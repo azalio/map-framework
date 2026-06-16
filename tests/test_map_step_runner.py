@@ -3045,6 +3045,57 @@ class TestBuildContextBlock:
         assert "ST-001: files=" in result
         assert "<MAP_Minimality_Doctrine>" not in result
 
+    def test_build_context_block_includes_monitor_misprune_guard_context(
+        self, branch_workspace
+    ):
+        bp = {
+            "summary": "Ship approved plan scope, not a smaller rewrite.",
+            **_blueprint_constraint_fields(),
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "Restore user-requested export",
+                    "aag_contract": "Actor -> restore_export() -> export works",
+                    "requiredness": "explicit",
+                    "pruneable": False,
+                    "restored_from_deferred_yagni": "YG-001",
+                    "validation_criteria": [
+                        "VC1 [AC-1]: export remains in active scope",
+                    ],
+                    "dependencies": [],
+                }
+            ],
+            "coverage_map": {"AC-1": "ST-001", "SC-1": "ST-001"},
+            "deferred_yagni": [
+                {
+                    "id": "YG-002",
+                    "title": "Add illustrative screenshots",
+                    "rationale": "Helpful but not acceptance-critical.",
+                    "restore_hint": "Restore only if the user asks for docs polish.",
+                }
+            ],
+        }
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        (branch_workspace / "task_plan_test-branch.md").write_text(
+            "## Goal\nUser asked for the export path to remain available.\n"
+        )
+
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "# Approved Blueprint Snapshot (Monitor misprune guard):" in result
+        assert "Original request / goal: User asked for the export path" in result
+        assert "Hard constraints:" in result
+        assert "AC-1: Timeouts must show a retryable message" in result
+        assert "Active approved plan scope:" in result
+        assert "ST-001: Restore user-requested export" in result
+        assert "requiredness=explicit" in result
+        assert "restored_from=YG-001" in result
+        assert "Coverage map:" in result
+        assert "AC-1 -> ST-001" in result
+        assert "Rejected removals / Deferred YAGNI parking lot:" in result
+        assert "YG-002: Add illustrative screenshots" in result
+        assert "Monitor rule: flag a misprune" in result
+
     def test_build_context_block_includes_minimality_doctrine_when_enabled(
         self, branch_workspace
     ):

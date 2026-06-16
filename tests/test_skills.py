@@ -1297,6 +1297,32 @@ class TestEvidenceFirstVerdictContracts:
         assert "summaries" in content
 
 
+class TestMonitorMispruneGuardContracts:
+    """Regression tests for issue #184 Monitor misprune guard context."""
+
+    @pytest.fixture
+    def project_root(self):
+        return Path(__file__).parent.parent
+
+    @pytest.mark.parametrize(
+        "relative_path",
+        [
+            Path(".claude/agents/monitor.md"),
+            Path(".codex/agents/monitor.toml"),
+        ],
+    )
+    def test_monitor_prompts_compare_against_approved_blueprint(
+        self, project_root, relative_path
+    ):
+        content = (project_root / relative_path).read_text(encoding="utf-8")
+
+        assert "Misprune guard" in content
+        assert "Approved Blueprint Snapshot" in content
+        assert "Active approved plan scope" in content
+        assert "Rejected removals / Deferred YAGNI parking lot" in content
+        assert "misprune" in content
+
+
 class TestEvidenceFirstPromptContracts:
     """Regression tests for evidence-grounded agent outputs.
 
