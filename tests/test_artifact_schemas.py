@@ -191,6 +191,7 @@ def test_validate_run_health_report_schema():
         "generated_at": "2026-05-15T10:00:00Z",
         "workflow": "map-efficient",
         "branch": "test-branch",
+        "minimality": "lite",
         "terminal_status": "blocked",
         "current_step_id": "2.4",
         "current_step_phase": "MONITOR",

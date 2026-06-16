@@ -3671,6 +3671,7 @@ def write_run_health_report(
         "generated_at": _utc_timestamp(),
         "workflow": (workflow or state.get("workflow") or "map-workflow"),
         "branch": branch_name,
+        "minimality": _load_minimality_level(Path.cwd()),
         "terminal_status": status,
         "current_step_id": state.get("current_step_id") or None,
         "current_step_phase": state.get("current_step_phase") or None,
@@ -3763,6 +3764,7 @@ def _validate_run_health_report_shape(report: Mapping[str, object]) -> list[str]
         "current_step_id",
         "current_step_phase",
         "current_subtask_id",
+        "minimality",
         "research",
     }
     for key in sorted(RUN_HEALTH_REQUIRED_KEYS - set(report)):
@@ -3777,6 +3779,10 @@ def _validate_run_health_report_shape(report: Mapping[str, object]) -> list[str]
     for key in ("schema_version", "generated_at", "workflow", "branch"):
         if key in report and not isinstance(report.get(key), str):
             errors.append(f"{key} must be a string")
+    minimality = report.get("minimality")
+    if minimality is not None:
+        if not isinstance(minimality, str) or minimality not in VALID_MINIMALITY_LEVELS:
+            errors.append("minimality must be one of: off, lite, full, ultra")
     for key in ("completed_step_count", "pending_step_count"):
         value = report.get(key)
         if key in report and not _is_non_negative_int(value):

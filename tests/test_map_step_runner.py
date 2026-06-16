@@ -211,6 +211,7 @@ def test_write_run_health_report_creates_report_and_manifest(branch_workspace):
     assert result["status"] == "success"
     report = json.loads((branch_workspace / "run_health_report.json").read_text())
     assert report["terminal_status"] == "blocked"
+    assert report["minimality"] == "off"
     assert report["completed_step_count"] == 3
     assert report["pending_step_count"] == 1
     assert report["artifacts"]["step_state"]["present"] is True
