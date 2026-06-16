@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`/map-understand` interactive learning mode (#221).** MAP now ships an
+  opt-in deep-understanding slash surface for Claude and Codex. It keeps a
+  transient Markdown checklist in the conversation, teaches code/diffs/workflow
+  artifacts incrementally, asks restatement or quiz checks without revealing
+  multiple-choice answers early, and stays separate from normal workflow
+  verbosity and `/map-learn` persistence.
 - **Minimality rollout telemetry can now be inspected before the Phase 3 default
   flip (#180/#183).** `run_health_report.json` records the workflow's historical
   `minimality` level, and `mapify minimality-report` compares complete `off` and

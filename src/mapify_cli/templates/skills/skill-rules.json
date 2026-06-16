@@ -145,6 +145,29 @@
         ]
       }
     },
+    "map-understand": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "medium",
+      "description": "Interactive deep-understanding and quiz mode that keeps a transient checklist, teaches incrementally, and checks user comprehension without changing normal MAP workflow verbosity.",
+      "promptTriggers": {
+        "keywords": [
+          "map-understand",
+          "understanding check",
+          "quiz me",
+          "teach me this",
+          "verify my understanding",
+          "deep understanding"
+        ],
+        "intentPatterns": [
+          "map-understand",
+          "(quiz|test|check|verify).*(understanding|comprehension)",
+          "teach.*(me|this).*(step.by.step|interactively)",
+          "deep.*understanding"
+        ]
+      }
+    },
     "map-efficient": {
       "type": "manual",
       "skillClass": "task",

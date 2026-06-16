@@ -148,7 +148,7 @@ This will:
 
 - ✅ Create project directory
 - ✅ Install MAP agents (including Synthesizer, DebateArbiter, ResearchAgent, FinalVerifier)
-- ✅ Add 10 command files plus the skill-backed `/map-learn` slash surface
+- ✅ Add skill-backed `/map-*` slash surfaces, including `/map-learn` and `/map-understand`
 - ✅ Configure essential MCP servers
 - ✅ Initialize git repository
 - ✅ Install branch-scoped `.map/<branch>/` workflow runtime used by `/map-plan` and `/map-efficient`
@@ -181,7 +181,7 @@ codex --enable codex_hooks
 
 or upgrade Codex first. Upgrading is recommended.
 
-Codex MAP skills do not start with `/`. Type `$map-plan`, `$map-fast`, or `$map-check` instead of `/map-plan`, `/map-fast`, or `/map-check`.
+Codex MAP skills do not start with `/`. Type `$map-plan`, `$map-fast`, `$map-check`, or `$map-understand` instead of `/map-plan`, `/map-fast`, `/map-check`, or `/map-understand`.
 
 ### MCP Server Configuration
 
@@ -271,6 +271,7 @@ If you prefer manual setup:
    │   │   ├── map-release/SKILL.md   # Release workflow
    │   │   ├── map-resume/SKILL.md    # Resume interrupted workflows
    │   │   ├── map-learn/SKILL.md     # Persist lessons to .claude/rules/learned/
+   │   │   ├── map-understand/SKILL.md # Interactive learning/quiz mode
    │   │   └── map-state/SKILL.md     # Branch-scoped planning state skill
    │   └── mcp_config.json
    ```
@@ -320,6 +321,9 @@ After installation, you can use MAP commands in Claude Code:
 
 # Extract lessons after workflow completion
 /map-learn
+
+# Teach and quiz until a target makes sense
+/map-understand HEAD~1..HEAD
 ```
 
 ### Workflow Architecture
@@ -335,6 +339,7 @@ MAP Framework uses **slash commands** as entry points that coordinate specialize
 - **`/map-release`** - Package release workflow with validation gates
 - **`/map-resume`** - Resume incomplete MAP workflow from checkpoint
 - **`/map-learn`** - Extract lessons from completed workflows (implemented as a skill, not a command file)
+- **`/map-understand`** - Interactive understanding checklist and quiz mode (transient, no artifact writes)
 
 **Note:** Agents are invoked automatically by slash commands. Direct agent invocation is not the recommended approach—use the slash commands above for proper workflow orchestration.
 

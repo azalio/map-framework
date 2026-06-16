@@ -30,7 +30,7 @@
   "features": [
     "11 specialized MAP agents (TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, DocumentationReviewer, Debate-Arbiter, Synthesizer, Research-Agent, Final-Verifier)",
     "5 Claude Code hooks for automation (validate-agent-templates, auto-store-knowledge, enrich-context, session-init, track-metrics)",
-    "11 slash commands (/map-efficient, /map-debug, /map-fast, /map-review, /map-check, /map-plan, /map-task, /map-tdd, /map-release, /map-resume, /map-learn)",
+    "12 slash commands (/map-efficient, /map-debug, /map-fast, /map-review, /map-check, /map-plan, /map-task, /map-tdd, /map-release, /map-resume, /map-learn, /map-understand)",
     "Chain-of-thought reasoning with sequential-thinking MCP",
     "Semantic pattern search with embeddings cache",
     "Cost optimization with per-agent model selection (haiku/sonnet/opus)"

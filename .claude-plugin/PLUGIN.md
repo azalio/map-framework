@@ -35,16 +35,19 @@ MAP (Modular Agentic Planner) is a cognitive architecture that orchestrates 11 s
 - `track-metrics` — tracks agent performance
 - `workflow-gate` — enforces workflow step sequencing
 
-**10 Slash Commands:**
+**12 Slash Commands:**
 - `/map-efficient` — implement features, refactor code, complex tasks with full MAP workflow
 - `/map-debug` — debug issues using MAP analysis
 - `/map-fast` — small, low-risk changes with minimal overhead
 - `/map-review` — comprehensive review of changes
 - `/map-check` — quality gates and verification
 - `/map-plan` — architecture decomposition
+- `/map-task` — execute one planned subtask
+- `/map-tdd` — test-first implementation workflow
 - `/map-release` — release workflow with validation gates
 - `/map-resume` — resume interrupted workflows
 - `/map-learn` — extract and preserve lessons
+- `/map-understand` — teach and quiz until a target makes sense
 
 ### Cost Optimization
 
