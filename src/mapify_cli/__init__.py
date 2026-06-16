@@ -1318,6 +1318,13 @@ def _render_minimality_report(report: Mapping[str, Any]) -> None:
         for reason in reasons:
             console.print(f"  - {reason}")
 
+    next_actions = summary.get("next_actions")
+    if isinstance(next_actions, list) and next_actions:
+        console.print()
+        console.print("[bold]Next actions[/bold]")
+        for action in next_actions:
+            console.print(f"  - {action}")
+
     if branch_rows:
         table = Table(title="Branch Samples", show_header=True, header_style="bold cyan")
         table.add_column("Branch")
