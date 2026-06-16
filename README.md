@@ -205,7 +205,7 @@ MAP is inspired by the [MAP cognitive architecture](https://github.com/Shanka123
 minimality: lite   # new installs default to lite; existing repos without the key stay off
 ```
 
-Allowed values: `off`, `lite`, `full`, `ultra`. Phase 1 ships conservative `lite` defaults: Actor prefers the fewest moving parts, Monitor blocks scope drift only when it affects required behavior, and Evaluator scores simplicity without letting it hide missing required work. `/map-review` also adds an advisory what-to-delete lens when minimality is not `off`; its `net: -N` estimate is informational, not a gate. In `full`/`ultra`, the decomposer may place speculative omissions in `blueprint.deferred_yagni`; those items must be shown during plan approval and can be restored before execution.
+Allowed values: `off`, `lite`, `full`, `ultra`. Phase 1 ships conservative `lite` defaults: Actor prefers the fewest moving parts, Monitor blocks scope drift only when it affects required behavior, and Evaluator scores simplicity without letting it hide missing required work. `/map-review` also adds an advisory what-to-delete lens when minimality is not `off`; its `net: -N` estimate is informational, not a gate. In `full`/`ultra`, the decomposer may place speculative omissions in `blueprint.deferred_yagni`; those items must be shown during plan approval and can be restored before execution with `python3 .map/scripts/map_orchestrator.py restore_deferred_yagni YG-NNN`.
 
 **Context-compression policy** (controls the `/compact` nudge; default `never` — opt-in):
 
