@@ -203,6 +203,13 @@ def _summarize(
         for sample in complete
         if sample.get("minimality_source") != "run_health_report"
     ]
+    complete_off_branches = [str(sample.get("branch", "")) for sample in complete_off]
+    complete_opt_in_branches = [
+        str(sample.get("branch", "")) for sample in complete_opt_in
+    ]
+    missing_historical_minimality_branches = [
+        str(sample.get("branch", "")) for sample in inferred_level_samples
+    ]
 
     restored_total = sum(
         _as_int(sample.get("restored_yagni_count")) for sample in complete_opt_in
@@ -312,6 +319,11 @@ def _summarize(
             "off_baseline_runs": off_gap,
             "opt_in_runs": opt_in_gap,
             "historical_minimality_runs": len(inferred_level_samples),
+        },
+        "cohort_branches": {
+            "off_baseline": complete_off_branches,
+            "opt_in": complete_opt_in_branches,
+            "missing_historical_minimality": missing_historical_minimality_branches,
         },
         "avg_retry_events_off": avg_retry_off,
         "avg_retry_events_opt_in": avg_retry_opt_in,
