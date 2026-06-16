@@ -13,9 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `minimality` level, and `mapify minimality-report` compares complete `off` and
   opt-in cohorts for retry pressure, guard rework, and deferred-YAGNI reversal
   rate before marking the local rollout as `candidate`, `hold`, or
-  `insufficient_data`. The report summary now includes `sample_gaps` and
-  `next_actions`, so maintainers can see the exact telemetry still needed before
-  promotion.
+  `insufficient_data`. The report summary now includes `sample_gaps`,
+  `next_actions`, and a candidate-only `manual_review_gate` with opt-in branches
+  plus a clarity/underscope checklist, so maintainers can see the exact telemetry
+  and human review still needed before promotion.
 - **Decomposer pruning is now contract-gated and user-visible (#184).**
   Blueprints can carry `requiredness`/`pruneable` metadata per active subtask
   and a `deferred_yagni` parking lot for speculative omissions. The validator

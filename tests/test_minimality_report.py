@@ -55,6 +55,19 @@ def test_minimality_report_marks_candidate_with_clean_baseline_and_opt_in(tmp_pa
         "Sample the candidate opt-in runs for clarity/underscope regressions "
         "before flipping the global default."
     ]
+    assert summary["manual_review_gate"] == {
+        "required": True,
+        "candidate_branches": ["lite-run"],
+        "checklist": [
+            "Compare each opt-in run against the original user request for dropped "
+            "explicit or implied requirements.",
+            "Inspect simplifications for terse or cryptic code that hurts "
+            "maintainability.",
+            "Confirm Actor retries addressed only BLOCKER feedback, not NON-BLOCKING "
+            "scope expansion.",
+            "Verify map:simplification markers name a real ceiling and safe upgrade path.",
+        ],
+    }
 
 
 def test_minimality_report_requires_historical_minimality_in_run_health(tmp_path):
@@ -89,6 +102,11 @@ def test_minimality_report_requires_historical_minimality_in_run_health(tmp_path
         "Collect 1 more complete baseline run(s) with minimality off."
         in summary["next_actions"]
     )
+    assert summary["manual_review_gate"] == {
+        "required": False,
+        "candidate_branches": [],
+        "checklist": [],
+    }
 
 
 def test_minimality_report_counts_deferred_yagni_reversals(tmp_path):
@@ -147,3 +165,24 @@ def test_minimality_report_cli_json(tmp_path):
     assert payload["summary"]["decision"] == "candidate"
     assert payload["summary"]["sample_gaps"]["opt_in_runs"] == 0
     assert payload["summary"]["next_actions"]
+    assert payload["summary"]["manual_review_gate"]["required"] is True
+
+
+def test_minimality_report_cli_human_output_prints_manual_review_gate(tmp_path):
+    _write_json(
+        tmp_path / ".map" / "off-run" / "run_health_report.json", _run_health("off")
+    )
+    _write_json(
+        tmp_path / ".map" / "lite-run" / "run_health_report.json", _run_health("lite")
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["minimality-report", "--path", str(tmp_path), "--min-runs", "1"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Manual review gate" in result.output
+    assert "Candidate opt-in branches: lite-run" in result.output
+    assert "Checklist:" in result.output
+    assert "map:simplification" in result.output
