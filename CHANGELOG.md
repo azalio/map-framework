@@ -54,6 +54,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repeated shapes explained once), before→after-first ordering for diffs,
   adaptive sections with an `Omitted:` footer, and natural-language follow-up
   offers. Applies to both the Claude and Codex surfaces.
+- **Research artifacts are now unified and consumed before broad search
+  (#209/#210).** Planning and per-subtask research now share a single artifact
+  shape across `/map-plan`, `/map-efficient`, and the research-agent, and Actor
+  is required to consume the persisted research artifact before launching its
+  own broad codebase search — enforced by `map_step_runner.py` so research spend
+  is not duplicated or ignored.
 
 ## [3.16.0] - 2026-06-15
 
