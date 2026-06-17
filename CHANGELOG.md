@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.17.0] - 2026-06-18
+
 ### Added
 - **`/map-understand` interactive learning mode (#221).** MAP now ships an
   opt-in deep-understanding slash surface for Claude and Codex. It keeps a
