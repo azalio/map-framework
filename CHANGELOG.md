@@ -41,6 +41,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The scorer is exposed as `mapify research-eval score` and covered by the
   no-provider E2E artifact-contract suite.
 
+### Changed
+- **`/map-explain` now respects the user's language and scales depth to target
+  size (#224).** The skill writes prose in the user's established language
+  (code, identifiers, commands, and `file:line` refs stay English) instead of
+  always defaulting to English. The rigid always-emit-all-10-sections /
+  explain-every-line structure is replaced by a signal-first output spec:
+  size tiers with word-budget ceilings and load-bearing-line caps, a front-loaded
+  "Mental model in 60 seconds" block, read-tier section tags
+  (`[MUST READ]`/`[READ IF MODIFYING]`/`[SKIM]`), a single load-bearing-lines
+  table (merging the old "what every line does" + "why each line" sections,
+  repeated shapes explained once), before→after-first ordering for diffs,
+  adaptive sections with an `Omitted:` footer, and natural-language follow-up
+  offers. Applies to both the Claude and Codex surfaces.
+
 ## [3.16.0] - 2026-06-15
 
 ### Added
