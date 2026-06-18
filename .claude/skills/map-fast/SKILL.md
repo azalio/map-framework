@@ -178,9 +178,12 @@ Begin now with minimal workflow.
 ## Examples
 
 ```
-/map-fast <typical args>
+/map-fast add a --verbose flag to the status command
+/map-fast fix the off-by-one error in the pagination offset
 ```
 
 ## Troubleshooting
 
-- **Issue:** Workflow doesn't behave as expected. **Fix:** Re-read the section above titled 'What this command CANNOT do' (if present) and ensure prerequisites are met. Run `/map-resume` to recover from interruptions.
+- **Issue:** Task turns out risky, multi-stage, or ambiguous. **Fix:** Stop using `/map-fast`; switch to `/map-efficient` or `/map-plan` (see "When Not To Expand Scope").
+- **Issue:** A subtask exceeds 3 iterations without passing Monitor. **Fix:** Report it as a blocker/tradeoff — do not loop or fake-complete (see "Critical Constraints").
+- **Issue:** The session was interrupted mid-workflow. **Fix:** Run `/map-resume` to recover.

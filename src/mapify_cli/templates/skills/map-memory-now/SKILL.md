@@ -32,6 +32,15 @@ as a maintenance sweep over multiple unfinalized scratches.
 
 ---
 
+## Constraints (NEVER)
+
+- **NEVER** edit code, run a workflow, or make commits beyond the digest from this skill — it only finalizes memory.
+- **NEVER** hand-write or edit a digest `.md` or scratch `.jsonl` directly; only `finalize_dirty` writes them (it is atomic — a failed digest is left unfinalized for retry, never half-written).
+- **NEVER** modify the user's `.gitignore` or flip `MAP_MEMORY_COMMIT_DIGESTS` for them — if the user wants digests kept local, instruct them; do not change it automatically.
+- **NEVER** let a digest carry secrets or credentials.
+
+---
+
 ## Arguments
 
 - `$ARGUMENTS` empty or `--finalize-all` — both run the full sweep (finalize ALL dirty

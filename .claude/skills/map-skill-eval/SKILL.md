@@ -12,6 +12,18 @@ Purpose: measure whether a `/map-*` skill fires on the right prompts and what it
 
 Requires the `claude` CLI (installed and on `$PATH`). The skill is skipped at install time on hosts without `claude`.
 
+## Constraints (NEVER)
+
+- **NEVER** plan or implement from this skill — it only measures trigger accuracy and cost. For work, use `/map-plan` or `/map-efficient`.
+- **NEVER** launch a non-dry-run `run`/`optimize` when the eval-set size or quota cost is unknown — run `--dry-run` first to see the call budget (each case spends a real `claude -p` call).
+- **NEVER** hand-edit the durable run log (`.map/eval-runs/<skill>/*.jsonl`) or `*-optimize.json` results — `--resume` and `view` depend on their integrity.
+- **NEVER** auto-commit an `--apply` change — `--apply` only stages the re-rendered description; review the diff, and patch `skill-rules.json` `description` by hand (it is not auto-patched).
+
+## Before reporting (self-check)
+
+- Confirm the run completed (not interrupted) — if it was, re-run with `--resume`; do not report a partial pass-rate.
+- Confirm the reported pass-rate equals passed/total and every case has a verdict.
+
 ## Invocation
 
 ```bash
@@ -83,7 +95,7 @@ mapify skill-eval run map-plan --eval-set .map/evals/map-plan.json --resume
 ## Troubleshooting
 
 - **`claude` not found** — `map-skill-eval` requires the `claude` CLI on `$PATH`. Install it and re-run `mapify init` to activate the skill.
-- **Eval-set validation error on `--dry-run`** — check that each case has a non-empty `id`, a `prompt`, and at least one `assertions` entry with a valid `type`.
+- **Eval-set validation error on `--dry-run`** — check that each case has a non-empty `prompt` (the only required field); that `should_trigger` / `should_not_trigger`, if present, are strings; and that every `assertions` entry has a valid `type`. Cases carry no user-supplied `id` — `cell_id`s like `p0-v1-r2` are derived automatically.
 - **Run log not found for `--resume`** — `--resume` looks for the latest `.map/eval-runs/<skill>/<timestamp>.jsonl`. If no prior run exists, omit `--resume` to start fresh.
 - **All cases report `not_trigger` unexpectedly** — verify the skill name matches exactly (e.g. `map-plan`, not `map_plan`) and that `.claude/` was seeded correctly in the temp cwd.
 

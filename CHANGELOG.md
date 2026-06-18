@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Broken and misleading prose in lower-tier MAP skill prompts (prompt-quality
+  audit).** Repaired shipped `SKILL.md` defects surfaced by a PQS audit: the
+  `/map-tdd` ACTOR example carried an unterminated `f"""` string (would break on
+  copy-paste) plus a duplicated `<TDD_Tests>` placeholder; `/map-state` declared
+  three conflicting versions (frontmatter `1.0.0`, `metadata` `3.1.0`, footer
+  `1.0.0`) — now all `3.1.0`; the auto-generated Troubleshooting footer in
+  `/map-fast`, `/map-debug`, `/map-tdd`, and `/map-release` referenced a
+  non-existent "What this command CANNOT do" section and shipped a
+  `<typical args>` placeholder Examples block; the `/map-release` validation-gate
+  matrix listed a "Black format" gate that `make check` never runs (black is
+  `make format` only); and `/map-skill-eval` Troubleshooting required a
+  non-existent `id` field on eval-set entries (`cell_id`s are derived).
+
+### Changed
+- **Strengthened inhibition (NEVER rules) and output contracts in read/write MAP
+  skills.** `/map-state`, `/map-tokenreport`, `/map-memory-now`, and
+  `/map-skill-eval` gained explicit `Constraints (NEVER)` blocks (single-writer
+  enforcement, no direct `step_state.json`/run-log edits, read-only guarantees,
+  no auto-persisting secrets or flipping user config) plus fixed output-report
+  templates and a skill-eval self-check — raising prompt quality without changing
+  runtime behavior. The `/map-debug`, `/map-fast`, `/map-tdd`, and `/map-release`
+  Examples/Troubleshooting sections now reference real sections and real example
+  invocations.
+
 ## [3.17.0] - 2026-06-18
 
 ### Added

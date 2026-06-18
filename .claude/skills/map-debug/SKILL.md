@@ -334,7 +334,7 @@ This is **completely optional**. Run it when debugging patterns are valuable for
 - Check for similar issues in other parts of the codebase when Predictor flags them or the root cause pattern is reusable.
 - Use the Task tool to call the specialized subagents in the sequence above.
 
-## Example
+## Examples
 
 User says: `/map-debug TypeError in authentication middleware`
 
@@ -349,12 +349,8 @@ You should:
 Begin debugging now.
 
 
-## Examples
-
-```
-/map-debug <typical args>
-```
-
 ## Troubleshooting
 
-- **Issue:** Workflow doesn't behave as expected. **Fix:** Re-read the section above titled 'What this command CANNOT do' (if present) and ensure prerequisites are met. Run `/map-resume` to recover from interruptions.
+- **Issue:** A fix is applied before the root cause is identified. **Fix:** Stop and return to investigation — Debugging Constraints require root cause first.
+- **Issue:** The same bug pattern may exist elsewhere. **Fix:** Check sibling code when Predictor flags it or the root cause is reusable (see "Debugging Constraints").
+- **Issue:** The session was interrupted mid-workflow. **Fix:** Run `/map-resume` to recover.
