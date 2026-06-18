@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.17.1] - 2026-06-18
+
 ### Fixed
 - **Broken and misleading prose in lower-tier MAP skill prompts (prompt-quality
   audit).** Repaired shipped `SKILL.md` defects surfaced by a PQS audit: the
