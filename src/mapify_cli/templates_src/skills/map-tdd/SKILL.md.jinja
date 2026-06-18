@@ -37,7 +37,7 @@ parallel_tool_policy: sequential_red_green_gate
 ## Execution Flow
 
 ```
-Standard:          DECOMPOSE → ACTOR (code+tests) → MONITOR
+Non-TDD baseline:  DECOMPOSE → ACTOR (code+tests) → MONITOR   (= /map-efficient, shown for contrast — NOT a /map-tdd mode)
 Targeted TDD:      DECOMPOSE → TEST_WRITER → TEST_FAIL_GATE → CONTRACT_HANDOFF → STOP
 Targeted Resume:   /map-task ST-001 → ACTOR (code only) → MONITOR
 Full-workflow TDD: DECOMPOSE → TEST_WRITER → TEST_FAIL_GATE → ACTOR (code only) → MONITOR
@@ -281,7 +281,6 @@ Task(
   description="TDD: Implement subtask [ID] to make tests green",
   prompt=f"""You are in TDD CODE_ONLY mode.
 
-
 <MAP_Contract>
 [AAG contract from decomposition]
 </MAP_Contract>
@@ -289,21 +288,18 @@ Task(
 <TDD_Mode>code_only</TDD_Mode>
 
 <TDD_Tests>
-[List test files created by TEST_WRITER]
+{test_files_list}
 </TDD_Tests>
 
 STRICT RULES:
-1. Write ONLY implementation code. Do NOT modify test files.
+1. Write ONLY implementation code. Do NOT modify test files (the files in <TDD_Tests> are READ-ONLY).
 2. Your goal: make ALL existing tests pass (turn Red → Green).
 3. Read the test files first to understand what behavior is expected.
 4. Implement the minimum code needed to satisfy the tests.
 5. Follow the AAG contract as your specification.
 
-Test files (READ-ONLY):
-{test_files_list}
-
 Output: standard Actor output (approach + code + trade-offs)
-
+"""
 )
 ```
 
@@ -378,9 +374,12 @@ In TDD mode, `TEST_WRITER` and `TEST_FAIL_GATE` still write into the same branch
 ## Examples
 
 ```
-/map-tdd <typical args>
+/map-tdd ST-003                         # write spec-derived tests for one planned subtask, then stop
+/map-tdd add idempotency keys to the payment capture endpoint
 ```
 
 ## Troubleshooting
 
-- **Issue:** Workflow doesn't behave as expected. **Fix:** Re-read the section above titled 'What this command CANNOT do' (if present) and ensure prerequisites are met. Run `/map-resume` to recover from interruptions.
+- **Issue:** Invoked without a spec or acceptance criteria. **Fix:** Run `/map-plan` first, or use `/map-efficient` (see "What this command does NOT do").
+- **Issue:** Tests pass trivially / mirror the implementation. **Fix:** Ensure TEST_WRITER derives tests from the spec only, before any implementation is in context (see "Key insight").
+- **Issue:** The session was interrupted between the red-phase contract and implementation. **Fix:** Resume with `/map-task ST-00N`.

@@ -13,6 +13,14 @@ run spent, attributed to the subtask, phase, and agent that spent them.
 Read-only reporting — this skill does not plan, implement, or run quality
 gates.
 
+## Constraints (NEVER)
+
+This skill is strictly read-only reporting.
+
+- **NEVER** edit code, state, or git from this skill — it renders an existing rollup and stops.
+- **NEVER** run or resume a MAP workflow here; if work is needed, hand off to `/map-efficient`.
+- **NEVER** present `est_cost_usd` as a billing source of truth — it is a per-model estimate.
+
 The numbers come from the `map-token-meter` hook (wired on `SubagentStop` and
 `Stop`), which reads each Claude Code transcript's per-turn `usage` block and
 appends attributed rows to `.map/<branch>/token_log.jsonl`, rolled up into
@@ -66,10 +74,16 @@ jq '{aggregate, by_agent, by_phase, research_roi}' ".map/${BRANCH}/token_account
 
 ### Step 4: Summarize
 
-Report the totals (input / output / cache), the cache-hit ratio, the research
-token share, and the estimated cost. Call out the most expensive subtask or
-agent, a low cache-hit ratio, or research cost that looks high relative to
-Actor/Monitor. Then STOP — do not change code from this skill.
+Emit exactly this report shape, then STOP (this skill never changes code):
+
+```text
+Tokens (<branch>): in <I> / out <O> / cache_rd <CR> / cache_cr <CC>
+Cache-hit ratio: <X>%   ·   Est. cost: $<C>   ·   Research share: <R>%
+Most expensive: <subtask|agent> ($<amount>)
+Flags: <low cache-hit | high research cost | none>
+```
+
+Fill every field from the `token_report` output. If a value is unavailable, write `n/a` — never omit a line or invent a number.
 
 ## Examples
 

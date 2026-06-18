@@ -1176,7 +1176,7 @@ Use these MCP tools throughout the workflow:
 | Gate # | Gate Name | Failure Impact | Can Proceed? | Fix Action |
 |--------|-----------|----------------|--------------|------------|
 | 1 | Pytest tests | High | ❌ NO | Fix failing tests |
-| 2 | Black format | Medium | ❌ NO | Run black --fix |
+| 2 | Pyright + hook lint | Medium | ❌ NO | Fix pyright / hook-lint errors (part of `make lint`) |
 | 3 | Ruff lint | Medium | ❌ NO | Fix linting errors |
 | 4 | Mypy types | Low | ⚠️ Review | Fix type errors (recommended) |
 | 5 | Package build | High | ❌ NO | Fix build config |
@@ -1265,9 +1265,11 @@ Begin now with the release request above.
 ## Examples
 
 ```
-/map-release <typical args>
+/map-release                            # full release workflow; bump type is chosen at the confirmation gate
 ```
 
 ## Troubleshooting
 
-- **Issue:** Workflow doesn't behave as expected. **Fix:** Re-read the section above titled 'What this command CANNOT do' (if present) and ensure prerequisites are met. Run `/map-resume` to recover from interruptions.
+- **Issue:** `make check` (Gate 1) fails. **Fix:** Stop — fix every lint/type/test failure before any tag or publish step; the release gates are hard stops, not warnings.
+- **Issue:** `__version__` is out of sync after `bump-version.sh`. **Fix:** Apply the documented `__version__` sync workaround in Phase 1 before continuing.
+- **Issue:** A tag or PyPI publish step failed midway. **Fix:** Follow the rollback scenario for that phase; never re-run an irreversible step blindly.
