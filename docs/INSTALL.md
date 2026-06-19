@@ -147,7 +147,7 @@ mapify init my-project
 This will:
 
 - ✅ Create project directory
-- ✅ Install MAP agents (including Synthesizer, DebateArbiter, ResearchAgent, FinalVerifier)
+- ✅ Install MAP agents (including Predictor, Evaluator, ResearchAgent, FinalVerifier)
 - ✅ Add skill-backed `/map-*` slash surfaces, including `/map-learn` and `/map-understand`
 - ✅ Configure essential MCP servers
 - ✅ Initialize git repository
@@ -243,15 +243,13 @@ If you prefer manual setup:
    ```
    your-project/
    ├── .claude/
-   │   ├── agents/                    # 11 specialized agents
+   │   ├── agents/                    # 9 specialized agents
    │   │   ├── task-decomposer.md     # Decomposes tasks into subtasks
    │   │   ├── actor.md               # Implements code
    │   │   ├── monitor.md             # Validates implementations
    │   │   ├── predictor.md           # Analyzes impact and risks
    │   │   ├── evaluator.md           # Scores solution quality
    │   │   ├── reflector.md           # Extracts lessons
-   │   │   ├── synthesizer.md         # Self-MoA: Merges variants
-   │   │   ├── debate-arbiter.md      # Opus: Cross-evaluates variants
    │   │   ├── research-agent.md      # Isolated codebase research
    │   │   ├── final-verifier.md      # Adversarial verification (Ralph Loop)
    │   │   └── documentation-reviewer.md  # Reviews technical docs

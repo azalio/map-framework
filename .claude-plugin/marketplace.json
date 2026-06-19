@@ -31,7 +31,7 @@
         "development"
       ],
       "features": [
-        "11 specialized agents (TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, DocumentationReviewer, Debate-Arbiter, Synthesizer, Research-Agent, Final-Verifier)",
+        "9 specialized agents (TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, DocumentationReviewer, Research-Agent, Final-Verifier)",
         "5 Claude Code hooks for automation",
         "12 slash commands (/map-efficient, /map-debug, /map-fast, /map-review, /map-check, /map-plan, /map-task, /map-tdd, /map-release, /map-resume, /map-learn, /map-understand)",
         "Professional code review integration",

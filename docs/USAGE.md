@@ -280,11 +280,6 @@ Both `.claude/` and `.codex/` can exist in the same project. When both are prese
   - [Refactoring](#refactoring)
   - [Library Integration](#library-integration)
   - [Learning from Open Source](#learning-from-open-source)
-- [Self-MoA: Solution Synthesis](#self-moa-solution-synthesis)
-  - [How Self-MoA Works](#how-self-moa-works)
-  - [When to Use Self-MoA](#when-to-use-self-moa)
-  - [Example Synthesis](#example-synthesis)
-  - [Token Cost Considerations](#token-cost-considerations)
 - [Common CLI Mistakes](#-common-cli-mistakes)
   - [Wrong Operation Field Name](#wrong-operation-field-name)
   - [Quick Reference Resources](#quick-reference-resources)
@@ -358,82 +353,6 @@ Fetch the latest Stripe docs while implementing.
 /map-efficient implement rate limiter.
 Study express-rate-limit's documentation, then create optimized version.
 ```
-
----
-
-## 🧬 Self-MoA: Solution Synthesis
-
-**Self-MoA** (Self-Mixture of Agents) is an advanced pattern that generates 3 implementation variants and **synthesizes** the best parts into an optimal combined solution.
-
-### How Self-MoA Works
-
-1. **Actor×3** generates variants with different optimization focuses:
-   - **V1 (Security)**: Input validation, OWASP compliance, defensive coding
-   - **V2 (Performance)**: Algorithm efficiency, caching, async patterns
-   - **V3 (Simplicity)**: Readability, standard patterns, clear structure
-
-2. **Monitor×3** validates each variant and extracts:
-   - Key design decisions (3-8 per variant)
-   - Compatibility features (error handling, concurrency model, etc.)
-   - Strengths and weaknesses
-
-3. **Synthesizer** combines the best parts:
-   - Extracts all decisions from viable variants
-   - Resolves conflicts using priority precedence
-   - Generates **fresh unified code** (not copy-paste)
-
-4. **Final Monitor** validates the synthesized solution
-
-### Activation
-
-**Explicit activation:**
-```bash
-/map-efficient --self-moa implement JWT authentication with refresh tokens
-```
-
-**Automatic activation:** When TaskDecomposer marks a subtask as:
-- `complexity: high`
-- `security_critical: true`
-
-### When to Use Self-MoA
-
-**Use Self-MoA for:**
-- Security-critical implementations (auth, data validation, encryption)
-- Complex algorithms with multiple valid approaches
-- Tasks requiring balance of security, performance, and maintainability
-- High-risk features where quality justifies higher token cost
-
-**Skip Self-MoA for:**
-- Simple CRUD operations
-- Configuration changes
-- Documentation updates
-- Token-constrained workflows
-
-### Example Synthesis
-
-```
-Input Variants:
-  V1 (security): Strong input validation, comprehensive error handling
-  V2 (performance): Efficient O(n) algorithm, smart caching
-  V3 (simplicity): Clean structure, readable code
-
-Synthesis Result:
-  - Structure: from V3 (clearest separation of concerns)
-  - Validation: from V1 (OWASP-compliant input checks)
-  - Algorithm: from V2 (O(n) instead of O(n²))
-
-Output: Clean, secure, AND fast (better than any single variant)
-```
-
-### Token Cost Considerations
-
-Self-MoA uses ~4x tokens per subtask:
-- 3 Actor calls (parallel)
-- 3 Monitor calls (parallel)
-- 1 Synthesizer call
-- 1 Final Monitor call
-
-**Recommendation:** Use Self-MoA selectively for critical subtasks, not for every task. The `/map-efficient` workflow automatically determines eligibility based on subtask complexity and security flags.
 
 ---
 
@@ -1196,8 +1115,6 @@ Each shipped task skill now declares an explicit effort and parallelism policy n
 | **Learning** | Via `/map-learn` | ❌ None |
 | **Quality Gates** | Essential agents + Final-Verifier | Basic only |
 | **Impact Analysis** | ✅ Conditional (Predictor) | ❌ Never |
-| **Multi-Variant** | ⚠️ Conditional (Self-MoA) | ❌ Never |
-| **Synthesis Model** | Synthesizer (sonnet) | N/A |
 | **Knowledge Updates** | Via `/map-learn` | ❌ None |
 | **Best For** | **Most tasks** | Throwaway only |
 | **Production Ready** | ✅ Yes | ❌ NO |
@@ -1230,27 +1147,6 @@ Each shipped task skill now declares an explicit effort and parallelism policy n
 
 # UI components
 /map-efficient build responsive navigation menu with mobile support
-```
-
-#### Use `/map-efficient --self-moa` (High-Quality Mode)
-
-**When:**
-- 🔒 Security-critical functionality (authentication, authorization)
-- 🔒 Complex features with multiple valid approaches
-- 🔒 High-risk changes affecting many files/modules
-
-**What `--self-moa` adds:**
-- Generates 3 variants (security/performance/simplicity focus)
-- Synthesizes best parts from each variant
-- Higher quality for critical code
-
-**Example use cases:**
-```bash
-# Security-critical
-/map-efficient --self-moa implement JWT authentication with refresh tokens
-
-# Complex feature
-/map-efficient --self-moa build real-time chat system with WebSocket support
 ```
 
 #### Use `/map-fast` (Minimal) ⚠️
@@ -1344,17 +1240,14 @@ DECOMPOSE → TEST_WRITER (tests from spec) → TEST_FAIL_GATE (verify Red) → 
 
 **Small Task (1-2 subtasks):**
 - `/map-efficient`: ~12-20K tokens (baseline)
-- `/map-efficient --self-moa`: ~25-35K tokens (3 variants)
 - `/map-fast`: ~8-12K tokens (minimal)
 
 **Medium Task (3-5 subtasks):**
 - `/map-efficient`: ~45-60K tokens (baseline)
-- `/map-efficient --self-moa`: ~100-130K tokens (3 variants)
 - `/map-fast`: ~25-35K tokens (minimal)
 
 **Large Task (6-8 subtasks):**
 - `/map-efficient`: ~90-120K tokens (baseline)
-- `/map-efficient --self-moa`: ~200-260K tokens (3 variants)
 - `/map-fast`: ~50-70K tokens (minimal)
 
 **Cost at $3/M input, $15/M output (Claude Sonnet):**
@@ -1412,22 +1305,6 @@ START: I need to implement a feature
   ├─ Do I care about token costs?
   |    └─ NO → /map-efficient (best quality)
   |    └─ YES → /map-efficient ⭐ (RECOMMENDED)
-```
-
-### When to Use `--self-moa` Flag
-
-**Add `--self-moa` to /map-efficient for:**
-- First implementation of authentication/authorization
-- Database migrations affecting multiple tables
-- Breaking API changes
-- Any feature where failure is costly
-
-```bash
-# Standard feature
-/map-efficient implement user dashboard
-
-# High-risk feature (use --self-moa for 3-variant synthesis)
-/map-efficient --self-moa implement user dashboard with role-based access
 ```
 
 ### Common Misconceptions
@@ -1657,17 +1534,15 @@ but deduplicated for scoring, and malformed paths are reported separately.
 
 **Scenario:** Implement a feature with 4 subtasks
 
-| Workflow | TaskDecomposer | Actor | Monitor | Predictor | Synthesizer | Total Cost* |
-|----------|----------------|-------|---------|-----------|-------------|-------------|
-| `/map-efficient` | sonnet | sonnet (4x) | sonnet (4x) | sonnet (0-2x) | skip | ~$0.22 |
-| `/map-efficient --self-moa` | sonnet | sonnet (12x) | sonnet (12x) | sonnet (0-2x) | sonnet (4x) | ~$0.45 |
-| `/map-fast` | sonnet | sonnet (4x) | sonnet (4x) | skip | skip | ~$0.12 |
+| Workflow | TaskDecomposer | Actor | Monitor | Predictor | Total Cost* |
+|----------|----------------|-------|---------|-----------|-------------|
+| `/map-efficient` | sonnet | sonnet (4x) | sonnet (4x) | sonnet (0-2x) | ~$0.22 |
+| `/map-fast` | sonnet | sonnet (4x) | sonnet (4x) | skip | ~$0.12 |
 
 *Approximate costs based on typical token usage. Learning via `/map-learn` adds ~$0.05-0.10.
 
 **Key differences:**
-- `/map-efficient`: Standard workflow, conditional Self-MoA
-- `/map-efficient --self-moa`: Forces 3-variant generation + synthesis
+- `/map-efficient`: Standard workflow, conditional Predictor
 - `/map-fast`: Minimal, NO learning support
 
 ---

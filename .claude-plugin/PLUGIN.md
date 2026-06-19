@@ -12,7 +12,7 @@ MAP (Modular Agentic Planner) is a cognitive architecture that orchestrates 11 s
 
 ## Features
 
-### 11 Specialized Agents
+### 9 Specialized Agents
 
 1. **TaskDecomposer** — breaks goals into atomic subtasks
 2. **Actor** — generates code and solutions
@@ -21,10 +21,8 @@ MAP (Modular Agentic Planner) is a cognitive architecture that orchestrates 11 s
 5. **Evaluator** — scores solution quality (functionality, security, testability)
 6. **Reflector** — extracts lessons from successes and failures
 7. **DocumentationReviewer** — checks documentation completeness
-8. **Debate-Arbiter** — cross-evaluates variants with reasoning (Opus)
-9. **Synthesizer** — merges multiple variants (Self-MoA)
-10. **Research-Agent** — isolated codebase research
-11. **Final-Verifier** — adversarial verification (Ralph Loop)
+8. **Research-Agent** — isolated codebase research
+9. **Final-Verifier** — adversarial verification (Ralph Loop)
 
 ### Claude Code Integration
 

@@ -263,7 +263,7 @@ User: /map-efficient "Add auth"
   ↓
 [995-line command загружается ЦЕЛИКОМ]
   ↓
-Claude видит: 19 шагов, 163 строки circuit breaker, 103 строки Self-MoA...
+Claude видит: 19 шагов, 163 строки circuit breaker, 103 строки edge-case логики...
   ↓
 Claude "компрессирует" ментально: "Ok, просто запусти agents и пиши код"
   ↓
@@ -305,9 +305,6 @@ Claude: [Сохраняет direct findings или запускает research-a
 ```bash
 # Просто вводите команду как раньше:
 /map-efficient "Добавить функцию экспорта в PDF"
-
-# Или с флагами:
-/map-efficient --self-moa "Реализовать OAuth 2.0"
 
 # Система автоматически:
 # 1. Создаст .map/<branch>/step_state.json
