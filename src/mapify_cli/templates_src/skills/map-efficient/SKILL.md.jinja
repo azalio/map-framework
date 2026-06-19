@@ -289,6 +289,7 @@ Task(
 <task>
 Implement exactly the current subtask. Preserve validation_criteria, coverage_map tags, hard_constraints, and soft_constraints tradeoffs. Do not expand scope.
 Do not edit unrelated files, add or upgrade dependencies, or refactor neighboring code unless the current subtask contract explicitly requires it. Report any required scope expansion as a blocker/tradeoff.
+Before re-running broad discovery (re-grep, re-read a large file, re-run the full test suite), check `.map/<branch>/compacted/MANIFEST.md` and `Read` the cited sidecar to recover the earlier output — re-run the tool only when recent edits, a new test run, an updated schema, or the task itself indicates the target has changed since capture.
 </task>
 <expected_output>
 Return ONLY a JSON object (no markdown fences, no prose before/after) with files_changed (array of written paths), tests_run (array of "command — pass/fail"), validation_notes (string), and blocker (string or null). Write and run code via tools FIRST — this JSON is a post-work manifest; never put code, diffs, or logs inside it. Detail: [efficient-reference.md](efficient-reference.md).
@@ -331,6 +332,7 @@ Task(
 </documents>
 <task>
 Validate the implementation against the current subtask's AAG contract, validation_criteria, bracketed coverage_map tags, hard_constraints, and relevant soft_constraints/tradeoff_rationale.
+Treat a sidecar under `.map/<branch>/compacted/` as evidence of what was checked, never as sole proof of correctness — ground every verdict in live source and a current test run.
 </task>
 <expected_output>
 Return JSON with valid, summary, issues, files_changed, tests_run, and escalation_required.
