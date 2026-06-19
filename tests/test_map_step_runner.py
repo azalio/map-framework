@@ -3176,7 +3176,7 @@ class TestBuildContextBlock:
         (branch_workspace.parent / "config.yaml").write_text(
             "compression_policy: auto\ncompression_threshold_tokens: 100\n"
         )
-        monkeypatch.setattr(map_step_runner, "_claude_code_log_dir", lambda _p: log_dir)
+        monkeypatch.setattr(map_step_runner, "_claude_code_log_dir", lambda _p: log_dir)  # pyright: ignore[reportUnusedParameter]
 
         result = map_step_runner.subtask_boundary_compact_check("test-branch")
 
@@ -4897,6 +4897,171 @@ class TestRecordTestBaseline:
         # auto-detected from pyproject.toml elsewhere). The contract:
         # the call should not raise and should write a baseline file.
         assert report["status"] in ("skipped", "success", "baseline_failures")
+
+    # --- #229: monorepo-subdir auto-detect -------------------------------
+
+    def test_detect_harness_prefers_repo_root(self, tmp_path):
+        """Root harness wins; no subdir scan when the root has one."""
+        (tmp_path / "pyproject.toml").write_text("[tool]\n", encoding="utf-8")
+        (tmp_path / "svc").mkdir()
+        (tmp_path / "svc" / "go.mod").write_text("module svc\n", encoding="utf-8")
+        detection = map_step_runner._detect_baseline_harness(tmp_path)
+        assert detection["command"] == "pytest"
+        assert detection["from_root"] is True
+        assert detection["module_dir"] is None
+        assert detection["run_dir"] == tmp_path
+
+    def test_detect_harness_single_monorepo_subdir(self, tmp_path):
+        """Root has no harness; a single subdir module is selected (the #229 case)."""
+        module = tmp_path / "component-manager"
+        module.mkdir()
+        (module / "go.mod").write_text("module cm\n", encoding="utf-8")
+        detection = map_step_runner._detect_baseline_harness(tmp_path)
+        assert detection["command"] == "go test ./..."
+        assert detection["from_root"] is False
+        assert detection["module_dir"] == "component-manager"
+        assert detection["run_dir"] == module
+
+    def test_detect_harness_ambiguous_subdirs_refuses_to_guess(self, tmp_path):
+        """More than one candidate subdir → no guess, candidates returned."""
+        for name in ("svc-a", "svc-b"):
+            d = tmp_path / name
+            d.mkdir()
+            (d / "go.mod").write_text(f"module {name}\n", encoding="utf-8")
+        detection = map_step_runner._detect_baseline_harness(tmp_path)
+        assert detection.get("command") is None
+        assert sorted(detection["ambiguous"]) == ["svc-a", "svc-b"]
+
+    def test_detect_harness_skips_noise_dirs(self, tmp_path):
+        """Harness markers inside vendored/cache dirs never become candidates."""
+        for noise in ("node_modules", ".venv", "vendor"):
+            d = tmp_path / noise
+            d.mkdir()
+            (d / "go.mod").write_text("module x\n", encoding="utf-8")
+        detection = map_step_runner._detect_baseline_harness(tmp_path)
+        assert detection == {}
+
+    def test_baseline_auto_detects_monorepo_subdir_and_runs_there(
+        self, branch_workspace, monkeypatch
+    ):
+        """Full record path: auto-detected subdir command runs with cwd=subdir."""
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        module = repo / "component-manager"
+        module.mkdir()
+        (module / "go.mod").write_text("module cm\n", encoding="utf-8")
+
+        captured: dict[str, object] = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["cwd"] = kwargs.get("cwd")
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(map_step_runner.subprocess, "run", fake_run)
+        report = map_step_runner.record_test_baseline("test-branch")
+        assert report["status"] == "success"
+        assert report["command"] == "go test ./..."
+        assert report["auto_detected"] is True
+        assert report["module_dir"] == "component-manager"
+        assert Path(report["run_dir"]).resolve() == module.resolve()
+        # The command actually ran from the module dir, not the repo root.
+        assert captured["cmd"] == "go test ./..."
+        assert Path(str(captured["cwd"])).resolve() == module.resolve()
+
+    def test_baseline_ambiguous_subdirs_skips_loudly(
+        self, branch_workspace, monkeypatch
+    ):
+        """Ambiguous monorepo → skipped with actionable reason, not silent."""
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        for name in ("svc-a", "svc-b"):
+            d = repo / name
+            d.mkdir()
+            (d / "go.mod").write_text(f"module {name}\n", encoding="utf-8")
+        report = map_step_runner.record_test_baseline("test-branch")
+        assert report["status"] == "skipped"
+        assert sorted(report["candidate_module_dirs"]) == ["svc-a", "svc-b"]
+        assert "--module-dir" in report["reason"]
+
+    def test_baseline_no_harness_skip_reason_is_actionable(
+        self, branch_workspace, monkeypatch
+    ):
+        """The empty-baseline skip names the escape hatch so it is not silent."""
+        repo = branch_workspace.parents[1]
+        empty = repo / "clean"
+        empty.mkdir()
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(empty))
+        report = map_step_runner.record_test_baseline("test-branch")
+        assert report["status"] == "skipped"
+        assert "--module-dir" in report["reason"]
+        assert "--command" in report["reason"]
+
+    def test_baseline_module_dir_runs_command_in_that_dir(
+        self, branch_workspace, monkeypatch
+    ):
+        """Explicit --module-dir routes the subprocess cwd to that module dir."""
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        module = repo / "component-manager"
+        module.mkdir()
+        report = map_step_runner.record_test_baseline(
+            "test-branch", "touch ran_here.txt", module_dir="component-manager"
+        )
+        assert report["status"] == "success"
+        assert report["module_dir"] == "component-manager"
+        assert (module / "ran_here.txt").exists()
+        assert not (repo / "ran_here.txt").exists()
+
+    def test_baseline_invalid_module_dir_is_error(
+        self, branch_workspace, monkeypatch
+    ):
+        """A non-existent --module-dir is a loud caller error, not a skip."""
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.record_test_baseline(
+            "test-branch", module_dir="does-not-exist"
+        )
+        assert report["status"] == "error"
+        assert "does-not-exist" in report["reason"]
+
+    def test_baseline_module_dir_path_escape_rejected(
+        self, branch_workspace, monkeypatch
+    ):
+        """--module-dir pointing outside the project tree is rejected."""
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.record_test_baseline(
+            "test-branch", module_dir=".."
+        )
+        assert report["status"] == "error"
+
+    def test_baseline_cli_accepts_module_dir_flag(self, tmp_path):
+        """CLI: --module-dir is parsed and routes the run dir (subprocess path)."""
+        (tmp_path / ".map" / "test-branch").mkdir(parents=True)
+        module = tmp_path / "component-manager"
+        module.mkdir()
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS_PATH / "map_step_runner.py"),
+                "record_test_baseline",
+                "test-branch",
+                "--command",
+                "touch ran_here.txt",
+                "--module-dir",
+                "component-manager",
+            ],
+            cwd=tmp_path,
+            env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        payload = json.loads(result.stdout)
+        assert payload["status"] == "success"
+        assert payload["module_dir"] == "component-manager"
+        assert (module / "ran_here.txt").exists()
 
     def test_list_baseline_failures_returns_recorded_entries(
         self, branch_workspace, monkeypatch, tmp_path

@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`record_test_baseline` silently skipped the MANDATORY pre-flight baseline in
+  monorepos (#229).** Auto-detect probed only the repo root, so when the module
+  lives in a subdir (e.g. `component-manager/go.mod` with no root harness) it
+  returned `status="skipped"` and the whole run proceeded with an empty baseline
+  — the cross-subtask regression gate could then no longer tell an introduced
+  regression from a pre-existing failure. Detection now probes the repo root
+  first, then shallow-scans the immediate subdirectories (one level) for a
+  single module that has a harness and runs the command from that dir (recording
+  `module_dir`/`run_dir`). When more than one subdir qualifies it refuses to
+  guess and skips loudly with `candidate_module_dirs`; the no-harness skip now
+  names the `--command`/`--module-dir` escape hatch. A new `--module-dir`/`--cwd`
+  flag forces the module dir for ambiguous or deeply-nested layouts. Documented
+  in `efficient-reference.md`.
 - **`/map-efficient` Actor truncation gate false-positived on every clean run
   (#227).** The pre-Monitor `detect_truncated_agent_output --agent actor` gate
   requires the Actor response to parse as a JSON object
