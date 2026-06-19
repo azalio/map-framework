@@ -3176,7 +3176,7 @@ class TestBuildContextBlock:
         (branch_workspace.parent / "config.yaml").write_text(
             "compression_policy: auto\ncompression_threshold_tokens: 100\n"
         )
-        monkeypatch.setattr(map_step_runner, "_claude_code_log_dir", lambda _p: log_dir)  # pyright: ignore[reportUnusedParameter]
+        monkeypatch.setattr(map_step_runner, "_claude_code_log_dir", lambda *_: log_dir)
 
         result = map_step_runner.subtask_boundary_compact_check("test-branch")
 
@@ -6345,6 +6345,97 @@ class TestSaveLoadResearch:
         )
         assert load_result.returncode == 0, load_result.stderr
         assert load_result.stdout == content
+
+    def test_validate_research_content_emits_self_correcting_skeleton(self, tmp_path):
+        """Invalid (loose) content returns a `skeleton` that itself validates clean.
+
+        Regression for #228: hand-authoring via the documented path used to cost
+        2-3 rejects because the exact schema was undiscoverable. The skeleton
+        emitted on the FIRST reject must be a copy-pasteable VALID artifact.
+        """
+        # The exact loose shapes the issue reported being rejected.
+        loose = json.dumps({"status": "complete", "confidence": "high"})
+        report = map_step_runner.validate_research_content(loose, project_dir=tmp_path)
+
+        assert report["valid"] is False
+        assert "skeleton" in report, report
+        skeleton = json.loads(report["skeleton"])
+        assert sorted(skeleton) == [
+            "confidence",
+            "relevant_locations",
+            "search_stats",
+            "status",
+        ]
+
+        # Make the skeleton's cited path real, then prove the skeleton self-validates.
+        cited = tmp_path / skeleton["relevant_locations"][0]["path"]
+        cited.parent.mkdir(parents=True, exist_ok=True)
+        cited.write_text("\n".join(f"line {i}" for i in range(1, 60)), encoding="utf-8")
+        echoed = map_step_runner.validate_research_content(
+            report["skeleton"], project_dir=tmp_path
+        )
+        assert echoed["valid"] is True, echoed["errors"]
+
+    def test_validate_research_content_omits_skeleton_when_valid(
+        self, branch_workspace, tmp_path
+    ):
+        """A valid artifact must NOT carry the skeleton (it is reject-only noise)."""
+        del branch_workspace
+        _write_research_source(tmp_path)
+        report = map_step_runner.validate_research_content(
+            json.dumps(_valid_research_payload()), project_dir=tmp_path
+        )
+        assert report["valid"] is True
+        assert "skeleton" not in report
+
+    def test_validate_research_emits_skeleton_on_invalid_artifact(
+        self, branch_workspace, tmp_path
+    ):
+        """The aggregator surfaces a top-level skeleton when an artifact is invalid."""
+        del branch_workspace
+        _write_research_source(tmp_path)
+        payload = _valid_research_payload()
+        payload["status"] = "complete"  # not in the enum
+        map_step_runner.save_research("test-branch", "ST-001", json.dumps(payload))
+
+        report = map_step_runner.validate_research("test-branch", "ST-001")
+
+        assert report["valid"] is False
+        assert "skeleton" in report, report
+        assert '"status": "OK"' in report["skeleton"]
+
+    def test_validate_research_emits_skeleton_on_missing_artifact(self, branch_workspace):
+        """Even a missing artifact returns the skeleton so the author knows the shape."""
+        del branch_workspace
+        report = map_step_runner.validate_research("test-branch", "ST-404")
+
+        assert report["status"] == "missing"
+        assert "skeleton" in report, report
+
+    def test_cli_validate_research_prints_skeleton_on_failure(self, tmp_path):
+        """End-to-end CLI: a rejected artifact exits 1 and prints a usable skeleton."""
+        runner = (
+            Path(__file__).resolve().parents[1]
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts" / "map_step_runner.py"
+        )
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        loose = json.dumps({"status": "complete", "confidence": "high"})
+        save = subprocess.run(
+            [sys.executable, str(runner), "save_research", "test-branch", "ST-009"],
+            input=loose, capture_output=True, text=True, cwd=str(tmp_path), env=env,
+        )
+        assert save.returncode == 0, save.stderr
+
+        result = subprocess.run(
+            [sys.executable, str(runner), "validate_research", "test-branch", "ST-009"],
+            capture_output=True, text=True, cwd=str(tmp_path), env=env,
+        )
+        assert result.returncode == 1, result.stdout
+        report = json.loads(result.stdout)
+        assert report["valid"] is False
+        assert "skeleton" in report
+        # The printed skeleton parses as JSON and carries the enum status field.
+        assert json.loads(report["skeleton"])["status"] == "OK"
 
 
 class TestSanitizeForJson:

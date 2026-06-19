@@ -168,7 +168,10 @@ so Actor/Monitor can distinguish planner-wide context from current-subtask
 evidence. Use `researcher` when independent exploration is useful: cold-start
 repository exploration, 3+ existing files, high risk, unclear locations, or
 failed direct search. Otherwise research in the current session and save concise
-strict-JSON findings. If the subtask truly needs no Actor/Monitor, use
+strict-JSON findings — exact field table + copy-pasteable skeleton in
+[efficient-reference.md](efficient-reference.md) under "RESEARCH artifact schema"
+(`validate_research` also echoes that skeleton in its `skeleton` field on any
+failure). If the subtask truly needs no Actor/Monitor, use
 `mark_subtask_complete --reason` instead of closing RESEARCH. Validate the
 research contract, then close RESEARCH before Actor work:
 

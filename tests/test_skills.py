@@ -2413,6 +2413,21 @@ class TestMapEfficientSaveResearchWiring:
             "validate_step 2.2 so malformed research cannot reach Actor."
         )
 
+    def test_research_phase_states_exact_contract_and_points_to_schema(
+        self, skill_path: Path
+    ) -> None:
+        """#228: the documented hand-author path must name the exact enum/types
+        and point to the authoritative schema so the first save validates."""
+        content = skill_path.read_text(encoding="utf-8")
+        # Exact status enum (the prose used to imply free text).
+        assert "OK, PARTIAL_RESULTS, NO_RESULTS, SEARCH_FAILED" in content, (
+            f"{skill_path} must name the exact research status enum."
+        )
+        # Pointer to the authoritative schema + the self-correcting skeleton.
+        assert "RESEARCH artifact schema" in content
+        assert "[efficient-reference.md](efficient-reference.md)" in content
+        assert "`skeleton`" in content
+
     def test_research_policy_distinguishes_artifact_from_subagent(
         self, skill_path: Path
     ) -> None:
@@ -2476,6 +2491,63 @@ class TestMapEfficientSaveResearchWiring:
             assert "Read cited code before broad search" in content
             assert "For confidence >= 0.7 with `relevant_locations`" in content
             assert "repository-wide `rg`/`grep`/`find`/`git grep`" in content
+
+
+class TestResearchArtifactSchemaDocumented:
+    """#228: the exact hand-author research contract must be documented (not prose).
+
+    Before this, the documented `save_research` path cost 2-3 `validate_research`
+    rejects because the exact field names/types/enum lived only in the validator.
+    """
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-efficient/efficient-reference.md"),
+            Path("src/mapify_cli/templates/skills/map-efficient/efficient-reference.md"),
+            Path(".agents/skills/map-efficient/efficient-reference.md"),
+            Path(
+                "src/mapify_cli/templates/codex/skills/map-efficient/efficient-reference.md"
+            ),
+        ],
+        ids=["claude-dev", "claude-template", "codex-dev", "codex-template"],
+    )
+    def reference_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_reference_documents_exact_research_contract(
+        self, reference_path: Path
+    ) -> None:
+        content = reference_path.read_text(encoding="utf-8")
+        assert "## RESEARCH artifact schema" in content, (
+            f"{reference_path} must document the exact research artifact schema."
+        )
+        # Exact enum + field names the validator enforces (the values the issue
+        # reported guessing wrong: 'complete'/'high'/'files_examined').
+        for token in (
+            "OK", "PARTIAL_RESULTS", "NO_RESULTS", "SEARCH_FAILED",
+            "files_scanned", "total_matches_found", "results_truncated",
+            "relevant_locations", "skeleton",
+        ):
+            assert token in content, f"{reference_path} schema missing {token!r}"
+
+    def test_reference_skeleton_is_a_valid_artifact(self, reference_path: Path) -> None:
+        """The copy-pasteable skeleton in the docs must parse and match the
+        validator's contract, so it never drifts into a shape that gets rejected."""
+        content = reference_path.read_text(encoding="utf-8")
+        block = content.split("```json", 1)[1].split("```", 1)[0]
+        skeleton = json.loads(block)
+        assert skeleton["status"] in {
+            "OK", "PARTIAL_RESULTS", "NO_RESULTS", "SEARCH_FAILED",
+        }
+        assert 0 <= skeleton["confidence"] <= 1
+        assert set(skeleton["search_stats"]) == {
+            "files_scanned", "total_matches_found", "results_truncated",
+        }
+        assert len(skeleton["relevant_locations"]) <= 5
+        loc = skeleton["relevant_locations"][0]
+        assert set(loc) == {"path", "lines", "relevance"}
+        start, end = loc["lines"]
+        assert 1 <= start <= end and end - start + 1 <= 200
 
 
 class TestResearchProviderParity:
