@@ -16,6 +16,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 VALID_MINIMALITY = frozenset({"off", "lite", "full", "ultra"})
+VALID_PROMPT_LAYERING = frozenset({"docs_first", "stable_first"})
 
 
 @dataclass
@@ -82,6 +83,16 @@ class MapConfig:
     # Minimality doctrine intensity. Existing projects that have no config key
     # stay off; new generated configs opt into lite explicitly.
     minimality: str = "off"
+
+    # Agent-prompt layering for repeated same-workflow dispatches (#231).
+    # "docs_first"   (default) = variable <documents> first, stable contract
+    #                last — best for attention, hostile to prefix caching.
+    # "stable_first" = stable contract first, variable <documents> last — the
+    #                stable prefix is byte-identical across same-role dispatches,
+    #                enabling automatic prefix-cache hits. The attention-vs-cache
+    #                tradeoff must be decided with measured data before the
+    #                default flips; see docs/ARCHITECTURE.md.
+    prompt_layering: str = "docs_first"
 
     # Context compression policy (see docs/context-compression-plan.md)
     # "never"      = never inject /compact nudge (default — user opts in by
@@ -223,6 +234,16 @@ def load_map_config(project_path: Path) -> MapConfig:
             )
             cfg.minimality = "off"
 
+        if cfg.prompt_layering not in VALID_PROMPT_LAYERING:
+            logger.warning(
+                "Invalid prompt_layering %r in %s (expected one of %s). "
+                "Using default 'docs_first'.",
+                cfg.prompt_layering,
+                config_file,
+                ", ".join(sorted(VALID_PROMPT_LAYERING)),
+            )
+            cfg.prompt_layering = "docs_first"
+
         return cfg
 
     except yaml.YAMLError as e:
@@ -316,6 +337,15 @@ profile: full
 # lazier alternatives without silently dropping required work.
 # Allowed: off, lite, full, ultra
 minimality: lite
+
+# Agent-prompt layering for repeated same-workflow dispatches (#231).
+# "docs_first" (default) orders the variable <documents> first and the stable
+# task/instructions/expected_output contract last — best for model attention.
+# "stable_first" puts the stable contract first so its byte-identical prefix can
+# trigger automatic prefix-cache hits across same-role dispatches. The
+# attention-vs-cache tradeoff is unproven; measure before flipping the default
+# (see docs/ARCHITECTURE.md). Allowed: docs_first, stable_first
+# prompt_layering: docs_first
 
 # Context compression policy. Default is "never" — the /compact nudge is
 # opt-in. Uncomment and switch to "auto" or "aggressive" if you want the

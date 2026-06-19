@@ -67,6 +67,21 @@ KNOWN_ISSUES_DEFAULT: dict[str, list[dict[str, object]]] = {"issues": []}
 ACTIVE_ISSUES_DEFAULT: dict[str, object] = {"updated_at": "", "issues": []}
 VALID_MINIMALITY_LEVELS = frozenset({"off", "lite", "full", "ultra"})
 PRUNING_MINIMALITY_LEVELS = frozenset({"full", "ultra"})
+
+# Agent-prompt layering (#231). Controls the order of stable vs variable
+# sections in the user-message portion of repeated same-workflow dispatches.
+#   docs_first   (default): variable <documents> first, stable contract last.
+#                Best for model attention; hostile to prefix caching because
+#                the variable prefix re-invalidates the cache every dispatch.
+#   stable_first: stable contract (task/policy/instructions/expected_output)
+#                first, variable <documents> last. The stable prefix is then
+#                byte-identical across same-role dispatches, which is the
+#                precondition for automatic prefix-cache hits.
+# Default stays docs_first: the attention-vs-cache tradeoff must be decided
+# with measured data (Monitor approval + cache_hit% + cost) on a real
+# multi-subtask run before the default can flip. See docs/ARCHITECTURE.md.
+VALID_PROMPT_LAYERING = frozenset({"docs_first", "stable_first"})
+DEFAULT_PROMPT_LAYERING = "docs_first"
 REQUIREDNESS_CATEGORIES = frozenset(
     {
         "explicit",
@@ -5522,12 +5537,32 @@ def _read_git_diff_for_review() -> str:
     return result.stdout.strip() or "[no git diff output]"
 
 
+def _layer_prompt_sections(
+    documents_section: str, stable_sections: list[str], layering: str
+) -> str:
+    """Join one variable <documents> section with the stable contract sections.
+
+    docs_first (default): variable documents first, stable contract after —
+        byte-identical to the historical envelope (good for attention).
+    stable_first: stable contract first, variable documents last — the stable
+        prefix is then byte-identical across same-role dispatches so an
+        automatic prefix cache can hit it (#231). An unknown mode falls back to
+        docs_first so a config typo never changes behavior.
+    """
+    if layering == "stable_first":
+        ordered = [*stable_sections, documents_section]
+    else:
+        ordered = [documents_section, *stable_sections]
+    return "\n\n".join(ordered)
+
+
 def _render_review_prompt(
     spec: dict[str, str],
     review_bundle: str,
     review_preferences: str,
     git_diff: str,
     budget_note: str = "",
+    layering: str = DEFAULT_PROMPT_LAYERING,
 ) -> str:
     preferences = review_preferences.strip() or "[no additional review preferences]"
     documents = [
@@ -5560,80 +5595,82 @@ def _render_review_prompt(
         )
     documents.append("</documents>")
 
-    return "\n\n".join(
-        [
-            "\n".join(documents),
-            f"<task>\n{spec['task']}\n</task>",
-            "<workflow_policy>\n"
-            "Read the persisted review bundle first. Use the raw diff only to "
-            "confirm or expand specific findings the bundle surfaces.\n"
-            "</workflow_policy>",
-            f"<instructions>\n{spec['instructions']}\n</instructions>",
-            f"<expected_output>\n{_render_format_block(spec['subagent_type'])}\n</expected_output>",
-        ]
-    )
+    # Variable per-dispatch content (changes every review): bundle + diff +
+    # preferences. Stable per-role contract (identical across same-role
+    # dispatches): task + workflow_policy + instructions + expected_output.
+    documents_section = "\n".join(documents)
+    stable_sections = [
+        f"<task>\n{spec['task']}\n</task>",
+        "<workflow_policy>\n"
+        "Read the persisted review bundle first. Use the raw diff only to "
+        "confirm or expand specific findings the bundle surfaces.\n"
+        "</workflow_policy>",
+        f"<instructions>\n{spec['instructions']}\n</instructions>",
+        f"<expected_output>\n{_render_format_block(spec['subagent_type'])}\n</expected_output>",
+    ]
+    return _layer_prompt_sections(documents_section, stable_sections, layering)
 
 
 def _render_complexity_lens_prompt(
     review_bundle: str,
     git_diff: str,
     minimality_level: str,
+    layering: str = DEFAULT_PROMPT_LAYERING,
 ) -> str:
     """Return the advisory `/map-review` what-to-delete lens prompt."""
-    return "\n\n".join(
+    documents_section = "\n".join(
         [
-            "\n".join(
-                [
-                    "<documents>",
-                    "  <document source='.map/<branch>/review-bundle.md' priority='primary'>",
-                    "    <document_content>",
-                    review_bundle,
-                    "    </document_content>",
-                    "  </document>",
-                    "  <document source='git diff' priority='secondary'>",
-                    "    <document_content>",
-                    git_diff,
-                    "    </document_content>",
-                    "  </document>",
-                    "</documents>",
-                ]
-            ),
-            (
-                "<task>\n"
-                "Run the MAP complexity-only what-to-delete lens. "
-                f"Project minimality is {minimality_level}; this lens is disabled when minimality is off.\n"
-                "</task>"
-            ),
-            (
-                "<workflow_policy>\n"
-                "This is advisory-only calibration. Do not gate PROCEED/REVISE/BLOCK on `net: -N`, "
-                "do not create correctness/security/performance findings here, and never feed this output "
-                "into Actor retry context. Normal Monitor/Evaluator review owns blockers.\n"
-                "</workflow_policy>"
-            ),
-            (
-                "<instructions>\n"
-                "Hunt only over-engineering introduced by the current diff. Use exactly these tags:\n"
-                "- delete: dead code, unused flexibility, speculative feature; replacement is nothing.\n"
-                "- stdlib: hand-rolled behavior the standard library ships; name the function.\n"
-                "- native: dependency or code doing what the platform already does; name the feature.\n"
-                "- yagni: abstraction with one implementation, config nobody sets, or layer with one caller.\n"
-                "- shrink: same logic in fewer clear lines; show the shorter form.\n"
-                "Boundaries: complexity only. Correctness bugs, security holes, and performance issues belong "
-                "to normal review, not this lens. A single smoke test or assert-based self-check is the minimum; "
-                "never flag it for deletion. Sample and verify any `map:simplification:` marker claim; the marker "
-                "is evidence, not an exemption.\n"
-                "</instructions>"
-            ),
-            (
-                "<expected_output>\n"
-                "Return plain text only. If cuts exist, write one line per finding exactly as: "
-                "`L<line>: <tag> <what>. <replacement>.` End with exactly: `net: -<N> lines possible.` "
-                "If nothing should be cut, return exactly: `Lean already. Ship.`\n"
-                "</expected_output>"
-            ),
+            "<documents>",
+            "  <document source='.map/<branch>/review-bundle.md' priority='primary'>",
+            "    <document_content>",
+            review_bundle,
+            "    </document_content>",
+            "  </document>",
+            "  <document source='git diff' priority='secondary'>",
+            "    <document_content>",
+            git_diff,
+            "    </document_content>",
+            "  </document>",
+            "</documents>",
         ]
     )
+    stable_sections = [
+        (
+            "<task>\n"
+            "Run the MAP complexity-only what-to-delete lens. "
+            f"Project minimality is {minimality_level}; this lens is disabled when minimality is off.\n"
+            "</task>"
+        ),
+        (
+            "<workflow_policy>\n"
+            "This is advisory-only calibration. Do not gate PROCEED/REVISE/BLOCK on `net: -N`, "
+            "do not create correctness/security/performance findings here, and never feed this output "
+            "into Actor retry context. Normal Monitor/Evaluator review owns blockers.\n"
+            "</workflow_policy>"
+        ),
+        (
+            "<instructions>\n"
+            "Hunt only over-engineering introduced by the current diff. Use exactly these tags:\n"
+            "- delete: dead code, unused flexibility, speculative feature; replacement is nothing.\n"
+            "- stdlib: hand-rolled behavior the standard library ships; name the function.\n"
+            "- native: dependency or code doing what the platform already does; name the feature.\n"
+            "- yagni: abstraction with one implementation, config nobody sets, or layer with one caller.\n"
+            "- shrink: same logic in fewer clear lines; show the shorter form.\n"
+            "Boundaries: complexity only. Correctness bugs, security holes, and performance issues belong "
+            "to normal review, not this lens. A single smoke test or assert-based self-check is the minimum; "
+            "never flag it for deletion. Sample and verify any `map:simplification:` marker claim; the marker "
+            "is evidence, not an exemption.\n"
+            "</instructions>"
+        ),
+        (
+            "<expected_output>\n"
+            "Return plain text only. If cuts exist, write one line per finding exactly as: "
+            "`L<line>: <tag> <what>. <replacement>.` End with exactly: `net: -<N> lines possible.` "
+            "If nothing should be cut, return exactly: `Lean already. Ship.`\n"
+            "</expected_output>"
+        ),
+    ]
+    return _layer_prompt_sections(documents_section, stable_sections, layering)
 
 
 def _budget_review_prompt(
@@ -5642,12 +5679,15 @@ def _budget_review_prompt(
     review_preferences: str,
     git_diff: str,
     budget_tokens: int,
+    layering: str = DEFAULT_PROMPT_LAYERING,
 ) -> dict[str, object]:
     # Truncation infrastructure removed by user directive ("убери транкейт
     # уже вообще"). The full review prompt is emitted with no clipping —
     # reviewers see the entire bundle, preferences, and diff. If the
     # prompt exceeds context, the operator opts into /compact themselves.
-    prompt = _render_review_prompt(spec, review_bundle, review_preferences, git_diff)
+    prompt = _render_review_prompt(
+        spec, review_bundle, review_preferences, git_diff, layering=layering
+    )
     return {
         "prompt": prompt,
         "estimated_tokens": 0,
@@ -5674,11 +5714,12 @@ def build_review_prompts(
     )
     git_diff = git_diff_text if git_diff_text is not None else _read_git_diff_for_review()
     minimality = _load_minimality_level(Path.cwd())
+    layering = _load_prompt_layering(Path.cwd())
 
     prompts: dict[str, dict[str, object]] = {}
     for role, spec in REVIEW_PROMPT_SPECS.items():
         prompt_result = _budget_review_prompt(
-            spec, review_bundle, review_preferences, git_diff, budget
+            spec, review_bundle, review_preferences, git_diff, budget, layering
         )
         # No token-budget bookkeeping — truncation is gone, so there's
         # nothing to record. Operators chase context-size concerns via
@@ -5692,7 +5733,9 @@ def build_review_prompts(
         prompts["complexity_lens"] = {
             "subagent_type": "evaluator",
             "description": "Find deletable complexity",
-            "prompt": _render_complexity_lens_prompt(review_bundle, git_diff, minimality),
+            "prompt": _render_complexity_lens_prompt(
+                review_bundle, git_diff, minimality, layering
+            ),
             "estimated_tokens": 0,
             "budget_tokens": budget,
             "truncated": False,
@@ -5703,6 +5746,7 @@ def build_review_prompts(
         "status": "success",
         "branch": branch_name,
         "minimality": minimality,
+        "prompt_layering": layering,
         "budget_tokens": budget,
         "budget_env": REVIEW_PROMPT_BUDGET_ENV,
         "prompts": prompts,
@@ -10385,6 +10429,18 @@ def _load_minimality_level(project_dir: Path) -> str:
     if level not in VALID_MINIMALITY_LEVELS:
         return "off"
     return level
+
+
+def _load_prompt_layering(project_dir: Path) -> str:
+    """Return the configured agent-prompt layering mode from .map/config.yaml.
+
+    Absent or invalid values fall back to ``docs_first`` so a missing key or a
+    config typo never silently changes prompt ordering (#231).
+    """
+    mode = _map_config_str(project_dir, "prompt_layering", DEFAULT_PROMPT_LAYERING)
+    if mode not in VALID_PROMPT_LAYERING:
+        return DEFAULT_PROMPT_LAYERING
+    return mode
 
 
 def _minimality_doctrine_block(level: str) -> str:
