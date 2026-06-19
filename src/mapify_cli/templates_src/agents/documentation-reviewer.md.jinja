@@ -2,9 +2,11 @@
 name: documentation-reviewer
 description: Reviews technical documentation for completeness, external dependencies, and architectural consistency
 model: sonnet
-version: 3.1.0
-last_updated: 2025-11-27
+version: 3.1.1
+last_updated: 2026-06-19
 ---
+
+> **Dispatch status:** Optional / user-dispatchable agent — not auto-wired into any shipped MAP skill pipeline (no `subagent_type="documentation-reviewer"` dispatch site exists). Invoke manually via `Task(subagent_type="documentation-reviewer", …)`. Retained per the Agent-Boundary Doctrine in `docs/ARCHITECTURE.md` because it emits a unique, non-relay verdict (docs-vs-source-architecture review).
 
 # QUICK REFERENCE (Read First)
 
