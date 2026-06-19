@@ -27,9 +27,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   outputs may contain secrets, so every sidecar is written `0o600` and a
   self-contained `.gitignore` (`*`) is dropped into `compacted/` on creation so
   it is never committed regardless of the host repo's ignore rules; bodies are
-  never redacted. Persistent Actor/Monitor prompt guidance is deferred to a
-  follow-up (eval-gated); recovery currently works via the ephemeral
-  post-compact pointer.
+  never redacted. Persistent Actor/Monitor prompt guidance landed as the
+  eval-gated follow-up #236 (below); the ephemeral post-compact pointer still
+  re-primes the next turn.
+- **Actor and Monitor persistently recover offloaded tool outputs across turns
+  (#236, follow-up to #232).** The #232 post-compact pointer only re-primed the
+  next turn; the map-efficient Actor and Monitor dispatched `<task>` prompts now
+  carry persistent guidance so recover-before-rediscover survives compaction
+  across turns. **Actor:** before re-running broad discovery (re-grep, re-read a
+  large file, re-run the full test suite), check
+  `.map/<branch>/compacted/MANIFEST.md` and `Read` the cited sidecar to recover
+  the earlier output, re-running the tool **only** on a concrete staleness
+  signal (recent edits, a new test run, an updated schema, or the task asking
+  for current state) — the default is sidecar reuse, not over-eager
+  re-discovery. **Monitor:** a sidecar is evidence of *what was checked*, never
+  sole proof of correctness — every verdict stays grounded in live source and a
+  current test run. Wording was validated with llm-council against the
+  documented eval risk (over-trust of stale snapshots vs. skipping needed fresh
+  discovery); the map-efficient `SKILL.md` line budget was bumped 502 → 504 for
+  the two prompt lines, which must live in the dispatched body.
 
 ### Fixed
 - **`record_test_baseline` silently skipped the MANDATORY pre-flight baseline in

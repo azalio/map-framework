@@ -454,9 +454,13 @@ class TestSkillStructure:
 
                 # Budget bumped from 500 → 502: C2 fence addition (ST-011) added
                 # <!-- map:start --> and <!-- map:end --> (2 lines) to every SKILL.md.
+                # Budget bumped from 502 → 504 (#236): one persistent recover-from-
+                # offloaded-sidecar line was added to each of the Actor and Monitor
+                # dispatched <task> prompts in map-efficient/SKILL.md. These are the
+                # actual agent prompt bodies, so they cannot move to the reference file.
                 # Do NOT remove content to fit — bump the budget instead (per learned rule
                 # 'always-loaded skill body line budget').
-                assert len(content.splitlines()) <= 502, (
+                assert len(content.splitlines()) <= 504, (
                     f"{skill_file} should keep the active workflow path compact; "
                     "move examples, rationale, and troubleshooting into supporting files."
                 )
@@ -1152,6 +1156,56 @@ class TestXMLPromptEnvelopeContracts:
                 f"ACTOR <expected_output> must name the '{key}' field required "
                 "by AGENT_OUTPUT_SCHEMAS['actor']."
             )
+
+    @pytest.mark.parametrize("skills_root", PROMPT_TONE_SKILL_ROOTS)
+    def test_map_efficient_actor_monitor_recover_offloaded_outputs(
+        self, project_root, skills_root
+    ):
+        """Regression for #236: the Actor and Monitor dispatched <task> prompts
+        must carry persistent guidance to recover offloaded tool outputs from the
+        compaction manifest (#232) instead of re-running broad discovery, while
+        still defaulting to live source/tests for current correctness. The
+        post-compact hook pointer is ephemeral (re-primes the next turn only);
+        without these prompt lines the recover-before-rediscover behavior does
+        not survive across turns.
+        """
+        skill_md = project_root / skills_root / "map-efficient" / "SKILL.md"
+        content = skill_md.read_text(encoding="utf-8")
+
+        def _task_block(section_start: str, section_end: str) -> str:
+            section = content.split(section_start, maxsplit=1)[1]
+            section = section.split(section_end, maxsplit=1)[0]
+            task = section.split("<task>", maxsplit=1)[1]
+            return task.split("</task>", maxsplit=1)[0]
+
+        actor_task = _task_block(
+            "### Phase: ACTOR (2.3)", "### Actor truncated-response gate"
+        )
+        # Recovery entry point is scoped to "re-running broad discovery" — not an
+        # unconditional "always check the manifest first".
+        assert "compacted/MANIFEST.md" in actor_task, (
+            "ACTOR <task> must point at .map/<branch>/compacted/MANIFEST.md so the "
+            "agent can recover offloaded tool outputs instead of re-running broad "
+            "discovery (#236)."
+        )
+        # The staleness guard must DEFAULT to sidecar reuse and re-run only on a
+        # concrete positive signal — guards against over-trust AND over-rediscovery.
+        assert "re-run the tool only when" in actor_task, (
+            "ACTOR <task> must gate re-running on a concrete staleness signal so "
+            "the default is sidecar reuse, not over-eager re-discovery (#236)."
+        )
+
+        monitor_task = _task_block(
+            "### Phase: MONITOR (2.4)", "# After Monitor returns:"
+        )
+        assert "never as sole proof of correctness" in monitor_task, (
+            "MONITOR <task> must forbid basing a verdict solely on an offloaded "
+            "sidecar (#236)."
+        )
+        assert "live source and a current test run" in monitor_task, (
+            "MONITOR <task> must ground every verdict in live source and a current "
+            "test run — not a stale snapshot (#236)."
+        )
 
 
 class TestContractSizedSubtaskSkillContracts:
