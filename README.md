@@ -219,7 +219,7 @@ mapify init . --compression aggressive            # nudge at 0.4 x threshold
 mapify init . --compression-threshold 250000      # Opus 1M / 50+ subtask plans
 ```
 
-Actor and reviewer prompts always carry the full bundled context — context-block truncation was removed. If the conversation grows beyond your model's window, opt into `/compact` via `--compression auto` or trigger it manually. See [docs/USAGE.md#context-budget-policy](docs/USAGE.md).
+Actor and reviewer prompts always carry the full bundled context — context-block truncation was removed. If the conversation grows beyond your model's window, opt into `/compact` via `--compression auto` or trigger it manually. When a policy other than `never` is active, MAP also offloads large tool outputs (grep/test/file-read results) to `.map/<branch>/compacted/` before `/compact` drops them, so a dropped output is re-read from its sidecar instead of re-running broad discovery (these sidecars can hold secrets — they are `0o600` and self-ignored from git; never push `.map/`). See [docs/USAGE.md#context-budget-policy](docs/USAGE.md).
 
 **Stack Overflow for Agents (SOFA)** read-only prior-art search — **off by default**, no network or credentials unless you enable it:
 

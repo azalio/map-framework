@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Compaction now offloads large tool outputs for on-demand retrieval instead
+  of dropping them (#232).** Before context compaction prunes old/large
+  tool-result bodies (grep output, test logs, whole-file reads), MAP now saves
+  each one at full resolution to a retrievable sidecar under
+  `.map/<branch>/compacted/` (an append-only `index.ndjson`, an agent-readable
+  `MANIFEST.md`, and per-output `*.txt` files with a self-describing header).
+  After compaction the post-compact hook points the agent at the manifest so a
+  dropped output is re-read from its sidecar **instead of re-running broad
+  discovery** — the exact re-discovery cost #203 fights. Provider-agnostic: the
+  Claude PreCompact hook and the Codex orchestrator budget warning both capture
+  at the same pre-drop point, sharing one `mapify_cli.tool_output_offload`
+  module. Gated by `compression_policy` — with the default `never` no offload
+  happens and `.map/<branch>/compacted/` is never created. Selection is
+  size-based (≥10K chars any tool, or ≥2K for `Bash`/`Read`/`Grep`/`Glob`;
+  `TodoWrite`/`AskUserQuestion`/`ExitPlanMode` never offloaded); the directory
+  is FIFO-capped (300 files / 100 MiB, evictions logged). **Security:** tool
+  outputs may contain secrets, so every sidecar is written `0o600` and a
+  self-contained `.gitignore` (`*`) is dropped into `compacted/` on creation so
+  it is never committed regardless of the host repo's ignore rules; bodies are
+  never redacted. Persistent Actor/Monitor prompt guidance is deferred to a
+  follow-up (eval-gated); recovery currently works via the ephemeral
+  post-compact pointer.
+
 ### Fixed
 - **`record_test_baseline` silently skipped the MANDATORY pre-flight baseline in
   monorepos (#229).** Auto-detect probed only the repo root, so when the module

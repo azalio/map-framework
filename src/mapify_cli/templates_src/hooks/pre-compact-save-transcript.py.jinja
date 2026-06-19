@@ -129,6 +129,37 @@ def parse_transcript(transcript_path: Path) -> str:
     return "\n".join(lines)
 
 
+def maybe_offload_tool_outputs(transcript_path: str, branch_dir: Path) -> None:
+    """Offload large tool-result bodies before compaction drops them (#232).
+
+    Only runs when ``compression_policy != never`` so a default install never
+    creates ``.map/<branch>/compacted/``. Lazy-imports mapify_cli and degrades
+    to a silent no-op if it is not importable. Never raises — a PreCompact hook
+    must not break compaction.
+    """
+    try:
+        sys.path.insert(0, str(PROJECT_DIR / "src"))
+        try:
+            from mapify_cli.config.project_config import load_map_config
+            from mapify_cli.tool_output_offload import (
+                offload_transcript_tool_outputs,
+            )
+        except ImportError:
+            return
+        config = load_map_config(PROJECT_DIR)
+        if config.compression_policy == "never":
+            return
+        summary = offload_transcript_tool_outputs(Path(transcript_path), branch_dir)
+        if summary.written:
+            print(
+                f"[pre-compact-save] Offloaded {summary.written} tool output(s) "
+                f"to {branch_dir / 'compacted'}",
+                file=sys.stderr,
+            )
+    except Exception:  # never break compaction
+        pass
+
+
 def main() -> None:
     if os.environ.get("MAP_INVOKED_BY"):
         sys.exit(0)
@@ -189,6 +220,10 @@ def main() -> None:
         )
     except (IOError, OSError):
         pass
+
+    # Offload full-resolution tool-result bodies so dropped outputs stay
+    # recoverable instead of forcing a re-run of broad discovery (#232).
+    maybe_offload_tool_outputs(transcript_path, branch_dir)
 
     print("{}")
     sys.exit(0)

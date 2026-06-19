@@ -200,6 +200,28 @@ def build_reprime(branch: str, branch_dir: Path) -> str | None:
     return truncate_text("\n".join(lines), REPRIME_LIMIT)
 
 
+def offloaded_outputs_pointer(branch: str, branch_dir: Path) -> str | None:
+    """Pointer to tool outputs offloaded before compaction, if any (#232).
+
+    Rebuilds the manifest from the append-only index and returns the recovery
+    line. Lazy-imports mapify_cli and degrades to ``None`` (silent) when it is
+    unavailable or nothing was offloaded.
+    """
+    try:
+        sys.path.insert(0, str(PROJECT_DIR / "src"))
+        try:
+            from mapify_cli.tool_output_offload import (
+                build_manifest,
+                recovery_pointer_text,
+            )
+        except ImportError:
+            return None
+        build_manifest(branch_dir / "compacted")
+        return recovery_pointer_text(branch, branch_dir)
+    except Exception:
+        return None
+
+
 def main() -> None:
     try:
         json.load(sys.stdin)
@@ -228,6 +250,12 @@ def main() -> None:
                 )
         except (IOError, OSError):
             pass
+
+    # Point at any tool outputs offloaded before compaction (#232) so the agent
+    # re-reads a sidecar instead of re-running broad discovery.
+    offload_pointer = offloaded_outputs_pointer(branch, branch_dir)
+    if offload_pointer:
+        parts.append(offload_pointer)
 
     # Check for workflow restore point
     restore = branch_dir / "restore_point.json"

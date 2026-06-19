@@ -531,6 +531,27 @@ built-in auto-compact has already run. For Codex sessions the same
 recommendation is emitted to stderr by `map_orchestrator.py` when invoked
 with `--transcript-path` (or env `MAPIFY_TRANSCRIPT_PATH`).
 
+#### Tool-output offload (recover dropped outputs, don't re-run discovery)
+
+When the policy is `auto`/`aggressive`, MAP also **offloads** large tool-result
+bodies (grep output, test logs, whole-file reads) before a `/compact` drops
+them. Each is saved at full resolution under `.map/<branch>/compacted/`
+(`index.ndjson` + a scannable `MANIFEST.md` + per-output `*.txt` sidecars). After
+compaction the post-compact hook points the agent at the manifest so a dropped
+output is **re-read from its sidecar instead of re-running the original broad
+tool** (Codex agents get the same pointer on stderr). The snapshots are
+point-in-time; live source, tests, and schemas remain the authority for current
+truth. With the default `never` policy nothing is offloaded and the directory is
+never created.
+
+> ⚠️ **Security.** Offloaded sidecars contain raw tool output, which may include
+> secrets (tokens in command output, env dumps, credential file reads). Each
+> file is written `0o600` and `compacted/.gitignore` (`*`) is created so the
+> directory is never committed — but **never sync, share, or push `.map/` to a
+> public remote**, and treat `.map/<branch>/compacted/` as sensitive. Bodies are
+> stored verbatim (no redaction). To disable offload entirely, keep
+> `compression_policy: never`.
+
 Actor prompts built by `build_context_block` and reviewer fan-out prompts
 built by `build_review_prompts` no longer truncate their input: the full
 bundled context (subtask description, research findings, affected_files,

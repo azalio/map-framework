@@ -3705,6 +3705,25 @@ def _emit_context_budget_warning(branch: str, transcript_path: Optional[str]) ->
         threshold=threshold,
         focus=_map_config_str(project_dir, "compression_focus", ""),
     )
+
+    # Offload large tool-result bodies before the (recommended) compaction drops
+    # them, then point the operator/agent at the sidecars (#232). Provider-
+    # agnostic: reuses the same transcript this warning already read. Lazy import
+    # with graceful fallback — never block the warning on a missing mapify_cli.
+    branch_dir = project_dir / ".map" / branch
+    try:
+        from mapify_cli.tool_output_offload import (  # noqa: PLC0415
+            offload_transcript_tool_outputs,
+            recovery_pointer_text,
+        )
+
+        offload_transcript_tool_outputs(path, branch_dir)
+        pointer = recovery_pointer_text(branch, branch_dir)
+        if pointer:
+            message = f"{message}\n\n{pointer}"
+    except Exception:  # noqa: BLE001 — warning must never raise
+        pass
+
     # stderr keeps stdout clean for JSON consumers (the orchestrator's
     # contract is JSON-on-stdout for every command).
     print(message, file=sys.stderr)
