@@ -154,7 +154,7 @@ surface, and rate-limit handling.)
 - **Mutation Boundary Constraints**: Write-capable provider surfaces include explicit negative constraints at the point where agents can edit files. Actor, `/map-fast`, `/map-efficient`, `/map-task`, `/map-debug`, and Codex quick-implementation scaffolds tell agents not to edit unrelated files, change dependencies, or refactor neighboring code unless the current contract requires it; necessary scope expansion must be reported as a blocker/tradeoff.
 - **Clean Retry Quarantine**: Repeated Monitor rejection switches the next Actor attempt from ordinary feedback retry to clean retry. The state machine records clean vs ordinary retry counters and writes `.map/<branch>/retry_quarantine.json` with the rejected feedback summary, preserved constraints, required evidence, and source artifacts so Actor can change approach without carrying raw failed-session context.
 - **Compact Skill Playbooks**: High-traffic task skills keep `SKILL.md` focused on active next-action flow and move examples, troubleshooting, and low-frequency rationale into bundled supporting files. This reduces recurring context cost after invocation and compaction without deleting the reference material needed for edge cases.
-- **Context-First Prompt Envelopes**: High-context skill prompts use a shared XML-style envelope so persisted artifacts appear in `<documents>` before `<task>`, instructions, and `<expected_output>`. This keeps specs, review bundles, diffs, logs, and output schemas distinct when provider runtimes receive long subagent prompts.
+- **Context-First Prompt Envelopes**: High-context skill prompts use a shared XML-style envelope so persisted artifacts appear in `<documents>` before `<task>`, instructions, and `<expected_output>`. This keeps specs, review bundles, diffs, logs, and output schemas distinct when provider runtimes receive long subagent prompts. The default (`prompt_layering: docs_first`) optimizes for model attention; an opt-in `stable_first` mode reorders the stable contract ahead of the variable documents to expose a cacheable prefix — see "Prompt Layering & Prefix Caching" below.
 - **Skill IR Audit**: `src/mapify_cli/skill_ir.py` lowers hand-authored Claude and Codex `SKILL.md` files into provider-neutral `SkillIR` records with content hashes, invocation mode, supporting-file links, and extracted safety constraints. The audit fails unsupported frontmatter, unresolved bundled references, and hidden instruction-override wording before provider surfaces are installed.
 - **Cross-session Memory**: MAP treats memory as branch/session artifacts, not hidden provider state. Capture hooks write append-only scratch records, finalization summarizes them with `claude -p`, failure leaves scratch files for retry, and recall is optional context injected into later sessions.
 - **Skill Evaluation Discipline**: `map-skill-eval` is explicitly measurement-only. Run mode detects trigger/not-trigger behavior from transcripts and records cost/duration; optimize mode uses deterministic train/test splits, rejects overfit candidates, and only mutates template source when `--apply` is requested.
@@ -166,6 +166,27 @@ surface, and rate-limit handling.)
 - **Token Budget Decisions**: `.map/<branch>/token_budget.json` records active prompt-path budget decisions from Actor context and review prompt builders only; it does not log dormant REGISTRY/FOCUS experiments. Each entry names the prompt path, configured budget, estimated tokens before/after enforcement, clipped sections, and source artifacts.
 - **Constraint Typing**: `blueprint.json` separates non-negotiable `hard_constraints` from negotiable `soft_constraints`; hard constraints must be covered through `coverage_map` and bracketed validation criteria, while soft constraints need either coverage or explicit tradeoff rationale.
 - **Provider Differences**: Workflow intent is shared, but orchestration mechanics differ between Claude Code (`.claude/`) and Codex CLI (`.codex/`).
+
+### Prompt Layering & Prefix Caching (#231)
+
+MAP dispatches reviewers (Monitor/Predictor/Evaluator) and the advisory complexity lens repeatedly within one workflow — re-running on Actor retries and across subtasks. Each agent's role `.md` **system** prompt is already byte-identical across dispatches and is auto-cached for free. The remaining lever is the **user-message** portion these dispatches share.
+
+`map_step_runner.py` exposes the order via `.map/config.yaml`:
+
+- `prompt_layering: docs_first` **(default)** — variable `<documents>` (review bundle, preferences, diff) first, then the stable `<task>`/`<workflow_policy>`/`<instructions>`/`<expected_output>` contract. Best for model attention; the variable prefix re-invalidates any prefix cache on every dispatch.
+- `prompt_layering: stable_first` — stable contract first, variable `<documents>` last. The contract is then a **byte-identical prefix** across same-role dispatches (`_render_review_prompt` / `_render_complexity_lens_prompt` route through `_layer_prompt_sections`; a unit test pins the prefix invariance). This is the precondition for an automatic prefix-cache hit.
+
+**The default stays `docs_first`.** The attention-vs-cache tradeoff genuinely conflicts and is decided with data, not assertion — so `stable_first` ships opt-in and the global default does not flip without a measured comparison.
+
+**Constraint (harness-owned dispatch):** MAP builds prompt *text* only; Claude Code's Task tool owns the actual API call and any `cache_control` breakpoints. So `stable_first` can only rely on byte-identical prefixes triggering Claude Code's *automatic* caching — whether that cache spans the first user message across two separate same-role subagent sessions within the cache TTL is **unproven and must be measured**, not assumed.
+
+**Measurement recipe (to decide a default flip):** Run the same multi-subtask workflow twice — once per mode — and compare `.map/<branch>/token_accounting.json`:
+
+1. **Cache effect (the no-op check):** look for an *incremental* rise in `aggregate.cache_read` (and `cache_hit_ratio = cache_read / (input + cache_read)`) under `stable_first` **relative to the `docs_first` baseline**, not merely a non-zero value — the already-cached system prompt produces cache reads in both modes. No incremental gain ⇒ the lever is a no-op at the harness layer and `docs_first` stays.
+2. **Quality:** Monitor approval / rejection rate and Evaluator scores must not regress.
+3. **Cost:** `aggregate.est_cost_usd` delta.
+
+The token-accounting figures are trustworthy for this comparison: the historical `cache_read` double-count (one `token_log` row per content block) was fixed by msg-id dedup at both the write path (`_iter_new_usage`) and the rollup (`_rebuild_token_accounting`), and is covered by a regression test. Flip the default only on a positive incremental cache gain with no quality regression; otherwise keep `docs_first` and record the negative result here.
 
 ## Deployment/Operations
 

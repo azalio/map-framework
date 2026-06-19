@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Opt-in cache-friendly prompt layering for reviewer fan-out (Part of #231).**
+  `.map/config.yaml` now accepts `prompt_layering: docs_first | stable_first`
+  (default `docs_first`, behavior unchanged). `docs_first` keeps the historical
+  attention-optimized envelope (variable `<documents>` first, stable contract
+  last). `stable_first` reorders the stable `<task>`/`<workflow_policy>`/
+  `<instructions>`/`<expected_output>` contract ahead of the variable documents
+  so it forms a **byte-identical prefix** across repeated same-role Monitor/
+  Predictor/Evaluator (and complexity-lens) dispatches — the precondition for an
+  automatic prefix-cache hit. `_render_review_prompt` and
+  `_render_complexity_lens_prompt` route through a shared `_layer_prompt_sections`
+  helper; `build_review_prompts` reads `_load_prompt_layering()` and echoes the
+  active mode as `prompt_layering` in its result. Registered + validated on
+  `MapConfig` and documented (commented) in the generated config. The
+  attention-vs-cache tradeoff is unproven, so the **default does not flip**: it
+  is gated on a measured `docs_first` vs `stable_first` comparison (incremental
+  `cache_read` + no quality regression) — the measurement recipe and the
+  harness-owned-dispatch constraint are documented under "Prompt Layering &
+  Prefix Caching" in `docs/ARCHITECTURE.md`. The token-accounting `cache_read`
+  double-count the issue cited as a measurement caveat was already fixed and is
+  regression-tested, so the comparison numbers are trustworthy. New
+  `tests/test_prompt_layering.py` pins docs_first byte-identity and the
+  stable_first prefix invariant.
 - **Agent-Boundary Doctrine: written down + every live hand-off audited
   `independent | relay` (#230).** `docs/ARCHITECTURE.md` now carries the explicit
   criterion — keep a separate sub-agent **only** when it adds an independent /
