@@ -7852,10 +7852,114 @@ def list_diagnostics_baseline(branch: str) -> dict[str, object]:
         return {"status": "error", "message": f"read failed: {exc}"}
 
 
+# Directories that never hold a project's test harness — skipped during the
+# shallow monorepo-subdir scan so a candidate is not picked from build output,
+# vendored deps, or tool caches.
+_HARNESS_SCAN_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        ".map",
+        ".claude",
+        ".codex",
+        ".agents",
+        ".venv",
+        "venv",
+        "node_modules",
+        "__pycache__",
+        ".idea",
+        ".vscode",
+        "vendor",
+        "target",
+        "dist",
+        "build",
+        ".tox",
+        ".mypy_cache",
+        ".pytest_cache",
+    }
+)
+
+
+def _probe_test_harness(directory: Path) -> str:
+    """Auto-detect a test command for a SINGLE directory. Cheap probes only.
+
+    Returns the command (``make test`` / ``pytest`` / ``go test ./...`` /
+    ``cargo test``), or ``""`` when the directory holds no recognised harness
+    marker. ``make test`` only wins when the Makefile actually defines a
+    ``test:`` target.
+    """
+    try:
+        if (directory / "Makefile").exists():
+            try:
+                mk_text = (directory / "Makefile").read_text(encoding="utf-8")
+                if re.search(r"^test:", mk_text, re.MULTILINE):
+                    return "make test"
+            except OSError:
+                pass
+        if (directory / "pyproject.toml").exists() or (directory / "pytest.ini").exists():
+            return "pytest"
+        if (directory / "go.mod").exists():
+            return "go test ./..."
+        if (directory / "Cargo.toml").exists():
+            return "cargo test"
+    except OSError:
+        pass
+    return ""
+
+
+def _detect_baseline_harness(project_dir: Path) -> dict[str, object]:
+    """Resolve the test harness + the directory to run it in.
+
+    Probes the repo root first (the common single-package layout). When the
+    root has no harness, shallow-scans the immediate subdirectories (ONE level
+    deep — the common monorepo-subdir layout, e.g. ``component-manager/go.mod``)
+    for module dirs that contain a harness.
+
+    Returns one of:
+      - ``{"command", "run_dir", "from_root", "module_dir"}`` — a resolved
+        harness (root or a single unambiguous subdir);
+      - ``{"ambiguous": [name, ...]}`` — more than one candidate subdir, so the
+        caller MUST NOT guess; it asks the operator for ``--module-dir``;
+      - ``{}`` — no harness at root or any immediate subdir.
+    """
+    root_cmd = _probe_test_harness(project_dir)
+    if root_cmd:
+        return {
+            "command": root_cmd,
+            "run_dir": project_dir,
+            "from_root": True,
+            "module_dir": None,
+        }
+
+    candidates: list[tuple[str, str]] = []
+    try:
+        entries = sorted(p for p in project_dir.iterdir() if p.is_dir())
+    except OSError:
+        entries = []
+    for sub in entries:
+        if sub.name.startswith(".") or sub.name in _HARNESS_SCAN_SKIP_DIRS:
+            continue
+        cmd = _probe_test_harness(sub)
+        if cmd:
+            candidates.append((sub.name, cmd))
+
+    if len(candidates) == 1:
+        name, cmd = candidates[0]
+        return {
+            "command": cmd,
+            "run_dir": project_dir / name,
+            "from_root": False,
+            "module_dir": name,
+        }
+    if len(candidates) > 1:
+        return {"ambiguous": [name for name, _ in candidates]}
+    return {}
+
+
 def record_test_baseline(
     branch: str,
     test_command: str = "",
     *,
+    module_dir: str = "",
     timeout_seconds: int = 120,
 ) -> dict[str, object]:
     """Record a pre-flight test baseline so subtasks can distinguish
@@ -7872,10 +7976,18 @@ def record_test_baseline(
       - ``pytest`` (no arguments) if pyproject.toml or pytest.ini present
       - ``go test ./...`` if go.mod present
       - ``cargo test`` if Cargo.toml present
-    Empty auto-detect ⇒ status="skipped" (no test harness found).
+    Detection probes the repo root first; if the root has no harness it
+    shallow-scans the immediate subdirectories (one level) for a single
+    obvious module dir (the common monorepo-subdir layout) and runs the
+    command from there. ``module_dir`` (CLI ``--module-dir`` / ``--cwd``)
+    forces a specific module dir, bypassing the scan. When the root has no
+    harness and MORE THAN ONE subdir qualifies, detection refuses to guess
+    and returns ``status="skipped"`` naming the candidates, so the empty
+    baseline is loud rather than silent.
 
-    Returns dict with status, command, returncode, baseline_failures (list of
-    failing test names parsed from stdout), and elapsed_seconds.
+    Returns dict with status, command, run_dir, module_dir, returncode,
+    baseline_failures (list of failing test names parsed from stdout), and
+    elapsed_seconds.
     """
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
     branch_name = _sanitize_branch(branch)
@@ -7883,31 +7995,81 @@ def record_test_baseline(
     baseline_dir.mkdir(parents=True, exist_ok=True)
     baseline_path = baseline_dir / "test_baseline.json"
 
+    # Resolve the command and the directory to run it in. Precedence:
+    #   1. explicit --module-dir (run there; auto-detect the command if absent)
+    #   2. explicit --command (run at the repo root)
+    #   3. auto-detect: repo root, else a single monorepo-subdir module
+    run_dir = project_dir
+    detected_module_dir: str | None = None
     cmd_str = test_command.strip()
     auto_detected_command = ""
-    if not cmd_str:
-        # Auto-detect a sensible default. Cheap shell probes only.
-        if (project_dir / "Makefile").exists():
-            try:
-                mk_text = (project_dir / "Makefile").read_text(encoding="utf-8")
-                if re.search(r"^test:", mk_text, re.MULTILINE):
-                    auto_detected_command = "make test"
-            except OSError:
-                pass
-        if not auto_detected_command:
-            if (project_dir / "pyproject.toml").exists() or (project_dir / "pytest.ini").exists():
-                auto_detected_command = "pytest"
-            elif (project_dir / "go.mod").exists():
-                auto_detected_command = "go test ./..."
-            elif (project_dir / "Cargo.toml").exists():
-                auto_detected_command = "cargo test"
-        cmd_str = auto_detected_command
+
+    module_dir_arg = module_dir.strip()
+    if module_dir_arg:
+        candidate = (project_dir / module_dir_arg).resolve()
+        # Keep the run dir inside the project tree and require it to exist —
+        # a bad --module-dir is a caller error, surfaced loudly (exit 1).
+        if not candidate.is_dir() or not candidate.is_relative_to(project_dir):
+            payload = {
+                "branch": branch_name,
+                "status": "error",
+                "reason": (
+                    f"--module-dir {module_dir_arg!r} is not a directory inside "
+                    f"the project ({project_dir})."
+                ),
+                "recorded_at": _utc_timestamp(),
+            }
+            baseline_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            return payload
+        run_dir = candidate
+        detected_module_dir = module_dir_arg
+        if not cmd_str:
+            auto_detected_command = _probe_test_harness(run_dir)
+            cmd_str = auto_detected_command
+    elif not cmd_str:
+        detection = _detect_baseline_harness(project_dir)
+        ambiguous = detection.get("ambiguous")
+        if ambiguous:
+            names = [str(n) for n in ambiguous]  # type: ignore[union-attr]
+            payload = {
+                "branch": branch_name,
+                "status": "skipped",
+                "reason": (
+                    "no test harness at the repo root, and multiple candidate "
+                    f"module dirs were found ({', '.join(names)}). Refusing to "
+                    "guess — re-run with `--module-dir <dir>` (or `--command "
+                    '"<test cmd>"`) to point the baseline at the right module. '
+                    "The cross-subtask regression gate needs a real baseline; an "
+                    "empty one cannot distinguish introduced from pre-existing "
+                    "failures."
+                ),
+                "candidate_module_dirs": names,
+                "recorded_at": _utc_timestamp(),
+            }
+            baseline_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            return payload
+        detected_cmd = detection.get("command")
+        if detected_cmd:
+            cmd_str = str(detected_cmd)
+            auto_detected_command = cmd_str
+            resolved_run_dir = detection.get("run_dir")
+            if isinstance(resolved_run_dir, Path):
+                run_dir = resolved_run_dir
+            module_name = detection.get("module_dir")
+            detected_module_dir = str(module_name) if module_name else None
 
     if not cmd_str:
         payload = {
             "branch": branch_name,
             "status": "skipped",
-            "reason": "no test harness detected (Makefile / pytest / go.mod / Cargo.toml)",
+            "reason": (
+                "no test harness detected (Makefile with test: / pyproject.toml / "
+                "pytest.ini / go.mod / Cargo.toml) at the repo root or any "
+                'immediate subdirectory. Re-run with `--command "<test cmd>"` or '
+                "`--module-dir <dir>` so the cross-subtask regression gate has a "
+                "real baseline — without one it cannot tell an introduced "
+                "regression from a pre-existing failure."
+            ),
             "recorded_at": _utc_timestamp(),
         }
         baseline_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -7918,7 +8080,7 @@ def record_test_baseline(
         proc = subprocess.run(
             cmd_str,
             shell=True,
-            cwd=project_dir,
+            cwd=run_dir,
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
@@ -7965,6 +8127,8 @@ def record_test_baseline(
         "status": "success" if returncode == 0 else "baseline_failures",
         "command": cmd_str,
         "auto_detected": bool(auto_detected_command),
+        "module_dir": detected_module_dir,
+        "run_dir": str(run_dir),
         "returncode": returncode,
         "timed_out": timed_out,
         "elapsed_seconds": elapsed,
@@ -11073,20 +11237,30 @@ if __name__ == "__main__":
         print(json.dumps(report, indent=2))
 
     elif func_name == "record_test_baseline":
-        # CLI: record_test_baseline <branch> [--command "..."] [--timeout N]
+        # CLI: record_test_baseline <branch> [--command "..."]
+        #       [--module-dir DIR | --cwd DIR] [--timeout N]
         # Snapshot pre-existing test failures so later subtasks can
         # distinguish "I broke this" from "this was broken before plan
-        # started". Auto-detects test command when omitted.
+        # started". Auto-detects the test command when omitted, probing the
+        # repo root then a single monorepo-subdir module; --module-dir/--cwd
+        # forces a module dir for ambiguous/deeply-nested layouts.
         if len(sys.argv) < 3:
-            print(json.dumps({"status": "error", "message": "usage: record_test_baseline <branch> [--command ...]"}), file=sys.stderr)
+            print(json.dumps({"status": "error", "message": "usage: record_test_baseline <branch> [--command ...] [--module-dir DIR]"}), file=sys.stderr)
             sys.exit(1)
         baseline_branch = sys.argv[2]
         baseline_cmd = ""
+        baseline_module_dir = ""
         baseline_timeout = 120
         if "--command" in sys.argv:
             c_idx = sys.argv.index("--command")
             if c_idx + 1 < len(sys.argv):
                 baseline_cmd = sys.argv[c_idx + 1]
+        for module_flag in ("--module-dir", "--cwd"):
+            if module_flag in sys.argv:
+                m_idx = sys.argv.index(module_flag)
+                if m_idx + 1 < len(sys.argv):
+                    baseline_module_dir = sys.argv[m_idx + 1]
+                    break
         if "--timeout" in sys.argv:
             t_idx = sys.argv.index("--timeout")
             if t_idx + 1 < len(sys.argv):
@@ -11096,7 +11270,10 @@ if __name__ == "__main__":
                     print(json.dumps({"status": "error", "message": "--timeout must be int"}), file=sys.stderr)
                     sys.exit(1)
         report = record_test_baseline(
-            baseline_branch, baseline_cmd, timeout_seconds=baseline_timeout
+            baseline_branch,
+            baseline_cmd,
+            module_dir=baseline_module_dir,
+            timeout_seconds=baseline_timeout,
         )
         print(json.dumps(report, indent=2))
         # Exit 0 even on baseline_failures — the WHOLE point is to

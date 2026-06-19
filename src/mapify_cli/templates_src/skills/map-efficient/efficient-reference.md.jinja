@@ -223,12 +223,35 @@ Auto-detects from project markers:
 - `go.mod` → `go test ./...`
 - `Cargo.toml` → `cargo test`
 
+Detection probes the **repo root first**. If the root has no harness it
+**shallow-scans the immediate subdirectories (one level)** for a module that
+does — the common monorepo layout (e.g. `component-manager/go.mod` with no
+root `go.mod`). A single matching subdir is used automatically and the command
+runs from that dir; the report records `module_dir` and `run_dir` so the chosen
+location is never silent.
+
+When the root has no harness and **more than one** subdir qualifies, detection
+**refuses to guess**: it returns `status="skipped"` with `candidate_module_dirs`
+listing them. Re-run pointing at the right module (`--module-dir`/`--cwd` are
+aliases):
+```bash
+python3 .map/scripts/map_step_runner.py record_test_baseline "$BRANCH" \
+  --module-dir component-manager
+```
+A `status="skipped"` baseline is a **hard signal, not a no-op**: the
+cross-subtask regression gate then has no baseline and cannot tell an introduced
+regression from a pre-existing failure. Resolve it (pass `--module-dir` or
+`--command`) before running subtasks — do not proceed on a silent empty baseline.
+
 Override the auto-detect when the full run is too slow for a
 pre-flight (or you want a narrower target):
 ```bash
 python3 .map/scripts/map_step_runner.py record_test_baseline "$BRANCH" \
   --command "pytest tests/smoke" --timeout 60
 ```
+`--module-dir` and `--command` compose: `--module-dir` sets where the command
+runs, `--command` sets what runs (auto-detected within the module dir if
+omitted).
 
 Persists to `.map/<branch>/test_baseline.json`. Parse pre-existing
 failures back via:
