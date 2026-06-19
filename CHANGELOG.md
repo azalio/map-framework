@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`/map-efficient` Actor truncation gate false-positived on every clean run
+  (#227).** The pre-Monitor `detect_truncated_agent_output --agent actor` gate
+  requires the Actor response to parse as a JSON object
+  (`files_changed`/`tests_run`/`validation_notes`/`blocker`), but the ACTOR
+  `<expected_output>` prompted for free-form prose — so every complete, correct
+  Actor response was flagged `truncated: true`, forcing a needless re-invoke
+  (token waste) or a manual operator override on each subtask. The ACTOR prompt
+  now instructs a strict JSON manifest mirroring the MONITOR contract: code is
+  written via tools first, then summarized into the four-field envelope (no code
+  or diffs inside the JSON). Detector and retry machinery are unchanged. The
+  rationale is documented in `efficient-reference.md`.
+
 ## [3.17.1] - 2026-06-18
 
 ### Fixed

@@ -1095,6 +1095,64 @@ class TestXMLPromptEnvelopeContracts:
                 "so long-context inputs are read before instructions."
             )
 
+    @pytest.mark.parametrize("skills_root", PROMPT_TONE_SKILL_ROOTS)
+    def test_map_efficient_actor_expected_output_instructs_json_envelope(
+        self, project_root, skills_root
+    ):
+        """Regression for #227: the ACTOR <expected_output> must instruct a
+        strict JSON envelope so the prompt AGREES with the actor-mode
+        truncation gate (`detect_truncated_agent_output --agent actor`), which
+        requires a JSON object with the AGENT_OUTPUT_SCHEMAS["actor"] keys. The
+        prior prose form ("Return files_changed, tests_run, validation_notes,
+        and any blocker.") parsed as non-JSON, so the gate false-flagged every
+        clean Actor response as truncated and forced needless re-invokes.
+        """
+        import sys
+
+        scripts_path = (
+            project_root
+            / "src"
+            / "mapify_cli"
+            / "templates"
+            / "map"
+            / "scripts"
+        )
+        if str(scripts_path) not in sys.path:
+            sys.path.insert(0, str(scripts_path))
+        import map_step_runner  # type: ignore[import-not-found]
+
+        actor_required = tuple(
+            map_step_runner.AGENT_OUTPUT_SCHEMAS["actor"]["required_keys"]
+        )
+
+        skill_md = project_root / skills_root / "map-efficient" / "SKILL.md"
+        content = skill_md.read_text(encoding="utf-8")
+
+        actor_section = content.split("### Phase: ACTOR (2.3)", maxsplit=1)[1]
+        actor_section = actor_section.split(
+            "### Actor truncated-response gate", maxsplit=1
+        )[0]
+        expected_output = actor_section.split("<expected_output>", maxsplit=1)[1]
+        expected_output = expected_output.split("</expected_output>", maxsplit=1)[0]
+
+        # Must instruct a strict JSON object (mirrors the MONITOR contract), so
+        # the truncation detector's JSON parse succeeds on a complete response.
+        assert "JSON" in expected_output, (
+            "ACTOR <expected_output> must instruct a JSON envelope so it agrees "
+            "with detect_truncated_agent_output --agent actor (requires JSON)."
+        )
+        assert "ONLY" in expected_output, (
+            "ACTOR <expected_output> must require ONLY a JSON object (no prose "
+            "before/after) so the truncation detector parses it cleanly."
+        )
+        # Every detector-required actor key must be named in the prompt — this
+        # is the single-source contract the gate enforces.
+        for key in actor_required:
+            assert key in expected_output, (
+                f"ACTOR <expected_output> must name the '{key}' field required "
+                "by AGENT_OUTPUT_SCHEMAS['actor']."
+            )
+
 
 class TestContractSizedSubtaskSkillContracts:
     """Regression tests for user-visible subtask size and concern guardrails."""
