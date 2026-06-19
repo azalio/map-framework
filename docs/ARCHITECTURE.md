@@ -397,6 +397,32 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 - Workflow logs in `.map/workflow_logs/`
 - Metrics tracked in `.claude/metrics/agent_metrics.jsonl`
 
+### Agent-Boundary Doctrine
+
+MAP is a hierarchical multi-agent orchestrator, but more agents is not automatically better: every extra agent hop costs an additional LLM call and risks paraphrasing fidelity loss. The doctrine below decides when a separate sub-agent is justified. It is a **substance rule, not a wiring rule** — what matters is whether the agent emits an *independent verdict*, not how many skills happen to call it.
+
+> **The test:** keep a separate agent **only** when it contributes an *independent or adversarial perspective* — a verdict, score, decomposition, or discovery that the caller's own context could not be trusted to produce about its own work. **Collapse** any hop that is a *pure relay* — a context whose only job is to reformat or paraphrase a prior agent's output and pass it on, emitting no new verdict — into the caller.
+
+Why the distinction matters (motivation from the Atlassian Rovo "long-horizon" result, issue #230): Rovo replaced a coordinator→capability-subagent hierarchy with a single-context loop and improved accuracy, because the orchestrator→subagent hop was *pure relay overhead* (one LLM call whose only job was to paraphrase tool results upward). That result does **not** argue for collapsing MAP to one context: MAP's Monitor / Predictor / Evaluator / FinalVerifier are **adversarial / independent-verification** roles where the *separation is the value* — an independent context catches what a single self-reviewing context rationalizes away. Collapsing those would destroy MAP's core benefit. The lesson is the criterion above, applied per hop.
+
+**Audit (ground truth = `subagent_type="…"` dispatch sites in `src/mapify_cli/templates_src/skills/**/SKILL.md.jinja`, not docs).** Every shipped agent classified `independent | relay`:
+
+| Agent | Dispatched by (`file:line`, jinja source) | Emits | Class |
+|-------|--------------------------------------------|-------|-------|
+| TaskDecomposer | `map-efficient:152`, `map-fast:73`, `map-debug:80`, `map-plan:204` | atomic subtask plan + coverage map | **Independent** (decomposition) |
+| ResearchAgent | `map-plan:98` (+ `map-efficient` RESEARCH phase 2.2, conditional) | discovery findings as typed artifact | **Independent** (producer) |
+| Actor | `map-efficient:282`, `map-fast:99`, `map-tdd:129/280`, `map-debug:124/148` | code diff + change manifest | **Independent** (producer — does the work, not a relay) |
+| Monitor | `map-efficient:325`, `map-fast:124`, `map-debug:181`, `map-plan:169`, `map-review:297` | pass/fail review verdict | **Independent** (adversarial) |
+| Predictor | `map-debug:226`, `map-review:298` | impact / regression risk | **Independent** (adversarial) |
+| Evaluator | `map-debug:252`, `map-review:299-300` | quality scores + Monitor-severity audit | **Independent** (adversarial) |
+| FinalVerifier | `map-efficient:470`, `map-check:147` | whole-task PASS / REVISE / BLOCK | **Independent** (adversarial) |
+| Reflector | `map-learn:119` | extracted lessons / rules | **Independent** |
+| DocumentationReviewer | *(no skill dispatch — manual `Task(subagent_type="documentation-reviewer")` only)* | docs-vs-source-architecture verdict | **Independent**, *not auto-wired* — intentionally user-dispatchable (see below) |
+
+**Conclusion — no relay hops remain.** Each of the 8 pipeline-dispatched agents emits its own independent verdict; none is a pure relay. The only relay hops the doctrine condemns — the Self-MoA `synthesizer` (which paraphrased 3× Actor/Monitor outputs into one, adding no new verdict) and its `debate-arbiter` sibling — were already collapsed and removed in **PR #240** (commit `17c69bc`); their dispatch never existed in any skill, so they were also orphaned. That satisfies the "measured keep/collapse decision" for the Self-MoA Synthesizer hop named in #230: the decision was *collapse*, already executed.
+
+**DocumentationReviewer is a deliberate keep, not dead weight.** It has zero skill-initiated dispatch sites, but — unlike the removed `synthesizer`/`debate-arbiter` — it is **not a relay**: it produces a unique docs-vs-source-architecture verdict (external-URL validation, completeness scoring, consistency checks) that no other agent duplicates. Under the substance rule it *passes* the doctrine; its missing caller is a discoverability gap, not redundancy. It is therefore retained as an **optional, user-dispatchable** agent — invoke manually via `Task(subagent_type="documentation-reviewer", …)`. Wiring it into a pipeline (e.g. `/map-release`) is deferred feature work, out of scope for this docs-and-audit change. Re-evaluate the keep if no manual adoption emerges over the next few releases.
+
 ### .map/ Artifact Specifications
 
 MAP Framework stores workflow artifacts in the `.map/` directory. All artifacts follow JSON schemas defined in `src/mapify_cli/schemas.py`.
@@ -1134,6 +1160,8 @@ If you forked the skill-backed `/map-efficient` workflow, you must manually inte
 - `mcp__sequential-thinking__sequentialthinking`: Structure reasoning process
 
 ### 7. DocumentationReviewer
+
+**Dispatch status:** Optional / **user-dispatchable** — not auto-wired into any shipped MAP skill pipeline (no `subagent_type="documentation-reviewer"` dispatch site exists). Invoke manually via `Task(subagent_type="documentation-reviewer", …)`. Retained per the [Agent-Boundary Doctrine](#agent-boundary-doctrine) because it emits a unique, non-relay verdict. See that section for the audit.
 
 **Responsibility:** Check documentation completeness and correctness.
 

@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Agent-Boundary Doctrine: written down + every live hand-off audited
+  `independent | relay` (#230).** `docs/ARCHITECTURE.md` now carries the explicit
+  criterion — keep a separate sub-agent **only** when it adds an independent /
+  adversarial perspective; collapse any **pure-relay** hop (a context that only
+  paraphrases a prior agent's output, emitting no new verdict) into its caller.
+  It is a *substance* rule, not a *wiring* rule. The doctrine includes a ground-truth
+  audit (classified from actual `subagent_type="…"` dispatch sites, not docs): all
+  8 pipeline-dispatched agents emit independent verdicts and none is a relay; the
+  only relay hops the doctrine condemns — the Self-MoA `synthesizer`/`debate-arbiter`
+  — were already collapsed in #240. The audit also resolves the orphaned
+  `documentation-reviewer` (zero skill dispatch sites) as a **deliberate keep**: it
+  emits a unique, non-relay verdict, so it is retained as an **optional,
+  user-dispatchable** agent (invoke via `Task(subagent_type="documentation-reviewer")`)
+  and now self-declares a `Dispatch status:` annotation. A new
+  `tests/test_agent_dispatch_audit.py` enforces the invariant going forward: any
+  agent shipped with no dispatch site and not marked optional fails the gate,
+  preventing a silent orphan from recurring.
 - **Hand-authored RESEARCH artifacts now self-correct on the first reject, and
   the exact contract is documented (#228, follow-up to #197).** The documented
   `save_research` path ("save direct current-session findings") used to cost 2-3
