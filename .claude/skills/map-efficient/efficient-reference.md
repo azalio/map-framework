@@ -109,6 +109,15 @@ echo "$ACTOR_OUTPUT" | python3 .map/scripts/map_step_runner.py \
     detect_truncated_agent_output --agent actor
 ```
 
+> **Why JSON (not prose):** Actor and this detector share one contract
+> (`AGENT_OUTPUT_SCHEMAS["actor"]`), exactly as Monitor does. The JSON is a
+> *post-work manifest*, never a code container — the Actor writes and runs code
+> via its tools FIRST, then summarizes. Keeping the four fields short (file
+> paths, test commands, a notes string, a blocker) keeps truncation
+> machine-checkable without diverting the agent into serialization or escaping
+> code/diffs into JSON strings. The `<expected_output>` block in `SKILL.md`
+> states this; do not relax the detector to accept prose.
+
 If `truncated: true`:
 1. Log via `log_agent_failure --agent actor --phase pre-monitor --failure-label truncated --reasons '<reasons>'`
    and re-invoke Actor ONCE using the prompt from

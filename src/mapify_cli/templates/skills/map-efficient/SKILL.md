@@ -291,7 +291,7 @@ Implement exactly the current subtask. Preserve validation_criteria, coverage_ma
 Do not edit unrelated files, add or upgrade dependencies, or refactor neighboring code unless the current subtask contract explicitly requires it. Report any required scope expansion as a blocker/tradeoff.
 </task>
 <expected_output>
-Return files_changed, tests_run, validation_notes, and any blocker.
+Return ONLY a JSON object (no markdown fences, no prose before/after) with files_changed (array of written paths), tests_run (array of "command — pass/fail"), validation_notes (string), and blocker (string or null). Write and run code via tools FIRST — this JSON is a post-work manifest; never put code, diffs, or logs inside it. Detail: [efficient-reference.md](efficient-reference.md).
 </expected_output>
 """
 )
