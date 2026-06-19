@@ -6514,6 +6514,33 @@ _RESEARCH_MAX_LOCATIONS = 5
 _RESEARCH_MAX_LINE_SPAN = 200
 _RESEARCH_ABSENT_LOCATION_STATUSES = frozenset({"absent", "missing", "new", "not_found"})
 
+# Canonical valid RESEARCH artifact, mirrored verbatim in
+# skills/map-efficient/efficient-reference.md ("RESEARCH artifact schema").
+# Emitted in the `skeleton` field of every invalid validate_research report so
+# the FIRST reject is self-correcting: copy it, swap real values, re-save —
+# instead of discovering the exact field names/types by eating 2-3 rejects.
+_RESEARCH_ARTIFACT_SKELETON: dict[str, object] = {
+    "status": "OK",
+    "confidence": 0.8,
+    "search_stats": {
+        "files_scanned": 12,
+        "total_matches_found": 4,
+        "results_truncated": False,
+    },
+    "relevant_locations": [
+        {
+            "path": "src/example/module.py",
+            "lines": [10, 42],
+            "relevance": "why this range matters to the current subtask",
+        }
+    ],
+}
+
+
+def _research_artifact_skeleton_json() -> str:
+    """Return a copy-pasteable valid RESEARCH artifact as indented JSON."""
+    return json.dumps(_RESEARCH_ARTIFACT_SKELETON, indent=2)
+
 
 def _research_path(branch: str, subtask_id: str, kind: str) -> Path:
     """Resolve a research artifact path with strict sanitization."""
@@ -6667,6 +6694,7 @@ def validate_research_content(
             "artifact_path": artifact_path,
             "errors": errors,
             "warnings": warnings,
+            "skeleton": _research_artifact_skeleton_json(),
         }
     if "```" in stripped:
         errors.append("artifact must not contain markdown/code fences or raw code blocks")
@@ -6682,6 +6710,7 @@ def validate_research_content(
             "artifact_path": artifact_path,
             "errors": errors,
             "warnings": warnings,
+            "skeleton": _research_artifact_skeleton_json(),
         }
 
     if not isinstance(parsed, dict):
@@ -6692,6 +6721,7 @@ def validate_research_content(
             "artifact_path": artifact_path,
             "errors": errors,
             "warnings": warnings,
+            "skeleton": _research_artifact_skeleton_json(),
         }
 
     research_status = parsed.get("status")
@@ -6740,7 +6770,7 @@ def validate_research_content(
             errors.extend(loc_errors)
             warnings.extend(loc_warnings)
 
-    return {
+    result: dict[str, object] = {
         "valid": not errors,
         "status": "valid" if not errors else "invalid",
         "artifact_path": artifact_path,
@@ -6750,6 +6780,9 @@ def validate_research_content(
         "confidence": float(confidence) if isinstance(confidence, (int, float)) and not isinstance(confidence, bool) else None,
         "location_count": location_count,
     }
+    if errors:
+        result["skeleton"] = _research_artifact_skeleton_json()
+    return result
 
 
 def validate_research_artifact(path: Path, *, project_dir: Optional[Path] = None) -> dict[str, object]:
@@ -6820,6 +6853,7 @@ def validate_research(
             "artifacts": [],
             "errors": [f"no research artifact found for {subtask_id} under {seed.parent}"],
             "warnings": [],
+            "skeleton": _research_artifact_skeleton_json(),
         }
 
     warnings: list[str] = []
@@ -6837,7 +6871,7 @@ def validate_research(
                 if isinstance(warning, str):
                     warnings.append(f"{path.name}: {warning}")
 
-    return {
+    aggregate: dict[str, object] = {
         "valid": not errors,
         "status": "valid" if not errors else "invalid",
         "subtask_id": subtask_id,
@@ -6846,6 +6880,9 @@ def validate_research(
         "errors": errors,
         "warnings": warnings,
     }
+    if errors:
+        aggregate["skeleton"] = _research_artifact_skeleton_json()
+    return aggregate
 
 
 def save_research(

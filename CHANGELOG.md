@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Hand-authored RESEARCH artifacts now self-correct on the first reject, and
+  the exact contract is documented (#228, follow-up to #197).** The documented
+  `save_research` path ("save direct current-session findings") used to cost 2-3
+  `validate_research` rejects because the strict schema enforced by the validator
+  (status enum, `confidence` float, `search_stats` field names, `lines: [start,
+  end]` with a ≤200-line span) lived only in code — the SKILL prose implied free
+  text (`"complete"`, `"high"`, `files_examined`). Now: (1) `validate_research`
+  echoes a copy-pasteable, structurally-valid artifact in a `skeleton` field on
+  ANY failure (bad JSON, wrong types, or a missing artifact), so the first reject
+  is self-correcting — copy it, swap your values, re-save; (2) the exact field
+  table + the same skeleton are documented under "RESEARCH artifact schema" in
+  the map-efficient `efficient-reference.md` (Claude and Codex), with the SKILL
+  RESEARCH section naming the exact status enum and pointing at it. Validator
+  behavior is unchanged for valid artifacts (no `skeleton` field is added).
 - **Compaction now offloads large tool outputs for on-demand retrieval instead
   of dropping them (#232).** Before context compaction prunes old/large
   tool-result bodies (grep output, test logs, whole-file reads), MAP now saves

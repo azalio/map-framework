@@ -263,6 +263,57 @@ Each subtask's failing test now has a clean disposition: in baseline ⇒
 pre-existing, route to follow-up subtask; NOT in baseline ⇒ this
 plan introduced it, fix here.
 
+## RESEARCH artifact schema (exact contract)
+
+`save_research` persists the bytes you pipe verbatim; `validate_research` then
+enforces the machine-checkable contract below before Actor consumes the artifact.
+Hand-author to this exact schema so the FIRST save validates — the loose prose in
+`SKILL.md` only names the fields; this is the authoritative shape and types.
+
+Top-level object — strict JSON only (no markdown, no ``` code fences, ≤ 64 KiB):
+
+| field | type | rule |
+| --- | --- | --- |
+| `status` | string | exactly one of `OK`, `PARTIAL_RESULTS`, `NO_RESULTS`, `SEARCH_FAILED` (upper-case enum — NOT free text like `"complete"`/`"high"`) |
+| `confidence` | number | float in `[0, 1]` (NOT a word like `"high"`) |
+| `search_stats` | object | exactly `files_scanned` (int ≥ 0), `total_matches_found` (int ≥ 0), `results_truncated` (bool) — these exact field names, not `files_examined`/`patterns_searched` |
+| `relevant_locations` | array | ≤ 5 entries; each is `{path, lines, relevance}` |
+
+Each `relevant_locations[]` entry:
+
+| field | type | rule |
+| --- | --- | --- |
+| `path` | string | safe relative repo path (no absolute, `~`, `\`, or `..`); must exist unless the entry is marked absent (`"exists": false`, `"absent": true`, or `"status"` ∈ `absent`/`missing`/`new`/`not_found`) |
+| `lines` | array | `[start, end]` — two positive ints, `start ≤ end`, span `end - start + 1 ≤ 200`, `end` within the file's line count (NOT a `"start-end"` string) |
+| `relevance` | string | non-empty; explain why the range matters. Never inline `content`/`file_contents`/`raw_code` — cite paths and ranges only |
+
+Copy-pasteable skeleton (a valid artifact — swap in your real values):
+
+```json
+{
+  "status": "OK",
+  "confidence": 0.8,
+  "search_stats": {
+    "files_scanned": 12,
+    "total_matches_found": 4,
+    "results_truncated": false
+  },
+  "relevant_locations": [
+    {
+      "path": "src/example/module.py",
+      "lines": [10, 42],
+      "relevance": "why this range matters to the current subtask"
+    }
+  ]
+}
+```
+
+`validate_research` echoes this exact skeleton in its `skeleton` field on ANY
+failure (invalid JSON, wrong types, or a missing artifact), so the first reject is
+self-correcting: copy the `skeleton`, swap your values, re-save. Extra fields beyond
+the contract (e.g. `executive_summary`, `search_method`) are allowed and ignored by
+the validator; only the fields above are required and type-checked.
+
 ## Proactive blueprint refresh (recommended)
 
 Re-sync a subtask's `affected_files` against the actual diff BEFORE
