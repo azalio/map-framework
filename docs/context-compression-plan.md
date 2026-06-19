@@ -144,6 +144,50 @@ Run `make render-templates`. If the new hook does not propagate to
 - `README.md` — one-line mention in quick-start.
 - `CHANGELOG.md` — entry under `Unreleased`.
 
+## Tool-output offload (#232)
+
+The soft-nudge design above keeps MAP *within* the window but the harness's
+`/compact` still **drops** old/large tool-result bodies (grep output, test logs,
+whole-file reads). Once dropped, the only recovery is re-running the tool — i.e.
+redoing the broad discovery #203 works to avoid. Offload closes that gap:
+
+- **Capture point.** At `PreCompact` the full transcript (bodies included) is
+  still readable — the same point the existing transcript-saver uses. The offload
+  reads the transcript JSONL, extracts each qualifying tool-result body, and
+  writes it at full resolution to `.map/<branch>/compacted/`. The Codex path does
+  the same in the orchestrator's budget warning (`_emit_context_budget_warning`),
+  reusing the transcript it already reads. Both share one runtime module,
+  `mapify_cli.tool_output_offload`, imported lazily with a silent no-op fallback.
+- **Why PreCompact (not PostToolUse).** `compression_policy` defaults to `never`,
+  and MAP compaction is manual-`/compact`-nudge-driven, so an always-on
+  PostToolUse hook would tax the default-off majority on every tool call.
+  PreCompact runs only at compaction time. Residual risk: if `PreCompact` does
+  not fire on Claude Code's automatic 83.5% compaction *and* that fires before
+  any nudged manual `/compact`, that round's bodies are not captured. Eager
+  PostToolUse capture is a documented future enhancement if field data shows
+  PreCompact misses.
+- **Selection.** Size-based, not age-based (the hook cannot know which bodies the
+  harness will drop): offload `≥10_000` chars for any tool, or `≥2_000` chars for
+  broad-discovery tools (`Bash`/`Read`/`Grep`/`Glob`); never offload
+  `TodoWrite`/`AskUserQuestion`/`ExitPlanMode`.
+- **Layout** under `.map/<branch>/compacted/`: `index.ndjson` (append-only,
+  `schema_version`), `MANIFEST.md` (agent-readable table, rebuilt from the index
+  at post-compact), `<tool>-<tool_use_id>.txt` sidecars with a self-describing
+  header, plus `.evictions.log`/`.errors.log`. Dedup by `tool_use_id`; FIFO cap
+  (300 files / 100 MiB).
+- **Recovery.** The post-compact `SessionStart(compact)` hook rebuilds the
+  manifest and injects a pointer telling the agent to read the specific sidecar
+  instead of re-running broad discovery; live source/tests/schemas remain the
+  authority for current truth. Codex agents get the same pointer via the stderr
+  budget warning.
+- **Gating & security.** No offload under `compression_policy=never` — the
+  `compacted/` directory is never created. Tool outputs can hold secrets, so each
+  sidecar is `0o600` and `compacted/.gitignore` (`*`) is written on creation;
+  bodies are never redacted (a partial scrubber gives false confidence). See the
+  USAGE security note.
+- **Deferred.** Persistent Actor/Monitor prompt guidance about the manifest is an
+  eval-gated follow-up; v1 recovery relies on the ephemeral post-compact pointer.
+
 ## Explicitly out of scope
 
 - Replacing or disabling Claude Code's built-in 83.5% auto-compact — it stays as a

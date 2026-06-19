@@ -1955,6 +1955,32 @@ Filesystem (persists forever)           Conversation Memory (clears on compactio
 - Task plan: `.map/<branch>/task_plan_*.md` (subtask decomposition with validation criteria)
 - Recovery: `/map-resume` command (detects branch checkpoint and offers to resume)
 
+#### Tool-output offload (#232)
+
+State persistence (above) protects *workflow* state; it does not protect the
+**raw tool outputs** (grep results, test logs, file reads) that `/compact`
+drops. Re-acquiring a dropped output means re-running broad discovery — the exact
+cost `#203` (typed research result) works to avoid. The offload layer captures
+those bodies before they are dropped:
+
+- **Producer-owns-parse.** One runtime module, `mapify_cli.tool_output_offload`,
+  parses the transcript and writes sidecars; the PreCompact hook (Claude) and the
+  orchestrator budget warning (Codex) are thin callers that lazy-import it and
+  no-op when it is unavailable. The parse-to-sidecar boundary lives in the
+  module, so both providers and the unit tests share one implementation.
+- **Pre-drop capture.** At `PreCompact` the transcript still holds full bodies
+  (the same window the transcript-saver uses); qualifying bodies (size-based
+  selection) are written `0o600` to `.map/<branch>/compacted/` with an
+  append-only `index.ndjson` and an agent-readable `MANIFEST.md`. Dedup by
+  `tool_use_id`; FIFO-capped.
+- **Recovery, not authority.** The post-compact `SessionStart(compact)` hook
+  injects a pointer to the manifest so the agent re-reads the specific sidecar
+  instead of re-running the tool. Snapshots are point-in-time; live source,
+  tests, and schemas stay authoritative for current truth.
+- **Gating.** Bound to `compression_policy`; the default `never` creates nothing.
+  A self-contained `compacted/.gitignore` (`*`) keeps the (possibly
+  secret-bearing) outputs out of git regardless of host repo ignore rules.
+
 ### Automatic Recovery (Phase 2)
 
 **Problem:** Manual recovery (Phase 1) requires users to reference checkpoint files after compaction, adding cognitive load and causing 60% workflow abandonment rate.
