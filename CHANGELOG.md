@@ -61,6 +61,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   discovery); the map-efficient `SKILL.md` line budget was bumped 502 → 504 for
   the two prompt lines, which must live in the dispatched body.
 
+### Removed
+- **Self-MoA and Debate-Arbiter removed entirely from MAP (#230).** Both the
+  Self-MoA multi-variant pattern (`3×Actor → 3×Monitor → Synthesizer → final
+  Monitor`) and the Debate-Arbiter cross-evaluation pattern were documented
+  across `ARCHITECTURE.md`, `USAGE.md`, `INSTALL.md` and the plugin manifests but
+  **never wired into any skill** — no `/map-*` surface dispatched the
+  `synthesizer` or `debate-arbiter` agents, no `--self-moa` flag was ever parsed,
+  and there was no `/map-debate` skill. The orphaned `synthesizer.md` and
+  `debate-arbiter.md` agent templates, the Actor "Self-MoA Support" and Monitor
+  "Self-MoA Output Extension" prompt sections, the `agent_mcp_mappings` entries,
+  and all Self-MoA/Debate documentation are deleted. The shipped agent roster is
+  now **9** (was advertised as 11): TaskDecomposer, Actor, Monitor, Predictor,
+  Evaluator, Reflector, DocumentationReviewer, Research-Agent, Final-Verifier.
+  No runtime behavior changes — nothing dispatched these agents.
+
 ### Fixed
 - **`record_test_baseline` silently skipped the MANDATORY pre-flight baseline in
   monorepos (#229).** Auto-detect probed only the repo root, so when the module

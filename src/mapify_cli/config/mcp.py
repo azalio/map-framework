@@ -23,8 +23,6 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             "evaluator": [],
             "reflector": [],
             "documentation-reviewer": [],
-            "debate-arbiter": [],
-            "synthesizer": [],
             "research-agent": [],
             "final-verifier": [],
         },
@@ -62,7 +60,6 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             "monitor",
             "evaluator",
             "reflector",
-            "debate-arbiter",
         ]:
             if agent in config["agent_mcp_mappings"]:
                 config["agent_mcp_mappings"][agent].append("sequential-thinking")

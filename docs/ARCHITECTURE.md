@@ -246,7 +246,7 @@ no-Anthropic invariant across optimizer modules.
 
 ### High-Level Design
 
-MAP Framework implements cognitive architecture inspired by prefrontal cortex functions, orchestrating 11 specialized agents for software development with automatic quality validation.
+MAP Framework implements cognitive architecture inspired by prefrontal cortex functions, orchestrating 9 specialized agents for software development with automatic quality validation.
 
 **Key Design Principle:** Each slash surface has its own unique workflow with different agent sequences. There is no single "standard" workflow. MAP slash surfaces are skill-backed, so their Claude Code implementations live in `.claude/skills/map-*/SKILL.md`.
 
@@ -259,11 +259,11 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
     ┌───────────────┼───────────────────────────────────────┐
     │               │               │               │        │
     ▼               ▼               ▼               ▼        ▼
-┌────────┐    ┌────────┐    ┌────────┐    ┌────────┐  ┌────────┐  ┌────────┐
-│EFFICIENT│    │  TDD   │    │ DEBUG  │    │ DEBATE │  │ REVIEW │  │  FAST  │
-└────┬────┘    └────┬────┘   └────┬────┘   └────┬────┘  └────┬────┘  └────┬────┘
-     │              │             │              │            │            │
-     ▼              ▼             ▼              ▼            ▼            ▼
+┌────────┐    ┌────────┐    ┌────────┐    ┌────────┐  ┌────────┐
+│EFFICIENT│    │  TDD   │    │ DEBUG  │    │ REVIEW │  │  FAST  │
+└────┬────┘    └────┬────┘   └────┬────┘   └────┬────┘  └────┬────┘
+     │              │             │              │            │
+     ▼              ▼             ▼              ▼            ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                   WORKFLOW-SPECIFIC SEQUENCES                    │
 ├─────────────────────────────────────────────────────────────────┤
@@ -271,8 +271,7 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 │  /map-efficient (⭐ RECOMMENDED):                                │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │ TaskDecomposer → For each subtask:                       │   │
-│  │   ├─ Standard: Actor → Monitor → [Predictor if risky]    │   │
-│  │   └─ Self-MoA: 3×Actor → 3×Monitor → Synthesizer → Mon.  │   │
+│  │   Actor → Monitor → [Predictor if risky]                 │   │
 │  │ No Evaluator. Learning via /map-learn (optional)         │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                  │
@@ -605,9 +604,6 @@ MAP Framework provides multiple workflow variants with different agent orchestra
 
 **Agent Sequence:** TaskDecomposer → RESEARCH artifact ([conditional ResearchAgent]) → (Actor → Monitor → [conditional Predictor]) per subtask → FinalVerifier
 
-**With Self-MoA** (--self-moa flag OR high risk/complexity):
-TaskDecomposer → RESEARCH artifact ([conditional ResearchAgent]) → (3×Actor parallel → 3×Monitor parallel → Synthesizer → final Monitor → [conditional Predictor]) per subtask → FinalVerifier
-
 **Optimizations:**
 
 1. **Conditional Predictor** (token savings)
@@ -685,52 +681,7 @@ print("Run /map-learn now, or later from the generated handoff")
 - Broad refactors or multi-module changes
 - High uncertainty requirements
 
-
-**Technical Details:**
-
-```python
-# Debate Workflow Orchestrator Logic
-for subtask in subtasks:
-    # Phase 1: Generate 3 variants in parallel
-    variants = parallel_execute([
-        call_actor(subtask, approach_focus="security"),
-        call_actor(subtask, approach_focus="performance"),
-        call_actor(subtask, approach_focus="simplicity")
-    ])
-
-    # Phase 2: Validate all variants in parallel
-    validations = parallel_execute([
-        call_monitor(variants[0]),
-        call_monitor(variants[1]),
-        call_monitor(variants[2])
-    ])
-
-    # Phase 3: Debate-Arbiter cross-evaluation + synthesis (Opus)
-    # DebateArbiter both evaluates AND synthesizes in single call
-    arbiter_output = call_debate_arbiter(
-        variants=variants,
-        validations=validations,
-        model="claude-opus-4-5"
-    )
-    # arbiter_output includes: comparison_matrix, decision_rationales,
-    # synthesis_reasoning, and synthesized code
-
-    # Phase 4: Final validation and impact analysis
-    final_monitor = call_monitor(arbiter_output.synthesized_code)
-    if final_monitor.valid:
-        if subtask.risk_level in ['high', 'medium']:
-            predictor_output = call_predictor(arbiter_output)
-        apply_code_changes(arbiter_output.synthesized_code)
-```
-
-**Trade-offs:**
-- **Pro:** Maximum solution quality through variant exploration
-- **Pro:** Discovers optimal patterns for knowledge base
-- **Pro:** Arbiter reasoning provides detailed decision documentation
-- **Con:** Higher token cost (3× Actor + Opus arbiter)
-- **Con:** Longer execution time (parallel but still 3× work)
-
-#### 4. `/map-debug` - Debugging Workflow (5 Agents)
+#### 3. `/map-debug` - Debugging Workflow (5 Agents)
 
 **Agent Sequence:** TaskDecomposer → For each step: Actor → Monitor → Predictor → Evaluator
 
@@ -762,7 +713,7 @@ for subtask in subtasks:
 - Root cause analysis
 - Regression debugging
 
-#### 5. `/map-review` - Interactive Code Review (3 Agents)
+#### 4. `/map-review` - Interactive Code Review (3 Agents)
 
 **Agent Sequence:** git diff → [Monitor + Predictor + Evaluator] (all 3 parallel) → Interactive 4-section presentation → Verdict
 
@@ -806,7 +757,7 @@ for subtask in subtasks:
 - Quality gate before merge
 - CI pipeline integration (`--ci` mode)
 
-#### 6. `/map-release` - Release Workflow (No Agents)
+#### 5. `/map-release` - Release Workflow (No Agents)
 
 **Workflow:** 7 sequential phases with validation gates (no AI agents)
 
@@ -828,7 +779,7 @@ for subtask in subtasks:
 - Package releases to PyPI
 - Version bumping with full validation
 
-#### 7. `/map-learn` - Post-Workflow Learning (1 Agent)
+#### 6. `/map-learn` - Post-Workflow Learning (1 Agent)
 
 **Agent Sequence:** Reflector → Verification
 
@@ -854,12 +805,10 @@ Typical token consumption per subtask (estimated):
 | Predictor | 1.5K | 1K | 2.5K | Conditional in /map-efficient, always in /map-debug |
 | Evaluator | 2K | 1K | 3K | Only in /map-debug, /map-review |
 | Reflector | 2K | 1K | 3K | Only via /map-learn |
-| Synthesizer | 2K | 3K | 5K | /map-efficient Self-MoA only |
 | ResearchAgent | 2K | 4K | 6K | Heavy codebase reading, on-demand in any workflow |
 
 **Per-subtask totals:**
 - /map-efficient (standard): ~9-12K tokens (baseline)
-- /map-efficient (Self-MoA): ~25-30K tokens (3× Actor + Synthesizer)
 - /map-fast: ~8-10K tokens (minimal, no learning)
 - /map-debug: ~15-20K tokens (full pipeline with Evaluator)
 - /map-review: ~15-25K tokens (parallel agents + interactive 4-section presentation; --ci mode ~12-15K)
@@ -1210,48 +1159,7 @@ If you forked the skill-backed `/map-efficient` workflow, you must manually inte
 - ✅ Configuration options explained
 - ✅ Examples match actual code behavior
 
-### 8. Synthesizer
-
-**Responsibility:** Merge best elements from multiple Actor variants in Self-MoA (Mixture of Agents) workflows.
-
-**Input:** Multiple Actor variants (typically 3) with different optimization focuses + DebateArbiter guidance
-
-**Output:**
-```json
-{
-  "synthesized_solution": {
-    "approach": "Hybrid approach combining security validation from v1, performance optimization from v2, and clear structure from v3",
-    "code_changes": "// Complete merged implementation",
-    "trade_offs": "Decision points resolved based on arbiter analysis",
-    "testing_considerations": "Merged test cases covering all variants' scenarios",
-    "decisions_resolved": [
-      {
-        "decision": "Error handling strategy",
-        "variants": {
-          "v1_security": "Comprehensive validation with detailed errors",
-          "v2_performance": "Fast-fail with minimal overhead",
-          "v3_simplicity": "Standard try-catch blocks"
-        },
-        "chosen": "v1_security with v2_performance optimizations",
-        "rationale": "Arbiter recommended comprehensive validation is critical; optimized by caching validation results"
-      }
-    ]
-  }
-}
-```
-
-**Key Behaviors:**
-- Analyzes decision points from all variants
-- Resolves conflicts using DebateArbiter guidance
-- Preserves best practices from each variant
-- Creates coherent unified solution (not patchwork)
-- Documents synthesis rationale for learning
-
-**Model Used:** Sonnet (requires strong reasoning for synthesis)
-
-**Usage Context:** Invoked in `/map-efficient --self-moa` workflow for multi-variant synthesis
-
-### 9. ResearchAgent
+### 8. ResearchAgent
 
 **Responsibility:** Heavy codebase reading with context isolation and compressed output for Actor/Monitor consumption.
 
@@ -1300,7 +1208,7 @@ If you forked the skill-backed `/map-efficient` workflow, you must manually inte
 - Outputs compressed summary (<2K tokens)
 - Prevents Actor context bloat (would be 20-50K tokens if Actor read directly)
 
-### 11. FinalVerifier
+### 9. FinalVerifier
 
 **Responsibility:** Adversarial verifier applying the "Four-Eyes Principle" — verifies the ENTIRE task goal is achieved, not just individual subtasks. Catches premature completion and hallucinated success.
 
@@ -1479,8 +1387,6 @@ MAP Framework uses intelligent model selection to balance quality and cost.
 | Evaluator | sonnet-4-5 | Evaluation requires nuanced judgment |
 | Reflector | sonnet-4-5 | Quality-critical: pattern extraction |
 | DocumentationReviewer | sonnet-4-5 | Quality-critical: doc validation |
-| Synthesizer | sonnet-4-5 | Quality-critical: variant synthesis |
-| DebateArbiter | opus-4-5 | Highest quality: cross-variant reasoning |
 | ResearchAgent | sonnet-4-5 | Quality-critical: codebase understanding |
 
 **Override Model Per Agent:**
@@ -1494,12 +1400,11 @@ model: claude-sonnet-4-5  # or claude-haiku-3-5
 ```
 
 **Cost vs Quality Trade-offs:**
-- **All Sonnet/Opus (current):** Highest quality, Opus only for DebateArbiter
+- **All Sonnet (current):** Highest quality across the agent roster
 - **Downgrade to Haiku:** Lower cost, risk of quality degradation in analysis and scoring
 
 **Recommended:**
-- Keep on Sonnet: TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, DocumentationReviewer, Synthesizer, ResearchAgent
-- Keep on Opus: DebateArbiter (cross-variant reasoning requires highest quality)
+- Keep on Sonnet: TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, DocumentationReviewer, ResearchAgent
 - Safe to downgrade to Haiku: Predictor, Evaluator (if cost reduction is priority)
 
 ### Adding Custom Agents

@@ -898,9 +898,9 @@ class TestAgentCreation:
         - Content includes required sections (IDENTITY, ROLE)
         - MCP integration sections are included when MCP servers specified
 
-        Note: Fallback generators only cover 8 core agents. The remaining 4
-        (debate-arbiter, synthesizer, research-agent, final-verifier) are
-        only available when copying from templates.
+        Note: Fallback generators only cover the core agents. The remaining
+        agents (research-agent, final-verifier) are only available when
+        copying from templates.
         """
         # Mock templates directory that doesn't have agent templates
         mock_templates_path = tmp_path / "mock_templates"
