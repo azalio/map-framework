@@ -2769,6 +2769,27 @@ def validate_blueprint_contract(
                             "treated as expected-absent."
                         )
 
+    # Entry-point existence check [AC-5 / VC1-VC2].
+    # Empty subtasks is already rejected by the early return above (~line 2376),
+    # so emptiness can never reach this check (VC2 satisfied by that guard).
+    # A non-empty graph where every subtask declares at least one dependency has
+    # no starting point and is either cyclic or malformed — catch it early with
+    # a clear diagnostic rather than letting the runtime walker deadlock.
+    has_entry_point = any(
+        isinstance(st, dict)
+        and (
+            st.get("dependencies") is None
+            or not isinstance(st.get("dependencies"), list)
+            or len(st.get("dependencies")) == 0  # type: ignore[arg-type]
+        )
+        for st in subtasks
+    )
+    if subtasks and not has_entry_point:
+        errors.append(
+            "no entry-point subtask: at least one subtask must have zero dependencies "
+            "(every subtask declares a dependency — the plan has no starting point / is cyclic)"
+        )
+
     coverage_map = payload.get("coverage_map") or blueprint_body.get("coverage_map")
     if not isinstance(coverage_map, dict) or not coverage_map:
         errors.append(
