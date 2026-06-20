@@ -12,7 +12,13 @@ dependencies = [
     "jinja2>=3.1,<4",
     "platformdirs>=4.0.0",
     "readchar>=4.0.0",
-    "questionary>=2.0.0"
+    "questionary>=2.0.0",
+    # mapify is a config-driven CLI: project_config.py loads .map/config.yaml via
+    # PyYAML on every config-dependent path (minimality-report, init overrides).
+    # It MUST be a hard runtime dep — a normal install (uv tool / pipx / pip
+    # without dev/test extras) otherwise ships without yaml, hits ImportError,
+    # and silently falls back to default config, ignoring the user's settings (#245).
+    "pyyaml>=6.0.0"
 ]
 
 [project.optional-dependencies]
