@@ -2839,7 +2839,11 @@ def validate_blueprint_contract(
                         f"{requirement_id!r} as {lineage_tag}"
                     )
 
-    # --- Forward-coverage gate (ST-005) ---
+    # --- Forward-coverage gate (ST-005/ST-006) ---
+    # HC-4: hard-fail is off-by-default; set MAP_STRICT_COVERAGE=1 to enable.
+    # _strict is computed once here and reused throughout the block (AC-8).
+    _strict = _parse_boolish(os.environ.get("MAP_STRICT_COVERAGE"))
+
     # Resolve spec path: .map/<branch>/spec_<branch>.md
     _spec_path = get_branch_dir(branch_name) / f"spec_{branch_name}.md"
     try:
@@ -2849,10 +2853,14 @@ def validate_blueprint_contract(
 
     _fc_status: str
     _fc_missing: list[str]
+    _fc_confidence: str  # HC-3: qualitative only — high | medium | low
+    _fc_basis: str       # HC-3: one-line rationale for the confidence value
     if not _spec_text:
         # Treat unreadable / absent file as absent index
         _fc_status = "absent"
         _fc_missing = []
+        _fc_confidence = "low"
+        _fc_basis = "no spec file found; forward-coverage skipped"
         warnings.append(
             "Forward-coverage: no Requirements Index found in "
             f"spec_{branch_name}.md (run make render-templates / populate the "
@@ -2869,6 +2877,8 @@ def validate_blueprint_contract(
             warnings.append(f"Requirements Index: {_pw}")
 
         if _fc_status == "absent":
+            _fc_confidence = "low"
+            _fc_basis = "no Requirements Index in spec; forward-coverage skipped"
             warnings.append(
                 "Forward-coverage: no Requirements Index found in "
                 f"spec_{branch_name}.md (run make render-templates / populate the "
@@ -2876,7 +2886,8 @@ def validate_blueprint_contract(
             )
         elif _fc_status == "present_empty":
             # PASS — empty index means no requirements declared; nothing to check.
-            pass
+            _fc_confidence = "high"
+            _fc_basis = "Requirements Index present but empty; nothing to check"
         elif _fc_status == "present_nonempty":
             _index_ids = [
                 r["id"]
@@ -2893,24 +2904,32 @@ def validate_blueprint_contract(
 
             _cov_keys: set[str] = set(coverage_map.keys()) if isinstance(coverage_map, dict) else set()
             _fc_missing = [i for i in _deduped_ids if i not in _cov_keys]
+            _n_ids = len(_deduped_ids)
+            _fc_confidence = "high"
+            _fc_basis = f"spec index parsed cleanly; {_n_ids} requirement id(s) diffed against coverage_map"
 
             if _fc_missing:
                 _fc_msg = (
                     f"Forward-coverage: spec requirement(s) {_fc_missing} "
                     "have no owner in coverage_map"
                 )
-                _strict = bool(os.environ.get("MAP_STRICT_COVERAGE"))
+                # HC-4: default posture is WARN (migration-friendly); strict=true -> hard error.
                 if _strict:
                     errors.append(_fc_msg)
                 else:
                     warnings.append(_fc_msg)
         elif _fc_status == "malformed":
+            # HC-5 / HC-3: malformed is always a hard error regardless of strict flag.
+            _fc_confidence = "low"
+            _fc_basis = "Requirements Index malformed; could not diff"
             errors.append(
                 "Forward-coverage: Requirements Index is malformed "
                 "(see the mapify:requirements-index:v1 template in plan-reference.md.jinja)"
             )
-
-    _strict_flag = bool(os.environ.get("MAP_STRICT_COVERAGE"))
+        else:
+            # Unknown status — treat defensively.
+            _fc_confidence = "low"
+            _fc_basis = f"unexpected Requirements Index status {_fc_status!r}"
 
     return {
         "valid": not errors,
@@ -2926,7 +2945,9 @@ def validate_blueprint_contract(
         "forward_coverage": {
             "status": _fc_status,
             "missing_ids": _fc_missing,
-            "strict": _strict_flag,
+            "strict": _strict,
+            "confidence": _fc_confidence,
+            "basis": _fc_basis,
         },
     }
 
