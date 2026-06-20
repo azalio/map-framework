@@ -2231,6 +2231,9 @@ _REQ_ID_RE = re.compile(r"^(AC|INV|HC|CCR)-[1-9][0-9]*$")
 _REQ_KIND_VOCAB = frozenset(
     {"acceptance_criterion", "invariant", "hard_constraint", "cross_cutting"}
 )
+# SC-1: suspicious fan-in threshold — one subtask owning more than this many
+# requirements is a coverage-dumping smell (tunable heuristic).
+_COVERAGE_FANIN_WARN = 3
 
 
 def parse_requirements_index(spec_text: str) -> dict[str, object]:
@@ -2951,6 +2954,64 @@ def validate_blueprint_contract(
             # Unknown status — treat defensively.
             _fc_confidence = "low"
             _fc_basis = f"unexpected Requirements Index status {_fc_status!r}"
+
+    # --- Non-blocking guardrails (ST-009/AC-6) — WARNINGS ONLY; never touch errors ---
+
+    # Build the index-id set once; reused by (a) and (b).
+    _index_id_set: set[str] = {
+        r["id"]
+        for r in (_fc_result.get("requirements") or [])
+        if isinstance(r, dict) and r.get("id")
+    }
+    _index_present = _fc_status in {"present_nonempty", "present_empty"}
+
+    # (a) prose-orphan: IDs in spec prose OUTSIDE the fenced index but absent from it.
+    if _index_present and _spec_text:
+        # Strip the fenced index region from the spec text before scanning.
+        _open_pos = _spec_text.find(_REQ_INDEX_OPEN)
+        _close_pos = _spec_text.find(_REQ_INDEX_CLOSE)
+        if _open_pos != -1 and _close_pos != -1 and _close_pos > _open_pos:
+            _remainder = (
+                _spec_text[:_open_pos]
+                + _spec_text[_close_pos + len(_REQ_INDEX_CLOSE):]
+            )
+        else:
+            _remainder = _spec_text
+        _prose_id_re = re.compile(r"(?:AC|INV|HC|CCR)-\d+")
+        _prose_ids_seen: set[str] = set()
+        for _pid in _prose_id_re.findall(_remainder):
+            if _pid not in _index_id_set and _pid not in _prose_ids_seen:
+                _prose_ids_seen.add(_pid)
+                warnings.append(
+                    f"Requirements Index prose-orphan: {_pid} appears in spec prose "
+                    "but not in the Requirements Index "
+                    "(did you forget to add it?)"
+                )
+
+    # (b) reverse-phantom: coverage_map keys absent from the index.
+    if _index_present and isinstance(coverage_map, dict):
+        for _ckey in coverage_map:
+            if isinstance(_ckey, str) and _ckey not in _index_id_set:
+                warnings.append(
+                    f"coverage_map key {_ckey!r} is not in the Requirements Index "
+                    "(possible hallucinated/extra requirement)"
+                )
+
+    # (c) ownership-distribution: always-on whenever coverage_map is a non-empty dict.
+    if isinstance(coverage_map, dict) and coverage_map:
+        _owner_counts: dict[str, int] = {}
+        for _owner in coverage_map.values():
+            if isinstance(_owner, str):
+                _owner_counts[_owner] = _owner_counts.get(_owner, 0) + 1
+        if _owner_counts:
+            warnings.append(f"coverage ownership: {_owner_counts}")
+            for _own, _cnt in _owner_counts.items():
+                if _cnt > _COVERAGE_FANIN_WARN:
+                    warnings.append(
+                        f"coverage fan-in: subtask {_own!r} owns {_cnt} requirements "
+                        f"(> {_COVERAGE_FANIN_WARN}); possible coverage-dumping — "
+                        "verify the decomposition actually split the work"
+                    )
 
     return {
         "valid": not errors,
