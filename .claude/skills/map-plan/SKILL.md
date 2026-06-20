@@ -77,11 +77,17 @@ Signals:
 - `needs_independent_review`: true | false
 - `has_clear_acceptance_criteria`: true | false
 - `test_first_required`: true | false
+- `depends_on_runtime_state`: true | false — does the plan's **correctness** depend on **current production/runtime state** (applied migration head, a table/column/index/enum value that exists in the live DB, current row counts / backfill volume, the actual value of a feature flag or config, runtime capacity/traffic)? Ask the operator directly when unsure — **if unsure, set it true.** Set it `false` for refactors, tests, docs, and static-config edits: "the code will eventually run in prod" is NOT runtime-dependence. When true, Step 0.6 runs.
 
-Persist the decision:
+Persist the decision (use the keyword form so the new signal is unambiguous):
 
 ```bash
-python3 .map/scripts/map_step_runner.py record_workflow_fit "<direct-edit|map-fast|map-plan>" "<tiny|small|medium|large>" "<true|false>" "<true|false>" "<true|false>" "<true|false>" "<one-sentence decision summary>"
+python3 .map/scripts/map_step_runner.py record_workflow_fit "<direct-edit|map-fast|map-plan>" \
+  --diff-size "<tiny|small|medium|large>" \
+  --has-new-invariants <0|1> --needs-independent-review <0|1> \
+  --has-clear-acceptance-criteria <0|1> --test-first-required <0|1> \
+  --depends-on-runtime-state <0|1> \
+  --summary "<one-sentence decision summary>"
 ```
 
 Outcomes:
@@ -125,6 +131,19 @@ Classify the request:
 - **Not implemented** — nothing matching exists (or only unrelated patterns). Continue normally.
 
 When in doubt about whether an existing implementation truly satisfies a request, treat it as partially implemented and surface the ambiguity in the interview or Open Questions — never silently re-plan code that already exists, and never silently assume an existing file already covers a behavior.
+
+### Step 0.6: Verify Live/Runtime State Gate (MANDATORY when `depends_on_runtime_state=true`)
+
+The runtime analogue of Step 0.5: that gate stops you re-planning code that already exists; this one stops you planning against **runtime facts that have drifted** from the design docs / memory the plan copied them from. Skip this step only when `depends_on_runtime_state=false`; if it is true, **read [plan-reference.md](plan-reference.md#verify-liveruntime-state) before Step 1** and run this gate.
+
+Caution — Step 0.5 ≠ Step 0.6: code can exist in the repo (already-implemented) while its migration / feature-flag is **not yet applied in prod**. A `file:line` proof does not prove the live state; verify runtime separately.
+
+For each assumption the plan's correctness rests on (counts, enum/label sets, an existing column, the applied migration head, a live flag/config value, capacity):
+
+- **Verifiable now (read-only):** confirm it empirically through an approved read-only source (read replica, dashboard, runbook, metadata query such as `INFORMATION_SCHEMA` / `pg_enum` / migration-head introspection). Cite the **fact**, not the raw query result. Never write/mutate, and never paste PII, secrets, or bulky prod output into the spec or `.map/<branch>/` artifacts (they may be committed). This skill is a planning-time gate, **not** a runtime tool — it does not run the query itself; defer execution to the operator or an authorized sub-agent.
+- **Prod unreachable / unverified:** do NOT bake the assumption in as fact. Record it under the spec's **Open Questions / Risks** as an `Unverified Runtime Assumption` with the **exact read-only check to run** (and the safe source), and mark every subtask that depends on it `provisional` until verified.
+
+Do not hard-stop merely because prod is unreachable — record-the-check is the contract. If a runtime dependency only surfaces later (during decomposition), loop back and verify-or-record it the same way.
 
 ### Step 1: Assess Scope and Decide Interview Depth
 
@@ -307,7 +326,7 @@ Runner functions you'll commonly need from `/map-plan`:
 | Function | Purpose |
 |---|---|
 | `record_plan_artifacts` | Persist spec/blueprint/task-plan into `artifact_manifest.json`. |
-| `record_workflow_fit <workflow> [--diff-size SIZE] [--has-new-invariants 0\|1] [--needs-independent-review 0\|1] [--has-clear-acceptance-criteria 0\|1] [--test-first-required 0\|1] [--summary "..."]` | Persist the workflow-fit decision. Use the named flags — bool order is easy to confuse otherwise. |
+| `record_workflow_fit <workflow> [--diff-size SIZE] [--has-new-invariants 0\|1] [--needs-independent-review 0\|1] [--has-clear-acceptance-criteria 0\|1] [--test-first-required 0\|1] [--depends-on-runtime-state 0\|1] [--summary "..."]` | Persist the workflow-fit decision. Use the named flags — bool order is easy to confuse otherwise. `--depends-on-runtime-state 1` arms Step 0.6 (defaults `0`; the legacy positional form always records it `0`). |
 | `normalize_blueprint [<path>] [--check]` | Deterministically repair decomposer drift before validation: topo-sort `subtasks[]` so deps precede dependents + inject missing `coverage_map` bracket-tags. `--check` reports without writing. |
 | `validate_blueprint_contract <path>` | Run schema + semantic checks on `blueprint.json`. |
 | `list_plans` | List per-branch plan artifacts under `.map/` to pick scope from a multi-roadmap workspace. |
@@ -367,6 +386,7 @@ See [plan-reference.md](plan-reference.md#troubleshooting) for stale artifacts, 
 
 - Workflow-fit decision recorded.
 - Already-implemented gate ran (or was explicitly skipped with a reason): whole-feature duplicates off-ramped, partial duplicates moved to spec "Out of Scope > Already Implemented".
+- Live/runtime-state gate ran when `depends_on_runtime_state=true`: each runtime assumption was verified read-only, or recorded as an `Unverified Runtime Assumption` (Open Questions / Risks) with the exact check to run and dependent subtasks marked `provisional`.
 - Spec exists or is intentionally reused.
 - Blueprint exists and `validate_blueprint_contract` passed.
 - Human-readable task plan includes scope metadata and coverage.

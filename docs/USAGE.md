@@ -8,6 +8,8 @@ For long-running work, the canonical MAP flows maintain branch-scoped artifacts 
 
 After discovery, `/map-plan` also runs an already-implemented gate: discovery reports which requested behaviors already exist (with `file:line` proof), and the planner reconciles against them. If the whole feature already exists it off-ramps with evidence and writes no plan; if only parts exist, those parts move to the spec's "Out of Scope > Already Implemented" subsection so decomposition plans only the remaining gap.
 
+`/map-plan` also carries a `depends_on_runtime_state` workflow-fit signal (set it via `record_workflow_fit --depends-on-runtime-state 1`; defaults off). When the plan's correctness depends on **current production/runtime state** — an applied migration head, an enum/column/row that actually exists in the live DB, current row counts or backfill volume, a live feature-flag value, runtime capacity — it arms **Step 0.6: Verify Live/Runtime State**. This is the runtime analogue of the already-implemented gate: Step 0.5 stops you re-planning code that already exists; Step 0.6 stops you planning against runtime facts that have drifted. Each assumption is either verified read-only (approved replica/dashboard/metadata query — cite the fact, never paste prod rows/secrets into `.map/` artifacts) or recorded as an `Unverified Runtime Assumption` in the spec's Open Questions / Risks with the exact check to run, with dependent subtasks marked `provisional`. The skill suggests the read-only checks; it does not run them.
+
 ## Canonical Flows
 
 ### Standard flow

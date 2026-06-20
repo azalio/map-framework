@@ -684,6 +684,10 @@ WORKFLOW_FIT_DECISION_SCHEMA = {
                 "needs_independent_review": {"type": "boolean"},
                 "has_clear_acceptance_criteria": {"type": "boolean"},
                 "test_first_required": {"type": "boolean"},
+                # Optional (not required): pre-existing workflow-fit.json files
+                # written before this signal existed must still validate. New
+                # writes always emit it (record_workflow_fit defaults it False).
+                "depends_on_runtime_state": {"type": "boolean"},
             },
             "required": [
                 "expected_diff_size",

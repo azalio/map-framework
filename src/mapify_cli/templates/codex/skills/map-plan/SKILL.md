@@ -58,6 +58,7 @@ Assess whether MAP planning is warranted. Evaluate these signals:
 - `needs_independent_review`: risky enough to require review?
 - `has_clear_acceptance_criteria`: can be executed without a planning pass?
 - `test_first_required`: TDD warranted because behavior contract matters?
+- `depends_on_runtime_state`: does correctness depend on **current production/runtime state** (applied migration head, a table/column/index/enum value present in the live DB, current row counts / backfill volume, the actual value of a feature flag or config, runtime capacity/traffic)? Ask the operator when unsure — **if unsure, true.** False for refactors, tests, docs, static-config; "code will run in prod" is not runtime-dependence. When true, Step 0.6 runs.
 
 Pick one outcome:
 - `direct-edit` — tiny, isolated, clear acceptance criteria, no new invariants
@@ -71,9 +72,11 @@ shell_command:
   cmd: |
     python3 .map/scripts/map_step_runner.py record_workflow_fit \
       "<direct-edit|map-fast|map-plan>" \
-      "<tiny|small|medium|large>" \
-      "<true|false>" "<true|false>" "<true|false>" "<true|false>" \
-      "<one-sentence decision summary>"
+      --diff-size "<tiny|small|medium|large>" \
+      --has-new-invariants <0|1> --needs-independent-review <0|1> \
+      --has-clear-acceptance-criteria <0|1> --test-first-required <0|1> \
+      --depends-on-runtime-state <0|1> \
+      --summary "<one-sentence decision summary>"
 ```
 
 - Outcome `direct-edit`: print off-ramp explanation and STOP.
@@ -149,6 +152,22 @@ Reconcile the request against the discovery `Already Implemented` section BEFORE
 - **Not implemented** — nothing matching exists; continue normally.
 
 When unsure whether existing code truly satisfies the request, treat it as partial and surface it in the interview / Open Questions — never silently re-plan code that already exists.
+
+---
+
+## Step 0.6: Verify Live/Runtime State Gate (MANDATORY when `depends_on_runtime_state=true`)
+
+The runtime analogue of Step 0.5. Step 0.5 stops you re-planning code that already exists; Step 0.6 stops you planning against **runtime facts that have drifted** from the design docs / memory the plan copied them from. Skip only when `depends_on_runtime_state=false`.
+
+Static discovery reads only the repo — it cannot see prod row counts, the enum labels actually present in a live DB, a column that already exists, the applied migration head, or a live feature-flag value. **Caution:** code can exist in the repo (Step 0.5 `file:line` proof) while its migration / feature flag is NOT yet applied in prod; verify runtime separately.
+
+Signals that arm the gate: a DB migration / data backfill; "measured on prod" / "currently" / "as of" numbers in the source; count-based acceptance criteria referencing current state ("migrate the 10k existing rows"), not a forward target ("1k RPS"); a feature-flag / config cutover; capacity / latency assumptions; "this column/table/enum value already exists".
+
+For each assumption the plan's correctness rests on:
+- **Verifiable read-only now** — confirm via an approved read-only source (read replica, dashboard, runbook, `INFORMATION_SCHEMA` / `pg_enum` / migration-head introspection). Record the **fact** + source, not the raw rows.
+- **Prod unreachable / unchecked** — record an `Unverified Runtime Assumption` under spec Open Questions / Risks with the **exact read-only check** + safe source, and mark dependent subtasks `provisional`. Do NOT bake the assumption in as fact.
+
+Safety: this skill is a planning-time gate, NOT a runtime tool — it suggests checks, it does not run them (defer to the operator or an authorized sub-agent). Prefer bounded / metadata queries over full scans / `COUNT(*)`; never write, mutate, or flip flags; never paste PII, secrets, or bulky prod output into the spec or `.map/<branch>/` artifacts (they may be committed); no isolation-level / `NOLOCK` hints. Do not hard-stop merely because prod is unreachable — record-the-check is the contract. If a runtime dependency surfaces later during decomposition, loop back and verify-or-record it.
 
 ---
 
