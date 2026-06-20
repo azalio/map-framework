@@ -4,7 +4,7 @@ This file holds templates, examples, and troubleshooting for `/map-plan` so the 
 
 ## Spec Template
 
-```markdown
+````markdown
 # Spec: [Title]
 
 ## Decisions Made
@@ -25,6 +25,30 @@ State the core design tension.
 ## Acceptance Criteria
 - AC-1: Observable outcome.
 
+## Requirements Index
+
+This block IS the visible, authoritative requirements section — NOT a hidden parallel artifact.
+Do not maintain a separate list elsewhere; update this block whenever criteria change.
+Downstream tooling (the forward-completeness gate) locates the index ONLY by the sentinel pair
+below; a sentinel-shaped string in prose outside the fenced block is ignored.
+
+Rules:
+- `kind` is a CLOSED vocabulary: `acceptance_criterion` | `invariant` | `hard_constraint` | `cross_cutting`
+- `id` is canonical: prefix in {AC, INV, HC, CCR}, a hyphen, then digits with NO leading zeros, uppercase prefix
+  (e.g. `AC-1` not `ac-01`, `INV-2` not `INV-02`)
+
+<!-- mapify:requirements-index:v1 -->
+```yaml
+requirements:
+  - id: AC-1
+    kind: acceptance_criterion
+  - id: INV-1
+    kind: invariant
+  - id: HC-1
+    kind: hard_constraint
+```
+<!-- /mapify:requirements-index:v1 -->
+
 ## Security Boundaries
 - Trust boundaries and sensitive flows.
 
@@ -36,7 +60,7 @@ State the core design tension.
 
 ## Open Questions
 - Questions that must be answered before decomposition or execution.
-```
+````
 
 ## Architecture Graph
 
