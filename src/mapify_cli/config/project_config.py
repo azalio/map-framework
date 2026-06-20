@@ -80,9 +80,11 @@ class MapConfig:
     # Language preference for agent responses
     language: str = ""
 
-    # Minimality doctrine intensity. Existing projects that have no config key
-    # stay off; new generated configs opt into lite explicitly.
-    minimality: str = "off"
+    # Minimality doctrine intensity. Phase 3 (#183) flipped the global default
+    # off -> lite after the promotion gate (`mapify minimality-report`) reached
+    # `candidate` and the manual review gate passed: projects with no config key
+    # now default to `lite` (advisory complexity-lens; no behavior/verdict gating).
+    minimality: str = "lite"
 
     # Agent-prompt layering for repeated same-workflow dispatches (#231).
     # "docs_first"   (default) = variable <documents> first, stable contract
@@ -178,6 +180,15 @@ def load_map_config(project_path: Path) -> MapConfig:
         if isinstance(data, dict) and "sofa.enabled" in data and "sofa_enabled" not in data:
             data["sofa_enabled"] = data.pop("sofa.enabled")
 
+        # YAML 1.1 parses bare ``off``/``on`` as booleans, so ``minimality: off``
+        # — the documented opt-out from the lite default (#183) — arrives as bool
+        # ``False``. Coerce it back to the string level before the type-check loop;
+        # otherwise the str field rejects the bool and silently falls back to the
+        # lite default, breaking opt-out. ``False`` -> ``"off"`` (valid opt-out);
+        # ``True`` -> ``"on"`` (not a real level -> rejected -> lite fallback).
+        if isinstance(data, dict) and isinstance(data.get("minimality"), bool):
+            data["minimality"] = "off" if data["minimality"] is False else "on"
+
         # Map YAML keys to MapConfig fields, filtering out unrecognized keys
         # and validating types against dataclass field annotations
         defaults = MapConfig()
@@ -227,12 +238,12 @@ def load_map_config(project_path: Path) -> MapConfig:
         if cfg.minimality not in VALID_MINIMALITY:
             logger.warning(
                 "Invalid minimality %r in %s (expected one of %s). "
-                "Using default 'off'.",
+                "Using default 'lite'.",
                 cfg.minimality,
                 config_file,
                 ", ".join(sorted(VALID_MINIMALITY)),
             )
-            cfg.minimality = "off"
+            cfg.minimality = "lite"
 
         if cfg.prompt_layering not in VALID_PROMPT_LAYERING:
             logger.warning(

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Global `minimality` default flipped `off` → `lite` (Phase 3, closes #183).**
+  The promotion gate (`mapify minimality-report`) reached `candidate` and the
+  manual review gate passed against field telemetry, so the keyless default now
+  resolves to `lite` instead of `off` at BOTH layers: `MapConfig.minimality`
+  (`src/mapify_cli/config/project_config.py`) and the runner's
+  `_load_minimality_level` (`map_step_runner.py`). Projects that omit the key now
+  get the advisory complexity-lens / minimality doctrine (advisory-only — never a
+  verdict gate). Opt out with `minimality: off`. **Opt-out hardening:** YAML 1.1
+  parses bare `off` as boolean `False`, which the str field previously rejected and
+  silently dropped to the default — now the loader coerces a boolean `minimality`
+  back to the `off` level before type-checking, so `minimality: off` (quoted or
+  bare) reliably opts out. `generate_default_config` already wrote `minimality:
+  lite` for new projects, so generated configs are unchanged; only keyless/invalid
+  fallbacks move from `off` to `lite`. Regression tests pin the new default, the
+  bare-`off` opt-out, the invalid→`lite` fallback, run-health stamping, and the
+  doctrine/lens activation at the lite default.
+
 ### Added
 - **`/map-plan` Step 0.6: Verify Live/Runtime State gate (#243).** A new
   `depends_on_runtime_state` workflow-fit signal (6th signal on
