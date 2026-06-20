@@ -2044,6 +2044,44 @@ class TestPlanDiscoveryResearchNamespace:
             f"{map_plan_path} must save new discovery through the shared research API."
         )
 
+    def test_map_plan_documents_runtime_state_gate(
+        self, map_plan_path: Path
+    ) -> None:
+        """Every map-plan surface (Claude + Codex) must ship the Step 0.6 gate (#243)."""
+        content = map_plan_path.read_text(encoding="utf-8")
+        assert "depends_on_runtime_state" in content, (
+            f"{map_plan_path} must document the depends_on_runtime_state signal."
+        )
+        assert "Step 0.6" in content, (
+            f"{map_plan_path} must define the Step 0.6 runtime-state gate."
+        )
+        assert "Verify Live/Runtime State" in content, (
+            f"{map_plan_path} must name the Verify Live/Runtime State gate."
+        )
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-plan/plan-reference.md"),
+            Path("src/mapify_cli/templates/skills/map-plan/plan-reference.md"),
+        ],
+        ids=["claude-dev", "claude-template"],
+    )
+    def plan_reference_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_plan_reference_details_runtime_state_gate(
+        self, plan_reference_path: Path
+    ) -> None:
+        """The reference must hold the Step 0.6 detail the compact SKILL body points to."""
+        content = plan_reference_path.read_text(encoding="utf-8")
+        assert "## Verify Live/Runtime State" in content, (
+            f"{plan_reference_path} must hold the Verify Live/Runtime State section "
+            "the SKILL body links to (#verify-liveruntime-state anchor)."
+        )
+        assert "Unverified Runtime Assumption" in content, (
+            f"{plan_reference_path} must document the record-the-check contract."
+        )
+
     def test_codex_map_plan_no_longer_writes_legacy_findings(self) -> None:
         path = (
             Path(__file__).parent.parent

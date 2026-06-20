@@ -672,6 +672,9 @@ def test_record_workflow_fit_creates_decision_and_manifest(branch_workspace):
     assert decision["recommended_workflow"] == "map-plan"
     assert decision["needs_map"] is True
     assert decision["signals"]["test_first_required"] is True
+    # Legacy positional path does not pass depends_on_runtime_state; it must
+    # default False so old callers stay backward compatible (Step 0.6 skipped).
+    assert decision["signals"]["depends_on_runtime_state"] is False
 
     manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
     stage = manifest["stages"]["workflow_fit"]
@@ -702,6 +705,78 @@ def test_record_workflow_fit_direct_edit_marks_needs_map_false(branch_workspace)
     stage = manifest["stages"]["workflow_fit"]
     assert stage["metadata"]["recommended_workflow"] == "direct-edit"
     assert stage["metadata"]["needs_map"] is False
+
+
+def test_record_workflow_fit_persists_depends_on_runtime_state_signal(
+    branch_workspace,
+):
+    """The Step 0.6 trigger signal must round-trip into workflow-fit.json."""
+    result = map_step_runner.record_workflow_fit(
+        "map-plan",
+        expected_diff_size="large",
+        depends_on_runtime_state="true",
+        decision_summary="Migration plan depends on live prod enum labels.",
+    )
+
+    assert result["status"] == "success"
+    decision = json.loads((branch_workspace / "workflow-fit.json").read_text())
+    assert decision["signals"]["depends_on_runtime_state"] is True
+
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    stage = manifest["stages"]["workflow_fit"]
+    assert stage["metadata"]["signals"]["depends_on_runtime_state"] is True
+
+
+def test_record_workflow_fit_cli_keyword_flag_arms_runtime_state(tmp_path):
+    """The --depends-on-runtime-state keyword flag must persist the signal."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "record_workflow_fit",
+            "map-plan",
+            "--diff-size",
+            "small",
+            "--depends-on-runtime-state",
+            "1",
+            "--summary",
+            "depends on prod state",
+        ],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    written = list(tmp_path.glob(".map/*/workflow-fit.json"))
+    assert written, "record_workflow_fit CLI did not write workflow-fit.json"
+    decision = json.loads(written[0].read_text(encoding="utf-8"))
+    assert decision["signals"]["depends_on_runtime_state"] is True
+
+
+def test_record_workflow_fit_cli_runtime_state_defaults_false(tmp_path):
+    """Omitting the flag (keyword path) leaves the signal False."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "record_workflow_fit",
+            "map-plan",
+            "--diff-size",
+            "small",
+        ],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    written = list(tmp_path.glob(".map/*/workflow-fit.json"))
+    assert written, "record_workflow_fit CLI did not write workflow-fit.json"
+    decision = json.loads(written[0].read_text(encoding="utf-8"))
+    assert decision["signals"]["depends_on_runtime_state"] is False
 
 
 def test_record_plan_artifacts_updates_manifest(branch_workspace):

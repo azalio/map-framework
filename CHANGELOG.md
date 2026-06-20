@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`/map-plan` Step 0.6: Verify Live/Runtime State gate (#243).** A new
+  `depends_on_runtime_state` workflow-fit signal (6th signal on
+  `record_workflow_fit`, default `false`; CLI flag `--depends-on-runtime-state`,
+  legacy positional path unchanged) arms a gated **Step 0.6** between the
+  Already-Implemented gate (Step 0.5) and decomposition. It is the runtime
+  analogue of Step 0.5: where 0.5 stops you re-planning code that already
+  exists, 0.6 stops you planning against runtime facts that have drifted
+  (prod row counts, enum labels actually present in a live DB, a column that
+  already exists, the applied migration head, a live feature-flag value).
+  Each assumption is either verified read-only through an approved source
+  (replica/dashboard/metadata query — cite the derived fact, never persist
+  prod rows/PII/secrets into `.map/<branch>/` artifacts) or recorded as an
+  `Unverified Runtime Assumption` in the spec's Open Questions / Risks with the
+  exact check to run, with dependent subtasks marked `provisional`. The skill is
+  a planning-time gate, not a runtime tool — it suggests the read-only checks and
+  defers execution to the operator or an authorized sub-agent; it never
+  hard-stops merely because prod is unreachable. Mirrored into the Codex
+  `$map-plan` surface; detail + examples + safety guardrails live in the bundled
+  `plan-reference.md` (the active SKILL body stays under its line budget).
+  `WORKFLOW_FIT_DECISION_SCHEMA` gains the optional `depends_on_runtime_state`
+  boolean (not `required`, so pre-existing `workflow-fit.json` files still
+  validate). Design pressure-tested via llm-council (deep mode). New regression
+  tests pin the signal round-trip, the keyword CLI flag, the legacy-positional
+  default, schema backward-compat, and the gate prose across all rendered
+  Claude + Codex trees.
 - **Opt-in cache-friendly prompt layering for reviewer fan-out (Part of #231).**
   `.map/config.yaml` now accepts `prompt_layering: docs_first | stable_first`
   (default `docs_first`, behavior unchanged). `docs_first` keeps the historical

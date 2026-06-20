@@ -47,6 +47,30 @@ def test_validate_workflow_fit_decision_schema():
             "needs_independent_review": True,
             "has_clear_acceptance_criteria": False,
             "test_first_required": True,
+            "depends_on_runtime_state": True,
+        },
+        "updated_at": "2026-04-12T13:30:00",
+    }
+
+    is_valid, errors = MODULE.validate_artifact(
+        artifact, MODULE.WORKFLOW_FIT_DECISION_SCHEMA
+    )
+    assert is_valid, f"Errors: {errors}"
+
+
+def test_validate_workflow_fit_decision_schema_accepts_legacy_without_runtime_state():
+    """workflow-fit.json written before depends_on_runtime_state must still validate."""
+    artifact = {
+        "version": "1.0",
+        "recommended_workflow": "map-plan",
+        "needs_map": True,
+        "decision_summary": "Legacy decision predating the runtime-state signal.",
+        "signals": {
+            "expected_diff_size": "large",
+            "has_new_invariants": True,
+            "needs_independent_review": True,
+            "has_clear_acceptance_criteria": False,
+            "test_first_required": True,
         },
         "updated_at": "2026-04-12T13:30:00",
     }

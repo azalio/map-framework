@@ -2083,6 +2083,7 @@ def record_workflow_fit(
     has_clear_acceptance_criteria: object = True,
     test_first_required: object = False,
     decision_summary: str = "",
+    depends_on_runtime_state: object = False,
     branch: Optional[str] = None,
 ) -> dict[str, object]:
     """Persist workflow-fit decision and update the artifact manifest."""
@@ -2109,6 +2110,7 @@ def record_workflow_fit(
             has_clear_acceptance_criteria
         ),
         "test_first_required": _parse_boolish(test_first_required),
+        "depends_on_runtime_state": _parse_boolish(depends_on_runtime_state),
     }
     needs_map = route != "direct-edit"
     payload = {
@@ -10765,9 +10767,12 @@ if __name__ == "__main__":
         #     record_workflow_fit <workflow> [--diff-size SIZE]
         #         [--has-new-invariants 0|1] [--needs-independent-review 0|1]
         #         [--has-clear-acceptance-criteria 0|1]
-        #         [--test-first-required 0|1] [--summary "..."]
+        #         [--test-first-required 0|1]
+        #         [--depends-on-runtime-state 0|1] [--summary "..."]
         # The keyword form prevents bool-order mix-ups the operator just
-        # called out.
+        # called out. The legacy positional path does NOT accept
+        # depends_on_runtime_state — it defaults False there (Step 0.6 skipped),
+        # so old callers stay backward compatible.
         recommended_workflow = sys.argv[2]
         rest = list(sys.argv[3:])
         if rest and not rest[0].startswith("--") and len(rest) >= 5:
@@ -10798,6 +10803,9 @@ if __name__ == "__main__":
                 ),
                 test_first_required=_flag("test-first-required", "0"),
                 decision_summary=_flag("summary", ""),
+                depends_on_runtime_state=_flag(
+                    "depends-on-runtime-state", "0"
+                ),
             )
         print(json.dumps(result, indent=2))
 

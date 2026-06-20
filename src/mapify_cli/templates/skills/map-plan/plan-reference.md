@@ -94,8 +94,56 @@ Remaining gap (planned):
   - token refresh endpoint + rotation (no existing implementation found)
 ```
 
+## Verify Live/Runtime State
+
+Detail for **Step 0.6** (gated on `depends_on_runtime_state=true`). Static discovery (Step 0 / Step 0.5) reads only the repo; it cannot see prod row counts, the enum labels actually present in a live DB, a column that already exists, the applied migration head, or a live feature-flag value. When a plan's correctness rests on those, verify them empirically or record the exact check — never copy them from a design doc as fact.
+
+**Signals that the plan depends on runtime state** (any one arms the gate):
+- a DB schema/data migration or a data backfill;
+- "measured on prod" / "currently" / "as of" numbers in the source request;
+- count-based acceptance criteria **referencing current state** (e.g. "migrate the 10k existing rows"), not a forward design target ("handle 1k RPS");
+- a feature-flag / config cutover, or capacity / latency assumptions about the running system;
+- "this column/table/enum value already exists" claims.
+
+**Contract per assumption:**
+
+| Situation | Action |
+|---|---|
+| Verifiable read-only now | Confirm via an approved read-only source (read replica, dashboard, runbook, `INFORMATION_SCHEMA` / `pg_enum` / migration-head introspection). Record the **fact** + its source. |
+| Prod unreachable / not checked | Record an `Unverified Runtime Assumption` under spec Open Questions / Risks with the **exact read-only check** + safe source; mark dependent subtasks `provisional`. |
+
+**Safety guardrails (the gate suggests checks; it does not run them):**
+- Prefer bounded / metadata queries (`INFORMATION_SCHEMA`, `pg_class` reltuples estimate, `EXISTS (SELECT 1 … LIMIT 1)`, migration-head table, flag-service lookup) over full scans / `COUNT(*)` on large tables.
+- Never write, mutate, enqueue jobs, flip flags, or run migrations. Read-only, on a replica where possible, with a timeout.
+- Cite the derived fact, not the raw rows. Do NOT paste PII, secrets, credentials, or bulky output into the spec or `.map/<branch>/` artifacts — they may be committed.
+- No isolation-level / `NOLOCK` / dirty-read hints.
+
+Runtime state is broader than SQL: feature flags, dashboards, external-service config, cloud resources, deployment/cutover state, and observability data all count.
+
+**Example — record an unverified runtime assumption (prod unreachable):**
+
+```text
+Unverified Runtime Assumption (-> spec Open Questions / Risks):
+  - Claim:   `type` enum has 15 labels (taken from the Go constants).
+    Why it matters: ST-002 abort-on-unmapped mapping enumerates the labels.
+    Status:  UNVERIFIED (no prod access this session).
+    Check:   read-only `SELECT enumlabel FROM pg_enum
+             JOIN pg_type t ON t.oid=enumtypid WHERE t.typname='type';`
+             run on a read replica.
+    Impact:  ST-002, ST-003 marked provisional until the live label set is confirmed.
+```
+
+**Example — verified read-only:**
+
+```text
+Verified Runtime Fact:
+  - `priority` column already exists on `items` (source: INFORMATION_SCHEMA on read replica).
+    Impact: migration uses ADD COLUMN IF NOT EXISTS; ST-006 must not overwrite existing values.
+```
+
 ## Troubleshooting
 
+- Plan depends on runtime/production state: set `depends_on_runtime_state=true` at the Workflow-Fit Gate and run Step 0.6 (Verify Live/Runtime State). Verify each assumption read-only, or record it as an `Unverified Runtime Assumption` with the exact check and mark dependent subtasks `provisional`. Remember Step 0.5 (`file:line`) proves the code exists, not that the migration/flag is applied in prod.
 - Existing `step_state.json`: planning already completed; print checkpoint and stop — but only when the Resume-Detection `verdict` is `resume`. The `.map/<branch>/` layout is single-plan-per-branch, so a branch can host several sequential plans over its lifetime; `check_plan_resume "$ARGUMENTS"` compares the prior plan's goal against the current request and returns `goal_mismatch` when they differ. On `goal_mismatch`, do NOT report "plan complete" and do NOT overwrite the prior `spec`/`blueprint`/`task_plan`; archive or rename the existing `.map/<branch>/` artifacts (or plan on a fresh branch) with operator confirmation, then plan the new goal.
 - `validate_blueprint_contract` fails: fix decomposer output before task plan creation.
 - Coverage key missing from validation criteria: add bracketed criteria such as `VC1 [AC-1]: ...`.
