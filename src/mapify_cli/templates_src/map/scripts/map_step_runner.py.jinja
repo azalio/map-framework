@@ -2839,6 +2839,79 @@ def validate_blueprint_contract(
                         f"{requirement_id!r} as {lineage_tag}"
                     )
 
+    # --- Forward-coverage gate (ST-005) ---
+    # Resolve spec path: .map/<branch>/spec_<branch>.md
+    _spec_path = get_branch_dir(branch_name) / f"spec_{branch_name}.md"
+    try:
+        _spec_text = _spec_path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        _spec_text = ""
+
+    _fc_status: str
+    _fc_missing: list[str]
+    if not _spec_text:
+        # Treat unreadable / absent file as absent index
+        _fc_status = "absent"
+        _fc_missing = []
+        warnings.append(
+            "Forward-coverage: no Requirements Index found in "
+            f"spec_{branch_name}.md (run make render-templates / populate the "
+            "mapify:requirements-index:v1 block); forward-coverage check skipped"
+        )
+        _fc_result: dict[str, object] = {"requirements": [], "status": "absent", "warnings": []}
+    else:
+        _fc_result = parse_requirements_index(_spec_text)
+        _fc_status = str(_fc_result.get("status", "absent"))
+        _fc_missing = []
+
+        # Fold parser warnings into the validator warnings list.
+        for _pw in (_fc_result.get("warnings") or []):
+            warnings.append(f"Requirements Index: {_pw}")
+
+        if _fc_status == "absent":
+            warnings.append(
+                "Forward-coverage: no Requirements Index found in "
+                f"spec_{branch_name}.md (run make render-templates / populate the "
+                "mapify:requirements-index:v1 block); forward-coverage check skipped"
+            )
+        elif _fc_status == "present_empty":
+            # PASS — empty index means no requirements declared; nothing to check.
+            pass
+        elif _fc_status == "present_nonempty":
+            _index_ids = [
+                r["id"]
+                for r in (_fc_result.get("requirements") or [])
+                if isinstance(r, dict) and r.get("id")
+            ]
+            # Preserve order, deduplicate while keeping first occurrence.
+            _seen: set[str] = set()
+            _deduped_ids: list[str] = []
+            for _iid in _index_ids:
+                if _iid not in _seen:
+                    _seen.add(_iid)
+                    _deduped_ids.append(_iid)
+
+            _cov_keys: set[str] = set(coverage_map.keys()) if isinstance(coverage_map, dict) else set()
+            _fc_missing = [i for i in _deduped_ids if i not in _cov_keys]
+
+            if _fc_missing:
+                _fc_msg = (
+                    f"Forward-coverage: spec requirement(s) {_fc_missing} "
+                    "have no owner in coverage_map"
+                )
+                _strict = bool(os.environ.get("MAP_STRICT_COVERAGE"))
+                if _strict:
+                    errors.append(_fc_msg)
+                else:
+                    warnings.append(_fc_msg)
+        elif _fc_status == "malformed":
+            errors.append(
+                "Forward-coverage: Requirements Index is malformed "
+                "(see the mapify:requirements-index:v1 template in plan-reference.md.jinja)"
+            )
+
+    _strict_flag = bool(os.environ.get("MAP_STRICT_COVERAGE"))
+
     return {
         "valid": not errors,
         "errors": errors,
@@ -2850,6 +2923,11 @@ def validate_blueprint_contract(
         "forward_dep_violations": forward_dep_violations,
         "deferred_yagni_count": deferred_yagni_count,
         "requires_pruning_approval": requires_pruning_approval,
+        "forward_coverage": {
+            "status": _fc_status,
+            "missing_ids": _fc_missing,
+            "strict": _strict_flag,
+        },
     }
 
 
