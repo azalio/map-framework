@@ -71,15 +71,15 @@ PRUNING_MINIMALITY_LEVELS = frozenset({"full", "ultra"})
 # Agent-prompt layering (#231). Controls the order of stable vs variable
 # sections in the user-message portion of repeated same-workflow dispatches.
 #   docs_first   (default): variable <documents> first, stable contract last.
-#                Best for model attention; hostile to prefix caching because
-#                the variable prefix re-invalidates the cache every dispatch.
+#                Best for recency/attention ("lost-in-the-middle").
 #   stable_first: stable contract (task/policy/instructions/expected_output)
-#                first, variable <documents> last. The stable prefix is then
-#                byte-identical across same-role dispatches, which is the
-#                precondition for automatic prefix-cache hits.
-# Default stays docs_first: the attention-vs-cache tradeoff must be decided
-# with measured data (Monitor approval + cache_hit% + cost) on a real
-# multi-subtask run before the default can flip. See docs/ARCHITECTURE.md.
+#                first, variable <documents> last — a byte-identical prefix
+#                across same-role dispatches.
+# Resolved (#231): the choice is cache-neutral at the Claude Code Task layer —
+# the harness owns the API call and cache_control, and MAP's stable/variable
+# seam lives mid-block, so it can never be a cache boundary. stable_first is
+# kept opt-in because it still changes token order/attention (NOT a behavior
+# no-op); it is never remapped to docs_first. See docs/ARCHITECTURE.md.
 VALID_PROMPT_LAYERING = frozenset({"docs_first", "stable_first"})
 DEFAULT_PROMPT_LAYERING = "docs_first"
 REQUIREDNESS_CATEGORIES = frozenset(
@@ -5547,9 +5547,11 @@ def _layer_prompt_sections(
     docs_first (default): variable documents first, stable contract after —
         byte-identical to the historical envelope (good for attention).
     stable_first: stable contract first, variable documents last — the stable
-        prefix is then byte-identical across same-role dispatches so an
-        automatic prefix cache can hit it (#231). An unknown mode falls back to
-        docs_first so a config typo never changes behavior.
+        prefix is then byte-identical across same-role dispatches. Resolved
+        cache-neutral at the Claude Code Task layer (#231: the harness owns
+        cache_control and the seam is mid-block), but it still changes token
+        order/attention. An unknown mode falls back to docs_first so a config
+        typo never changes behavior.
     """
     if layering == "stable_first":
         ordered = [*stable_sections, documents_section]
