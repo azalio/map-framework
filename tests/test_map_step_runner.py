@@ -1854,6 +1854,83 @@ def test_validate_blueprint_contract_rejects_unexplained_soft_constraint_tradeof
     ), result["errors"]
 
 
+def test_multinode_cycle_already_rejected(branch_workspace):
+    # ST-007 spike regression guard — proves tri-color DFS is unnecessary.
+    #
+    # Spike finding: a multi-node cycle (ST-001->ST-003, ST-002->ST-001, ST-003->ST-002,
+    # i.e. a->b->c->a) is ALREADY rejected by the existing validate_blueprint_contract
+    # via two independent mechanisms:
+    #   1. forward_dep_violations: the forward-dependency-ordering rule requires every
+    #      dependency to be declared EARLIER in subtasks[]; a cycle cannot satisfy that
+    #      for all edges, so at least one violation is flagged.
+    #   2. _topo_sort_subtasks returns (None, "dependency cycle detected; skipped reorder").
+    # Conclusion: dedicated tri-color DFS is redundant; this test is the guard.
+    cycle_blueprint = {
+        "hard_constraints": [
+            {"id": "HC-1", "description": "Must reject cyclic plans"},
+        ],
+        "soft_constraints": [],
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "First cyclic node",
+                "aag_contract": "A -> a() -> x",
+                "dependencies": ["ST-003"],
+                "affected_files": ["src/a.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1 [HC-1]: cycle rejected"],
+            },
+            {
+                "id": "ST-002",
+                "title": "Second cyclic node",
+                "aag_contract": "B -> b() -> y",
+                "dependencies": ["ST-001"],
+                "affected_files": ["src/b.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1 [HC-1]: cycle rejected"],
+            },
+            {
+                "id": "ST-003",
+                "title": "Third cyclic node",
+                "aag_contract": "C -> c() -> z",
+                "dependencies": ["ST-002"],
+                "affected_files": ["src/c.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1 [HC-1]: cycle rejected"],
+            },
+        ],
+        "coverage_map": {"HC-1": "ST-001"},
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(cycle_blueprint))
+
+    result = map_step_runner.validate_blueprint_contract(
+        branch=branch_workspace.name
+    )
+
+    # Mechanism 1: forward-dep-ordering rule rejects the cycle.
+    assert result["valid"] is False
+    assert len(result["forward_dep_violations"]) > 0, (
+        "Expected forward_dep_violations for a->b->c->a cycle; "
+        f"got: {result['forward_dep_violations']}"
+    )
+
+    # Mechanism 2: topo-sort detects the cycle and returns None.
+    subtasks = cycle_blueprint["subtasks"]
+    topo_result, topo_msg = map_step_runner._topo_sort_subtasks(subtasks)
+    assert topo_result is None, (
+        f"Expected _topo_sort_subtasks to return None for a cycle; got: {topo_result!r}"
+    )
+    assert "cycle" in (topo_msg or "").lower(), (
+        f"Expected cycle message from _topo_sort_subtasks; got: {topo_msg!r}"
+    )
+
+
 def test_record_test_contract_handoff_creates_json_and_manifest(branch_workspace):
     (branch_workspace / "test_contract_ST-001.md").write_text(
         "# Test Contract\n", encoding="utf-8"
