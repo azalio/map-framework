@@ -462,7 +462,8 @@ class TestProjectConfig:
         assert cfg.confidence_threshold == 0.7
         assert "src/" in cfg.safe_path_prefixes
         assert cfg.language == ""
-        assert cfg.minimality == "off"
+        # Phase 3 (#183): global default flipped off -> lite.
+        assert cfg.minimality == "lite"
         # /compact nudge is opt-in: the meter must NOT fire unless the user
         # explicitly switches compression_policy to "auto" or "aggressive".
         assert cfg.compression_policy == "never"
@@ -473,7 +474,8 @@ class TestProjectConfig:
 
         cfg = load_map_config(tmp_path)
         assert cfg.profile == "full"  # default
-        assert cfg.minimality == "off"  # absence preserves existing behavior
+        # Phase 3 (#183): keyless config now defaults to lite (was off).
+        assert cfg.minimality == "lite"
 
     def test_load_map_config_empty_file(self, tmp_path):
         from mapify_cli.config.project_config import load_map_config
@@ -568,12 +570,25 @@ class TestProjectConfig:
 
             assert cfg.minimality == value
 
-    def test_load_map_config_invalid_minimality_falls_back_to_off(self, tmp_path):
+    def test_load_map_config_invalid_minimality_falls_back_to_lite(self, tmp_path):
         from mapify_cli.config.project_config import load_map_config
 
         map_dir = tmp_path / ".map"
         map_dir.mkdir()
         (map_dir / "config.yaml").write_text("minimality: maximalist\n")
+
+        cfg = load_map_config(tmp_path)
+
+        # Phase 3 (#183): invalid value falls back to the new default lite.
+        assert cfg.minimality == "lite"
+
+    def test_load_map_config_yaml_bool_off_opts_out_to_off(self, tmp_path):
+        """`minimality: off` (unquoted) is YAML bool False; it must still opt out (#183)."""
+        from mapify_cli.config.project_config import load_map_config
+
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text("minimality: off\n")
 
         cfg = load_map_config(tmp_path)
 

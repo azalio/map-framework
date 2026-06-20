@@ -10426,10 +10426,14 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
 
 
 def _load_minimality_level(project_dir: Path) -> str:
-    """Return the configured minimality level from .map/config.yaml."""
-    level = _map_config_str(project_dir, "minimality", "off")
+    """Return the configured minimality level from .map/config.yaml.
+
+    Phase 3 (#183) flipped the keyless default off -> lite: a project whose
+    config omits `minimality` now runs at `lite` (advisory complexity-lens only).
+    """
+    level = _map_config_str(project_dir, "minimality", "lite")
     if level not in VALID_MINIMALITY_LEVELS:
-        return "off"
+        return "lite"
     return level
 
 

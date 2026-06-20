@@ -211,7 +211,8 @@ def test_write_run_health_report_creates_report_and_manifest(branch_workspace):
     assert result["status"] == "success"
     report = json.loads((branch_workspace / "run_health_report.json").read_text())
     assert report["terminal_status"] == "blocked"
-    assert report["minimality"] == "off"
+    # Phase 3 (#183): keyless config now resolves to the lite default.
+    assert report["minimality"] == "lite"
     assert report["completed_step_count"] == 3
     assert report["pending_step_count"] == 1
     assert report["artifacts"]["step_state"]["present"] is True
@@ -3119,7 +3120,10 @@ class TestBuildContextBlock:
         assert "[x] ST-001" in result
         assert "# Upstream Results" in result
         assert "ST-001: files=" in result
-        assert "<MAP_Minimality_Doctrine>" not in result
+        # Phase 3 (#183): the keyless default is now lite, so the Actor context
+        # carries the minimality doctrine block by default.
+        assert "<MAP_Minimality_Doctrine>" in result
+        assert "Level: lite" in result
 
     def test_build_context_block_includes_monitor_misprune_guard_context(
         self, branch_workspace
@@ -3201,7 +3205,7 @@ class TestBuildContextBlock:
         assert "Decision ladder" in result
         assert "map:simplification:" in result
 
-    def test_build_context_block_invalid_minimality_disables_doctrine(
+    def test_build_context_block_invalid_minimality_falls_back_to_lite(
         self, branch_workspace
     ):
         bp = {
@@ -3224,7 +3228,10 @@ class TestBuildContextBlock:
 
         result = map_step_runner.build_context_block("test-branch", "ST-001")
 
-        assert "<MAP_Minimality_Doctrine>" not in result
+        # Phase 3 (#183): an invalid value falls back to the lite default
+        # (was off), so the doctrine block is present at Level: lite.
+        assert "<MAP_Minimality_Doctrine>" in result
+        assert "Level: lite" in result
 
     def test_subtask_boundary_compact_check_uses_standalone_config(
         self, branch_workspace, monkeypatch
@@ -6981,6 +6988,13 @@ class TestCreateReviewBundle:
     ):
         """Budget diagnostics must not block prompt generation on I/O errors."""
         del branch_workspace
+
+        # Pin minimality off so the prompt set is the 3 reviewers regardless of
+        # the global default — the complexity_lens add is covered by its own test.
+        # (Phase 3 (#183) flipped the keyless default to lite, which would add a
+        # 4th prompt and make this write-error test's assertion non-deterministic.)
+        Path(".map").mkdir(exist_ok=True)
+        (Path(".map") / "config.yaml").write_text("minimality: off\n", encoding="utf-8")
 
         def fail_write(path, payload):
             del path, payload

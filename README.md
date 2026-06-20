@@ -205,10 +205,10 @@ MAP is inspired by the [MAP cognitive architecture](https://github.com/Shanka123
 
 ```yaml
 # .map/config.yaml
-minimality: lite   # new installs default to lite; existing repos without the key stay off
+minimality: lite   # default for ALL projects incl. keyless configs (#183); set 'off' to opt out
 ```
 
-Allowed values: `off`, `lite`, `full`, `ultra`. Phase 1 ships conservative `lite` defaults: Actor prefers the fewest moving parts, Monitor blocks scope drift only when it affects required behavior, and Evaluator scores simplicity without letting it hide missing required work. `/map-review` also adds an advisory what-to-delete lens when minimality is not `off`; its `net: -N` estimate is informational, not a gate. In `full`/`ultra`, the decomposer may place speculative omissions in `blueprint.deferred_yagni`; those items must be shown during plan approval and can be restored before execution with `python3 .map/scripts/map_orchestrator.py restore_deferred_yagni YG-NNN`. Maintainers can inspect local rollout readiness with `mapify minimality-report --json`, which compares complete `off` and opt-in run-health samples before considering the Phase 3 default flip, reports missing sample gaps and cohort branch names, lists the next telemetry actions, and emits a candidate-only `manual_review_gate` with opt-in branches plus a clarity/underscope checklist before promotion.
+Allowed values: `off`, `lite`, `full`, `ultra`. The global default is `lite` (Phase 3 flip, #183 — keyless configs included; set `off` to opt out). `lite` is conservative: Actor prefers the fewest moving parts, Monitor blocks scope drift only when it affects required behavior, and Evaluator scores simplicity without letting it hide missing required work. `/map-review` also adds an advisory what-to-delete lens when minimality is not `off`; its `net: -N` estimate is informational, not a gate. In `full`/`ultra`, the decomposer may place speculative omissions in `blueprint.deferred_yagni`; those items must be shown during plan approval and can be restored before execution with `python3 .map/scripts/map_orchestrator.py restore_deferred_yagni YG-NNN`. Maintainers can still inspect local rollout telemetry with `mapify minimality-report --json`, which compares complete `off` and opt-in run-health cohorts, reports sample gaps and cohort branch names, lists next telemetry actions, and emits a candidate-only `manual_review_gate` with opt-in branches plus a clarity/underscope checklist.
 
 **Context-compression policy** (controls the `/compact` nudge; default `never` — opt-in):
 
