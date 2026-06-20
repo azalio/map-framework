@@ -2225,6 +2225,120 @@ def record_plan_artifacts(branch: Optional[str] = None) -> dict[str, object]:
     }
 
 
+_REQ_INDEX_OPEN = "<!-- mapify:requirements-index:v1 -->"
+_REQ_INDEX_CLOSE = "<!-- /mapify:requirements-index:v1 -->"
+_REQ_ID_RE = re.compile(r"^(AC|INV|HC|CCR)-[1-9][0-9]*$")
+_REQ_KIND_VOCAB = frozenset(
+    {"acceptance_criterion", "invariant", "hard_constraint", "cross_cutting"}
+)
+
+
+def parse_requirements_index(spec_text: str) -> dict[str, object]:
+    """Parse the versioned Requirements Index from a spec markdown string.
+
+    Contract:
+    - Locates the index by the sentinel PAIR ``<!-- mapify:requirements-index:v1 -->``
+      (open) and ``<!-- /mapify:requirements-index:v1 -->`` (close).  Only the
+      fenced ```yaml block between those two sentinels is authoritative; a
+      sentinel-shaped string anywhere else in the prose is ignored.
+    - Parses the inner YAML via a lazy ``import yaml``; both ``ImportError`` and
+      ``yaml.YAMLError`` yield ``status='malformed'`` — never an uncaught exception.
+    - Returns::
+
+        {
+            'requirements': [{'id': str, 'kind': str}, ...],
+            'status': 'absent' | 'malformed' | 'present_empty' | 'present_nonempty',
+            'warnings': [str, ...],
+        }
+
+    Status semantics:
+    - ``absent``          — sentinel pair not found in the text.
+    - ``malformed``       — open sentinel found but: no close sentinel, no inner
+                            yaml fence, YAML parse error, or top-level shape is not
+                            ``{requirements: list}``.
+    - ``present_empty``   — parsed successfully; ``requirements`` is ``[]``.
+    - ``present_nonempty``— parsed successfully; ``requirements`` has >=1 entry.
+
+    Validation (warn-not-normalize, never silently dropped):
+    - Canonical ID regex: ``^(AC|INV|HC|CCR)-[1-9][0-9]*$``
+      (uppercase prefix, no leading zero). Non-canonical IDs are kept as-is and
+      a warning is appended.
+    - Closed kind vocabulary: ``{acceptance_criterion, invariant,
+      hard_constraint, cross_cutting}``.  Out-of-vocab kinds are kept as-is and
+      a warning is appended.
+
+    Pure function: no file I/O, no LLM call (HC-2, HC-6).
+    """
+    warnings: list[str] = []
+
+    # Step 1: locate the open sentinel.
+    open_pos = spec_text.find(_REQ_INDEX_OPEN)
+    if open_pos == -1:
+        return {"requirements": [], "status": "absent", "warnings": warnings}
+
+    after_open = spec_text[open_pos + len(_REQ_INDEX_OPEN):]
+
+    # Step 2: require the close sentinel to follow the open sentinel.
+    close_pos = after_open.find(_REQ_INDEX_CLOSE)
+    if close_pos == -1:
+        return {"requirements": [], "status": "malformed", "warnings": warnings}
+
+    between = after_open[:close_pos]
+
+    # Step 3: require a fenced ```yaml block inside the sentinel pair.
+    fence_open_re = re.compile(r"```yaml\s*\n")
+    fence_match = fence_open_re.search(between)
+    if not fence_match:
+        return {"requirements": [], "status": "malformed", "warnings": warnings}
+
+    after_fence = between[fence_match.end():]
+    fence_close = after_fence.find("```")
+    if fence_close == -1:
+        return {"requirements": [], "status": "malformed", "warnings": warnings}
+
+    yaml_text = after_fence[:fence_close]
+
+    # Step 4: parse YAML (lazy import; treat ImportError == YAMLError == malformed).
+    try:
+        import yaml  # noqa: PLC0415
+        data = yaml.safe_load(yaml_text)
+    except Exception:
+        return {"requirements": [], "status": "malformed", "warnings": warnings}
+
+    # Step 5: validate top-level shape.
+    if not isinstance(data, dict) or not isinstance(data.get("requirements"), list):
+        return {"requirements": [], "status": "malformed", "warnings": warnings}
+
+    raw_entries: list[object] = data["requirements"]
+
+    # Step 6: validate each entry; warn-not-normalize.
+    requirements: list[dict[str, str]] = []
+    for entry in raw_entries:
+        if not isinstance(entry, dict):
+            warnings.append(f"requirements entry is not a mapping: {entry!r}")
+            requirements.append(entry)  # type: ignore[arg-type]
+            continue
+
+        req_id = entry.get("id", "")
+        req_kind = entry.get("kind", "")
+
+        if not _REQ_ID_RE.match(str(req_id)):
+            warnings.append(
+                f"non-canonical requirement id {req_id!r} "
+                f"(expected ^(AC|INV|HC|CCR)-[1-9][0-9]*$)"
+            )
+        if str(req_kind) not in _REQ_KIND_VOCAB:
+            warnings.append(
+                f"unknown requirement kind {req_kind!r} "
+                f"(expected one of {sorted(_REQ_KIND_VOCAB)})"
+            )
+
+        requirements.append({"id": str(req_id), "kind": str(req_kind)})
+
+    status = "present_nonempty" if requirements else "present_empty"
+    return {"requirements": requirements, "status": status, "warnings": warnings}
+
+
 def validate_blueprint_contract(
     blueprint_path: str = "", branch: Optional[str] = None
 ) -> dict[str, object]:
