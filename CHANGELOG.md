@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **PyYAML promoted to a hard runtime dependency (closes #245).** `pyyaml` was
+  declared only in the `test`/`dev` optional groups, so a normal install
+  (`uv tool install` / `pipx` / `pip install mapify-cli` without extras) shipped
+  without PyYAML. `project_config.load_map_config` then hit `ImportError`, warned
+  once, and **silently fell back to default config** — the user's entire
+  `.map/config.yaml` (`minimality`, `profile`, `compression_policy`, thresholds,
+  `language`, `prompt_layering`, …) was ignored by every config-dependent CLI path
+  (`minimality-report`, `mapify init` compression/sofa overrides). CI never caught
+  it because the dev/test groups *do* include `pyyaml`. Fix adds `pyyaml>=6.0.0` to
+  `[project].dependencies` in `pyproject.toml`. (The `.map/scripts/map_step_runner.py`
+  runner was unaffected — it reads config via a stdlib-only scalar parser — which is
+  why the defect hid.) Regression tests assert `pyyaml` is in the runtime dependency
+  table and that a non-default `.map/config.yaml` value actually loads.
+
 ### Changed
 - **Global `minimality` default flipped `off` → `lite` (Phase 3, closes #183).**
   The promotion gate (`mapify minimality-report`) reached `candidate` and the
