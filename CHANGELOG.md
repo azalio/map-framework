@@ -23,6 +23,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   table and that a non-default `.map/config.yaml` value actually loads.
 
 ### Changed
+- **Prompt layering resolved as cache-neutral; `docs_first` stays the default (closes #231).**
+  The remaining field-gated step of #231 — measure `docs_first` vs `stable_first`
+  on a real multi-subtask run, then maybe flip the global default — is resolved
+  **on mechanism, not a fabricated measurement.** Anthropic prompt caching writes
+  a cache entry only at an explicit `cache_control` breakpoint on a content-block
+  boundary and hits require a byte-identical prefix up to that block; Claude Code's
+  Task tool owns the API call and **all** breakpoint placement, and MAP joins its
+  sections into one user-message string so the stable/variable seam lives *mid-block*
+  and can never become a cache boundary. The only byte-identical cross-dispatch
+  prefix (`tools` + role system prompt) is independent of `prompt_layering`, so both
+  modes benefit equally. Therefore `stable_first` yields **no incremental prefix-cache
+  hit** under the current Claude Code Task architecture. **No behavior change:** the
+  global default stays `docs_first`; `stable_first` remains opt-in and is **not** a
+  behavior no-op (it still changes token order/attention) and is never silently
+  remapped. `docs/ARCHITECTURE.md`, `docs/USAGE.md`, the `MapConfig.prompt_layering`
+  comment, the generated `.map/config.yaml` comment, the `map_step_runner.py` layering
+  comments, and `tests/test_prompt_layering.py` were de-overclaimed accordingly, and
+  re-open triggers were recorded. No `token_accounting.json` figures were fabricated —
+  per-subagent cache `usage` is harness-owned and not observable to MAP for Task
+  dispatches, which is exactly why an end-to-end run is a poor test of this hypothesis.
 - **Global `minimality` default flipped `off` → `lite` (Phase 3, closes #183).**
   The promotion gate (`mapify minimality-report`) reached `candidate` and the
   manual review gate passed against field telemetry, so the keyless default now

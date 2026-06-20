@@ -8,9 +8,15 @@ Covers two surfaces:
 
 The central invariant: in `stable_first` mode the stable role/contract sections
 form a byte-identical PREFIX across same-role dispatches whose only difference is
-the variable `<documents>` (bundle / preferences / diff). That byte-identical
-prefix is the precondition for an automatic prefix-cache hit. `docs_first`
-(the default) must stay byte-identical to the historical envelope.
+the variable `<documents>` (bundle / preferences / diff). `docs_first` (the
+default) must stay byte-identical to the historical envelope.
+
+Note (#231 resolved): the byte-identical prefix was the *conjectured* precondition
+for an automatic prefix-cache hit, but the layering choice was determined
+cache-neutral at the Claude Code Task layer (the harness owns cache_control and
+the stable/variable seam is mid-block). These tests pin the ordering/prefix
+behavior — which still matters because `stable_first` changes token order and
+therefore model attention — not a caching claim. See docs/ARCHITECTURE.md.
 """
 
 import sys

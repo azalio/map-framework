@@ -88,12 +88,13 @@ class MapConfig:
 
     # Agent-prompt layering for repeated same-workflow dispatches (#231).
     # "docs_first"   (default) = variable <documents> first, stable contract
-    #                last — best for attention, hostile to prefix caching.
-    # "stable_first" = stable contract first, variable <documents> last — the
-    #                stable prefix is byte-identical across same-role dispatches,
-    #                enabling automatic prefix-cache hits. The attention-vs-cache
-    #                tradeoff must be decided with measured data before the
-    #                default flips; see docs/ARCHITECTURE.md.
+    #                last — optimized for recency / "lost-in-the-middle".
+    # "stable_first" = stable contract first, variable <documents> last — a
+    #                byte-identical prefix across same-role dispatches. Resolved
+    #                cache-neutral at the Claude Code Task layer (the harness owns
+    #                cache_control and the seam is mid-block), but NOT a behavior
+    #                no-op: it changes token order / attention. Kept opt-in; never
+    #                remapped to docs_first. See docs/ARCHITECTURE.md (#231).
     prompt_layering: str = "docs_first"
 
     # Context compression policy (see docs/context-compression-plan.md)
@@ -351,11 +352,12 @@ minimality: lite
 
 # Agent-prompt layering for repeated same-workflow dispatches (#231).
 # "docs_first" (default) orders the variable <documents> first and the stable
-# task/instructions/expected_output contract last — best for model attention.
-# "stable_first" puts the stable contract first so its byte-identical prefix can
-# trigger automatic prefix-cache hits across same-role dispatches. The
-# attention-vs-cache tradeoff is unproven; measure before flipping the default
-# (see docs/ARCHITECTURE.md). Allowed: docs_first, stable_first
+# task/instructions/expected_output contract last — best for recency/attention.
+# "stable_first" puts the stable contract first (byte-identical prefix across
+# same-role dispatches). Resolved cache-neutral at the Claude Code Task layer
+# (harness owns cache_control; the seam is mid-block) but it still changes token
+# order/attention, so it is kept opt-in — see docs/ARCHITECTURE.md (#231).
+# Allowed: docs_first, stable_first
 # prompt_layering: docs_first
 
 # Context compression policy. Default is "never" — the /compact nudge is
