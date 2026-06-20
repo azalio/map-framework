@@ -2234,6 +2234,10 @@ _REQ_KIND_VOCAB = frozenset(
 # SC-1: suspicious fan-in threshold — one subtask owning more than this many
 # requirements is a coverage-dumping smell (tunable heuristic).
 _COVERAGE_FANIN_WARN = 3
+# AC-7: max dependency-chain depth before a warning is emitted. Overridable via
+# MAP_MAX_DEPENDENCY_DEPTH env var (positive int). This is a warn-only signal —
+# valid is never set false by this check.
+MAX_DEPENDENCY_DEPTH = 5
 
 
 def parse_requirements_index(spec_text: str) -> dict[str, object]:
@@ -3012,6 +3016,65 @@ def validate_blueprint_contract(
                         f"(> {_COVERAGE_FANIN_WARN}); possible coverage-dumping — "
                         "verify the decomposition actually split the work"
                     )
+
+    # --- Max dependency-depth check (ST-011 / AC-7) — WARN only; never touches errors ---
+    # The graph is acyclic by this point (forward-dep checks above reject back-edges),
+    # but we guard against stray cycles anyway via an in-progress set so depth()
+    # cannot recurse infinitely.
+    _raw_max_depth_env = os.environ.get("MAP_MAX_DEPENDENCY_DEPTH", "")
+    _depth_threshold = MAX_DEPENDENCY_DEPTH
+    if _raw_max_depth_env.strip():
+        try:
+            _parsed_depth = int(_raw_max_depth_env.strip())
+            if _parsed_depth > 0:
+                _depth_threshold = _parsed_depth
+        except ValueError:
+            pass  # silently fall back to module constant
+
+    # Build deps map: subtask id -> list of dependency ids that exist as subtasks.
+    _dep_map: dict[str, list[str]] = {}
+    for _st in subtasks:
+        if not isinstance(_st, dict):
+            continue
+        _sid = _st.get("id")
+        if not isinstance(_sid, str):
+            continue
+        _raw_deps = _st.get("dependencies")
+        if isinstance(_raw_deps, list):
+            _dep_map[_sid] = [
+                d for d in _raw_deps
+                if isinstance(d, str) and d in subtask_ids
+            ]
+        else:
+            _dep_map[_sid] = []
+
+    # Memoized depth computation with cycle guard.
+    _depth_memo: dict[str, int] = {}
+    _depth_in_progress: set[str] = set()
+
+    def _compute_depth(sid: str) -> int:
+        if sid in _depth_memo:
+            return _depth_memo[sid]
+        if sid in _depth_in_progress:
+            # Stray back-edge / cycle — treat as depth 0 to avoid infinite recursion.
+            return 0
+        _depth_in_progress.add(sid)
+        deps_of = _dep_map.get(sid, [])
+        if deps_of:
+            d = 1 + max(_compute_depth(dep) for dep in deps_of)
+        else:
+            d = 0
+        _depth_in_progress.discard(sid)
+        _depth_memo[sid] = d
+        return d
+
+    if _dep_map:
+        _max_observed_depth = max(_compute_depth(sid) for sid in _dep_map)
+        if _max_observed_depth > _depth_threshold:
+            warnings.append(
+                f"dependency depth {_max_observed_depth} exceeds MAX_DEPENDENCY_DEPTH "
+                f"({_depth_threshold}); consider flattening the plan"
+            )
 
     return {
         "valid": not errors,
