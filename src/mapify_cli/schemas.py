@@ -501,6 +501,13 @@ BLUEPRINT_SCHEMA = {
                 "additionalProperties": True,
             },
         },
+        # Forward-coverage source-of-truth: the authoritative list of requirement
+        # IDs lives in the spec's Requirements Index (the mapify:requirements-index:v1
+        # block, parsed by parse_requirements_index in map_step_runner). The
+        # decomposition-completeness gate diffs that index against these coverage_map
+        # keys. Acceptance criteria are deliberately NOT stored as a blueprint field
+        # (the decomposer cannot be trusted to declare the set it is checked against);
+        # coverage_map remains a mapping of those spec IDs to owning subtasks only.
         "coverage_map": {
             "type": "object",
             "description": (
