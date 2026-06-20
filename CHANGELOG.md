@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.18.0] - 2026-06-21
+
 ### Fixed
 - **PyYAML promoted to a hard runtime dependency (closes #245).** `pyyaml` was
   declared only in the `test`/`dev` optional groups, so a normal install
