@@ -458,9 +458,14 @@ class TestSkillStructure:
                 # offloaded-sidecar line was added to each of the Actor and Monitor
                 # dispatched <task> prompts in map-efficient/SKILL.md. These are the
                 # actual agent prompt bodies, so they cannot move to the reference file.
+                # Budget bumped from 504 → 508 (#253): the intra-run failure-memory
+                # wiring adds one MANDATORY `record_failure_signature` bullet on the
+                # valid=false path and a `set_anti_repeat_subtask_status succeeded`
+                # clause on the clean-pass record — both are the active retry-loop
+                # control flow (full recipe lives in efficient-reference.md, not here).
                 # Do NOT remove content to fit — bump the budget instead (per learned rule
                 # 'always-loaded skill body line budget').
-                assert len(content.splitlines()) <= 504, (
+                assert len(content.splitlines()) <= 508, (
                     f"{skill_file} should keep the active workflow path compact; "
                     "move examples, rationale, and troubleshooting into supporting files."
                 )

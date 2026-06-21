@@ -377,6 +377,9 @@ Return JSON with valid, summary, issues, files_changed, tests_run, and escalatio
   ```
   `record_subtask_result` is the canonical write path. Pass `--commit-sha`
   (preferred); omitting it triggers auto-detect via `git log -1 --format=%H`.
+  If this subtask ever tripped an armed anti-repeat sign, also run
+  `python3 .map/scripts/map_step_runner.py set_anti_repeat_subtask_status "$SUBTASK_ID" succeeded`
+  so its signs are excluded from /map-learn candidates (it found a way through).
 - **Auto-validate mutation boundary:** `validate_step 2.4` itself now runs
   `validate_mutation_boundary` for the current subtask and rejects on
   `status="violation"` (only when `MAP_STRICT_SCOPE=1`) or `status="error"`.
@@ -387,6 +390,7 @@ Return JSON with valid, summary, issues, files_changed, tests_run, and escalatio
   blueprint to actual diff — keeps mutation-boundary checks honest.
   Full recipe: [efficient-reference.md](efficient-reference.md).
 - If `valid=false`, write `code-review-N.md`, run `python3 .map/scripts/map_orchestrator.py monitor_failed --feedback "<feedback>"`, inspect `retry_isolation`, and invoke Predictor only when stuck/high-risk escalation rules apply.
+- **Intra-run failure memory (MANDATORY on every `valid=false`):** record the rejection with `python3 .map/scripts/map_step_runner.py record_failure_signature "<monitor feedback>" "$SUBTASK_ID"`. If it returns `armed:true`, prepend the block from `build_anti_repeat_constraint "$SUBTASK_ID"` (add `--quarantine-active` when CLEAN_RETRY is set) to the TOP of the next Actor prompt so the same dead end is not re-walked; if `escalation_recommended:true`, escalate instead of another blind retry. Full recipe: [efficient-reference.md](efficient-reference.md).
 - If `retry_isolation=clean_retry_required`, run `python3 .map/scripts/map_step_runner.py validate_retry_quarantine` before the next Actor call. The next Actor prompt must use CLEAN_RETRY mode from `.map/<branch>/retry_quarantine.json` and must not reuse the rejected approach unless the quarantine artifact preserves it.
 - Treat test failures after Monitor approval as Monitor failure. **Cross-subtask regression gate (MANDATORY):** before the test gate, run `python3 .map/scripts/map_step_runner.py detect_cross_subtask_regression_risk "$BRANCH" "$SUBTASK_ID"`; if `recommended_gate == "full_suite"` you MUST run the FULL suite (never a `-k` subset) before commit / `record_subtask_result` — per-subtask Monitor is blind to regressions on prior subtasks' code. Recipe: [efficient-reference.md](efficient-reference.md).
 
