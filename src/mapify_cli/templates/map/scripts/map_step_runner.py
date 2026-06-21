@@ -38,6 +38,7 @@ import signal
 import subprocess
 import sys
 import time
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable, Mapping, Optional, TypedDict, cast
@@ -202,6 +203,7 @@ ARTIFACT_STAGE_NAMES = (
     "review",
     "verification",
     "retry_quarantine",
+    "anti_repeat",
     "token_budget",
     "run_health",
     "learn_handoff",
@@ -303,6 +305,33 @@ REPRO_PROBE_DEFAULT_TIMEOUT = 120  # seconds per run
 REPRO_PROBE_MAX_TIMEOUT = 600  # hard cap on per-run timeout
 REPRO_PROBE_MAX_RUNS = 10  # flakiness-guard cap on repeated runs
 REPRO_PROBE_OUTPUT_MAX_CHARS = 4_000  # bounded capture per stream
+
+# --- Intra-run failure memory (#253): anti-repeat signatures within a subtask ---
+# When the SAME subtask is rejected with the SAME normalized failure twice, arm a
+# HARD anti-stagnation constraint that the next Actor attempt must consume. This
+# is the INTRA-run, per-subtask analogue of the CROSS-session
+# record_repeated_learning_violations bridge. It complements — never duplicates —
+# log_agent_failure (FORMAT failures only: truncated/missing_field) and
+# retry_quarantine (a single-shot CLEAN_RETRY reset). The signature is a
+# conservatively normalized + hashed key; the human-readable sample (not the
+# hash) is what the Actor reads, and the constraint binds to the repeated FAILURE
+# OUTCOME, not to a broad "approach" (an over-broad ban pushes the Actor off the
+# genuinely-correct fix). A generic rejection with no concrete failure anchor
+# (file / symbol / exception / assertion) is recorded but NEVER armed, so
+# "tests still fail" cannot brick a subtask. At count >= the escalate threshold
+# the record sets escalation_recommended=true as a SIGNAL only; the stopping
+# decision belongs to the retry orchestrator / bounded-effort escalation (#255).
+ANTI_REPEAT_ARTIFACT_NAME = "anti_repeat.json"
+ANTI_REPEAT_NORMALIZER_VERSION = 1  # bump when a normalization rule changes
+ANTI_REPEAT_ARM_THRESHOLD = 2  # "twice the same way" -> arm the constraint
+ANTI_REPEAT_ESCALATE_THRESHOLD = 3  # still failing despite the constraint -> signal #255
+ANTI_REPEAT_SOURCES = frozenset({"monitor_rejection", "test_failure", "gate_failure"})
+ANTI_REPEAT_MIN_SIGNATURE_CHARS = 24  # shorter normalized text -> low specificity, never armed
+ANTI_REPEAT_STORE_MAX_CHARS = 800  # bound normalized text persisted (keeps the distinctive tail)
+ANTI_REPEAT_SAMPLE_MAX_CHARS = 240  # bound the raw sample rendered into the Actor prompt
+ANTI_REPEAT_MAX_ARMED_IN_BLOCK = 2  # cap armed signatures injected into one prompt
+ANTI_REPEAT_TERMINAL_STATUSES = frozenset({"succeeded", "failed", "escalated"})
+ANTI_REPEAT_VALID_STATUSES = frozenset({"active"}) | ANTI_REPEAT_TERMINAL_STATUSES
 
 # Truncation infrastructure deleted by user directive ("убери транкейт уже
 # вообще"). build_context_block / _budget_review_prompt now emit raw text;
@@ -6616,6 +6645,9 @@ def write_learning_handoff(
     run_health_report = read_json("run_health_report.json")
     known_issues = read_json("known-issues.json")
     active_issues = read_json("active-issues.json")
+    # Intra-run failure-memory candidates (#253): armed anti-repeat signs from
+    # NON-succeeded subtasks, offered to /map-learn as CANDIDATES only.
+    anti_repeat_candidates = collect_anti_repeat_learn_candidates(branch_name)
 
     markdown_path = branch_dir / "learning-handoff.md"
     json_path = branch_dir / "learning-handoff.json"
@@ -6658,6 +6690,7 @@ def write_learning_handoff(
         "summary": bundle.get("summary", "- [not recorded]"),
         "validation": bundle.get("validation", "- [not recorded]"),
         "risks_follow_up": bundle.get("risks_follow_up", "- [not recorded]"),
+        "intra_run_failure_memory": anti_repeat_candidates,
         "artifacts": {
             "workflow_fit": workflow_fit,
             "artifact_manifest": manifest,
@@ -6699,6 +6732,19 @@ def write_learning_handoff(
         "## Source Artifacts\n\n"
         f"{artifacts_section}\n"
     )
+    if anti_repeat_candidates:
+        candidate_lines = "\n".join(
+            f"- [{c['status']}] {c['subtask_id']} (seen {c['count']}x via "
+            f"{c['source']}): {c['sample']}"
+            for c in anti_repeat_candidates
+        )
+        markdown += (
+            "\n## Intra-run Failure Memory (candidates)\n\n"
+            "Repeated failures from subtasks that did NOT succeed. Review before "
+            "promoting any to a cross-session learned rule — a subtask that "
+            "eventually passed is excluded by design.\n\n"
+            f"{candidate_lines}\n"
+        )
     if notes_text:
         markdown += f"\n## Notes\n\n{notes_text}\n"
 
@@ -11476,6 +11522,447 @@ def log_agent_failure(
     return {"status": "ok", "path": str(path), "event": event}
 
 
+# ---------------------------------------------------------------------------
+# Intra-run failure memory (#253): anti-repeat signatures within one subtask
+# ---------------------------------------------------------------------------
+
+_ANTI_REPEAT_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_ANTI_REPEAT_UUID_RE = re.compile(
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+)
+_ANTI_REPEAT_TIMESTAMP_RE = re.compile(
+    r"\b\d{4}-\d{2}-\d{2}[t ]\d{2}:\d{2}:\d{2}(?:\.\d+)?z?\b", re.IGNORECASE
+)
+_ANTI_REPEAT_TIME_RE = re.compile(r"\b\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\b")
+_ANTI_REPEAT_HEXADDR_RE = re.compile(r"\b0x[0-9a-fA-F]+\b")
+_ANTI_REPEAT_LONGHEX_RE = re.compile(r"\b[0-9a-fA-F]{12,}\b")
+# /abs/or/rel/path/to/basename.ext -> basename.ext (preserve the distinctive
+# file name; drop the volatile directory prefix).
+_ANTI_REPEAT_PATH_RE = re.compile(r"(?:[\w.\-]*/)+([\w.\-]+)")
+_ANTI_REPEAT_LINE_RE = re.compile(r"\bline\s+\d+\b", re.IGNORECASE)
+_ANTI_REPEAT_COLNUM_RE = re.compile(r":\d+(?=[:\s)\]]|$)")
+# Strong specificity anchors — at least one must be present before a signature
+# can arm. A rejection with none of these ("tests still fail", "needs work") is
+# generic and is recorded but never armed.
+_ANTI_REPEAT_ANCHOR_RES = (
+    re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:Error|Exception|Warning|Failure)\b"),
+    re.compile(
+        r"\b[\w\-]+\.(?:py|js|ts|tsx|jsx|go|rs|java|rb|cpp|cc|cxx|c|h|hpp|json|"
+        r"ya?ml|toml|md|sh|sql)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b(?:def|class)\s+\w+|\btest_[A-Za-z0-9_]+"),
+    re.compile(r"\bassert\w*\b|\bAssertionError\b|\bexpected\b", re.IGNORECASE),
+    re.compile(r"::[A-Za-z_]\w+"),
+)
+
+
+def _anti_repeat_artifact_path(branch: Optional[str] = None) -> Path:
+    """Return the branch-scoped intra-run failure-memory artifact path."""
+    return get_branch_dir(branch) / ANTI_REPEAT_ARTIFACT_NAME
+
+
+def _anti_repeat_thresholds() -> tuple[int, int]:
+    """Return (arm_threshold, escalate_threshold), honouring env overrides.
+
+    This is an eval-driven framework; the thresholds are tunable without an
+    edit. Both are clamped to >= 1 and escalate is kept >= arm so the
+    escalation signal can never fire before the constraint is armed.
+    """
+
+    def _env_int(name: str, default: int) -> int:
+        try:
+            return max(1, int(os.environ.get(name, str(default))))
+        except (TypeError, ValueError):
+            return default
+
+    arm = _env_int("MAP_ANTI_REPEAT_ARM_THRESHOLD", ANTI_REPEAT_ARM_THRESHOLD)
+    escalate = _env_int(
+        "MAP_ANTI_REPEAT_ESCALATE_THRESHOLD", ANTI_REPEAT_ESCALATE_THRESHOLD
+    )
+    return arm, max(arm, escalate)
+
+
+def _normalize_failure_signature(text: str) -> str:
+    """Canonicalize failure text into a stable signature.
+
+    Conservative on purpose: a false-MERGE (two distinct failures collapsing to
+    one signature) applies the WRONG constraint inside the loop and is not
+    recoverable, whereas a false-SPLIT just produces a redundant record the next
+    iteration resolves. So we strip only volatile noise (line numbers, absolute
+    path prefixes, hex/uuid/addresses, timestamps, ANSI) and PRESERVE semantic
+    anchors (exception type names, file basenames, symbol/test names, assertion
+    text). The distinctive tail of a traceback is kept when truncating.
+    """
+    norm = unicodedata.normalize("NFKC", text)
+    norm = _ANTI_REPEAT_ANSI_RE.sub("", norm)
+    norm = _ANTI_REPEAT_UUID_RE.sub("<uuid>", norm)
+    norm = _ANTI_REPEAT_TIMESTAMP_RE.sub("<ts>", norm)
+    norm = _ANTI_REPEAT_TIME_RE.sub("<ts>", norm)
+    norm = _ANTI_REPEAT_HEXADDR_RE.sub("<addr>", norm)
+    norm = _ANTI_REPEAT_LONGHEX_RE.sub("<hex>", norm)
+    norm = _ANTI_REPEAT_PATH_RE.sub(r"\1", norm)
+    norm = _ANTI_REPEAT_LINE_RE.sub("line <n>", norm)
+    norm = _ANTI_REPEAT_COLNUM_RE.sub(":<n>", norm)
+    norm = norm.lower()
+    norm = re.sub(r"\s+", " ", norm).strip()
+    if len(norm) > ANTI_REPEAT_STORE_MAX_CHARS:
+        norm = "…" + norm[-(ANTI_REPEAT_STORE_MAX_CHARS - 1):]
+    return norm
+
+
+def _failure_signature_is_specific(normalized: str, raw: str) -> bool:
+    """True when the failure carries a concrete anchor that may arm a constraint.
+
+    Anchors are detected on the RAW text so CamelCase exception names survive the
+    lowercasing the normalized form applies. Generic rejections ("tests still
+    fail", "needs more work") have no anchor and must never arm.
+    """
+    if len(normalized) < ANTI_REPEAT_MIN_SIGNATURE_CHARS:
+        return False
+    return any(pattern.search(raw) for pattern in _ANTI_REPEAT_ANCHOR_RES)
+
+
+def _anti_repeat_signature_hash(normalized: str, source: str) -> str:
+    """Return a stable 16-hex-char key for (normalizer version, source, text)."""
+    key = f"{ANTI_REPEAT_NORMALIZER_VERSION}\x00{source}\x00{normalized}"
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+
+
+def _empty_anti_repeat_store(branch_name: str) -> dict[str, Any]:
+    return {
+        "schema_version": "1.0",
+        "normalizer_version": ANTI_REPEAT_NORMALIZER_VERSION,
+        "branch": branch_name,
+        "updated_at": _utc_timestamp(),
+        "subtasks": {},
+    }
+
+
+def _load_anti_repeat_store(path: Path, branch_name: str) -> dict[str, Any]:
+    """Load the store, discarding it on a normalizer-version mismatch.
+
+    The artifact is a short-lived intra-run scratch; when a normalization rule
+    changes the old hashes are meaningless, so a clean reset is the correct
+    behaviour rather than mixing incompatible signatures.
+    """
+    loaded = _read_json_file(path)
+    if not isinstance(loaded, dict):
+        return _empty_anti_repeat_store(branch_name)
+    if loaded.get("normalizer_version") != ANTI_REPEAT_NORMALIZER_VERSION:
+        return _empty_anti_repeat_store(branch_name)
+    if not isinstance(loaded.get("subtasks"), dict):
+        loaded["subtasks"] = {}
+    return cast(dict[str, Any], loaded)
+
+
+def record_failure_signature(
+    failure_text: str,
+    subtask_id: str,
+    source: str = "monitor_rejection",
+    branch: Optional[str] = None,
+) -> dict[str, Any]:
+    """Record one substantive failure for a subtask; arm on the 2nd same failure.
+
+    Returns a dict whose ``armed`` field tells the caller to inject the
+    anti-stagnation constraint (via ``build_anti_repeat_constraint``) into the
+    next Actor attempt, and whose ``escalation_recommended`` field SIGNALS (only)
+    that bounded-effort escalation (#255) should take over. This never skips the
+    Actor call itself — it is a pure memory/sensor module.
+    """
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    path = _anti_repeat_artifact_path(branch_name)
+    arm_threshold, escalate_threshold = _anti_repeat_thresholds()
+
+    def _error(reason: str) -> dict[str, Any]:
+        return {
+            "status": "error",
+            "armed": False,
+            "escalation_recommended": False,
+            "path": str(path),
+            "reasons": [reason],
+        }
+
+    sid = (subtask_id or "").strip()
+    if not sid:
+        return _error("subtask_id is required")
+    if source not in ANTI_REPEAT_SOURCES:
+        return _error(
+            f"source {source!r} is not one of {sorted(ANTI_REPEAT_SOURCES)}"
+        )
+    raw = failure_text or ""
+    if not raw.strip():
+        return _error("failure_text is empty")
+
+    normalized = _normalize_failure_signature(raw)
+    specific = _failure_signature_is_specific(normalized, raw)
+    signature = _anti_repeat_signature_hash(normalized, source)
+    sample = _sanitize_for_json(raw.strip())[:ANTI_REPEAT_SAMPLE_MAX_CHARS]
+    now = _utc_timestamp()
+
+    store = _load_anti_repeat_store(path, branch_name)
+    subtasks = cast(dict[str, Any], store["subtasks"])
+    entry = subtasks.get(sid)
+    if not isinstance(entry, dict):
+        entry = {"status": "active", "signatures": {}}
+    signatures = entry.get("signatures")
+    if not isinstance(signatures, dict):
+        signatures = {}
+
+    record = signatures.get(signature)
+    if not isinstance(record, dict):
+        record = {
+            "count": 0,
+            "source": source,
+            "normalized": normalized,
+            "first_seen": now,
+        }
+    record["count"] = int(record.get("count", 0)) + 1
+    record["last_seen"] = now
+    record["sample"] = sample
+    record["normalized"] = normalized
+    record["low_specificity"] = not specific
+    count = int(record["count"])
+    armed = specific and count >= arm_threshold
+    escalation = specific and count >= escalate_threshold
+    record["armed"] = armed
+    record["escalation_recommended"] = escalation
+    signatures[signature] = record
+    entry["signatures"] = signatures
+    if entry.get("status") not in ANTI_REPEAT_TERMINAL_STATUSES:
+        entry["status"] = "active"
+    subtasks[sid] = entry
+
+    store["normalizer_version"] = ANTI_REPEAT_NORMALIZER_VERSION
+    store["branch"] = branch_name
+    store["updated_at"] = now
+    _write_json_file(path, store)
+
+    any_armed = any(
+        bool(rec.get("armed"))
+        for st in subtasks.values()
+        if isinstance(st, dict)
+        for rec in (st.get("signatures") or {}).values()
+        if isinstance(rec, dict)
+    )
+    manifest = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        manifest,
+        "anti_repeat",
+        "armed" if any_armed else "tracking",
+        artifacts=[_artifact_ref(path, "anti-repeat")],
+        metadata={
+            "any_armed": any_armed,
+            "normalizer_version": ANTI_REPEAT_NORMALIZER_VERSION,
+        },
+    )
+    save_artifact_manifest(manifest, branch_name)
+
+    reasons: list[str] = []
+    if not specific:
+        reasons.append(
+            "low_specificity: no concrete failure anchor "
+            "(file / symbol / exception / assertion) — recorded but not armed"
+        )
+    return {
+        "status": "ok",
+        "branch": branch_name,
+        "subtask_id": sid,
+        "signature": signature,
+        "source": source,
+        "count": count,
+        "armed": armed,
+        "escalation_recommended": escalation,
+        "low_specificity": not specific,
+        "normalized": normalized,
+        "path": str(path),
+        "reasons": reasons,
+    }
+
+
+def build_anti_repeat_constraint(
+    subtask_id: str,
+    branch: Optional[str] = None,
+    quarantine_active: object = False,
+) -> dict[str, Any]:
+    """Render the hard anti-stagnation block for a subtask's armed signatures.
+
+    Returns ``constraint=""`` when nothing is armed OR a CLEAN_RETRY quarantine
+    is active this iteration (CLEAN_RETRY semantics dominate; the signature is
+    still recorded by ``record_failure_signature`` so the counter keeps ticking
+    and the constraint re-arms on the next non-quarantine attempt). The block is
+    delimited with an ``<intra_run_failure_memory>`` tag so eval post-processing
+    can strip it cleanly, binds to the repeated FAILURE (never a broad
+    "approach"), and shows the human-readable sample rather than the hash.
+    """
+    branch_name = branch or get_branch_name()
+    path = _anti_repeat_artifact_path(branch_name)
+    sid = (subtask_id or "").strip()
+    empty: dict[str, Any] = {
+        "status": "ok",
+        "armed": False,
+        "escalation_recommended": False,
+        "constraint": "",
+        "signatures": [],
+        "subtask_id": sid,
+        "branch": branch_name,
+    }
+    if not sid:
+        return {**empty, "status": "error", "reasons": ["subtask_id is required"]}
+    if _parse_boolish(quarantine_active):
+        return {**empty, "suppressed": "clean_retry_active"}
+
+    store = _load_anti_repeat_store(path, branch_name)
+    subtasks = cast(dict[str, Any], store["subtasks"])
+    entry = subtasks.get(sid)
+    if not isinstance(entry, dict):
+        return empty
+    armed_records = [
+        rec
+        for rec in (entry.get("signatures") or {}).values()
+        if isinstance(rec, dict) and rec.get("armed")
+    ]
+    if not armed_records:
+        return empty
+    armed_records.sort(
+        key=lambda rec: (int(rec.get("count", 0)), str(rec.get("last_seen", ""))),
+        reverse=True,
+    )
+    chosen = armed_records[:ANTI_REPEAT_MAX_ARMED_IN_BLOCK]
+    escalation = any(bool(rec.get("escalation_recommended")) for rec in chosen)
+
+    lines = [
+        "<intra_run_failure_memory>",
+        "This subtask has already been rejected with the same failure signature "
+        "more than once. Binding anti-stagnation constraint for THIS attempt:",
+        "- Your next change MUST directly resolve the repeated failure(s) below; "
+        "do not resubmit a change that would still produce the same rejection.",
+        "- You may reuse prior code only if the new delta fixes this specific "
+        "blocker — the constraint targets the failure, not any whole approach.",
+        "- Briefly state how this attempt differs in substance from the rejected "
+        "ones.",
+        "",
+    ]
+    summaries: list[dict[str, Any]] = []
+    for rec in chosen:
+        sample = _shorten_retry_text(
+            str(rec.get("sample", "")), ANTI_REPEAT_SAMPLE_MAX_CHARS
+        )
+        count = int(rec.get("count", 0))
+        lines.append(f"Repeated failure (seen {count}x):")
+        lines.append(f"> {sample}")
+        lines.append("")
+        summaries.append(
+            {
+                "count": count,
+                "source": rec.get("source", ""),
+                "sample": sample,
+                "escalation_recommended": bool(rec.get("escalation_recommended")),
+            }
+        )
+    lines.append("</intra_run_failure_memory>")
+    constraint = "\n".join(lines).rstrip() + "\n"
+    return {
+        "status": "ok",
+        "armed": True,
+        "escalation_recommended": escalation,
+        "constraint": constraint,
+        "signatures": summaries,
+        "subtask_id": sid,
+        "branch": branch_name,
+    }
+
+
+def set_anti_repeat_subtask_status(
+    subtask_id: str,
+    status: str,
+    branch: Optional[str] = None,
+) -> dict[str, Any]:
+    """Mark a subtask's terminal disposition for the promotion bridge.
+
+    Only NON-succeeded subtasks feed /map-learn candidates: a subtask that
+    succeeded after two same-signature failures is positive evidence the Actor
+    FOUND a way through, so promoting its anti-repeat signs would teach a
+    cross-session rule to forbid an approach that actually worked.
+    """
+    branch_name = branch or get_branch_name()
+    path = _anti_repeat_artifact_path(branch_name)
+    sid = (subtask_id or "").strip()
+    if not sid:
+        return {"status": "error", "reasons": ["subtask_id is required"], "path": str(path)}
+    if status not in ANTI_REPEAT_VALID_STATUSES:
+        return {
+            "status": "error",
+            "reasons": [
+                f"status {status!r} is not one of {sorted(ANTI_REPEAT_VALID_STATUSES)}"
+            ],
+            "path": str(path),
+        }
+    store = _load_anti_repeat_store(path, branch_name)
+    subtasks = cast(dict[str, Any], store["subtasks"])
+    entry = subtasks.get(sid)
+    if not isinstance(entry, dict):
+        return {
+            "status": "noop",
+            "reason": "no anti-repeat record for subtask",
+            "subtask_id": sid,
+            "path": str(path),
+        }
+    entry["status"] = status
+    store["updated_at"] = _utc_timestamp()
+    _write_json_file(path, store)
+    return {
+        "status": "ok",
+        "subtask_id": sid,
+        "new_status": status,
+        "path": str(path),
+    }
+
+
+def collect_anti_repeat_learn_candidates(
+    branch: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """Return armed anti-repeat signs from NON-succeeded subtasks as candidates.
+
+    These are CANDIDATES for /map-learn review — never auto-promoted into
+    .claude/rules/learned/. Each carries the subtask's terminal status and the
+    normalized text so cross-session learning can tell guided-success from
+    terminal-failure.
+    """
+    branch_name = branch or get_branch_name()
+    path = _anti_repeat_artifact_path(branch_name)
+    store = _read_json_file(path)
+    if not isinstance(store, dict):
+        return []
+    subtasks = store.get("subtasks")
+    if not isinstance(subtasks, dict):
+        return []
+    candidates: list[dict[str, Any]] = []
+    for sid in sorted(subtasks):
+        entry = subtasks[sid]
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("status") == "succeeded":
+            continue
+        for rec in (entry.get("signatures") or {}).values():
+            if not isinstance(rec, dict) or not rec.get("armed"):
+                continue
+            candidates.append(
+                {
+                    "subtask_id": sid,
+                    "status": entry.get("status", "active"),
+                    "count": int(rec.get("count", 0)),
+                    "source": rec.get("source", ""),
+                    "normalized": rec.get("normalized", ""),
+                    "sample": rec.get("sample", ""),
+                    "escalation_recommended": bool(rec.get("escalation_recommended")),
+                }
+            )
+    return candidates
+
+
 if __name__ == "__main__":
     # Simple CLI interface for testing
     import sys
@@ -12505,6 +12992,80 @@ if __name__ == "__main__":
         print(json.dumps(vr_result, indent=2))
         if not vr_result.get("valid"):
             sys.exit(1)
+
+    elif func_name == "record_failure_signature":
+        # CLI: record_failure_signature <failure_text> <subtask_id>
+        #      [--source monitor_rejection|test_failure|gate_failure] [--branch B]
+        # Intra-run failure memory (#253): record one substantive failure and arm
+        # the anti-stagnation constraint on the 2nd same-signature rejection.
+        # Exit 0 always (sensor, not a gate); inspect "armed" in the JSON.
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py record_failure_signature")
+        _p.add_argument("failure_text")
+        _p.add_argument("subtask_id")
+        _p.add_argument("--source", default="monitor_rejection")
+        _p.add_argument("--branch", default=None)
+        _a = _p.parse_args(sys.argv[2:])
+        rfs_result = record_failure_signature(
+            _a.failure_text, _a.subtask_id, _a.source, _a.branch
+        )
+        print(json.dumps(rfs_result, indent=2))
+        if rfs_result.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "build_anti_repeat_constraint":
+        # CLI: build_anti_repeat_constraint <subtask_id> [--branch B]
+        #      [--quarantine-active]
+        # Render the hard anti-stagnation block (empty when nothing armed or a
+        # CLEAN_RETRY quarantine is active this iteration).
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py build_anti_repeat_constraint")
+        _p.add_argument("subtask_id")
+        _p.add_argument("--branch", default=None)
+        _p.add_argument("--quarantine-active", action="store_true")
+        _a = _p.parse_args(sys.argv[2:])
+        barc_result = build_anti_repeat_constraint(
+            _a.subtask_id, _a.branch, _a.quarantine_active
+        )
+        print(json.dumps(barc_result, indent=2))
+        if barc_result.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "set_anti_repeat_subtask_status":
+        # CLI: set_anti_repeat_subtask_status <subtask_id> <status> [--branch B]
+        # status in {active, succeeded, failed, escalated}. Mark "succeeded" on a
+        # clean Monitor close so the promotion bridge skips guided-success signs.
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(
+            prog="map_step_runner.py set_anti_repeat_subtask_status"
+        )
+        _p.add_argument("subtask_id")
+        _p.add_argument("status")
+        _p.add_argument("--branch", default=None)
+        _a = _p.parse_args(sys.argv[2:])
+        sars_result = set_anti_repeat_subtask_status(
+            _a.subtask_id, _a.status, _a.branch
+        )
+        print(json.dumps(sars_result, indent=2))
+        if sars_result.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "collect_anti_repeat_learn_candidates":
+        # CLI: collect_anti_repeat_learn_candidates [--branch B]
+        # Emit armed anti-repeat signs from NON-succeeded subtasks as /map-learn
+        # candidates (never auto-promoted into .claude/rules/learned/).
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(
+            prog="map_step_runner.py collect_anti_repeat_learn_candidates"
+        )
+        _p.add_argument("--branch", default=None)
+        _a = _p.parse_args(sys.argv[2:])
+        carlc_result = collect_anti_repeat_learn_candidates(_a.branch)
+        print(json.dumps(carlc_result, indent=2))
 
     else:
         # Helpful redirect: when the user passes a command that belongs to

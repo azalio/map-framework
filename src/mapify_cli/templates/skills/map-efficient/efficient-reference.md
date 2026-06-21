@@ -11,11 +11,12 @@ Two CLI scripts back the workflow; calling the wrong one fails with `invalid cho
 
 - **`python3 .map/scripts/map_step_runner.py <cmd>`** — pure analysis/persistence helpers (no state-machine side effect). The list below names ONLY commands that have a `func_name` dispatch branch in `map_step_runner.py` and are thus invocable from the shell; the module defines additional internal helpers (`save_artifact_manifest`, `save_learning_metrics`, `load_learning_metrics`, `load_blueprint`, `record_repeated_learning_violations`, `record_token_budget_decision`, …) that are used by other dispatch branches but cannot be called directly:
   - `detect_*` family: `detect_truncated_agent_output`, `detect_already_done`, `detect_cross_subtask_regression_risk`, `detect_actor_files_changed_mismatch`, `detect_symbol_blast_radius`
-  - `build_*` family: `build_context_block`, `build_json_retry_prompt`, `build_acceptance_coverage_report`, `build_prior_stage_consumption_report`, `build_retry_quarantine`, `build_handoff_bundle`, `build_review_handoff`, `build_review_prompts`
+  - `build_*` family: `build_context_block`, `build_json_retry_prompt`, `build_acceptance_coverage_report`, `build_prior_stage_consumption_report`, `build_retry_quarantine`, `build_handoff_bundle`, `build_review_handoff`, `build_review_prompts`, `build_anti_repeat_constraint`
   - `save_*` / `load_*`: `save_research`, `load_research`, `load_artifact_manifest`
   - `refresh_*`: `refresh_blueprint_affected_files`
   - `validate_*` (non-state): `validate_blueprint_contract`, `validate_mutation_boundary`, `validate_retry_quarantine`, `validate_run_health_report`, `validate_checkpoint`, `validate_prior_stage_consumption`
-  - `record_*` (artifacts, not state): `record_test_baseline`, `record_diagnostics_baseline`, `record_scope_baseline`, `record_subtask_baseline`, `record_token_event`, `record_learning_consumption`, `record_workflow_fit`, `record_plan_artifacts`, `record_test_contract_handoff`, `record-review-ordering` (note: this one is dispatched with a hyphen, not an underscore)
+  - `record_*` (artifacts, not state): `record_test_baseline`, `record_diagnostics_baseline`, `record_scope_baseline`, `record_subtask_baseline`, `record_token_event`, `record_learning_consumption`, `record_workflow_fit`, `record_plan_artifacts`, `record_test_contract_handoff`, `record_failure_signature`, `record-review-ordering` (note: this one is dispatched with a hyphen, not an underscore)
+  - intra-run failure memory (#253): `record_failure_signature`, `build_anti_repeat_constraint`, `set_anti_repeat_subtask_status`, `collect_anti_repeat_learn_candidates`
   - artifact writers: `write_verification_summary`, `write_run_health_report`, `write_pr_draft`, `write_plan_review`, `write_stage_gate`, `write_learning_handoff`
   - `log_*`: `log_agent_failure`
 
@@ -140,6 +141,56 @@ STATUS_MISMATCH=$(echo "$MISMATCH" | jq -r '.status_mismatch')
   Actor to finish the `declared_not_written` files. Do NOT record the subtask
   until the mismatch clears.
 - `status_mismatch == false` — no mismatch; proceed to Monitor.
+
+## Intra-run failure memory (#253, full recipe)
+
+Stops the Actor from re-walking the SAME dead end across retries of ONE subtask.
+It complements — never replaces — the truncation gate (`log_agent_failure`,
+FORMAT failures only) and CLEAN_RETRY (`retry_quarantine`, a one-shot reset).
+Branch-scoped store: `.map/<branch>/anti_repeat.json` (manifest stage
+`anti_repeat`).
+
+On EVERY Monitor `valid=false` (and on a post-approval test failure treated as a
+Monitor failure), after `monitor_failed`:
+
+```bash
+# 1. Record the substantive rejection. source ∈ {monitor_rejection,
+#    test_failure, gate_failure}. Exit 0 always — this is a sensor, not a gate.
+REC=$(python3 .map/scripts/map_step_runner.py record_failure_signature \
+  "$MONITOR_FEEDBACK" "$SUBTASK_ID" --source monitor_rejection)
+ARMED=$(echo "$REC" | jq -r '.armed')
+ESCALATE=$(echo "$REC" | jq -r '.escalation_recommended')
+
+# 2. If armed (same normalized failure >= 2x), prepend the hard constraint to
+#    the TOP of the next Actor prompt. Pass --quarantine-active when CLEAN_RETRY
+#    is set this iteration (CLEAN_RETRY wins; the counter still ticked in step 1).
+if [ "$ARMED" = "true" ]; then
+  BLOCK=$(python3 .map/scripts/map_step_runner.py \
+    build_anti_repeat_constraint "$SUBTASK_ID" | jq -r '.constraint')
+  # Next Actor prompt = "$BLOCK" + the normal subtask prompt.
+fi
+```
+
+- **Armed semantics.** The constraint is *anti-stagnation*, not *anti-approach*:
+  it binds the next delta to RESOLVE the repeated failure and forbids
+  resubmitting a change that would still produce it — it never bans a whole
+  approach (an over-broad ban pushes the Actor off the genuinely-correct fix).
+  The block is delimited `<intra_run_failure_memory>…</intra_run_failure_memory>`
+  and shows the human-readable sample, not the hash.
+- **Generic rejections never arm.** "tests still fail", "needs more work" carry
+  no concrete anchor (file / symbol / exception / assertion); they are recorded
+  with `low_specificity:true` and never produce a block, so a vague Monitor note
+  cannot brick a subtask.
+- **Escalation seam (#255).** At the 3rd identical failure the record sets
+  `escalation_recommended:true`. That is a SIGNAL only — escalate to
+  `CLARIFICATION_NEEDED`/bounded-effort retry instead of another blind Actor
+  call; this slice never skips the Actor call itself.
+- **On a clean close**, if the subtask had armed signs, run
+  `set_anti_repeat_subtask_status "$SUBTASK_ID" succeeded` so its signs are
+  excluded from the /map-learn candidates `write_learning_handoff` collects
+  (a subtask that eventually passed is positive evidence, not a rule to mine).
+- **Thresholds** are env-tunable: `MAP_ANTI_REPEAT_ARM_THRESHOLD` (default 2),
+  `MAP_ANTI_REPEAT_ESCALATE_THRESHOLD` (default 3).
 
 ## Symbol blast-radius gate
 

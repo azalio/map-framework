@@ -10534,3 +10534,316 @@ def test_cli_repro_probe_full_flip_record_then_verify(tmp_path):
     ok = _run_repro_cli(["verify_repro_resolved", "--branch", "clitest"], tmp_path)
     assert ok.returncode == 0, ok.stderr
     assert json.loads(ok.stdout)["phase"] == "resolved"
+
+
+# ---------------------------------------------------------------------------
+# Intra-run failure memory (#253): record_failure_signature /
+# build_anti_repeat_constraint / set_anti_repeat_subtask_status /
+# collect_anti_repeat_learn_candidates
+# ---------------------------------------------------------------------------
+
+_SPECIFIC_FAILURE = "AssertionError: expected 3 but got 4 in test_widget at foo.py:12"
+_SPECIFIC_FAILURE_OTHER_LINE = (
+    "AssertionError: expected 3 but got 4 in test_widget at foo.py:99"
+)
+_GENERIC_FAILURE = "tests still fail, needs more work"
+
+
+def _read_anti_repeat_store(branch_dir: Path) -> dict[str, Any]:
+    return cast(
+        dict[str, Any],
+        json.loads((branch_dir / "anti_repeat.json").read_text(encoding="utf-8")),
+    )
+
+
+def test_record_failure_signature_first_specific_is_recorded_not_armed(branch_workspace):
+    result = map_step_runner.record_failure_signature(_SPECIFIC_FAILURE, "ST-001")
+    assert result["status"] == "ok"
+    assert result["count"] == 1
+    assert result["armed"] is False
+    assert result["low_specificity"] is False
+    store = _read_anti_repeat_store(branch_workspace)
+    assert store["normalizer_version"] == map_step_runner.ANTI_REPEAT_NORMALIZER_VERSION
+    assert "ST-001" in store["subtasks"]
+
+
+def test_record_failure_signature_arms_on_second_same_normalized_failure(branch_workspace):
+    del branch_workspace
+    first = map_step_runner.record_failure_signature(_SPECIFIC_FAILURE, "ST-001")
+    # Different line number must normalize to the SAME signature (false-split guard).
+    second = map_step_runner.record_failure_signature(
+        _SPECIFIC_FAILURE_OTHER_LINE, "ST-001"
+    )
+    assert second["signature"] == first["signature"]
+    assert second["count"] == 2
+    assert second["armed"] is True
+    assert second["escalation_recommended"] is False
+
+
+def test_record_failure_signature_distinct_failures_do_not_arm(branch_workspace):
+    del branch_workspace
+    a = map_step_runner.record_failure_signature(_SPECIFIC_FAILURE, "ST-001")
+    b = map_step_runner.record_failure_signature(
+        "KeyError: 'name' raised in handler.py:5 build_payload", "ST-001"
+    )
+    assert a["signature"] != b["signature"]
+    assert a["armed"] is False and b["armed"] is False
+
+
+def test_record_failure_signature_generic_is_never_armed(branch_workspace):
+    del branch_workspace
+    map_step_runner.record_failure_signature(_GENERIC_FAILURE, "ST-002")
+    second = map_step_runner.record_failure_signature(_GENERIC_FAILURE, "ST-002")
+    assert second["count"] == 2
+    assert second["low_specificity"] is True
+    assert second["armed"] is False
+    assert any("low_specificity" in r for r in second["reasons"])
+
+
+def test_record_failure_signature_escalation_signal_at_third(branch_workspace):
+    del branch_workspace
+    for _ in range(2):
+        map_step_runner.record_failure_signature(_SPECIFIC_FAILURE, "ST-001")
+    third = map_step_runner.record_failure_signature(_SPECIFIC_FAILURE, "ST-001")
+    assert third["count"] == 3
+    assert third["armed"] is True
+    assert third["escalation_recommended"] is True
+
+
+def test_record_failure_signature_env_threshold_override(branch_workspace, monkeypatch):
+    del branch_workspace
+    monkeypatch.setenv("MAP_ANTI_REPEAT_ARM_THRESHOLD", "1")
+    result = map_step_runner.record_failure_signature(_SPECIFIC_FAILURE, "ST-001")
+    assert result["count"] == 1
+    assert result["armed"] is True  # arms on the very first failure under override
+
+
+def test_record_failure_signature_rejects_empty_and_bad_inputs(branch_workspace):
+    del branch_workspace
+    assert map_step_runner.record_failure_signature("", "ST-001")["status"] == "error"
+    assert map_step_runner.record_failure_signature("  \n ", "ST-001")["status"] == "error"
+    assert map_step_runner.record_failure_signature(_SPECIFIC_FAILURE, "")["status"] == "error"
+    bad_source = map_step_runner.record_failure_signature(
+        _SPECIFIC_FAILURE, "ST-001", source="not_a_source"
+    )
+    assert bad_source["status"] == "error"
+
+
+def test_record_failure_signature_registers_manifest_stage(branch_workspace):
+    map_step_runner.record_failure_signature(_SPECIFIC_FAILURE, "ST-001")
+    manifest = map_step_runner.load_artifact_manifest()
+    stage = manifest["stages"]["anti_repeat"]
+    assert stage["status"] in {"tracking", "armed"}
+    assert any(
+        a["path"].endswith("anti_repeat.json") for a in stage["artifacts"]
+    )
+    # Arm it and confirm the status flips to "armed".
+    map_step_runner.record_failure_signature(_SPECIFIC_FAILURE, "ST-001")
+    armed_stage = map_step_runner.load_artifact_manifest()["stages"]["anti_repeat"]
+    assert armed_stage["status"] == "armed"
+    del branch_workspace
+
+
+def test_build_anti_repeat_constraint_empty_when_nothing_armed(branch_workspace):
+    del branch_workspace
+    # First failure recorded but not armed -> no block (no-regression baseline).
+    map_step_runner.record_failure_signature(_SPECIFIC_FAILURE, "ST-001")
+    result = map_step_runner.build_anti_repeat_constraint("ST-001")
+    assert result["armed"] is False
+    assert result["constraint"] == ""
+
+
+def test_build_anti_repeat_constraint_renders_block_when_armed(branch_workspace):
+    del branch_workspace
+    map_step_runner.record_failure_signature(_SPECIFIC_FAILURE, "ST-001")
+    rec = map_step_runner.record_failure_signature(_SPECIFIC_FAILURE_OTHER_LINE, "ST-001")
+    result = map_step_runner.build_anti_repeat_constraint("ST-001")
+    assert result["armed"] is True
+    block = result["constraint"]
+    assert "<intra_run_failure_memory>" in block
+    assert "</intra_run_failure_memory>" in block
+    # Human-readable sample present; the hash key must NOT leak into the prompt.
+    assert "AssertionError" in block
+    assert rec["signature"] not in block
+    # Anti-stagnation, not anti-approach.
+    assert "MUST directly resolve" in block
+
+
+def test_build_anti_repeat_constraint_suppressed_during_clean_retry(branch_workspace):
+    del branch_workspace
+    map_step_runner.record_failure_signature(_SPECIFIC_FAILURE, "ST-001")
+    map_step_runner.record_failure_signature(_SPECIFIC_FAILURE_OTHER_LINE, "ST-001")
+    result = map_step_runner.build_anti_repeat_constraint(
+        "ST-001", quarantine_active=True
+    )
+    assert result["constraint"] == ""
+    assert result["armed"] is False
+    assert result["suppressed"] == "clean_retry_active"
+
+
+def test_anti_repeat_is_scoped_per_subtask(branch_workspace):
+    del branch_workspace
+    map_step_runner.record_failure_signature(_SPECIFIC_FAILURE, "ST-001")
+    map_step_runner.record_failure_signature(_SPECIFIC_FAILURE_OTHER_LINE, "ST-001")
+    # ST-002 saw the same failure only once -> its constraint stays empty.
+    map_step_runner.record_failure_signature(_SPECIFIC_FAILURE, "ST-002")
+    assert map_step_runner.build_anti_repeat_constraint("ST-001")["armed"] is True
+    assert map_step_runner.build_anti_repeat_constraint("ST-002")["armed"] is False
+
+
+def test_build_anti_repeat_constraint_caps_armed_signatures(branch_workspace):
+    del branch_workspace
+    failures = [
+        "AssertionError: alpha mismatch in test_a at a.py:1",
+        "KeyError: 'beta' raised in b.py build_b",
+        "TypeError: gamma is None in c.py render_c",
+    ]
+    for failure in failures:
+        for _ in range(2):  # arm all three distinct signatures
+            map_step_runner.record_failure_signature(failure, "ST-001")
+    result = map_step_runner.build_anti_repeat_constraint("ST-001")
+    assert len(result["signatures"]) == map_step_runner.ANTI_REPEAT_MAX_ARMED_IN_BLOCK
+
+
+def test_normalizer_version_mismatch_resets_store(branch_workspace):
+    map_step_runner.record_failure_signature(_SPECIFIC_FAILURE, "ST-001")
+    store_path = branch_workspace / "anti_repeat.json"
+    store = json.loads(store_path.read_text(encoding="utf-8"))
+    store["normalizer_version"] = 999  # simulate an incompatible older artifact
+    store_path.write_text(json.dumps(store), encoding="utf-8")
+    # Next record starts from a clean store (count resets to 1, not 2).
+    result = map_step_runner.record_failure_signature(_SPECIFIC_FAILURE, "ST-001")
+    assert result["count"] == 1
+
+
+def test_set_anti_repeat_subtask_status_transitions(branch_workspace):
+    map_step_runner.record_failure_signature(_SPECIFIC_FAILURE, "ST-001")
+    ok = map_step_runner.set_anti_repeat_subtask_status("ST-001", "succeeded")
+    assert ok["status"] == "ok"
+    assert ok["new_status"] == "succeeded"
+    store = _read_anti_repeat_store(branch_workspace)
+    assert store["subtasks"]["ST-001"]["status"] == "succeeded"
+    # Unknown subtask is a noop, not an error.
+    noop = map_step_runner.set_anti_repeat_subtask_status("ST-404", "failed")
+    assert noop["status"] == "noop"
+    # Invalid status is rejected.
+    assert map_step_runner.set_anti_repeat_subtask_status("ST-001", "bogus")["status"] == "error"
+
+
+def test_collect_anti_repeat_learn_candidates_excludes_succeeded(branch_workspace):
+    del branch_workspace
+    # ST-001: armed then SUCCEEDED -> excluded (found a way through).
+    map_step_runner.record_failure_signature(_SPECIFIC_FAILURE, "ST-001")
+    map_step_runner.record_failure_signature(_SPECIFIC_FAILURE_OTHER_LINE, "ST-001")
+    map_step_runner.set_anti_repeat_subtask_status("ST-001", "succeeded")
+    # ST-002: armed then FAILED -> included.
+    map_step_runner.record_failure_signature(
+        "KeyError: 'name' raised in handler.py:5 build_payload", "ST-002"
+    )
+    map_step_runner.record_failure_signature(
+        "KeyError: 'name' raised in handler.py:8 build_payload", "ST-002"
+    )
+    map_step_runner.set_anti_repeat_subtask_status("ST-002", "failed")
+    candidates = map_step_runner.collect_anti_repeat_learn_candidates()
+    ids = {c["subtask_id"] for c in candidates}
+    assert ids == {"ST-002"}
+    assert candidates[0]["status"] == "failed"
+    assert candidates[0]["count"] == 2
+
+
+def test_collect_anti_repeat_learn_candidates_skips_unarmed_generic(branch_workspace):
+    del branch_workspace
+    map_step_runner.record_failure_signature(_GENERIC_FAILURE, "ST-001")
+    map_step_runner.record_failure_signature(_GENERIC_FAILURE, "ST-001")
+    map_step_runner.set_anti_repeat_subtask_status("ST-001", "failed")
+    assert map_step_runner.collect_anti_repeat_learn_candidates() == []
+
+
+def test_learning_handoff_includes_intra_run_failure_memory(branch_workspace):
+    # Arm a failed subtask (same failure twice) -> it becomes a learn candidate.
+    map_step_runner.record_failure_signature(
+        "ValueError: bad config in cfg.py:10 load_config", "ST-001"
+    )
+    map_step_runner.record_failure_signature(
+        "ValueError: bad config in cfg.py:42 load_config", "ST-001"
+    )
+    map_step_runner.set_anti_repeat_subtask_status("ST-001", "failed")
+    map_step_runner.write_learning_handoff("map-efficient", "Task", "blocked")
+    payload = json.loads(
+        (branch_workspace / "learning-handoff.json").read_text(encoding="utf-8")
+    )
+    assert "intra_run_failure_memory" in payload
+    assert any(c["subtask_id"] == "ST-001" for c in payload["intra_run_failure_memory"])
+    markdown = (branch_workspace / "learning-handoff.md").read_text(encoding="utf-8")
+    assert "Intra-run Failure Memory" in markdown
+
+
+def test_cli_record_failure_signature_exits_zero_and_arms(tmp_path):
+    first = _run_repro_cli(
+        ["record_failure_signature", _SPECIFIC_FAILURE, "ST-1", "--branch", "clitest"],
+        tmp_path,
+    )
+    assert first.returncode == 0, first.stderr
+    assert json.loads(first.stdout)["armed"] is False
+    second = _run_repro_cli(
+        [
+            "record_failure_signature",
+            _SPECIFIC_FAILURE_OTHER_LINE,
+            "ST-1",
+            "--branch",
+            "clitest",
+        ],
+        tmp_path,
+    )
+    assert second.returncode == 0, second.stderr
+    assert json.loads(second.stdout)["armed"] is True
+
+
+def test_cli_record_failure_signature_bad_source_exits_one(tmp_path):
+    proc = _run_repro_cli(
+        ["record_failure_signature", "x", "ST-1", "--source", "bogus", "--branch", "clitest"],
+        tmp_path,
+    )
+    assert proc.returncode == 1
+
+
+def test_cli_build_anti_repeat_constraint_and_quarantine(tmp_path):
+    for failure in (_SPECIFIC_FAILURE, _SPECIFIC_FAILURE_OTHER_LINE):
+        _run_repro_cli(
+            ["record_failure_signature", failure, "ST-1", "--branch", "clitest"],
+            tmp_path,
+        )
+    built = _run_repro_cli(
+        ["build_anti_repeat_constraint", "ST-1", "--branch", "clitest"], tmp_path
+    )
+    assert built.returncode == 0, built.stderr
+    assert "<intra_run_failure_memory>" in json.loads(built.stdout)["constraint"]
+    suppressed = _run_repro_cli(
+        [
+            "build_anti_repeat_constraint",
+            "ST-1",
+            "--branch",
+            "clitest",
+            "--quarantine-active",
+        ],
+        tmp_path,
+    )
+    assert json.loads(suppressed.stdout)["constraint"] == ""
+
+
+def test_cli_set_status_and_collect_candidates(tmp_path):
+    for failure in (_SPECIFIC_FAILURE, _SPECIFIC_FAILURE_OTHER_LINE):
+        _run_repro_cli(
+            ["record_failure_signature", failure, "ST-1", "--branch", "clitest"],
+            tmp_path,
+        )
+    _run_repro_cli(
+        ["set_anti_repeat_subtask_status", "ST-1", "failed", "--branch", "clitest"],
+        tmp_path,
+    )
+    collected = _run_repro_cli(
+        ["collect_anti_repeat_learn_candidates", "--branch", "clitest"], tmp_path
+    )
+    assert collected.returncode == 0, collected.stderr
+    candidates = json.loads(collected.stdout)
+    assert [c["subtask_id"] for c in candidates] == ["ST-1"]
