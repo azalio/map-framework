@@ -214,3 +214,38 @@
       token_usage: TokenUsage | None
   # tests inject MockDispatcher(triggered_skill="map-plan") — no subprocess needed
   ```
+
+- **Bidirectional Mapping Completeness: Forward AND Reverse Checks Required** (2026-06-21): When validating a mapping structure (coverage_map, import registry, ID→item dict, any key→value store), enforce BOTH directions: REVERSE (every key in the map is legitimately cited by its owning source) AND FORWARD (every item in the authoritative source set appears as a key in the map). Reverse-only validation silently passes dropped entries — an item removed from both the source set and the map in the same commit is invisible to a reverse scan because there is no key to check. The forward check requires an authoritative source-of-truth list independent of the map itself. [workflow: map-efficient]
+  ```python
+  # WRONG — reverse-only: a dropped AC absent from both spec and coverage_map is never detected.
+  def validate_coverage(bp):
+      return [f'{k} not cited by {sid}' for k, sids in bp['coverage_map'].items()
+              for sid in sids if k not in bp['subtasks'][sid].get('requirements', [])]
+  # CORRECT — forward uses an upstream req_index set independent of coverage_map:
+  def validate_coverage(bp, req_index: set[str]):
+      missing = req_index - set(bp['coverage_map'].keys())   # FORWARD: dropped items surface here
+      errors = [f'FORWARD: {r} in index but absent from coverage_map' for r in sorted(missing)]
+      # ... plus the REVERSE cite-check as before
+      return errors
+  ```
+
+- **Upstream-Owned Reference Set: Self-Check Authority Must Be External to the Checked Component** (2026-06-21): When building a completeness gate that checks whether a component (decomposer, code generator, schema migrator) processed every required item, the authoritative list of required items must live UPSTREAM of that component in the data-flow — never be declared by the component itself. If the component declares BOTH the list it must cover AND the coverage map, it can silently drop an item from both simultaneously, producing a consistent-but-incomplete output that passes every check. The upstream artifact (spec, schema definition, API contract) is owned by a different actor and is the only tamper-resistant source. [workflow: map-efficient]
+  ```python
+  # WRONG — decomposer owns its own authoritative list; dropping AC-007 from both passes.
+  # blueprint = {'declared_requirements': [...], 'coverage_map': {...}}  # same author
+  # CORRECT — spec markdown (upstream of decomposer) carries a versioned fenced index;
+  # the validator reads the index from the SPEC, not from blueprint.json.
+  def validate(bp, spec_path):
+      req_index = parse_requirements_index(spec_path)   # authoritative, upstream, human-visible
+      return req_index - set(bp['coverage_map'].keys()) # {AC-007} even if decomposer never named it
+  ```
+
+- **Per-Subtask Render Propagation in Agentic Loops: Commit Generated Trees at Each .jinja-Editing Subtask Close** (2026-06-21): In a per-subtask agentic loop where subtasks edit `.jinja` sources and a render step propagates to N generated trees, never defer all render+commit work to a final subtask. Deferral leaves every intermediate commit with stale generated trees; when Monitor runs `make check-render` mid-loop it sees a non-empty diff and HARD-STOPS with valid=false even though all logic VCs passed — a false blocking failure. Invariant: any subtask that edits a `.jinja` source must also `make render-templates` and commit the rendered output before Monitor sees the commit. After each close, call `refresh_blueprint_affected_files` to register the generated trees (render touches files outside the declared affected_files and trips the mutation-boundary check otherwise). This is N-Output-Tree Parity applied at subtask-loop granularity, not just feature granularity. [workflow: map-efficient]
+  ```bash
+  # WRONG: ST-001..ST-012 commit .jinja only; ST-013 renders -> Monitor hard-stops at ST-006.
+  # CORRECT: at each .jinja-editing subtask close:
+  make render-templates
+  git add src/mapify_cli/templates_src/ src/mapify_cli/templates/ .claude/ .codex/
+  git commit -m "ST-006: ..."
+  python3 .map/scripts/map_step_runner.py refresh_blueprint_affected_files "$BRANCH" ST-006
+  ```

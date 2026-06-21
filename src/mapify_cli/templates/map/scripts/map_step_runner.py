@@ -2225,6 +2225,127 @@ def record_plan_artifacts(branch: Optional[str] = None) -> dict[str, object]:
     }
 
 
+_REQ_INDEX_OPEN = "<!-- mapify:requirements-index:v1 -->"
+_REQ_INDEX_CLOSE = "<!-- /mapify:requirements-index:v1 -->"
+_REQ_ID_RE = re.compile(r"^(AC|INV|HC|CCR)-[1-9][0-9]*$")
+_REQ_KIND_VOCAB = frozenset(
+    {"acceptance_criterion", "invariant", "hard_constraint", "cross_cutting"}
+)
+# SC-1: suspicious fan-in threshold — one subtask owning more than this many
+# requirements is a coverage-dumping smell (tunable heuristic).
+_COVERAGE_FANIN_WARN = 3
+# AC-7: max dependency-chain depth before a warning is emitted. Overridable via
+# MAP_MAX_DEPENDENCY_DEPTH env var (positive int). This is a warn-only signal —
+# valid is never set false by this check.
+MAX_DEPENDENCY_DEPTH = 5
+
+
+def parse_requirements_index(spec_text: str) -> dict[str, object]:
+    """Parse the versioned Requirements Index from a spec markdown string.
+
+    Contract:
+    - Locates the index by the sentinel PAIR ``<!-- mapify:requirements-index:v1 -->``
+      (open) and ``<!-- /mapify:requirements-index:v1 -->`` (close).  Only the
+      fenced ```yaml block between those two sentinels is authoritative; a
+      sentinel-shaped string anywhere else in the prose is ignored.
+    - Parses the inner YAML via a lazy ``import yaml``; both ``ImportError`` and
+      ``yaml.YAMLError`` yield ``status='malformed'`` — never an uncaught exception.
+    - Returns::
+
+        {
+            'requirements': [{'id': str, 'kind': str}, ...],
+            'status': 'absent' | 'malformed' | 'present_empty' | 'present_nonempty',
+            'warnings': [str, ...],
+        }
+
+    Status semantics:
+    - ``absent``          — sentinel pair not found in the text.
+    - ``malformed``       — open sentinel found but: no close sentinel, no inner
+                            yaml fence, YAML parse error, or top-level shape is not
+                            ``{requirements: list}``.
+    - ``present_empty``   — parsed successfully; ``requirements`` is ``[]``.
+    - ``present_nonempty``— parsed successfully; ``requirements`` has >=1 entry.
+
+    Validation (warn-not-normalize, never silently dropped):
+    - Canonical ID regex: ``^(AC|INV|HC|CCR)-[1-9][0-9]*$``
+      (uppercase prefix, no leading zero). Non-canonical IDs are kept as-is and
+      a warning is appended.
+    - Closed kind vocabulary: ``{acceptance_criterion, invariant,
+      hard_constraint, cross_cutting}``.  Out-of-vocab kinds are kept as-is and
+      a warning is appended.
+
+    Pure function: no file I/O, no LLM call (HC-2, HC-6).
+    """
+    warnings: list[str] = []
+
+    # Step 1: locate the open sentinel.
+    open_pos = spec_text.find(_REQ_INDEX_OPEN)
+    if open_pos == -1:
+        return {"requirements": [], "status": "absent", "warnings": warnings}
+
+    after_open = spec_text[open_pos + len(_REQ_INDEX_OPEN):]
+
+    # Step 2: require the close sentinel to follow the open sentinel.
+    close_pos = after_open.find(_REQ_INDEX_CLOSE)
+    if close_pos == -1:
+        return {"requirements": [], "status": "malformed", "warnings": warnings}
+
+    between = after_open[:close_pos]
+
+    # Step 3: require a fenced ```yaml block inside the sentinel pair.
+    fence_open_re = re.compile(r"```yaml\s*\n")
+    fence_match = fence_open_re.search(between)
+    if not fence_match:
+        return {"requirements": [], "status": "malformed", "warnings": warnings}
+
+    after_fence = between[fence_match.end():]
+    fence_close = after_fence.find("```")
+    if fence_close == -1:
+        return {"requirements": [], "status": "malformed", "warnings": warnings}
+
+    yaml_text = after_fence[:fence_close]
+
+    # Step 4: parse YAML (lazy import; treat ImportError == YAMLError == malformed).
+    try:
+        import yaml  # noqa: PLC0415
+        data = yaml.safe_load(yaml_text)
+    except Exception:
+        return {"requirements": [], "status": "malformed", "warnings": warnings}
+
+    # Step 5: validate top-level shape.
+    if not isinstance(data, dict) or not isinstance(data.get("requirements"), list):
+        return {"requirements": [], "status": "malformed", "warnings": warnings}
+
+    raw_entries: list[object] = data["requirements"]
+
+    # Step 6: validate each entry; warn-not-normalize.
+    requirements: list[dict[str, str]] = []
+    for entry in raw_entries:
+        if not isinstance(entry, dict):
+            warnings.append(f"requirements entry is not a mapping: {entry!r}")
+            requirements.append(entry)  # type: ignore[arg-type]
+            continue
+
+        req_id = entry.get("id", "")
+        req_kind = entry.get("kind", "")
+
+        if not _REQ_ID_RE.match(str(req_id)):
+            warnings.append(
+                f"non-canonical requirement id {req_id!r} "
+                f"(expected ^(AC|INV|HC|CCR)-[1-9][0-9]*$)"
+            )
+        if str(req_kind) not in _REQ_KIND_VOCAB:
+            warnings.append(
+                f"unknown requirement kind {req_kind!r} "
+                f"(expected one of {sorted(_REQ_KIND_VOCAB)})"
+            )
+
+        requirements.append({"id": str(req_id), "kind": str(req_kind)})
+
+    status = "present_nonempty" if requirements else "present_empty"
+    return {"requirements": requirements, "status": status, "warnings": warnings}
+
+
 def validate_blueprint_contract(
     blueprint_path: str = "", branch: Optional[str] = None
 ) -> dict[str, object]:
@@ -2655,6 +2776,27 @@ def validate_blueprint_contract(
                             "treated as expected-absent."
                         )
 
+    # Entry-point existence check [AC-5 / VC1-VC2].
+    # Empty subtasks is already rejected by the early return above (~line 2376),
+    # so emptiness can never reach this check (VC2 satisfied by that guard).
+    # A non-empty graph where every subtask declares at least one dependency has
+    # no starting point and is either cyclic or malformed — catch it early with
+    # a clear diagnostic rather than letting the runtime walker deadlock.
+    has_entry_point = any(
+        isinstance(st, dict)
+        and (
+            st.get("dependencies") is None
+            or not isinstance(st.get("dependencies"), list)
+            or len(st.get("dependencies")) == 0  # type: ignore[arg-type]
+        )
+        for st in subtasks
+    )
+    if subtasks and not has_entry_point:
+        errors.append(
+            "no entry-point subtask: at least one subtask must have zero dependencies "
+            "(every subtask declares a dependency — the plan has no starting point / is cyclic)"
+        )
+
     coverage_map = payload.get("coverage_map") or blueprint_body.get("coverage_map")
     if not isinstance(coverage_map, dict) or not coverage_map:
         errors.append(
@@ -2725,6 +2867,215 @@ def validate_blueprint_contract(
                         f"{requirement_id!r} as {lineage_tag}"
                     )
 
+    # --- Forward-coverage gate (ST-005/ST-006) ---
+    # HC-4: hard-fail is off-by-default; set MAP_STRICT_COVERAGE=1 to enable.
+    # _strict is computed once here and reused throughout the block (AC-8).
+    _strict = _parse_boolish(os.environ.get("MAP_STRICT_COVERAGE"))
+
+    # Resolve spec path: .map/<branch>/spec_<branch>.md
+    _spec_path = get_branch_dir(branch_name) / f"spec_{branch_name}.md"
+    try:
+        _spec_text = _spec_path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        _spec_text = ""
+
+    _fc_status: str
+    _fc_missing: list[str]
+    _fc_confidence: str  # HC-3: qualitative only — high | medium | low
+    _fc_basis: str       # HC-3: one-line rationale for the confidence value
+    if not _spec_text:
+        # Treat unreadable / absent file as absent index
+        _fc_status = "absent"
+        _fc_missing = []
+        _fc_confidence = "low"
+        _fc_basis = "no spec file found; forward-coverage skipped"
+        warnings.append(
+            "Forward-coverage: no Requirements Index found in "
+            f"spec_{branch_name}.md (run make render-templates / populate the "
+            "mapify:requirements-index:v1 block); forward-coverage check skipped"
+        )
+        _fc_result: dict[str, object] = {"requirements": [], "status": "absent", "warnings": []}
+    else:
+        _fc_result = parse_requirements_index(_spec_text)
+        _fc_status = str(_fc_result.get("status", "absent"))
+        _fc_missing = []
+
+        # Fold parser warnings into the validator warnings list.
+        for _pw in (_fc_result.get("warnings") or []):
+            warnings.append(f"Requirements Index: {_pw}")
+
+        if _fc_status == "absent":
+            _fc_confidence = "low"
+            _fc_basis = "no Requirements Index in spec; forward-coverage skipped"
+            warnings.append(
+                "Forward-coverage: no Requirements Index found in "
+                f"spec_{branch_name}.md (run make render-templates / populate the "
+                "mapify:requirements-index:v1 block); forward-coverage check skipped"
+            )
+        elif _fc_status == "present_empty":
+            # PASS — empty index means no requirements declared; nothing to check.
+            _fc_confidence = "high"
+            _fc_basis = "Requirements Index present but empty; nothing to check"
+        elif _fc_status == "present_nonempty":
+            _index_ids = [
+                r["id"]
+                for r in (_fc_result.get("requirements") or [])
+                if isinstance(r, dict) and r.get("id")
+            ]
+            # Preserve order, deduplicate while keeping first occurrence.
+            _seen: set[str] = set()
+            _deduped_ids: list[str] = []
+            for _iid in _index_ids:
+                if _iid not in _seen:
+                    _seen.add(_iid)
+                    _deduped_ids.append(_iid)
+
+            _cov_keys: set[str] = set(coverage_map.keys()) if isinstance(coverage_map, dict) else set()
+            _fc_missing = [i for i in _deduped_ids if i not in _cov_keys]
+            _n_ids = len(_deduped_ids)
+            _fc_confidence = "high"
+            _fc_basis = f"spec index parsed cleanly; {_n_ids} requirement id(s) diffed against coverage_map"
+
+            if _fc_missing:
+                _fc_msg = (
+                    f"Forward-coverage: spec requirement(s) {_fc_missing} "
+                    "have no owner in coverage_map"
+                )
+                # HC-4: default posture is WARN (migration-friendly); strict=true -> hard error.
+                if _strict:
+                    errors.append(_fc_msg)
+                else:
+                    warnings.append(_fc_msg)
+        elif _fc_status == "malformed":
+            # HC-5 / HC-3: malformed is always a hard error regardless of strict flag.
+            _fc_confidence = "low"
+            _fc_basis = "Requirements Index malformed; could not diff"
+            errors.append(
+                "Forward-coverage: Requirements Index is malformed "
+                "(see the mapify:requirements-index:v1 template in plan-reference.md.jinja)"
+            )
+        else:
+            # Unknown status — treat defensively.
+            _fc_confidence = "low"
+            _fc_basis = f"unexpected Requirements Index status {_fc_status!r}"
+
+    # --- Non-blocking guardrails (ST-009/AC-6) — WARNINGS ONLY; never touch errors ---
+
+    # Build the index-id set once; reused by (a) and (b).
+    _index_id_set: set[str] = {
+        r["id"]
+        for r in (_fc_result.get("requirements") or [])
+        if isinstance(r, dict) and r.get("id")
+    }
+    _index_present = _fc_status in {"present_nonempty", "present_empty"}
+
+    # (a) prose-orphan: IDs in spec prose OUTSIDE the fenced index but absent from it.
+    if _index_present and _spec_text:
+        # Strip the fenced index region from the spec text before scanning.
+        _open_pos = _spec_text.find(_REQ_INDEX_OPEN)
+        _close_pos = _spec_text.find(_REQ_INDEX_CLOSE)
+        if _open_pos != -1 and _close_pos != -1 and _close_pos > _open_pos:
+            _remainder = (
+                _spec_text[:_open_pos]
+                + _spec_text[_close_pos + len(_REQ_INDEX_CLOSE):]
+            )
+        else:
+            _remainder = _spec_text
+        _prose_id_re = re.compile(r"(?:AC|INV|HC|CCR)-\d+")
+        _prose_ids_seen: set[str] = set()
+        for _pid in _prose_id_re.findall(_remainder):
+            if _pid not in _index_id_set and _pid not in _prose_ids_seen:
+                _prose_ids_seen.add(_pid)
+                warnings.append(
+                    f"Requirements Index prose-orphan: {_pid} appears in spec prose "
+                    "but not in the Requirements Index "
+                    "(did you forget to add it?)"
+                )
+
+    # (b) reverse-phantom: coverage_map keys absent from the index.
+    if _index_present and isinstance(coverage_map, dict):
+        for _ckey in coverage_map:
+            if isinstance(_ckey, str) and _ckey not in _index_id_set:
+                warnings.append(
+                    f"coverage_map key {_ckey!r} is not in the Requirements Index "
+                    "(possible hallucinated/extra requirement)"
+                )
+
+    # (c) ownership-distribution: always-on whenever coverage_map is a non-empty dict.
+    if isinstance(coverage_map, dict) and coverage_map:
+        _owner_counts: dict[str, int] = {}
+        for _owner in coverage_map.values():
+            if isinstance(_owner, str):
+                _owner_counts[_owner] = _owner_counts.get(_owner, 0) + 1
+        if _owner_counts:
+            warnings.append(f"coverage ownership: {_owner_counts}")
+            for _own, _cnt in _owner_counts.items():
+                if _cnt > _COVERAGE_FANIN_WARN:
+                    warnings.append(
+                        f"coverage fan-in: subtask {_own!r} owns {_cnt} requirements "
+                        f"(> {_COVERAGE_FANIN_WARN}); possible coverage-dumping — "
+                        "verify the decomposition actually split the work"
+                    )
+
+    # --- Max dependency-depth check (ST-011 / AC-7) — WARN only; never touches errors ---
+    # The graph is acyclic by this point (forward-dep checks above reject back-edges),
+    # but we guard against stray cycles anyway via an in-progress set so depth()
+    # cannot recurse infinitely.
+    _raw_max_depth_env = os.environ.get("MAP_MAX_DEPENDENCY_DEPTH", "")
+    _depth_threshold = MAX_DEPENDENCY_DEPTH
+    if _raw_max_depth_env.strip():
+        try:
+            _parsed_depth = int(_raw_max_depth_env.strip())
+            if _parsed_depth > 0:
+                _depth_threshold = _parsed_depth
+        except ValueError:
+            pass  # silently fall back to module constant
+
+    # Build deps map: subtask id -> list of dependency ids that exist as subtasks.
+    _dep_map: dict[str, list[str]] = {}
+    for _st in subtasks:
+        if not isinstance(_st, dict):
+            continue
+        _sid = _st.get("id")
+        if not isinstance(_sid, str):
+            continue
+        _raw_deps = _st.get("dependencies")
+        if isinstance(_raw_deps, list):
+            _dep_map[_sid] = [
+                d for d in _raw_deps
+                if isinstance(d, str) and d in subtask_ids
+            ]
+        else:
+            _dep_map[_sid] = []
+
+    # Memoized depth computation with cycle guard.
+    _depth_memo: dict[str, int] = {}
+    _depth_in_progress: set[str] = set()
+
+    def _compute_depth(sid: str) -> int:
+        if sid in _depth_memo:
+            return _depth_memo[sid]
+        if sid in _depth_in_progress:
+            # Stray back-edge / cycle — treat as depth 0 to avoid infinite recursion.
+            return 0
+        _depth_in_progress.add(sid)
+        deps_of = _dep_map.get(sid, [])
+        if deps_of:
+            d = 1 + max(_compute_depth(dep) for dep in deps_of)
+        else:
+            d = 0
+        _depth_in_progress.discard(sid)
+        _depth_memo[sid] = d
+        return d
+
+    if _dep_map:
+        _max_observed_depth = max(_compute_depth(sid) for sid in _dep_map)
+        if _max_observed_depth > _depth_threshold:
+            warnings.append(
+                f"dependency depth {_max_observed_depth} exceeds MAX_DEPENDENCY_DEPTH "
+                f"({_depth_threshold}); consider flattening the plan"
+            )
+
     return {
         "valid": not errors,
         "errors": errors,
@@ -2736,6 +3087,13 @@ def validate_blueprint_contract(
         "forward_dep_violations": forward_dep_violations,
         "deferred_yagni_count": deferred_yagni_count,
         "requires_pruning_approval": requires_pruning_approval,
+        "forward_coverage": {
+            "status": _fc_status,
+            "missing_ids": _fc_missing,
+            "strict": _strict,
+            "confidence": _fc_confidence,
+            "basis": _fc_basis,
+        },
     }
 
 

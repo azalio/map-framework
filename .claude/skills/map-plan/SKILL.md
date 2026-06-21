@@ -163,6 +163,8 @@ Ask only non-obvious questions. Cover technical choices, UX, tradeoffs, risks, s
 
 Write `.map/<branch>/spec_<branch>.md`. The full spec template is in [plan-reference.md](plan-reference.md#spec-template); the active spec must include decisions, contradiction, invariants, constraints, edge cases, acceptance criteria, security boundaries, out of scope, and open questions.
 
+**Requirements Index (MANDATORY):** After writing the spec, populate the `mapify:requirements-index:v1` sentinel-wrapped fenced YAML block (defined in the spec template) with exactly ONE `{id, kind}` entry per acceptance criterion, invariant, hard constraint, and cross-cutting requirement. `kind` must be one of `acceptance_criterion | invariant | hard_constraint | cross_cutting`. IDs must be canonical: prefix in `{AC, INV, HC, CCR}`, no leading zeros, uppercase (e.g. `AC-1`, `INV-2`, `HC-3`). These IDs are **exactly** the keys the decomposer must map in `coverage_map` — the forward-completeness gate diffs the index IDs against `coverage_map` keys to detect uncovered requirements.
+
 ### Step 2a: Write Spec (when interview was skipped)
 
 Write the same spec artifact from the provided requirements and discovery evidence. Do not invent unresolved decisions; put them in Open Questions.

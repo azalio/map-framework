@@ -222,3 +222,13 @@ paths:
   mapify skill-eval --help | grep -i max-concurrency        # actual default
   grep -nE 'default|yaml|schema|--[a-z-]+' docs/SKILL.md     # reconcile every claim
   ```
+
+- **Snapshot-Before-Mutate: Tautological File-Comparison Tests Must Capture State Before In-Place Operations** (2026-06-21): When a test verifies that an in-place operation (render, format, migration) actually changed a file, compare PRE-operation bytes to POST-operation bytes — never the post-operation file to itself. `filecmp.cmp(path, path)` (or reading the file twice after the operation) is always True regardless of whether the operation did anything, because both sides read the same post-mutation content. Capture `path.read_bytes()` BEFORE the operation, then compare to `read_bytes()` after — a no-op render now fails the test, which is the correct stale-tree signal. [workflow: map-efficient]
+  ```python
+  # WRONG — always-True tautology; never detects a broken/no-op render
+  render_templates(tmp); assert filecmp.cmp(committed, committed)   # same file both sides
+  # CORRECT — snapshot before the in-place mutation
+  snapshot = committed.read_bytes()        # BEFORE
+  render_templates(tmp)
+  assert committed.read_bytes() != snapshot, "render should have updated the stale file"
+  ```

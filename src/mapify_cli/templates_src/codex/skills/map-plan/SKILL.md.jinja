@@ -292,6 +292,8 @@ Priority: must-handle / should-handle / won't-handle
 SPEC_EOF
 ```
 
+**Requirements Index (MANDATORY):** After writing the spec, populate the `mapify:requirements-index:v1` sentinel-wrapped fenced YAML block (defined in the spec template) with exactly ONE `{id, kind}` entry per acceptance criterion, invariant, hard constraint, and cross-cutting requirement. `kind` must be one of `acceptance_criterion | invariant | hard_constraint | cross_cutting`. IDs must be canonical: prefix in `{AC, INV, HC, CCR}`, no leading zeros, uppercase (e.g. `AC-1`, `INV-2`, `HC-3`). These IDs are **exactly** the keys the decomposer must map in `coverage_map` — the forward-completeness gate diffs the index IDs against `coverage_map` keys to detect uncovered requirements.
+
 ---
 
 ## Step 2a: Write Spec (interview skipped)
@@ -305,6 +307,8 @@ Populate from user requirements and discovery findings:
 - **Edge Cases:** from task description and affected code
 
 **Completeness rule:** If the source defines explicit ACs, enumerate ALL of them — do NOT summarize N criteria as "key M". Every AC that is not listed will be silently dropped by the decomposer.
+
+**Requirements Index (MANDATORY):** Same as above — populate the `mapify:requirements-index:v1` sentinel block with one `{id, kind}` entry per AC/INV/HC/CCR. IDs are the exact `coverage_map` keys the decomposer must map.
 
 ---
 

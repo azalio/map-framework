@@ -167,3 +167,15 @@ paths:
   done = {json.loads(l)["cell_id"] for l in out_path.read_text().splitlines() if l.strip()}
   pending = [c for c in cells if make_cell_id(...) not in done]   # order-independent resume
   ```
+
+- **dict[str,object] Pyright Barrier: Cast at Return/Creation Sites for Iterate and Double-Index Operations** (2026-06-21): When a function returns `dict[str, object]`, Pyright rejects any operation on a retrieved value that needs the runtime type — iteration (`for e in result["errors"]`), subscript/double-index (`result["fc"]["status"]`), method calls. Equality comparison (`result["errors"] == []`) is the ONLY operation legal on `object`, which is why pre-existing compare-only tests stay clean while new tests that iterate or double-index produce a batch of errors. Fix by widening the return type to `dict[str, Any]` at the few creation/return sites (the builder helper + direct returns), NOT by adding `cast()` at every downstream usage. [workflow: map-efficient]
+  ```python
+  # WRONG — dict[str, object] blocks iterate/index downstream; equality still ok
+  def validate(bp) -> dict[str, object]: ...
+  for e in result["errors"]: ...          # ERROR: object not iterable
+  fc = result["forward_coverage"]; fc["status"]   # ERROR: object has no __getitem__
+  result["errors"] == []                  # OK
+  # CORRECT — widen at the creation site; all callers unblocked, no per-call casts
+  from typing import Any
+  def validate(bp) -> dict[str, Any]: ...   # 34 downstream errors cleared by 1 change site
+  ```

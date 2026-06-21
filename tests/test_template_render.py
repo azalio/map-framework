@@ -792,13 +792,20 @@ class TestRenderRepoTreesCodex:
         the committed template.  Uses the live tree (HC-5 already verifies
         empty diff after render, so re-rendering is idempotent).
         """
+        # Snapshot committed bytes BEFORE the in-place re-render so a stale
+        # committed tree is detectable: an in-place render of a drifted file
+        # would change its bytes, making the post-render comparison fail.
+        # (Comparing the file to itself after rendering is tautological.)
+        before = {
+            committed: committed.read_bytes()
+            for committed in sorted(_TEMPLATES_CODEX.rglob("*"))
+            if committed.is_file() and not _is_bytecode(committed)
+        }
         render_repo_trees(
             "codex", dry_run=False, repo_root=_REPO_ROOT, templates_src_root=_TEMPLATES_SRC
         )
-        for committed in sorted(_TEMPLATES_CODEX.rglob("*")):
-            if not committed.is_file() or _is_bytecode(committed):
-                continue
-            assert filecmp.cmp(committed, committed, shallow=False), (
+        for committed, original in before.items():
+            assert committed.read_bytes() == original, (
                 f"Byte-parity FAILED for templates/codex/{committed.relative_to(_TEMPLATES_CODEX)}"
             )
 
@@ -1187,3 +1194,144 @@ class TestDiffRenderedTrees:
         # And crucially the learned file is untouched (never reverted/destroyed).
         assert learned.exists()
         assert learned.read_text(encoding="utf-8") == sentinel
+
+
+# ---------------------------------------------------------------------------
+# ST-012 VC2: golden-render tests — Requirements Index sentinel + SKILL
+# instruction byte-identically in generated trees (HC-1 single-source render)
+# ---------------------------------------------------------------------------
+
+
+_MAP_PLAN_PLAN_REFERENCE_CLAUDE = _CLAUDE_ROOT / "skills" / "map-plan" / "plan-reference.md"
+_MAP_PLAN_PLAN_REFERENCE_TEMPLATES = _TEMPLATES_DEST / "skills" / "map-plan" / "plan-reference.md"
+_MAP_PLAN_SKILL_CLAUDE = _CLAUDE_ROOT / "skills" / "map-plan" / "SKILL.md"
+_MAP_PLAN_SKILL_TEMPLATES = _TEMPLATES_DEST / "skills" / "map-plan" / "SKILL.md"
+
+_RI_OPEN_SENTINEL = "<!-- mapify:requirements-index:v1 -->"
+_RI_CLOSE_SENTINEL = "<!-- /mapify:requirements-index:v1 -->"
+_RI_SKILL_INSTRUCTION = "Requirements Index (MANDATORY)"
+
+
+class TestRequirementsIndexGoldenRender:
+    """ST-012 VC2: assert that the Requirements Index single-source render
+    landed in the generated trees with the expected content (HC-1).
+    """
+
+    def test_vc2_plan_reference_committed_contains_sentinel_open(self) -> None:
+        """VC2: committed .claude/skills/map-plan/plan-reference.md contains
+        the opening Requirements Index sentinel (ST-001 render landed).
+        """
+        assert _MAP_PLAN_PLAN_REFERENCE_CLAUDE.is_file(), (
+            f"Generated plan-reference.md missing: {_MAP_PLAN_PLAN_REFERENCE_CLAUDE}"
+        )
+        content = _MAP_PLAN_PLAN_REFERENCE_CLAUDE.read_text(encoding="utf-8")
+        assert _RI_OPEN_SENTINEL in content, (
+            f"plan-reference.md missing opening sentinel {_RI_OPEN_SENTINEL!r} — "
+            "run make render-templates after editing ST-001 .jinja source"
+        )
+
+    def test_vc2_plan_reference_committed_contains_sentinel_close(self) -> None:
+        """VC2: committed plan-reference.md contains the closing sentinel."""
+        assert _MAP_PLAN_PLAN_REFERENCE_CLAUDE.is_file(), (
+            f"Generated plan-reference.md missing: {_MAP_PLAN_PLAN_REFERENCE_CLAUDE}"
+        )
+        content = _MAP_PLAN_PLAN_REFERENCE_CLAUDE.read_text(encoding="utf-8")
+        assert _RI_CLOSE_SENTINEL in content, (
+            f"plan-reference.md missing closing sentinel {_RI_CLOSE_SENTINEL!r}"
+        )
+
+    def test_vc2_skill_committed_contains_requirements_index_instruction(self) -> None:
+        """VC2: committed .claude/skills/map-plan/SKILL.md contains the
+        'Requirements Index (MANDATORY)' author instruction (ST-002 render landed).
+        """
+        assert _MAP_PLAN_SKILL_CLAUDE.is_file(), (
+            f"Generated SKILL.md missing: {_MAP_PLAN_SKILL_CLAUDE}"
+        )
+        content = _MAP_PLAN_SKILL_CLAUDE.read_text(encoding="utf-8")
+        assert _RI_SKILL_INSTRUCTION in content, (
+            f"SKILL.md missing instruction {_RI_SKILL_INSTRUCTION!r} — "
+            "run make render-templates after editing ST-002 .jinja source"
+        )
+
+    def test_vc2_templates_plan_reference_contains_sentinel(self) -> None:
+        """VC2: committed templates/skills/map-plan/plan-reference.md contains
+        the sentinel pair (cross-tree parity for the spec template).
+        """
+        assert _MAP_PLAN_PLAN_REFERENCE_TEMPLATES.is_file(), (
+            f"Generated plan-reference.md missing in templates/: {_MAP_PLAN_PLAN_REFERENCE_TEMPLATES}"
+        )
+        content = _MAP_PLAN_PLAN_REFERENCE_TEMPLATES.read_text(encoding="utf-8")
+        assert _RI_OPEN_SENTINEL in content
+        assert _RI_CLOSE_SENTINEL in content
+
+    def test_vc2_templates_skill_contains_requirements_index_instruction(self) -> None:
+        """VC2: committed templates/skills/map-plan/SKILL.md contains
+        the Requirements Index author instruction.
+        """
+        assert _MAP_PLAN_SKILL_TEMPLATES.is_file(), (
+            f"Generated SKILL.md missing in templates/: {_MAP_PLAN_SKILL_TEMPLATES}"
+        )
+        content = _MAP_PLAN_SKILL_TEMPLATES.read_text(encoding="utf-8")
+        assert _RI_SKILL_INSTRUCTION in content
+
+    def test_vc2_cross_tree_plan_reference_byte_identity(self) -> None:
+        """VC2: .claude/ and templates/ copies of plan-reference.md are byte-identical
+        (cross-tree parity — proves HC-1 single render wrote both).
+        """
+        assert _MAP_PLAN_PLAN_REFERENCE_CLAUDE.is_file()
+        assert _MAP_PLAN_PLAN_REFERENCE_TEMPLATES.is_file()
+        assert filecmp.cmp(
+            _MAP_PLAN_PLAN_REFERENCE_CLAUDE,
+            _MAP_PLAN_PLAN_REFERENCE_TEMPLATES,
+            shallow=False,
+        ), (
+            "cross-tree parity FAILED for plan-reference.md — "
+            "run make render-templates"
+        )
+
+    def test_vc2_cross_tree_skill_byte_identity(self) -> None:
+        """VC2: .claude/ and templates/ copies of map-plan/SKILL.md are byte-identical."""
+        assert _MAP_PLAN_SKILL_CLAUDE.is_file()
+        assert _MAP_PLAN_SKILL_TEMPLATES.is_file()
+        assert filecmp.cmp(
+            _MAP_PLAN_SKILL_CLAUDE,
+            _MAP_PLAN_SKILL_TEMPLATES,
+            shallow=False,
+        ), (
+            "cross-tree parity FAILED for map-plan/SKILL.md — "
+            "run make render-templates"
+        )
+
+    @_skip_no_templates_src
+    def test_vc2_fresh_render_plan_reference_byte_identity(self, tmp_path: Path) -> None:
+        """VC2: a fresh render of templates_src produces plan-reference.md byte-identical
+        to the committed copy — proves the .jinja source is the single source of truth.
+        """
+        from mapify_cli.delivery.template_renderer import render_tree
+
+        dest = tmp_path / "rendered"
+        render_tree("claude", templates_src_root=_TEMPLATES_SRC, dest_root=dest)
+
+        rendered = dest / "skills" / "map-plan" / "plan-reference.md"
+        assert rendered.exists(), "Fresh render did not produce plan-reference.md"
+        assert filecmp.cmp(rendered, _MAP_PLAN_PLAN_REFERENCE_TEMPLATES, shallow=False), (
+            "Fresh-render plan-reference.md differs from committed templates/ copy — "
+            "edit .jinja source and run make render-templates"
+        )
+
+    @_skip_no_templates_src
+    def test_vc2_fresh_render_skill_byte_identity(self, tmp_path: Path) -> None:
+        """VC2: a fresh render of templates_src produces SKILL.md byte-identical
+        to the committed copy — proves the .jinja source is the single source of truth.
+        """
+        from mapify_cli.delivery.template_renderer import render_tree
+
+        dest = tmp_path / "rendered"
+        render_tree("claude", templates_src_root=_TEMPLATES_SRC, dest_root=dest)
+
+        rendered = dest / "skills" / "map-plan" / "SKILL.md"
+        assert rendered.exists(), "Fresh render did not produce map-plan/SKILL.md"
+        assert filecmp.cmp(rendered, _MAP_PLAN_SKILL_TEMPLATES, shallow=False), (
+            "Fresh-render SKILL.md differs from committed templates/ copy — "
+            "edit .jinja source and run make render-templates"
+        )

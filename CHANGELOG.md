@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Deterministic decomposition-completeness gate (issue #249).** `validate_blueprint_contract` now runs a forward-coverage set-diff between the spec's **Requirements Index** (`mapify:requirements-index:v1` fenced YAML, one `{id, kind}` entry per acceptance criterion / invariant / hard constraint / cross-cutting concern) and `coverage_map` keys. The index is the authoritative requirement list and lives in the spec, not the blueprint, so the decomposer cannot self-certify the set it is measured against. Uncovered requirements produce a **warning** by default; set `MAP_STRICT_COVERAGE=1` for a hard error (off by default — staged migration). An absent index (e.g. the `/map-efficient` no-spec path) emits a loud warning and skips the check — never a silent pass. A malformed index is always a hard error. Confidence is qualitative (`high | medium | low`) with a one-line basis; no numeric scores. Non-blocking guardrails: prose-orphan detection (canonical IDs in spec prose outside the index), reverse-phantom detection (`coverage_map` keys absent from the index), and an ownership-distribution report with a configurable fan-in warning (`_COVERAGE_FANIN_WARN`, default 3). Structural checks: entry-point existence (non-empty plan must have at least one zero-dependency subtask) and warn-first max dependency depth (`MAX_DEPENDENCY_DEPTH` default 5, env override `MAP_MAX_DEPENDENCY_DEPTH`). Spike finding (ST-007): multi-node cycle DFS was evaluated and deliberately omitted — forward-dependency-ordering and `_topo_sort_subtasks` already reject all cycles; a regression test (`test_multinode_cycle_already_rejected`) guards both mechanisms.
+
 ## [3.18.0] - 2026-06-21
 
 ### Fixed
