@@ -181,10 +181,36 @@ fi
   no concrete anchor (file / symbol / exception / assertion); they are recorded
   with `low_specificity:true` and never produce a block, so a vague Monitor note
   cannot brick a subtask.
-- **Escalation seam (#255).** At the 3rd identical failure the record sets
-  `escalation_recommended:true`. That is a SIGNAL only — escalate to
-  `CLARIFICATION_NEEDED`/bounded-effort retry instead of another blind Actor
-  call; this slice never skips the Actor call itself.
+- **Bounded-effort escalation (#255).** At the 3rd identical failure the record
+  sets `escalation_recommended:true`. The constraint armed at the 2nd failure
+  was the single bounded recovery *act*; a 3rd identical rejection means it did
+  not break the dead end, so STOP — do not retry, do not run the legacy retry-3
+  Stuck-Recovery path for this identical loop. Emit ONE deterministic terminal
+  outcome:
+
+  ```bash
+  if [ "$ESCALATE" = "true" ]; then
+    OUT=$(python3 .map/scripts/map_step_runner.py \
+      build_escalation_outcome "$SUBTASK_ID" repeated_failure)
+    #  Pass --quarantine-active on a CLEAN_RETRY iteration: it returns
+    #  status:"deferred" so the one-shot reset runs before any terminal stop.
+    STATUS=$(echo "$OUT" | jq -r '.status')
+    #  status:"escalated"-> surface OUT.blocker_summary + OUT.recommended_action
+    #    to the user and STOP (outcome:"BLOCKED", .map/<branch>/escalation_*.md).
+    #  status:"not_escalated" -> the LATEST failure was a NEW signature; the
+    #    Actor moved off the dead end -> resume normal retries.
+  fi
+  ```
+
+  The stop is re-derived from the store INSIDE `build_escalation_outcome`
+  (latest-signature rule), so a spurious call cannot fabricate a terminal stop.
+  When `monitor_failed` instead returns `status:"max_retries"`, run
+  `build_escalation_outcome "$SUBTASK_ID" max_retries --retry-count <n>
+  --max-retries <m>` for the same structured outcome with
+  `outcome:"CLARIFICATION_NEEDED"`. The escalation is idempotent (re-running
+  after `status:"escalated"` returns the prior outcome without rewriting it) and
+  the subtask's anti-repeat status flips to `escalated`, so its armed signs still
+  feed `/map-learn` candidates.
 - **On a clean close**, if the subtask had armed signs, run
   `set_anti_repeat_subtask_status "$SUBTASK_ID" succeeded` so its signs are
   excluded from the /map-learn candidates `write_learning_handoff` collects

@@ -204,6 +204,7 @@ ARTIFACT_STAGE_NAMES = (
     "verification",
     "retry_quarantine",
     "anti_repeat",
+    "escalation",
     "token_budget",
     "run_health",
     "learn_handoff",
@@ -332,6 +333,27 @@ ANTI_REPEAT_SAMPLE_MAX_CHARS = 240  # bound the raw sample rendered into the Act
 ANTI_REPEAT_MAX_ARMED_IN_BLOCK = 2  # cap armed signatures injected into one prompt
 ANTI_REPEAT_TERMINAL_STATUSES = frozenset({"succeeded", "failed", "escalated"})
 ANTI_REPEAT_VALID_STATUSES = frozenset({"active"}) | ANTI_REPEAT_TERMINAL_STATUSES
+
+# Bounded-effort escalation (#255). Consumes the #253 `escalation_recommended`
+# SIGNAL and the orchestrator's max_retries hard cap, converting either into ONE
+# deterministic terminal outcome instead of grinding the Actor->Monitor loop to
+# the ceiling on a dead end. "Act once, then escalate": the anti-stagnation
+# constraint armed at the 2nd identical failure IS the single bounded recovery
+# act; the 3rd identical failure short-circuits straight to escalation (the
+# legacy retry-3 Stuck-Recovery path is bypassed for IDENTICAL-failure loops and
+# stays active only for non-identical stuckness). The decision is re-derived from
+# the anti_repeat store INSIDE build_escalation_outcome — never trusted from the
+# caller — so a spurious/hallucinated invocation cannot fabricate a terminal stop.
+ESCALATION_ARTIFACT_PREFIX = "escalation_"
+ESCALATION_REASONS = frozenset({"repeated_failure", "max_retries"})
+# outcome label per reason: a specific diagnosed blocker ("fix this thing") vs a
+# diverse-failure budget exhaustion that likely needs reframing ("tell me what
+# you want"). status stays "escalated" for both; the label drives the human ask.
+ESCALATION_OUTCOME_BY_REASON = {
+    "repeated_failure": "BLOCKED",
+    "max_retries": "CLARIFICATION_NEEDED",
+}
+ESCALATION_MAX_EVIDENCE_RECORDS = 3  # cap repeated-failure samples in the outcome
 
 # Truncation infrastructure deleted by user directive ("убери транкейт уже
 # вообще"). build_context_block / _budget_review_prompt now emit raw text;
@@ -11963,6 +11985,289 @@ def collect_anti_repeat_learn_candidates(
     return candidates
 
 
+def _escalation_artifact_path(
+    subtask_id: str, branch: Optional[str] = None
+) -> Path:
+    """Return the branch-scoped human-readable escalation report path."""
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", (subtask_id or "").strip()) or "subtask"
+    return get_branch_dir(branch) / f"{ESCALATION_ARTIFACT_PREFIX}{safe}.md"
+
+
+def _latest_signature_record(entry: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Return the subtask's most-recently-seen signature record, or None.
+
+    The escalation decision binds to the LATEST failure signature only. If the
+    most recent rejection is a NEW signature (the Actor moved off the prior dead
+    end), that record's ``escalation_recommended`` is False and the loop resumes
+    normal retries instead of escalating on a stale armed signature — this is
+    Q1's "different signature appears -> resume" rule, made deterministic by
+    selecting on max ``last_seen`` across ALL signatures (not just armed ones).
+    """
+    sigs = [
+        rec
+        for rec in (entry.get("signatures") or {}).values()
+        if isinstance(rec, dict)
+    ]
+    if not sigs:
+        return None
+    sigs.sort(
+        key=lambda rec: (str(rec.get("last_seen", "")), int(rec.get("count", 0))),
+        reverse=True,
+    )
+    return sigs[0]
+
+
+def _render_escalation_artifact(outcome: dict[str, Any]) -> str:
+    """Render the durable human-readable blocker report for an escalation."""
+    lines = [
+        f"# Escalation: {outcome['subtask_id']}",
+        "",
+        f"- **Status:** {outcome['status_label']}",
+        f"- **Outcome:** {outcome['outcome']}",
+        f"- **Reason:** {outcome['reason_code']}",
+        f"- **Attempts:** {outcome['attempts']}",
+        f"- **Branch:** {outcome['branch']}",
+        f"- **Generated:** {outcome['generated_at']}",
+        "",
+        "## Blocker",
+        "",
+        outcome["blocker_summary"],
+        "",
+    ]
+    repeated = outcome.get("repeated_failures") or []
+    if repeated:
+        lines.append("## Repeated failures")
+        lines.append("")
+        for rec in repeated:
+            marker = " (escalation trigger)" if rec.get("is_trigger") else ""
+            lines.append(
+                f"Repeated failure (seen {rec.get('count', 0)}x, "
+                f"source={rec.get('source', '')}){marker}:"
+            )
+            lines.append(f"> {rec.get('sample', '')}")
+            lines.append("")
+    lines.append("## Recommended action")
+    lines.append("")
+    lines.append(outcome["recommended_action"])
+    lines.append("")
+    return "\n".join(lines)
+
+
+def build_escalation_outcome(
+    subtask_id: str,
+    reason: str,
+    retry_count: Optional[int] = None,
+    max_retries: Optional[int] = None,
+    branch: Optional[str] = None,
+    quarantine_active: object = False,
+) -> dict[str, Any]:
+    """Emit ONE deterministic terminal escalation outcome for a subtask (#255).
+
+    Consumes the #253 ``escalation_recommended`` SIGNAL (reason
+    ``repeated_failure``) or the orchestrator's max_retries hard cap (reason
+    ``max_retries``) and converts it into a structured, persisted terminal
+    outcome instead of another blind retry. The stopping DECISION is re-derived
+    from the anti_repeat store here — never trusted from the caller — so a
+    spurious or hallucinated invocation returns ``status="not_escalated"`` rather
+    than fabricating a stop:
+
+      - ``repeated_failure`` escalates ONLY when the subtask's most-recently-seen
+        signature itself carries ``escalation_recommended`` (latest-signature
+        rule); a fresh signature on the last attempt resumes normal retries.
+      - ``max_retries`` escalates ONLY when ``retry_count >= max_retries``.
+
+    A CLEAN_RETRY iteration (``quarantine_active``) can never trigger a terminal
+    escalation — the one-shot reset gets to run first (mirrors
+    ``build_anti_repeat_constraint`` suppression). The call is idempotent: once a
+    subtask is ``escalated`` it returns the prior outcome without rewriting the
+    ``.map/<branch>/escalation_<subtask>.md`` artifact or re-touching the manifest.
+    """
+    branch_name = branch or get_branch_name()
+    path = _anti_repeat_artifact_path(branch_name)
+    artifact_path = _escalation_artifact_path(subtask_id, branch_name)
+    sid = (subtask_id or "").strip()
+    arm_threshold, escalate_threshold = _anti_repeat_thresholds()
+
+    base: dict[str, Any] = {
+        "status": "ok",
+        "escalated": False,
+        "subtask_id": sid,
+        "branch": branch_name,
+        "reason_code": reason,
+        "path": str(path),
+    }
+
+    def _reject(status: str, reason_text: str) -> dict[str, Any]:
+        return {**base, "status": status, "reasons": [reason_text]}
+
+    if not sid:
+        return _reject("error", "subtask_id is required")
+    if reason not in ESCALATION_REASONS:
+        return _reject(
+            "error",
+            f"reason {reason!r} is not one of {sorted(ESCALATION_REASONS)}",
+        )
+    if _parse_boolish(quarantine_active):
+        return {
+            **base,
+            "status": "deferred",
+            "suppressed": "clean_retry_active",
+            "reasons": [
+                "CLEAN_RETRY iteration — the one-shot reset runs before any "
+                "terminal escalation; the counter still ticked."
+            ],
+        }
+
+    store = _load_anti_repeat_store(path, branch_name)
+    subtasks = cast(dict[str, Any], store["subtasks"])
+    entry = subtasks.get(sid)
+    if not isinstance(entry, dict):
+        entry = {"status": "active", "signatures": {}}
+
+    # Idempotency: a subtask that already escalated returns its prior outcome
+    # deterministically (rebuilt from the same store) without duplicating writes.
+    already_escalated = entry.get("status") == "escalated"
+
+    # --- Deterministic stop guard: re-derive the decision from the store. ---
+    trigger_record: Optional[dict[str, Any]] = None
+    if reason == "repeated_failure":
+        latest = _latest_signature_record(entry)
+        if not (latest and latest.get("escalation_recommended")):
+            if already_escalated:
+                # Prior escalation stands; the store guard only governs NEW stops.
+                pass
+            else:
+                return _reject(
+                    "not_escalated",
+                    "no escalation-recommended signature on the latest failure "
+                    "(the Actor moved off the dead end, or the budget is unmet) "
+                    "— resume normal retries",
+                )
+        trigger_record = latest
+    else:  # max_retries
+        if retry_count is None or max_retries is None:
+            return _reject(
+                "error",
+                "reason 'max_retries' requires --retry-count and --max-retries",
+            )
+        if int(retry_count) < int(max_retries) and not already_escalated:
+            return _reject(
+                "not_escalated",
+                f"retry_count {retry_count} < max_retries {max_retries} — "
+                "the retry budget is not yet exhausted",
+            )
+
+    # --- Build evidence from armed records (latest-trigger first). ---
+    armed_records = [
+        rec
+        for rec in (entry.get("signatures") or {}).values()
+        if isinstance(rec, dict) and rec.get("armed")
+    ]
+    armed_records.sort(
+        key=lambda rec: (int(rec.get("count", 0)), str(rec.get("last_seen", ""))),
+        reverse=True,
+    )
+    repeated_failures: list[dict[str, Any]] = []
+    for rec in armed_records[:ESCALATION_MAX_EVIDENCE_RECORDS]:
+        repeated_failures.append(
+            {
+                "count": int(rec.get("count", 0)),
+                "source": rec.get("source", ""),
+                "sample": _shorten_retry_text(
+                    str(rec.get("sample", "")), ANTI_REPEAT_SAMPLE_MAX_CHARS
+                ),
+                "escalation_recommended": bool(rec.get("escalation_recommended")),
+                "is_trigger": (
+                    trigger_record is not None and rec is trigger_record
+                ),
+            }
+        )
+
+    outcome_label = ESCALATION_OUTCOME_BY_REASON[reason]
+    if reason == "repeated_failure":
+        trigger_count = (
+            int(trigger_record.get("count", 0)) if trigger_record else 0
+        )
+        attempts = trigger_count
+        blocker_summary = (
+            f"Subtask {sid} hit the SAME failure signature {trigger_count}x "
+            f"(threshold {escalate_threshold}). The anti-stagnation constraint "
+            f"armed at attempt {arm_threshold} did not break the dead end."
+        )
+        recommended_action = (
+            "Surface this blocker to the user and STOP — do NOT retry. The "
+            "identical failure recurred despite the bounded recovery attempt; "
+            "the subtask needs a human decision or a changed approach/spec. Do "
+            "NOT weaken or skip tests and do NOT fake progress to force a pass."
+        )
+    else:  # max_retries
+        attempts = int(retry_count) if retry_count is not None else 0
+        blocker_summary = (
+            f"Subtask {sid} exhausted the retry budget "
+            f"({attempts}/{max_retries}) across differing failures with no "
+            "dominant repeated signature."
+        )
+        recommended_action = (
+            "Surface to the user and STOP — the per-subtask retry budget is "
+            "exhausted across differing failures; the task likely needs "
+            "reframing or clarification. Do NOT retry blindly."
+        )
+
+    now = _utc_timestamp()
+    outcome: dict[str, Any] = {
+        "status": "ok",
+        "escalated": True,
+        "status_label": "escalated",
+        "outcome": outcome_label,
+        "reason_code": reason,
+        "subtask_id": sid,
+        "branch": branch_name,
+        "attempts": attempts,
+        "escalate_threshold": escalate_threshold,
+        "blocker_summary": blocker_summary,
+        "repeated_failures": repeated_failures,
+        "recommended_action": recommended_action,
+        "evidence_artifact": str(artifact_path),
+        "generated_at": now,
+        "idempotent": already_escalated,
+        "path": str(path),
+    }
+
+    if already_escalated and artifact_path.exists():
+        # Nothing new to persist; return the deterministic prior outcome.
+        return outcome
+
+    # Persist the terminal status into the anti_repeat store (single write).
+    entry["status"] = "escalated"
+    subtasks[sid] = entry
+    store["normalizer_version"] = ANTI_REPEAT_NORMALIZER_VERSION
+    store["branch"] = branch_name
+    store["updated_at"] = now
+    _write_json_file(path, store)
+
+    # Durable human-readable blocker report.
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(_render_escalation_artifact(outcome), encoding="utf-8")
+
+    # Register the manifest stage so run-health / resume can see the terminal stop.
+    manifest = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        manifest,
+        "escalation",
+        "escalated",
+        artifacts=[_artifact_ref(artifact_path, "escalation")],
+        metadata={
+            "subtask_id": sid,
+            "reason_code": reason,
+            "outcome": outcome_label,
+            "attempts": attempts,
+        },
+    )
+    save_artifact_manifest(manifest, branch_name)
+
+    return outcome
+
+
 if __name__ == "__main__":
     # Simple CLI interface for testing
     import sys
@@ -13066,6 +13371,36 @@ if __name__ == "__main__":
         _a = _p.parse_args(sys.argv[2:])
         carlc_result = collect_anti_repeat_learn_candidates(_a.branch)
         print(json.dumps(carlc_result, indent=2))
+
+    elif func_name == "build_escalation_outcome":
+        # CLI: build_escalation_outcome <subtask_id> <reason> [--retry-count N]
+        #      [--max-retries M] [--branch B] [--quarantine-active]
+        # Bounded-effort escalation (#255): emit ONE deterministic terminal
+        # outcome (status=escalated) instead of another blind retry. reason in
+        # {repeated_failure, max_retries}. The stop is re-derived from the
+        # anti_repeat store; a trigger that the store does not support returns
+        # status="not_escalated" (exit 0 — caller resumes retries). Idempotent.
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py build_escalation_outcome")
+        _p.add_argument("subtask_id")
+        _p.add_argument("reason")
+        _p.add_argument("--retry-count", type=int, default=None)
+        _p.add_argument("--max-retries", type=int, default=None)
+        _p.add_argument("--branch", default=None)
+        _p.add_argument("--quarantine-active", action="store_true")
+        _a = _p.parse_args(sys.argv[2:])
+        beo_result = build_escalation_outcome(
+            _a.subtask_id,
+            _a.reason,
+            _a.retry_count,
+            _a.max_retries,
+            _a.branch,
+            _a.quarantine_active,
+        )
+        print(json.dumps(beo_result, indent=2))
+        if beo_result.get("status") == "error":
+            sys.exit(1)
 
     else:
         # Helpful redirect: when the user passes a command that belongs to
