@@ -6,12 +6,80 @@ Verifies that:
 3. New schemas validate correctly
 """
 
+import json
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+# ---------------------------------------------------------------------------
+# map_step_runner import (mirrors tests/test_map_step_runner.py lines 14-26)
+# ---------------------------------------------------------------------------
+
+SCRIPTS_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "src"
+    / "mapify_cli"
+    / "templates"
+    / "map"
+    / "scripts"
+)
+
+sys.path.insert(0, str(SCRIPTS_PATH))
+
+import map_step_runner  # noqa: E402  # type: ignore[import-not-found]
+
+# ---------------------------------------------------------------------------
+# Requirements Index sentinel constants (mirrors test_map_step_runner.py)
+# ---------------------------------------------------------------------------
+
+_RI_OPEN = "<!-- mapify:requirements-index:v1 -->"
+_RI_CLOSE = "<!-- /mapify:requirements-index:v1 -->"
+
+
+def _make_spec_with_index(yaml_body: str | None = None) -> str:
+    """Return a spec markdown string for integration fixture construction.
+
+    Pass yaml_body=None  -> no sentinel (absent index).
+    Pass yaml_body=""    -> sentinel pair with empty yaml block.
+    Pass yaml_body=<str> -> sentinel pair wrapping the given yaml.
+    """
+    if yaml_body is None:
+        return "# Spec\n\nSome prose.\n"
+    return (
+        f"# Spec\n\n{_RI_OPEN}\n"
+        f"```yaml\n{yaml_body}```\n"
+        f"{_RI_CLOSE}\n"
+    )
+
+
+def _make_integration_blueprint(
+    coverage_map: dict[str, str] | None = None,
+) -> dict[str, object]:
+    """Return a minimal valid blueprint for integration tests."""
+    if coverage_map is None:
+        coverage_map = {"AC-1": "ST-001"}
+    return {
+        "hard_constraints": [{"id": "AC-1", "description": "It must work"}],
+        "soft_constraints": [],
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Do the thing",
+                "aag_contract": "X -> do() -> done",
+                "dependencies": [],
+                "affected_files": ["src/x.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1 [AC-1]: it works"],
+            }
+        ],
+        "coverage_map": coverage_map,
+    }
 
 
 class TestCliUiModule:
@@ -1001,3 +1069,165 @@ class TestRulesDir:
         # Only README, no duplicates
         files = list(rules_dir.iterdir())
         assert len(files) == 1
+
+
+# ---------------------------------------------------------------------------
+# ST-012 VC1: Integration tests — 5 forward-coverage outcomes end-to-end
+# ---------------------------------------------------------------------------
+
+
+class TestForwardCoverageIntegration:
+    """VC1 [Cross-cutting: integration tests]: drive a real blueprint+spec fixture
+    through validate_blueprint_contract for all 5 forward outcomes.
+    """
+
+    _BRANCH = "test-integration-branch"
+
+    def _write_fixture(
+        self,
+        tmp_path: Path,
+        spec_text: str,
+        blueprint: dict[str, object] | None = None,
+    ) -> None:
+        """Write spec + blueprint under tmp_path/.map/<branch>/."""
+        if blueprint is None:
+            blueprint = _make_integration_blueprint()
+        branch_dir = tmp_path / ".map" / self._BRANCH
+        branch_dir.mkdir(parents=True, exist_ok=True)
+        (branch_dir / f"spec_{self._BRANCH}.md").write_text(spec_text, encoding="utf-8")
+        (branch_dir / "blueprint.json").write_text(
+            json.dumps(blueprint), encoding="utf-8"
+        )
+
+    def _run(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        spec_text: str,
+        blueprint: dict[str, object] | None = None,
+    ) -> dict[str, Any]:
+        """Write fixture and invoke validate_blueprint_contract."""
+        self._write_fixture(tmp_path, spec_text, blueprint)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: self._BRANCH)
+        return cast(
+            "dict[str, Any]",
+            map_step_runner.validate_blueprint_contract(branch=self._BRANCH),
+        )
+
+    def test_vc1_outcome1_complete_index_all_ids_covered(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Outcome 1: complete index, all IDs in coverage_map -> valid True,
+        forward_coverage.status present_nonempty, missing_ids [].
+        """
+        spec = _make_spec_with_index(
+            "requirements:\n  - id: AC-1\n    kind: acceptance_criterion\n"
+        )
+        blueprint = _make_integration_blueprint(coverage_map={"AC-1": "ST-001"})
+        result = self._run(tmp_path, monkeypatch, spec, blueprint)
+
+        assert result["valid"] is True
+        fc = result["forward_coverage"]
+        assert fc["status"] == "present_nonempty"
+        assert fc["missing_ids"] == []
+        # No forward-coverage errors or warnings about missing IDs
+        fc_errors = [e for e in result["errors"] if "Forward-coverage" in e]
+        assert fc_errors == []
+
+    def test_vc1_outcome2_missing_id_default_warn_not_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Outcome 2: missing ID, MAP_STRICT_COVERAGE unset -> WARNING, valid True."""
+        monkeypatch.delenv("MAP_STRICT_COVERAGE", raising=False)
+        spec = _make_spec_with_index(
+            "requirements:\n"
+            "  - id: AC-1\n    kind: acceptance_criterion\n"
+            "  - id: HC-1\n    kind: hard_constraint\n"
+        )
+        # coverage_map covers AC-1 but not HC-1
+        blueprint = _make_integration_blueprint(coverage_map={"AC-1": "ST-001"})
+        result = self._run(tmp_path, monkeypatch, spec, blueprint)
+
+        assert result["valid"] is True
+        fc = result["forward_coverage"]
+        assert "HC-1" in fc["missing_ids"]
+        # Must appear in warnings, not errors
+        assert any("HC-1" in w for w in result["warnings"])
+        assert not any("HC-1" in e for e in result["errors"])
+
+    def test_vc1_outcome3_missing_id_strict_hard_fail(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Outcome 3: missing ID, MAP_STRICT_COVERAGE=1 -> ERROR, valid False."""
+        monkeypatch.setenv("MAP_STRICT_COVERAGE", "1")
+        spec = _make_spec_with_index(
+            "requirements:\n"
+            "  - id: AC-1\n    kind: acceptance_criterion\n"
+            "  - id: HC-1\n    kind: hard_constraint\n"
+        )
+        blueprint = _make_integration_blueprint(coverage_map={"AC-1": "ST-001"})
+        result = self._run(tmp_path, monkeypatch, spec, blueprint)
+
+        assert result["valid"] is False
+        fc = result["forward_coverage"]
+        assert "HC-1" in fc["missing_ids"]
+        assert fc["strict"] is True
+        assert any("HC-1" in e for e in result["errors"])
+
+    def test_vc1_outcome4_absent_spec_warn_skip_not_hard_fail(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Outcome 4: absent spec file (the /map-efficient path: blueprint present,
+        NO spec) -> forward_coverage.status absent, a warning present, valid not
+        forced False by absence alone.
+        """
+        monkeypatch.delenv("MAP_STRICT_COVERAGE", raising=False)
+        # Write blueprint but NO spec file
+        branch_dir = tmp_path / ".map" / self._BRANCH
+        branch_dir.mkdir(parents=True, exist_ok=True)
+        blueprint = _make_integration_blueprint()
+        (branch_dir / "blueprint.json").write_text(
+            json.dumps(blueprint), encoding="utf-8"
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: self._BRANCH)
+        result = cast(
+            "dict[str, Any]",
+            map_step_runner.validate_blueprint_contract(branch=self._BRANCH),
+        )
+
+        fc = result["forward_coverage"]
+        assert fc["status"] == "absent"
+        # A warning about missing spec must be present
+        assert any(
+            "forward-coverage" in w.lower() or "requirements index" in w.lower()
+            for w in result["warnings"]
+        )
+        # Absent spec alone must NOT force valid=False
+        forward_errors = [e for e in result["errors"] if "Forward-coverage" in e]
+        assert forward_errors == [], (
+            "Absent spec must emit a warning and skip, not a hard error"
+        )
+
+    def test_vc1_outcome5_malformed_index_hard_fail_regardless_of_strict(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Outcome 5: malformed index (open sentinel + broken yaml) -> valid False
+        even without strict flag set.
+        """
+        monkeypatch.delenv("MAP_STRICT_COVERAGE", raising=False)
+        # Open sentinel present but no close sentinel -> malformed
+        spec = (
+            "# Spec\n\n"
+            f"{_RI_OPEN}\n"
+            "```yaml\nrequirements:\n  - id: AC-1\n    kind: acceptance_criterion\n```\n"
+            # deliberately omit _RI_CLOSE
+        )
+        blueprint = _make_integration_blueprint()
+        result = self._run(tmp_path, monkeypatch, spec, blueprint)
+
+        assert result["valid"] is False
+        fc = result["forward_coverage"]
+        assert fc["status"] == "malformed"
+        assert any("malformed" in e.lower() or "Forward-coverage" in e for e in result["errors"])
