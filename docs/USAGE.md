@@ -345,6 +345,8 @@ Include validation, error handling, and tests.
 /map-debug debug why payment processing fails for amounts over $1000
 ```
 
+`/map-debug` enforces a **repro-probe root-cause gate**: before writing a fix you author a small executable probe under `.map/<branch>/repro/` (gitignored) that exits `42` while the bug reproduces and `0` once it is gone. `record_repro_probe` executes a frozen, immutable snapshot of the probe and only proceeds when the runner witnesses exit 42; after the fix, `verify_repro_resolved` re-runs the same snapshot and passes only on the 42→0 flip. This turns "I found the root cause" from a claim into evidence the runner observed — no fix is written until the bug is empirically reproduced.
+
 ### Refactoring
 
 ```bash

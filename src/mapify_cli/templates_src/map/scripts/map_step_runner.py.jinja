@@ -34,12 +34,13 @@ import json
 import os
 import random
 import re
+import signal
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Callable, Iterable, Mapping, Optional, TypedDict, cast
+from typing import Any, Callable, Iterable, Mapping, Optional, TypedDict, cast
 
 # Keep in sync with workflow-context-injector.py GOAL_HEADING_RE
 GOAL_HEADING_RE = r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)"
@@ -196,6 +197,7 @@ ARTIFACT_STAGE_NAMES = (
     "spec",
     "plan",
     "test_contract",
+    "repro_probe",
     "implementation",
     "review",
     "verification",
@@ -283,6 +285,24 @@ REVIEW_PROMPT_BUDGET_ENV = "MAP_REVIEW_PROMPT_BUDGET_TOKENS"
 TOKEN_BUDGET_ARTIFACT_NAME = "token_budget.json"
 TOKEN_BUDGET_DECISION_LIMIT = 100
 RETRY_QUARANTINE_ARTIFACT_NAME = "retry_quarantine.json"
+
+# --- Repro-probe gate (#254): "no fix without root cause" enforcement ---
+# The runner EXECUTES a frozen snapshot of an agent-authored probe script and
+# witnesses its exit code against a sentinel contract, so reproduction is
+# evidence the runner observed — not a self-reported boolean. Whether the probe
+# truly captures the root cause is a SEMANTIC judgment that stays with Monitor;
+# the runner only proves a witnessed behavioral flip (exit 42 -> exit 0) on an
+# immutable probe. map-debug is for the operator's own repo, not untrusted PRs:
+# the probe runs with the workflow's own privileges (this is not a sandbox).
+REPRO_PROBE_ARTIFACT_NAME = "repro_probe.json"
+REPRO_PROBE_DIRNAME = "repro"  # throwaway probe scripts live here (gitignored)
+REPRO_PROBE_LOCK_DIRNAME = ".locked"  # runner-owned frozen snapshot
+REPRO_REPRODUCED_EXIT = 42  # sentinel: bug is present (MAP_REPRODUCED)
+REPRO_RESOLVED_EXIT = 0  # sentinel: bug is absent (MAP_RESOLVED)
+REPRO_PROBE_DEFAULT_TIMEOUT = 120  # seconds per run
+REPRO_PROBE_MAX_TIMEOUT = 600  # hard cap on per-run timeout
+REPRO_PROBE_MAX_RUNS = 10  # flakiness-guard cap on repeated runs
+REPRO_PROBE_OUTPUT_MAX_CHARS = 4_000  # bounded capture per stream
 
 # Truncation infrastructure deleted by user directive ("убери транкейт уже
 # вообще"). build_context_block / _budget_review_prompt now emit raw text;
@@ -2894,7 +2914,9 @@ def validate_blueprint_contract(
             f"spec_{branch_name}.md (run make render-templates / populate the "
             "mapify:requirements-index:v1 block); forward-coverage check skipped"
         )
-        _fc_result: dict[str, object] = {"requirements": [], "status": "absent", "warnings": []}
+        # dict[str, Any]: parse_requirements_index returns heterogeneous values
+        # (lists, strings); Any keeps the downstream `.get(...)` iterations valid.
+        _fc_result: dict[str, Any] = {"requirements": [], "status": "absent", "warnings": []}
     else:
         _fc_result = parse_requirements_index(_spec_text)
         _fc_status = str(_fc_result.get("status", "absent"))
@@ -4559,6 +4581,435 @@ def validate_retry_quarantine(
         "manifest_path": manifest_path,
         "errors": errors,
         "warnings": warnings,
+    }
+
+
+def _repro_probe_artifact_path(branch: Optional[str] = None) -> Path:
+    """Return the branch-scoped repro-probe gate artifact path."""
+    return get_branch_dir(branch) / REPRO_PROBE_ARTIFACT_NAME
+
+
+def _repro_scratch_dir(branch: Optional[str] = None) -> Path:
+    """Return the gitignored throwaway directory for repro probe scripts."""
+    return get_branch_dir(branch) / REPRO_PROBE_DIRNAME
+
+
+def _repro_current_git_ref() -> str:
+    """Return the short HEAD sha, or 'unknown' when git is unavailable."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    return result.stdout.strip() if result.returncode == 0 else "unknown"
+
+
+def _hash_file(path: Path) -> str:
+    """Return the sha256 hex digest of a file's bytes."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _ensure_repro_scratch_gitignored(scratch_dir: Path) -> None:
+    """Make .map/<branch>/repro/ a self-contained gitignored scratch dir.
+
+    Probe scripts and the locked snapshot are throwaway artifacts that must
+    never be committed; the durable gate verdict lives in repro_probe.json at
+    the branch root. Mirrors the self-contained `.map/<branch>/compacted/`
+    pattern — the user's own .gitignore is never modified.
+    """
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+    gitignore = scratch_dir / ".gitignore"
+    if not gitignore.exists():
+        gitignore.write_text("*\n", encoding="utf-8")
+
+
+def _clip_probe_output(text: str) -> str:
+    """Flatten newlines and bound probe output to a safe size for JSON."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if len(text) > REPRO_PROBE_OUTPUT_MAX_CHARS:
+        return text[:REPRO_PROBE_OUTPUT_MAX_CHARS] + "\n... [truncated]"
+    return text
+
+
+def _run_one_probe(
+    snapshot: Path, timeout: int
+) -> tuple[Optional[int], str, str, bool]:
+    """Run one frozen probe with a hard timeout and process-group kill.
+
+    Returns ``(returncode, stdout, stderr, timed_out)``. ``returncode`` is
+    ``None`` when the probe could not be executed (no shebang / not executable)
+    or was killed on timeout. Safety: ``shell=False`` (executes the file
+    directly via its shebang), ``stdin`` is /dev/null, output is captured (and
+    later clipped), and on timeout the whole process group is killed so forked
+    workers (pytest, go test) do not orphan.
+    """
+    use_groups = hasattr(os, "killpg") and hasattr(os, "getpgid")
+    try:
+        proc = subprocess.Popen(
+            [str(snapshot.resolve())],
+            cwd=str(Path.cwd()),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=use_groups,
+        )
+    except OSError as exc:
+        return None, "", f"probe is not executable ({exc}); add a shebang line", False
+    try:
+        out, err = proc.communicate(timeout=timeout)
+        return proc.returncode, out, err, False
+    except subprocess.TimeoutExpired:
+        if use_groups:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                proc.kill()
+        else:
+            proc.kill()
+        try:
+            out, err = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            out, err = "", ""
+        return None, out, err, True
+
+
+def _run_repro_snapshot(snapshot: Path, timeout: int, runs: int) -> dict[str, object]:
+    """Execute the frozen probe ``runs`` times and classify against the sentinel.
+
+    Outcome is ``reproduced`` only when EVERY run exits ``REPRO_REPRODUCED_EXIT``,
+    ``resolved`` only when every run exits ``REPRO_RESOLVED_EXIT``, otherwise
+    ``inconclusive`` (any other exit code, a timeout, or a non-executable probe).
+    A unanimity requirement makes the flakiness guard (``runs`` > 1) meaningful.
+    """
+    try:
+        os.chmod(snapshot, 0o755)
+    except OSError as exc:
+        return {
+            "outcome": "inconclusive",
+            "exit_codes": [],
+            "timed_out": False,
+            "stdout_tail": "",
+            "stderr_tail": f"cannot chmod probe snapshot: {exc}",
+        }
+    exit_codes: list[Optional[int]] = []
+    stdout_tail = ""
+    stderr_tail = ""
+    timed_out = False
+    for _ in range(runs):
+        rc, out, err, run_timed_out = _run_one_probe(snapshot, timeout)
+        exit_codes.append(rc)
+        stdout_tail = _clip_probe_output(out)
+        stderr_tail = _clip_probe_output(err)
+        if run_timed_out:
+            timed_out = True
+            break
+    if timed_out or any(code is None for code in exit_codes):
+        outcome = "inconclusive"
+    elif all(code == REPRO_REPRODUCED_EXIT for code in exit_codes):
+        outcome = "reproduced"
+    elif all(code == REPRO_RESOLVED_EXIT for code in exit_codes):
+        outcome = "resolved"
+    else:
+        outcome = "inconclusive"
+    return {
+        "outcome": outcome,
+        "exit_codes": exit_codes,
+        "timed_out": timed_out,
+        "stdout_tail": stdout_tail,
+        "stderr_tail": stderr_tail,
+    }
+
+
+def record_repro_probe(
+    probe: str,
+    root_cause_evidence: str = "",
+    timeout: int = REPRO_PROBE_DEFAULT_TIMEOUT,
+    runs: int = 1,
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Freeze + execute an agent-authored repro probe BEFORE any fix (#254).
+
+    The probe is a self-contained executable script (any language, selected by
+    its shebang) written under ``.map/<branch>/repro/`` that exits
+    ``REPRO_REPRODUCED_EXIT`` (42) while the bug is present and
+    ``REPRO_RESOLVED_EXIT`` (0) when it is absent. The runner copies it into a
+    runner-owned locked snapshot, executes that snapshot, and arms the gate
+    (``phase='reproduced'``) ONLY when every run exits 42. A self-reported claim
+    never satisfies the gate — the runner witnesses the exit code. The supplied
+    ``root_cause_evidence`` is recorded as AUDIT metadata only; whether the probe
+    truly captures the root cause is a semantic judgment owned by Monitor.
+    """
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    timeout = max(1, min(int(timeout), REPRO_PROBE_MAX_TIMEOUT))
+    runs = max(1, min(int(runs), REPRO_PROBE_MAX_RUNS))
+    path = _repro_probe_artifact_path(branch_name)
+    scratch_dir = _repro_scratch_dir(branch_name)
+    _ensure_repro_scratch_gitignored(scratch_dir)
+
+    def _error(reason: str) -> dict[str, object]:
+        return {
+            "status": "error",
+            "valid": False,
+            "branch": branch_name,
+            "phase": "not_recorded",
+            "path": str(path),
+            "reasons": [reason],
+        }
+
+    resolved_probe = Path(probe)
+    lock_dir = scratch_dir / REPRO_PROBE_LOCK_DIRNAME
+    try:
+        resolved_probe = Path(probe).resolve()
+        resolved_probe.relative_to(scratch_dir.resolve())
+    except (ValueError, OSError):
+        return _error(
+            f"probe must be a regular file under {scratch_dir}/ — "
+            "write the throwaway repro script there"
+        )
+    if not resolved_probe.is_file():
+        return _error(f"probe not found or not a regular file: {probe}")
+    try:
+        resolved_probe.relative_to(lock_dir.resolve())
+        return _error("probe path is inside the runner-owned .locked/ snapshot dir")
+    except (ValueError, OSError):
+        pass
+
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    snapshot = lock_dir / "probe.snapshot"
+    snapshot.write_bytes(resolved_probe.read_bytes())
+    sha256 = _hash_file(snapshot)
+
+    run_result = _run_repro_snapshot(snapshot, timeout, runs)
+    outcome = run_result["outcome"]
+    reproduced = outcome == "reproduced"
+
+    payload: dict[str, object] = {
+        "schema_version": "1.0",
+        "branch": branch_name,
+        "updated_at": _utc_timestamp(),
+        "phase": "reproduced" if reproduced else "not_reproduced",
+        "gate": {
+            "runner_verified": True,
+            "reproduced": reproduced,
+            "resolved": False,
+        },
+        "probe": {
+            "source_path": str(resolved_probe),
+            "snapshot_path": str(snapshot),
+            "sha256": sha256,
+            "sentinel": {
+                "reproduced_exit": REPRO_REPRODUCED_EXIT,
+                "resolved_exit": REPRO_RESOLVED_EXIT,
+            },
+        },
+        "record": {
+            "git_ref": _repro_current_git_ref(),
+            "runs": runs,
+            "timeout": timeout,
+            "outcome": outcome,
+            "exit_codes": run_result["exit_codes"],
+            "timed_out": run_result["timed_out"],
+            "stdout_tail": run_result["stdout_tail"],
+            "stderr_tail": run_result["stderr_tail"],
+            "recorded_at": _utc_timestamp(),
+        },
+        "verify": None,
+        "root_cause_evidence": _shorten_retry_text(root_cause_evidence),
+    }
+    _write_json_file(path, payload)
+
+    manifest = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        manifest,
+        "repro_probe",
+        "reproduced" if reproduced else "inconclusive",
+        artifacts=[_artifact_ref(path, "repro-probe")],
+        metadata={
+            "outcome": outcome,
+            "sha256": sha256,
+            "runner_verified": True,
+            "reproduced": reproduced,
+            "resolved": False,
+        },
+    )
+    save_artifact_manifest(manifest, branch_name)
+
+    if reproduced:
+        return {
+            "status": "success",
+            "valid": True,
+            "branch": branch_name,
+            "phase": "reproduced",
+            "path": str(path),
+            "sha256": sha256,
+            "exit_codes": run_result["exit_codes"],
+            "reasons": [],
+        }
+    return {
+        "status": "error",
+        "valid": False,
+        "branch": branch_name,
+        "phase": "not_reproduced",
+        "path": str(path),
+        "exit_codes": run_result["exit_codes"],
+        "reasons": [
+            f"probe did not reproduce the bug: outcome={outcome}, "
+            f"exit_codes={run_result['exit_codes']} (expected every run to exit "
+            f"{REPRO_REPRODUCED_EXIT}). The probe must exit "
+            f"{REPRO_REPRODUCED_EXIT} while the bug is present, before any fix."
+        ],
+    }
+
+
+def verify_repro_resolved(
+    timeout: Optional[int] = None,
+    runs: Optional[int] = None,
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Re-run the SAME frozen probe AFTER the fix; require it to flip to resolved.
+
+    Enforces the "no fix without root cause" ordering invariant: HARD-FAILS
+    (``valid=False``) when no prior reproduced probe is on record, and when the
+    locked snapshot's sha256 no longer matches the recorded one (the probe was
+    swapped). The gate is satisfied only when the runner witnesses every run flip
+    from exit ``REPRO_REPRODUCED_EXIT`` (reproduced) to ``REPRO_RESOLVED_EXIT``
+    (resolved). ``timeout`` / ``runs`` default to the values recorded at reproduce
+    time so the same probe is re-run under the same conditions.
+    """
+    branch_name = branch or get_branch_name()
+    path = _repro_probe_artifact_path(branch_name)
+
+    def _fail(reason: str, phase: str = "blocked") -> dict[str, object]:
+        return {
+            "status": "error",
+            "valid": False,
+            "branch": branch_name,
+            "phase": phase,
+            "path": str(path),
+            "reasons": [reason],
+        }
+
+    existing = _read_json_file(path)
+    if existing is None:
+        return _fail(
+            "no repro probe on record — run record_repro_probe with a probe that "
+            "exits 42 (reproduced) BEFORE claiming any fix is resolved.",
+            phase="no_probe",
+        )
+    record_meta = existing.get("record")
+    record_outcome = (
+        record_meta.get("outcome") if isinstance(record_meta, Mapping) else None
+    )
+    gate = existing.get("gate")
+    # Ordering invariant keys on the IMMUTABLE record fact (gate.reproduced),
+    # not the mutable phase — so a fix can be re-verified after iterating even
+    # when an earlier verify left phase='still_reproducing'.
+    if not (isinstance(gate, Mapping) and gate.get("reproduced") is True):
+        return _fail(
+            f"repro probe never reproduced the bug (record outcome={record_outcome!r}) "
+            "— record a probe that exits 42 (reproduced) before verifying a fix.",
+            phase="no_probe" if record_outcome is None else "not_reproduced",
+        )
+    probe_meta = existing.get("probe")
+    if not isinstance(probe_meta, Mapping):
+        return _fail("repro probe artifact is missing probe metadata")
+    snapshot = Path(str(probe_meta.get("snapshot_path") or ""))
+    recorded_sha = str(probe_meta.get("sha256") or "")
+    if not snapshot.is_file():
+        return _fail(f"locked probe snapshot missing: {snapshot}")
+    if _hash_file(snapshot) != recorded_sha:
+        return _fail(
+            "locked probe snapshot changed since record (sha256 mismatch) — "
+            "the probe must be immutable between reproduce and verify."
+        )
+
+    rec_runs = record_meta.get("runs") if isinstance(record_meta, Mapping) else None
+    rec_timeout = record_meta.get("timeout") if isinstance(record_meta, Mapping) else None
+    base_runs = runs if runs is not None else (rec_runs if isinstance(rec_runs, int) else 1)
+    base_timeout = (
+        timeout
+        if timeout is not None
+        else (rec_timeout if isinstance(rec_timeout, int) else REPRO_PROBE_DEFAULT_TIMEOUT)
+    )
+    eff_runs = max(1, min(int(base_runs), REPRO_PROBE_MAX_RUNS))
+    eff_timeout = max(1, min(int(base_timeout), REPRO_PROBE_MAX_TIMEOUT))
+
+    run_result = _run_repro_snapshot(snapshot, eff_timeout, eff_runs)
+    outcome = run_result["outcome"]
+    resolved = outcome == "resolved"
+
+    existing["verify"] = {
+        "git_ref": _repro_current_git_ref(),
+        "runs": eff_runs,
+        "timeout": eff_timeout,
+        "outcome": outcome,
+        "exit_codes": run_result["exit_codes"],
+        "timed_out": run_result["timed_out"],
+        "stdout_tail": run_result["stdout_tail"],
+        "stderr_tail": run_result["stderr_tail"],
+        "verified_at": _utc_timestamp(),
+    }
+    existing["updated_at"] = _utc_timestamp()
+    if resolved:
+        new_phase = "resolved"
+    elif outcome == "reproduced":
+        new_phase = "still_reproducing"
+    else:
+        new_phase = "inconclusive"
+    existing["phase"] = new_phase
+    if isinstance(gate, dict):
+        gate["resolved"] = resolved
+    _write_json_file(path, existing)
+
+    manifest = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        manifest,
+        "repro_probe",
+        "resolved" if resolved else "blocked",
+        artifacts=[_artifact_ref(path, "repro-probe")],
+        metadata={
+            "outcome": outcome,
+            "reproduced": True,
+            "resolved": resolved,
+            "runner_verified": True,
+        },
+    )
+    save_artifact_manifest(manifest, branch_name)
+
+    if resolved:
+        return {
+            "status": "success",
+            "valid": True,
+            "branch": branch_name,
+            "phase": "resolved",
+            "path": str(path),
+            "exit_codes": run_result["exit_codes"],
+            "reasons": [],
+        }
+    reason = (
+        f"probe still reproduces after the fix (exit {REPRO_REPRODUCED_EXIT}) — "
+        "root cause not resolved"
+        if outcome == "reproduced"
+        else (
+            f"probe outcome inconclusive: exit_codes={run_result['exit_codes']} "
+            f"(expected every run to exit {REPRO_RESOLVED_EXIT})"
+        )
+    )
+    return {
+        "status": "error",
+        "valid": False,
+        "branch": branch_name,
+        "phase": new_phase,
+        "path": str(path),
+        "exit_codes": run_result["exit_codes"],
+        "reasons": [reason],
     }
 
 
@@ -12015,6 +12466,44 @@ if __name__ == "__main__":
         )
         print(json.dumps(laf_result, indent=2))
         if laf_result.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "record_repro_probe":
+        # CLI: record_repro_probe <probe_path> [--root-cause <text>]
+        #      [--timeout N] [--runs N] [--branch B]
+        # Freeze + execute the repro probe BEFORE any fix (#254). Exits 1 when
+        # the probe did not reproduce (exit != 42) so callers cannot proceed.
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py record_repro_probe")
+        _p.add_argument("probe")
+        _p.add_argument("--root-cause", default="")
+        _p.add_argument("--timeout", type=int, default=REPRO_PROBE_DEFAULT_TIMEOUT)
+        _p.add_argument("--runs", type=int, default=1)
+        _p.add_argument("--branch", default=None)
+        _a = _p.parse_args(sys.argv[2:])
+        rp_result = record_repro_probe(
+            _a.probe, _a.root_cause, _a.timeout, _a.runs, _a.branch
+        )
+        print(json.dumps(rp_result, indent=2))
+        if not rp_result.get("valid"):
+            sys.exit(1)
+
+    elif func_name == "verify_repro_resolved":
+        # CLI: verify_repro_resolved [--timeout N] [--runs N] [--branch B]
+        # Re-run the SAME frozen probe AFTER the fix; require exit 42 -> exit 0.
+        # Exits 1 (hard stop) when no reproduced probe is on record or the probe
+        # still reproduces — this is the "no fix without root cause" gate.
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py verify_repro_resolved")
+        _p.add_argument("--timeout", type=int, default=None)
+        _p.add_argument("--runs", type=int, default=None)
+        _p.add_argument("--branch", default=None)
+        _a = _p.parse_args(sys.argv[2:])
+        vr_result = verify_repro_resolved(_a.timeout, _a.runs, _a.branch)
+        print(json.dumps(vr_result, indent=2))
+        if not vr_result.get("valid"):
             sys.exit(1)
 
     else:

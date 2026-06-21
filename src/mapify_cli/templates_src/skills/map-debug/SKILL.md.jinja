@@ -56,13 +56,16 @@ Debugging workflow focuses on analysis before implementation:
 
 ```
 1. DECOMPOSE → task-decomposer (break down debugging steps)
-2. FOR each debugging step:
-   3. IMPLEMENT → actor (edit files directly)
-   4. VALIDATE → monitor (check written files)
-   5. PREDICT → predictor (assess impact of fix)
-   6. EVALUATE → evaluator (verify fix quality)
-   7. Keep Actor's already-written fix
-3. DONE → Suggest /map-learn if user wants to preserve patterns
+2. REPRODUCE → write an executable probe; record_repro_probe MUST witness exit 42
+   ("no fix without root cause") before any fix is written
+3. FOR each fix step:
+   4. IMPLEMENT → actor (edit files directly)
+   5. VALIDATE → monitor (check written files)
+   6. PREDICT → predictor (assess impact of fix)
+   7. EVALUATE → evaluator (verify fix quality)
+   8. Keep Actor's already-written fix
+9. VERIFY → verify_repro_resolved: the SAME probe MUST flip to exit 0 (resolved)
+10. DONE → Suggest /map-learn if user wants to preserve patterns
 ```
 
 ## Step 1: Analyze the Issue
@@ -112,6 +115,43 @@ Debug types:
 </constraints>"
 )
 ```
+
+## Step 2.5: Reproduce With an Executable Probe (MANDATORY root-cause gate)
+
+**No fix may be written until an executable probe has empirically reproduced the bug.** This operationalizes the "no fix without root cause" Iron Law: the runner *witnesses* the bug instead of trusting a claim, and the probe becomes a deterministic artifact Monitor / final-verifier can re-run.
+
+1. Write a small, self-contained **executable** probe under `.map/<branch>/repro/` (it is gitignored — throwaway). Give it a shebang and the sentinel exit contract:
+   - exit **42** when the bug **reproduces** (`MAP_REPRODUCED`)
+   - exit **0** when the bug is **absent** (`MAP_RESOLVED`)
+   - any other exit code or a timeout = inconclusive (the gate will not advance)
+
+   Example `.map/<branch>/repro/probe.sh` (a shell wrapper makes this language-agnostic — wrap the real check for pytest / go test / node / etc.):
+   ```bash
+   #!/usr/bin/env bash
+   # Reproduces the bug: <one-line root-cause hypothesis>.
+   # Exit 42 while the bug is present, 0 once it is fixed.
+   if python3 -c 'import sys; from app import parse; sys.exit(0 if parse("") == [] else 1)'; then
+     exit 0     # correct behavior -> bug absent
+   else
+     exit 42    # wrong behavior -> bug reproduced
+   fi
+   ```
+
+2. Record it. The runner copies the probe into an **immutable locked snapshot**, executes it, and arms the gate only when it actually exits 42:
+   ```bash
+   python3 .map/scripts/map_step_runner.py record_repro_probe \
+     .map/<branch>/repro/probe.sh \
+     --root-cause "<short root-cause statement>"
+   ```
+   - `valid:true, phase:"reproduced"` → the root cause is demonstrated; proceed to the fix.
+   - `valid:false` (exit code != 42) → **you do not yet understand the bug.** Return to investigation; do NOT write a fix.
+
+3. Only now implement the fix (Step 3), then verify the flip in Step 4.
+
+**Scope & honesty:**
+- Keep probes throwaway. Promote a probe to a real regression test only when the bug warrants permanent coverage.
+- The runner proves a *witnessed behavioral flip* (42 → 0) on an immutable probe — **not** that the probe captures the *real* root cause. Monitor still judges that.
+- If an executable probe is genuinely impossible (e.g. a pure docs/comment typo with no runtime behavior), STOP and surface a `CLARIFICATION_NEEDED` to the user with the reason. Never skip the gate silently or hand-write the artifact.
 
 ## Step 3: For Each Debugging Step
 
@@ -296,7 +336,13 @@ This writes `.map/<branch>/learning-handoff.md` and `.json`, updates `artifact_m
 After all fixes applied:
 
 1. **Run full test suite** to check for regressions
-2. **Verify original issue is resolved**
+2. **Verify the original issue is resolved with the repro-probe gate** — re-run the SAME probe; it must flip from reproducing (42) to resolved (0):
+
+   ```bash
+   python3 .map/scripts/map_step_runner.py verify_repro_resolved
+   ```
+
+   `valid:true, phase:"resolved"` confirms the fix. `valid:false` (still reproducing or inconclusive) is a **hard stop**: the fix did not resolve the root cause — return to Step 3. The runner re-runs the immutable locked snapshot, so a sha256-mismatch error means the probe was altered — re-`record_repro_probe` from the original probe.
 3. **Check predictor's similar_issues** - fix those too if relevant
 4. **Create commit** with clear description of fix and root cause
 5. **Write a run health report** with the terminal status that matches the verified debug outcome:
@@ -330,6 +376,7 @@ This is **completely optional**. Run it when debugging patterns are valuable for
 ## Debugging Constraints
 
 - Identify the root cause before implementing fixes.
+- **Prove the root cause with an executable probe BEFORE any fix** (`record_repro_probe` must witness exit 42); **verify the same probe flips to exit 0 after the fix** (`verify_repro_resolved`). See Step 2.5 — the gate is a hard stop, never skipped silently.
 - Test after applying fixes.
 - Check for similar issues in other parts of the codebase when Predictor flags them or the root cause pattern is reusable.
 - Use the Task tool to call the specialized subagents in the sequence above.
@@ -351,6 +398,7 @@ Begin debugging now.
 
 ## Troubleshooting
 
-- **Issue:** A fix is applied before the root cause is identified. **Fix:** Stop and return to investigation — Debugging Constraints require root cause first.
+- **Issue:** A fix is applied before the root cause is identified. **Fix:** Stop and return to investigation — the repro-probe gate (Step 2.5) requires `record_repro_probe` to witness exit 42 BEFORE any fix.
+- **Issue:** `verify_repro_resolved` returns `valid:false` after the fix. **Fix:** Hard stop — the probe still reproduces (exit 42) or is inconclusive, so the root cause is not resolved. Iterate the fix and re-verify; do not commit. A sha256-mismatch reason means the locked probe was altered — re-`record_repro_probe` from the original.
 - **Issue:** The same bug pattern may exist elsewhere. **Fix:** Check sibling code when Predictor flags it or the root cause is reusable (see "Debugging Constraints").
 - **Issue:** The session was interrupted mid-workflow. **Fix:** Run `/map-resume` to recover.

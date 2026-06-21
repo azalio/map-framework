@@ -10339,3 +10339,198 @@ class TestST011MaxDepth:
         assert not any("dependency depth" in e for e in result["errors"]), (
             f"Depth check must never write to errors; errors: {result['errors']}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Repro-probe root-cause gate (#254): record_repro_probe / verify_repro_resolved
+# ---------------------------------------------------------------------------
+
+_PROBE_REPRODUCES = "#!/usr/bin/env python3\nimport sys\nsys.exit(42)\n"
+_PROBE_RESOLVED = "#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n"
+# Exits 42 until a FIXED marker exists in cwd, then exits 0 — simulates a fix.
+_PROBE_FLIPS = (
+    "#!/usr/bin/env python3\n"
+    "import sys, pathlib\n"
+    "sys.exit(0 if pathlib.Path('FIXED').exists() else 42)\n"
+)
+
+
+def _write_probe(workspace: Path, body: str, name: str = "probe.py") -> Path:
+    repro = workspace / "repro"
+    repro.mkdir(parents=True, exist_ok=True)
+    probe = repro / name
+    probe.write_text(body, encoding="utf-8")
+    return probe
+
+
+def _record_probe(*args: object, **kwargs: object) -> dict[str, Any]:
+    return cast(dict[str, Any], map_step_runner.record_repro_probe(*args, **kwargs))
+
+
+def _verify_probe(*args: object, **kwargs: object) -> dict[str, Any]:
+    return cast(dict[str, Any], map_step_runner.verify_repro_resolved(*args, **kwargs))
+
+
+def test_record_repro_probe_arms_gate_when_runner_witnesses_exit_42(branch_workspace):
+    probe = _write_probe(branch_workspace, _PROBE_REPRODUCES)
+    result = _record_probe(str(probe), "missing guard in parse()")
+    assert result["valid"] is True
+    assert result["phase"] == "reproduced"
+    assert result["exit_codes"] == [42]
+    artifact = json.loads((branch_workspace / "repro_probe.json").read_text())
+    assert artifact["gate"]["reproduced"] is True
+    assert artifact["gate"]["runner_verified"] is True
+    assert artifact["gate"]["resolved"] is False
+    assert artifact["probe"]["sentinel"] == {"reproduced_exit": 42, "resolved_exit": 0}
+    # Self-contained gitignore keeps throwaway probes out of version control.
+    assert (branch_workspace / "repro" / ".gitignore").read_text() == "*\n"
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    assert manifest["stages"]["repro_probe"]["status"] == "reproduced"
+
+
+def test_record_repro_probe_rejects_probe_that_does_not_reproduce(branch_workspace):
+    probe = _write_probe(branch_workspace, _PROBE_RESOLVED)
+    result = _record_probe(str(probe))
+    assert result["valid"] is False
+    assert result["phase"] == "not_reproduced"
+    assert result["exit_codes"] == [0]
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    assert manifest["stages"]["repro_probe"]["status"] == "inconclusive"
+
+
+def test_record_repro_probe_rejects_probe_outside_repro_dir(branch_workspace):
+    # Probe written at the branch root, not under repro/ -> containment failure.
+    outside = branch_workspace / "evil.py"
+    outside.write_text(_PROBE_REPRODUCES, encoding="utf-8")
+    result = _record_probe(str(outside))
+    assert result["valid"] is False
+    assert "under" in result["reasons"][0]
+    assert not (branch_workspace / "repro_probe.json").exists()  # nothing recorded
+
+
+def test_verify_repro_resolved_hard_fails_without_a_recorded_probe(branch_workspace):
+    del branch_workspace  # side-effect fixture: chdir + branch patch already applied
+    result = _verify_probe()
+    assert result["valid"] is False
+    assert result["phase"] == "no_probe"
+
+
+def test_verify_repro_resolved_blocks_when_probe_still_reproduces(branch_workspace):
+    probe = _write_probe(branch_workspace, _PROBE_FLIPS)
+    assert _record_probe(str(probe))["valid"] is True
+    # No FIXED marker yet -> the same probe still exits 42 -> hard stop.
+    result = _verify_probe()
+    assert result["valid"] is False
+    assert result["phase"] == "still_reproducing"
+
+
+def test_verify_repro_resolved_passes_on_42_to_0_flip(branch_workspace):
+    probe = _write_probe(branch_workspace, _PROBE_FLIPS)
+    assert _record_probe(str(probe))["valid"] is True
+    # Simulate the fix landing (cwd is tmp_path via the fixture's chdir).
+    (Path.cwd() / "FIXED").write_text("done", encoding="utf-8")
+    result = _verify_probe()
+    assert result["valid"] is True
+    assert result["phase"] == "resolved"
+    assert result["exit_codes"] == [0]
+    artifact = json.loads((branch_workspace / "repro_probe.json").read_text())
+    assert artifact["gate"]["resolved"] is True
+    assert artifact["verify"]["outcome"] == "resolved"
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    assert manifest["stages"]["repro_probe"]["status"] == "resolved"
+
+
+def test_verify_repro_resolved_detects_swapped_snapshot(branch_workspace):
+    probe = _write_probe(branch_workspace, _PROBE_REPRODUCES)
+    assert _record_probe(str(probe))["valid"] is True
+    snapshot = Path(
+        json.loads((branch_workspace / "repro_probe.json").read_text())["probe"][
+            "snapshot_path"
+        ]
+    )
+    # Tamper the locked snapshot so it would exit 0 — immutability must catch this.
+    snapshot.write_text(_PROBE_RESOLVED, encoding="utf-8")
+    result = _verify_probe()
+    assert result["valid"] is False
+    assert "sha256 mismatch" in result["reasons"][0]
+
+
+def test_verify_repro_resolved_rejects_after_not_reproduced_record(branch_workspace):
+    probe = _write_probe(branch_workspace, _PROBE_RESOLVED)
+    assert _record_probe(str(probe))["valid"] is False
+    # gate.reproduced is False -> verify must refuse (ordering invariant).
+    result = _verify_probe()
+    assert result["valid"] is False
+    assert "never reproduced" in result["reasons"][0]
+
+
+def test_record_repro_probe_runs_must_be_unanimous(branch_workspace):
+    probe = _write_probe(branch_workspace, _PROBE_REPRODUCES)
+    result = _record_probe(str(probe), runs=3)
+    assert result["valid"] is True
+    assert result["exit_codes"] == [42, 42, 42]
+
+
+def _run_repro_cli(args: list[str], cwd: Path) -> "subprocess.CompletedProcess[str]":
+    return subprocess.run(
+        [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_cli_record_repro_probe_exits_zero_when_reproduced(tmp_path):
+    repro = tmp_path / ".map" / "clitest" / "repro"
+    repro.mkdir(parents=True)
+    (repro / "probe.py").write_text(_PROBE_REPRODUCES, encoding="utf-8")
+    proc = _run_repro_cli(
+        ["record_repro_probe", ".map/clitest/repro/probe.py", "--branch", "clitest"],
+        tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["valid"] is True
+    assert payload["phase"] == "reproduced"
+
+
+def test_cli_record_repro_probe_exits_one_when_not_reproduced(tmp_path):
+    repro = tmp_path / ".map" / "clitest" / "repro"
+    repro.mkdir(parents=True)
+    (repro / "probe.py").write_text(_PROBE_RESOLVED, encoding="utf-8")
+    proc = _run_repro_cli(
+        ["record_repro_probe", ".map/clitest/repro/probe.py", "--branch", "clitest"],
+        tmp_path,
+    )
+    assert proc.returncode == 1
+    payload = json.loads(proc.stdout)
+    assert payload["valid"] is False
+    assert payload["phase"] == "not_reproduced"
+
+
+def test_cli_verify_repro_resolved_exits_one_without_a_record(tmp_path):
+    (tmp_path / ".map" / "clitest").mkdir(parents=True)
+    proc = _run_repro_cli(["verify_repro_resolved", "--branch", "clitest"], tmp_path)
+    assert proc.returncode == 1
+    payload = json.loads(proc.stdout)
+    assert payload["valid"] is False
+    assert payload["phase"] == "no_probe"
+
+
+def test_cli_repro_probe_full_flip_record_then_verify(tmp_path):
+    repro = tmp_path / ".map" / "clitest" / "repro"
+    repro.mkdir(parents=True)
+    (repro / "probe.py").write_text(_PROBE_FLIPS, encoding="utf-8")
+    rec = _run_repro_cli(
+        ["record_repro_probe", ".map/clitest/repro/probe.py", "--branch", "clitest"],
+        tmp_path,
+    )
+    assert rec.returncode == 0, rec.stderr
+    # Before the fix the same probe still reproduces -> verify exits 1 (hard stop).
+    blocked = _run_repro_cli(["verify_repro_resolved", "--branch", "clitest"], tmp_path)
+    assert blocked.returncode == 1
+    # Land the fix, then the same frozen probe flips 42 -> 0 -> verify exits 0.
+    (tmp_path / "FIXED").write_text("done", encoding="utf-8")
+    ok = _run_repro_cli(["verify_repro_resolved", "--branch", "clitest"], tmp_path)
+    assert ok.returncode == 0, ok.stderr
+    assert json.loads(ok.stdout)["phase"] == "resolved"
