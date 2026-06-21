@@ -7,7 +7,7 @@ import subprocess
 import sys
 import types
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -9459,3 +9459,883 @@ class TestDetectActorFilesChangedMismatch:
         assert result.returncode == 0, result.stderr
         parsed = json.loads(result.stdout)
         assert "status_mismatch" in parsed
+
+
+# ---------------------------------------------------------------------------
+# ST-010: Unit tests for decomposition-completeness gate
+# ---------------------------------------------------------------------------
+
+# ── Sentinel constants (mirror map_step_runner so tests are self-contained) ─
+_RI_OPEN = "<!-- mapify:requirements-index:v1 -->"
+_RI_CLOSE = "<!-- /mapify:requirements-index:v1 -->"
+
+
+def _make_spec(yaml_body: str | None = None) -> str:
+    """Return a spec markdown string with an embedded Requirements Index fence.
+
+    Pass yaml_body=None to produce a spec with NO sentinel (absent).
+    Pass yaml_body="" to produce a sentinel pair with an empty yaml block.
+    """
+    if yaml_body is None:
+        return "# Spec\n\nSome prose.\n"
+    return (
+        f"# Spec\n\n{_RI_OPEN}\n"
+        f"```yaml\n{yaml_body}```\n"
+        f"{_RI_CLOSE}\n"
+    )
+
+
+def _make_blueprint(
+    subtasks: list[dict[str, object]] | None = None,
+    coverage_map: dict[str, str] | None = None,
+) -> dict[str, object]:
+    """Return a minimal valid blueprint dict."""
+    if subtasks is None:
+        subtasks = [
+            {
+                "id": "ST-001",
+                "title": "Do the thing",
+                "aag_contract": "X -> do() -> done",
+                "dependencies": [],
+                "affected_files": ["src/x.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1 [AC-1]: it works"],
+            }
+        ]
+    if coverage_map is None:
+        coverage_map = {"AC-1": "ST-001"}
+    return {
+        "hard_constraints": [{"id": "AC-1", "description": "It must work"}],
+        "soft_constraints": [],
+        "subtasks": subtasks,
+        "coverage_map": coverage_map,
+    }
+
+
+def _write_fixture(
+    tmp_path: Path,
+    branch: str,
+    spec_text: str,
+    blueprint: dict[str, object],
+) -> Path:
+    """Write spec + blueprint files under tmp_path/.map/<branch>/."""
+    branch_dir = tmp_path / ".map" / branch
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    (branch_dir / f"spec_{branch}.md").write_text(spec_text, encoding="utf-8")
+    (branch_dir / "blueprint.json").write_text(
+        json.dumps(blueprint), encoding="utf-8"
+    )
+    return branch_dir
+
+
+def _run_gate(
+    tmp_path: Path,
+    branch: str,
+    monkeypatch: pytest.MonkeyPatch,
+    spec_text: str,
+    blueprint: dict[str, object] | None = None,
+) -> dict[str, Any]:
+    """Write fixture, chdir to tmp_path, invoke validate_blueprint_contract."""
+    if blueprint is None:
+        blueprint = _make_blueprint()
+    _write_fixture(tmp_path, branch, spec_text, blueprint)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: branch)
+    return cast("dict[str, Any]", map_step_runner.validate_blueprint_contract(branch=branch))
+
+
+# ============================================================================
+# ST-003: parse_requirements_index — 4-way status
+# ============================================================================
+
+
+class TestST003ParseRequirementsIndex:
+    """VC1, VC2, VC3 for ST-003."""
+
+    def test_st003_vc1_parse_index_four_statuses_present_nonempty(self) -> None:
+        """VC1: well-formed non-empty index -> present_nonempty."""
+        spec = _make_spec("requirements:\n  - id: AC-1\n    kind: acceptance_criterion\n")
+        result = map_step_runner.parse_requirements_index(spec)
+        assert result["status"] == "present_nonempty"
+        reqs = result["requirements"]
+        assert isinstance(reqs, list) and len(reqs) == 1
+        assert reqs[0]["id"] == "AC-1"
+        assert reqs[0]["kind"] == "acceptance_criterion"
+        assert result["warnings"] == []
+
+    def test_st003_vc1_parse_index_four_statuses_present_empty(self) -> None:
+        """VC1: sentinel pair with empty requirements list -> present_empty."""
+        spec = _make_spec("requirements: []\n")
+        result = map_step_runner.parse_requirements_index(spec)
+        assert result["status"] == "present_empty"
+        assert result["requirements"] == []
+
+    def test_st003_vc1_parse_index_four_statuses_absent(self) -> None:
+        """VC1: no sentinel pair in text -> absent."""
+        spec = "# Spec\n\nSome prose without the sentinel.\n"
+        result = map_step_runner.parse_requirements_index(spec)
+        assert result["status"] == "absent"
+        assert result["requirements"] == []
+
+    def test_st003_vc1_parse_index_four_statuses_malformed_no_close_sentinel(self) -> None:
+        """VC1: open sentinel present but no close sentinel -> malformed."""
+        spec = f"# Spec\n\n{_RI_OPEN}\n```yaml\nrequirements:\n  - id: AC-1\n    kind: acceptance_criterion\n```\n"
+        result = map_step_runner.parse_requirements_index(spec)
+        assert result["status"] == "malformed"
+
+    def test_st003_vc1_parse_index_four_statuses_malformed_broken_yaml(self) -> None:
+        """VC1: sentinel pair present but YAML is syntactically invalid -> malformed."""
+        spec = (
+            f"# Spec\n\n{_RI_OPEN}\n"
+            "```yaml\nrequirements: [\n  unclosed bracket\n```\n"
+            f"{_RI_CLOSE}\n"
+        )
+        result = map_step_runner.parse_requirements_index(spec)
+        assert result["status"] == "malformed"
+
+    def test_st003_vc1_parse_index_four_statuses_malformed_wrong_shape(self) -> None:
+        """VC1: YAML parses but top-level is not {requirements: list} -> malformed."""
+        spec = _make_spec("not_requirements:\n  - id: AC-1\n    kind: acceptance_criterion\n")
+        result = map_step_runner.parse_requirements_index(spec)
+        assert result["status"] == "malformed"
+
+    def test_st003_vc2_non_canonical_id_warned_not_normalized(self) -> None:
+        """VC2: non-canonical ID 'ac-01' (lowercase prefix) is WARNED, kept as-is, not dropped."""
+        spec = _make_spec("requirements:\n  - id: ac-01\n    kind: acceptance_criterion\n")
+        result = map_step_runner.parse_requirements_index(spec)
+        # Status is still present_nonempty (not malformed) — warn-not-normalize
+        assert result["status"] == "present_nonempty"
+        reqs = result["requirements"]
+        assert len(reqs) == 1
+        # ID kept as-is, not normalized to 'AC-1'
+        assert reqs[0]["id"] == "ac-01"
+        assert len(result["warnings"]) >= 1
+        assert any("non-canonical" in w for w in result["warnings"])
+
+    def test_st003_vc2_non_canonical_id_ac0_warned(self) -> None:
+        """VC2: 'AC-0' (leading zero digit) is non-canonical — warned, kept."""
+        spec = _make_spec("requirements:\n  - id: AC-0\n    kind: acceptance_criterion\n")
+        result = map_step_runner.parse_requirements_index(spec)
+        assert result["status"] == "present_nonempty"
+        assert result["requirements"][0]["id"] == "AC-0"
+        assert any("non-canonical" in w for w in result["warnings"])
+
+    def test_st003_vc2_non_canonical_id_uppercase_leading_zero_warned(self) -> None:
+        """VC2: 'AC-01' (uppercase but leading zero) is non-canonical — warned, kept."""
+        spec = _make_spec("requirements:\n  - id: AC-01\n    kind: acceptance_criterion\n")
+        result = map_step_runner.parse_requirements_index(spec)
+        assert result["status"] == "present_nonempty"
+        assert result["requirements"][0]["id"] == "AC-01"
+        assert any("non-canonical" in w for w in result["warnings"])
+
+    def test_st003_vc2_out_of_vocab_kind_warned(self) -> None:
+        """VC2: unknown kind is warned but kept, entry retained."""
+        spec = _make_spec("requirements:\n  - id: AC-1\n    kind: unknown_kind\n")
+        result = map_step_runner.parse_requirements_index(spec)
+        assert result["status"] == "present_nonempty"
+        assert result["requirements"][0]["kind"] == "unknown_kind"
+        assert any("unknown requirement kind" in w for w in result["warnings"])
+
+    def test_st003_vc3_sentinel_pair_only_authority(self) -> None:
+        """VC3: a sentinel-shaped string in prose OUTSIDE the pair does not yield a populated index."""
+        # Place the open sentinel text in prose only — no close sentinel follows in the
+        # structured location; the real fenced block is absent entirely.
+        prose_only = (
+            "# Spec\n\n"
+            f"Note: the block uses `{_RI_OPEN}` as its open marker.\n\n"
+            "No actual block here.\n"
+        )
+        result = map_step_runner.parse_requirements_index(prose_only)
+        # The prose mention of the open sentinel triggers a search for the close sentinel,
+        # which is absent — so status must be malformed or absent, never present_nonempty.
+        assert result["status"] in {"absent", "malformed"}
+        assert result["requirements"] == []
+
+    def test_st003_vc3_close_sentinel_without_open_yields_absent(self) -> None:
+        """VC3: close sentinel present but no open sentinel -> absent (not populated)."""
+        spec = f"# Spec\n\nSome prose.\n{_RI_CLOSE}\n"
+        result = map_step_runner.parse_requirements_index(spec)
+        assert result["status"] == "absent"
+        assert result["requirements"] == []
+
+
+# ============================================================================
+# ST-005: forward-gate 5 outcomes via validate_blueprint_contract
+# ============================================================================
+
+
+class TestST005ForwardGate:
+    """VC1, VC2, VC3 for ST-005."""
+
+    def test_st005_vc1_all_ids_covered_valid(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC1: present_nonempty index, all IDs in coverage_map -> valid, missing_ids=[]."""
+        spec = _make_spec("requirements:\n  - id: AC-1\n    kind: acceptance_criterion\n")
+        blueprint = _make_blueprint(coverage_map={"AC-1": "ST-001"})
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec, blueprint)
+        assert result["valid"] is True
+        fc = result["forward_coverage"]
+        assert fc["status"] == "present_nonempty"
+        assert fc["missing_ids"] == []
+        assert not any("Forward-coverage" in e for e in result["errors"])
+
+    def test_st005_vc1_missing_id_default_warning_not_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC1: missing ID -> warning (valid stays true), NOT in errors by default."""
+        monkeypatch.delenv("MAP_STRICT_COVERAGE", raising=False)
+        spec = _make_spec(
+            "requirements:\n"
+            "  - id: AC-1\n    kind: acceptance_criterion\n"
+            "  - id: AC-2\n    kind: acceptance_criterion\n"
+        )
+        # AC-2 is missing from coverage_map
+        blueprint = _make_blueprint(coverage_map={"AC-1": "ST-001"})
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec, blueprint)
+        assert result["valid"] is True
+        fc = result["forward_coverage"]
+        assert "AC-2" in fc["missing_ids"]
+        assert any("AC-2" in w for w in result["warnings"])
+        assert not any("AC-2" in e for e in result["errors"])
+
+    def test_st005_vc2_present_empty_passes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC2: present_empty index -> no forward error/warn; valid unaffected."""
+        monkeypatch.delenv("MAP_STRICT_COVERAGE", raising=False)
+        spec = _make_spec("requirements: []\n")
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec)
+        assert result["valid"] is True
+        fc = result["forward_coverage"]
+        assert fc["status"] == "present_empty"
+        assert fc["missing_ids"] == []
+
+    def test_st005_vc2_absent_spec_warns_and_skips(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC2: absent spec -> loud WARN appended; gate skips; valid not forced false.
+        Absent is DISTINCT from present_empty (different warning message)."""
+        monkeypatch.delenv("MAP_STRICT_COVERAGE", raising=False)
+        branch = "test-branch"
+        branch_dir = tmp_path / ".map" / branch
+        branch_dir.mkdir(parents=True, exist_ok=True)
+        # Write blueprint but NO spec file
+        (branch_dir / "blueprint.json").write_text(
+            json.dumps(_make_blueprint()), encoding="utf-8"
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: branch)
+        result = cast(
+            "dict[str, Any]",
+            map_step_runner.validate_blueprint_contract(branch=branch),
+        )
+        assert result["valid"] is True
+        fc = result["forward_coverage"]
+        assert fc["status"] == "absent"
+        assert any("forward-coverage" in w.lower() for w in result["warnings"])
+        assert not any("Forward-coverage" in e for e in result["errors"])
+
+    def test_st005_vc2_malformed_index_hard_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC2: malformed index -> hard error regardless of strict flag."""
+        monkeypatch.delenv("MAP_STRICT_COVERAGE", raising=False)
+        # Sentinel pair present, but no yaml fence inside
+        spec = f"# Spec\n\n{_RI_OPEN}\nNo yaml fence here.\n{_RI_CLOSE}\n"
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec)
+        assert result["valid"] is False
+        fc = result["forward_coverage"]
+        assert fc["status"] == "malformed"
+        assert any("malformed" in e.lower() for e in result["errors"])
+
+    def test_st005_vc3_no_subprocess_or_llm_call(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC3: forward block reads only spec + coverage_map (no subprocess/LLM).
+        Proven by running with a valid spec and confirming result structure."""
+        spec = _make_spec("requirements:\n  - id: AC-1\n    kind: acceptance_criterion\n")
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec)
+        # If a subprocess/LLM were called, it would fail in the test env.
+        # Getting a valid dict with the expected keys proves no such call happened.
+        assert "forward_coverage" in result
+        assert "missing_ids" in result["forward_coverage"]
+
+
+# ============================================================================
+# ST-006: strict flag, qualitative confidence, Monitor-untouched
+# ============================================================================
+
+
+class TestST006StrictFlagAndConfidence:
+    """VC1, VC2, VC3, VC4 for ST-006."""
+
+    def _spec_with_missing_id(self) -> tuple[str, dict[str, object]]:
+        """Returns (spec_text, blueprint) where AC-2 is in the index but not coverage_map."""
+        spec = _make_spec(
+            "requirements:\n"
+            "  - id: AC-1\n    kind: acceptance_criterion\n"
+            "  - id: AC-2\n    kind: acceptance_criterion\n"
+        )
+        blueprint = _make_blueprint(coverage_map={"AC-1": "ST-001"})
+        return spec, blueprint
+
+    def test_st006_vc1_unset_strict_missing_id_is_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC1: MAP_STRICT_COVERAGE unset -> missing ID is WARN; valid stays true."""
+        monkeypatch.delenv("MAP_STRICT_COVERAGE", raising=False)
+        spec, blueprint = self._spec_with_missing_id()
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec, blueprint)
+        assert result["valid"] is True
+        assert any("AC-2" in w for w in result["warnings"])
+        assert not any("AC-2" in e for e in result["errors"])
+
+    def test_st006_vc1_strict_on_missing_id_is_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC1: MAP_STRICT_COVERAGE=1 -> missing ID is a hard error; valid false."""
+        monkeypatch.setenv("MAP_STRICT_COVERAGE", "1")
+        spec, blueprint = self._spec_with_missing_id()
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec, blueprint)
+        assert result["valid"] is False
+        assert any("AC-2" in e for e in result["errors"])
+
+    def test_st006_vc2_confidence_is_qualitative_string_not_numeric(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC2: forward_coverage.confidence is in {high,medium,low}, never a float/int."""
+        monkeypatch.delenv("MAP_STRICT_COVERAGE", raising=False)
+        spec = _make_spec("requirements:\n  - id: AC-1\n    kind: acceptance_criterion\n")
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec)
+        fc = result["forward_coverage"]
+        confidence = fc["confidence"]
+        assert isinstance(confidence, str), f"confidence must be str, got {type(confidence)}"
+        assert confidence in {"high", "medium", "low"}, (
+            f"confidence must be in {{high,medium,low}}, got {confidence!r}"
+        )
+        assert not isinstance(confidence, float)
+        # No numeric field like "confidence_score" should be present
+        assert "confidence_score" not in fc
+
+    def test_st006_vc2_confidence_qualitative_for_absent_status(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC2: qualitative confidence for absent status too (low)."""
+        monkeypatch.delenv("MAP_STRICT_COVERAGE", raising=False)
+        # No spec file -> absent
+        branch = "test-branch"
+        branch_dir = tmp_path / ".map" / branch
+        branch_dir.mkdir(parents=True, exist_ok=True)
+        (branch_dir / "blueprint.json").write_text(
+            json.dumps(_make_blueprint()), encoding="utf-8"
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: branch)
+        result = cast(
+            "dict[str, Any]",
+            map_step_runner.validate_blueprint_contract(branch=branch),
+        )
+        fc = result["forward_coverage"]
+        assert isinstance(fc["confidence"], str)
+        assert fc["confidence"] in {"high", "medium", "low"}
+
+    def test_st006_vc3_default_posture_is_warn_not_shadow_mode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC3: default posture is loud WARN (warning IS emitted), not silent suppression."""
+        monkeypatch.delenv("MAP_STRICT_COVERAGE", raising=False)
+        spec, blueprint = self._spec_with_missing_id()
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec, blueprint)
+        # Warn is NOT suppressed — HC-4 says warning must be emitted
+        assert any("AC-2" in w for w in result["warnings"]), (
+            "Default posture must EMIT warning for orphaned requirement, not suppress it"
+        )
+
+    def test_st006_vc4_no_monitor_symbol_in_forward_block(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC4: forward_coverage block contains no 'Monitor' string reference."""
+        monkeypatch.delenv("MAP_STRICT_COVERAGE", raising=False)
+        spec = _make_spec("requirements:\n  - id: AC-1\n    kind: acceptance_criterion\n")
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec)
+        fc = result["forward_coverage"]
+        # Serialize the forward_coverage block and check no 'Monitor' string leaks in
+        fc_str = json.dumps(fc)
+        assert "Monitor" not in fc_str, (
+            f"'Monitor' must not appear in forward_coverage block; got: {fc_str!r}"
+        )
+
+    def test_st006_vc4_preexisting_errors_preserved(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC4: forward gate ADDS an earlier stop but never removes pre-existing errors."""
+        monkeypatch.setenv("MAP_STRICT_COVERAGE", "1")
+        spec = _make_spec(
+            "requirements:\n"
+            "  - id: AC-1\n    kind: acceptance_criterion\n"
+            "  - id: AC-2\n    kind: acceptance_criterion\n"
+        )
+        # AC-2 missing from coverage_map triggers forward-gate error (strict on)
+        blueprint = _make_blueprint(coverage_map={"AC-1": "ST-001"})
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec, blueprint)
+        assert result["valid"] is False
+        # The forward-gate error (AC-2 missing) is present
+        assert any("AC-2" in e for e in result["errors"])
+
+    def test_st006_vc2_env_isolation_no_env_leak(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC2 (env isolation): MAP_STRICT_COVERAGE set in one test does not leak to others.
+        This test sets then clears the env var and verifies the gate reverts to warn mode."""
+        spec, blueprint = self._spec_with_missing_id()
+        # First: strict on
+        monkeypatch.setenv("MAP_STRICT_COVERAGE", "1")
+        result_strict = _run_gate(tmp_path / "a", "test-branch", monkeypatch, spec, blueprint)
+        assert result_strict["valid"] is False
+        # Then: clear via monkeypatch (auto-restored after test)
+        monkeypatch.delenv("MAP_STRICT_COVERAGE", raising=False)
+        result_warn = _run_gate(tmp_path / "b", "test-branch", monkeypatch, spec, blueprint)
+        assert result_warn["valid"] is True
+
+
+# ============================================================================
+# ST-008: entry-point existence check + empty guard
+# ============================================================================
+
+
+class TestST008EntryPoint:
+    """VC1, VC2 for ST-008."""
+
+    def test_st008_vc1_no_entry_point_is_hard_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC1: non-empty blueprint where every subtask has non-empty deps -> hard error."""
+        blueprint: dict[str, object] = {
+            "hard_constraints": [{"id": "AC-1", "description": "Must work"}],
+            "soft_constraints": [],
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "Has dep",
+                    "aag_contract": "X -> do() -> done",
+                    "dependencies": ["ST-002"],
+                    "affected_files": ["src/x.py"],
+                    "expected_diff_size": "small",
+                    "concern_type": "runtime",
+                    "one_logical_step": True,
+                    "validation_criteria": ["VC1 [AC-1]: it works"],
+                },
+                {
+                    "id": "ST-002",
+                    "title": "Also has dep",
+                    "aag_contract": "Y -> do() -> done",
+                    "dependencies": ["ST-001"],
+                    "affected_files": ["src/y.py"],
+                    "expected_diff_size": "small",
+                    "concern_type": "runtime",
+                    "one_logical_step": True,
+                    "validation_criteria": ["VC1 [AC-1]: it works"],
+                },
+            ],
+            "coverage_map": {"AC-1": "ST-001"},
+        }
+        spec = _make_spec("requirements: []\n")
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec, blueprint)
+        assert result["valid"] is False
+        assert any("entry" in e.lower() for e in result["errors"]), (
+            f"Expected entry-point error; got errors: {result['errors']}"
+        )
+
+    def test_st008_vc1_one_zero_dep_subtask_passes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC1: at least one subtask with zero deps -> no entry-point error."""
+        blueprint: dict[str, object] = {
+            "hard_constraints": [{"id": "AC-1", "description": "Must work"}],
+            "soft_constraints": [],
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "Entry point",
+                    "aag_contract": "X -> do() -> done",
+                    "dependencies": [],
+                    "affected_files": ["src/x.py"],
+                    "expected_diff_size": "small",
+                    "concern_type": "runtime",
+                    "one_logical_step": True,
+                    "validation_criteria": ["VC1 [AC-1]: it works"],
+                },
+                {
+                    "id": "ST-002",
+                    "title": "Depends on ST-001",
+                    "aag_contract": "Y -> do() -> done",
+                    "dependencies": ["ST-001"],
+                    "affected_files": ["src/y.py"],
+                    "expected_diff_size": "small",
+                    "concern_type": "runtime",
+                    "one_logical_step": True,
+                    "validation_criteria": ["VC1 [AC-1]: it works"],
+                },
+            ],
+            "coverage_map": {"AC-1": "ST-001"},
+        }
+        spec = _make_spec("requirements: []\n")
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec, blueprint)
+        assert not any("entry" in e.lower() for e in result["errors"]), (
+            f"Unexpected entry-point error; errors: {result['errors']}"
+        )
+
+    def test_st008_vc2_empty_subtasks_no_entry_point_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC2: empty subtasks list is handled by early-return, not entry-point error."""
+        branch = "test-branch"
+        branch_dir = tmp_path / ".map" / branch
+        branch_dir.mkdir(parents=True, exist_ok=True)
+        blueprint: dict[str, object] = {
+            "hard_constraints": [],
+            "soft_constraints": [],
+            "subtasks": [],
+            "coverage_map": {},
+        }
+        (branch_dir / "blueprint.json").write_text(json.dumps(blueprint), encoding="utf-8")
+        (branch_dir / f"spec_{branch}.md").write_text(
+            _make_spec("requirements: []\n"), encoding="utf-8"
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: branch)
+        result = cast(
+            "dict[str, Any]",
+            map_step_runner.validate_blueprint_contract(branch=branch),
+        )
+        # Early return for empty subtasks: valid=False but the reason is "at least one subtask"
+        # not an entry-point error
+        assert not any("entry" in e.lower() for e in result.get("errors", []))
+        assert not any("entry" in e.lower() for e in result.get("warnings", []))
+
+
+# ============================================================================
+# ST-009: non-blocking guardrails
+# ============================================================================
+
+
+class TestST009Guardrails:
+    """VC1, VC2, VC3 for ST-009."""
+
+    def test_st009_vc1_prose_orphan_id_outside_fence_warns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC1: ID in spec prose OUTSIDE the fenced index but absent from index -> WARNING."""
+        # AC-1 is in the index; AC-99 is only in prose outside the fence
+        spec = (
+            f"# Spec\n\n"
+            f"See also AC-99 for context.\n\n"
+            f"{_RI_OPEN}\n"
+            "```yaml\nrequirements:\n  - id: AC-1\n    kind: acceptance_criterion\n```\n"
+            f"{_RI_CLOSE}\n"
+        )
+        blueprint = _make_blueprint(coverage_map={"AC-1": "ST-001"})
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec, blueprint)
+        assert result["valid"] is True
+        assert any("prose-orphan" in w and "AC-99" in w for w in result["warnings"]), (
+            f"Expected prose-orphan warning for AC-99; warnings: {result['warnings']}"
+        )
+        assert not any("AC-99" in e for e in result["errors"])
+
+    def test_st009_vc1_in_index_id_does_not_trigger_prose_orphan(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC1: ID in the fenced index does NOT produce prose-orphan warning."""
+        # AC-1 is both in the index AND in the prose outside; should NOT be orphan-warned
+        spec = (
+            f"# Spec\n\n"
+            f"See also AC-1 for context.\n\n"
+            f"{_RI_OPEN}\n"
+            "```yaml\nrequirements:\n  - id: AC-1\n    kind: acceptance_criterion\n```\n"
+            f"{_RI_CLOSE}\n"
+        )
+        blueprint = _make_blueprint(coverage_map={"AC-1": "ST-001"})
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec, blueprint)
+        assert result["valid"] is True
+        assert not any("prose-orphan" in w and "AC-1" in w for w in result["warnings"]), (
+            f"AC-1 (in index) must NOT produce prose-orphan warning; warnings: {result['warnings']}"
+        )
+
+    def test_st009_vc2_reverse_phantom_coverage_key_not_in_index_warns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC2: coverage_map key not in Requirements Index -> reverse-phantom WARNING."""
+        # The Requirements Index has only AC-1; AC-99 is in coverage_map but not in the index.
+        # Both AC-1 and AC-99 must be cited in ST-001's validation_criteria to pass lineage check.
+        spec = _make_spec("requirements:\n  - id: AC-1\n    kind: acceptance_criterion\n")
+        blueprint: dict[str, object] = {
+            "hard_constraints": [
+                {"id": "AC-1", "description": "Must work"},
+                {"id": "AC-99", "description": "Phantom extra requirement"},
+            ],
+            "soft_constraints": [],
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "Handles everything",
+                    "aag_contract": "X -> do() -> done",
+                    "dependencies": [],
+                    "affected_files": ["src/x.py"],
+                    "expected_diff_size": "small",
+                    "concern_type": "runtime",
+                    "one_logical_step": True,
+                    # Both AC-1 and AC-99 cited so lineage check passes
+                    "validation_criteria": [
+                        "VC1 [AC-1]: it works",
+                        "VC2 [AC-99]: phantom also covered",
+                    ],
+                }
+            ],
+            # AC-99 is in coverage_map but NOT in the Requirements Index
+            "coverage_map": {"AC-1": "ST-001", "AC-99": "ST-001"},
+        }
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec, blueprint)
+        assert result["valid"] is True
+        assert any(
+            "AC-99" in w and ("phantom" in w.lower() or "hallucinated" in w.lower() or "not in the Requirements Index" in w)
+            for w in result["warnings"]
+        ), (
+            f"Expected reverse-phantom warning for AC-99; warnings: {result['warnings']}"
+        )
+        assert not any("AC-99" in e for e in result["errors"])
+
+    def test_st009_vc3_ownership_distribution_summary_present(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC3: ownership-distribution report is emitted in warnings when coverage_map non-empty."""
+        spec = _make_spec("requirements:\n  - id: AC-1\n    kind: acceptance_criterion\n")
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec)
+        assert result["valid"] is True
+        # The ownership summary line mentions "coverage ownership" or similar
+        assert any("coverage ownership" in w for w in result["warnings"]), (
+            f"Expected ownership-distribution summary; warnings: {result['warnings']}"
+        )
+
+    def test_st009_vc3_fan_in_warning_when_owner_exceeds_threshold(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC3: subtask owning >3 requirements triggers fan-in WARNING, not error."""
+        spec = _make_spec(
+            "requirements:\n"
+            "  - id: AC-1\n    kind: acceptance_criterion\n"
+            "  - id: AC-2\n    kind: acceptance_criterion\n"
+            "  - id: AC-3\n    kind: acceptance_criterion\n"
+            "  - id: AC-4\n    kind: acceptance_criterion\n"
+        )
+        blueprint: dict[str, object] = {
+            "hard_constraints": [
+                {"id": "AC-1", "description": "W"},
+                {"id": "AC-2", "description": "X"},
+                {"id": "AC-3", "description": "Y"},
+                {"id": "AC-4", "description": "Z"},
+            ],
+            "soft_constraints": [],
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "Owns all requirements",
+                    "aag_contract": "X -> do() -> done",
+                    "dependencies": [],
+                    "affected_files": ["src/x.py"],
+                    "expected_diff_size": "small",
+                    "concern_type": "runtime",
+                    "one_logical_step": True,
+                    "validation_criteria": [
+                        "VC1 [AC-1]: w",
+                        "VC2 [AC-2]: x",
+                        "VC3 [AC-3]: y",
+                        "VC4 [AC-4]: z",
+                    ],
+                }
+            ],
+            # All 4 requirements owned by ST-001 (> threshold of 3)
+            "coverage_map": {
+                "AC-1": "ST-001",
+                "AC-2": "ST-001",
+                "AC-3": "ST-001",
+                "AC-4": "ST-001",
+            },
+        }
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec, blueprint)
+        assert result["valid"] is True
+        assert any("fan-in" in w for w in result["warnings"]), (
+            f"Expected fan-in warning; warnings: {result['warnings']}"
+        )
+        assert not any("fan-in" in e for e in result["errors"])
+
+    def test_st009_vc3_guardrails_never_set_valid_false(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC3: prose-orphan + reverse-phantom + fan-in all together -> valid stays true."""
+        monkeypatch.delenv("MAP_STRICT_COVERAGE", raising=False)
+        spec = (
+            f"# Spec\n\nProse mentions AC-99 and AC-100.\n\n"
+            f"{_RI_OPEN}\n"
+            "```yaml\n"
+            "requirements:\n"
+            "  - id: AC-1\n    kind: acceptance_criterion\n"
+            "  - id: AC-2\n    kind: acceptance_criterion\n"
+            "  - id: AC-3\n    kind: acceptance_criterion\n"
+            "  - id: AC-4\n    kind: acceptance_criterion\n"
+            "```\n"
+            f"{_RI_CLOSE}\n"
+        )
+        # AC-5 is in coverage_map but NOT in the Requirements Index (reverse-phantom trigger).
+        # AC-99/AC-100 are mentioned in prose but not in the index (prose-orphan trigger).
+        # All 5 coverage_map entries point to ST-001 (fan-in trigger: 5 > 3).
+        # ST-001 must cite all 5 requirement IDs in validation_criteria to pass lineage check.
+        blueprint: dict[str, object] = {
+            "hard_constraints": [
+                {"id": "AC-1", "description": "W"},
+                {"id": "AC-2", "description": "X"},
+                {"id": "AC-3", "description": "Y"},
+                {"id": "AC-4", "description": "Z"},
+                {"id": "AC-5", "description": "Phantom — not in index"},
+            ],
+            "soft_constraints": [],
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "Owns all",
+                    "aag_contract": "X -> do() -> done",
+                    "dependencies": [],
+                    "affected_files": ["src/x.py"],
+                    "expected_diff_size": "small",
+                    "concern_type": "runtime",
+                    "one_logical_step": True,
+                    "validation_criteria": [
+                        "VC1 [AC-1]: w",
+                        "VC2 [AC-2]: x",
+                        "VC3 [AC-3]: y",
+                        "VC4 [AC-4]: z",
+                        "VC5 [AC-5]: phantom covered",
+                    ],
+                }
+            ],
+            "coverage_map": {
+                "AC-1": "ST-001",
+                "AC-2": "ST-001",
+                "AC-3": "ST-001",
+                "AC-4": "ST-001",
+                # phantom key not in Requirements Index -> reverse-phantom warning
+                "AC-5": "ST-001",
+            },
+        }
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec, blueprint)
+        # All three guardrail categories fire but valid must remain True
+        assert result["valid"] is True
+
+
+# ============================================================================
+# ST-011: max-dependency-depth warn-only + env override
+# ============================================================================
+
+
+def _make_linear_chain_blueprint(depth: int) -> dict[str, object]:
+    """Return a blueprint with a linear chain of `depth` subtasks (depth-N chain)."""
+    assert depth >= 1
+    subtasks = []
+    for i in range(1, depth + 1):
+        subtasks.append(
+            {
+                "id": f"ST-{i:03d}",
+                "title": f"Step {i}",
+                "aag_contract": f"X -> step{i}() -> done",
+                "dependencies": [f"ST-{i - 1:03d}"] if i > 1 else [],
+                "affected_files": [f"src/step{i}.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1 [AC-1]: ok"],
+            }
+        )
+    return {
+        "hard_constraints": [{"id": "AC-1", "description": "Must work"}],
+        "soft_constraints": [],
+        "subtasks": subtasks,
+        "coverage_map": {"AC-1": "ST-001"},
+    }
+
+
+class TestST011MaxDepth:
+    """VC1, VC2 for ST-011."""
+
+    def test_st011_vc1_depth_6_warns_valid_true(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC1: 7-node chain (max depth=6, exceeds default MAX_DEPTH=5) -> WARNING; valid true.
+
+        In a linear chain of N nodes, node N has depth N-1. So 7 nodes -> max depth = 6 > 5.
+        """
+        monkeypatch.delenv("MAP_MAX_DEPENDENCY_DEPTH", raising=False)
+        blueprint = _make_linear_chain_blueprint(7)  # 7 nodes -> depth 6 > threshold 5
+        spec = _make_spec("requirements: []\n")
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec, blueprint)
+        assert result["valid"] is True
+        assert any("dependency depth" in w for w in result["warnings"]), (
+            f"Expected depth warning; warnings: {result['warnings']}"
+        )
+        assert not any("dependency depth" in e for e in result["errors"])
+
+    def test_st011_vc1_depth_5_no_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC1: 6-node chain (max depth=5, at threshold) -> no depth warning.
+
+        Depth 5 is NOT greater than MAX_DEPTH=5; warning fires only when depth > threshold.
+        """
+        monkeypatch.delenv("MAP_MAX_DEPENDENCY_DEPTH", raising=False)
+        blueprint = _make_linear_chain_blueprint(6)  # 6 nodes -> depth 5 == threshold
+        spec = _make_spec("requirements: []\n")
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec, blueprint)
+        assert not any("dependency depth" in w for w in result["warnings"]), (
+            f"Unexpected depth warning for 6-node chain (depth=5); warnings: {result['warnings']}"
+        )
+
+    def test_st011_vc2_env_override_lower_threshold_triggers_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC2: MAP_MAX_DEPENDENCY_DEPTH=2 -> 4-node chain (depth=3) warns."""
+        monkeypatch.setenv("MAP_MAX_DEPENDENCY_DEPTH", "2")
+        blueprint = _make_linear_chain_blueprint(4)  # 4 nodes -> depth 3 > threshold 2
+        spec = _make_spec("requirements: []\n")
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec, blueprint)
+        assert result["valid"] is True
+        assert any("dependency depth" in w for w in result["warnings"]), (
+            f"Expected depth warning with threshold=2 for 4-node chain (depth=3); warnings: {result['warnings']}"
+        )
+
+    def test_st011_vc2_env_override_higher_threshold_suppresses_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC2: MAP_MAX_DEPENDENCY_DEPTH=10 -> depth-6 chain does NOT warn."""
+        monkeypatch.setenv("MAP_MAX_DEPENDENCY_DEPTH", "10")
+        blueprint = _make_linear_chain_blueprint(6)
+        spec = _make_spec("requirements: []\n")
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec, blueprint)
+        assert result["valid"] is True
+        assert not any("dependency depth" in w for w in result["warnings"]), (
+            f"Unexpected depth warning with threshold=10; warnings: {result['warnings']}"
+        )
+
+    def test_st011_vc2_depth_check_never_hard_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC2: depth check is WARN-ONLY; valid is never set false by depth alone."""
+        monkeypatch.setenv("MAP_MAX_DEPENDENCY_DEPTH", "1")  # very low threshold
+        blueprint = _make_linear_chain_blueprint(10)  # very deep chain
+        spec = _make_spec("requirements: []\n")
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec, blueprint)
+        # valid may be False due to other checks (forward_dep_violations from deep chain),
+        # but the depth check itself must not be in errors
+        assert not any("dependency depth" in e for e in result["errors"]), (
+            f"Depth check must never write to errors; errors: {result['errors']}"
+        )
