@@ -3450,10 +3450,11 @@ def resume_from_plan(branch: str) -> dict:
         }
 
     # Extract subtask IDs from plan file (ST-XXX pattern)
+    # Matches heading style (### ST-001), table rows (| ST-001 | ...), and plain references
     import re
 
     plan_content = plan_file.read_text(encoding="utf-8")
-    subtask_ids = re.findall(r"###\s+(ST-\d+)", plan_content)
+    subtask_ids = re.findall(r"\bST-\d+\b", plan_content)
 
     if not subtask_ids:
         return {
