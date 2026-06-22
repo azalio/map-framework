@@ -91,6 +91,7 @@ def _valid_run_health_payload() -> dict[str, Any]:
                 "active_issues",
                 "known_issues",
                 "retry_quarantine",
+                "flaky_test_triage",
             )
         },
         "resiliency_signals": {
@@ -387,6 +388,171 @@ def test_validate_retry_quarantine_rejects_bool_retry_count(branch_workspace):
 
     assert result["status"] == "error"
     assert "quarantines[0].retry_count must be an integer >= 2" in result["errors"]
+
+
+def test_record_flaky_test_triage_deferred_nondeterministic_writes_artifact(
+    branch_workspace,
+):
+    result = map_step_runner.record_flaky_test_triage(
+        "pytest::test_checkout",
+        [
+            {"run": 1, "exit_code": 1, "summary": "AssertionError"},
+            {"run": 2, "exit_code": 0, "summary": "passed"},
+            {"run": 3, "status": "failed", "summary": "timeout"},
+        ],
+        command="pytest tests/test_checkout.py::test_checkout",
+        reason="Inconsistent outcomes across repeated runs.",
+    )
+
+    assert result["status"] == "success"
+    assert result["valid"] is True
+    assert result["disposition"] == "deferred_nondeterministic"
+    assert result["pass_count"] == 1
+    assert result["fail_count"] == 2
+
+    payload = json.loads((branch_workspace / "flaky_test_triage.json").read_text())
+    triage = payload["triages"][0]
+    assert triage["check_id"] == "pytest::test_checkout"
+    assert triage["disposition"] == "deferred_nondeterministic"
+    assert triage["monitor_verdict_policy"] == "not_valid_without_explicit_triage"
+    assert triage["operator_requirements"] == [
+        "Do not weaken, skip, or delete the check.",
+        "Do not treat this artifact as a passing gate.",
+        "Record the deferred nondeterministic evidence in Monitor output or issue tracking.",
+    ]
+
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    stage = manifest["stages"]["flaky_test_triage"]
+    assert stage["status"] == "deferred_nondeterministic"
+    assert stage["metadata"]["deferred_count"] == 1
+    assert stage["metadata"]["deterministic_failure_count"] == 0
+
+
+def test_record_flaky_test_triage_deterministic_failure_is_not_deferred(
+    branch_workspace,
+):
+    result = map_step_runner.record_flaky_test_triage(
+        "pytest::test_api",
+        [
+            {"run": 1, "exit_code": 1, "summary": "AssertionError"},
+            {"run": 2, "exit_code": 1, "summary": "AssertionError"},
+        ],
+        command="pytest tests/test_api.py::test_api",
+    )
+
+    assert result["status"] == "success"
+    assert result["valid"] is True
+    assert result["disposition"] == "deterministic_failure"
+    assert result["pass_count"] == 0
+    assert result["fail_count"] == 2
+
+    payload = json.loads((branch_workspace / "flaky_test_triage.json").read_text())
+    triage = payload["triages"][0]
+    assert triage["disposition"] == "deterministic_failure"
+    assert triage["recommended_next_action"] == "fix_confirmed_regression"
+
+
+def test_record_flaky_test_triage_rejects_empty_evidence_without_writing_artifact(
+    branch_workspace,
+):
+    result = map_step_runner.record_flaky_test_triage(
+        "pytest::test_empty",
+        [],
+        command="pytest tests/test_empty.py::test_empty",
+    )
+
+    assert result["status"] == "error"
+    assert result["valid"] is False
+    assert result["errors"] == ["outcomes must include at least one repeated run"]
+    assert not (branch_workspace / "flaky_test_triage.json").exists()
+
+
+def test_validate_flaky_test_triage_rejects_invalid_deferred_counts(
+    branch_workspace,
+):
+    (branch_workspace / "flaky_test_triage.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "branch": "test-branch",
+                "updated_at": "2026-06-21T10:00:00Z",
+                "triages": [
+                    {
+                        "check_id": "pytest::test_api",
+                        "command": "pytest tests/test_api.py::test_api",
+                        "reason": "bad evidence",
+                        "run_count": 2,
+                        "pass_count": 0,
+                        "fail_count": 2,
+                        "outcome_sequence": ["failed", "failed"],
+                        "disposition": "deferred_nondeterministic",
+                        "recommended_next_action": "record_deferred_nondeterministic",
+                        "monitor_verdict_policy": "not_valid_without_explicit_triage",
+                        "operator_requirements": [
+                            "Do not weaken, skip, or delete the check.",
+                        ],
+                        "evidence": [
+                            {
+                                "run": 1,
+                                "status": "failed",
+                                "exit_code": 1,
+                                "summary": "A",
+                            },
+                            {
+                                "run": 2,
+                                "status": "failed",
+                                "exit_code": 1,
+                                "summary": "A",
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.validate_flaky_test_triage()
+
+    assert result["valid"] is False
+    assert (
+        "triages[0].deferred_nondeterministic requires at least one pass and one fail"
+        in result["errors"]
+    )
+
+
+def test_cli_record_flaky_test_triage_writes_artifact(tmp_path):
+    outcomes = json.dumps(
+        [
+            {"run": 1, "exit_code": 1, "summary": "AssertionError"},
+            {"run": 2, "exit_code": 0, "summary": "passed"},
+        ]
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "record_flaky_test_triage",
+            "pytest::test_cli",
+            outcomes,
+            "--branch",
+            "clitest",
+            "--command",
+            "pytest tests/test_cli.py::test_cli",
+            "--reason",
+            "CLI mixed pass/fail evidence.",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    assert payload["disposition"] == "deferred_nondeterministic"
+    assert (tmp_path / ".map" / "clitest" / "flaky_test_triage.json").exists()
 
 
 def test_artifact_health_entry_handles_disappearing_file():

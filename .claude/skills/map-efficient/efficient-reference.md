@@ -14,13 +14,34 @@ Two CLI scripts back the workflow; calling the wrong one fails with `invalid cho
   - `build_*` family: `build_context_block`, `build_json_retry_prompt`, `build_acceptance_coverage_report`, `build_prior_stage_consumption_report`, `build_retry_quarantine`, `build_handoff_bundle`, `build_review_handoff`, `build_review_prompts`, `build_anti_repeat_constraint`
   - `save_*` / `load_*`: `save_research`, `load_research`, `load_artifact_manifest`
   - `refresh_*`: `refresh_blueprint_affected_files`
-  - `validate_*` (non-state): `validate_blueprint_contract`, `validate_mutation_boundary`, `validate_retry_quarantine`, `validate_run_health_report`, `validate_checkpoint`, `validate_prior_stage_consumption`
-  - `record_*` (artifacts, not state): `record_test_baseline`, `record_diagnostics_baseline`, `record_scope_baseline`, `record_subtask_baseline`, `record_token_event`, `record_learning_consumption`, `record_workflow_fit`, `record_plan_artifacts`, `record_test_contract_handoff`, `record_failure_signature`, `record-review-ordering` (note: this one is dispatched with a hyphen, not an underscore)
+  - `validate_*` (non-state): `validate_blueprint_contract`, `validate_mutation_boundary`, `validate_retry_quarantine`, `validate_flaky_test_triage`, `validate_run_health_report`, `validate_checkpoint`, `validate_prior_stage_consumption`
+  - `record_*` (artifacts, not state): `record_test_baseline`, `record_diagnostics_baseline`, `record_scope_baseline`, `record_subtask_baseline`, `record_token_event`, `record_learning_consumption`, `record_workflow_fit`, `record_plan_artifacts`, `record_test_contract_handoff`, `record_failure_signature`, `record_flaky_test_triage`, `record-review-ordering` (note: this one is dispatched with a hyphen, not an underscore)
   - intra-run failure memory (#253): `record_failure_signature`, `build_anti_repeat_constraint`, `set_anti_repeat_subtask_status`, `collect_anti_repeat_learn_candidates`
   - artifact writers: `write_verification_summary`, `write_run_health_report`, `write_pr_draft`, `write_plan_review`, `write_stage_gate`, `write_learning_handoff`
   - `log_*`: `log_agent_failure`
 
 Rule of thumb: anything that mutates `step_state.json` → orchestrator. Anything that reads the repo, writes a sidecar artifact, or returns a JSON verdict without touching `step_state.json` → step_runner. The two `record_subtask_result` (orchestrator) vs `record_test_baseline` (step_runner) cases are the most common confusion point — orchestrator advances the cursor, step_runner just persists a baseline file.
+
+### Flaky-test triage sidecar
+
+When a test/check fails inconsistently, repeat the exact failing command and
+record the evidence instead of weakening the test or treating a later pass as a
+green gate:
+
+```bash
+python3 .map/scripts/map_step_runner.py record_flaky_test_triage \
+  "pytest::test_name" \
+  '[{"run":1,"exit_code":1,"summary":"AssertionError"},{"run":2,"exit_code":0,"summary":"passed"}]' \
+  --command "pytest tests/test_file.py::test_name" \
+  --reason "Mixed pass/fail outcomes across repeated runs."
+python3 .map/scripts/map_step_runner.py validate_flaky_test_triage
+```
+
+Mixed pass/fail evidence is classified as `deferred_nondeterministic` and
+stored in `.map/<branch>/flaky_test_triage.json` plus the `flaky_test_triage`
+manifest stage. This is an explicit recorded defer, not a pass: the artifact
+sets `monitor_verdict_policy=not_valid_without_explicit_triage`, and Monitor
+must still report the deferred evidence rather than returning a silent green.
 
 If a command above ever returns `Unknown function`, grep `map_step_runner.py` for `func_name ==` to confirm the dispatch branch still exists; this list is the source of truth as of the PR that added it but the underlying dispatcher is the ground truth.
 

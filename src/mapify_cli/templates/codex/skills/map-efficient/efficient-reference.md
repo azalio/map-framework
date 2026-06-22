@@ -32,6 +32,27 @@ If `recommended_gate == "full_suite"`, run the full suite. A focused run is
 allowed only when the detector returns `scoped` and the subtask contract does
 not require broader validation.
 
+## Flaky-Test Triage
+
+If a test/check fails inconsistently, repeat the exact failing command and
+record the outcomes before acting on the failure:
+
+```bash
+python3 .map/scripts/map_step_runner.py record_flaky_test_triage \
+  "pytest::test_name" \
+  '[{"run":1,"exit_code":1,"summary":"AssertionError"},{"run":2,"exit_code":0,"summary":"passed"}]' \
+  --command "pytest tests/test_file.py::test_name" \
+  --reason "Mixed pass/fail outcomes across repeated runs."
+python3 .map/scripts/map_step_runner.py validate_flaky_test_triage
+```
+
+Mixed pass/fail evidence writes `.map/<branch>/flaky_test_triage.json`, updates
+the `flaky_test_triage` manifest stage, and returns
+`disposition=deferred_nondeterministic`. This disposition is not a passing
+gate: do not weaken, skip, or delete the check, and do not return a silent
+green. Monitor must include the recorded defer evidence and
+`monitor_verdict_policy=not_valid_without_explicit_triage` in its finding.
+
 ## Wave Execution
 
 Sequential execution is the default. Use wave APIs only when the blueprint has
