@@ -22,9 +22,34 @@ Reference guide for orchestrator agents on when to escalate failures vs. retry.
 | Confidence oscillating > 0.3 | Model uncertain |
 | Same error message 2+ times | Not making progress |
 
-## Stuck Recovery (Intermediate — at retry 3)
+## Bounded-effort terminal escalation (#255 — deterministic)
 
-Before exhausting retries, invoke intermediate recovery at monitor retry 3:
+This is the deterministic terminal outcome for the `/map-efficient`
+Actor→Monitor loop. It supersedes the prose "escalate to user" for two cases and
+emits ONE structured outcome via
+`map_step_runner.py build_escalation_outcome <subtask_id> <reason>`:
+
+| Trigger | reason | `outcome` | What happens |
+|---------|--------|-----------|--------------|
+| 3rd **identical** normalized failure (`escalation_recommended:true`) | `repeated_failure` | `BLOCKED` | STOP immediately. The constraint armed at the 2nd identical failure was the single bounded recovery act; a 3rd means it did not work. |
+| `monitor_failed` returns `status:"max_retries"` (budget exhausted across **differing** failures) | `max_retries` | `CLARIFICATION_NEEDED` | STOP; the task likely needs reframing/clarification. |
+
+Properties: `status:"escalated"`, durable `.map/<branch>/escalation_<subtask>.md`
+blocker report, `escalation` manifest stage, idempotent. The stop is re-derived
+from the anti_repeat store inside the subcommand (latest-signature rule), so a
+fresh signature on the last attempt returns `status:"not_escalated"` and the loop
+resumes — a spurious call cannot fabricate a terminal stop. A CLEAN_RETRY
+iteration (`--quarantine-active`) defers the stop so the one-shot reset runs first.
+
+**The legacy retry-3 Stuck Recovery below is BYPASSED for an identical-failure
+loop** (a dominant repeated signature short-circuits straight to escalation). It
+stays active only for **non-identical stuckness** — changing failures with no
+dominant repeated signature, where research/predictor recovery may still help.
+
+## Stuck Recovery (Intermediate — at retry 3, non-identical failures only)
+
+For non-identical stuckness (no dominant repeated signature), invoke intermediate
+recovery at monitor retry 3:
 
 | Step | Action | Skip Condition |
 |------|--------|----------------|

@@ -10847,3 +10847,158 @@ def test_cli_set_status_and_collect_candidates(tmp_path):
     assert collected.returncode == 0, collected.stderr
     candidates = json.loads(collected.stdout)
     assert [c["subtask_id"] for c in candidates] == ["ST-1"]
+
+
+# --- Bounded-effort escalation (#255) ---
+
+_NEW_SPECIFIC_FAILURE = "KeyError: 'zzz' raised in other.py:9 build_other"
+
+
+def _arm_to_escalation(subtask_id: str) -> None:
+    """Record the same normalized failure 3x so escalation_recommended fires."""
+    for failure in (
+        _SPECIFIC_FAILURE,
+        _SPECIFIC_FAILURE_OTHER_LINE,
+        _SPECIFIC_FAILURE,
+    ):
+        map_step_runner.record_failure_signature(failure, subtask_id)
+
+
+def test_build_escalation_outcome_repeated_failure_blocks(branch_workspace):
+    _arm_to_escalation("ST-001")
+    out = map_step_runner.build_escalation_outcome("ST-001", "repeated_failure")
+    assert out["status"] == "ok"
+    assert out["escalated"] is True
+    assert out["outcome"] == "BLOCKED"
+    assert out["reason_code"] == "repeated_failure"
+    assert out["attempts"] == 3
+    # The escalating signature is flagged as the trigger in the evidence.
+    assert any(rec["is_trigger"] for rec in out["repeated_failures"])
+    # Terminal status persisted in the anti_repeat store.
+    store = _read_anti_repeat_store(branch_workspace)
+    assert store["subtasks"]["ST-001"]["status"] == "escalated"
+    # Durable human-readable blocker report written.
+    report = branch_workspace / "escalation_ST-001.md"
+    assert report.exists()
+    body = report.read_text(encoding="utf-8")
+    assert "Outcome:** BLOCKED" in body
+    assert "Recommended action" in body
+    # Manifest stage registered.
+    manifest = json.loads(
+        (branch_workspace / "artifact_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["stages"]["escalation"]["status"] == "escalated"
+    assert manifest["stages"]["escalation"]["metadata"]["outcome"] == "BLOCKED"
+
+
+def test_build_escalation_outcome_not_escalated_when_latest_signature_is_new(
+    branch_workspace,
+):
+    # Sig A reaches escalation, then the Actor produces a NEW distinct failure:
+    # the latest signature is not escalation-recommended -> resume, do not stop.
+    _arm_to_escalation("ST-001")
+    map_step_runner.record_failure_signature(_NEW_SPECIFIC_FAILURE, "ST-001")
+    out = map_step_runner.build_escalation_outcome("ST-001", "repeated_failure")
+    assert out["status"] == "not_escalated"
+    assert out["escalated"] is False
+    store = _read_anti_repeat_store(branch_workspace)
+    assert store["subtasks"]["ST-001"]["status"] != "escalated"
+    assert not (branch_workspace / "escalation_ST-001.md").exists()
+
+
+def test_build_escalation_outcome_repeated_failure_requires_escalation_signal(
+    branch_workspace,
+):
+    del branch_workspace
+    # Armed (2x) but below the escalate threshold -> not yet a terminal stop.
+    map_step_runner.record_failure_signature(_SPECIFIC_FAILURE, "ST-001")
+    map_step_runner.record_failure_signature(_SPECIFIC_FAILURE_OTHER_LINE, "ST-001")
+    out = map_step_runner.build_escalation_outcome("ST-001", "repeated_failure")
+    assert out["status"] == "not_escalated"
+
+
+def test_build_escalation_outcome_max_retries_clarification(branch_workspace):
+    out = map_step_runner.build_escalation_outcome(
+        "ST-007", "max_retries", retry_count=6, max_retries=5
+    )
+    assert out["status"] == "ok"
+    assert out["escalated"] is True
+    assert out["outcome"] == "CLARIFICATION_NEEDED"
+    assert out["attempts"] == 6
+    store = _read_anti_repeat_store(branch_workspace)
+    assert store["subtasks"]["ST-007"]["status"] == "escalated"
+
+
+def test_build_escalation_outcome_max_retries_under_budget_not_escalated(
+    branch_workspace,
+):
+    del branch_workspace
+    out = map_step_runner.build_escalation_outcome(
+        "ST-007", "max_retries", retry_count=3, max_retries=5
+    )
+    assert out["status"] == "not_escalated"
+
+
+def test_build_escalation_outcome_max_retries_requires_counts(branch_workspace):
+    del branch_workspace
+    out = map_step_runner.build_escalation_outcome("ST-007", "max_retries")
+    assert out["status"] == "error"
+
+
+def test_build_escalation_outcome_quarantine_defers(branch_workspace):
+    _arm_to_escalation("ST-001")
+    out = map_step_runner.build_escalation_outcome(
+        "ST-001", "repeated_failure", quarantine_active=True
+    )
+    assert out["status"] == "deferred"
+    assert out["suppressed"] == "clean_retry_active"
+    # CLEAN_RETRY iteration must NOT flip the subtask to escalated.
+    store = _read_anti_repeat_store(branch_workspace)
+    assert store["subtasks"]["ST-001"]["status"] != "escalated"
+
+
+def test_build_escalation_outcome_is_idempotent(branch_workspace):
+    _arm_to_escalation("ST-001")
+    first = map_step_runner.build_escalation_outcome("ST-001", "repeated_failure")
+    assert first["idempotent"] is False
+    second = map_step_runner.build_escalation_outcome("ST-001", "repeated_failure")
+    assert second["idempotent"] is True
+    assert second["outcome"] == "BLOCKED"
+    store = _read_anti_repeat_store(branch_workspace)
+    assert store["subtasks"]["ST-001"]["status"] == "escalated"
+
+
+def test_build_escalation_outcome_invalid_reason_errors(branch_workspace):
+    del branch_workspace
+    out = map_step_runner.build_escalation_outcome("ST-001", "bogus")
+    assert out["status"] == "error"
+
+
+def test_cli_build_escalation_outcome_repeated_failure(tmp_path):
+    for failure in (
+        _SPECIFIC_FAILURE,
+        _SPECIFIC_FAILURE_OTHER_LINE,
+        _SPECIFIC_FAILURE,
+    ):
+        _run_repro_cli(
+            ["record_failure_signature", failure, "ST-1", "--branch", "clitest"],
+            tmp_path,
+        )
+    proc = _run_repro_cli(
+        ["build_escalation_outcome", "ST-1", "repeated_failure", "--branch", "clitest"],
+        tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["escalated"] is True
+    assert payload["outcome"] == "BLOCKED"
+    assert (tmp_path / ".map" / "clitest" / "escalation_ST-1.md").exists()
+
+
+def test_cli_build_escalation_outcome_invalid_reason_exits_one(tmp_path):
+    (tmp_path / ".map" / "clitest").mkdir(parents=True)
+    proc = _run_repro_cli(
+        ["build_escalation_outcome", "ST-1", "bogus", "--branch", "clitest"],
+        tmp_path,
+    )
+    assert proc.returncode == 1
