@@ -365,6 +365,10 @@ def test_validate_flaky_test_triage_schema():
                         "status": "failed",
                         "exit_code": 1,
                         "summary": "AssertionError",
+                        "timed_out": False,
+                        "duration_seconds": 0.123,
+                        "stdout_tail": "",
+                        "stderr_tail": "AssertionError",
                     },
                     {
                         "run": 2,

@@ -44,7 +44,8 @@ These constraints apply before any write-capable step:
   sidecar artifacts: `record_test_baseline`, `save_research`, `load_research`,
   `build_context_block`, `detect_truncated_agent_output`,
   `detect_actor_files_changed_mismatch`, `detect_symbol_blast_radius`,
-  `detect_cross_subtask_regression_risk`, `record_flaky_test_triage`,
+  `detect_cross_subtask_regression_risk`, `run_flaky_test_triage`,
+  `record_flaky_test_triage`,
   `validate_flaky_test_triage`, `write_run_health_report`.
 
 ## Argument Handling
@@ -241,7 +242,8 @@ Write a durable `.map/<branch>/code-review-N.md` with exact issues and then fix
 the current subtask. Do not advance until Monitor passes.
 
 If the failure is inconsistent across repeated identical check runs, record the
-run evidence with `record_flaky_test_triage` and validate
+run evidence with `run_flaky_test_triage` (or `record_flaky_test_triage` if the
+repeated runs were already collected) and validate
 `flaky_test_triage.json` before reporting `deferred_nondeterministic`. This is
 not a passing gate: do not weaken, skip, or delete the check, and do not return
 a silent green.

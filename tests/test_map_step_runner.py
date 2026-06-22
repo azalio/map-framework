@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import types
@@ -553,6 +554,210 @@ def test_cli_record_flaky_test_triage_writes_artifact(tmp_path):
     payload = json.loads(completed.stdout)
     assert payload["disposition"] == "deferred_nondeterministic"
     assert (tmp_path / ".map" / "clitest" / "flaky_test_triage.json").exists()
+
+
+def test_run_flaky_test_triage_uses_shell_false(branch_workspace):
+    calls: list[dict[str, object]] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> types.SimpleNamespace:
+        calls.append({"command": command, **kwargs})
+        stdout = kwargs["stdout"]
+        assert hasattr(stdout, "write")
+        stdout.write(b"ok")
+        return types.SimpleNamespace(returncode=0)
+
+    with patch.object(map_step_runner.subprocess, "run", side_effect=fake_run):
+        result = map_step_runner.run_flaky_test_triage(
+            "pytest::test_shell_safe",
+            ["pytest", "tests/test_shell_safe.py"],
+            runs=2,
+        )
+
+    assert result["valid"] is True
+    assert result["disposition"] == "not_reproduced"
+    assert len(calls) == 2
+    assert calls[0]["command"] == ["pytest", "tests/test_shell_safe.py"]
+    assert calls[0]["shell"] is False
+
+
+def test_run_flaky_test_triage_mixed_outcomes_records_deferred(branch_workspace):
+    script = """
+from pathlib import Path
+p = Path('counter.txt')
+n = int(p.read_text()) if p.exists() else 0
+p.write_text(str(n + 1))
+raise SystemExit(1 if n % 2 == 0 else 0)
+"""
+
+    result = map_step_runner.run_flaky_test_triage(
+        "pytest::test_flaky",
+        [sys.executable, "-c", script],
+        runs=3,
+        timeout_seconds=5,
+        reason="Collected by automatic repeat runner.",
+    )
+
+    assert result["valid"] is True
+    assert result["disposition"] == "deferred_nondeterministic"
+    assert result["pass_count"] == 1
+    assert result["fail_count"] == 2
+    payload = json.loads((branch_workspace / "flaky_test_triage.json").read_text())
+    triage = payload["triages"][0]
+    assert triage["outcome_sequence"] == ["failed", "passed", "failed"]
+    assert triage["command"] == shlex.join([sys.executable, "-c", script])
+    assert all("duration_seconds" in item for item in triage["evidence"])
+    assert all("timed_out" in item for item in triage["evidence"])
+
+
+def test_run_flaky_test_triage_does_not_interpret_shell_syntax(branch_workspace):
+    script = """
+from pathlib import Path
+import sys
+Path('argv.txt').write_text(sys.argv[1], encoding='utf-8')
+"""
+
+    result = map_step_runner.run_flaky_test_triage(
+        "pytest::test_literal_argv",
+        [sys.executable, "-c", script, "literal; touch shell_injected"],
+        runs=2,
+        timeout_seconds=5,
+    )
+
+    assert result["valid"] is True
+    assert (branch_workspace.parent.parent / "argv.txt").read_text() == (
+        "literal; touch shell_injected"
+    )
+    assert not (branch_workspace.parent.parent / "shell_injected").exists()
+
+
+def test_run_flaky_test_triage_stores_bounded_output_tail(branch_workspace):
+    script = """
+import sys
+sys.stdout.write('HEAD-' + ('x' * 200) + '-TAIL')
+"""
+
+    result = map_step_runner.run_flaky_test_triage(
+        "pytest::test_tail",
+        [sys.executable, "-c", script],
+        runs=2,
+        timeout_seconds=5,
+        output_tail_bytes=32,
+    )
+
+    assert result["valid"] is True
+    payload = json.loads((branch_workspace / "flaky_test_triage.json").read_text())
+    stdout_tail = payload["triages"][0]["evidence"][0]["stdout_tail"]
+    assert "TAIL" in stdout_tail
+    assert "HEAD" not in stdout_tail
+    assert stdout_tail.startswith("[truncated to last 32 bytes]")
+
+
+def test_run_flaky_test_triage_timeout_is_failed_evidence(branch_workspace):
+    def fake_run(command: list[str], **kwargs: object) -> types.SimpleNamespace:
+        del command, kwargs
+        raise subprocess.TimeoutExpired(cmd=["slow"], timeout=1)
+
+    with patch.object(map_step_runner.subprocess, "run", side_effect=fake_run):
+        result = map_step_runner.run_flaky_test_triage(
+            "pytest::test_timeout",
+            ["slow"],
+            runs=1,
+            timeout_seconds=1,
+        )
+
+    assert result["valid"] is True
+    assert result["disposition"] == "insufficient_evidence"
+    payload = json.loads((branch_workspace / "flaky_test_triage.json").read_text())
+    evidence = payload["triages"][0]["evidence"][0]
+    assert evidence["timed_out"] is True
+    assert evidence["exit_code"] == 124
+
+
+def test_cli_run_flaky_test_triage_accepts_command_json(tmp_path):
+    command_json = json.dumps([sys.executable, "-c", "print('ok')"])
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "run_flaky_test_triage",
+            "--check-id",
+            "pytest::test_cli_runner",
+            "--branch",
+            "clitest",
+            "--runs",
+            "2",
+            "--timeout",
+            "5",
+            "--command-json",
+            command_json,
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    assert payload["disposition"] == "not_reproduced"
+    triage_path = tmp_path / ".map" / "clitest" / "flaky_test_triage.json"
+    triage = json.loads(triage_path.read_text())["triages"][0]
+    assert triage["command"] == shlex.join([sys.executable, "-c", "print('ok')"])
+
+
+def test_cli_run_flaky_test_triage_accepts_trailing_argv(tmp_path):
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "run_flaky_test_triage",
+            "--check-id",
+            "pytest::test_cli_trailing",
+            "--branch",
+            "clitest",
+            "--runs",
+            "2",
+            "--timeout",
+            "5",
+            "--",
+            sys.executable,
+            "-c",
+            "print('ok')",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    assert payload["disposition"] == "not_reproduced"
+    triage_path = tmp_path / ".map" / "clitest" / "flaky_test_triage.json"
+    triage = json.loads(triage_path.read_text())["triages"][0]
+    assert triage["command"] == shlex.join([sys.executable, "-c", "print('ok')"])
+
+
+def test_cli_run_flaky_test_triage_rejects_string_command_json(tmp_path):
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "run_flaky_test_triage",
+            "--check-id",
+            "pytest::test_bad_cli",
+            "--command-json",
+            json.dumps("pytest tests"),
+        ],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 1
+    payload = json.loads(completed.stdout)
+    assert payload["valid"] is False
+    assert payload["errors"] == ["--command-json must be a non-empty JSON array of strings"]
 
 
 def test_artifact_health_entry_handles_disappearing_file():

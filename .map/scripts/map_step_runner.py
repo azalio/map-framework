@@ -34,9 +34,11 @@ import json
 import os
 import random
 import re
+import shlex
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import unicodedata
 from datetime import datetime, timezone
@@ -304,6 +306,12 @@ FLAKY_TEST_TRIAGE_OPERATOR_REQUIREMENTS = [
     "Do not treat this artifact as a passing gate.",
     "Record the deferred nondeterministic evidence in Monitor output or issue tracking.",
 ]
+FLAKY_TEST_TRIAGE_DEFAULT_RUNS = 3
+FLAKY_TEST_TRIAGE_MAX_RUNS = 20
+FLAKY_TEST_TRIAGE_DEFAULT_TIMEOUT_SECONDS = 120
+FLAKY_TEST_TRIAGE_MAX_TIMEOUT_SECONDS = 600
+FLAKY_TEST_TRIAGE_DEFAULT_OUTPUT_TAIL_BYTES = 4096
+FLAKY_TEST_TRIAGE_MAX_OUTPUT_TAIL_BYTES = 65536
 
 # --- Repro-probe gate (#254): "no fix without root cause" enforcement ---
 # The runner EXECUTES a frozen snapshot of an agent-authored probe script and
@@ -4488,15 +4496,230 @@ def _normalize_flaky_test_evidence(
             status = "failed"
             exit_code = 1
         summary = str(raw.get("summary") or status).strip()
-        evidence.append(
-            {
-                "run": run,
-                "status": status,
-                "exit_code": exit_code,
-                "summary": _shorten_retry_text(summary) or status,
-            }
-        )
+        evidence_item: dict[str, object] = {
+            "run": run,
+            "status": status,
+            "exit_code": exit_code,
+            "summary": _shorten_retry_text(summary) or status,
+        }
+        timed_out = raw.get("timed_out")
+        if timed_out is not None:
+            if type(timed_out) is not bool:
+                errors.append(f"{prefix}.timed_out must be a boolean")
+            else:
+                evidence_item["timed_out"] = timed_out
+        duration_seconds = raw.get("duration_seconds")
+        if duration_seconds is not None:
+            if isinstance(duration_seconds, bool) or not isinstance(
+                duration_seconds, (int, float)
+            ):
+                errors.append(f"{prefix}.duration_seconds must be a non-negative number")
+            else:
+                if duration_seconds < 0:
+                    errors.append(
+                        f"{prefix}.duration_seconds must be a non-negative number"
+                    )
+                else:
+                    evidence_item["duration_seconds"] = round(float(duration_seconds), 3)
+        for tail_field in ("stdout_tail", "stderr_tail"):
+            if tail_field in raw:
+                tail_value = raw.get(tail_field)
+                if not isinstance(tail_value, str):
+                    errors.append(f"{prefix}.{tail_field} must be a string")
+                else:
+                    evidence_item[tail_field] = tail_value
+        evidence.append(evidence_item)
     return evidence, errors
+
+
+def _bounded_positive_int(value: Optional[int], default: int, maximum: int) -> int:
+    if value is None:
+        return default
+    if value < 1:
+        raise ValueError("value must be >= 1")
+    return min(value, maximum)
+
+
+def _flaky_test_triage_default_runs() -> int:
+    configured = _map_config_int(
+        Path.cwd(), "flaky_test_triage.default_runs", FLAKY_TEST_TRIAGE_DEFAULT_RUNS
+    )
+    return min(configured, FLAKY_TEST_TRIAGE_MAX_RUNS)
+
+
+def _flaky_test_triage_default_timeout() -> int:
+    configured = _map_config_int(
+        Path.cwd(),
+        "flaky_test_triage.default_timeout_seconds",
+        FLAKY_TEST_TRIAGE_DEFAULT_TIMEOUT_SECONDS,
+    )
+    return min(configured, FLAKY_TEST_TRIAGE_MAX_TIMEOUT_SECONDS)
+
+
+def _flaky_test_triage_default_output_tail_bytes() -> int:
+    configured = _map_config_int(
+        Path.cwd(),
+        "flaky_test_triage.output_tail_bytes",
+        FLAKY_TEST_TRIAGE_DEFAULT_OUTPUT_TAIL_BYTES,
+    )
+    return min(configured, FLAKY_TEST_TRIAGE_MAX_OUTPUT_TAIL_BYTES)
+
+
+def _read_spooled_tail(handle: Any, limit: int) -> str:
+    if limit <= 0:
+        return ""
+    handle.flush()
+    size = handle.tell()
+    start = max(0, size - limit)
+    handle.seek(start)
+    data = handle.read()
+    text = data.decode("utf-8", errors="replace")
+    if start > 0:
+        return f"[truncated to last {limit} bytes]\n{text}"
+    return text
+
+
+def _flaky_run_summary(
+    *,
+    exit_code: int,
+    timed_out: bool,
+    timeout_seconds: int,
+    stdout_tail: str,
+    stderr_tail: str,
+) -> str:
+    if timed_out:
+        head = f"timed out after {timeout_seconds}s"
+    else:
+        head = f"exit_code={exit_code}"
+    details: list[str] = []
+    if stderr_tail.strip():
+        details.append(f"stderr_tail:\n{stderr_tail.strip()}")
+    if stdout_tail.strip():
+        details.append(f"stdout_tail:\n{stdout_tail.strip()}")
+    if not details:
+        return head
+    return _shorten_retry_text(head + "\n" + "\n".join(details))
+
+
+def _run_flaky_triage_command_once(
+    command_argv: list[str],
+    *,
+    run_number: int,
+    timeout_seconds: int,
+    cwd: Optional[Path],
+    output_tail_bytes: int,
+) -> dict[str, object]:
+    start = time.monotonic()
+    stdout_tail = ""
+    stderr_tail = ""
+    exit_code = 1
+    timed_out = False
+    spool_size = min(max(output_tail_bytes * 2, 1), FLAKY_TEST_TRIAGE_MAX_OUTPUT_TAIL_BYTES)
+    with tempfile.SpooledTemporaryFile(max_size=spool_size) as stdout_file:
+        with tempfile.SpooledTemporaryFile(max_size=spool_size) as stderr_file:
+            try:
+                completed = subprocess.run(
+                    command_argv,
+                    cwd=str(cwd) if cwd else None,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                    timeout=timeout_seconds,
+                    check=False,
+                    shell=False,
+                )
+                exit_code = int(completed.returncode)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                exit_code = 124
+                stderr_file.write(f"Timed out after {timeout_seconds}s".encode("utf-8"))
+            except OSError as exc:
+                exit_code = 127
+                stderr_file.write(str(exc).encode("utf-8", errors="replace"))
+            finally:
+                stdout_tail = _read_spooled_tail(stdout_file, output_tail_bytes)
+                stderr_tail = _read_spooled_tail(stderr_file, output_tail_bytes)
+    duration_seconds = round(time.monotonic() - start, 3)
+    return {
+        "run": run_number,
+        "exit_code": exit_code,
+        "timed_out": timed_out,
+        "duration_seconds": duration_seconds,
+        "stdout_tail": stdout_tail,
+        "stderr_tail": stderr_tail,
+        "summary": _flaky_run_summary(
+            exit_code=exit_code,
+            timed_out=timed_out,
+            timeout_seconds=timeout_seconds,
+            stdout_tail=stdout_tail,
+            stderr_tail=stderr_tail,
+        ),
+    }
+
+
+def run_flaky_test_triage(
+    check_id: str,
+    command_argv: list[str],
+    *,
+    runs: Optional[int] = None,
+    timeout_seconds: Optional[int] = None,
+    output_tail_bytes: Optional[int] = None,
+    cwd: str = "",
+    reason: str = "",
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Repeat an exact command with shell=False, then record flaky-test evidence."""
+    if not command_argv or not all(isinstance(part, str) and part for part in command_argv):
+        return {
+            "status": "error",
+            "valid": False,
+            "errors": ["command_argv must be a non-empty array of non-empty strings"],
+        }
+    try:
+        run_count = _bounded_positive_int(
+            runs, _flaky_test_triage_default_runs(), FLAKY_TEST_TRIAGE_MAX_RUNS
+        )
+        per_run_timeout = _bounded_positive_int(
+            timeout_seconds,
+            _flaky_test_triage_default_timeout(),
+            FLAKY_TEST_TRIAGE_MAX_TIMEOUT_SECONDS,
+        )
+        tail_bytes = _bounded_positive_int(
+            output_tail_bytes,
+            _flaky_test_triage_default_output_tail_bytes(),
+            FLAKY_TEST_TRIAGE_MAX_OUTPUT_TAIL_BYTES,
+        )
+    except ValueError as exc:
+        return {"status": "error", "valid": False, "errors": [str(exc)]}
+    cwd_path: Optional[Path] = None
+    if cwd:
+        cwd_path = Path(cwd).expanduser()
+        if not cwd_path.is_dir():
+            return {
+                "status": "error",
+                "valid": False,
+                "errors": [f"cwd is not a directory: {cwd_path}"],
+            }
+    outcomes = [
+        _run_flaky_triage_command_once(
+            command_argv,
+            run_number=index + 1,
+            timeout_seconds=per_run_timeout,
+            cwd=cwd_path,
+            output_tail_bytes=tail_bytes,
+        )
+        for index in range(run_count)
+    ]
+    result = record_flaky_test_triage(
+        check_id,
+        outcomes,
+        command=shlex.join(command_argv),
+        reason=reason,
+        branch=branch,
+    )
+    result["command_argv"] = command_argv
+    result["timeout_seconds"] = per_run_timeout
+    result["output_tail_bytes"] = tail_bytes
+    return result
 
 
 def _classify_flaky_test_evidence(
@@ -4744,6 +4967,23 @@ def validate_flaky_test_triage(
                 errors.append(f"{evidence_prefix}.exit_code must be an integer")
             if not isinstance(evidence_item.get("summary"), str):
                 errors.append(f"{evidence_prefix}.summary must be a string")
+            if "timed_out" in evidence_item and type(evidence_item.get("timed_out")) is not bool:
+                errors.append(f"{evidence_prefix}.timed_out must be a boolean")
+            if "duration_seconds" in evidence_item:
+                duration_seconds = evidence_item.get("duration_seconds")
+                if isinstance(duration_seconds, bool) or not isinstance(
+                    duration_seconds, (int, float)
+                ):
+                    errors.append(
+                        f"{evidence_prefix}.duration_seconds must be a non-negative number"
+                    )
+                elif duration_seconds < 0:
+                    errors.append(
+                        f"{evidence_prefix}.duration_seconds must be a non-negative number"
+                    )
+            for tail_field in ("stdout_tail", "stderr_tail"):
+                if tail_field in evidence_item and not isinstance(evidence_item.get(tail_field), str):
+                    errors.append(f"{evidence_prefix}.{tail_field} must be a string")
         if type(run_count) is int and len(outcome_sequence) != run_count:
             errors.append(f"{prefix}.outcome_sequence length must equal run_count")
         if type(run_count) is int and len(evidence) != run_count:
@@ -12890,6 +13130,63 @@ if __name__ == "__main__":
                     reason=_args.reason,
                     branch=_args.branch,
                 )
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+        if not result.get("valid"):
+            sys.exit(1)
+
+    elif func_name == "run_flaky_test_triage":
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py run_flaky_test_triage")
+        _p.add_argument("--check-id", required=True)
+        _p.add_argument("--branch", default=None)
+        _p.add_argument("--reason", default="")
+        _p.add_argument("--runs", type=int, default=None)
+        _p.add_argument("--timeout", type=int, default=None)
+        _p.add_argument("--cwd", default="")
+        _p.add_argument("--output-limit", type=int, default=None)
+        _p.add_argument("--command-json", default="")
+        _p.add_argument("command", nargs=_ap.REMAINDER)
+        _args = _p.parse_args(sys.argv[2:])
+        command_remainder = list(_args.command)
+        if command_remainder and command_remainder[0] == "--":
+            command_remainder = command_remainder[1:]
+        command_argv: list[str] = []
+        errors: list[str] = []
+        if _args.command_json and command_remainder:
+            errors.append("use either --command-json or trailing command argv, not both")
+        elif _args.command_json:
+            try:
+                parsed_command = json.loads(_args.command_json)
+            except json.JSONDecodeError as exc:
+                errors.append(f"--command-json must be a JSON array of strings: {exc}")
+            else:
+                if not isinstance(parsed_command, list) or not all(
+                    isinstance(part, str) and part for part in parsed_command
+                ):
+                    errors.append("--command-json must be a non-empty JSON array of strings")
+                else:
+                    command_argv = parsed_command
+        elif command_remainder:
+            if not all(isinstance(part, str) and part for part in command_remainder):
+                errors.append("trailing command argv must be non-empty strings")
+            else:
+                command_argv = command_remainder
+        else:
+            errors.append("provide --command-json or a trailing command after --")
+        if errors:
+            result = {"status": "error", "valid": False, "errors": errors}
+        else:
+            result = run_flaky_test_triage(
+                _args.check_id,
+                command_argv,
+                runs=_args.runs,
+                timeout_seconds=_args.timeout,
+                output_tail_bytes=_args.output_limit,
+                cwd=_args.cwd,
+                reason=_args.reason,
+                branch=_args.branch,
+            )
         print(json.dumps(result, indent=2, ensure_ascii=True))
         if not result.get("valid"):
             sys.exit(1)

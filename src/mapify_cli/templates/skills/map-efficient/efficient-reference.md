@@ -15,7 +15,7 @@ Two CLI scripts back the workflow; calling the wrong one fails with `invalid cho
   - `save_*` / `load_*`: `save_research`, `load_research`, `load_artifact_manifest`
   - `refresh_*`: `refresh_blueprint_affected_files`
   - `validate_*` (non-state): `validate_blueprint_contract`, `validate_mutation_boundary`, `validate_retry_quarantine`, `validate_flaky_test_triage`, `validate_run_health_report`, `validate_checkpoint`, `validate_prior_stage_consumption`
-  - `record_*` (artifacts, not state): `record_test_baseline`, `record_diagnostics_baseline`, `record_scope_baseline`, `record_subtask_baseline`, `record_token_event`, `record_learning_consumption`, `record_workflow_fit`, `record_plan_artifacts`, `record_test_contract_handoff`, `record_failure_signature`, `record_flaky_test_triage`, `record-review-ordering` (note: this one is dispatched with a hyphen, not an underscore)
+  - `record_*` / run evidence collectors (artifacts, not state): `record_test_baseline`, `record_diagnostics_baseline`, `record_scope_baseline`, `record_subtask_baseline`, `record_token_event`, `record_learning_consumption`, `record_workflow_fit`, `record_plan_artifacts`, `record_test_contract_handoff`, `record_failure_signature`, `record_flaky_test_triage`, `run_flaky_test_triage`, `record-review-ordering` (note: this one is dispatched with a hyphen, not an underscore)
   - intra-run failure memory (#253): `record_failure_signature`, `build_anti_repeat_constraint`, `set_anti_repeat_subtask_status`, `collect_anti_repeat_learn_candidates`
   - artifact writers: `write_verification_summary`, `write_run_health_report`, `write_pr_draft`, `write_plan_review`, `write_stage_gate`, `write_learning_handoff`
   - `log_*`: `log_agent_failure`
@@ -24,9 +24,24 @@ Rule of thumb: anything that mutates `step_state.json` → orchestrator. Anythin
 
 ### Flaky-test triage sidecar
 
-When a test/check fails inconsistently, repeat the exact failing command and
-record the evidence instead of weakening the test or treating a later pass as a
-green gate:
+When a test/check fails inconsistently, have MAP repeat the exact failing command
+and record the evidence instead of weakening the test or treating a later pass as
+a green gate:
+
+```bash
+python3 .map/scripts/map_step_runner.py run_flaky_test_triage \
+  --check-id "pytest::test_name" \
+  --runs 3 \
+  --timeout 120 \
+  -- python -m pytest tests/test_file.py::test_name
+python3 .map/scripts/map_step_runner.py validate_flaky_test_triage
+```
+
+`run_flaky_test_triage` executes argv with `shell=False`; shell syntax is not
+interpreted. If a shell is intentionally required, pass it explicitly as argv,
+for example `-- bash -lc 'python -m pytest tests/unit && echo done'`.
+
+Manual evidence remains available when the repeated runs were already collected:
 
 ```bash
 python3 .map/scripts/map_step_runner.py record_flaky_test_triage \
