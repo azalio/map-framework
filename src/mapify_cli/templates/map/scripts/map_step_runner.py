@@ -203,6 +203,7 @@ ARTIFACT_STAGE_NAMES = (
     "review",
     "verification",
     "retry_quarantine",
+    "flaky_test_triage",
     "anti_repeat",
     "escalation",
     "token_budget",
@@ -288,6 +289,21 @@ REVIEW_PROMPT_BUDGET_ENV = "MAP_REVIEW_PROMPT_BUDGET_TOKENS"
 TOKEN_BUDGET_ARTIFACT_NAME = "token_budget.json"
 TOKEN_BUDGET_DECISION_LIMIT = 100
 RETRY_QUARANTINE_ARTIFACT_NAME = "retry_quarantine.json"
+FLAKY_TEST_TRIAGE_ARTIFACT_NAME = "flaky_test_triage.json"
+FLAKY_TEST_TRIAGE_DISPOSITIONS = frozenset(
+    {
+        "deferred_nondeterministic",
+        "deterministic_failure",
+        "not_reproduced",
+        "insufficient_evidence",
+    }
+)
+FLAKY_TEST_TRIAGE_MONITOR_POLICY = "not_valid_without_explicit_triage"
+FLAKY_TEST_TRIAGE_OPERATOR_REQUIREMENTS = [
+    "Do not weaken, skip, or delete the check.",
+    "Do not treat this artifact as a passing gate.",
+    "Record the deferred nondeterministic evidence in Monitor output or issue tracking.",
+]
 
 # --- Repro-probe gate (#254): "no fix without root cause" enforcement ---
 # The runner EXECUTES a frozen snapshot of an agent-authored probe script and
@@ -3925,6 +3941,9 @@ def _run_health_artifact_inventory(
         "retry_quarantine": _artifact_health_entry(
             branch_dir / RETRY_QUARANTINE_ARTIFACT_NAME, "retry-quarantine"
         ),
+        "flaky_test_triage": _artifact_health_entry(
+            branch_dir / FLAKY_TEST_TRIAGE_ARTIFACT_NAME, "flaky-test-triage"
+        ),
     }
 
 
@@ -4412,6 +4431,379 @@ def validate_run_health_report(
         "valid": valid,
         "path": str(path),
         "terminal_status": terminal_status,
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def _flaky_test_triage_artifact_path(branch: Optional[str] = None) -> Path:
+    """Return the branch-scoped flaky-test triage artifact path."""
+    return get_branch_dir(branch) / FLAKY_TEST_TRIAGE_ARTIFACT_NAME
+
+
+def _normalize_flaky_test_evidence(
+    outcomes: Iterable[object],
+) -> tuple[list[dict[str, object]], list[str]]:
+    """Normalize repeated check outcomes into passed/failed evidence entries."""
+    evidence: list[dict[str, object]] = []
+    errors: list[str] = []
+    status_aliases = {
+        "pass": "passed",
+        "passed": "passed",
+        "success": "passed",
+        "ok": "passed",
+        "fail": "failed",
+        "failed": "failed",
+        "failure": "failed",
+        "error": "failed",
+    }
+    for index, raw in enumerate(outcomes):
+        prefix = f"outcomes[{index}]"
+        if not isinstance(raw, Mapping):
+            errors.append(f"{prefix} must be an object")
+            continue
+        run_value = raw.get("run", index + 1)
+        if type(run_value) is not int or run_value < 1:
+            errors.append(f"{prefix}.run must be a positive integer")
+            run = index + 1
+        else:
+            run = run_value
+        exit_code_value = raw.get("exit_code")
+        raw_status = str(raw.get("status") or "").strip().lower()
+        status = ""
+        exit_code = 0
+        if exit_code_value is not None:
+            if type(exit_code_value) is not int:
+                errors.append(f"{prefix}.exit_code must be an integer")
+                exit_code = 1
+                status = "failed"
+            else:
+                exit_code = exit_code_value
+                status = "passed" if exit_code == 0 else "failed"
+        elif raw_status in status_aliases:
+            status = status_aliases[raw_status]
+            exit_code = 0 if status == "passed" else 1
+        else:
+            errors.append(f"{prefix} must include exit_code or status")
+            status = "failed"
+            exit_code = 1
+        summary = str(raw.get("summary") or status).strip()
+        evidence.append(
+            {
+                "run": run,
+                "status": status,
+                "exit_code": exit_code,
+                "summary": _shorten_retry_text(summary) or status,
+            }
+        )
+    return evidence, errors
+
+
+def _classify_flaky_test_evidence(
+    evidence: list[dict[str, object]],
+) -> tuple[str, str, int, int]:
+    pass_count = sum(1 for item in evidence if item.get("status") == "passed")
+    fail_count = sum(1 for item in evidence if item.get("status") == "failed")
+    run_count = len(evidence)
+    if run_count < 2:
+        return (
+            "insufficient_evidence",
+            "repeat_failing_check_before_acting",
+            pass_count,
+            fail_count,
+        )
+    if pass_count > 0 and fail_count > 0:
+        return (
+            "deferred_nondeterministic",
+            "record_deferred_nondeterministic",
+            pass_count,
+            fail_count,
+        )
+    if fail_count == run_count:
+        return ("deterministic_failure", "fix_confirmed_regression", pass_count, fail_count)
+    return (
+        "not_reproduced",
+        "rerun_original_gate_or_record_environment",
+        pass_count,
+        fail_count,
+    )
+
+
+def _flaky_test_triage_reason(disposition: str, reason: str) -> str:
+    cleaned = reason.strip()
+    if cleaned:
+        return cleaned
+    if disposition == "deferred_nondeterministic":
+        return "Repeated evidence observed both passing and failing outcomes."
+    if disposition == "deterministic_failure":
+        return "Every repeated run failed; treat as a confirmed regression."
+    if disposition == "not_reproduced":
+        return "Every repeated run passed; original failure was not reproduced."
+    return "Fewer than two repeated runs were recorded; classification is incomplete."
+
+
+def record_flaky_test_triage(
+    check_id: str,
+    outcomes: Iterable[object],
+    *,
+    command: str = "",
+    reason: str = "",
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Record repeated check outcomes and classify nondeterministic failures."""
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    check = check_id.strip()
+    if not check:
+        return {
+            "status": "error",
+            "valid": False,
+            "errors": ["check_id must be a non-empty string"],
+        }
+    evidence, errors = _normalize_flaky_test_evidence(outcomes)
+    if errors:
+        return {"status": "error", "valid": False, "errors": errors}
+    if not evidence:
+        return {
+            "status": "error",
+            "valid": False,
+            "errors": ["outcomes must include at least one repeated run"],
+        }
+    disposition, action, pass_count, fail_count = _classify_flaky_test_evidence(evidence)
+    run_count = len(evidence)
+    triage = {
+        "check_id": check,
+        "command": command.strip(),
+        "reason": _flaky_test_triage_reason(disposition, reason),
+        "run_count": run_count,
+        "pass_count": pass_count,
+        "fail_count": fail_count,
+        "outcome_sequence": [str(item["status"]) for item in evidence],
+        "disposition": disposition,
+        "recommended_next_action": action,
+        "monitor_verdict_policy": FLAKY_TEST_TRIAGE_MONITOR_POLICY,
+        "operator_requirements": list(FLAKY_TEST_TRIAGE_OPERATOR_REQUIREMENTS),
+        "evidence": evidence,
+    }
+    path = _flaky_test_triage_artifact_path(branch_name)
+    existing = _read_json_file(path) or {}
+    triages = existing.get("triages")
+    if not isinstance(triages, list):
+        triages = []
+    triages = [
+        item
+        for item in triages
+        if not (isinstance(item, Mapping) and item.get("check_id") == check)
+    ]
+    triages.append(triage)
+    payload = {
+        "schema_version": "1.0",
+        "branch": branch_name,
+        "updated_at": _utc_timestamp(),
+        "triages": triages,
+    }
+    _write_json_file(path, payload)
+    validation = validate_flaky_test_triage(str(path), branch_name)
+    return {
+        "status": "success" if validation.get("valid") else "error",
+        "valid": validation.get("valid", False),
+        "path": str(path),
+        "disposition": disposition,
+        "pass_count": pass_count,
+        "fail_count": fail_count,
+        "run_count": run_count,
+        "validation": validation,
+    }
+
+
+def validate_flaky_test_triage(
+    triage_path: str = "",
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Validate flaky_test_triage.json before a Monitor defers a flaky check."""
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    path = Path(triage_path) if triage_path else _flaky_test_triage_artifact_path(branch_name)
+    errors: list[str] = []
+    warnings: list[str] = []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {
+            "status": "error",
+            "valid": False,
+            "path": str(path),
+            "errors": [f"flaky test triage not found: {path}"],
+            "warnings": [],
+        }
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        return {
+            "status": "error",
+            "valid": False,
+            "path": str(path),
+            "errors": [f"cannot read flaky test triage: {exc}"],
+            "warnings": [],
+        }
+    if not isinstance(payload, Mapping):
+        return {
+            "status": "error",
+            "valid": False,
+            "path": str(path),
+            "errors": ["flaky test triage must be a JSON object"],
+            "warnings": [],
+        }
+    if payload.get("schema_version") != "1.0":
+        errors.append("schema_version must be 1.0")
+    if not isinstance(payload.get("branch"), str) or not payload.get("branch"):
+        errors.append("branch must be a non-empty string")
+    triages = payload.get("triages")
+    if not isinstance(triages, list) or not triages:
+        errors.append("triages must be a non-empty array")
+        triages = []
+    counts = {
+        "deferred_nondeterministic": 0,
+        "deterministic_failure": 0,
+        "not_reproduced": 0,
+        "insufficient_evidence": 0,
+    }
+    for index, item in enumerate(triages):
+        prefix = f"triages[{index}]"
+        if not isinstance(item, Mapping):
+            errors.append(f"{prefix} must be an object")
+            continue
+        for field_name in (
+            "check_id",
+            "command",
+            "reason",
+            "run_count",
+            "pass_count",
+            "fail_count",
+            "outcome_sequence",
+            "disposition",
+            "recommended_next_action",
+            "monitor_verdict_policy",
+            "operator_requirements",
+            "evidence",
+        ):
+            if field_name not in item:
+                errors.append(f"{prefix}.{field_name} is required")
+        if not isinstance(item.get("check_id"), str) or not item.get("check_id"):
+            errors.append(f"{prefix}.check_id must be a non-empty string")
+        if not isinstance(item.get("command"), str):
+            errors.append(f"{prefix}.command must be a string")
+        if not isinstance(item.get("reason"), str) or not item.get("reason"):
+            errors.append(f"{prefix}.reason must be a non-empty string")
+        run_count = item.get("run_count")
+        pass_count = item.get("pass_count")
+        fail_count = item.get("fail_count")
+        for field_name, value in (
+            ("run_count", run_count),
+            ("pass_count", pass_count),
+            ("fail_count", fail_count),
+        ):
+            if type(value) is not int or value < 0:
+                errors.append(f"{prefix}.{field_name} must be a non-negative integer")
+        if type(run_count) is int and run_count < 1:
+            errors.append(f"{prefix}.run_count must be a positive integer")
+        outcome_sequence = item.get("outcome_sequence")
+        if not isinstance(outcome_sequence, list) or not outcome_sequence:
+            errors.append(f"{prefix}.outcome_sequence must be a non-empty array")
+            outcome_sequence = []
+        elif not all(outcome in {"passed", "failed"} for outcome in outcome_sequence):
+            errors.append(f"{prefix}.outcome_sequence entries must be passed or failed")
+        disposition = item.get("disposition")
+        if disposition not in FLAKY_TEST_TRIAGE_DISPOSITIONS:
+            errors.append(f"{prefix}.disposition is invalid")
+        else:
+            counts[str(disposition)] += 1
+        if item.get("monitor_verdict_policy") != FLAKY_TEST_TRIAGE_MONITOR_POLICY:
+            errors.append(
+                f"{prefix}.monitor_verdict_policy must be {FLAKY_TEST_TRIAGE_MONITOR_POLICY}"
+            )
+        operator_requirements = item.get("operator_requirements")
+        if not isinstance(operator_requirements, list) or not all(
+            isinstance(entry, str) for entry in operator_requirements
+        ):
+            errors.append(f"{prefix}.operator_requirements must be an array of strings")
+        evidence = item.get("evidence")
+        if not isinstance(evidence, list) or not evidence:
+            errors.append(f"{prefix}.evidence must be a non-empty array")
+            evidence = []
+        for evidence_index, evidence_item in enumerate(evidence):
+            evidence_prefix = f"{prefix}.evidence[{evidence_index}]"
+            if not isinstance(evidence_item, Mapping):
+                errors.append(f"{evidence_prefix} must be an object")
+                continue
+            evidence_run = evidence_item.get("run")
+            if type(evidence_run) is not int or evidence_run < 1:
+                errors.append(f"{evidence_prefix}.run must be a positive integer")
+            if evidence_item.get("status") not in {"passed", "failed"}:
+                errors.append(f"{evidence_prefix}.status must be passed or failed")
+            if type(evidence_item.get("exit_code")) is not int:
+                errors.append(f"{evidence_prefix}.exit_code must be an integer")
+            if not isinstance(evidence_item.get("summary"), str):
+                errors.append(f"{evidence_prefix}.summary must be a string")
+        if type(run_count) is int and len(outcome_sequence) != run_count:
+            errors.append(f"{prefix}.outcome_sequence length must equal run_count")
+        if type(run_count) is int and len(evidence) != run_count:
+            errors.append(f"{prefix}.evidence length must equal run_count")
+        if (
+            type(run_count) is int
+            and type(pass_count) is int
+            and type(fail_count) is int
+            and pass_count + fail_count != run_count
+        ):
+            errors.append(f"{prefix}.pass_count + fail_count must equal run_count")
+        if disposition == "deferred_nondeterministic":
+            if not (type(pass_count) is int and type(fail_count) is int):
+                continue
+            if pass_count < 1 or fail_count < 1:
+                errors.append(
+                    f"{prefix}.deferred_nondeterministic requires at least one pass and one fail"
+                )
+        if disposition == "deterministic_failure":
+            if type(run_count) is int and type(fail_count) is int and fail_count != run_count:
+                errors.append(f"{prefix}.deterministic_failure requires all runs to fail")
+        if disposition == "not_reproduced":
+            if type(run_count) is int and type(pass_count) is int and pass_count != run_count:
+                errors.append(f"{prefix}.not_reproduced requires all runs to pass")
+        if disposition == "insufficient_evidence":
+            if type(run_count) is int and run_count >= 2:
+                errors.append(f"{prefix}.insufficient_evidence requires fewer than two runs")
+    valid = not errors
+    if valid:
+        if counts["deferred_nondeterministic"]:
+            stage_status = "deferred_nondeterministic"
+        elif counts["deterministic_failure"]:
+            stage_status = "deterministic_failure"
+        elif counts["insufficient_evidence"]:
+            stage_status = "insufficient_evidence"
+        else:
+            stage_status = "ready"
+        manifest = load_artifact_manifest(branch_name)
+        _set_manifest_stage(
+            manifest,
+            "flaky_test_triage",
+            stage_status,
+            artifacts=[_artifact_ref(path, "flaky-test-triage")],
+            metadata={
+                "triage_count": len(triages),
+                "deferred_count": counts["deferred_nondeterministic"],
+                "deterministic_failure_count": counts["deterministic_failure"],
+                "not_reproduced_count": counts["not_reproduced"],
+                "insufficient_evidence_count": counts["insufficient_evidence"],
+            },
+        )
+        manifest_result = save_artifact_manifest(manifest, branch_name)
+        manifest_path = manifest_result["path"]
+    else:
+        manifest_path = str(branch_dir / "artifact_manifest.json")
+    return {
+        "status": "success" if valid else "error",
+        "valid": valid,
+        "path": str(path),
+        "manifest_path": manifest_path,
         "errors": errors,
         "warnings": warnings,
     }
@@ -12461,6 +12853,50 @@ if __name__ == "__main__":
     elif func_name == "validate_run_health_report":
         report_path = sys.argv[2] if len(sys.argv) >= 3 else ""
         result = validate_run_health_report(report_path)
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+        if not result.get("valid"):
+            sys.exit(1)
+
+    elif func_name == "record_flaky_test_triage":
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py record_flaky_test_triage")
+        _p.add_argument("check_id")
+        _p.add_argument("outcomes_json")
+        _p.add_argument("--branch", default=None)
+        _p.add_argument("--command", default="")
+        _p.add_argument("--reason", default="")
+        _args = _p.parse_args(sys.argv[2:])
+        try:
+            outcomes = json.loads(_args.outcomes_json)
+        except json.JSONDecodeError as exc:
+            result = {
+                "status": "error",
+                "valid": False,
+                "errors": [f"outcomes_json must be a JSON array: {exc}"],
+            }
+        else:
+            if not isinstance(outcomes, list):
+                result = {
+                    "status": "error",
+                    "valid": False,
+                    "errors": ["outcomes_json must be a JSON array"],
+                }
+            else:
+                result = record_flaky_test_triage(
+                    _args.check_id,
+                    outcomes,
+                    command=_args.command,
+                    reason=_args.reason,
+                    branch=_args.branch,
+                )
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+        if not result.get("valid"):
+            sys.exit(1)
+
+    elif func_name == "validate_flaky_test_triage":
+        triage_path = sys.argv[2] if len(sys.argv) >= 3 else ""
+        result = validate_flaky_test_triage(triage_path)
         print(json.dumps(result, indent=2, ensure_ascii=True))
         if not result.get("valid"):
             sys.exit(1)

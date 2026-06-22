@@ -809,10 +809,14 @@ ARTIFACT_MANIFEST_SCHEMA = {
                 "spec": ARTIFACT_STAGE_SCHEMA,
                 "plan": ARTIFACT_STAGE_SCHEMA,
                 "test_contract": ARTIFACT_STAGE_SCHEMA,
+                "repro_probe": ARTIFACT_STAGE_SCHEMA,
                 "implementation": ARTIFACT_STAGE_SCHEMA,
                 "review": ARTIFACT_STAGE_SCHEMA,
                 "verification": ARTIFACT_STAGE_SCHEMA,
                 "retry_quarantine": ARTIFACT_STAGE_SCHEMA,
+                "flaky_test_triage": ARTIFACT_STAGE_SCHEMA,
+                "anti_repeat": ARTIFACT_STAGE_SCHEMA,
+                "escalation": ARTIFACT_STAGE_SCHEMA,
                 "token_budget": ARTIFACT_STAGE_SCHEMA,
                 "run_health": ARTIFACT_STAGE_SCHEMA,
                 "learn_handoff": ARTIFACT_STAGE_SCHEMA,
@@ -960,6 +964,97 @@ RETRY_QUARANTINE_SCHEMA = {
         },
     },
     "required": ["schema_version", "branch", "updated_at", "quarantines"],
+    "additionalProperties": False,
+}
+
+
+FLAKY_TEST_TRIAGE_EVIDENCE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "run": {"type": "integer", "minimum": 1},
+        "status": {"type": "string", "enum": ["passed", "failed"]},
+        "exit_code": {"type": "integer"},
+        "summary": {"type": "string"},
+    },
+    "required": ["run", "status", "exit_code", "summary"],
+    "additionalProperties": False,
+}
+
+
+FLAKY_TEST_TRIAGE_ENTRY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "check_id": {"type": "string"},
+        "command": {"type": "string"},
+        "reason": {"type": "string"},
+        "run_count": {"type": "integer", "minimum": 1},
+        "pass_count": {"type": "integer", "minimum": 0},
+        "fail_count": {"type": "integer", "minimum": 0},
+        "outcome_sequence": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["passed", "failed"]},
+            "minItems": 1,
+        },
+        "disposition": {
+            "type": "string",
+            "enum": [
+                "deferred_nondeterministic",
+                "deterministic_failure",
+                "not_reproduced",
+                "insufficient_evidence",
+            ],
+        },
+        "recommended_next_action": {"type": "string"},
+        "monitor_verdict_policy": {
+            "type": "string",
+            "enum": ["not_valid_without_explicit_triage"],
+        },
+        "operator_requirements": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+        },
+        "evidence": {
+            "type": "array",
+            "items": FLAKY_TEST_TRIAGE_EVIDENCE_SCHEMA,
+            "minItems": 1,
+        },
+    },
+    "required": [
+        "check_id",
+        "command",
+        "reason",
+        "run_count",
+        "pass_count",
+        "fail_count",
+        "outcome_sequence",
+        "disposition",
+        "recommended_next_action",
+        "monitor_verdict_policy",
+        "operator_requirements",
+        "evidence",
+    ],
+    "additionalProperties": False,
+}
+
+
+FLAKY_TEST_TRIAGE_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://mapframework.dev/schemas/flaky-test-triage.json",
+    "title": "MAP Flaky Test Triage",
+    "description": "Repeated check evidence stored in .map/<branch>/flaky_test_triage.json",
+    "type": "object",
+    "properties": {
+        "schema_version": {"type": "string"},
+        "branch": {"type": "string"},
+        "updated_at": {"type": "string", "format": "date-time"},
+        "triages": {
+            "type": "array",
+            "items": FLAKY_TEST_TRIAGE_ENTRY_SCHEMA,
+            "minItems": 1,
+        },
+    },
+    "required": ["schema_version", "branch", "updated_at", "triages"],
     "additionalProperties": False,
 }
 

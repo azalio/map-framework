@@ -101,6 +101,7 @@ def test_validate_artifact_manifest_schema():
             "review": stage,
             "verification": stage,
             "retry_quarantine": stage,
+            "flaky_test_triage": stage,
             "token_budget": stage,
             "run_health": stage,
             "learn_handoff": stage,
@@ -235,6 +236,7 @@ def test_validate_run_health_report_schema():
             "active_issues": artifact_entry,
             "known_issues": artifact_entry,
             "retry_quarantine": artifact_entry,
+            "flaky_test_triage": artifact_entry,
         },
         "research": {
             "schema_version": "1.0",
@@ -331,6 +333,58 @@ def test_validate_retry_quarantine_schema():
 
     is_valid, errors = MODULE.validate_artifact(
         artifact, MODULE.RETRY_QUARANTINE_SCHEMA
+    )
+    assert is_valid, f"Errors: {errors}"
+
+
+def test_validate_flaky_test_triage_schema():
+    artifact = {
+        "schema_version": "1.0",
+        "branch": "test-branch",
+        "updated_at": "2026-06-21T10:00:00Z",
+        "triages": [
+            {
+                "check_id": "pytest::test_checkout",
+                "command": "pytest tests/test_checkout.py::test_checkout",
+                "reason": "Inconsistent outcomes across repeated runs.",
+                "run_count": 3,
+                "pass_count": 1,
+                "fail_count": 2,
+                "outcome_sequence": ["failed", "passed", "failed"],
+                "disposition": "deferred_nondeterministic",
+                "recommended_next_action": "record_deferred_nondeterministic",
+                "monitor_verdict_policy": "not_valid_without_explicit_triage",
+                "operator_requirements": [
+                    "Do not weaken, skip, or delete the check.",
+                    "Do not treat this artifact as a passing gate.",
+                    "Record the deferred nondeterministic evidence in Monitor output or issue tracking.",
+                ],
+                "evidence": [
+                    {
+                        "run": 1,
+                        "status": "failed",
+                        "exit_code": 1,
+                        "summary": "AssertionError",
+                    },
+                    {
+                        "run": 2,
+                        "status": "passed",
+                        "exit_code": 0,
+                        "summary": "passed",
+                    },
+                    {
+                        "run": 3,
+                        "status": "failed",
+                        "exit_code": 1,
+                        "summary": "timeout",
+                    },
+                ],
+            }
+        ],
+    }
+
+    is_valid, errors = MODULE.validate_artifact(
+        artifact, MODULE.FLAKY_TEST_TRIAGE_SCHEMA
     )
     assert is_valid, f"Errors: {errors}"
 
