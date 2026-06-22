@@ -34,8 +34,23 @@ not require broader validation.
 
 ## Flaky-Test Triage
 
-If a test/check fails inconsistently, repeat the exact failing command and
-record the outcomes before acting on the failure:
+If a test/check fails inconsistently, repeat the exact failing command with the
+runner and record the outcomes before acting on the failure:
+
+```bash
+python3 .map/scripts/map_step_runner.py run_flaky_test_triage \
+  --check-id "pytest::test_name" \
+  --runs 3 \
+  --timeout 120 \
+  -- python -m pytest tests/test_file.py::test_name
+python3 .map/scripts/map_step_runner.py validate_flaky_test_triage
+```
+
+The runner executes argv with `shell=False`; shell syntax is not interpreted. If
+shell behavior is intentionally needed, pass a shell explicitly as argv, for
+example `-- bash -lc 'python -m pytest tests/unit && echo done'`.
+
+Manual evidence remains available when repeated runs were already collected:
 
 ```bash
 python3 .map/scripts/map_step_runner.py record_flaky_test_triage \
