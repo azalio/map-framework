@@ -373,6 +373,60 @@ class TestPlanResumeContract:
         assert state.plan_approved is True
         assert state.execution_mode == "batch"
 
+    def test_resume_from_plan_extracts_subtask_ids_from_map_plan_table(
+        self, branch_dir
+    ):
+        """resume_from_plan should parse the table format emitted by /map-plan."""
+        plan_dir = Path(f".map/{branch_dir}")
+        (plan_dir / f"task_plan_{branch_dir}.md").write_text(
+            "\n".join(
+                [
+                    "# Task Plan",
+                    "",
+                    "| ID | Title | concern | diff | risk | one-step | deps |",
+                    "|----|-------|---------|------|------|----------|------|",
+                    "| ST-001 | Migration 108 | data | small | medium | yes | - |",
+                    "| ST-002 | Pure DecayDecision | runtime | medium | high | yes | ST-001 |",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = map_orchestrator.resume_from_plan(branch_dir)
+
+        assert result["status"] == "success"
+        assert result["subtask_sequence"] == ["ST-001", "ST-002"]
+        state = map_orchestrator.StepState.load(plan_dir / "step_state.json")
+        assert state.subtask_sequence == ["ST-001", "ST-002"]
+
+    def test_resume_from_plan_prefers_blueprint_json_for_subtask_ids(
+        self, branch_dir
+    ):
+        """blueprint.json is the machine contract; markdown is only fallback."""
+        plan_dir = Path(f".map/{branch_dir}")
+        (plan_dir / f"task_plan_{branch_dir}.md").write_text(
+            "# Task Plan\n\nHuman-readable plan without machine-readable IDs.\n",
+            encoding="utf-8",
+        )
+        (plan_dir / "blueprint.json").write_text(
+            json.dumps(
+                {
+                    "subtasks": [
+                        {"id": "ST-001", "dependencies": []},
+                        {"id": "ST-002", "dependencies": ["ST-001"]},
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = map_orchestrator.resume_from_plan(branch_dir)
+
+        assert result["status"] == "success"
+        assert result["subtask_sequence"] == ["ST-001", "ST-002"]
+        assert result["waves_computed"] == "success"
+
 
 class TestRestoreDeferredYagni:
     """Restore deferred_yagni items into active plan scope before approval."""
@@ -3589,6 +3643,32 @@ class TestSetSubtasksTopologicalSort:
         assert result["status"] == "success"
         assert result["subtask_sequence"] == ["ST-003", "ST-001", "ST-002"]
         assert "reordered" not in result
+
+    def test_shell_joined_subtask_argument_is_split(self, branch_dir, tmp_path):
+        bp = tmp_path / ".map" / branch_dir / "blueprint.json"
+        if bp.exists():
+            bp.unlink()
+
+        result = map_orchestrator.set_subtasks(
+            ["ST-001 ST-002 ST-003"], branch_dir
+        )
+
+        assert result["status"] == "success"
+        assert result["subtask_sequence"] == ["ST-001", "ST-002", "ST-003"]
+        state = map_orchestrator.StepState.load(
+            tmp_path / ".map" / branch_dir / "step_state.json"
+        )
+        assert state.subtask_sequence == ["ST-001", "ST-002", "ST-003"]
+
+    def test_invalid_subtask_id_is_rejected(self, branch_dir, tmp_path):
+        bp = tmp_path / ".map" / branch_dir / "blueprint.json"
+        if bp.exists():
+            bp.unlink()
+
+        result = map_orchestrator.set_subtasks(["ST-001", "ST-002,ST-003"], branch_dir)
+
+        assert result["status"] == "error"
+        assert "Invalid subtask ID" in result["message"]
 
 
 class TestCwdIndependence:
