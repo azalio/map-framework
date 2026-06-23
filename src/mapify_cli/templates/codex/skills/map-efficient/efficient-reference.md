@@ -44,6 +44,8 @@ python3 .map/scripts/map_step_runner.py run_flaky_test_triage \
   --timeout 120 \
   -- python -m pytest tests/test_file.py::test_name
 python3 .map/scripts/map_step_runner.py validate_flaky_test_triage
+python3 .map/scripts/map_orchestrator.py defer_flaky_subtask "$SUBTASK_ID" \
+  --check-id "pytest::test_name"
 ```
 
 The runner executes argv with `shell=False`; shell syntax is not interpreted. If
@@ -59,6 +61,8 @@ python3 .map/scripts/map_step_runner.py record_flaky_test_triage \
   --command "pytest tests/test_file.py::test_name" \
   --reason "Mixed pass/fail outcomes across repeated runs."
 python3 .map/scripts/map_step_runner.py validate_flaky_test_triage
+python3 .map/scripts/map_orchestrator.py defer_flaky_subtask "$SUBTASK_ID" \
+  --check-id "pytest::test_name"
 ```
 
 Mixed pass/fail evidence writes `.map/<branch>/flaky_test_triage.json`, updates
@@ -67,6 +71,10 @@ the `flaky_test_triage` manifest stage, and returns
 gate: do not weaken, skip, or delete the check, and do not return a silent
 green. Monitor must include the recorded defer evidence and
 `monitor_verdict_policy=not_valid_without_explicit_triage` in its finding.
+After validation, close the subtask via `defer_flaky_subtask`, not the clean-pass
+close command; the orchestrator records
+`status=deferred_nondeterministic` with evidence metadata and advances without
+requeueing Actor.
 
 ## Wave Execution
 

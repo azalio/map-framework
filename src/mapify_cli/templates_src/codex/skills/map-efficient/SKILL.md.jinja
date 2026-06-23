@@ -246,7 +246,9 @@ run evidence with `run_flaky_test_triage` (or `record_flaky_test_triage` if the
 repeated runs were already collected) and validate
 `flaky_test_triage.json` before reporting `deferred_nondeterministic`. This is
 not a passing gate: do not weaken, skip, or delete the check, and do not return
-a silent green.
+a silent green. After validation, close with
+`python3 .map/scripts/map_orchestrator.py defer_flaky_subtask "$SUBTASK_ID" --check-id "<check-id>"`,
+not `validate_step 2.4 --recommendation proceed`.
 
 On a clean pass, run the regression gate and record the subtask:
 

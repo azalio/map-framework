@@ -3832,6 +3832,7 @@ _DONE_RESULT_STATUSES_FOR_COMPLETION = {
     "done",
     "skipped",
     "no-op",
+    "deferred_nondeterministic",
 }
 _DONE_PHASE_STATUSES_FOR_COMPLETION = {
     "completed",

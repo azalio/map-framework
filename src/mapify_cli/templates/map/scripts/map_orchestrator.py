@@ -883,6 +883,8 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
 
 
 DEFERRED_FOR_DEPS_PHASE = "deferred_for_deps"
+DEFERRED_NONDETERMINISTIC_STATUS = "deferred_nondeterministic"
+FLAKY_TEST_TRIAGE_MONITOR_POLICY = "not_valid_without_explicit_triage"
 
 
 def _completed_subtask_ids_for_deps(state: "StepState") -> set[str]:
@@ -896,7 +898,8 @@ def _completed_subtask_ids_for_deps(state: "StepState") -> set[str]:
         subtask_phases didn't get updated due to case mismatch or
         legacy state. This was the root cause of the "cursor stuck on
         ST-033 stub" friction.
-      - subtask_results[sid].status ∈ {valid, completed, done, skipped, no-op}
+      - subtask_results[sid].status ∈ {valid, completed, done, skipped, no-op,
+        deferred_nondeterministic}
       - subtask_phases[sid] ∈ {completed, skipped, COMPLETE, SKIPPED, no-op}
         (case-insensitive match; mark_subtask_complete writes "COMPLETE"
         in upper, validate_step writes lowercase)
@@ -905,7 +908,14 @@ def _completed_subtask_ids_for_deps(state: "StepState") -> set[str]:
         (those were intentionally skipped and owe a revisit).
     """
     done: set[str] = set()
-    DONE_RESULT_STATUSES = {"valid", "completed", "done", "skipped", "no-op"}
+    DONE_RESULT_STATUSES = {
+        "valid",
+        "completed",
+        "done",
+        "skipped",
+        "no-op",
+        DEFERRED_NONDETERMINISTIC_STATUS,
+    }
     DONE_PHASE_STATUSES = {"completed", "skipped", "no-op", "complete"}
     for sid, entry in (state.subtask_results or {}).items():
         if not isinstance(entry, dict):
@@ -2819,6 +2829,271 @@ def record_subtask_result(
     return response
 
 
+def _load_deferred_flaky_triage(
+    branch: str,
+    check_id: str,
+    triage_path: str = "",
+) -> tuple[Optional[dict], dict]:
+    """Return a validated deferred_nondeterministic triage for check_id."""
+    path = Path(triage_path) if triage_path else Path(f".map/{branch}/flaky_test_triage.json")
+    try:
+        from map_step_runner import validate_flaky_test_triage  # pyright: ignore[reportMissingImports]
+    except ImportError:
+        return None, {
+            "valid": False,
+            "errors": ["map_step_runner.validate_flaky_test_triage could not be imported"],
+            "path": str(path),
+        }
+
+    validation = validate_flaky_test_triage(str(path), branch)
+    if not validation.get("valid"):
+        return None, validation
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        return None, {
+            "valid": False,
+            "errors": [f"cannot read flaky test triage after validation: {exc}"],
+            "path": str(path),
+        }
+    triages = payload.get("triages") if isinstance(payload, dict) else None
+    if not isinstance(triages, list):
+        return None, {
+            "valid": False,
+            "errors": ["flaky test triage must contain a triages array"],
+            "path": str(path),
+        }
+    matches = [
+        item
+        for item in triages
+        if isinstance(item, dict)
+        and item.get("check_id") == check_id
+        and item.get("disposition") == DEFERRED_NONDETERMINISTIC_STATUS
+    ]
+    if not matches:
+        return None, {
+            "valid": False,
+            "errors": [
+                f"no {DEFERRED_NONDETERMINISTIC_STATUS} triage found for check_id {check_id!r}"
+            ],
+            "path": str(path),
+            "validation": validation,
+        }
+    return matches[-1], {"valid": True, "path": str(path), "validation": validation}
+
+
+def _advance_after_terminal_current_subtask(state: StepState, branch: str) -> dict:
+    """Advance from a terminal current subtask to next ready subtask or COMPLETE."""
+    advanced_from_subtask: Optional[str] = None
+    advanced_to_subtask: Optional[str] = None
+    blocked_remaining: list[str] = []
+    skipped_for_deps: list[str] = []
+
+    if state.subtask_index + 1 < len(state.subtask_sequence) or any(
+        state.subtask_phases.get(sid) == DEFERRED_FOR_DEPS_PHASE
+        for sid in state.subtask_sequence
+    ):
+        ready_idx, skipped_for_deps = _find_next_ready_subtask_index(
+            state, branch, start_after_index=state.subtask_index,
+            treat_current_as_done=True,
+        )
+        for skipped_sid in skipped_for_deps:
+            state.subtask_phases[skipped_sid] = DEFERRED_FOR_DEPS_PHASE
+        if ready_idx is not None:
+            advanced_from_subtask = state.current_subtask_id
+            state.subtask_index = ready_idx
+            state.current_subtask_id = state.subtask_sequence[state.subtask_index]
+            advanced_to_subtask = state.current_subtask_id
+            if state.subtask_phases.get(state.current_subtask_id) == DEFERRED_FOR_DEPS_PHASE:
+                state.subtask_phases.pop(state.current_subtask_id, None)
+            step_order = _get_step_order(state.tdd_mode)
+            research_idx = step_order.index("2.2")
+            state.pending_steps = step_order[research_idx:]
+            state.completed_steps = []
+            state.skipped_steps = []
+            state.retry_count = 0
+            state.current_step_id = state.pending_steps[0]
+            state.current_step_phase = STEP_PHASES.get(
+                state.current_step_id, "RESEARCH"
+            )
+            next_step_signal = state.current_step_id
+        else:
+            completed = _completed_subtask_ids_for_deps(state)
+            if state.current_subtask_id:
+                completed.add(state.current_subtask_id)
+            blocked_remaining = [
+                sid for sid in state.subtask_sequence if sid not in completed
+            ]
+            if not blocked_remaining:
+                state.pending_steps = []
+                state.workflow_status = "WORKFLOW_COMPLETE"
+                state.current_step_id = "COMPLETE"
+                state.current_step_phase = "COMPLETE"
+                state.completed_at = _utc_timestamp()
+                next_step_signal = "COMPLETE"
+            else:
+                state.current_step_id = "BLOCKED_ON_DEPS"
+                state.current_step_phase = "BLOCKED_ON_DEPS"
+                next_step_signal = "BLOCKED_ON_DEPS"
+    else:
+        state.pending_steps = []
+        state.workflow_status = "WORKFLOW_COMPLETE"
+        state.current_step_id = "COMPLETE"
+        state.current_step_phase = "COMPLETE"
+        state.completed_at = _utc_timestamp()
+        next_step_signal = "COMPLETE"
+
+    result: dict[str, object] = {"next_step": next_step_signal}
+    if advanced_to_subtask is not None:
+        result["subtask_advanced_from"] = advanced_from_subtask
+        result["subtask_advanced_to"] = advanced_to_subtask
+    if skipped_for_deps:
+        result["skipped_for_deps"] = skipped_for_deps
+    if next_step_signal == "BLOCKED_ON_DEPS":
+        result["blocked_subtasks"] = blocked_remaining
+    return result
+
+
+def defer_flaky_subtask(
+    subtask_id: str,
+    branch: str,
+    check_id: str,
+    *,
+    triage_path: str = "",
+    files_changed: Optional[list[str]] = None,
+    summary: str = "",
+    commit_sha: Optional[str] = None,
+) -> dict:
+    """Record an explicit flaky-test Monitor defer and advance the workflow.
+
+    This is the third Monitor outcome for confirmed nondeterminism: it is not a
+    clean pass, and it is not Actor retry feedback. The command only succeeds
+    after validating a sidecar triage whose matching check has mixed pass/fail
+    evidence and disposition=deferred_nondeterministic.
+    """
+    check = check_id.strip()
+    if not check:
+        return {"status": "error", "message": "--check-id is required"}
+
+    state_file = Path(f".map/{branch}/step_state.json")
+    if not state_file.exists():
+        return {
+            "status": "error",
+            "message": f"No step_state.json at {state_file}",
+        }
+    state = StepState.load(state_file)
+    if subtask_id not in state.subtask_sequence:
+        return {
+            "status": "error",
+            "message": (
+                f"Unknown subtask_id {subtask_id!r}. "
+                f"Known: {state.subtask_sequence}"
+            ),
+        }
+    if subtask_id != state.current_subtask_id:
+        return {
+            "status": "error",
+            "message": (
+                f"defer_flaky_subtask only advances the current subtask; "
+                f"current is {state.current_subtask_id!r}, got {subtask_id!r}"
+            ),
+        }
+    if state.current_step_phase not in ("MONITOR", "ACTOR"):
+        return {
+            "status": "error",
+            "message": (
+                f"defer_flaky_subtask must be called from MONITOR/ACTOR phase, "
+                f"got {state.current_step_phase!r}"
+            ),
+        }
+
+    triage, validation = _load_deferred_flaky_triage(branch, check, triage_path)
+    if triage is None:
+        errors = validation.get("errors")
+        detail = "; ".join(str(err) for err in errors) if isinstance(errors, list) else "invalid flaky triage"
+        return {
+            "status": "error",
+            "message": (
+                f"Cannot defer {subtask_id}: {detail}. Run "
+                "run_flaky_test_triage/record_flaky_test_triage and "
+                "validate_flaky_test_triage first."
+            ),
+            "validation": validation,
+        }
+
+    run_count = triage.get("run_count")
+    pass_count = triage.get("pass_count")
+    fail_count = triage.get("fail_count")
+    reason = str(triage.get("reason") or "Recorded mixed pass/fail repeated-run evidence.")
+    summary_text = summary.strip() or (
+        f"Deferred nondeterministic check {check}: {reason} "
+        f"({pass_count} pass / {fail_count} fail over {run_count} runs)."
+    )
+
+    record_result = record_subtask_result(
+        subtask_id,
+        branch,
+        files_changed=files_changed or [],
+        status=DEFERRED_NONDETERMINISTIC_STATUS,
+        summary=summary_text,
+        commit_sha=commit_sha,
+    )
+    if record_result.get("status") != "success":
+        return record_result
+
+    state = StepState.load(state_file)
+    recorded = state.subtask_results.get(subtask_id)
+    if not isinstance(recorded, dict):
+        recorded = {}
+        state.subtask_results[subtask_id] = recorded
+    recorded["monitor_verdict_policy"] = FLAKY_TEST_TRIAGE_MONITOR_POLICY
+    recorded["non_green_outcome"] = True
+    recorded["flaky_test_triage"] = {
+        "path": validation.get("path"),
+        "check_id": check,
+        "disposition": DEFERRED_NONDETERMINISTIC_STATUS,
+        "run_count": run_count,
+        "pass_count": pass_count,
+        "fail_count": fail_count,
+        "reason": reason,
+        "command": triage.get("command", ""),
+    }
+    state.subtask_phases[subtask_id] = "COMPLETE"
+    if "2.3" in state.pending_steps:
+        state.pending_steps.remove("2.3")
+    if "2.3" not in state.completed_steps:
+        state.completed_steps.append("2.3")
+    if "2.4" in state.pending_steps:
+        state.pending_steps.remove("2.4")
+    if "2.4" not in state.completed_steps:
+        state.completed_steps.append("2.4")
+    if not isinstance(getattr(state, "subtask_completion_reasons", None), dict):
+        state.subtask_completion_reasons = {}  # type: ignore[attr-defined]
+    state.subtask_completion_reasons[subtask_id] = {  # type: ignore[attr-defined]
+        "kind": DEFERRED_NONDETERMINISTIC_STATUS,
+        "reason": reason,
+        "recorded_at": _utc_timestamp(),
+        "check_id": check,
+    }
+
+    advance = _advance_after_terminal_current_subtask(state, branch)
+    state.save(state_file)
+
+    return {
+        "status": "success",
+        "disposition": DEFERRED_NONDETERMINISTIC_STATUS,
+        "subtask_id": subtask_id,
+        "check_id": check,
+        "monitor_verdict_policy": FLAKY_TEST_TRIAGE_MONITOR_POLICY,
+        "non_green_outcome": True,
+        "triage_path": validation.get("path"),
+        "recorded": state.subtask_results[subtask_id],
+        "record_result": record_result,
+        **advance,
+    }
+
+
 def backfill_subtask_ids(branch: str) -> dict:
     """Populate the redundant ``subtask_id`` field on legacy subtask_results.
 
@@ -3861,6 +4136,7 @@ def main():
             "get_plan_progress",
             "monitor_failed",
             "wave_monitor_failed",
+            "defer_flaky_subtask",
             "reopen_for_fixes",
             "mark_workflow_complete",
             "mark_subtask_complete",
@@ -3902,7 +4178,20 @@ def main():
     parser.add_argument(
         "--commit-sha",
         dest="commit_sha",
-        help="Commit SHA (for record_subtask_result)",
+        help="Commit SHA (for record_subtask_result / defer_flaky_subtask)",
+    )
+    parser.add_argument(
+        "--check-id",
+        dest="check_id",
+        help="Flaky check id (for defer_flaky_subtask)",
+    )
+    parser.add_argument(
+        "--flaky-triage-path",
+        dest="flaky_triage_path",
+        help=(
+            "Optional flaky_test_triage.json path (for defer_flaky_subtask). "
+            "Defaults to .map/<branch>/flaky_test_triage.json."
+        ),
     )
     parser.add_argument(
         "--recommendation",
@@ -4255,6 +4544,38 @@ def main():
             feedback = args.feedback or ""
             result = wave_monitor_failed(args.task_or_step, branch, feedback)
             print(json.dumps(result, indent=2))
+
+        elif args.command == "defer_flaky_subtask":
+            if not args.task_or_step:
+                print(
+                    json.dumps({"error": "subtask_id required for defer_flaky_subtask"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if not args.check_id:
+                print(
+                    json.dumps({"error": "--check-id required for defer_flaky_subtask"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            files_list = []
+            if args.files:
+                for chunk in re.split(r"[,\s]+", args.files):
+                    chunk = chunk.strip()
+                    if chunk:
+                        files_list.append(chunk)
+            result = defer_flaky_subtask(
+                args.task_or_step,
+                branch,
+                args.check_id,
+                triage_path=args.flaky_triage_path or "",
+                files_changed=files_list,
+                summary=args.summary or "",
+                commit_sha=args.commit_sha,
+            )
+            print(json.dumps(result, indent=2))
+            if result.get("status") != "success":
+                sys.exit(1)
 
         elif args.command == "reopen_for_fixes":
             feedback = args.feedback or ""

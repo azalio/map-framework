@@ -831,6 +831,38 @@ def test_write_run_health_report_derives_workflow_complete(branch_workspace):
     assert report["terminal_status"] == "complete"
 
 
+def test_write_run_health_report_derives_complete_from_deferred_flaky_result(
+    branch_workspace,
+):
+    (branch_workspace / "step_state.json").write_text(
+        json.dumps(
+            {
+                "workflow": "map-efficient",
+                "workflow_status": "IN_PROGRESS",
+                "current_step_phase": "MONITOR",
+                "subtask_sequence": ["ST-001"],
+                "current_subtask_id": "ST-001",
+                "subtask_results": {
+                    "ST-001": {
+                        "subtask_id": "ST-001",
+                        "files_changed": [],
+                        "status": "deferred_nondeterministic",
+                        "non_green_outcome": True,
+                    }
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.write_run_health_report("map-efficient")
+
+    assert result["terminal_status"] == "complete"
+    report = json.loads((branch_workspace / "run_health_report.json").read_text())
+    assert report["terminal_status"] == "complete"
+
+
 def test_write_run_health_report_counts_legacy_dict_steps(branch_workspace):
     (branch_workspace / "step_state.json").write_text(
         json.dumps(
