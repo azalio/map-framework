@@ -1513,6 +1513,29 @@ def test_check_plan_resume_goal_mismatch_issue_166(branch_workspace):
     assert "Analysis" in result["recommendation"]
 
 
+def test_check_plan_resume_goal_mismatch_issue_274_low_overlap(branch_workspace):
+    # Repro of issue #274: a few generic branch-wide domain terms can inflate
+    # containment on a short request, but near-zero Jaccard overlap still means
+    # this is a different goal and must not be resumed as "plan complete".
+    _write_completed_plan(
+        branch_workspace,
+        "Address actionable reviewer comments on yc quantum PR 3184 "
+        "IngressConfig restructure contour nginx ingress validation gateway "
+        "route listener source cluster patch cleanup tests docs followup "
+        "cert-manager annotations rollout ordering",
+    )
+
+    result = map_step_runner.check_plan_resume(
+        "contour nginx ingress fresh install version cutover helper default"
+    )
+
+    assert result["verdict"] == "goal_mismatch"
+    assert result["containment"] >= map_step_runner.RESUME_GOAL_MISMATCH_CONTAINMENT
+    assert result["overlap"] < map_step_runner.RESUME_GOAL_MISMATCH_OVERLAP
+    assert {"contour", "nginx"}.issubset(set(result["shared_terms"]))
+    assert "goal-overlap" in result["recommendation"]
+
+
 def test_check_plan_resume_empty_request_defaults_to_resume(branch_workspace):
     # A bare `/map-plan` resume (no request text) must preserve the prior
     # "step_state => complete" behavior — never divert to goal_mismatch.

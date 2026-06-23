@@ -52,11 +52,13 @@ GOAL_HEADING_RE = r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)"
 # preflight diverts a brand-new request to `goal_mismatch` (instead of falsely
 # reporting "plan complete" / silently clobbering the prior plan) ONLY on strong
 # evidence: both the existing goal and the incoming request must carry at least
-# RESUME_MIN_TOKENS_FOR_MISMATCH significant tokens, and their containment (shared
-# tokens / smaller significant-token set) must fall below
-# RESUME_GOAL_MISMATCH_CONTAINMENT. Conservative by design so a legitimate resume
-# with a shorter paraphrase is never falsely diverted.
+# RESUME_MIN_TOKENS_FOR_MISMATCH significant tokens, and either containment
+# (shared tokens / smaller significant-token set) or Jaccard overlap must fall
+# below the mismatch floor. Conservative by design so a legitimate resume with a
+# shorter paraphrase is rarely diverted, but a few generic shared domain terms
+# cannot falsely resume an unrelated completed plan.
 RESUME_GOAL_MISMATCH_CONTAINMENT = 0.25
+RESUME_GOAL_MISMATCH_OVERLAP = 0.10
 RESUME_MIN_TOKENS_FOR_MISMATCH = 2
 
 
@@ -10966,8 +10968,9 @@ def check_plan_resume(request: str = "", branch: Optional[str] = None) -> dict:
       before planning the new goal, with operator confirmation.
 
     Goal comparison is a deterministic token-overlap heuristic (see
-    RESUME_GOAL_MISMATCH_CONTAINMENT) — intentionally conservative so a real
-    resume with a shorter paraphrase is never falsely diverted.
+    RESUME_GOAL_MISMATCH_CONTAINMENT / RESUME_GOAL_MISMATCH_OVERLAP) —
+    intentionally conservative so a real resume with a shorter paraphrase is
+    rarely diverted.
     """
     branch_name = _sanitize_branch(branch) if branch else get_branch_name()
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
@@ -11034,15 +11037,24 @@ def check_plan_resume(request: str = "", branch: Optional[str] = None) -> dict:
         and min_len >= RESUME_MIN_TOKENS_FOR_MISMATCH
     )
 
+    mismatch_reasons = []
     if comparable and containment < RESUME_GOAL_MISMATCH_CONTAINMENT:
+        mismatch_reasons.append(
+            f"containment {containment} < {RESUME_GOAL_MISMATCH_CONTAINMENT}"
+        )
+    if comparable and overlap < RESUME_GOAL_MISMATCH_OVERLAP:
+        mismatch_reasons.append(
+            f"goal-overlap {overlap} < {RESUME_GOAL_MISMATCH_OVERLAP}"
+        )
+
+    if mismatch_reasons:
         verdict = "goal_mismatch"
         snippet = " ".join(existing_goal.split())
         if len(snippet) > 160:
             snippet = snippet[:157].rstrip() + "..."
         recommendation = (
             f"The existing plan on branch '{branch_name}' targets a DIFFERENT "
-            f"goal than the current request (goal-overlap {overlap}, "
-            f"containment {containment} < {RESUME_GOAL_MISMATCH_CONTAINMENT}). "
+            f"goal than the current request ({', '.join(mismatch_reasons)}). "
             f'Existing goal: "{snippet}". Do NOT report "plan complete" / STOP. '
             f"Archive or rename the prior .map/{branch_name}/ artifacts (or run "
             "/map-plan on a fresh branch) so the completed plan is preserved, "
