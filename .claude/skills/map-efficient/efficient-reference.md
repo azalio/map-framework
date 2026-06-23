@@ -472,15 +472,17 @@ the validator; only the fields above are required and type-checked.
 
 ## Proactive blueprint refresh (recommended)
 
-Re-sync a subtask's `affected_files` against the actual diff BEFORE
-its RESEARCH starts, so decomposer's stale path/symbol guesses from
-planning time don't leak into research → Actor → Monitor.
+Merge a subtask's observed actual diff into its approved `affected_files`
+BEFORE its RESEARCH starts, so decomposer's stale path/symbol guesses from
+planning time don't hide real edits from research → Actor → Monitor.
+The default is additive and must not shrink the approved mutation surface;
+`--replace` is the explicit destructive mode for intentional contract rewrite.
 
 ```bash
 python3 .map/scripts/map_step_runner.py refresh_blueprint_affected_files \
   "$BRANCH" "$SUBTASK_ID" --dry-run   # preview the proposed write
 python3 .map/scripts/map_step_runner.py refresh_blueprint_affected_files \
-  "$BRANCH" "$SUBTASK_ID"             # commit the refresh
+  "$BRANCH" "$SUBTASK_ID"             # merge observed files into affected_files
 ```
 
 When to call:
