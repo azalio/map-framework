@@ -7,7 +7,7 @@ This file holds low-frequency MAP Efficient details so `SKILL.md` stays focused 
 Two CLI scripts back the workflow; calling the wrong one fails with `invalid choice`. Route by purpose, not by name prefix:
 
 - **`python3 .map/scripts/map_orchestrator.py <cmd>`** — state-machine transitions and step-state writes:
-  `get_next_step`, `peek_current_step`, `validate_step`, `initialize`, `set_plan_approved`, `set_execution_mode`, `set_tdd_mode`, `skip_step`, `set_subtasks`, `mark_contract_ready`, `resume_from_plan`, `resume_from_test_contract`, `check_circuit_breaker`, `set_waves`, `get_wave_step`, `validate_wave_step`, `advance_wave`, `resume_single_subtask`, `get_plan_progress`, `monitor_failed`, `wave_monitor_failed`, `reopen_for_fixes`, `mark_workflow_complete`, `mark_subtask_complete`, `record_subtask_result`, `backfill_subtask_ids`, `finalize_plan`.
+  `get_next_step`, `peek_current_step`, `validate_step`, `initialize`, `set_plan_approved`, `set_execution_mode`, `set_tdd_mode`, `skip_step`, `set_subtasks`, `mark_contract_ready`, `resume_from_plan`, `resume_from_test_contract`, `check_circuit_breaker`, `set_waves`, `get_wave_step`, `validate_wave_step`, `advance_wave`, `resume_single_subtask`, `get_plan_progress`, `monitor_failed`, `wave_monitor_failed`, `defer_flaky_subtask`, `reopen_for_fixes`, `mark_workflow_complete`, `mark_subtask_complete`, `record_subtask_result`, `backfill_subtask_ids`, `finalize_plan`.
 
 - **`python3 .map/scripts/map_step_runner.py <cmd>`** — pure analysis/persistence helpers (no state-machine side effect). The list below names ONLY commands that have a `func_name` dispatch branch in `map_step_runner.py` and are thus invocable from the shell; the module defines additional internal helpers (`save_artifact_manifest`, `save_learning_metrics`, `load_learning_metrics`, `load_blueprint`, `record_repeated_learning_violations`, `record_token_budget_decision`, …) that are used by other dispatch branches but cannot be called directly:
   - `detect_*` family: `detect_truncated_agent_output`, `detect_already_done`, `detect_cross_subtask_regression_risk`, `detect_actor_files_changed_mismatch`, `detect_symbol_blast_radius`
@@ -35,6 +35,8 @@ python3 .map/scripts/map_step_runner.py run_flaky_test_triage \
   --timeout 120 \
   -- python -m pytest tests/test_file.py::test_name
 python3 .map/scripts/map_step_runner.py validate_flaky_test_triage
+python3 .map/scripts/map_orchestrator.py defer_flaky_subtask "$SUBTASK_ID" \
+  --check-id "pytest::test_name"
 ```
 
 `run_flaky_test_triage` executes argv with `shell=False`; shell syntax is not
@@ -50,6 +52,8 @@ python3 .map/scripts/map_step_runner.py record_flaky_test_triage \
   --command "pytest tests/test_file.py::test_name" \
   --reason "Mixed pass/fail outcomes across repeated runs."
 python3 .map/scripts/map_step_runner.py validate_flaky_test_triage
+python3 .map/scripts/map_orchestrator.py defer_flaky_subtask "$SUBTASK_ID" \
+  --check-id "pytest::test_name"
 ```
 
 Mixed pass/fail evidence is classified as `deferred_nondeterministic` and
@@ -57,6 +61,10 @@ stored in `.map/<branch>/flaky_test_triage.json` plus the `flaky_test_triage`
 manifest stage. This is an explicit recorded defer, not a pass: the artifact
 sets `monitor_verdict_policy=not_valid_without_explicit_triage`, and Monitor
 must still report the deferred evidence rather than returning a silent green.
+After validation, close the subtask via `defer_flaky_subtask`, not the
+clean-pass close command; it records
+`status=deferred_nondeterministic` plus evidence metadata in `step_state.json`
+and advances without requeueing Actor.
 
 If a command above ever returns `Unknown function`, grep `map_step_runner.py` for `func_name ==` to confirm the dispatch branch still exists; this list is the source of truth as of the PR that added it but the underlying dispatcher is the ground truth.
 

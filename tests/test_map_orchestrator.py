@@ -81,6 +81,67 @@ def _write_valid_research_artifact(
     )
 
 
+def _write_flaky_triage_artifact(
+    tmp_path: Path,
+    branch: str,
+    *,
+    check_id: str = "pytest::test_flaky",
+    disposition: str = "deferred_nondeterministic",
+    pass_count: int = 1,
+    fail_count: int = 1,
+) -> Path:
+    run_count = pass_count + fail_count
+    evidence = []
+    outcome_sequence = []
+    for run in range(1, pass_count + 1):
+        evidence.append(
+            {"run": run, "status": "passed", "exit_code": 0, "summary": "passed"}
+        )
+        outcome_sequence.append("passed")
+    for run in range(pass_count + 1, run_count + 1):
+        evidence.append(
+            {"run": run, "status": "failed", "exit_code": 1, "summary": "failed"}
+        )
+        outcome_sequence.append("failed")
+    triage = {
+        "check_id": check_id,
+        "command": f"pytest {check_id}",
+        "reason": "Mixed pass/fail outcomes across repeated runs.",
+        "run_count": run_count,
+        "pass_count": pass_count,
+        "fail_count": fail_count,
+        "outcome_sequence": outcome_sequence,
+        "disposition": disposition,
+        "recommended_next_action": (
+            "record_deferred_nondeterministic"
+            if disposition == "deferred_nondeterministic"
+            else "fix_confirmed_regression"
+        ),
+        "monitor_verdict_policy": "not_valid_without_explicit_triage",
+        "operator_requirements": [
+            "Do not weaken, skip, or delete the check.",
+            "Do not treat this artifact as a passing gate.",
+            "Record the deferred nondeterministic evidence in Monitor output or issue tracking.",
+        ],
+        "evidence": evidence,
+    }
+    path = tmp_path / ".map" / branch / "flaky_test_triage.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "branch": branch,
+                "updated_at": "2026-06-23T00:00:00Z",
+                "triages": [triage],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 @pytest.fixture
 def sample_blueprint(tmp_path):
     """Create a sample blueprint JSON with a fan-out DAG."""
@@ -1910,6 +1971,121 @@ class TestMonitorFailed:
         assert result["step_id"] == "2.3"
 
 
+class TestDeferFlakySubtask:
+    """Explicit non-binary Monitor outcome for confirmed flaky checks."""
+
+    def _make_monitor_state(self, tmp_path, branch, **overrides):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        for k, v in overrides.items():
+            setattr(state, k, v)
+        state_file = tmp_path / ".map" / branch / "step_state.json"
+        state.save(state_file)
+        return state_file
+
+    def test_rejects_without_valid_flaky_triage_sidecar(self, branch_dir, tmp_path):
+        state_file = self._make_monitor_state(tmp_path, branch_dir)
+
+        result = map_orchestrator.defer_flaky_subtask(
+            "ST-001",
+            branch_dir,
+            "pytest::test_flaky",
+        )
+
+        assert result["status"] == "error"
+        assert "flaky test triage not found" in result["message"]
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert "ST-001" not in reloaded.subtask_results
+        assert reloaded.current_step_id == "2.4"
+
+    def test_rejects_deterministic_failure_triage(self, branch_dir, tmp_path):
+        state_file = self._make_monitor_state(tmp_path, branch_dir)
+        _write_flaky_triage_artifact(
+            tmp_path,
+            branch_dir,
+            check_id="pytest::test_flaky",
+            disposition="deterministic_failure",
+            pass_count=0,
+            fail_count=2,
+        )
+
+        result = map_orchestrator.defer_flaky_subtask(
+            "ST-001",
+            branch_dir,
+            "pytest::test_flaky",
+        )
+
+        assert result["status"] == "error"
+        assert "no deferred_nondeterministic triage" in result["message"]
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert "ST-001" not in reloaded.subtask_results
+
+    def test_records_non_green_defer_and_advances_to_next_subtask(
+        self, branch_dir, tmp_path
+    ):
+        state_file = self._make_monitor_state(tmp_path, branch_dir)
+        _write_flaky_triage_artifact(tmp_path, branch_dir, check_id="pytest::test_flaky")
+
+        result = map_orchestrator.defer_flaky_subtask(
+            "ST-001",
+            branch_dir,
+            "pytest::test_flaky",
+            files_changed=["src/service.py"],
+            summary="Monitor deferred a confirmed flaky check with recorded evidence.",
+        )
+
+        assert result["status"] == "success", result
+        assert result["disposition"] == "deferred_nondeterministic"
+        assert result["non_green_outcome"] is True
+        assert result["next_step"] == "2.2"
+        assert result["subtask_advanced_from"] == "ST-001"
+        assert result["subtask_advanced_to"] == "ST-002"
+
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.current_subtask_id == "ST-002"
+        assert reloaded.current_step_id == "2.2"
+        assert reloaded.current_step_phase == "RESEARCH"
+        recorded = reloaded.subtask_results["ST-001"]
+        assert recorded["status"] == "deferred_nondeterministic"
+        assert recorded["files_changed"] == ["src/service.py"]
+        assert recorded["non_green_outcome"] is True
+        assert recorded["monitor_verdict_policy"] == "not_valid_without_explicit_triage"
+        assert recorded["flaky_test_triage"]["check_id"] == "pytest::test_flaky"
+        assert recorded["flaky_test_triage"]["pass_count"] == 1
+        assert recorded["flaky_test_triage"]["fail_count"] == 1
+
+    def test_final_deferred_subtask_marks_workflow_complete_with_evidence(
+        self, branch_dir, tmp_path
+    ):
+        state_file = self._make_monitor_state(
+            tmp_path,
+            branch_dir,
+            subtask_sequence=["ST-001"],
+            subtask_index=0,
+        )
+        _write_flaky_triage_artifact(tmp_path, branch_dir, check_id="pytest::test_flaky")
+
+        result = map_orchestrator.defer_flaky_subtask(
+            "ST-001",
+            branch_dir,
+            "pytest::test_flaky",
+        )
+
+        assert result["status"] == "success", result
+        assert result["next_step"] == "COMPLETE"
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.workflow_status == "WORKFLOW_COMPLETE"
+        assert reloaded.current_step_phase == "COMPLETE"
+        assert reloaded.subtask_results["ST-001"]["status"] == "deferred_nondeterministic"
+
+
 class TestWaveMonitorFailed:
     """Tests for wave_monitor_failed() — per-subtask retry in wave execution."""
 
@@ -3359,6 +3535,26 @@ class TestCursorAdvancesPastMarkedSubtasks:
         }
         completed = map_orchestrator._completed_subtask_ids_for_deps(state)
         assert "ST-003" in completed, completed
+
+    def test_deferred_nondeterministic_result_counts_as_terminal_for_deps(
+        self, branch_dir, tmp_path
+    ):
+        del branch_dir, tmp_path
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        state.subtask_results = {
+            "ST-001": {
+                "subtask_id": "ST-001",
+                "files_changed": [],
+                "status": "deferred_nondeterministic",
+                "non_green_outcome": True,
+            }
+        }
+
+        completed = map_orchestrator._completed_subtask_ids_for_deps(state)
+
+        assert "ST-001" in completed, completed
 
     def test_validate_step_advances_past_already_marked_subtasks(
         self, branch_dir, tmp_path
