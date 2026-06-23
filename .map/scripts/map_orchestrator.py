@@ -172,6 +172,79 @@ def _shorten_text(text: str, max_chars: int = 1_200) -> str:
     return compact[: max_chars - 15].rstrip() + "\n[truncated]"
 
 
+_SUBTASK_ID_FULL_RE = re.compile(r"ST-\d+\Z")
+
+
+def _dedupe_subtask_ids(subtask_ids: list[str]) -> list[str]:
+    """Return subtask IDs in first-seen order without duplicates."""
+    seen: set[str] = set()
+    unique: list[str] = []
+    for subtask_id in subtask_ids:
+        if subtask_id in seen:
+            continue
+        seen.add(subtask_id)
+        unique.append(subtask_id)
+    return unique
+
+
+def _extract_subtask_ids_from_blueprint(blueprint_file: Path) -> list[str]:
+    """Extract ordered subtask IDs from blueprint.json when available."""
+    if not blueprint_file.exists():
+        return []
+    try:
+        data = json.loads(blueprint_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    subtasks = data.get("subtasks")
+    if not isinstance(subtasks, list):
+        return []
+
+    subtask_ids: list[str] = []
+    for subtask in subtasks:
+        if not isinstance(subtask, dict):
+            continue
+        subtask_id = subtask.get("id")
+        if isinstance(subtask_id, str) and _SUBTASK_ID_FULL_RE.fullmatch(
+            subtask_id.strip()
+        ):
+            subtask_ids.append(subtask_id.strip())
+    return _dedupe_subtask_ids(subtask_ids)
+
+
+def _extract_subtask_ids_from_plan_markdown(plan_content: str) -> list[str]:
+    """Extract ordered subtask IDs from supported task_plan.md layouts."""
+    subtask_ids: list[str] = []
+    for line in plan_content.splitlines():
+        heading_match = re.match(r"\s{0,3}#{1,6}\s+(ST-\d+)\b", line)
+        if heading_match:
+            subtask_ids.append(heading_match.group(1))
+            continue
+
+        table_match = re.match(r"\s*\|\s*(ST-\d+)\s*\|", line)
+        if table_match:
+            subtask_ids.append(table_match.group(1))
+            continue
+
+        bullet_match = re.match(r"\s*[-*]\s+(?:\[[ xX]\]\s*)?(ST-\d+)\b", line)
+        if bullet_match:
+            subtask_ids.append(bullet_match.group(1))
+
+    return _dedupe_subtask_ids(subtask_ids)
+
+
+def _extract_subtask_ids_from_plan_artifacts(
+    plan_content: str,
+    blueprint_file: Path,
+) -> list[str]:
+    """Prefer structured blueprint IDs, falling back to human plan markdown."""
+    blueprint_ids = _extract_subtask_ids_from_blueprint(blueprint_file)
+    if blueprint_ids:
+        return blueprint_ids
+    return _extract_subtask_ids_from_plan_markdown(plan_content)
+
+
 AGGRESSIVE_COMPRESSION_MULTIPLIER = 0.4
 
 
@@ -3227,6 +3300,26 @@ def _topological_sort_subtasks(
     return sorted_ids, None
 
 
+def _normalize_subtask_ids(raw_subtask_ids: list[str]) -> tuple[list[str], Optional[str]]:
+    """Split shell-joined arguments and reject malformed subtask IDs."""
+    subtask_ids: list[str] = []
+    for raw_subtask_id in raw_subtask_ids:
+        subtask_ids.extend(raw_subtask_id.split())
+
+    invalid = [
+        subtask_id
+        for subtask_id in subtask_ids
+        if not _SUBTASK_ID_FULL_RE.fullmatch(subtask_id)
+    ]
+    if invalid:
+        return [], (
+            "Invalid subtask ID(s): "
+            + ", ".join(invalid)
+            + ". Expected IDs like ST-001."
+        )
+    return subtask_ids, None
+
+
 def set_subtasks(subtask_ids: list[str], branch: str) -> dict:
     """Set subtask sequence after decomposition and select the first subtask.
 
@@ -3250,6 +3343,10 @@ def set_subtasks(subtask_ids: list[str], branch: str) -> dict:
     """
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
+
+    subtask_ids, validation_error = _normalize_subtask_ids(subtask_ids)
+    if validation_error:
+        return {"status": "error", "message": validation_error}
 
     if not subtask_ids:
         return {"status": "error", "message": "At least one subtask ID is required"}
@@ -3354,6 +3451,7 @@ def resume_from_test_contract(subtask_id: str, branch: str) -> dict:
     """Resume a single subtask at ACTOR using a persisted TDD handoff."""
     plan_dir = Path(f".map/{branch}")
     plan_file = plan_dir / f"task_plan_{branch}.md"
+    blueprint_file = plan_dir / "blueprint.json"
     if not plan_file.exists():
         return {
             "status": "error",
@@ -3372,10 +3470,10 @@ def resume_from_test_contract(subtask_id: str, branch: str) -> dict:
             "message": "Missing persisted TDD artifacts: " + ", ".join(missing),
         }
 
-    import re
-
     plan_content = plan_file.read_text(encoding="utf-8")
-    all_subtask_ids = re.findall(r"###\s+(ST-\d+)", plan_content)
+    all_subtask_ids = _extract_subtask_ids_from_plan_artifacts(
+        plan_content, blueprint_file
+    )
     if subtask_id not in all_subtask_ids:
         return {
             "status": "error",
@@ -3449,11 +3547,14 @@ def resume_from_plan(branch: str) -> dict:
             "message": f"No plan found at {plan_file}. Run /map-plan first.",
         }
 
-    # Extract subtask IDs from plan file (ST-XXX pattern)
-    import re
+    blueprint_file = plan_dir / "blueprint.json"
 
+    # Prefer blueprint.json as the machine-readable contract; fall back to
+    # task_plan markdown for older or partial artifacts.
     plan_content = plan_file.read_text(encoding="utf-8")
-    subtask_ids = re.findall(r"###\s+(ST-\d+)", plan_content)
+    subtask_ids = _extract_subtask_ids_from_plan_artifacts(
+        plan_content, blueprint_file
+    )
 
     if not subtask_ids:
         return {
@@ -3464,7 +3565,6 @@ def resume_from_plan(branch: str) -> dict:
     # Extract AAG contracts from step_state.json or blueprint.json if present
     aag_contracts: dict[str, str] = {}
     step_state_file = plan_dir / "step_state.json"
-    blueprint_file = plan_dir / "blueprint.json"
     for source_file in [step_state_file, blueprint_file]:
         if source_file.exists() and not aag_contracts:
             try:
@@ -3539,6 +3639,7 @@ def get_plan_progress(branch: str) -> dict:
 
     plan_dir = Path(f".map/{branch}")
     plan_file = plan_dir / f"task_plan_{branch}.md"
+    blueprint_file = plan_dir / "blueprint.json"
 
     if not plan_file.exists():
         return {"status": "error", "message": f"No plan found at {plan_file}."}
@@ -3555,7 +3656,7 @@ def get_plan_progress(branch: str) -> dict:
 
     if not subtasks:
         # Fallback: just extract IDs without status
-        ids = re.findall(r"###\s+(ST-\d+)", content)
+        ids = _extract_subtask_ids_from_plan_artifacts(content, blueprint_file)
         subtasks = [{"id": sid, "status": "unknown"} for sid in ids]
 
     completed = [s for s in subtasks if s["status"] == "complete"]
@@ -3596,6 +3697,7 @@ def resume_single_subtask(subtask_id: str, branch: str, tdd_mode: bool = False) 
     """
     plan_dir = Path(f".map/{branch}")
     plan_file = plan_dir / f"task_plan_{branch}.md"
+    blueprint_file = plan_dir / "blueprint.json"
 
     if not plan_file.exists():
         return {
@@ -3603,10 +3705,10 @@ def resume_single_subtask(subtask_id: str, branch: str, tdd_mode: bool = False) 
             "message": f"No plan found at {plan_file}. Run /map-plan first.",
         }
 
-    import re
-
     plan_content = plan_file.read_text(encoding="utf-8")
-    all_subtask_ids = re.findall(r"###\s+(ST-\d+)", plan_content)
+    all_subtask_ids = _extract_subtask_ids_from_plan_artifacts(
+        plan_content, blueprint_file
+    )
 
     if not all_subtask_ids:
         return {

@@ -38,7 +38,7 @@ import typer
 import httpx
 
 try:
-    import truststore
+    import truststore  # pyright: ignore[reportMissingImports]
 
     HAS_TRUSTSTORE = True
 except ImportError:
