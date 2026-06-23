@@ -27,6 +27,57 @@ def _run_hook_raw(tmp_project_dir: Path, stdin_payload: str) -> tuple[int, str, 
     return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
 
 
+def _run_git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=check,
+    )
+
+
+def _seed_conflicted_repo(repo: Path) -> None:
+    _run_git(repo, "init", "-b", "main")
+    _run_git(repo, "config", "user.email", "map-test@example.com")
+    _run_git(repo, "config", "user.name", "MAP Test")
+    conflict_file = repo / "conflicted.txt"
+    conflict_file.write_text("base\n", encoding="utf-8")
+    _run_git(repo, "add", "conflicted.txt")
+    _run_git(repo, "commit", "-m", "base")
+
+    _run_git(repo, "checkout", "-b", "feature")
+    conflict_file.write_text("feature\n", encoding="utf-8")
+    _run_git(repo, "commit", "-am", "feature change")
+
+    _run_git(repo, "checkout", "main")
+    conflict_file.write_text("main\n", encoding="utf-8")
+    _run_git(repo, "commit", "-am", "main change")
+    merge = _run_git(repo, "merge", "feature", check=False)
+    assert merge.returncode != 0
+
+
+def _seed_step_state(project_dir: Path, branch: str = "default") -> Path:
+    state_dir = project_dir / ".map" / branch
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_file = state_dir / "step_state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "current_step_id": "2.3",
+                "current_step_phase": "ACTOR",
+                "current_subtask_id": "ST-001",
+                "subtask_index": 0,
+                "subtask_sequence": ["ST-001"],
+                "plan_approved": True,
+                "execution_mode": "batch",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return state_file
+
+
 def _import_hook():
     """Import the hook module dynamically for direct function testing."""
     hook_path = Path(".claude/hooks/workflow-context-injector.py").resolve()
@@ -380,6 +431,94 @@ def test_injects_for_pytest_bash_when_step_state_exists(
     state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
     assert state["hook_injection"]["status"] == "injected"
     assert state["hook_injection_counts"]["injected"] == 1
+
+
+def test_conflict_guardrail_injects_for_unmerged_files_on_readonly_bash(
+    tmp_path: Path,
+) -> None:
+    _seed_conflicted_repo(tmp_path)
+    _seed_step_state(tmp_path, "main")
+
+    code, out, err = _run_hook(
+        tmp_path,
+        {"tool_name": "Bash", "tool_input": {"command": "ls"}},
+    )
+
+    assert code == 0
+    assert err == ""
+    payload = json.loads(out)
+    additional = payload["hookSpecificOutput"]["additionalContext"]
+    assert "[MAP-CONFLICT]" in additional
+    assert "conflicted.txt" in additional
+    assert "Resolve one file or small batch" in additional
+    assert "preserving BOTH sides' intent" in additional
+    assert "run the test gate" in additional
+
+
+def test_conflict_guardrail_preserves_step_state_gate(tmp_path: Path) -> None:
+    _seed_conflicted_repo(tmp_path)
+
+    code, out, err = _run_hook(
+        tmp_path,
+        {"tool_name": "Bash", "tool_input": {"command": "ls"}},
+    )
+
+    assert code == 0
+    assert err == ""
+    assert out == "{}"
+
+
+def test_conflict_guardrail_warns_for_rebase_preflight(
+    tmp_path: Path, branch_name: str
+) -> None:
+    _seed_step_state(tmp_path, branch_name)
+
+    code, out, err = _run_hook(
+        tmp_path,
+        {"tool_name": "Bash", "tool_input": {"command": "git rebase origin/main"}},
+    )
+
+    assert code == 0
+    assert err == ""
+    payload = json.loads(out)
+    additional = payload["hookSpecificOutput"]["additionalContext"]
+    assert "[MAP-CONFLICT] Merge/rebase preflight" in additional
+    assert "Never blanket-accept ours/theirs" in additional
+
+
+def test_conflict_guardrail_skips_clean_lifecycle_command(
+    tmp_path: Path, branch_name: str
+) -> None:
+    _seed_step_state(tmp_path, branch_name)
+
+    code, out, err = _run_hook(
+        tmp_path,
+        {"tool_name": "Bash", "tool_input": {"command": "git rebase --continue"}},
+    )
+
+    assert code == 0
+    assert err == ""
+    payload = json.loads(out)
+    additional = payload["hookSpecificOutput"]["additionalContext"]
+    assert "[MAP]" in additional
+    assert "[MAP-CONFLICT]" not in additional
+
+
+def test_unmerged_file_detection_handles_nul_paths_with_spaces(
+    hook_mod, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Result:
+        returncode = 0
+        stdout = b"src/file one.py\0docs/conflicted page.md\0"
+
+    def fake_run(*args, **kwargs):
+        return Result()
+
+    monkeypatch.setattr(hook_mod.subprocess, "run", fake_run)
+
+    files = hook_mod.get_unmerged_files(tmp_path)
+
+    assert files == ["src/file one.py", "docs/conflicted page.md"]
 
 
 def test_records_skipped_when_state_has_no_reminder(
