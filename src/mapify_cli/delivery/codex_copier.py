@@ -8,8 +8,11 @@ Never touches .claude/.
 
 from __future__ import annotations
 
+import json
 import shutil
+from copy import deepcopy
 from pathlib import Path
+from typing import Any
 
 from mapify_cli.delivery.file_copier import (
     _extract_requires_block,
@@ -20,7 +23,11 @@ from mapify_cli.delivery.file_copier import (
     _warn_requires_skills,
     get_templates_dir,
 )
-from mapify_cli.delivery.managed_file_copier import copy_managed_file
+from mapify_cli.delivery.managed_file_copier import (
+    _assert_safe_dest,
+    _atomic_write,
+    copy_managed_file,
+)
 
 
 def _install_managed_file(
@@ -81,6 +88,129 @@ def _copy_tree(
 
 
 _EXEC_SUFFIXES = frozenset((".py", ".sh"))
+_CODEX_WORKFLOW_GATE_PATH = ".codex/hooks/workflow-gate.py"
+
+
+def _is_codex_workflow_gate_hook(hook: Any) -> bool:
+    """Return True for MAP's managed Codex workflow-gate command hook."""
+    if not isinstance(hook, dict):
+        return False
+    command = hook.get("command")
+    return isinstance(command, str) and _CODEX_WORKFLOW_GATE_PATH in command
+
+
+def _merge_codex_hook_entries(
+    existing_entries: Any,
+    template_entries: Any,
+) -> list[Any]:
+    """Merge MAP hook entries into existing Codex hook entries.
+
+    Existing project hooks are preserved. MAP-owned workflow-gate command hooks
+    are refreshed from the template and de-duplicated.
+    """
+    merged_entries: list[Any] = []
+    if isinstance(existing_entries, list):
+        for raw_entry in deepcopy(existing_entries):
+            if not isinstance(raw_entry, dict):
+                merged_entries.append(raw_entry)
+                continue
+
+            raw_hooks = raw_entry.get("hooks")
+            if not isinstance(raw_hooks, list):
+                merged_entries.append(raw_entry)
+                continue
+
+            cleaned_hooks = [
+                hook for hook in raw_hooks if not _is_codex_workflow_gate_hook(hook)
+            ]
+            if not cleaned_hooks and len(cleaned_hooks) != len(raw_hooks):
+                continue
+
+            raw_entry["hooks"] = cleaned_hooks
+            merged_entries.append(raw_entry)
+
+    if not isinstance(template_entries, list):
+        return merged_entries
+
+    for template_entry in template_entries:
+        if not isinstance(template_entry, dict):
+            if template_entry not in merged_entries:
+                merged_entries.append(deepcopy(template_entry))
+            continue
+
+        matcher = template_entry.get("matcher")
+        template_hooks = template_entry.get("hooks")
+        target = None
+        if isinstance(matcher, str) and isinstance(template_hooks, list):
+            for entry in merged_entries:
+                if (
+                    isinstance(entry, dict)
+                    and entry.get("matcher") == matcher
+                    and isinstance(entry.get("hooks"), list)
+                ):
+                    target = entry
+                    break
+
+        if target is None:
+            if template_entry not in merged_entries:
+                merged_entries.append(deepcopy(template_entry))
+            continue
+
+        assert isinstance(template_hooks, list)
+        target_hooks = target["hooks"]
+        assert isinstance(target_hooks, list)
+        for hook in template_hooks:
+            if hook not in target_hooks:
+                target_hooks.append(deepcopy(hook))
+
+    return merged_entries
+
+
+def _merge_codex_hooks_json(
+    existing_data: dict[str, Any] | None,
+    template_data: dict[str, Any],
+) -> dict[str, Any]:
+    """Return Codex-valid hooks.json containing only the top-level hooks key."""
+    existing_hooks = existing_data.get("hooks") if existing_data else None
+    template_hooks = template_data.get("hooks")
+
+    merged_hooks: dict[str, Any] = (
+        deepcopy(existing_hooks) if isinstance(existing_hooks, dict) else {}
+    )
+
+    if isinstance(template_hooks, dict):
+        for event_name, template_entries in template_hooks.items():
+            merged_hooks[event_name] = _merge_codex_hook_entries(
+                merged_hooks.get(event_name),
+                template_entries,
+            )
+
+    return {"hooks": merged_hooks}
+
+
+def _load_json_object(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _install_codex_hooks_json(src: Path, dst: Path) -> None:
+    """Install .codex/hooks.json without MAP metadata and merge project hooks."""
+    template_data = _load_json_object(src)
+    if template_data is None:
+        raise ValueError(f"Invalid Codex hooks template JSON: {src}")
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+
+    existing_data: dict[str, Any] | None = None
+    if dst.exists():
+        _assert_safe_dest(dst)
+        existing_data = _load_json_object(dst)
+
+    merged = _merge_codex_hooks_json(existing_data, template_data)
+    _atomic_write(dst, json.dumps(merged, indent=2, ensure_ascii=False) + "\n")
 
 
 def create_codex_files(project_path: Path) -> dict[str, int]:
@@ -96,8 +226,8 @@ def create_codex_files(project_path: Path) -> dict[str, int]:
 
     Watched files (skills, agents, config, AGENTS.md, hooks) are installed
     fence-aware so a re-install preserves any user content below the fence;
-    hooks.json is JSON (fully-managed via _map_managed); .map/scripts is
-    MAP-owned (fenced=False, skip-if-exists).
+    hooks.json is merged without MAP metadata because Codex validates top-level
+    keys strictly; .map/scripts is MAP-owned (fenced=False, skip-if-exists).
 
     Skips .map/scripts/ if the directory already exists.
     Never creates or modifies any .claude/ path.
@@ -186,12 +316,13 @@ def create_codex_files(project_path: Path) -> dict[str, int]:
 
     # ------------------------------------------------------------------
     # 4. Hooks (hooks.json + hooks/*.py)
-    #    hooks.json is JSON (fully-managed via _map_managed, no fence);
+    #    hooks.json must remain Codex-schema-valid, so install it with a
+    #    Codex-specific merge instead of the generic _map_managed JSON copier.
     #    hooks/*.py are watched (fence-aware) with exec bits preserved.
     # ------------------------------------------------------------------
     hooks_json_src = codex_templates / "hooks.json"
     if hooks_json_src.exists():
-        _install_managed_file(hooks_json_src, codex_dir / "hooks.json", version)
+        _install_codex_hooks_json(hooks_json_src, codex_dir / "hooks.json")
         counts["hooks"] += 1
 
     hooks_dir_src = codex_templates / "hooks"

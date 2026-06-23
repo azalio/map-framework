@@ -1636,6 +1636,9 @@ class TestCodexProvider:
 
         # Verify hook command uses quoted git-root-resolved path
         hooks_data = _json.loads(hooks_json_path.read_text())
+        assert set(hooks_data) == {"hooks"}, (
+            ".codex/hooks.json must not include MAP-only top-level metadata"
+        )
         command = hooks_data["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
         assert (
             "$(git rev-parse --show-toplevel)" in command
@@ -1737,6 +1740,116 @@ class TestCodexProvider:
         assert (
             "Bash" in matchers
         ), f"hooks.json PreToolUse must have a 'Bash' matcher, got: {matchers}"
+
+    def test_ac18b_hooks_json_merges_existing_project_hooks(self, tmp_path):
+        """AC-18b: Codex init preserves project hooks and removes legacy MAP metadata."""
+        project = tmp_path / "existing_codex_hooks"
+        project.mkdir()
+        hooks_json_path = project / ".codex" / "hooks.json"
+        hooks_json_path.parent.mkdir(parents=True)
+        hooks_json_path.write_text(
+            json.dumps(
+                {
+                    "_map_managed": {"generated_by": "mapify-cli"},
+                    "customTopLevel": "must be dropped for Codex schema",
+                    "hooks": {
+                        "SessionStart": [
+                            {"hooks": [{"type": "command", "command": "echo session"}]}
+                        ],
+                        "UserPromptSubmit": [
+                            {"hooks": [{"type": "command", "command": "echo prompt"}]}
+                        ],
+                        "PreToolUse": [
+                            {
+                                "matcher": "Bash",
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": "echo existing bash",
+                                        "timeout": 3,
+                                    },
+                                    {
+                                        "type": "command",
+                                        "command": "python3 old/.codex/hooks/workflow-gate.py",
+                                        "timeout": 1,
+                                    },
+                                ],
+                            },
+                            {
+                                "matcher": "Read",
+                                "hooks": [{"type": "command", "command": "echo read"}],
+                            },
+                        ],
+                        "PostToolUse": [
+                            {
+                                "matcher": "Bash",
+                                "hooks": [{"type": "command", "command": "echo post"}],
+                            }
+                        ],
+                        "Stop": [
+                            {"hooks": [{"type": "command", "command": "echo stop"}]}
+                        ],
+                    },
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        local_runner = CliRunner()
+        os.chdir(project)
+        result = local_runner.invoke(
+            app, ["init", ".", "--provider", "codex", "--no-git", "--force"]
+        )
+        assert result.exit_code == 0, f"init failed:\n{result.output}"
+
+        hooks_data = json.loads(hooks_json_path.read_text(encoding="utf-8"))
+        assert set(hooks_data) == {"hooks"}
+        hooks = hooks_data["hooks"]
+        assert hooks["SessionStart"][0]["hooks"][0]["command"] == "echo session"
+        assert hooks["UserPromptSubmit"][0]["hooks"][0]["command"] == "echo prompt"
+        assert hooks["PostToolUse"][0]["hooks"][0]["command"] == "echo post"
+        assert hooks["Stop"][0]["hooks"][0]["command"] == "echo stop"
+
+        pre_tool_use = hooks["PreToolUse"]
+        bash_entries = [
+            entry
+            for entry in pre_tool_use
+            if isinstance(entry, dict) and entry.get("matcher") == "Bash"
+        ]
+        assert len(bash_entries) == 1
+        bash_hooks = bash_entries[0]["hooks"]
+        commands = [hook["command"] for hook in bash_hooks]
+        assert "echo existing bash" in commands
+        assert "python3 old/.codex/hooks/workflow-gate.py" not in commands
+        workflow_gate_commands = [
+            command for command in commands if ".codex/hooks/workflow-gate.py" in command
+        ]
+        assert len(workflow_gate_commands) == 1
+        assert any(
+            entry.get("matcher") == "Read"
+            and entry["hooks"][0]["command"] == "echo read"
+            for entry in pre_tool_use
+            if isinstance(entry, dict)
+        )
+
+        result = local_runner.invoke(
+            app, ["init", ".", "--provider", "codex", "--no-git", "--force"]
+        )
+        assert result.exit_code == 0, f"second init failed:\n{result.output}"
+        hooks_data = json.loads(hooks_json_path.read_text(encoding="utf-8"))
+        all_commands = [
+            hook["command"]
+            for entry in hooks_data["hooks"]["PreToolUse"]
+            if isinstance(entry, dict)
+            for hook in entry.get("hooks", [])
+            if isinstance(hook, dict)
+        ]
+        assert (
+            sum(".codex/hooks/workflow-gate.py" in command for command in all_commands)
+            == 1
+        )
 
     # ------------------------------------------------------------------ #
     # AC-19: Discovery paths — skills/agents/config at expected locations #
