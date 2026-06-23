@@ -489,6 +489,16 @@ exhaustive test matrices by default.
 - [ ] When using training data for unfamiliar patterns, tag with `[training-data]` in Approach section
 - [ ] Tag verified sources: `[code: path/to/file.py:line]`, `[training-data]`
 
+### Qualitative Self-Review Convergence (Opt-In Only)
+- [ ] If the caller explicitly requests self-review convergence, treat this
+  checklist run as one bounded pass and return concrete evidence for every
+  `clean=true` claim.
+- [ ] `clean` means no critical findings in this pass, not proof of correctness.
+  If you find a blocker, report it as a critical finding; do not soften it to
+  help the convergence loop finish.
+- [ ] On pass N>1, verify prior critical findings are resolved before looking
+  for new regressions.
+
 ### SFT Comfort Zone (Token Discipline)
 - [ ] Each function/method body stays within ~100 lines (~4000 tokens)
 - [ ] If a function exceeds this: split into sub-functions with their own inline contracts

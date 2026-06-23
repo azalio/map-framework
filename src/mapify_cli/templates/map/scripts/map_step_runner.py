@@ -206,6 +206,7 @@ ARTIFACT_STAGE_NAMES = (
     "verification",
     "retry_quarantine",
     "flaky_test_triage",
+    "qualitative_convergence",
     "anti_repeat",
     "escalation",
     "token_budget",
@@ -312,6 +313,23 @@ FLAKY_TEST_TRIAGE_DEFAULT_TIMEOUT_SECONDS = 120
 FLAKY_TEST_TRIAGE_MAX_TIMEOUT_SECONDS = 600
 FLAKY_TEST_TRIAGE_DEFAULT_OUTPUT_TAIL_BYTES = 4096
 FLAKY_TEST_TRIAGE_MAX_OUTPUT_TAIL_BYTES = 65536
+
+# --- Qualitative convergence (#257): N consecutive clean review passes ---
+# This is deterministic bookkeeping around LLM review passes. Python never
+# invokes Monitor/self-review itself; callers record each pass here, and the
+# validator re-derives the tail clean streak from append-only evidence.
+QUALITATIVE_CONVERGENCE_ARTIFACT_NAME = "qualitative_convergence.json"
+QUALITATIVE_CONVERGENCE_SCOPES = frozenset({"monitor", "self_review"})
+QUALITATIVE_CONVERGENCE_INVOCATIONS = frozenset({"operator_loop", "template_loop"})
+QUALITATIVE_CONVERGENCE_DEFAULT_REQUIRED_CLEAN = 2
+QUALITATIVE_CONVERGENCE_MAX_REQUIRED_CLEAN = 5
+QUALITATIVE_CONVERGENCE_DEFAULT_MAX_PASSES = 4
+QUALITATIVE_CONVERGENCE_HARD_MAX_PASSES = 10
+QUALITATIVE_CONVERGENCE_CAVEAT = (
+    "Convergence means no critical findings in the required consecutive "
+    "qualitative review passes. It is not proof of correctness and does not "
+    "replace deterministic build/test/lint gates."
+)
 
 # --- Repro-probe gate (#254): "no fix without root cause" enforcement ---
 # The runner EXECUTES a frozen snapshot of an agent-authored probe script and
@@ -3953,6 +3971,10 @@ def _run_health_artifact_inventory(
         "flaky_test_triage": _artifact_health_entry(
             branch_dir / FLAKY_TEST_TRIAGE_ARTIFACT_NAME, "flaky-test-triage"
         ),
+        "qualitative_convergence": _artifact_health_entry(
+            branch_dir / QUALITATIVE_CONVERGENCE_ARTIFACT_NAME,
+            "qualitative-convergence",
+        ),
     }
 
 
@@ -5045,6 +5067,645 @@ def validate_flaky_test_triage(
         "valid": valid,
         "path": str(path),
         "manifest_path": manifest_path,
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def _qualitative_convergence_artifact_path(branch: Optional[str] = None) -> Path:
+    """Return the branch-scoped qualitative convergence artifact path."""
+    return get_branch_dir(branch) / QUALITATIVE_CONVERGENCE_ARTIFACT_NAME
+
+
+def _qualitative_convergence_default_required_clean_passes() -> int:
+    configured = _map_config_int(
+        Path.cwd(),
+        "qualitative_convergence.required_clean_passes",
+        QUALITATIVE_CONVERGENCE_DEFAULT_REQUIRED_CLEAN,
+    )
+    return min(configured, QUALITATIVE_CONVERGENCE_MAX_REQUIRED_CLEAN)
+
+
+def _qualitative_convergence_default_max_passes() -> int:
+    configured = _map_config_int(
+        Path.cwd(),
+        "qualitative_convergence.max_passes",
+        QUALITATIVE_CONVERGENCE_DEFAULT_MAX_PASSES,
+    )
+    return min(configured, QUALITATIVE_CONVERGENCE_HARD_MAX_PASSES)
+
+
+def _json_compatible_value(value: object) -> object:
+    """Return a JSON-compatible copy without trusting agent-provided classes."""
+    if isinstance(value, Mapping):
+        return {str(k): _json_compatible_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_compatible_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_compatible_value(item) for item in value]
+    if value is None or type(value) in {bool, int, float} or isinstance(value, str):
+        return value
+    return str(value)
+
+
+def _normalize_qualitative_findings(
+    raw_findings: object,
+    prefix: str,
+    errors: list[str],
+) -> list[object]:
+    """Normalize critical/non-blocking finding arrays for durable JSON storage."""
+    if not isinstance(raw_findings, list):
+        errors.append(f"{prefix} must be an array")
+        return []
+    findings: list[object] = []
+    for index, raw in enumerate(raw_findings):
+        item_prefix = f"{prefix}[{index}]"
+        if isinstance(raw, str):
+            text = _shorten_retry_text(raw)
+            if not text:
+                errors.append(f"{item_prefix} must not be empty")
+                continue
+            findings.append(text)
+            continue
+        if isinstance(raw, Mapping):
+            if not raw:
+                errors.append(f"{item_prefix} must not be an empty object")
+                continue
+            findings.append(_json_compatible_value(raw))
+            continue
+        errors.append(f"{item_prefix} must be a string or object")
+    return findings
+
+
+def _normalize_qualitative_evidence(
+    raw_evidence: object,
+    prefix: str,
+    errors: list[str],
+) -> list[str]:
+    """Normalize evidence references; clean passes still need concrete proof."""
+    if not isinstance(raw_evidence, list) or not raw_evidence:
+        errors.append(f"{prefix} must be a non-empty array of strings")
+        return []
+    evidence: list[str] = []
+    for index, raw in enumerate(raw_evidence):
+        item_prefix = f"{prefix}[{index}]"
+        if not isinstance(raw, str) or not raw.strip():
+            errors.append(f"{item_prefix} must be a non-empty string")
+            continue
+        evidence.append(_shorten_retry_text(raw, 400))
+    return evidence
+
+
+def _normalize_qualitative_pass(
+    raw_pass: Mapping[str, object],
+    expected_pass_number: int,
+    errors: list[str],
+) -> dict[str, object]:
+    """Validate and normalize one append-only qualitative review pass."""
+    prefix = "pass"
+    pass_number = raw_pass.get("pass_number")
+    if type(pass_number) is not int or pass_number < 1:
+        errors.append(f"{prefix}.pass_number must be a positive integer")
+        pass_number = expected_pass_number
+    elif pass_number != expected_pass_number:
+        errors.append(
+            f"{prefix}.pass_number must be {expected_pass_number} "
+            "(append-only contiguous pass log)"
+        )
+
+    reviewer = str(raw_pass.get("reviewer") or "").strip()
+    if not reviewer:
+        errors.append(f"{prefix}.reviewer must be a non-empty string")
+    summary = _shorten_retry_text(str(raw_pass.get("summary") or ""))
+    if not summary:
+        errors.append(f"{prefix}.summary must be a non-empty string")
+
+    raw_clean = raw_pass.get("clean")
+    clean = False
+    if type(raw_clean) is not bool:
+        errors.append(f"{prefix}.clean must be a boolean")
+    else:
+        clean = raw_clean
+
+    critical_findings = _normalize_qualitative_findings(
+        raw_pass.get("critical_findings"),
+        f"{prefix}.critical_findings",
+        errors,
+    )
+    if clean and critical_findings:
+        errors.append(f"{prefix}.clean=true requires zero critical_findings")
+    if not clean and not critical_findings:
+        errors.append(f"{prefix}.clean=false requires at least one critical finding")
+
+    evidence = _normalize_qualitative_evidence(
+        raw_pass.get("evidence"),
+        f"{prefix}.evidence",
+        errors,
+    )
+
+    timestamp = str(raw_pass.get("timestamp") or "").strip() or _utc_timestamp()
+    normalized: dict[str, object] = {
+        "pass_number": pass_number,
+        "reviewer": reviewer,
+        "clean": clean,
+        "critical_findings": critical_findings,
+        "summary": summary,
+        "evidence": evidence,
+        "timestamp": timestamp,
+    }
+    non_blocking = raw_pass.get("non_blocking_findings")
+    if non_blocking is not None:
+        normalized["non_blocking_findings"] = _normalize_qualitative_findings(
+            non_blocking,
+            f"{prefix}.non_blocking_findings",
+            errors,
+        )
+    for field_name in ("model", "prompt_hash", "run_id", "template_version"):
+        if field_name not in raw_pass:
+            continue
+        value = raw_pass.get(field_name)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"{prefix}.{field_name} must be a non-empty string")
+            continue
+        normalized[field_name] = value.strip()
+    return normalized
+
+
+def _qualitative_tail_clean_streak(passes: Iterable[Mapping[str, object]]) -> int:
+    streak = 0
+    for item in reversed(list(passes)):
+        if item.get("clean") is True:
+            streak += 1
+        else:
+            break
+    return streak
+
+
+def _qualitative_convergence_status(
+    pass_count: int,
+    consecutive_clean_passes: int,
+    required_clean_passes: int,
+    max_passes: int,
+) -> str:
+    if consecutive_clean_passes >= required_clean_passes:
+        return "converged"
+    if pass_count >= max_passes:
+        return "max_passes_exceeded"
+    if pass_count == 0:
+        return "pending"
+    return "needs_more_passes"
+
+
+def _qualitative_gate_payload(
+    *,
+    gate_id: str,
+    scope: str,
+    branch: str,
+    passes: list[dict[str, object]],
+    required_clean_passes: int,
+    max_passes: int,
+    invocation: str,
+    risk_ref: str,
+) -> dict[str, object]:
+    streak = _qualitative_tail_clean_streak(passes)
+    status = _qualitative_convergence_status(
+        len(passes), streak, required_clean_passes, max_passes
+    )
+    policy = {
+        "required_clean_passes": required_clean_passes,
+        "max_passes": max_passes,
+        "invocation": invocation,
+        "hard_cap": True,
+    }
+    return {
+        "gate_id": gate_id,
+        "scope": scope,
+        "branch": branch,
+        "risk_ref": risk_ref,
+        "policy": policy,
+        "status": status,
+        "converged": status == "converged",
+        "consecutive_clean_passes": streak,
+        "pass_count": len(passes),
+        "caveat": QUALITATIVE_CONVERGENCE_CAVEAT,
+        "passes": passes,
+    }
+
+
+def _validate_qualitative_gate(
+    gate: Mapping[str, object],
+    index: int,
+    branch_name: str,
+    errors: list[str],
+    warnings: list[str],
+) -> dict[str, object]:
+    prefix = f"gates[{index}]"
+    gate_id = gate.get("gate_id")
+    if not isinstance(gate_id, str) or not gate_id.strip():
+        errors.append(f"{prefix}.gate_id must be a non-empty string")
+        gate_id = ""
+    scope = gate.get("scope")
+    if scope not in QUALITATIVE_CONVERGENCE_SCOPES:
+        errors.append(
+            f"{prefix}.scope must be one of {sorted(QUALITATIVE_CONVERGENCE_SCOPES)}"
+        )
+        scope = ""
+    if gate.get("branch") != branch_name:
+        errors.append(f"{prefix}.branch must equal artifact branch {branch_name!r}")
+    if not isinstance(gate.get("risk_ref"), str):
+        errors.append(f"{prefix}.risk_ref must be a string")
+    if gate.get("caveat") != QUALITATIVE_CONVERGENCE_CAVEAT:
+        errors.append(f"{prefix}.caveat is required and must match the convergence caveat")
+
+    policy = gate.get("policy")
+    if not isinstance(policy, Mapping):
+        errors.append(f"{prefix}.policy must be an object")
+        policy = {}
+    required_clean = policy.get("required_clean_passes")
+    max_passes = policy.get("max_passes")
+    invocation = policy.get("invocation")
+    if type(required_clean) is not int or required_clean < 1:
+        errors.append(f"{prefix}.policy.required_clean_passes must be an integer >= 1")
+        required_clean = 1
+    if type(max_passes) is not int or max_passes < 1:
+        errors.append(f"{prefix}.policy.max_passes must be an integer >= 1")
+        max_passes = 1
+    if type(required_clean) is int and required_clean > QUALITATIVE_CONVERGENCE_MAX_REQUIRED_CLEAN:
+        errors.append(
+            f"{prefix}.policy.required_clean_passes exceeds "
+            f"{QUALITATIVE_CONVERGENCE_MAX_REQUIRED_CLEAN}"
+        )
+    if type(max_passes) is int and max_passes > QUALITATIVE_CONVERGENCE_HARD_MAX_PASSES:
+        errors.append(
+            f"{prefix}.policy.max_passes exceeds "
+            f"{QUALITATIVE_CONVERGENCE_HARD_MAX_PASSES}"
+        )
+    if type(required_clean) is int and type(max_passes) is int and max_passes < required_clean:
+        errors.append(f"{prefix}.policy.max_passes must be >= required_clean_passes")
+    if invocation not in QUALITATIVE_CONVERGENCE_INVOCATIONS:
+        errors.append(
+            f"{prefix}.policy.invocation must be one of "
+            f"{sorted(QUALITATIVE_CONVERGENCE_INVOCATIONS)}"
+        )
+    if policy.get("hard_cap") is not True:
+        errors.append(f"{prefix}.policy.hard_cap must be true")
+
+    passes = gate.get("passes")
+    if not isinstance(passes, list):
+        errors.append(f"{prefix}.passes must be an array")
+        passes = []
+    normalized_passes: list[Mapping[str, object]] = []
+    seen_prompt_hashes: set[str] = set()
+    for pass_index, raw_pass in enumerate(passes):
+        pass_prefix = f"{prefix}.passes[{pass_index}]"
+        if not isinstance(raw_pass, Mapping):
+            errors.append(f"{pass_prefix} must be an object")
+            continue
+        expected_number = pass_index + 1
+        pass_number = raw_pass.get("pass_number")
+        if pass_number != expected_number:
+            errors.append(f"{pass_prefix}.pass_number must be {expected_number}")
+        reviewer = raw_pass.get("reviewer")
+        if not isinstance(reviewer, str) or not reviewer.strip():
+            errors.append(f"{pass_prefix}.reviewer must be a non-empty string")
+        clean = raw_pass.get("clean")
+        if type(clean) is not bool:
+            errors.append(f"{pass_prefix}.clean must be a boolean")
+        critical_findings = raw_pass.get("critical_findings")
+        if not isinstance(critical_findings, list):
+            errors.append(f"{pass_prefix}.critical_findings must be an array")
+            critical_findings = []
+        if clean is True and critical_findings:
+            errors.append(f"{pass_prefix}.clean=true requires zero critical_findings")
+        if clean is False and not critical_findings:
+            errors.append(f"{pass_prefix}.clean=false requires at least one critical finding")
+        evidence = raw_pass.get("evidence")
+        if not isinstance(evidence, list) or not evidence:
+            errors.append(f"{pass_prefix}.evidence must be a non-empty array")
+        elif not all(isinstance(item, str) and item.strip() for item in evidence):
+            errors.append(f"{pass_prefix}.evidence entries must be non-empty strings")
+        summary = raw_pass.get("summary")
+        if not isinstance(summary, str) or not summary.strip():
+            errors.append(f"{pass_prefix}.summary must be a non-empty string")
+        timestamp = raw_pass.get("timestamp")
+        if not isinstance(timestamp, str) or not timestamp.strip():
+            errors.append(f"{pass_prefix}.timestamp must be a non-empty string")
+        non_blocking = raw_pass.get("non_blocking_findings")
+        if non_blocking is not None and not isinstance(non_blocking, list):
+            errors.append(f"{pass_prefix}.non_blocking_findings must be an array")
+        for field_name in ("model", "prompt_hash", "run_id", "template_version"):
+            if field_name in raw_pass:
+                value = raw_pass.get(field_name)
+                if not isinstance(value, str) or not value.strip():
+                    errors.append(f"{pass_prefix}.{field_name} must be a non-empty string")
+        prompt_hash = raw_pass.get("prompt_hash")
+        if isinstance(prompt_hash, str):
+            if prompt_hash in seen_prompt_hashes:
+                warnings.append(
+                    f"{pass_prefix}.prompt_hash duplicates an earlier pass; "
+                    "reviewer diversity may be low"
+                )
+            seen_prompt_hashes.add(prompt_hash)
+        normalized_passes.append(raw_pass)
+
+    pass_count = len(normalized_passes)
+    if type(max_passes) is int and pass_count > max_passes:
+        errors.append(f"{prefix}.passes length exceeds policy.max_passes")
+    if type(required_clean) is int and type(max_passes) is int:
+        streak = _qualitative_tail_clean_streak(normalized_passes)
+        expected_status = _qualitative_convergence_status(
+            pass_count, streak, required_clean, max_passes
+        )
+        if gate.get("consecutive_clean_passes") != streak:
+            errors.append(f"{prefix}.consecutive_clean_passes must be {streak}")
+        if gate.get("pass_count") != pass_count:
+            errors.append(f"{prefix}.pass_count must be {pass_count}")
+        if gate.get("status") != expected_status:
+            errors.append(f"{prefix}.status must be {expected_status!r}")
+        if gate.get("converged") is not (expected_status == "converged"):
+            errors.append(f"{prefix}.converged disagrees with computed tail streak")
+        return {
+            "gate_id": str(gate_id),
+            "scope": str(scope),
+            "status": expected_status,
+            "converged": expected_status == "converged",
+        }
+    return {
+        "gate_id": str(gate_id),
+        "scope": str(scope),
+        "status": "invalid",
+        "converged": False,
+    }
+
+
+def record_qualitative_convergence(
+    gate_id: str,
+    pass_payload: Mapping[str, object],
+    *,
+    scope: str = "monitor",
+    required_clean_passes: Optional[int] = None,
+    max_passes: Optional[int] = None,
+    invocation: str = "operator_loop",
+    risk_ref: str = "",
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Append one qualitative review pass and compute the clean tail streak."""
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    path = _qualitative_convergence_artifact_path(branch_name)
+    gate = gate_id.strip()
+    errors: list[str] = []
+    if not gate:
+        errors.append("gate_id must be a non-empty string")
+    if scope not in QUALITATIVE_CONVERGENCE_SCOPES:
+        errors.append(f"scope must be one of {sorted(QUALITATIVE_CONVERGENCE_SCOPES)}")
+    if invocation not in QUALITATIVE_CONVERGENCE_INVOCATIONS:
+        errors.append(
+            f"invocation must be one of {sorted(QUALITATIVE_CONVERGENCE_INVOCATIONS)}"
+        )
+    try:
+        required_clean = _bounded_positive_int(
+            required_clean_passes,
+            _qualitative_convergence_default_required_clean_passes(),
+            QUALITATIVE_CONVERGENCE_MAX_REQUIRED_CLEAN,
+        )
+        max_allowed_passes = _bounded_positive_int(
+            max_passes,
+            _qualitative_convergence_default_max_passes(),
+            QUALITATIVE_CONVERGENCE_HARD_MAX_PASSES,
+        )
+    except ValueError as exc:
+        errors.append(str(exc))
+        required_clean = QUALITATIVE_CONVERGENCE_DEFAULT_REQUIRED_CLEAN
+        max_allowed_passes = QUALITATIVE_CONVERGENCE_DEFAULT_MAX_PASSES
+    if max_allowed_passes < required_clean:
+        errors.append("max_passes must be >= required_clean_passes")
+    if errors:
+        return {"status": "error", "valid": False, "path": str(path), "errors": errors}
+
+    existing = _read_json_file(path) or {}
+    gates_obj = existing.get("gates")
+    if gates_obj is None:
+        gates: list[dict[str, object]] = []
+    elif isinstance(gates_obj, list) and all(isinstance(item, dict) for item in gates_obj):
+        gates = cast(list[dict[str, object]], gates_obj)
+    else:
+        return {
+            "status": "error",
+            "valid": False,
+            "path": str(path),
+            "errors": ["existing qualitative convergence gates must be an array"],
+        }
+
+    gate_index: Optional[int] = None
+    for index, item in enumerate(gates):
+        if item.get("gate_id") == gate and item.get("scope") == scope:
+            gate_index = index
+            break
+    if gate_index is None:
+        existing_passes: list[dict[str, object]] = []
+    else:
+        existing_gate = gates[gate_index]
+        if existing_gate.get("status") in {"converged", "max_passes_exceeded"}:
+            return {
+                "status": "error",
+                "valid": False,
+                "path": str(path),
+                "errors": [
+                    f"gate {gate!r} is terminal ({existing_gate.get('status')}); "
+                    "start a new gate_id for a new convergence loop"
+                ],
+            }
+        policy = existing_gate.get("policy")
+        if not isinstance(policy, Mapping):
+            return {
+                "status": "error",
+                "valid": False,
+                "path": str(path),
+                "errors": [f"gate {gate!r} has invalid policy"],
+            }
+        expected_policy = {
+            "required_clean_passes": required_clean,
+            "max_passes": max_allowed_passes,
+            "invocation": invocation,
+            "hard_cap": True,
+        }
+        if dict(policy) != expected_policy:
+            return {
+                "status": "error",
+                "valid": False,
+                "path": str(path),
+                "errors": [f"gate {gate!r} policy is append-only and cannot change"],
+            }
+        passes_obj = existing_gate.get("passes")
+        if not isinstance(passes_obj, list) or not all(isinstance(p, dict) for p in passes_obj):
+            return {
+                "status": "error",
+                "valid": False,
+                "path": str(path),
+                "errors": [f"gate {gate!r} passes must be an array of objects"],
+            }
+        existing_passes = cast(list[dict[str, object]], passes_obj)
+        if len(existing_passes) >= max_allowed_passes:
+            return {
+                "status": "error",
+                "valid": False,
+                "path": str(path),
+                "errors": [f"gate {gate!r} already reached max_passes"],
+            }
+
+    pass_errors: list[str] = []
+    normalized_pass = _normalize_qualitative_pass(
+        pass_payload,
+        len(existing_passes) + 1,
+        pass_errors,
+    )
+    if pass_errors:
+        return {
+            "status": "error",
+            "valid": False,
+            "path": str(path),
+            "errors": pass_errors,
+        }
+    updated_passes = [*existing_passes, normalized_pass]
+    updated_gate = _qualitative_gate_payload(
+        gate_id=gate,
+        scope=scope,
+        branch=branch_name,
+        passes=updated_passes,
+        required_clean_passes=required_clean,
+        max_passes=max_allowed_passes,
+        invocation=invocation,
+        risk_ref=risk_ref.strip(),
+    )
+    if gate_index is None:
+        gates.append(updated_gate)
+    else:
+        gates[gate_index] = updated_gate
+
+    payload = {
+        "schema_version": "1.0",
+        "branch": branch_name,
+        "updated_at": _utc_timestamp(),
+        "gates": gates,
+    }
+    _write_json_file(path, payload)
+    validation = validate_qualitative_convergence(str(path), branch_name)
+    return {
+        "status": "success" if validation.get("valid") else "error",
+        "valid": validation.get("valid", False),
+        "path": str(path),
+        "gate_id": gate,
+        "scope": scope,
+        "converged": updated_gate["converged"],
+        "gate_status": updated_gate["status"],
+        "consecutive_clean_passes": updated_gate["consecutive_clean_passes"],
+        "pass_count": updated_gate["pass_count"],
+        "validation": validation,
+    }
+
+
+def validate_qualitative_convergence(
+    convergence_path: str = "",
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Validate qualitative_convergence.json and update artifact manifest."""
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    path = (
+        Path(convergence_path)
+        if convergence_path
+        else _qualitative_convergence_artifact_path(branch_name)
+    )
+    errors: list[str] = []
+    warnings: list[str] = []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {
+            "status": "error",
+            "valid": False,
+            "path": str(path),
+            "errors": [f"qualitative convergence artifact not found: {path}"],
+            "warnings": [],
+        }
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        return {
+            "status": "error",
+            "valid": False,
+            "path": str(path),
+            "errors": [f"cannot read qualitative convergence artifact: {exc}"],
+            "warnings": [],
+        }
+    if not isinstance(payload, Mapping):
+        return {
+            "status": "error",
+            "valid": False,
+            "path": str(path),
+            "errors": ["qualitative convergence artifact must be a JSON object"],
+            "warnings": [],
+        }
+    if payload.get("schema_version") != "1.0":
+        errors.append("schema_version must be 1.0")
+    if payload.get("branch") != branch_name:
+        errors.append(f"branch must equal {branch_name!r}")
+    gates_obj = payload.get("gates")
+    if not isinstance(gates_obj, list) or not gates_obj:
+        errors.append("gates must be a non-empty array")
+        gates_obj = []
+    summaries: list[dict[str, object]] = []
+    for index, gate in enumerate(gates_obj):
+        if not isinstance(gate, Mapping):
+            errors.append(f"gates[{index}] must be an object")
+            continue
+        summaries.append(
+            _validate_qualitative_gate(gate, index, branch_name, errors, warnings)
+        )
+    valid = not errors
+    counts = {
+        "converged": sum(1 for gate in summaries if gate.get("status") == "converged"),
+        "max_passes_exceeded": sum(
+            1 for gate in summaries if gate.get("status") == "max_passes_exceeded"
+        ),
+        "needs_more_passes": sum(
+            1 for gate in summaries if gate.get("status") == "needs_more_passes"
+        ),
+        "pending": sum(1 for gate in summaries if gate.get("status") == "pending"),
+    }
+    if valid:
+        if counts["max_passes_exceeded"]:
+            stage_status = "max_passes_exceeded"
+        elif counts["needs_more_passes"] or counts["pending"]:
+            stage_status = "needs_more_passes"
+        else:
+            stage_status = "converged"
+        manifest = load_artifact_manifest(branch_name)
+        _set_manifest_stage(
+            manifest,
+            "qualitative_convergence",
+            stage_status,
+            artifacts=[_artifact_ref(path, "qualitative-convergence")],
+            metadata={
+                "gate_count": len(summaries),
+                "converged_count": counts["converged"],
+                "max_passes_exceeded_count": counts["max_passes_exceeded"],
+                "needs_more_passes_count": counts["needs_more_passes"],
+                "pending_count": counts["pending"],
+                "scopes": sorted({str(g.get("scope")) for g in summaries}),
+            },
+        )
+        manifest_result = save_artifact_manifest(manifest, branch_name)
+        manifest_path = manifest_result["path"]
+    else:
+        manifest_path = str(branch_dir / "artifact_manifest.json")
+    return {
+        "status": "success" if valid else "error",
+        "valid": valid,
+        "path": str(path),
+        "manifest_path": manifest_path,
+        "gate_count": len(summaries),
+        "counts": counts,
         "errors": errors,
         "warnings": warnings,
     }
@@ -13197,6 +13858,63 @@ if __name__ == "__main__":
         result = validate_flaky_test_triage(triage_path)
         print(json.dumps(result, indent=2, ensure_ascii=True))
         if not result.get("valid"):
+            sys.exit(1)
+
+    elif func_name == "record_qualitative_convergence":
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py record_qualitative_convergence")
+        _p.add_argument("gate_id")
+        _p.add_argument("pass_json")
+        _p.add_argument("--scope", default="monitor")
+        _p.add_argument("--branch", default=None)
+        _p.add_argument("--required-clean-passes", type=int, default=None)
+        _p.add_argument("--max-passes", type=int, default=None)
+        _p.add_argument("--invocation", default="operator_loop")
+        _p.add_argument("--risk-ref", default="")
+        _args = _p.parse_args(sys.argv[2:])
+        try:
+            parsed_pass = json.loads(_args.pass_json)
+        except json.JSONDecodeError as exc:
+            qc_result = {
+                "status": "error",
+                "valid": False,
+                "errors": [f"pass_json must be a JSON object: {exc}"],
+            }
+        else:
+            if not isinstance(parsed_pass, dict):
+                qc_result = {
+                    "status": "error",
+                    "valid": False,
+                    "errors": ["pass_json must be a JSON object"],
+                }
+            else:
+                qc_result = record_qualitative_convergence(
+                    _args.gate_id,
+                    parsed_pass,
+                    scope=_args.scope,
+                    required_clean_passes=_args.required_clean_passes,
+                    max_passes=_args.max_passes,
+                    invocation=_args.invocation,
+                    risk_ref=_args.risk_ref,
+                    branch=_args.branch,
+                )
+        print(json.dumps(qc_result, indent=2, ensure_ascii=True))
+        if not qc_result.get("valid"):
+            sys.exit(1)
+
+    elif func_name == "validate_qualitative_convergence":
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py validate_qualitative_convergence")
+        _p.add_argument("convergence_path", nargs="?", default="")
+        _p.add_argument("--branch", default=None)
+        _args = _p.parse_args(sys.argv[2:])
+        qc_result = validate_qualitative_convergence(
+            _args.convergence_path, _args.branch
+        )
+        print(json.dumps(qc_result, indent=2, ensure_ascii=True))
+        if not qc_result.get("valid"):
             sys.exit(1)
 
     elif func_name == "build_retry_quarantine":

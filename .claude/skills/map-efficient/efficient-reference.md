@@ -68,6 +68,41 @@ and advances without requeueing Actor.
 
 If a command above ever returns `Unknown function`, grep `map_step_runner.py` for `func_name ==` to confirm the dispatch branch still exists; this list is the source of truth as of the PR that added it but the underlying dispatcher is the ground truth.
 
+## Qualitative Convergence
+
+Use this only when the plan/user/config explicitly opts a high-risk qualitative
+gate into convergence. It is for `monitor` and `self_review`; never wrap
+deterministic build/test/lint commands in this loop.
+
+Each reviewer pass is recorded as append-only evidence in
+`.map/<branch>/qualitative_convergence.json`:
+
+```bash
+python3 .map/scripts/map_step_runner.py record_qualitative_convergence \
+  "monitor:${SUBTASK_ID}" \
+  '{"pass_number":1,"reviewer":"monitor","clean":true,"critical_findings":[],"summary":"No critical findings against VC-1/VC-2","evidence":["src/app.py:42","pytest tests/test_app.py::test_contract"]}' \
+  --scope monitor \
+  --required-clean-passes 2 \
+  --max-passes 4 \
+  --risk-ref "concern_type=security"
+```
+
+Inspect `gate_status` after every call:
+
+- `needs_more_passes`: run the next independent qualitative pass. Pass N>1 must
+  specifically verify the prior pass's findings/regression risk, not rubber-stamp
+  the same answer.
+- `converged`: the tail streak reached K clean passes. This means "no critical
+  findings in K consecutive qualitative passes", not "proven correct"; still run
+  all deterministic gates.
+- `max_passes_exceeded`: hard stop/escalate. Do not record the subtask as clean
+  and do not weaken findings to force convergence.
+
+Validation always re-derives `converged` and `consecutive_clean_passes` from the
+pass log. A dirty pass resets the tail streak (`clean, dirty, clean` with K=2 is
+not converged), `clean=true` with critical findings is invalid, and every pass —
+including clean passes — must carry concrete evidence references.
+
 ## Wave Execution
 
 Sequential is default. Parallel execution is allowed only when a wave has satisfied dependencies, low risk, and disjoint new-file writes, or when the user explicitly requests it. Use `get_wave_step`, `validate_wave_step`, and `advance_wave`; do not mix wave APIs with the single-current-subtask API.

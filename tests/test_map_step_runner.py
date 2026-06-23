@@ -760,6 +760,194 @@ def test_cli_run_flaky_test_triage_rejects_string_command_json(tmp_path):
     assert payload["errors"] == ["--command-json must be a non-empty JSON array of strings"]
 
 
+def _qualitative_pass(
+    pass_number: int,
+    *,
+    clean: bool,
+    reviewer: str = "monitor",
+    critical_findings: list[object] | None = None,
+) -> dict[str, object]:
+    if critical_findings is None:
+        critical_findings = [] if clean else ["Critical blocker in src/app.py:12"]
+    return {
+        "pass_number": pass_number,
+        "reviewer": reviewer,
+        "clean": clean,
+        "critical_findings": critical_findings,
+        "summary": "No critical findings" if clean else "Found a critical blocker",
+        "evidence": ["src/app.py:12", "tests/test_app.py::test_contract"],
+        "prompt_hash": f"hash-{pass_number}",
+    }
+
+
+def test_record_qualitative_convergence_requires_tail_clean_streak(branch_workspace):
+    first = map_step_runner.record_qualitative_convergence(
+        "monitor:ST-001",
+        _qualitative_pass(1, clean=True),
+        required_clean_passes=2,
+        max_passes=4,
+        risk_ref="concern_type=security",
+    )
+    assert first["status"] == "success"
+    assert first["gate_status"] == "needs_more_passes"
+    assert first["consecutive_clean_passes"] == 1
+
+    second = map_step_runner.record_qualitative_convergence(
+        "monitor:ST-001",
+        _qualitative_pass(2, clean=True, reviewer="monitor-regression"),
+        required_clean_passes=2,
+        max_passes=4,
+        risk_ref="concern_type=security",
+    )
+
+    assert second["status"] == "success"
+    assert second["converged"] is True
+    assert second["gate_status"] == "converged"
+    payload = json.loads((branch_workspace / "qualitative_convergence.json").read_text())
+    gate = payload["gates"][0]
+    assert gate["policy"]["invocation"] == "operator_loop"
+    assert gate["caveat"].startswith("Convergence means no critical findings")
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    stage = manifest["stages"]["qualitative_convergence"]
+    assert stage["status"] == "converged"
+    assert stage["metadata"]["converged_count"] == 1
+
+
+def test_qualitative_convergence_dirty_pass_resets_tail_streak(branch_workspace):
+    del branch_workspace
+    map_step_runner.record_qualitative_convergence(
+        "monitor:ST-002",
+        _qualitative_pass(1, clean=True),
+        required_clean_passes=2,
+        max_passes=4,
+    )
+    map_step_runner.record_qualitative_convergence(
+        "monitor:ST-002",
+        _qualitative_pass(2, clean=False),
+        required_clean_passes=2,
+        max_passes=4,
+    )
+    third = map_step_runner.record_qualitative_convergence(
+        "monitor:ST-002",
+        _qualitative_pass(3, clean=True, reviewer="monitor-regression"),
+        required_clean_passes=2,
+        max_passes=4,
+    )
+
+    assert third["gate_status"] == "needs_more_passes"
+    assert third["converged"] is False
+    assert third["consecutive_clean_passes"] == 1
+
+
+def test_qualitative_convergence_max_passes_exceeded_is_not_pass(branch_workspace):
+    result1 = map_step_runner.record_qualitative_convergence(
+        "monitor:ST-003",
+        _qualitative_pass(1, clean=False),
+        required_clean_passes=2,
+        max_passes=2,
+    )
+    result2 = map_step_runner.record_qualitative_convergence(
+        "monitor:ST-003",
+        _qualitative_pass(2, clean=True, reviewer="monitor-regression"),
+        required_clean_passes=2,
+        max_passes=2,
+    )
+
+    assert result1["gate_status"] == "needs_more_passes"
+    assert result2["valid"] is True
+    assert result2["gate_status"] == "max_passes_exceeded"
+    assert result2["converged"] is False
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    assert manifest["stages"]["qualitative_convergence"]["status"] == (
+        "max_passes_exceeded"
+    )
+
+
+def test_record_qualitative_convergence_rejects_gaming_inputs(branch_workspace):
+    clean_with_findings = map_step_runner.record_qualitative_convergence(
+        "monitor:ST-004",
+        _qualitative_pass(1, clean=True, critical_findings=["still broken"]),
+        required_clean_passes=2,
+        max_passes=4,
+    )
+    skipped_number = map_step_runner.record_qualitative_convergence(
+        "monitor:ST-004",
+        _qualitative_pass(2, clean=True),
+        required_clean_passes=2,
+        max_passes=4,
+    )
+    unsupported_scope = map_step_runner.record_qualitative_convergence(
+        "pytest:unit",
+        _qualitative_pass(1, clean=True),
+        scope="deterministic_test",
+    )
+
+    assert clean_with_findings["status"] == "error"
+    assert any("clean=true" in error for error in clean_with_findings["errors"])
+    assert skipped_number["status"] == "error"
+    assert any("pass_number must be 1" in error for error in skipped_number["errors"])
+    assert unsupported_scope["status"] == "error"
+    assert not (branch_workspace / "qualitative_convergence.json").exists()
+
+
+def test_validate_qualitative_convergence_rederives_cached_status(branch_workspace):
+    map_step_runner.record_qualitative_convergence(
+        "monitor:ST-005",
+        _qualitative_pass(1, clean=True),
+        required_clean_passes=2,
+        max_passes=4,
+    )
+    path = branch_workspace / "qualitative_convergence.json"
+    payload = json.loads(path.read_text())
+    payload["gates"][0]["status"] = "converged"
+    payload["gates"][0]["converged"] = True
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    result = map_step_runner.validate_qualitative_convergence()
+
+    assert result["valid"] is False
+    assert "gates[0].status must be 'needs_more_passes'" in result["errors"]
+    assert any("converged disagrees" in error for error in result["errors"])
+
+
+def test_cli_record_qualitative_convergence_writes_artifact(tmp_path):
+    pass_payload = json.dumps(_qualitative_pass(1, clean=True))
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "record_qualitative_convergence",
+            "self-review:ST-006",
+            pass_payload,
+            "--scope",
+            "self_review",
+            "--branch",
+            "clitest",
+            "--required-clean-passes",
+            "2",
+            "--max-passes",
+            "4",
+            "--invocation",
+            "template_loop",
+            "--risk-ref",
+            "actor pre-submission checklist",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    assert payload["gate_status"] == "needs_more_passes"
+    artifact = tmp_path / ".map" / "clitest" / "qualitative_convergence.json"
+    assert artifact.exists()
+    gate = json.loads(artifact.read_text())["gates"][0]
+    assert gate["scope"] == "self_review"
+    assert gate["policy"]["invocation"] == "template_loop"
+
+
 def test_artifact_health_entry_handles_disappearing_file():
     with patch.object(Path, "stat", side_effect=FileNotFoundError):
         entry = map_step_runner._artifact_health_entry(Path("transient.json"), "state")

@@ -815,6 +815,7 @@ ARTIFACT_MANIFEST_SCHEMA = {
                 "verification": ARTIFACT_STAGE_SCHEMA,
                 "retry_quarantine": ARTIFACT_STAGE_SCHEMA,
                 "flaky_test_triage": ARTIFACT_STAGE_SCHEMA,
+                "qualitative_convergence": ARTIFACT_STAGE_SCHEMA,
                 "anti_repeat": ARTIFACT_STAGE_SCHEMA,
                 "escalation": ARTIFACT_STAGE_SCHEMA,
                 "token_budget": ARTIFACT_STAGE_SCHEMA,
