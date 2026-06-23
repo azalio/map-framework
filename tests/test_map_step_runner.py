@@ -5419,9 +5419,9 @@ class TestRecordPlanArtifactsPlanReadyWithoutStepState:
 
 
 class TestRefreshBlueprintAffectedFiles:
-    """refresh_blueprint_affected_files locks the planned mutation surface to
-    the actual diff once Actor finishes a subtask — closes the recurring
-    drift between blueprint affected_files and reality."""
+    """refresh_blueprint_affected_files merges the observed mutation surface
+    into the approved blueprint contract unless an explicit replace is
+    requested."""
 
     def _init_git(self, root: Path) -> None:
         subprocess.run(["git", "init"], cwd=root, capture_output=True, check=False)
@@ -5431,15 +5431,15 @@ class TestRefreshBlueprintAffectedFiles:
         subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
         subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True)
 
-    def test_overwrites_affected_files_with_actual_diff(
+    def test_merges_affected_files_with_actual_diff_by_default(
         self, branch_workspace, monkeypatch
     ):
         repo = branch_workspace.parents[1]
         self._init_git(repo)
-        # Blueprint guessed wrong paths.
+        # Blueprint already has an approved surface.
         bp = {"subtasks": [{
             "id": "ST-001", "title": "x",
-            "affected_files": ["wrong/path.py", "stale_guess.py"],
+            "affected_files": ["approved/path.py", "existing_contract.py"],
         }]}
         (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
         # Actor actually changed these:
@@ -5451,6 +5451,43 @@ class TestRefreshBlueprintAffectedFiles:
             "test-branch", "ST-001"
         )
         assert report["status"] == "success", report
+        assert report["mode"] == "merge"
+        assert sorted(report["actual"]) == ["real_a.py", "real_b.py"]
+        assert sorted(report["current"]) == [
+            "approved/path.py",
+            "existing_contract.py",
+            "real_a.py",
+            "real_b.py",
+        ]
+        assert report["diff"]["added"] == ["real_a.py", "real_b.py"]
+        assert report["diff"]["removed"] == []
+        reloaded = json.loads((branch_workspace / "blueprint.json").read_text())
+        assert reloaded["subtasks"][0]["affected_files"] == [
+            "approved/path.py",
+            "existing_contract.py",
+            "real_a.py",
+            "real_b.py",
+        ]
+
+    def test_replace_overwrites_affected_files_when_explicit(
+        self, branch_workspace, monkeypatch
+    ):
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        bp = {"subtasks": [{
+            "id": "ST-001", "title": "x",
+            "affected_files": ["wrong/path.py", "stale_guess.py"],
+        }]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        (repo / "real_a.py").write_text("x = 1")
+        (repo / "real_b.py").write_text("y = 2")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.refresh_blueprint_affected_files(
+            "test-branch", "ST-001", replace=True
+        )
+        assert report["status"] == "success", report
+        assert report["mode"] == "replace"
         assert sorted(report["current"]) == ["real_a.py", "real_b.py"]
         assert report["diff"]["added"] == ["real_a.py", "real_b.py"]
         assert report["diff"]["removed"] == ["stale_guess.py", "wrong/path.py"]
@@ -5471,6 +5508,8 @@ class TestRefreshBlueprintAffectedFiles:
             "test-branch", "ST-001", dry_run=True
         )
         assert report["status"] == "dry_run"
+        assert report["mode"] == "merge"
+        assert report["current"] == ["real.py", "wrong.py"]
         reloaded = json.loads((branch_workspace / "blueprint.json").read_text())
         # File on disk untouched.
         assert reloaded["subtasks"][0]["affected_files"] == ["wrong.py"]
@@ -5512,20 +5551,61 @@ class TestRefreshBlueprintAffectedFiles:
             ["git", "commit", "-m", "ST-001 work"],
             cwd=repo, capture_output=True,
         )
-        # Blueprint has stale guess; refresh should write the real two files
-        # even though porcelain is now empty.
+        # Blueprint has an existing approved file; refresh should preserve it
+        # while adding the real two files even though porcelain is now empty.
         bp = {"subtasks": [{
-            "id": "ST-001", "affected_files": ["wrong.py"],
+            "id": "ST-001", "affected_files": ["approved.py"],
         }]}
         (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
         report = map_step_runner.refresh_blueprint_affected_files(
             "test-branch", "ST-001"
         )
         assert report["status"] == "success", report
-        # current MUST include both committed files — NOT empty.
-        assert sorted(report["current"]) == ["committed_a.py", "committed_b.py"]
-        assert "wrong.py" in report["diff"]["removed"]
+        # current MUST include both committed files — NOT only the prior list.
+        assert sorted(report["actual"]) == ["committed_a.py", "committed_b.py"]
+        assert sorted(report["current"]) == [
+            "approved.py",
+            "committed_a.py",
+            "committed_b.py",
+        ]
+        assert report["diff"]["removed"] == []
         assert "committed_a.py" in report["diff"]["added"]
+
+    def test_preserves_existing_files_missing_from_subtask_baseline_delta(
+        self, branch_workspace, monkeypatch
+    ):
+        """Issue #273: if edits happened before the subtask baseline, the
+        computed delta is a strict subset of the approved affected_files. Default
+        refresh must not silently shrink the blueprint contract.
+        """
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        (repo / "pre_baseline.py").write_text("x = 1")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        snap = map_step_runner.record_subtask_baseline(
+            "test-branch", "ST-001"
+        )
+        assert snap["status"] == "success"
+        bp = {"subtasks": [{
+            "id": "ST-001",
+            "affected_files": ["pre_baseline.py", "post_baseline.py"],
+        }]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        (repo / "post_baseline.py").write_text("y = 2")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        report = map_step_runner.refresh_blueprint_affected_files(
+            "test-branch", "ST-001"
+        )
+        assert report["status"] == "success", report
+        assert report["actual"] == ["post_baseline.py"]
+        assert report["current"] == ["post_baseline.py", "pre_baseline.py"]
+        assert report["diff"] == {"added": [], "removed": []}
+        reloaded = json.loads((branch_workspace / "blueprint.json").read_text())
+        assert reloaded["subtasks"][0]["affected_files"] == [
+            "post_baseline.py",
+            "pre_baseline.py",
+        ]
 
 
 class TestRecordDiagnosticsBaseline:

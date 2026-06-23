@@ -9789,20 +9789,30 @@ def subtask_token_usage(
 
 
 def refresh_blueprint_affected_files(
-    branch: str, subtask_id: str, *, dry_run: bool = False
+    branch: str,
+    subtask_id: str,
+    *,
+    dry_run: bool = False,
+    replace: bool = False,
 ) -> dict:
-    """Overwrite a subtask's `affected_files` in blueprint.json with the
+    """Refresh a subtask's `affected_files` in blueprint.json from the
     actual files this subtask changed (per-subtask baseline ∆ git status).
 
     Closes the recurring "blueprint affected_files drift" friction: paths
     decomposer guessed at planning time are routinely wrong, and the
     mutation-boundary check then flags every Monitor pass as `warning`.
-    Run this after Actor finishes a subtask to lock the planned surface
-    to reality before MONITOR — or after MONITOR pass to keep blueprint
-    auditable for downstream review.
+    Run this after Actor finishes a subtask to add the observed surface
+    before MONITOR — or after MONITOR pass to keep blueprint auditable for
+    downstream review.
+
+    Default mode is additive: merge the computed actual delta into the
+    existing approved `affected_files` instead of shrinking it. This protects
+    resume/compaction cases where some subtask edits happened before the
+    per-subtask baseline was recorded. Pass ``replace=True`` to intentionally
+    rewrite the list to the computed actual delta.
 
     Returns: status, subtask_id, previous, current, diff (added/removed),
-    blueprint_path, dry_run.
+    blueprint_path, dry_run, mode.
     """
     branch_name = _sanitize_branch(branch)
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
@@ -9917,7 +9927,7 @@ def refresh_blueprint_affected_files(
             ):
                 actual_set.add(path)
     actual_set -= baseline_files
-    current_files = sorted(actual_set)
+    actual_files = sorted(actual_set)
 
     previous_raw = subtasks[found_index].get("affected_files", []) or []
     previous_files = sorted({
@@ -9926,8 +9936,14 @@ def refresh_blueprint_affected_files(
         if isinstance(p, str) and p.strip()
     })
 
+    if replace:
+        current_files = actual_files
+    else:
+        current_files = sorted(set(previous_files) | set(actual_files))
+
     added = sorted(set(current_files) - set(previous_files))
     removed = sorted(set(previous_files) - set(current_files))
+    mode = "replace" if replace else "merge"
 
     if dry_run:
         return {
@@ -9935,8 +9951,10 @@ def refresh_blueprint_affected_files(
             "subtask_id": subtask_id,
             "blueprint_path": str(bp_path),
             "previous": previous_files,
+            "actual": actual_files,
             "current": current_files,
             "diff": {"added": added, "removed": removed},
+            "mode": mode,
         }
 
     subtasks[found_index]["affected_files"] = current_files
@@ -9950,8 +9968,10 @@ def refresh_blueprint_affected_files(
         "subtask_id": subtask_id,
         "blueprint_path": str(bp_path),
         "previous": previous_files,
+        "actual": actual_files,
         "current": current_files,
         "diff": {"added": added, "removed": removed},
+        "mode": mode,
     }
 
 
@@ -14152,12 +14172,13 @@ if __name__ == "__main__":
             sys.exit(1)
 
     elif func_name == "refresh_blueprint_affected_files" and len(sys.argv) >= 4:
-        # CLI: refresh_blueprint_affected_files <branch> <subtask_id> [--dry-run]
+        # CLI: refresh_blueprint_affected_files <branch> <subtask_id> [--dry-run] [--replace]
         branch_arg = sys.argv[2]
         sid_arg = sys.argv[3]
         dry_run_arg = "--dry-run" in sys.argv
+        replace_arg = "--replace" in sys.argv
         report = refresh_blueprint_affected_files(
-            branch_arg, sid_arg, dry_run=dry_run_arg
+            branch_arg, sid_arg, dry_run=dry_run_arg, replace=replace_arg
         )
         print(json.dumps(report, indent=2))
         if report.get("status") == "error":
