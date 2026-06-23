@@ -6,6 +6,8 @@ Workflow Context Injector - PreToolUse Hook (Tiered)
 Injects a short MAP workflow reminder ONLY for significant operations:
 - Edit/Write/MultiEdit: always inject
 - Bash: inject for test/build/vcs commands
+- Bash/Edit/Write: while a MAP worktree has unmerged git paths, inject the
+  conflict-resolution discipline
 
 Source of truth: .map/<branch>/step_state.json
 (single state file used for enforcement gates and workflow context injection).
@@ -17,6 +19,7 @@ Exit codes: Always 0 (non-blocking, just adds context)
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +29,8 @@ GOAL_HEADING_RE = r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)"
 REMINDER_LIMIT = 700
 PERSONAL_BLOCK_BUDGET_TOTAL = 10000
 PERSONAL_RULES_SEPARATOR = "\n\n"
+CONFLICT_CONTEXT_LIMIT = 1200
+CONFLICT_FILE_LIMIT = 8
 
 # Bash commands that don't need workflow reminders
 READONLY_COMMANDS = {
@@ -110,8 +115,6 @@ def sanitize_branch_name(branch: str) -> str:
 
 def get_branch_name() -> str:
     """Get current git branch name."""
-    import subprocess
-
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
@@ -327,6 +330,93 @@ def is_verification_command(command: str) -> bool:
         if re.search(pattern, command, re.IGNORECASE):
             return True
     return False
+
+
+def is_git_conflict_lifecycle_command(command: str) -> bool:
+    """Return True for merge/rebase lifecycle commands that should not get
+    a preflight conflict warning when the index is already clean.
+    """
+    return bool(
+        re.search(
+            r"\bgit\s+(?:merge\s+--(?:abort|quit|continue)|rebase\s+--(?:abort|quit|skip|continue))\b",
+            command,
+            re.IGNORECASE,
+        )
+    )
+
+
+def is_git_conflict_prone_command(command: str) -> bool:
+    """Return True when a Bash command is about to enter merge/rebase territory.
+
+    This is advisory-only. Actual conflicted-file detection is driven by git's
+    unmerged index state below.
+    """
+    if not command or is_git_conflict_lifecycle_command(command):
+        return False
+    return bool(re.search(r"\bgit\s+(?:merge|rebase)\b", command, re.IGNORECASE))
+
+
+def get_unmerged_files(project_dir: Path) -> list[str]:
+    """Return git paths with unmerged index entries, degrading to [] on error."""
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "--diff-filter=U", "-z", "--"],
+            cwd=project_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=False,
+            timeout=2,
+            check=False,
+        )
+    except Exception:
+        return []
+    if result.returncode != 0 or not result.stdout:
+        return []
+    return [
+        item.decode("utf-8", errors="replace")
+        for item in result.stdout.split(b"\0")
+        if item
+    ]
+
+
+def format_conflict_file_list(files: list[str]) -> str:
+    shown = [_truncate_at_word(path, 80) for path in files[:CONFLICT_FILE_LIMIT]]
+    suffix = ""
+    if len(files) > CONFLICT_FILE_LIMIT:
+        suffix = f", +{len(files) - CONFLICT_FILE_LIMIT} more"
+    return ", ".join(shown) + suffix
+
+
+def build_git_conflict_context(command: str, project_dir: Path) -> str:
+    """Build a short conflict-resolution guardrail for conflicted MAP runs."""
+    unmerged_files = get_unmerged_files(project_dir)
+    command_trigger = is_git_conflict_prone_command(command)
+    if not unmerged_files and not command_trigger:
+        return ""
+
+    if unmerged_files:
+        heading = "[MAP-CONFLICT] Unmerged files: " + format_conflict_file_list(
+            unmerged_files
+        )
+    else:
+        heading = (
+            "[MAP-CONFLICT] Merge/rebase preflight: if conflicts appear, use this discipline."
+        )
+
+    block = "\n".join(
+        [
+            heading,
+            "- Never blanket-accept ours/theirs for non-trivial files.",
+            "- List conflicts: git diff --name-only --diff-filter=U.",
+            "- Resolve one file or small batch at a time, preserving BOTH sides' intent.",
+            "- After each batch: check markers, run the test gate, then stage only resolved files.",
+            "- Continue merge/rebase only when no unmerged files remain.",
+            "- Final check: branch current with origin/main, no conflict markers, tests green.",
+        ]
+    )
+    if len(block) > CONFLICT_CONTEXT_LIMIT:
+        return _truncate_at_word(block, CONFLICT_CONTEXT_LIMIT)
+    return block
 
 
 def state_string(state: dict, key: str, default: str = "") -> str:
@@ -738,20 +828,29 @@ def main() -> None:
     tool_input = input_data.get("tool_input", {})
     if not isinstance(tool_input, dict):
         tool_input = {}
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
 
     # Determine if we should inject
     should_inject = False
     suppress_required = False
     skip_reason = ""
+    command = ""
+    conflict_context = ""
 
     if tool_name in ("Edit", "Write", "MultiEdit"):
         should_inject = True
     elif tool_name == "Bash":
-        command = tool_input.get("command", "")
-        if not isinstance(command, str):
+        command_value = tool_input.get("command", "")
+        if not isinstance(command_value, str):
             skip_reason = "bash command is not a string"
         else:
+            command = command_value
             should_inject = should_inject_for_bash(command)
+            if not should_inject:
+                state_snapshot, _ = read_step_state(branch)
+                if isinstance(state_snapshot, dict):
+                    conflict_context = build_git_conflict_context(command, project_dir)
+                    should_inject = bool(conflict_context)
             # Verification commands inject the base reminder but drop the
             # "REQUIRED: Run Actor" pressure tag — Actor running pytest on
             # their own work shouldn't be nagged to re-enter ACTOR.
@@ -788,6 +887,9 @@ def main() -> None:
         print("{}")
         sys.exit(0)
 
+    if not conflict_context:
+        conflict_context = build_git_conflict_context(command, project_dir)
+
     # Edits during a phase where editing is EXPECTED (ACTOR / TEST_WRITER)
     # don't need a trailing "REQUIRED: Run Actor" nag. The operator is
     # already doing exactly that — consecutive atomic Edits in the same
@@ -800,15 +902,20 @@ def main() -> None:
         suppress_required = True
     reminder = format_reminder(state, branch, suppress_required=suppress_required)
     if reminder:
-        project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+        context_parts = [reminder]
+        if conflict_context:
+            context_parts.append(conflict_context)
+        base_context = PERSONAL_RULES_SEPARATOR.join(context_parts)
         personal_count, personal_content = _load_personal_rules(project_dir)
         personal_limit = max(
             0,
-            PERSONAL_BLOCK_BUDGET_TOTAL - len(reminder) - len(PERSONAL_RULES_SEPARATOR),
+            PERSONAL_BLOCK_BUDGET_TOTAL - len(base_context) - len(PERSONAL_RULES_SEPARATOR),
         )
         personal_block = _build_personal_block(personal_count, personal_content, personal_limit)
         assembled = (
-            reminder if not personal_block else reminder + PERSONAL_RULES_SEPARATOR + personal_block
+            base_context
+            if not personal_block
+            else base_context + PERSONAL_RULES_SEPARATOR + personal_block
         )
         assert len(assembled) <= PERSONAL_BLOCK_BUDGET_TOTAL
         # Per-turn dedup: same reminder + same state_mtime within 5s = same
