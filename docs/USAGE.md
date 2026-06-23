@@ -258,6 +258,10 @@ This creates a Codex layout instead of `.claude/`:
 - `.codex/hooks.json` + `.codex/hooks/workflow-gate.py` — edit gate enforcement
 - `.map/scripts/` — shared orchestrator scripts (same as Claude provider)
 
+On reinstall or upgrade, MAP merges its `PreToolUse`/`Bash` workflow gate into
+an existing `.codex/hooks.json` instead of replacing project hook registrations.
+The installed `hooks.json` keeps Codex's strict top-level schema: only `hooks`.
+
 ### Using MAP with Codex
 
 ```bash
