@@ -467,6 +467,22 @@ IF {{feedback}} contains previous review findings:
 }
 ```
 
+### Qualitative Convergence Passes (Opt-In Only)
+
+When the caller explicitly marks this subtask/gate for qualitative convergence,
+your current review is one pass in a bounded sequence. The caller records each
+pass with `record_qualitative_convergence`; you must make the pass auditable:
+
+- `clean` means **no critical findings for this gate**, not globally defect-free.
+- A clean pass must still cite evidence (`path:line`, test command, or artifact)
+  for the contract slices you checked.
+- A non-clean pass must list concrete critical findings; do not emit
+  `clean=true` with findings or `clean=false` with no blocker.
+- On pass N>1, first verify the prior pass's critical findings are resolved and
+  that the fix did not introduce regressions; then perform the normal review.
+- Do not soften critical findings to help the run converge. If the max-pass cap
+  is reached, the caller escalates instead of treating the gate as passed.
+
 ### Disputed Findings Protocol
 
 ```
