@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.19.0] - 2026-06-24
+
 ### Fixed
 - **Blueprint affected-files refresh no longer shrinks approved subtask scope after resume (closes #273).** `refresh_blueprint_affected_files` now merges the computed actual delta into existing `affected_files` by default, preserving files that were already approved but excluded from the per-subtask baseline. The old destructive rewrite behavior remains available only via explicit `--replace`, and reports now expose both `actual` and `mode`.
 - **Plan resume requires an overlap floor, not containment alone (closes #274).** `check_plan_resume()` no longer returns a false `resume` verdict (with the dangerous "existing step_state ⇒ plan complete, print checkpoint and STOP" recommendation) when the new goal merely overlaps a contained-but-near-zero existing plan. The verdict now requires a minimum goal overlap in addition to containment, so a genuinely different goal starts fresh instead of silently resuming a stale plan.
