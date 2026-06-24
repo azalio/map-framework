@@ -43,6 +43,38 @@ def run_hook_bash(command: str) -> tuple[int, str, str]:
     return result.returncode, result.stdout, result.stderr
 
 
+def run_hook_bash_in(command: str, project_dir: Path) -> tuple[int, str, str]:
+    """Execute the hook with CLAUDE_PROJECT_DIR pointed at *project_dir*.
+
+    Used to exercise the autonomy git-block, which keys on the
+    ``mapify.autonomy`` sentinel in ``<project_dir>/.claude/settings.local.json``.
+    """
+    import os
+
+    input_data = {"tool_name": "Bash", "tool_input": {"command": command}}
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(project_dir)}
+    result = subprocess.run(
+        [sys.executable, str(HOOK_PATH)],
+        input=json.dumps(input_data),
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    return result.returncode, result.stdout, result.stderr
+
+
+def _write_autonomy_settings(project_dir: Path, enabled: bool) -> None:
+    """Write .claude/settings.local.json with the autonomy sentinel set/cleared."""
+    settings = project_dir / ".claude" / "settings.local.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, object] = {
+        "permissions": {"allow": ["Bash(*)"], "deny": ["Bash(git commit:*)"]}
+    }
+    if enabled:
+        payload["mapify"] = {"autonomy": True}
+    settings.write_text(json.dumps(payload))
+
+
 def _parse_stdout(stdout: str) -> dict:
     stdout = (stdout or "").strip()
     if not stdout:
@@ -358,6 +390,76 @@ class TestLegitimateCommands:
         exit_code, stdout, _ = run_hook_bash(command)
         assert exit_code == 0
         assert _parse_stdout(stdout) == {}
+
+
+# =============================================================================
+# Autonomy git-block Tests
+# =============================================================================
+
+
+class TestAutonomyGitBlock:
+    """git commit/push hard-block, gated on the mapify.autonomy sentinel."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git commit",
+            'git commit -m "wip"',
+            "git push",
+            "git push origin main",
+            "git push --force origin feature",  # not main/master, but autonomy blocks all push
+            "bash -c 'git commit'",  # wrapper bypass of permission-deny — hook catches it
+            "git status && git commit -m x",  # chained
+            "git -C /repo commit -m x",  # -C <path> before subcommand
+        ],
+    )
+    def test_git_write_blocked_when_autonomy_on(self, command, tmp_path):
+        _write_autonomy_settings(tmp_path, enabled=True)
+        exit_code, stdout, _ = run_hook_bash_in(command, tmp_path)
+        assert exit_code == 0
+        _assert_denied(_parse_stdout(stdout))
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git status",
+            "git diff",
+            "git log --oneline",
+            "git add .",
+            "echo committing",  # 'commit' substring, not a git subcommand
+            "pytest -q",
+        ],
+    )
+    def test_read_only_git_allowed_when_autonomy_on(self, command, tmp_path):
+        _write_autonomy_settings(tmp_path, enabled=True)
+        exit_code, stdout, _ = run_hook_bash_in(command, tmp_path)
+        assert exit_code == 0
+        assert _parse_stdout(stdout) == {}
+
+    @pytest.mark.parametrize("command", ["git commit -m x", "git push origin main"])
+    def test_git_write_allowed_when_autonomy_off(self, command, tmp_path):
+        _write_autonomy_settings(tmp_path, enabled=False)
+        exit_code, stdout, _ = run_hook_bash_in(command, tmp_path)
+        assert exit_code == 0
+        assert _parse_stdout(stdout) == {}
+
+    def test_git_write_allowed_when_no_settings_file(self, command="git commit -m x"):
+        # No .claude/settings.local.json at all → autonomy off → not blocked.
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            exit_code, stdout, _ = run_hook_bash_in(command, Path(d))
+        assert exit_code == 0
+        assert _parse_stdout(stdout) == {}
+
+    def test_force_push_still_blocked_when_autonomy_off(self, tmp_path):
+        # The baseline force-push guard is independent of autonomy mode.
+        _write_autonomy_settings(tmp_path, enabled=False)
+        exit_code, stdout, _ = run_hook_bash_in(
+            "git push --force origin main", tmp_path
+        )
+        assert exit_code == 0
+        _assert_denied(_parse_stdout(stdout))
 
 
 # =============================================================================

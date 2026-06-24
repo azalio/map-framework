@@ -622,6 +622,107 @@ class TestSofaGitignoreMerge:
         )
 
 
+class TestAutonomyPosture:
+    """Tests for the opt-in --autonomy posture in settings.local.json."""
+
+    def _read_local(self, tmp_path):
+        return json.loads(
+            (tmp_path / ".claude" / "settings.local.json").read_text()
+        )
+
+    def test_autonomy_true_writes_broad_allow_deny_and_sentinel(self, tmp_path):
+        from mapify_cli.config.settings import create_or_merge_project_settings_local
+
+        create_or_merge_project_settings_local(tmp_path, autonomy=True)
+
+        data = self._read_local(tmp_path)
+        allow = data["permissions"]["allow"]
+        deny = data["permissions"]["deny"]
+        assert "Bash(*)" in allow
+        assert "Edit(*)" in allow and "Write(*)" in allow
+        assert "Bash(git commit:*)" in deny
+        assert "Bash(git push:*)" in deny
+        # Sentinel beside the permissions it governs (read by the hook).
+        assert data["mapify"]["autonomy"] is True
+        # Narrow dev allowlist still merged (not replaced by autonomy).
+        assert "Bash(go test *)" in allow
+
+    def test_autonomy_true_gitignores_settings_local(self, tmp_path):
+        from mapify_cli.config.settings import create_or_merge_project_settings_local
+
+        create_or_merge_project_settings_local(tmp_path, autonomy=True)
+
+        content = (tmp_path / ".gitignore").read_text()
+        assert ".claude/settings.local.json" in content.splitlines()
+        assert "# map:settings-local" in content
+
+    def test_autonomy_none_leaves_no_sentinel(self, tmp_path):
+        from mapify_cli.config.settings import create_or_merge_project_settings_local
+
+        create_or_merge_project_settings_local(tmp_path, autonomy=None)
+
+        data = self._read_local(tmp_path)
+        assert "mapify" not in data
+        assert "Bash(*)" not in data["permissions"]["allow"]
+        # Default: settings.local.json is not auto-gitignored without --autonomy.
+        assert not (tmp_path / ".gitignore").exists()
+
+    def test_autonomy_false_removes_posture(self, tmp_path):
+        from mapify_cli.config.settings import create_or_merge_project_settings_local
+
+        create_or_merge_project_settings_local(tmp_path, autonomy=True)
+        create_or_merge_project_settings_local(tmp_path, autonomy=False)
+
+        data = self._read_local(tmp_path)
+        assert "Bash(*)" not in data["permissions"]["allow"]
+        assert "Bash(git commit:*)" not in data["permissions"]["deny"]
+        assert "mapify" not in data
+        # Teardown preserves the narrow dev allowlist.
+        assert "Bash(go test *)" in data["permissions"]["allow"]
+
+    def test_autonomy_true_idempotent(self, tmp_path):
+        from mapify_cli.config.settings import create_or_merge_project_settings_local
+
+        create_or_merge_project_settings_local(tmp_path, autonomy=True)
+        create_or_merge_project_settings_local(tmp_path, autonomy=True)
+
+        data = self._read_local(tmp_path)
+        assert data["permissions"]["allow"].count("Bash(*)") == 1
+        assert data["permissions"]["deny"].count("Bash(git commit:*)") == 1
+        content = (tmp_path / ".gitignore").read_text()
+        assert content.count("# map:settings-local") == 1
+        assert content.count(".claude/settings.local.json") == 1
+
+    def test_init_autonomy_flag_end_to_end(self, tmp_path):
+        os.chdir(tmp_path)
+
+        result = runner.invoke(
+            app, ["init", ".", "--no-git", "--mcp", "none", "--autonomy"]
+        )
+
+        assert result.exit_code == 0, f"init --autonomy failed: {result.stdout}"
+        data = json.loads(
+            (tmp_path / ".claude" / "settings.local.json").read_text()
+        )
+        assert data["mapify"]["autonomy"] is True
+        assert "Bash(*)" in data["permissions"]["allow"]
+        assert ".claude/settings.local.json" in (
+            tmp_path / ".gitignore"
+        ).read_text().splitlines()
+
+    def test_init_default_no_autonomy_sentinel(self, tmp_path):
+        os.chdir(tmp_path)
+
+        result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none"])
+
+        assert result.exit_code == 0, f"init failed: {result.stdout}"
+        data = json.loads(
+            (tmp_path / ".claude" / "settings.local.json").read_text()
+        )
+        assert "mapify" not in data
+        assert "Bash(*)" not in data["permissions"]["allow"]
+
+
 class TestCheckCommand:
     """Test the check command."""
 

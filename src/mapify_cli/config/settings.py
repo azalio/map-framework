@@ -2,9 +2,74 @@
 
 import json
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from mapify_cli.cli_ui import console
+
+
+# ---------------------------------------------------------------------------
+# Autonomy posture (opt-in via `mapify init --autonomy`)
+# ---------------------------------------------------------------------------
+#
+# "YOLO-minus-git": auto-approve most tools locally while keeping the human in
+# control of commit/push. This is a *personal* risk preference, so it is written
+# ONLY to the per-user, gitignored .claude/settings.local.json — never to the
+# committed, team-shared .claude/settings.json baseline.
+#
+# The permission-level git deny below is documentation / defense-in-depth: under
+# a broad ``Bash(*)`` allow it is bypassable (``bash -c 'git commit'`` matches as
+# ``bash``). The actual hard block is the ``safety-guardrails.py`` PreToolUse
+# hook, which is gated on the ``mapify.autonomy`` sentinel this module writes.
+_AUTONOMY_ALLOW = [
+    "Bash(*)",
+    "Read(*)",
+    "Edit(*)",
+    "Write(*)",
+    "MultiEdit(*)",
+    "Glob(*)",
+    "Grep(*)",
+    "LS(*)",
+]
+_AUTONOMY_DENY = [
+    "Bash(git commit:*)",
+    "Bash(git push:*)",
+]
+
+_SETTINGS_LOCAL_GITIGNORE_MARKER = "# map:settings-local"
+_SETTINGS_LOCAL_GITIGNORE_BLOCK = (
+    "# map:settings-local — per-user Claude Code approvals / autonomy posture; "
+    "never commit\n"
+    ".claude/settings.local.json\n"
+)
+
+
+def ensure_settings_local_gitignored(project_path: Path) -> int:
+    """Idempotently add ``.claude/settings.local.json`` to the repo-root .gitignore.
+
+    A personal autonomy posture must not leak into the team via a committed
+    settings.local.json. Mirrors ``merge_sofa_gitignore``: the OR-guard skips the
+    append whenever our marker OR an active ignore line is already present, so the
+    entry is never duplicated regardless of how the user got it there.
+
+    Returns 1 when the file was created or modified, 0 when already up-to-date.
+    """
+    gitignore = project_path / ".gitignore"
+
+    if not gitignore.exists():
+        gitignore.write_text(_SETTINGS_LOCAL_GITIGNORE_BLOCK)
+        return 1
+
+    existing = gitignore.read_text()
+    ignored_lines = {line.strip() for line in existing.splitlines()}
+    if (
+        _SETTINGS_LOCAL_GITIGNORE_MARKER in existing
+        or ".claude/settings.local.json" in ignored_lines
+    ):
+        return 0
+
+    separator = "" if existing.endswith("\n") else "\n"
+    gitignore.write_text(existing + separator + _SETTINGS_LOCAL_GITIGNORE_BLOCK)
+    return 1
 
 
 def configure_global_permissions() -> None:
@@ -91,7 +156,9 @@ def configure_global_permissions() -> None:
     )
 
 
-def create_or_merge_project_settings_local(project_path: Path) -> None:
+def create_or_merge_project_settings_local(
+    project_path: Path, *, autonomy: Optional[bool] = None
+) -> None:
     """Create/merge .claude/settings.local.json with safe project allowlist.
 
     Claude Code supports per-project approvals via `.claude/settings.local.json`.
@@ -105,6 +172,16 @@ def create_or_merge_project_settings_local(project_path: Path) -> None:
 
     We keep this allowlist intentionally narrow and focused on common safe actions
     for local development workflows.
+
+    Args:
+        project_path: Target project root.
+        autonomy: Opt-in "YOLO-minus-git" posture.
+            - ``True``  → merge a broad tool allowlist + git commit/push deny and
+              write the ``mapify.autonomy`` sentinel (also gitignores the file).
+            - ``False`` → remove the autonomy allow/deny entries and the sentinel
+              (teardown for ``--no-autonomy``).
+            - ``None``  → leave any existing autonomy posture untouched (default on
+              re-run, so re-init never silently flips a user's choice).
     """
 
     settings_file = project_path / ".claude" / "settings.local.json"
@@ -167,4 +244,60 @@ def create_or_merge_project_settings_local(project_path: Path) -> None:
     permissions.setdefault("deny", [])
     permissions.setdefault("ask", [])
 
+    # Autonomy posture (opt-in). None = leave as-is.
+    if autonomy is True:
+        _apply_autonomy(existing_settings, permissions)
+    elif autonomy is False:
+        _remove_autonomy(existing_settings, permissions)
+
     settings_file.write_text(json.dumps(existing_settings, indent=2) + "\n")
+
+    if autonomy is True:
+        ensure_settings_local_gitignored(project_path)
+        console.print(
+            "[yellow]Autonomy mode:[/yellow] auto-allowing most tools in "
+            ".claude/settings.local.json (per-user, gitignored). git commit/push "
+            "stay blocked — you run them. The local deny overrides the team baseline."
+        )
+    elif autonomy is False:
+        console.print(
+            "[dim]Autonomy mode disabled: removed local broad-allow + git block "
+            "from .claude/settings.local.json.[/dim]"
+        )
+
+
+def _apply_autonomy(settings: Dict[str, Any], permissions: Dict[str, Any]) -> None:
+    """Add the broad allow + git deny entries and the autonomy sentinel."""
+    allow = permissions.setdefault("allow", [])
+    for entry in _AUTONOMY_ALLOW:
+        if entry not in allow:
+            allow.append(entry)
+
+    deny = permissions.setdefault("deny", [])
+    for entry in _AUTONOMY_DENY:
+        if entry not in deny:
+            deny.append(entry)
+
+    # Sentinel beside the permissions it governs so posture and permissions
+    # cannot drift apart; read by the safety-guardrails.py PreToolUse hook.
+    mapify_meta = settings.setdefault("mapify", {})
+    if isinstance(mapify_meta, dict):
+        mapify_meta["autonomy"] = True
+
+
+def _remove_autonomy(settings: Dict[str, Any], permissions: Dict[str, Any]) -> None:
+    """Remove the autonomy allow/deny entries and the sentinel (teardown)."""
+    if isinstance(permissions.get("allow"), list):
+        permissions["allow"] = [
+            e for e in permissions["allow"] if e not in _AUTONOMY_ALLOW
+        ]
+    if isinstance(permissions.get("deny"), list):
+        permissions["deny"] = [
+            e for e in permissions["deny"] if e not in _AUTONOMY_DENY
+        ]
+
+    mapify_meta = settings.get("mapify")
+    if isinstance(mapify_meta, dict):
+        mapify_meta.pop("autonomy", None)
+        if not mapify_meta:
+            settings.pop("mapify", None)
