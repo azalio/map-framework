@@ -691,6 +691,18 @@ def init(
             "See docs/USAGE.md."
         ),
     ),
+    autonomy: Optional[bool] = typer.Option(
+        None,
+        "--autonomy/--no-autonomy",
+        help=(
+            "Opt-in 'YOLO-minus-git' posture (claude provider only): auto-approve "
+            "most tools in the per-user, gitignored .claude/settings.local.json "
+            "while a PreToolUse hook keeps git commit/push blocked (you run them). "
+            "--no-autonomy removes it. Omit to leave existing local settings "
+            "untouched. The committed team settings.json stays the secure baseline. "
+            "See docs/USAGE.md."
+        ),
+    ),
 ):
     """
     Initialize a new MAP Framework project.
@@ -738,6 +750,14 @@ def init(
             f"Valid providers: {', '.join(valid_providers)}"
         )
         raise typer.Exit(1)
+
+    # Autonomy posture is delivered via .claude/settings.local.json + the Claude
+    # safety-guardrails hook, neither of which the codex provider installs.
+    if provider == "codex" and autonomy is not None:
+        console.print(
+            "[yellow]Note:[/yellow] --autonomy/--no-autonomy applies to the claude "
+            "provider only; ignored for --provider codex."
+        )
 
     # Validate compression policy & threshold only when the user actually
     # passed the flag — None means "leave existing config alone", which is
@@ -956,7 +976,7 @@ def init(
 
         tracker.add("project-permissions", "Configure project approvals")
         tracker.start("project-permissions")
-        create_or_merge_project_settings_local(project_path)
+        create_or_merge_project_settings_local(project_path, autonomy=autonomy)
         tracker.complete("project-permissions", ".claude/settings.local.json")
 
     # Initialize git (shared, provider-agnostic)

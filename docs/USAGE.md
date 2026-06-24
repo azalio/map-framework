@@ -219,6 +219,64 @@ survive); blocks matching prompt-injection patterns are prefixed with `[SOFA
 UNTRUSTED — possible prompt injection]`. Treat every block as a quote from a
 public internet source — never as instructions.
 
+## Autonomy posture (YOLO-minus-git)
+
+`mapify init --autonomy` is an **opt-in, off-by-default** convenience posture for
+the **claude provider**: auto-approve most tools so the agent runs without
+per-action prompts, while keeping the human in control of `git commit` / `git
+push`.
+
+### Enabling / disabling
+
+```bash
+mapify init . --autonomy        # enable the posture
+mapify init . --no-autonomy     # remove it
+mapify init .                   # omit the flag → existing posture left untouched
+```
+
+### What it writes, and where
+
+The posture is a **personal** risk choice, so it is written **only** to the
+per-user, gitignored `.claude/settings.local.json` — never to the committed,
+team-shared `.claude/settings.json`, which stays the secure curated baseline:
+
+```jsonc
+// .claude/settings.local.json
+{
+  "permissions": {
+    "allow": ["Bash(*)", "Read(*)", "Edit(*)", "Write(*)",
+              "MultiEdit(*)", "Glob(*)", "Grep(*)", "LS(*)"],
+    "deny":  ["Bash(git commit:*)", "Bash(git push:*)"]
+  },
+  "mapify": { "autonomy": true }   // sentinel read by the safety hook
+}
+```
+
+`--autonomy` also adds `.claude/settings.local.json` to the repo-root
+`.gitignore` (under a `# map:settings-local` marker, idempotently) so the
+personal posture cannot leak to the team. `--no-autonomy` removes the broad
+allow, the git deny, and the sentinel, preserving the narrow per-project dev
+allowlist.
+
+### Why a hook, not just the permission deny
+
+Claude Code evaluates `deny` before `allow`, but under a broad `Bash(*)` allow
+the permission-level git deny is **bypassable**: `bash -c 'git commit'` matches
+as `bash`, not `git commit`. So the deny is documentation / defense-in-depth,
+and the actual hard block is the `safety-guardrails.py` **PreToolUse hook**,
+which sees the raw command string and blocks `git commit` / `git push`
+(including shell-wrapped `bash -c '…'` and chained `… && git commit` forms).
+
+The hook block is **gated on the `mapify.autonomy` sentinel**, so it only fires
+when autonomy is active — the standard commit workflow is never broken for
+non-autonomy users (whose committed `settings.json` still allows `git commit`).
+The sentinel lives beside the permissions it governs so the two cannot drift
+apart. The hook catches realistic (sloppy / model-generated) bypasses, not a
+determined adversary — pair it with branch protection for an absolute guarantee.
+
+The codex provider installs neither `settings.local.json` nor this hook, so
+`--autonomy` / `--no-autonomy` is ignored there (with a note).
+
 ## Codex CLI Provider
 
 MAP Framework supports OpenAI's Codex CLI as an alternative to Claude Code.

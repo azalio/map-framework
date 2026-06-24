@@ -163,6 +163,64 @@ def check_command_safety(command: str) -> tuple[bool, str]:
     return True, ""
 
 
+def _autonomy_enabled() -> bool:
+    """Return True when the per-user autonomy posture is active.
+
+    Detected via the ``mapify.autonomy`` sentinel that ``mapify init --autonomy``
+    writes into the gitignored ``.claude/settings.local.json``. The sentinel lives
+    beside the permissions it governs so posture and permissions cannot drift
+    apart. Read fresh on each invocation (the hook is a short-lived subprocess).
+    """
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+    path = os.path.join(project_dir, ".claude", "settings.local.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return False
+    return (
+        isinstance(data, dict)
+        and isinstance(data.get("mapify"), dict)
+        and data["mapify"].get("autonomy") is True
+    )
+
+
+def check_autonomy_git_block(command: str) -> tuple[bool, str]:
+    """Hard-block ``git commit`` / ``git push`` when autonomy mode is active.
+
+    Under a broad ``Bash(*)`` allow the permission-level deny for git commit/push
+    is bypassable (``bash -c 'git commit'`` matches as ``bash``, not as
+    ``git commit``). This PreToolUse hook sees the raw command string, so a single
+    regex over the whole command catches the wrapped/chained forms too — it is the
+    only gate that survives ``bash -c``. Catches realistic (sloppy /
+    model-generated) bypasses, not a determined adversary; pair with branch
+    protection for an absolute guarantee.
+    """
+    if not command or not _autonomy_enabled():
+        return True, ""
+
+    import re
+
+    # ``git`` must start a shell token (handles ``bash -c 'git commit'``);
+    # optional git options / ``-C <path>`` may sit between git and the subcommand;
+    # the subcommand must itself be a full token (avoids matching ``committing``).
+    git_block = re.compile(
+        r"(?:^|[\s;&|`'\"()])"
+        r"git\s+"
+        r"(?:-\S+\s+|-C\s+\S+\s+|-c\s+\S+\s+)*"
+        r"(?:commit|push)"
+        r"(?:$|[\s;&|`'\"()])",
+        re.IGNORECASE,
+    )
+    if git_block.search(command):
+        return (
+            False,
+            "Autonomy mode blocks git commit/push — run it yourself "
+            "(human owns commit/push).",
+        )
+    return True, ""
+
+
 def deny(reason: str) -> None:
     """Deny tool execution using structured PreToolUse decision control."""
     print(
@@ -202,6 +260,9 @@ def main() -> None:
         is_safe, reason = check_command_safety(command)
         if not is_safe:
             deny(f"{reason} (tool={tool_name})")
+        is_safe, reason = check_autonomy_git_block(command)
+        if not is_safe:
+            deny(reason)
 
     print("{}")
     sys.exit(0)

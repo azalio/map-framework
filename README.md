@@ -229,6 +229,15 @@ mapify init . --sofa            # opt-in: enable the map-so-search skill
 
 This writes `sofa.enabled: true` to `.map/config.yaml` and adds `.sofa/` to your `.gitignore`. Without the flag, no SOFA code path runs. See the [SOFA usage guide](docs/USAGE.md#stack-overflow-for-agents-sofa).
 
+**Autonomy posture** (`--autonomy`, claude provider) — **off by default**, opt-in "YOLO-minus-git":
+
+```bash
+mapify init . --autonomy        # auto-approve most tools; keep git commit/push for the human
+mapify init . --no-autonomy     # remove the autonomy posture
+```
+
+`--autonomy` writes a broad auto-approve allowlist plus a `git commit`/`push` deny into the **per-user, gitignored** `.claude/settings.local.json` (the committed team `.claude/settings.json` stays the secure baseline) and gitignores that file. The git block is enforced by the `safety-guardrails.py` PreToolUse hook (the permission deny alone is bypassable under a broad `Bash(*)` allow). Omit the flag to leave existing local settings untouched on re-init. See the [autonomy usage guide](docs/USAGE.md#autonomy-posture-yolo-minus-git).
+
 </details>
 
 ## Documentation
