@@ -70,6 +70,7 @@ REQUIRE_GUARD = {
     "ralph-context-pruner.py",
     "pre-compact-save-transcript.py",
     "end-of-turn.sh",
+    "scrub-internal-ids.py",
     "map-memory-capture.py",
     "map-memory-endmark.py",
     "map-memory-finalize.py",

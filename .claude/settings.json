@@ -183,6 +183,17 @@
     ],
     "Stop": [
       {
+        "description": "Strip MAP-internal workflow IDs at run completion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/scrub-internal-ids.py",
+            "timeout": 120,
+            "description": "On WORKFLOW_COMPLETE, removes leaked ST-/AC-/VC-/INV-/HC- IDs from run-changed code and commits the cleanup (gated, runs once)"
+          }
+        ]
+      },
+      {
         "description": "Lightweight quality gates - only critical issues",
         "hooks": [
           {

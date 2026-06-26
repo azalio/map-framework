@@ -47,6 +47,7 @@ the top-level session. They early-exit when the flag is set.
 | `ralph-context-pruner.py` | `PreCompact` | No | Restore-point/pruning belongs to the top-level transcript |
 | `pre-compact-save-transcript.py` | `PreCompact` | No | Saving the parent transcript; a nested run has its own short-lived transcript |
 | `end-of-turn.sh` | `Stop` | No | Auto-format could edit files outside a nested Actor's `affected_files`; lint surfacing is the orchestrator's job |
+| `scrub-internal-ids.py` | `Stop` | No | Scrub + cleanup-commit is a top-level run-completion concern; a nested Actor (`MAP_INVOKED_BY` set) must not rewrite or commit the parent run's tree |
 | `map-memory-capture.py` | `Stop` | No | Memory capture is a top-level-session concern; a nested run (MAP_INVOKED_BY set) must not write to the parent's session WAL |
 | `map-memory-endmark.py` | `SessionEnd` | No | End-marker belongs to the top-level session WAL; a nested run must not write an ended marker into the parent's scratch |
 | `map-memory-finalize.py` | `SessionStart` | No | Digest finalization is a top-level-session concern; a nested run must not finalize the parent's session scratch |

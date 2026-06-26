@@ -122,6 +122,12 @@ class MapConfig:
     # .map/config.yaml. When enabled, the map-so-search skill is available.
     sofa_enabled: bool = False
 
+    # Strip MAP-internal workflow IDs (ST-/AC-/VC-/INV-/HC-) from run-changed
+    # code at workflow completion (Stop hook `scrub-internal-ids.py`). On by
+    # default; set `scrub_internal_ids: false` in .map/config.yaml to opt out
+    # and keep the IDs the framework wrote into comments/strings/test names.
+    scrub_internal_ids: bool = True
+
 
 def load_map_config(project_path: Path) -> MapConfig:
     """Load MAP config from .map/config.yaml with fallback to defaults.
@@ -384,6 +390,11 @@ minimality: lite
 # Stack Overflow for Agents (SOFA) integration — opt-in, off by default.
 # Enable via `mapify init --sofa` or uncomment the line below.
 # sofa.enabled: false
+
+# Strip MAP-internal workflow IDs (ST-/AC-/VC-/INV-/HC-) from the code a run
+# changed, at workflow completion (Stop hook). On by default; uncomment and set
+# to false to keep the IDs the framework wrote into comments/strings/test names.
+# scrub_internal_ids: true
 """
 
 

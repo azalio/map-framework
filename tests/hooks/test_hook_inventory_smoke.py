@@ -316,6 +316,13 @@ HOOK_CASES: dict[str, list[HookCase]] = {
         HookCase("non-git-noop", {}, _assert_noop, cwd_factory=lambda project: project),
         HookCase("syntax-block", {}, _assert_end_turn_blocks_syntax, cwd_factory=_make_dirty_git_repo),
     ],
+    "scrub-internal-ids.py": [
+        # The shared fixture's step_state has no WORKFLOW_COMPLETE status, so the
+        # scrub hook gates out and stays a silent no-op. The active scrub + commit
+        # path (which needs a completed git workflow) is covered end-to-end in
+        # tests/hooks/test_scrub_internal_ids_hook.py.
+        HookCase("not-complete-noop", {}, _assert_noop),
+    ],
     "map-token-meter.py": [
         HookCase("subagentstop-records", {"agent_transcript_path": "__PROJECT__/transcript.jsonl", "agent_type": "actor"}, _assert_token_accounting),
         HookCase("stop-records-main", {"transcript_path": "__PROJECT__/transcript.jsonl"}, _assert_token_accounting),

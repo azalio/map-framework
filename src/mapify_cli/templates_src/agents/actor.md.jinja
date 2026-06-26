@@ -776,6 +776,7 @@ Follow this protocol exactly — do not infer "how seniors write" or add stylist
 4. **Intent comments**: Add a one-line `# Intent: <why>` comment above any non-obvious logic block. Do NOT comment obvious code.
 5. **Performance**: Clarity first, optimize only if proven necessary.
 6. **Imports**: Group by stdlib → third-party → local. One blank line between groups.
+7. **No internal workflow IDs in comments or strings**: NEVER write MAP-internal workflow identifiers — subtask `ST-001`, acceptance criteria `AC-3`, verification criteria `VC1`, invariants `INV-7`, hard constraints `HC-1` — into shipped code comments or string literals. They are workflow scaffolding, not user-facing documentation. State the *reason* without the ID (`# enforce single-writer invariant`, not `# INV-7 single writer`). The one exception is the transient `test_vc<n>_*` test-naming aid described above: keep it during the run — the framework strips the `vc<n>` segment from shipped tests automatically at completion.
 
 ## Error Handling Patterns
 
