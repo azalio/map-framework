@@ -50,7 +50,7 @@ parallel_tool_policy: validation_gates_only
 
 - Use deeper reasoning for version selection, release safety, CI interpretation, and rollback decisions.
 - Parallelize only independent pre-release validation gates when their outputs do not depend on one another.
-- Keep version bumping, commits, tags, pushes, GitHub release creation, PyPI verification, and any irreversible or state-mutating operation sequential with the required user confirmation gates.
+- Keep version bumping, commits, tags, pushes, PyPI verification, and any irreversible or state-mutating operation sequential with the required user confirmation gates.
 
 ## Workflow Overview
 
@@ -65,7 +65,7 @@ Phase 3: Execute Version Bump Script (updates code + git commit + tag)
    ↓
 Phase 4: Push Commit and Tag ⚠️ IRREVERSIBLE - triggers CI/CD
    ↓
-Phase 5: GitHub Release and CI/CD Monitoring (watch pipeline)
+Phase 5: CI/CD Monitoring (watch pipeline — GitHub Release created automatically)
    ↓
 Phase 6: Post-Release Verification (PyPI + installation test)
    ↓
@@ -651,9 +651,9 @@ echo "Tag pushed at: $(date)"
 
 ---
 
-## Phase 5: GitHub Release and CI/CD Monitoring
+## Phase 5: CI/CD Monitoring
 
-**Purpose:** Create GitHub release and monitor CI/CD pipeline until completion.
+**Purpose:** Monitor CI/CD pipeline until completion. The GitHub Release is created automatically by the release workflow (no manual step needed).
 
 ### 5.1 Wait for CI/CD Workflow to Start
 
@@ -712,36 +712,6 @@ if [[ "$FINAL_STATUS" != "success" ]]; then
 fi
 
 echo "✅ Release workflow completed successfully"
-```
-
-### 5.4 Create GitHub Release
-
-Extract changelog excerpt and create GitHub release:
-
-```bash
-# Get version from tag
-TAG_VERSION="${LAST_TAG#v}"
-
-# Extract changelog excerpt for this version
-CHANGELOG_EXCERPT=$(awk "/## \[$TAG_VERSION\]/,/## \[/" CHANGELOG.md | sed '$d')
-
-# Create GitHub release
-echo ""
-echo "Creating GitHub release..."
-gh release create "$LAST_TAG" \
-  --title "MAP Framework $LAST_TAG" \
-  --notes "$CHANGELOG_EXCERPT"
-
-if [[ $? -ne 0 ]]; then
-  echo "❌ ERROR: Failed to create GitHub release"
-  echo "You can create manually: gh release create $LAST_TAG"
-else
-  echo "✅ GitHub release created: $LAST_TAG"
-fi
-
-# Get release URL
-RELEASE_URL=$(gh release view "$LAST_TAG" --json url --jq '.url')
-echo "Release URL: $RELEASE_URL"
 ```
 
 ---
@@ -882,7 +852,7 @@ echo "Version Released: $TAG_VERSION"
 echo "Bump Type: $BUMP_TYPE"
 echo "Release Tag: $LAST_TAG"
 echo ""
-echo "GitHub Release: $RELEASE_URL"
+echo "GitHub Release: https://github.com/azalio/map-framework/releases/tag/$LAST_TAG"
 echo "PyPI Package: $PYPI_URL"
 echo ""
 echo "CI/CD Workflow: Run ID $RUN_ID"
@@ -942,7 +912,7 @@ echo ""
 echo "MAP Framework $TAG_VERSION successfully released!"
 echo ""
 echo "Package: https://pypi.org/project/mapify-cli/$TAG_VERSION/"
-echo "Release: $RELEASE_URL"
+echo "Release: https://github.com/azalio/map-framework/releases/tag/$LAST_TAG"
 echo ""
 echo "Install: pip install mapify-cli==$TAG_VERSION"
 echo ""
@@ -1237,8 +1207,7 @@ You should:
    ```bash
    gh run list --workflow=release.yml --limit 1
    gh run watch <run-id>
-   # Create GitHub release
-   gh release create v1.0.1 --title "MAP Framework v1.0.1" --notes "$(awk ...)"
+   # GitHub Release is created automatically by the workflow
    ```
 
 6. **Phase 6 - Verify PyPI:**

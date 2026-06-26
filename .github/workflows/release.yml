@@ -30,6 +30,9 @@ jobs:
   publish:
     needs: ci
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # Required for PyPI OIDC authentication
+      contents: write  # Required for creating GitHub Release
 
     steps:
     - name: Checkout repository
@@ -94,3 +97,25 @@ jobs:
       uses: pypa/gh-action-pypi-publish@v1.13.0
       with:
         skip-existing: true
+
+    - name: Extract changelog for GitHub Release
+      id: changelog
+      run: |
+        VERSION="${{ steps.get_version.outputs.VERSION }}"
+        EXCERPT=$(awk "/^## \[${VERSION}\]/,/^## \[/" CHANGELOG.md | sed '1d;$d')
+        if [ -z "$EXCERPT" ]; then
+          echo "::warning::No changelog excerpt found for version ${VERSION}"
+          EXCERPT="See CHANGELOG.md for details."
+        fi
+        echo "$EXCERPT" > /tmp/changelog_excerpt.md
+        echo "excerpt_file=/tmp/changelog_excerpt.md" >> $GITHUB_OUTPUT
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ github.ref_name }}
+        name: MAP Framework ${{ github.ref_name }}
+        body_path: ${{ steps.changelog.outputs.excerpt_file }}
+        draft: false
+        prerelease: false
+        fail_on_unmatched_files: false
