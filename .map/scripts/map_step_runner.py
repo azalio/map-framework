@@ -2317,6 +2317,53 @@ def _load_learned_rules() -> list[dict[str, object]]:
     return rules
 
 
+def _filter_learned_rules_by_files(
+    learned_rules: list[dict[str, object]], affected_files: list[str]
+) -> list[dict[str, object]]:
+    """Filter learned rules to those applicable to the given affected files.
+
+    Rules without ``paths:`` frontmatter are always included (unconditional).
+    Rules with ``paths:`` are included only when at least one affected file
+    matches at least one path glob.  When *affected_files* is empty (the
+    subtask has no declared file targets), all rules are included — we cannot
+    safely exclude scoped rules without file context.
+    """
+    if not affected_files:
+        return learned_rules
+
+    filtered: list[dict[str, object]] = []
+    for rule in learned_rules:
+        rule_paths = cast(list[object], rule.get("paths", []))
+        str_paths: list[str] = [
+            str(p) for p in rule_paths if isinstance(p, str) and p.strip()
+        ]
+        if not str_paths:
+            filtered.append(rule)
+            continue
+        if _paths_match_rule_scope(str_paths, affected_files):
+            filtered.append(rule)
+    return filtered
+
+
+def _format_learned_rules_block(rules: list[dict[str, object]]) -> str:
+    """Format applicable learned rules as a compact context block."""
+    if not rules:
+        return ""
+
+    lines = [
+        "<learned_rules>",
+        f"[learned-rules: {len(rules)} applicable rules]",
+    ]
+    for rule in rules:
+        title = str(rule.get("title", ""))
+        body = str(rule.get("body", ""))
+        rule_file = str(rule.get("file", ""))
+        file_name = Path(rule_file).name if rule_file else "unknown"
+        lines.append(f"- **{title}** ({file_name}): {body}")
+    lines.append("</learned_rules>")
+    return "\n".join(lines)
+
+
 def _normalize_section_title(title: str) -> str:
     """Normalize markdown section headings for comparison."""
     return re.sub(r"\s+", " ", (title or "").strip().lower())
@@ -13003,6 +13050,22 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
                     parts.append(_consumption_contract)
                 break
     except (ValueError, OSError):
+        pass
+
+    # Path-scoped learned rules: load all rules, then filter to those whose
+    # paths: frontmatter intersects the current subtask's affected_files.
+    # Rules without paths: are always included (unconditional learned
+    # knowledge).  Rules with paths: that don't match any affected file are
+    # excluded — they don't apply to this subtask's files and would waste
+    # context budget.
+    try:
+        _all_rules = _load_learned_rules()
+        _applicable_rules = _filter_learned_rules_by_files(_all_rules, files)
+        _rules_block = _format_learned_rules_block(_applicable_rules)
+        if _rules_block:
+            parts.append("")
+            parts.append(_rules_block)
+    except Exception:
         pass
 
     parts.append("")
