@@ -11506,6 +11506,39 @@ def _is_test_path(path: str) -> bool:
     return False
 
 
+# Framework-managed artifact trees. These are gitignored (or otherwise stripped
+# from the diff surface), so a git-diff-based change detector can never witness
+# them. The mutation-boundary direction strips them as non-scope-creep; the
+# declared-but-not-written direction must instead validate them by filesystem
+# existence (see ``_map_artifact_written``).
+_MAP_INTERNAL_ARTIFACT_PREFIXES = (".map/", ".codex/", ".agents/")
+
+
+def _is_map_internal_artifact(path: str) -> bool:
+    """True when ``path`` lives under a framework-managed artifact tree.
+
+    Such paths are gitignored, so ``git diff``/``git status`` never surface them
+    and ``_current_subtask_changed_files`` strips them — a diff-based "was it
+    written?" check would false-positive every MAP-only subtask as truncated.
+    """
+    return path.startswith(_MAP_INTERNAL_ARTIFACT_PREFIXES)
+
+
+def _map_artifact_written(path: str, project_dir: Path) -> bool:
+    """True when a declared MAP-internal artifact exists on disk with content.
+
+    "Written" for a gitignored artifact means the file exists and is non-empty.
+    An empty file is treated as *not* written — that is exactly the truncated /
+    incomplete-edit signal this detector exists to catch. Any ``OSError`` (e.g.
+    the path resolves to a directory) is treated as not written.
+    """
+    try:
+        artifact = project_dir / path
+        return artifact.is_file() and artifact.stat().st_size > 0
+    except OSError:
+        return False
+
+
 def _current_subtask_changed_files(
     branch_name: str, subtask_id: str, project_dir: Path
 ) -> Optional[set[str]]:
@@ -11570,12 +11603,7 @@ def _current_subtask_changed_files(
             if path:
                 changed.add(path)
 
-    changed = {
-        p for p in changed
-        if not p.startswith(".map/")
-        and not p.startswith(".codex/")
-        and not p.startswith(".agents/")
-    }
+    changed = {p for p in changed if not _is_map_internal_artifact(p)}
 
     baseline_path = _subtask_baseline_path(branch_name, subtask_id, project_dir)
     if baseline_path.exists():
@@ -11735,6 +11763,15 @@ def detect_actor_files_changed_mismatch(
     - THIS function checks *declared-but-not-written* only.  The load-bearing
       field is ``declared_not_written``.
 
+    Declared files are validated in two ways depending on their tree:
+    - **git-tracked files** are validated against the git diff (``actual``).
+    - **MAP-internal artifacts** (``.map/``, ``.codex/``, ``.agents/``) are
+      gitignored and stripped from the diff surface, so they are validated by
+      filesystem existence + non-empty content instead. Without this split a
+      subtask whose only declared artifact is e.g.
+      ``.map/<branch>/verification-summary.md`` would always false-positive as
+      truncated even though the file exists (see issue #277).
+
     Returns::
 
         {
@@ -11755,52 +11792,83 @@ def detect_actor_files_changed_mismatch(
     branch_name = _sanitize_branch(branch)
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
 
-    actual_set = _current_subtask_changed_files(branch_name, subtask_id, project_dir)
-    if actual_set is None:
-        # Intent: fail safe to mismatch so the gate cannot pass blindly.
-        declared_sorted = sorted(d.strip() for d in (declared_files or []) if d.strip())
-        return {
-            "status": "unknown",
-            "subtask_id": subtask_id,
-            "declared": declared_sorted,
-            "actual": [],
-            "declared_not_written": declared_sorted,
-            "status_mismatch": True,
-            "recovery_instruction": (
-                "git diff unavailable (fail-safe — actual changes were NOT "
-                f"consulted): treating all declared files as unwritten: {declared_sorted}. "
-                "Re-invoke the Actor to finish any truncated edits and re-run this "
-                "check once git is available; do NOT record the subtask until "
-                "git diff --name-only covers every declared file."
-            ),
-            "reason": (
-                "could not compute the actual diff (git unavailable) — "
-                "assuming mismatch as a fail-safe."
-            ),
-        }
-
     declared = [d.strip() for d in (declared_files or []) if d.strip()]
-    declared_not_written = sorted(d for d in declared if d not in actual_set)
+    map_declared = [d for d in declared if _is_map_internal_artifact(d)]
+    git_declared = [d for d in declared if not _is_map_internal_artifact(d)]
+
+    # MAP-internal artifacts are gitignored, so the diff surface can never
+    # witness them. Validate them by filesystem existence + non-empty content
+    # instead — independent of git availability (fixes issue #277).
+    map_not_written = sorted(
+        d for d in map_declared if not _map_artifact_written(d, project_dir)
+    )
+
+    status = "ok"
+    reason = ""
+    actual_list: list[str] = []
+    git_not_written: list[str] = []
+
+    # Only consult git when there are git-tracked declared files to validate.
+    # A MAP-only subtask needs no diff, so a git error must not force it into a
+    # false mismatch.
+    if git_declared:
+        actual_set = _current_subtask_changed_files(branch_name, subtask_id, project_dir)
+        if actual_set is None:
+            # Intent: fail safe to mismatch so the gate cannot pass blindly on a
+            # git error — but only for the git-tracked files. MAP artifacts were
+            # already validated against the filesystem above.
+            status = "unknown"
+            reason = (
+                "could not compute the actual diff (git unavailable) — "
+                "assuming the git-tracked declared files are unwritten as a "
+                "fail-safe."
+            )
+            git_not_written = sorted(git_declared)
+        else:
+            actual_list = sorted(actual_set)
+            git_not_written = sorted(d for d in git_declared if d not in actual_set)
+
+    declared_not_written = sorted([*git_not_written, *map_not_written])
     status_mismatch = bool(declared_not_written)
 
     recovery_instruction = ""
     if status_mismatch:
-        recovery_instruction = (
-            f"Actor declared files it did not write: {declared_not_written}. "
-            "Its previous response was likely truncated mid-edit — re-invoke "
-            "the Actor to finish those files; do NOT record the subtask until "
-            "git diff --name-only covers every declared file."
+        parts: list[str] = []
+        if git_not_written:
+            if status == "unknown":
+                parts.append(
+                    "git diff unavailable (fail-safe — actual changes were NOT "
+                    "consulted): treating git-tracked declared files as "
+                    f"unwritten: {git_not_written}."
+                )
+            else:
+                parts.append(
+                    "Actor declared git-tracked files it did not write: "
+                    f"{git_not_written}. Its previous response was likely "
+                    "truncated mid-edit — re-invoke the Actor to finish those "
+                    "files."
+                )
+        if map_not_written:
+            parts.append(
+                "Declared MAP artifacts are missing or empty on disk: "
+                f"{map_not_written}. Re-invoke the Actor to write them."
+            )
+        parts.append(
+            "Do NOT record the subtask until every declared file is written "
+            "(git diff --name-only covers git-tracked files; MAP artifacts must "
+            "exist on disk with content)."
         )
+        recovery_instruction = " ".join(parts)
 
     return {
-        "status": "ok",
+        "status": status,
         "subtask_id": subtask_id,
         "declared": sorted(declared),
-        "actual": sorted(actual_set),
+        "actual": actual_list,
         "declared_not_written": declared_not_written,
         "status_mismatch": status_mismatch,
         "recovery_instruction": recovery_instruction,
-        "reason": "",
+        "reason": reason,
     }
 
 
