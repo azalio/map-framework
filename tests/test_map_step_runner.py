@@ -561,7 +561,7 @@ def test_run_flaky_test_triage_uses_shell_false(branch_workspace):
 
     def fake_run(command: list[str], **kwargs: object) -> types.SimpleNamespace:
         calls.append({"command": command, **kwargs})
-        stdout = kwargs["stdout"]
+        stdout = cast(Any, kwargs["stdout"])
         assert hasattr(stdout, "write")
         stdout.write(b"ok")
         return types.SimpleNamespace(returncode=0)
@@ -10153,6 +10153,117 @@ class TestDetectActorFilesChangedMismatch:
         assert result.returncode == 0, result.stderr
         parsed = json.loads(result.stdout)
         assert "status_mismatch" in parsed
+
+    # ── #277: MAP-only artifacts validated by filesystem, not git diff ──────
+
+    def test_map_only_artifact_exists_no_mismatch(
+        self, branch_workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression #277: a subtask whose only declared file is a MAP artifact
+        that EXISTS on disk must NOT be flagged as truncated.
+
+        ``.map/`` is gitignored and stripped from the diff surface, so the old
+        diff-only detector reported a false ``status_mismatch`` for a real file.
+        """
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_state(branch_workspace)
+
+        artifact = branch_workspace / "verification-summary.md"
+        artifact.write_text("# Verification Summary\n\nAll VCs pass.\n")
+
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_actor_files_changed_mismatch(
+            "test-branch", "ST-007",
+            [".map/test-branch/verification-summary.md"],
+        )
+
+        assert report["status"] == "ok", report
+        assert report["status_mismatch"] is False, report
+        assert report["declared_not_written"] == [], report
+        assert report["recovery_instruction"] == "", report
+
+    def test_map_only_artifact_missing_is_mismatch(
+        self, branch_workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A declared MAP artifact that does NOT exist is a real mismatch."""
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_state(branch_workspace)
+
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        declared = [".map/test-branch/verification-summary.md"]
+        report = map_step_runner.detect_actor_files_changed_mismatch(
+            "test-branch", "ST-007", declared
+        )
+
+        assert report["status_mismatch"] is True, report
+        assert report["declared_not_written"] == declared, report
+        assert report["recovery_instruction"] != "", report
+
+    def test_map_only_artifact_empty_is_mismatch(
+        self, branch_workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An empty declared MAP artifact counts as not-written (truncation)."""
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_state(branch_workspace)
+
+        (branch_workspace / "verification-summary.md").write_text("")
+
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        declared = [".map/test-branch/verification-summary.md"]
+        report = map_step_runner.detect_actor_files_changed_mismatch(
+            "test-branch", "ST-007", declared
+        )
+
+        assert report["status_mismatch"] is True, report
+        assert report["declared_not_written"] == declared, report
+
+    def test_mixed_git_and_map_artifacts_validated_independently(
+        self, branch_workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A git file (written) + a MAP artifact (exists) → no mismatch; each
+        surface is validated by its own mechanism."""
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_state(branch_workspace)
+
+        (repo / "a.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        (branch_workspace / "verification-summary.md").write_text("done\n")
+
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_actor_files_changed_mismatch(
+            "test-branch", "ST-007",
+            ["a.py", ".map/test-branch/verification-summary.md"],
+        )
+
+        assert report["status_mismatch"] is False, report
+        assert report["declared_not_written"] == [], report
+
+    def test_mixed_git_written_map_missing_flags_only_map(
+        self, branch_workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """git file written, MAP artifact missing → only the MAP artifact is
+        flagged; the written git file is not a false positive."""
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_state(branch_workspace)
+
+        (repo / "a.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_actor_files_changed_mismatch(
+            "test-branch", "ST-007",
+            ["a.py", ".map/test-branch/verification-summary.md"],
+        )
+
+        assert report["declared_not_written"] == [
+            ".map/test-branch/verification-summary.md"
+        ], report
+        assert report["status_mismatch"] is True, report
 
 
 # ---------------------------------------------------------------------------

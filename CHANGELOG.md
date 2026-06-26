@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`detect_actor_files_changed_mismatch` no longer false-positives on MAP-only subtask artifacts (closes #277).** The actor files-changed gate validated every declared file against `_current_subtask_changed_files`, which derives from `git diff`/`git status` and strips the gitignored framework trees (`.map/`, `.codex/`, `.agents/`). A subtask whose only declared `affected_files` entry was a MAP artifact (e.g. `.map/<branch>/verification-summary.md`) therefore always reported `status_mismatch=true` with a false "Actor declared files it did not write" recovery instruction, making MAP-only documentation/verification subtasks look like truncated actor edits. The detector now partitions declared files: git-tracked files keep the diff check, while MAP-internal artifacts are validated by filesystem existence + non-empty content (a missing or empty artifact is still a real mismatch). MAP-artifact validation is independent of git availability, so a MAP-only subtask is never forced into a false mismatch by a git error. A new shared `_is_map_internal_artifact` helper de-duplicates the framework-tree prefix list used by both the strip filter and the new validation path.
+
 ## [3.20.0] - 2026-06-26
 
 ### Added
