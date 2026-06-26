@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 from datetime import datetime, timezone
+from fnmatch import fnmatch
 from pathlib import Path
 
 # Keep in sync with map_step_runner.py GOAL_HEADING_RE
@@ -708,12 +709,70 @@ def _sanitize_fence_content(text: str) -> str:
     return text
 
 
-def _load_personal_rules(project_dir: Path) -> tuple[int, str]:
+def _parse_rule_paths(content: str) -> list[str]:
+    """Extract optional ``paths:`` frontmatter globs from a rule markdown file."""
+    lines = content.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return []
+
+    paths: list[str] = []
+    in_paths = False
+    for raw_line in lines[1:]:
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if stripped == "---":
+            break
+        if stripped == "paths:":
+            in_paths = True
+            continue
+        if not in_paths:
+            continue
+        if stripped.startswith("- "):
+            candidate = stripped[2:].strip().strip("\"'")
+            if candidate:
+                paths.append(candidate)
+            continue
+        if stripped:
+            in_paths = False
+    return paths
+
+
+def _paths_match_file(rule_paths: list[str], file_path: str) -> bool:
+    """Return True when *file_path* matches at least one glob in *rule_paths*."""
+    for pattern in rule_paths:
+        if fnmatch(file_path, pattern) or fnmatch(f"./{file_path}", pattern):
+            return True
+    return False
+
+
+def _extract_target_file(tool_name: str, tool_input: dict) -> str:
+    """Extract the target file path from a tool invocation.
+
+    For Edit/Write/MultiEdit, reads ``file_path`` directly.
+    For Bash, returns empty — we cannot reliably determine which files
+    a command operates on without parsing arbitrary shell syntax.
+    """
+    if tool_name in ("Edit", "Write", "MultiEdit"):
+        file_path = tool_input.get("file_path", "")
+        if isinstance(file_path, str) and file_path.strip():
+            return file_path.strip()
+    return ""
+
+
+def _load_personal_rules(
+    project_dir: Path, target_file: str = ""
+) -> tuple[int, str]:
     """Load personal learned rules from ``.map/personal/rules/learned/``.
 
     Reads every ``*.md`` file under the directory in sorted order,
     sanitises each file's content through ``_sanitize_fence_content``,
     and returns a tuple of ``(count, joined_content)``.
+
+    When *target_file* is non-empty, files with ``paths:`` frontmatter that
+    do not match *target_file* are skipped — only unconditional rules and
+    matching scoped rules are loaded.  When *target_file* is empty, all
+    files are loaded (no filtering — we cannot determine relevance without
+    a target).
 
     Returns ``(0, "")`` when the directory does not exist or contains
     no readable ``.md`` files.
@@ -743,6 +802,11 @@ def _load_personal_rules(project_dir: Path) -> tuple[int, str]:
             content = md_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
+
+        if target_file:
+            rule_paths = _parse_rule_paths(content)
+            if rule_paths and not _paths_match_file(rule_paths, target_file):
+                continue
 
         sanitized_parts.append(_sanitize_fence_content(content))
 
@@ -906,7 +970,8 @@ def main() -> None:
         if conflict_context:
             context_parts.append(conflict_context)
         base_context = PERSONAL_RULES_SEPARATOR.join(context_parts)
-        personal_count, personal_content = _load_personal_rules(project_dir)
+        target_file = _extract_target_file(tool_name, tool_input)
+        personal_count, personal_content = _load_personal_rules(project_dir, target_file)
         personal_limit = max(
             0,
             PERSONAL_BLOCK_BUDGET_TOTAL - len(base_context) - len(PERSONAL_RULES_SEPARATOR),
