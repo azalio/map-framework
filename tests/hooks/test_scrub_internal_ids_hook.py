@@ -45,6 +45,11 @@ def _make_project(tmp_path: Path, *, complete: bool, leaked: bool = True,
     project = tmp_path / "proj"
     project.mkdir()
     _git(project, "init", "-b", "main")
+    # Configure a repo-local identity so the hook's own `git commit` (which runs
+    # under ambient identity, not GIT_* env) succeeds — a real user repo always
+    # has one; CI runners do not set a global identity.
+    _git(project, "config", "user.email", "t@t")
+    _git(project, "config", "user.name", "t")
     (project / "seed.txt").write_text("seed\n", encoding="utf-8")
     _git(project, "add", "-A")
     _git(project, "commit", "-m", "base")
