@@ -4,30 +4,35 @@
 During a MAP run the planning artifacts use internal identifiers — subtask
 ``ST-001``, acceptance criteria ``AC-3``, verification criteria ``VC1``,
 invariants ``INV-7``, hard constraints ``HC-1`` — and an Actor can leak them
-into the shipped code as comments (``// The rule (INV-7) is:``), string
-literals, or test names (``test_vc1_register``). These are workflow scaffolding,
-not something the user should review in their PR.
+into the shipped code as comments (``// The rule (INV-7) is:``) or test names
+(``test_vc1_register``). These are workflow scaffolding, not something the user
+should review in their PR.
 
 This module is the deterministic *engine*. It is invoked at workflow close by
 the ``scrub-internal-ids.py`` Stop hook (Claude provider). It is stdlib-only on
 purpose: in an installed project ``mapify_cli`` is not importable, so all logic
 must live here under ``.map/scripts/`` (same rationale as ``map_step_runner``).
 
-Safety model — three deterministic phases, hard-scoped:
+Safety model — conservative, hard-scoped, corruption-averse:
 
 1. SCOPE. Only files the *run* changed (git diff vs the run base) are touched,
    and within each file only the *lines the run added* (new-side line numbers of
    the diff; the whole file for run-created untracked files). A pre-existing
    ``INV-7`` the user wrote on an untouched line is never modified.
-2. CLEAN. Conservative edits only:
+2. FILE TYPE. Only recognized source files are scrubbed, using that language's
+   comment syntax (``#`` for Python/shell/YAML, ``//``+``/* */`` for C-likes,
+   ``<!-- -->`` for markdown/HTML, ...). Data files (``.json``, ``.lock``, ...)
+   and unknown types are skipped entirely — never blanked.
+3. EDIT. Only inside COMMENTS:
      - a comment whose payload is only an ID marker  -> delete the line;
-     - an ID token inside a larger comment / string  -> strip the token and tidy
-       adjacent decoration (``()`` / ``[]`` / stray ``:``), keep the line;
-     - a test identifier carrying ``vc<n>``          -> rename dropping that
-       segment (``test_vc1_foo`` -> ``test_foo``), guarded against collisions;
-     - an ID token in bare code (not comment/string) -> left untouched, reported.
-3. RE-SCAN. After cleaning, scope is scanned again; anything that could not be
-   removed safely is reported as ``residual`` rather than corrupted.
+     - an ID token inside a larger comment           -> strip the token and tidy
+       adjacent decoration (``()`` / ``[]`` / stray ``:``), keep the line.
+   Test identifiers carrying ``vc<n>`` are renamed (``test_vc1_foo`` ->
+   ``test_foo``) with a collision guard. IDs in code, string literals, or
+   docstrings are LEFT IN PLACE and reported (stripping a string substring would
+   corrupt legitimate values, e.g. ``"INV-7-special-sku"`` or a JSON value).
+4. RE-SCAN. After cleaning, scope is scanned again; anything not removed is
+   reported as ``residual`` rather than corrupted.
 
 CLI::
 
@@ -63,20 +68,49 @@ _VC_SEGMENT = re.compile(r"(?i)vc\d+")
 _PY_DEF = re.compile(r"^(\s*)(async\s+def|def|class)\s+([A-Za-z_][A-Za-z0-9_]*)")
 _GO_DEF = re.compile(r"^(\s*)func\s+(?:\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)")
 
-LINE_COMMENT_LEADERS = ("#", "//", "--", ";")
+
+# --- per-language comment syntax --------------------------------------------
+# Each syntax records which line-comment leaders and block-comment openers apply.
+# String literals are always tracked (so a ``#`` inside a string is not a
+# comment) but are never eligible for stripping.
+_HASH = {"line": ("#",), "block": ()}
+_SLASH = {"line": ("//",), "block": ("/*",)}
+_DASH = {"line": ("--",), "block": ()}
+_HTML = {"line": (), "block": ("<!--",)}  # markdown/HTML: `#` is a heading, NOT a comment
+_CSS = {"line": (), "block": ("/*",)}
+
+_EXT_SYNTAX: dict[str, dict] = {
+    ".py": _HASH, ".pyi": _HASH, ".sh": _HASH, ".bash": _HASH, ".zsh": _HASH,
+    ".yaml": _HASH, ".yml": _HASH, ".toml": _HASH, ".ini": _HASH, ".cfg": _HASH,
+    ".conf": _HASH, ".rb": _HASH, ".pl": _HASH, ".r": _HASH, ".tf": _HASH,
+    ".go": _SLASH, ".js": _SLASH, ".jsx": _SLASH, ".ts": _SLASH, ".tsx": _SLASH,
+    ".mjs": _SLASH, ".cjs": _SLASH, ".rs": _SLASH, ".c": _SLASH, ".h": _SLASH,
+    ".cc": _SLASH, ".cpp": _SLASH, ".cxx": _SLASH, ".hpp": _SLASH, ".java": _SLASH,
+    ".kt": _SLASH, ".kts": _SLASH, ".swift": _SLASH, ".scala": _SLASH, ".php": _SLASH,
+    ".sql": _DASH, ".lua": _DASH, ".hs": _DASH,
+    ".html": _HTML, ".htm": _HTML, ".xml": _HTML, ".vue": _HTML, ".svelte": _HTML, ".md": _HTML,
+    ".css": _CSS, ".scss": _CSS, ".less": _CSS,
+}
+_NAME_SYNTAX: dict[str, dict] = {"Dockerfile": _HASH, "Makefile": _HASH}
+
+
+def syntax_for_ext(ext: str) -> Optional[dict]:
+    return _EXT_SYNTAX.get(ext.lower())
+
+
+def _syntax_for_path(path: Path) -> Optional[dict]:
+    return _EXT_SYNTAX.get(path.suffix.lower()) or _NAME_SYNTAX.get(path.name)
 
 
 # --- pure text helpers (unit-tested without git) -----------------------------
-def _line_regions(line: str, in_triple: bool) -> list[tuple[int, int, str]]:
+def _line_regions(line: str, syntax: Optional[dict]) -> list[tuple[int, int, str]]:
     """Split a line into (start, end, kind) regions; kind in code/string/comment.
 
-    ``in_triple`` means the line begins inside a Python triple-quoted string; the
-    whole line is then treated as a string region (over-eligibility inside a
-    docstring is harmless — we only strip ID tokens there, never delete code).
+    Comment leaders are taken from ``syntax`` so that, e.g., a markdown ``#``
+    heading is NOT treated as a comment. Strings are tracked but never eligible.
     """
-    if in_triple:
-        return [(0, len(line), "string")]
-
+    line_leaders = syntax["line"] if syntax else ()
+    block_starts = syntax["block"] if syntax else ()
     regions: list[tuple[int, int, str]] = []
     i, n = 0, len(line)
     code_start = 0
@@ -87,17 +121,15 @@ def _line_regions(line: str, in_triple: bool) -> list[tuple[int, int, str]]:
 
     while i < n:
         ch = line[i]
-        two = line[i : i + 2]
-        four = line[i : i + 4]
-        # Line comments run to EOL.
-        if ch == "#" or two == "//" or two == "--" or ch == ";":
+        # Line comment -> runs to EOL.
+        if any(line.startswith(leader, i) for leader in line_leaders):
             flush_code(i)
             regions.append((i, n, "comment"))
             code_start = n
             i = n
             break
-        # Block comment /* ... */ (single line; runs to EOL if unterminated).
-        if two == "/*":
+        # Block comment /* ... */ (single line; to EOL if unterminated).
+        if "/*" in block_starts and line.startswith("/*", i):
             flush_code(i)
             end = line.find("*/", i + 2)
             end = n if end == -1 else end + 2
@@ -105,8 +137,8 @@ def _line_regions(line: str, in_triple: bool) -> list[tuple[int, int, str]]:
             code_start = end
             i = end
             continue
-        # HTML/XML comment <!-- ... -->.
-        if four == "<!--":
+        # HTML/XML/markdown comment <!-- ... -->.
+        if "<!--" in block_starts and line.startswith("<!--", i):
             flush_code(i)
             end = line.find("-->", i + 4)
             end = n if end == -1 else end + 3
@@ -114,7 +146,7 @@ def _line_regions(line: str, in_triple: bool) -> list[tuple[int, int, str]]:
             code_start = end
             i = end
             continue
-        # String literal.
+        # String literal (tracked so a leader inside it is not a comment).
         if ch in ("'", '"'):
             flush_code(i)
             j = i + 1
@@ -166,24 +198,23 @@ def _comment_leader(comment_text: str) -> tuple[str, str]:
     return "", comment_text
 
 
-def scrub_line(line: str, in_triple: bool) -> tuple[Optional[str], list[str], list[str]]:
-    """Strip eligible ID tokens from one line.
+def scrub_line(line: str, syntax: Optional[dict]) -> tuple[Optional[str], list[str], list[str]]:
+    """Strip ID tokens that sit INSIDE a comment on one line.
 
     Returns ``(new_line | None, removed_tokens, residual_tokens)``. ``None``
-    means the line should be deleted (a comment that became empty). Tokens in
-    bare code are left in place and reported as residual.
+    means delete the line (a comment that became empty). Tokens outside comments
+    (code, string literals, docstrings) are left in place and reported.
     """
     matches = list(ID_TOKEN.finditer(line))
     if not matches:
         return line, [], []
 
-    regions = _line_regions(line, in_triple)
+    regions = _line_regions(line, syntax)
     removed: list[str] = []
     residual: list[str] = []
     eligible_spans: list[tuple[int, int]] = []
     for m in matches:
-        kind = _region_kind(regions, m.start())
-        if kind in ("comment", "string"):
+        if _region_kind(regions, m.start()) == "comment":
             eligible_spans.append((m.start(), m.end()))
             removed.append(m.group(0))
         else:
@@ -197,26 +228,22 @@ def scrub_line(line: str, in_triple: bool) -> tuple[Optional[str], list[str], li
     for start, end in sorted(eligible_spans, reverse=True):
         new_line = new_line[:start] + new_line[end:]
 
-    # If the (single) comment region is now an empty marker, drop the line.
-    comment_regions = [r for r in regions if r[2] == "comment"]
-    if comment_regions and not in_triple:
-        # Recompute the comment text on the modified line.
-        new_regions = _line_regions(new_line, in_triple)
-        new_comment = [r for r in new_regions if r[2] == "comment"]
-        if new_comment:
-            cstart, cend, _ = new_comment[0]
-            leader, payload = _comment_leader(new_line[cstart:cend])
-            tidied = _tidy_comment_payload(payload)
-            head = new_line[:cstart]
-            if not tidied:
-                # Pure-marker comment -> delete the whole line if there is no
-                # meaningful code before it; otherwise just drop the comment.
-                if head.strip() == "":
-                    return None, removed, residual
-                new_line = head.rstrip()
-            else:
-                closer = " -->" if leader == "<!--" else (" */" if leader == "/*" else "")
-                new_line = f"{head}{leader} {tidied}{closer}"
+    # If the comment is now an empty marker, delete the line (or just the comment
+    # if there is meaningful code before it).
+    new_regions = _line_regions(new_line, syntax)
+    new_comment = [r for r in new_regions if r[2] == "comment"]
+    if new_comment:
+        cstart, cend, _ = new_comment[0]
+        leader, payload = _comment_leader(new_line[cstart:cend])
+        tidied = _tidy_comment_payload(payload)
+        head = new_line[:cstart]
+        if not tidied:
+            if head.strip() == "":
+                return None, removed, residual
+            new_line = head.rstrip()
+        else:
+            closer = " -->" if leader == "<!--" else (" */" if leader == "/*" else "")
+            new_line = f"{head}{leader} {tidied}{closer}"
 
     return new_line, removed, residual
 
@@ -255,10 +282,11 @@ def _is_test_def(line: str) -> Optional[tuple[str, str]]:
 
 
 def scrub_text(
-    text: str, scope: Optional[set[int]]
+    text: str, scope: Optional[set[int]], syntax: Optional[dict]
 ) -> tuple[str, dict]:
     """Scrub ``text`` (a whole file). ``scope`` = 1-based line numbers to act on
-    (``None`` = every line, used for run-created untracked files).
+    (``None`` = every line, used for run-created untracked files). ``syntax`` =
+    the file's comment syntax (``None`` -> only test renames apply).
 
     Returns ``(new_text, report)`` where report has ``removed`` (count),
     ``deleted`` (count), ``renames`` ([{old,new}]), ``residual`` ([{line,token}]).
@@ -281,8 +309,7 @@ def scrub_text(
         new_ident = renamed_test_identifier(ident)
         if new_ident is None:
             continue
-        # Collision guard: skip if the target identifier already exists anywhere.
-        if re.search(rf"\b{re.escape(new_ident)}\b", text):
+        if re.search(rf"\b{re.escape(new_ident)}\b", text):  # collision guard
             residual.append({"line": idx0 + 1, "token": ident, "reason": "rename_collision"})
             continue
         rename_map[ident] = new_ident
@@ -293,39 +320,21 @@ def scrub_text(
         working = re.sub(rf"\b{re.escape(old)}\b", new, working)
         renames.append({"old": old, "new": new})
 
-    # --- Pass 2: per-line token strip / pure-marker deletion -----------------
+    # --- Pass 2: per-line comment token strip / pure-marker deletion ----------
     lines = working.splitlines(keepends=True)
     out: list[str] = []
     removed_count = 0
     deleted_count = 0
-    in_triple = False
-    triple_delim = ""
     for idx0, raw in enumerate(lines):
-        body = raw.rstrip("\n")
-        newline = raw[len(body):]  # preserve original EOL ("" or "\n")
-        line_in_triple = in_triple
-
-        # Update triple-quote state from this line (approximate: net toggles).
-        for delim in ('"""', "'''"):
-            if in_triple and triple_delim == delim:
-                if delim in body:
-                    in_triple = False
-                    triple_delim = ""
-            elif not in_triple:
-                count = body.count(delim)
-                if count % 2 == 1:
-                    in_triple = True
-                    triple_delim = delim
-
         if not in_scope(idx0):
             out.append(raw)
             continue
-
-        new_body, removed, line_residual = scrub_line(body, line_in_triple)
+        body = raw.rstrip("\n")
+        newline = raw[len(body):]  # preserve original EOL ("" or "\n")
+        new_body, removed, line_residual = scrub_line(body, syntax)
         removed_count += len(removed)
         for tok in line_residual:
-            residual.append({"line": idx0 + 1, "token": tok, "reason": "bare_code"})
-
+            residual.append({"line": idx0 + 1, "token": tok, "reason": "outside_comment"})
         if new_body is None:
             deleted_count += 1
             continue
@@ -472,6 +481,9 @@ def run(project_dir: Path, *, mode: str, base: Optional[str], branch: Optional[s
         path = project_dir / rel
         if not path.is_file():
             continue
+        syntax = _syntax_for_path(path)
+        if syntax is None:
+            continue  # unsupported / data file -> never scrub (avoid corruption)
         try:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
@@ -479,7 +491,7 @@ def run(project_dir: Path, *, mode: str, base: Optional[str], branch: Optional[s
         scope = _added_line_numbers(project_dir, resolved_base, rel)
         if scope is not None and not scope:
             continue  # nothing this run added in this file
-        new_text, report = scrub_text(text, scope)
+        new_text, report = scrub_text(text, scope, syntax)
         for r in report["residual"]:
             residual.append({"file": rel, **r})
         if new_text != text:
