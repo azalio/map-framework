@@ -4,7 +4,7 @@ description: |
   Interactive 4-section code review using Monitor, Predictor, and Evaluator agents on current changes. Use when reviewing a diff, PR, or staged work before merge. Do NOT use to plan or implement; use map-plan or map-efficient.
 effort: high
 disable-model-invocation: true
-argument-hint: "[review focus] [--detached] [--ci] [--reverse-sections] [--shuffle-sections] [--seed <int>] [--compare-orderings]"
+argument-hint: "[review focus] [--detached] [--ci] [--reverse-sections] [--shuffle-sections] [--seed <int>] [--compare-orderings] [--adversarial] [--quick] [--show-raw-findings]"
 ---
 # MAP Review Workflow
 
@@ -33,6 +33,9 @@ parallel_tool_policy: single_review_fanout
 - `--shuffle-sections`: randomize section order with a branch+commit derived seed.
 - `--seed <int>`: override shuffle seed with a non-negative integer.
 - `--compare-orderings`: run default and reverse ordering reviews, then aggregate drift. Cannot be combined with `--shuffle-sections` (EC-1/EC-17).
+- `--adversarial`: run three independent adversarial reviewers (Blind Hunter, Edge Case Hunter, Acceptance Auditor) in parallel, then aggregate with deduplication and convergence analysis. Each reviewer operates in an isolated context with only its permitted inputs.
+- `--quick`: used with `--adversarial` to skip the Edge Case Hunter (Blind + Acceptance only). Reduces token cost for routine changes.
+- `--show-raw-findings`: used with `--adversarial` to include raw reviewer outputs in the report. Useful for debugging or verifying aggregation.
 
 ## Execution Rules
 
@@ -155,6 +158,19 @@ fi
 if [ "$COMPARE_FLAG" = "true" ] && [ "$SHUFFLE_FLAG" = "true" ]; then
   echo '{"status":"error","reason":"--compare-orderings always uses default+reverse; cannot combine with --shuffle-sections (EC-1/EC-17)"}'
   exit 1
+fi
+
+ADVERSARIAL_FLAG=false
+QUICK_FLAG=false
+SHOW_RAW_FLAG=false
+if echo "$ARGUMENTS" | grep -q -- '--adversarial'; then
+  ADVERSARIAL_FLAG=true
+fi
+if echo "$ARGUMENTS" | grep -q -- '--quick'; then
+  QUICK_FLAG=true
+fi
+if echo "$ARGUMENTS" | grep -q -- '--show-raw-findings'; then
+  SHOW_RAW_FLAG=true
 fi
 
 MODE_FLAG="default"
@@ -362,7 +378,24 @@ skip Phase B. Record `REVISE` or `BLOCK` as appropriate. Bare
 mode skips presentation) with a verification note instead of
 publishing the bare verdict.
 
-## Phase B: Interactive Presentation (4 Sections)
+## Phase B: Adversarial Review (--adversarial only)
+When `--adversarial` is set, skip the Monitor/Predictor/Evaluator fan-out and the 4-section interactive walkthrough. Instead run three independent adversarial reviewers with isolated contexts, then aggregate. See [adversarial-reference.md](adversarial-reference.md) for the detailed step-by-step commands.
+
+### Quick reference
+
+```text
+1. Build prompts:  python3 .map/scripts/map_step_runner.py build_adversarial_review_prompts [--quick]
+2. Fan-out:        Task(subagent_type="general", ...) for blind, edge_case, acceptance — parallel, then wait for all
+3. Validate:       Each must return valid JSON per adversarial finding schema; retry ONCE on failure
+4. Aggregate:      python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings --blind <path> --edge-case <path> --acceptance <path>
+5. Present:        Unified report: CRITICAL/IMPORTANT/MINOR, convergence section, all-clear statements (--show-raw-findings for debug)
+6. Verdict:        BLOCK (corroborated CRITICAL or >2 CRITICAL), REVISE (any CRITICAL/IMPORTANT), PROCEED (MINOR only or all-clear)
+7. Skip to:        Final Verdict → Handoff Artifacts; do NOT run normal 4-section walkthrough
+```
+
+## Phase B: Interactive Presentation (4 Sections) — NORMAL MODE ONLY
+
+This phase runs ONLY when `ADVERSARIAL_FLAG=false`. Skip it entirely when `--adversarial` is set.
 
 ### Step B.0: Determine section presentation order
 

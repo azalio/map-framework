@@ -8314,6 +8314,511 @@ def build_review_prompts(
     }
 
 
+ADVERSARIAL_REVIEWER_SPECS: dict[str, dict[str, str]] = {
+    "blind": {
+        "subagent_type": "general",
+        "description": "Blind diff-only review",
+        "task": """Review ONLY the git diff below. You have NO access to the project context, spec, architecture, or naming conventions. Your job is to find bugs, dead code, and obvious errors that are visible in the diff alone — without being biased by "what was intended."
+
+Be skeptical: assume nothing about intent. If something looks wrong in isolation, flag it.
+
+IMPORTANT: If the diff is correct and you find no issues, you MUST explicitly state that. A clean review is signal, not absence of output.""",
+        "instructions": """Find:
+- Typos, syntax errors, logic errors visible in isolation
+- Dead code, unreachable branches, unused variables
+- Obvious null-pointer / None-access risks
+- Missing imports or undefined references
+- Copy-paste errors
+- Inconsistent naming within the diff itself
+
+Do NOT speculate about:
+- Whether the code fits the project architecture (you cannot see it)
+- Whether a requirement is met (you cannot see the spec)
+- Whether edge cases are handled (that's the Edge Case reviewer's job)""",
+        "context_access": "diff_only",
+    },
+    "edge_case": {
+        "subagent_type": "general",
+        "description": "Edge case and codebase consistency review",
+        "task": """Review the git diff AND the full repository. You have read access to the codebase but NO access to the spec, requirements, or architecture documents. Your job is to find edge cases, error paths, and consistency issues through mechanical path tracing.
+
+Trace every changed function: who calls it, what can be null, where could it fail. Compare with existing patterns in the codebase.
+
+IMPORTANT: If you find no issues, explicitly state that the code is correct with reasoning.""",
+        "instructions": """Find:
+- Null handling gaps: trace every value that could be None/null
+- Boundary conditions: empty lists, zero values, max values
+- Error paths: are exceptions handled? Are error returns checked?
+- Consistency with existing codebase patterns
+- State lifecycle issues: initialization, cleanup, transitions
+- Race conditions or ordering dependencies
+- Missing validation on inputs from callers
+
+For each finding, include concrete evidence:
+- The line in the diff where the issue is
+- The caller path that triggers it (grep the repo)
+- What would fail and how""",
+        "context_access": "diff_plus_repo_read",
+    },
+    "acceptance": {
+        "subagent_type": "general",
+        "description": "Spec compliance and acceptance review",
+        "task": """Review the git diff against the specification and requirements. You have access to the diff, spec, plan, and all project artifacts. Your job is to verify every requirement is implemented and flag gaps.
+
+Take an adversarial stance toward COMPLACENCY, not the developer: "Has every stated requirement actually been met? Is there implemented code that serves no spec requirement?" 
+
+IMPORTANT: If all requirements are met, explicitly state that with reasoning. A clean review is signal.""",
+        "instructions": """Verify:
+- Every acceptance criterion / requirement has a corresponding implementation
+- Every requirement's implementation is correct (not just present)
+- No extra/unplanned work slipped in (implementation without spec requirement)
+- The implementation matches the spec's intent, not just its literal text
+- Spec contradictions or ambiguities exposed by the implementation
+- Edge cases mentioned in the spec are actually handled
+
+For each gap, cite:
+- The spec requirement ID and text
+- The file:line of the missing or incorrect implementation
+- The concrete failure scenario""",
+        "context_access": "diff_plus_spec_plus_artifacts",
+    },
+}
+
+ADVERSARIAL_FINDING_SCHEMA: dict[str, object] = {
+    "reviewer": "<'blind' | 'edge_case' | 'acceptance'>",
+    "all_clear": "<boolean — true if NO issues found; must be explicit>",
+    "all_clear_rationale": "<string — required when all_clear=true: what you checked and why it's clean>",
+    "findings": [
+        {
+            "id": "<F-<reviewer_prefix>-<NN> — e.g. F-B-01, F-E-01, F-A-01>",
+            "severity": "<'CRITICAL' | 'IMPORTANT' | 'MINOR'>",
+            "category": "<string — e.g. 'null_safety', 'spec_gap', 'logic_error', 'boundary', 'consistency', 'dead_code', 'typo'>",
+            "file_path": "<string | null — null for spec-level findings without a code location>",
+            "line_range": "<string | null>",
+            "symbol": "<string | null — affected function/class/variable>",
+            "failure_mode": "<string — concrete description of what goes wrong and when>",
+            "evidence": "<string — concrete trace: grep output, code path, spec requirement ID>",
+            "recommendation": "<string — actionable fix suggestion>",
+        }
+    ],
+    "checks_performed": ["<string — list what was actually checked>"],
+}
+
+
+def _render_adversarial_reviewer_prompt(
+    spec: dict[str, str],
+    git_diff: str,
+    repo_context: str = "",
+    spec_context: str = "",
+    layering: str = DEFAULT_PROMPT_LAYERING,
+) -> str:
+    """Render a self-contained prompt for one adversarial reviewer.
+
+    The reviewer receives only its permitted context, never the full bundle.
+    """
+    reviewer_id = spec.get("context_access", "unknown")
+    documents = ["<documents>"]
+
+    if reviewer_id == "diff_only":
+        documents.extend(
+            [
+                "  <document source='git diff' priority='primary'>",
+                "    <document_content>",
+                git_diff,
+                "    </document_content>",
+                "  </document>",
+            ]
+        )
+    elif reviewer_id == "diff_plus_repo_read":
+        documents.extend(
+            [
+                "  <document source='git diff' priority='primary'>",
+                "    <document_content>",
+                git_diff,
+                "    </document_content>",
+                "  </document>",
+            ]
+        )
+        if repo_context:
+            documents.extend(
+                [
+                    "  <document source='repo context' priority='secondary'>",
+                    "    <document_content>",
+                    repo_context,
+                    "    </document_content>",
+                    "  </document>",
+                ]
+            )
+        documents.extend(
+            [
+                "  <document source='repo access note' priority='diagnostic'>",
+                "    <document_content>",
+                "You have READ access to the entire repository. Trace callers, "
+                "check existing patterns, and grep for related code. The repo "
+                "context above provides guidance on what to investigate.",
+                "    </document_content>",
+                "  </document>",
+            ]
+        )
+    elif reviewer_id == "diff_plus_spec_plus_artifacts":
+        documents.extend(
+            [
+                "  <document source='git diff' priority='primary'>",
+                "    <document_content>",
+                git_diff,
+                "    </document_content>",
+                "  </document>",
+            ]
+        )
+        if spec_context:
+            documents.extend(
+                [
+                    "  <document source='specification and requirements' priority='primary'>",
+                    "    <document_content>",
+                    spec_context,
+                    "    </document_content>",
+                    "  </document>",
+                ]
+            )
+        if repo_context:
+            documents.extend(
+                [
+                    "  <document source='project artifacts' priority='secondary'>",
+                    "    <document_content>",
+                    repo_context,
+                    "    </document_content>",
+                    "  </document>",
+                ]
+            )
+    else:
+        documents.extend(
+            [
+                "  <document source='git diff' priority='primary'>",
+                "    <document_content>",
+                git_diff,
+                "    </document_content>",
+                "  </document>",
+            ]
+        )
+
+    documents.append("</documents>")
+
+    output_schema = json.dumps(ADVERSARIAL_FINDING_SCHEMA, indent=2)
+    format_rules = (
+        "Return exactly one JSON object matching the schema. "
+        "No markdown, no code fences, no prose before/after. "
+        "Every finding must include concrete evidence and a plausible failure_mode. "
+        "Prefer no finding over a weak finding. "
+        'Set all_clear=true when no issues found, with a rationale explaining what you checked.'
+    )
+
+    documents_section = "\n".join(documents)
+    stable_sections = [
+        f"<task>\n{spec['task']}\n</task>",
+        "<workflow_policy>\n"
+        "You are one of three independent adversarial reviewers. You have NO access "
+        "to other reviewers' output. Review only what is in your context documents. "
+        "Do NOT speculate about information you cannot see.\n"
+        "</workflow_policy>",
+        f"<instructions>\n{spec['instructions']}\n</instructions>",
+        "<expected_output>\n"
+        f"<output_schema>\n{output_schema}\n</output_schema>\n"
+        f"<format_rules>\n{format_rules}\n</format_rules>\n"
+        "</expected_output>",
+    ]
+    return _layer_prompt_sections(documents_section, stable_sections, layering)
+
+
+def build_adversarial_review_prompts(
+    branch: Optional[str] = None,
+    reviewers: Optional[list[str]] = None,
+    git_diff_text: Optional[str] = None,
+    spec_text: Optional[str] = None,
+) -> dict:
+    """Build isolated prompts for the three adversarial reviewers.
+
+    Args:
+        branch: Branch name for reading spec/plan artifacts.
+        reviewers: Which reviewers to build prompts for.
+                   Default all three. ['blind', 'acceptance'] for --quick.
+        git_diff_text: Preloaded diff (avoids redundant git calls).
+        spec_text: Preloaded spec text (avoids redundant file reads).
+
+    Returns dict with 'prompts' key mapping reviewer_id to {subagent_type, description, prompt}.
+    """
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
+    reviewer_ids = reviewers or ["blind", "edge_case", "acceptance"]
+    layering = _load_prompt_layering(Path.cwd())
+
+    git_diff = git_diff_text if git_diff_text is not None else _read_git_diff_for_review()
+
+    spec_context = spec_text if spec_text is not None else _read_spec_for_review(branch_name)
+    repo_context = _read_repo_summary_for_review(branch_name)
+
+    prompts: dict[str, dict[str, object]] = {}
+    for reviewer_id in reviewer_ids:
+        spec_entry = ADVERSARIAL_REVIEWER_SPECS.get(reviewer_id)
+        if spec_entry is None:
+            continue
+        prompt = _render_adversarial_reviewer_prompt(
+            spec_entry,
+            git_diff=git_diff,
+            repo_context=repo_context,
+            spec_context=spec_context,
+            layering=layering,
+        )
+        prompts[reviewer_id] = {
+            "subagent_type": spec_entry["subagent_type"],
+            "description": spec_entry["description"],
+            "prompt": prompt,
+            "context_access": spec_entry["context_access"],
+        }
+
+    return {
+        "status": "success",
+        "branch": branch_name,
+        "prompt_layering": layering,
+        "prompts": prompts,
+        "reviewers_requested": reviewer_ids,
+    }
+
+
+def _read_spec_for_review(branch_name: str) -> str:
+    """Read spec and plan artifacts for the acceptance reviewer."""
+    branch_dir = get_branch_dir(branch_name)
+    parts: list[str] = []
+
+    spec_path = branch_dir / f"spec_{branch_name}.md"
+    if spec_path.exists():
+        try:
+            parts.append(spec_path.read_text(encoding="utf-8"))
+        except OSError:
+            pass
+
+    plan_path = branch_dir / f"task_plan_{branch_name}.md"
+    if plan_path.exists():
+        try:
+            parts.append(plan_path.read_text(encoding="utf-8"))
+        except OSError:
+            pass
+
+    return "\n\n---\n\n".join(parts) if parts else "[no spec or plan artifacts found]"
+
+
+def _read_repo_summary_for_review(branch_name: str) -> str:
+    """Build a lightweight repo summary for edge_case and acceptance reviewers."""
+    branch_dir = get_branch_dir(branch_name)
+    parts: list[str] = []
+
+    review_bundle_path = branch_dir / "review-bundle.md"
+    if review_bundle_path.exists():
+        try:
+            content = review_bundle_path.read_text(encoding="utf-8")
+            if content.strip() and not content.strip().startswith("MISSING"):
+                parts.append(f"=== Review Bundle ===\n{content}")
+        except OSError:
+            pass
+
+    return "\n\n".join(parts) if parts else "[no review bundle; use git history and repo structure for context]"
+
+
+def _cluster_adversarial_findings(
+    findings_by_reviewer: dict[str, list[dict[str, object]]],
+) -> list[dict[str, object]]:
+    """Deterministic clustering: group findings by file+proximity or by category+symbol.
+
+    Returns list of clusters, each with merged findings from multiple reviewers.
+    """
+    all_findings: list[tuple[str, dict[str, object]]] = []
+    for reviewer_id, findings in findings_by_reviewer.items():
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            all_findings.append((reviewer_id, finding))
+
+    clusters: list[dict[str, object]] = []
+    used: set[int] = set()
+
+    for i, (rev_i, f_i) in enumerate(all_findings):
+        if i in used:
+            continue
+        cluster: dict[str, object] = {
+            "findings": [f_i],
+            "reviewers": [rev_i],
+        }
+        used.add(i)
+        fp_i = str(f_i.get("file_path") or "")
+        sym_i = str(f_i.get("symbol") or "")
+        cat_i = str(f_i.get("category") or "")
+
+        for j, (rev_j, f_j) in enumerate(all_findings):
+            if j in used:
+                continue
+            fp_j = str(f_j.get("file_path") or "")
+            sym_j = str(f_j.get("symbol") or "")
+            cat_j = str(f_j.get("category") or "")
+
+            same_file = fp_i and fp_j and fp_i == fp_j
+            same_symbol = sym_i and sym_j and sym_i == sym_j
+            same_category = cat_i and cat_j and cat_i == cat_j
+
+            if (same_file and same_category) or (same_symbol and same_category):
+                cluster["findings"].append(f_j)  # type: ignore[union-attr]
+                cluster["reviewers"].append(rev_j)  # type: ignore[union-attr]
+                used.add(j)
+
+        clusters.append(cluster)
+
+    return clusters
+
+
+def _dedup_cluster_via_llm_fallback(cluster: dict[str, object]) -> dict[str, object]:
+    """Return cluster as-is for v1 — deterministic clustering is sufficient.
+
+    LLM adjudication for ambiguous cases is deferred to v2.
+    """
+    return cluster
+
+
+def _severity_rank(severity: str) -> int:
+    return {"CRITICAL": 0, "IMPORTANT": 1, "MINOR": 2}.get(str(severity).upper(), 3)
+
+
+def aggregate_adversarial_findings(
+    blind_json: Optional[str] = None,
+    edge_case_json: Optional[str] = None,
+    acceptance_json: Optional[str] = None,
+) -> dict:
+    """Aggregate, deduplicate, and classify findings from adversarial reviewers.
+
+    Args:
+        blind_json: Raw JSON output from Blind Hunter reviewer.
+        edge_case_json: Raw JSON output from Edge Case Hunter reviewer.
+        acceptance_json: Raw JSON output from Acceptance Auditor reviewer.
+
+    Returns dict with unified report.
+    """
+    reviewer_data: dict[str, dict[str, object]] = {}
+    findings_by_reviewer: dict[str, list[dict[str, object]]] = {}
+
+    inputs = [
+        ("blind", blind_json),
+        ("edge_case", edge_case_json),
+        ("acceptance", acceptance_json),
+    ]
+
+    parse_errors: list[str] = []
+    for reviewer_id, raw_json in inputs:
+        if raw_json is None:
+            reviewer_data[reviewer_id] = {
+                "status": "not_run",
+                "error": "No output provided",
+            }
+            findings_by_reviewer[reviewer_id] = []
+            continue
+        try:
+            parsed = json.loads(raw_json)
+            if not isinstance(parsed, dict):
+                reviewer_data[reviewer_id] = {
+                    "status": "parse_error",
+                    "error": "Output is not a JSON object",
+                }
+                findings_by_reviewer[reviewer_id] = []
+                parse_errors.append(f"{reviewer_id}: output is not a JSON object")
+                continue
+            reviewer_data[reviewer_id] = {
+                "status": "ok",
+                "all_clear": parsed.get("all_clear"),
+                "all_clear_rationale": parsed.get("all_clear_rationale", ""),
+                "checks_performed": parsed.get("checks_performed", []),
+                "raw": parsed,
+            }
+            findings = parsed.get("findings", [])
+            if not isinstance(findings, list):
+                findings = []
+            findings_by_reviewer[reviewer_id] = findings
+        except (json.JSONDecodeError, ValueError) as e:
+            reviewer_data[reviewer_id] = {
+                "status": "parse_error",
+                "error": str(e),
+            }
+            findings_by_reviewer[reviewer_id] = []
+            parse_errors.append(f"{reviewer_id}: {e}")
+
+    clusters = _cluster_adversarial_findings(findings_by_reviewer)
+
+    merged_findings: list[dict[str, object]] = []
+    for cluster in clusters:
+        cluster_findings = cluster.get("findings", [])
+        cluster_reviewers = cluster.get("reviewers", [])
+        if not isinstance(cluster_findings, list) or not cluster_findings:
+            continue
+
+        primary = cluster_findings[0] if isinstance(cluster_findings[0], dict) else {}
+        corroborated = len(set(str(r) for r in (cluster_reviewers if isinstance(cluster_reviewers, list) else []))) > 1
+
+        severities = [
+            _severity_rank(str(f.get("severity", "MINOR")))
+            for f in cluster_findings
+            if isinstance(f, dict)
+        ]
+        max_sev = min(severities) if severities else 2
+        merged_severity = {0: "CRITICAL", 1: "IMPORTANT", 2: "MINOR"}[max_sev]
+
+        merged: dict[str, object] = {
+            "severity": merged_severity,
+            "category": primary.get("category", "unknown"),
+            "file_path": primary.get("file_path"),
+            "line_range": primary.get("line_range"),
+            "symbol": primary.get("symbol"),
+            "failure_mode": primary.get("failure_mode", ""),
+            "evidence": primary.get("evidence", ""),
+            "recommendation": primary.get("recommendation", ""),
+            "reported_by": sorted(set(
+                str(r) for r in (cluster_reviewers if isinstance(cluster_reviewers, list) else [])
+            )),
+            "corroborated": corroborated,
+            "corroboration_note": (
+                f"Found independently by {len(set(str(r) for r in (cluster_reviewers if isinstance(cluster_reviewers, list) else [])))} reviewers — high confidence"
+                if corroborated
+                else ""
+            ),
+            "raw_findings": cluster_findings,
+        }
+        merged_findings.append(merged)
+
+    merged_findings.sort(key=lambda f: _severity_rank(str(f.get("severity", "MINOR"))))
+
+    critical_count = sum(1 for f in merged_findings if f.get("severity") == "CRITICAL")
+    important_count = sum(1 for f in merged_findings if f.get("severity") == "IMPORTANT")
+    minor_count = sum(1 for f in merged_findings if f.get("severity") == "MINOR")
+    corroborated_count = sum(1 for f in merged_findings if f.get("corroborated"))
+
+    per_reviewer_counts = {}
+    for reviewer_id, findings in findings_by_reviewer.items():
+        per_reviewer_counts[reviewer_id] = len(findings)
+
+    all_clear_by_reviewer = {}
+    for reviewer_id, data in reviewer_data.items():
+        all_clear_by_reviewer[reviewer_id] = data.get("all_clear")
+
+    return {
+        "status": "success",
+        "summary": {
+            "total_findings": len(merged_findings),
+            "critical": critical_count,
+            "important": important_count,
+            "minor": minor_count,
+            "corroborated": corroborated_count,
+            "per_reviewer_counts": per_reviewer_counts,
+            "all_clear_by_reviewer": all_clear_by_reviewer,
+        },
+        "findings": merged_findings,
+        "reviewer_status": reviewer_data,
+        "parse_errors": parse_errors,
+    }
+
+
 def write_learning_handoff(
     workflow: str,
     task_title: str = "",
@@ -14466,6 +14971,62 @@ if __name__ == "__main__":
             branch=_args.branch,
             review_preferences=_args.review_preferences,
             budget_tokens=_args.budget_tokens,
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+
+    elif func_name == "build_adversarial_review_prompts":
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py build_adversarial_review_prompts")
+        _p.add_argument("--branch", default=None)
+        _p.add_argument("--reviewers", default=None, help="Comma-separated: blind,edge_case,acceptance")
+        _p.add_argument("--quick", action="store_true", default=False, help="Skip edge_case reviewer")
+        _args = _p.parse_args(sys.argv[2:])
+        reviewer_ids = None
+        if _args.reviewers:
+            reviewer_ids = [r.strip() for r in _args.reviewers.split(",") if r.strip()]
+        elif _args.quick:
+            reviewer_ids = ["blind", "acceptance"]
+        result = build_adversarial_review_prompts(
+            branch=_args.branch,
+            reviewers=reviewer_ids,
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+
+    elif func_name == "aggregate_adversarial_findings":
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py aggregate_adversarial_findings")
+        _p.add_argument("--blind", default=None, help="Path to blind reviewer JSON output")
+        _p.add_argument("--edge-case", default=None, help="Path to edge_case reviewer JSON output")
+        _p.add_argument("--acceptance", default=None, help="Path to acceptance reviewer JSON output")
+        _args = _p.parse_args(sys.argv[2:])
+
+        blind_json = None
+        edge_case_json = None
+        acceptance_json = None
+        for arg_path, key in [
+            (_args.blind, "blind"),
+            (_args.edge_case, "edge_case"),
+            (_args.acceptance, "acceptance"),
+        ]:
+            if arg_path:
+                try:
+                    text = Path(arg_path).read_text(encoding="utf-8")
+                    if key == "blind":
+                        blind_json = text
+                    elif key == "edge_case":
+                        edge_case_json = text
+                    elif key == "acceptance":
+                        acceptance_json = text
+                except OSError as e:
+                    print(json.dumps({"status": "error", "reason": f"Cannot read {arg_path}: {e}"}))
+                    sys.exit(1)
+
+        result = aggregate_adversarial_findings(
+            blind_json=blind_json,
+            edge_case_json=edge_case_json,
+            acceptance_json=acceptance_json,
         )
         print(json.dumps(result, indent=2, ensure_ascii=True))
 
