@@ -1,10 +1,10 @@
 ---
 name: map-tokenreport
 description: |
-  Show per-subtask/agent token accounting (input, output, cache read/creation, cost, cache-hit ratio) for the current branch. Use when asked for token usage, run cost, or a token report. Do NOT use to plan or run work; use map-efficient.
+  Show per-subtask/agent token accounting (input, output, cache read/creation, cost, cache-hit ratio) for the current branch. Supports --dashboard (box-drawing visual), --history (trends), --estimate (cost projection), --json / --csv export, and --finalize (record session snapshot). Use when asked for token usage, run cost, or a token report. Do NOT use to plan or run work; use map-efficient.
 effort: low
 disable-model-invocation: true
-argument-hint: "[branch]"
+argument-hint: "[branch] [--dashboard|--history|--estimate|--json|--csv|--finalize]"
 ---
 # /map-tokenreport - Token Accounting Report
 
@@ -41,6 +41,20 @@ appends attributed rows to `.map/<branch>/token_log.jsonl`, rolled up into
   with downstream Actor/Monitor tokens, so users can see whether delegated
   exploration paid for itself.
 
+## Modes
+
+The skill supports several modes via CLI flags:
+
+| Flag | Effect |
+|---|---|
+| _(default)_ | Classic text table: per-subtask rows, by-agent section, research ROI, cache-hit + cost |
+| `--dashboard` | Box-drawing visual dashboard: subtask bar chart, per-agent + per-model breakdowns, vs-previous comparison |
+| `--history [N]` | Trend table over last N recorded sessions (default 10) with cost delta and cache-hit trend |
+| `--estimate` | Cost projection from weighted historical average, with range, median, and remaining estimate |
+| `--json` | Export `token_accounting.json` as formatted JSON |
+| `--csv` | Export as CSV (one row per dimension key: aggregate, subtask, agent, phase) |
+| `--finalize` | Record current `token_accounting.json` as a snapshot in `token_history.jsonl` for trend tracking |
+
 ## Steps
 
 ### Step 1: Resolve the branch
@@ -54,14 +68,38 @@ one.
 
 ### Step 2: Render the report
 
+Choose the right command for the user's intent:
+
+**Default (classic table):**
 ```bash
 python3 .map/scripts/map_step_runner.py token_report "$BRANCH"
 ```
 
-`token_report` re-reads `token_log.jsonl`, rebuilds `token_accounting.json`,
-and prints a per-subtask table, a per-agent table, research ROI, and a TOTAL
-line with the cache-hit ratio and estimated cost. It is idempotent and read-only
-against your code.
+**Dashboard (visual):**
+```bash
+python3 .map/scripts/map_step_runner.py token_report "$BRANCH" --dashboard
+```
+
+**History (trends):**
+```bash
+python3 .map/scripts/map_step_runner.py token_report "$BRANCH" --history
+```
+
+**Estimate:**
+```bash
+python3 .map/scripts/map_step_runner.py token_report "$BRANCH" --estimate
+```
+
+**JSON / CSV export:**
+```bash
+python3 .map/scripts/map_step_runner.py token_report "$BRANCH" --json
+python3 .map/scripts/map_step_runner.py token_report "$BRANCH" --csv
+```
+
+**Record snapshot for history:**
+```bash
+python3 .map/scripts/map_step_runner.py token_report "$BRANCH" --finalize
+```
 
 ### Step 3: Optional — inspect the raw rollup
 
@@ -93,24 +131,93 @@ Report token usage for the current branch:
 /map-tokenreport
 ```
 
-Report for a specific branch:
+Visual dashboard:
 
 ```text
-/map-tokenreport feat/add-multiply
+/map-tokenreport --dashboard
 ```
 
-Typical output:
+Trend over last 5 sessions:
 
 ```text
-Token accounting — feat-add-multiply (93 assistant turns)
+/map-tokenreport --history 5
+```
 
-subtask              input      output     cache_rd    cache_cr     $cost
--------------------------------------------------------------------------
-ST-001                 183     150,879   14,085,841     792,780     47.31
--------------------------------------------------------------------------
-TOTAL                  183     150,879   14,085,841     792,780     47.31
+Cost estimate before starting:
 
-cache hit ratio: 100.0%   est cost: $47.31
+```text
+/map-tokenreport --estimate
+```
+
+Export for CI pipeline:
+
+```text
+/map-tokenreport --json > .map/token_report.json
+```
+
+Record a snapshot (typically called automatically by the Stop hook):
+
+```text
+/map-tokenreport --finalize
+```
+
+Typical dashboard output:
+
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│  MAP Token Report — feat-oauth2                                 │
+│                                                                 │
+├─────────────────────────────────────────────────────────────────┤
+│  Session: $ 3.42     Cache-hit: 67%  │ vs prev: ↑12%            │
+│  Turns: 93  │                                                   │
+├─────────────────────────────────────────────────────────────────┤
+│  Per-subtask                                                    │
+│                                                                 │
+│  ST-001       $   0.87  █████████████████████████████░░░░ 28%   │
+│  ST-002       $   1.23  ██████████████████████████████████████  │
+│  ST-003       $   0.65  █████████████████████░░░░░░░░░░░░ 21%   │
+│  ST-004       $   0.67  ██████████████████████░░░░░░░░░░░ 22%   │
+├─────────────────────────────────────────────────────────────────┤
+│  By agent                                                        │
+│    actor                       $   1.89 (55%)                    │
+│    monitor                     $   0.67 (20%)                    │
+│    evaluator                   $   0.44 (13%)                    │
+│    predictor                   $   0.42 (12%)                    │
+├─────────────────────────────────────────────────────────────────┤
+│  By model                                                        │
+│    claude-sonnet-4-6           $   2.10 (61%)                    │
+│    claude-haiku-4-5            $   1.32 (39%)                    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+Typical history output:
+
+```text
+Token history — feat-oauth2 (last 3 of 3 sessions)
+
+  #  timestamp              turns     cost   cache%  vs prev
+-------------------------------------------------------------------
+  1  2026-06-24T10:15:00       45  $   2.87    58%        —
+  2  2026-06-25T14:22:00       72  $   3.15    62%      +10%
+  3  2026-06-26T09:30:00       93  $   3.42    67%       +9%
+
+Trend (3 sessions):
+  Cost:     $ 2.87 → $ 3.42  ↑ 19%
+  Cache:    58% → 67%  ↑ 9pp
+  Avg cost: $ 3.15 / session
+```
+
+Typical estimate output:
+
+```text
+Cost estimate — feat-oauth2
+
+  Based on 3 historical sessions (last 3 weighted):
+  Weighted avg:  $ 3.22
+  Range:         $ 2.87 — $ 3.42
+  Median:        $ 3.15
+  Spent so far:  $ 1.20
+  Remaining est: $ 2.02
 ```
 
 ## Troubleshooting
@@ -132,3 +239,9 @@ cache hit ratio: 100.0%   est cost: $47.31
 - **Unknown model in cost estimate.** `MODEL_TOKEN_PRICES` falls back to the
   default model price for unrecognized model ids; update that table in
   `map_step_runner.py` when a new model ships.
+- **`--history` / `--estimate` show no data.** No snapshots have been recorded.
+  Run `/map-tokenreport --finalize` at the end of each session, or set up the
+  Stop hook to call `record_session_snapshot` automatically.
+- **Dashboard layout looks wrong in narrow terminals.** The dashboard uses
+  a fixed 67-character width. Pipe the output to a file and view it in a wider
+  terminal, or use `--json` for programmatic consumption.

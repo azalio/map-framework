@@ -748,6 +748,7 @@ def record_token_budget_decision(
 
 TOKEN_LOG_NAME = "token_log.jsonl"
 TOKEN_ACCOUNTING_NAME = "token_accounting.json"
+TOKEN_HISTORY_NAME = "token_history.jsonl"
 TOKEN_METER_CACHE_NAME = ".token-meter-cache.json"
 _SEEN_ID_CACHE_LIMIT = 5000
 
@@ -1383,6 +1384,359 @@ def token_report(branch: Optional[str] = None) -> str:
         f"cache hit ratio: {ratio:.1f}%   "
         f"est cost: ${float(aggregate.get('est_cost_usd', 0.0)):.2f}"
     )
+    return "\n".join(rows) + "\n"
+
+
+def record_session_snapshot(branch: Optional[str] = None) -> dict[str, object]:
+    """Append the current token_accounting.json to token_history.jsonl.
+
+    Called once per session (typically from the Stop hook or /map-tokenreport
+    --finalize). Records timestamp, branch, aggregate, by_subtask, by_agent,
+    by_model, cache_hit_ratio, and est_cost_usd so history queries can show
+    trends across sessions without re-reading every token_log.jsonl.
+    """
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
+    payload = _rebuild_token_accounting(branch_name)
+    aggregate = cast(dict[str, float], payload.get("aggregate", {}))
+    by_subtask = cast(dict[str, dict[str, float]], payload.get("by_subtask", {}))
+    by_agent = cast(dict[str, dict[str, float]], payload.get("by_agent", {}))
+
+    by_model: dict[str, dict[str, float]] = {}
+    log_path = get_branch_dir(branch_name) / TOKEN_LOG_NAME
+    if log_path.is_file():
+        try:
+            for raw in log_path.read_text(encoding="utf-8").splitlines():
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    row = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                model = str(row.get("model") or "unknown")
+                usage = {field: _coerce_token_int(row.get(field, 0)) for field in _TOKEN_FIELDS}
+                cost = _token_cost(usage, model)
+                bucket = by_model.setdefault(model, {**_empty_token_bucket(), "est_cost_usd": 0.0})
+                for field in _TOKEN_FIELDS:
+                    bucket[field] += usage[field]
+                bucket["est_cost_usd"] = round(bucket.get("est_cost_usd", 0.0) + cost, 6)
+        except (OSError, UnicodeDecodeError):
+            pass
+
+    snapshot: dict[str, object] = {
+        "ts": _utc_timestamp(),
+        "branch": branch_name,
+        "event_count": payload.get("event_count", 0),
+        "aggregate": aggregate,
+        "by_subtask": {k: v for k, v in by_subtask.items()},
+        "by_agent": {k: v for k, v in by_agent.items()},
+        "by_model": {k: v for k, v in by_model.items()},
+    }
+    history_path = get_branch_dir(branch_name) / TOKEN_HISTORY_NAME
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with history_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(snapshot) + "\n")
+    except OSError as exc:
+        return {"status": "error", "reason": str(exc)}
+    return {"status": "success", "recorded": 1}
+
+
+def _load_token_history(branch: str) -> list[dict[str, object]]:
+    """Load all snapshots from token_history.jsonl for a branch."""
+    history_path = get_branch_dir(branch) / TOKEN_HISTORY_NAME
+    entries: list[dict[str, object]] = []
+    if not history_path.is_file():
+        return entries
+    try:
+        for raw in history_path.read_text(encoding="utf-8").splitlines():
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                row = json.loads(raw)
+                if isinstance(row, dict):
+                    entries.append(cast(dict[str, object], row))
+            except json.JSONDecodeError:
+                continue
+    except (OSError, UnicodeDecodeError):
+        pass
+    return entries
+
+
+def token_report_json(branch: Optional[str] = None) -> str:
+    """Export token_accounting.json as formatted JSON."""
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
+    payload = _rebuild_token_accounting(branch_name)
+    return json.dumps(payload, indent=2)
+
+
+def token_report_csv(branch: Optional[str] = None) -> str:
+    """Export token_accounting as CSV (one row per accounting bucket)."""
+    import csv as _csv
+    import io as _io
+
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
+    payload = _rebuild_token_accounting(branch_name)
+    aggregate = cast(dict[str, float], payload.get("aggregate", {}))
+    by_subtask = cast(dict[str, dict[str, float]], payload.get("by_subtask", {}))
+    by_agent = cast(dict[str, dict[str, float]], payload.get("by_agent", {}))
+    by_phase = cast(dict[str, dict[str, float]], payload.get("by_phase", {}))
+
+    buf = _io.StringIO()
+    writer = _csv.writer(buf)
+    header = ["dimension", "key", "input", "output", "cache_read", "cache_creation", "est_cost_usd", "cache_hit_ratio"]
+    writer.writerow(header)
+
+    def _write_rows(dim: str, bucket: dict[str, dict[str, float]]) -> None:
+        for key in sorted(bucket):
+            b = bucket[key]
+            cacheable = b.get("input", 0.0) + b.get("cache_read", 0.0)
+            ratio = round(b.get("cache_read", 0.0) / cacheable, 4) if cacheable else 0.0
+            writer.writerow([
+                dim, key,
+                int(b.get("input", 0)), int(b.get("output", 0)),
+                int(b.get("cache_read", 0)), int(b.get("cache_creation", 0)),
+                round(b.get("est_cost_usd", 0.0), 4), ratio,
+            ])
+
+    cacheable = aggregate.get("input", 0.0) + aggregate.get("cache_read", 0.0)
+    agg_ratio = round(aggregate.get("cache_read", 0.0) / cacheable, 4) if cacheable else 0.0
+    writer.writerow([
+        "aggregate", branch_name,
+        int(aggregate.get("input", 0)), int(aggregate.get("output", 0)),
+        int(aggregate.get("cache_read", 0)), int(aggregate.get("cache_creation", 0)),
+        round(aggregate.get("est_cost_usd", 0.0), 4), agg_ratio,
+    ])
+    _write_rows("subtask", by_subtask)
+    _write_rows("agent", by_agent)
+    _write_rows("phase", by_phase)
+    return buf.getvalue()
+
+
+def token_report_dashboard(branch: Optional[str] = None) -> str:
+    """Render a visual dashboard with box-drawing characters.
+
+    Shows session summary, per-subtask bar chart, per-agent/per-model
+    breakdowns, and vs-previous-session comparison when history exists.
+    """
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
+    payload = _rebuild_token_accounting(branch_name)
+    aggregate = cast(dict[str, float], payload.get("aggregate", {}))
+    by_subtask = cast(dict[str, dict[str, float]], payload.get("by_subtask", {}))
+    by_agent = cast(dict[str, dict[str, float]], payload.get("by_agent", {}))
+
+    total_cost = aggregate.get("est_cost_usd", 0.0)
+    cache_ratio = float(aggregate.get("cache_hit_ratio", 0.0)) * 100
+    event_count = _coerce_token_int(payload.get("event_count", 0))
+
+    rows: list[str] = []
+    W = 67
+
+    def _box_row(content):
+        rows.append("│  " + content.ljust(W - 5) + " │")
+
+    rows.append("┌" + "─" * (W - 2) + "┐")
+    rows.append("│  MAP Token Report — " + branch_name.ljust(W - 24) + " │")
+    rows.append("│" + " " * (W - 2) + "│")
+    rows.append("├" + "─" * (W - 2) + "┤")
+
+    # ---- summary ----
+    history = _load_token_history(branch_name)
+    vs_prev = ""
+    if len(history) >= 2:
+        prev = cast(dict[str, float], history[-2].get("aggregate", {}))
+        prev_cost = prev.get("est_cost_usd", 0.0)
+        if prev_cost > 0:
+            delta = ((total_cost - prev_cost) / prev_cost) * 100
+            arrow = "\u25b2" if delta > 0 else "\u25bc"
+            vs_prev = " | vs prev: {}{:+.0f}%".format(arrow, delta)
+
+    _box_row("Session: ${:.2f}  |  Cache-hit: {:.0f}%{}".format(
+        total_cost, cache_ratio, vs_prev))
+    _box_row("Turns: {}".format(event_count))
+
+    # ---- per-subtask bar chart ----
+    if by_subtask:
+        rows.append("├" + "─" * (W - 2) + "┤")
+        _box_row("Per-subtask:")
+        rows.append("│  " + " " * (W - 5) + " │")
+
+        max_cost = max((b.get("est_cost_usd", 0.0) for b in by_subtask.values()), default=0.01)
+        bar_max = W - 24
+        for sid in sorted(by_subtask):
+            b = by_subtask[sid]
+            scost = b.get("est_cost_usd", 0.0)
+            ratio_pct = (scost / total_cost * 100) if total_cost > 0 else 0
+            bar_len = int((scost / max_cost) * bar_max) if max_cost > 0 else 0
+            bar = "\u2588" * bar_len + "\u2591" * (bar_max - bar_len)
+            rows.append("│  {:12s} $ {:>7.2f}  {} {:>3.0f}% │".format(
+                sid, scost, bar, ratio_pct))
+
+    # ---- by agent ----
+    if by_agent:
+        rows.append("├" + "─" * (W - 2) + "┤")
+        _box_row("By agent:")
+        agent_cost_total = sum(b.get("est_cost_usd", 0.0) for b in by_agent.values())
+        for agent in sorted(by_agent, key=lambda a: by_agent[a].get("est_cost_usd", 0.0), reverse=True):
+            b = by_agent[agent]
+            acost = b.get("est_cost_usd", 0.0)
+            pct = (acost / agent_cost_total * 100) if agent_cost_total > 0 else 0
+            pad = max(0, W - 5 - 26 - 11 - 7)
+            rows.append("│    {:26s} $ {:>7.2f} ({:>3.0f}%){:s} │".format(
+                agent, acost, pct, " " * pad))
+
+    # ---- by model ----
+    rows.append("├" + "─" * (W - 2) + "┤")
+    _box_row("By model:")
+    by_model: dict[str, dict[str, float]] = {}
+    log_path = get_branch_dir(branch_name) / TOKEN_LOG_NAME
+    if log_path.is_file():
+        try:
+            for raw in log_path.read_text(encoding="utf-8").splitlines():
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    row = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                model = str(row.get("model") or "unknown")
+                usage = {field: _coerce_token_int(row.get(field, 0)) for field in _TOKEN_FIELDS}
+                cost = _token_cost(usage, model)
+                bucket = by_model.setdefault(model, {**_empty_token_bucket(), "est_cost_usd": 0.0})
+                for field in _TOKEN_FIELDS:
+                    bucket[field] += usage[field]
+                bucket["est_cost_usd"] = round(bucket.get("est_cost_usd", 0.0) + cost, 6)
+        except (OSError, UnicodeDecodeError):
+            pass
+
+    if by_model:
+        model_cost_total = sum(b.get("est_cost_usd", 0.0) for b in by_model.values())
+        for model in sorted(by_model, key=lambda m: by_model[m].get("est_cost_usd", 0.0), reverse=True):
+            b = by_model[model]
+            mcost = b.get("est_cost_usd", 0.0)
+            pct = (mcost / model_cost_total * 100) if model_cost_total > 0 else 0
+            model_short = model[:30] if len(model) > 30 else model
+            pad = max(0, W - 5 - 32 - 11 - 7)
+            rows.append("│    {:32s} $ {:>7.2f} ({:>3.0f}%){:s} │".format(
+                model_short, mcost, pct, " " * pad))
+
+    rows.append("└" + "─" * (W - 2) + "┘")
+    return "\n".join(rows) + "\n"
+
+
+def token_report_history(branch: Optional[str] = None, n: int = 10) -> str:
+    """Show token cost trends across the last N recorded sessions."""
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
+    entries = _load_token_history(branch_name)
+    if not entries:
+        return "No session history recorded yet. Run /map-tokenreport to record a snapshot.\n"
+
+    shown = entries[-n:]
+    rows: list[str] = []
+    rows.append(f"Token history — {branch_name} (last {len(shown)} of {len(entries)} sessions)")
+    rows.append("")
+    header = f"{'#':>3}  {'timestamp':<20}  {'turns':>7}  {'cost':>9}  {'cache%':>7}  {'vs prev':>8}"
+    rows.append(header)
+    rows.append("-" * len(header))
+
+    prev_cost: Optional[float] = None
+    for i, entry in enumerate(shown):
+        idx = len(entries) - len(shown) + i + 1
+        agg = cast(dict[str, float], entry.get("aggregate", {}))
+        ts = str(entry.get("ts", ""))[:19]
+        turns = _coerce_token_int(entry.get("event_count", 0))
+        cost = agg.get("est_cost_usd", 0.0)
+        cache = float(agg.get("cache_hit_ratio", 0.0)) * 100
+
+        vs_str = ""
+        if prev_cost is not None and prev_cost > 0:
+            delta = ((cost - prev_cost) / prev_cost) * 100
+            vs_str = f"{delta:+.0f}%"
+        else:
+            vs_str = "—"
+
+        rows.append(f"{idx:>3}  {ts:<20}  {turns:>7,}  $ {cost:>7.2f}  {cache:>5.0f}%  {vs_str:>8}")
+        prev_cost = cost
+
+    if len(shown) >= 2:
+        first = cast(dict[str, float], shown[0].get("aggregate", {}))
+        last = cast(dict[str, float], shown[-1].get("aggregate", {}))
+        first_cost = first.get("est_cost_usd", 0.0)
+        last_cost = last.get("est_cost_usd", 0.0)
+        first_cache = float(first.get("cache_hit_ratio", 0.0)) * 100
+        last_cache = float(last.get("cache_hit_ratio", 0.0)) * 100
+        rows.append("")
+        rows.append(f"Trend ({len(shown)} sessions):")
+        rows.append(f"  Cost:     $ {first_cost:.2f} → $ {last_cost:.2f}  "
+                     f"({'↑' if last_cost > first_cost else '↓' if last_cost < first_cost else '→'} "
+                     f"{abs(((last_cost - first_cost) / first_cost * 100) if first_cost > 0 else 0):.0f}%)")
+        rows.append(f"  Cache:    {first_cache:.0f}% → {last_cache:.0f}%  "
+                     f"({'↑' if last_cache > first_cache else '↓' if last_cache < first_cache else '→'} "
+                     f"{abs(last_cache - first_cache):.0f}pp)")
+        avg_cost = sum(
+            float(cast(dict[str, float], e.get("aggregate", {})).get("est_cost_usd", 0.0))
+            for e in shown
+        ) / len(shown)
+        rows.append(f"  Avg cost: $ {avg_cost:.2f} / session")
+
+    return "\n".join(rows) + "\n"
+
+
+def token_report_estimate(branch: Optional[str] = None) -> str:
+    """Estimate session cost from history data.
+
+    Uses weighted average of past sessions, with recent sessions weighted
+    more heavily. Falls back to worst-case estimate when no history exists.
+    """
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
+    payload = _rebuild_token_accounting(branch_name)
+    aggregate = cast(dict[str, float], payload.get("aggregate", {}))
+    spent_so_far = aggregate.get("est_cost_usd", 0.0)
+
+    entries = _load_token_history(branch_name)
+    history_costs = [
+        float(cast(dict[str, float], e.get("aggregate", {})).get("est_cost_usd", 0.0))
+        for e in entries
+    ]
+
+    rows: list[str] = []
+    if not history_costs:
+        rows.append(f"Cost estimate — {branch_name}")
+        rows.append("")
+        rows.append("  No session history available.")
+        rows.append(f"  Spent so far: $ {spent_so_far:.2f}")
+        rows.append("  A typical MAP session (1-3 subtasks) costs $0.50–$5.00")
+        rows.append("  with default models, depending on codebase size and task complexity.")
+        return "\n".join(rows) + "\n"
+
+    weighted_sum = 0.0
+    weight_sum = 0.0
+    for i, cost in enumerate(history_costs[-10:]):
+        weight = i + 1
+        weighted_sum += cost * weight
+        weight_sum += weight
+    weighted_avg = weighted_sum / weight_sum if weight_sum > 0 else 0.0
+
+    sorted_costs = sorted(history_costs[-10:])
+    median = sorted_costs[len(sorted_costs) // 2]
+    lo = sorted_costs[0]
+    hi = sorted_costs[-1]
+
+    rows.append(f"Cost estimate — {branch_name}")
+    rows.append("")
+    rows.append(f"  Based on {len(history_costs)} historical sessions (last {min(len(history_costs), 10)} weighted):")
+    rows.append(f"  Weighted avg:  $ {weighted_avg:.2f}")
+    rows.append(f"  Range:         $ {lo:.2f} — $ {hi:.2f}")
+    rows.append(f"  Median:        $ {median:.2f}")
+    rows.append(f"  Spent so far:  $ {spent_so_far:.2f}")
+    remaining = max(0.0, weighted_avg - spent_so_far)
+    rows.append(f"  Remaining est: $ {remaining:.2f}")
     return "\n".join(rows) + "\n"
 
 
@@ -14289,9 +14643,36 @@ if __name__ == "__main__":
         print(json.dumps(report, indent=2))
 
     elif func_name == "token_report":
-        # CLI: token_report [branch]
-        tok_branch = sys.argv[2] if len(sys.argv) >= 3 else None
-        print(token_report(tok_branch))
+        # CLI: token_report [branch] [--dashboard] [--json] [--csv]
+        #       [--history [N]] [--estimate] [--finalize]
+        args = sys.argv[2:]
+        branch_arg: Optional[str] = None
+        if args and not args[0].startswith("--"):
+            branch_arg = args[0]
+            args = args[1:]
+
+        if "--json" in args:
+            print(token_report_json(branch_arg))
+        elif "--csv" in args:
+            print(token_report_csv(branch_arg))
+        elif "--history" in args:
+            n = 10
+            try:
+                idx = args.index("--history")
+                if idx + 1 < len(args) and not args[idx + 1].startswith("--"):
+                    n = int(args[idx + 1])
+            except (ValueError, IndexError):
+                pass
+            print(token_report_history(branch_arg, n))
+        elif "--estimate" in args:
+            print(token_report_estimate(branch_arg))
+        elif "--dashboard" in args:
+            print(token_report_dashboard(branch_arg))
+        elif "--finalize" in args:
+            result = record_session_snapshot(branch_arg)
+            print(json.dumps(result, indent=2))
+        else:
+            print(token_report(branch_arg))
 
     elif func_name == "detect_cross_subtask_regression_risk" and len(sys.argv) >= 4:
         # CLI: detect_cross_subtask_regression_risk <branch> <subtask_id>
