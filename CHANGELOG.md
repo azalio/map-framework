@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Automatic cleanup of MAP-internal workflow IDs from shipped code.** At workflow completion (`WORKFLOW_COMPLETE`), the new `scrub-internal-ids.py` Stop hook strips leaked internal identifiers — subtask `ST-001`, acceptance criteria `AC-3`, verification criteria `VC1`, invariants `INV-7`, hard constraints `HC-1` — that an Actor wrote into the code a run changed: as comments (`// The rule (INV-7) is:`), string literals, or test names (`test_vc1_*` → `test_*`). The deterministic engine (`.map/scripts/scrub_internal_ids.py`) is hard-scoped to the run's git diff (only files the run changed, only the lines it added; pre-existing IDs the user wrote on untouched lines are never modified), strips ID tokens inside comments/strings (deleting pure-marker comment lines) and renames `vc<n>` test identifiers with a collision guard, leaves IDs in bare code untouched and *reported*, and re-scans to surface anything it could not safely remove. It then commits the cleanup as a dedicated `chore(map): strip internal workflow IDs` commit, runs exactly once per completed run, no-ops outside a completed run, honors `MAP_INVOKED_BY`, and can be disabled with `scrub_internal_ids: false` in `.map/config.yaml`. The Actor prompt now also forbids writing these IDs into comments/strings (the transient `test_vc<n>` grep aid stays during the run and is renamed at close). Claude provider only — the Codex hook model has no `Stop` event; the shared engine ships to `.map/scripts/` regardless.
+
 ## [3.19.0] - 2026-06-24
 
 ### Fixed
