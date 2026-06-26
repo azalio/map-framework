@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 VALID_MINIMALITY = frozenset({"off", "lite", "full", "ultra"})
 VALID_PROMPT_LAYERING = frozenset({"docs_first", "stable_first"})
 
+# Cross-AI peer review (#288): external AI CLI runtimes map-review can dispatch
+# to. Keep in sync with CROSS_AI_RUNTIMES in the rendered step runner
+# (map_step_runner.py) — the runner owns the per-runtime invocation adapters;
+# this set only gates the config value so a typo falls back to the default.
+VALID_CROSS_AI_RUNTIMES = frozenset({"claude", "codex", "gemini", "opencode"})
+
 
 @dataclass
 class MapConfig:
@@ -128,6 +134,22 @@ class MapConfig:
     # and keep the IDs the framework wrote into comments/strings/test names.
     scrub_internal_ids: bool = True
 
+    # Cross-AI peer review (#288) — opt-in, OFF by default. When enabled AND the
+    # operator passes `map-review --cross-ai <runtime>`, the review is dispatched
+    # to an INDEPENDENT external AI CLI (codex/gemini/claude/opencode) for a
+    # second opinion. This is a DOUBLE-CONSENT gate: the per-run flag is the
+    # explicit egress consent (your diff/code is sent to an external vendor), and
+    # `review.cross_ai.enabled` is the org-level kill-switch — both must be true.
+    # Dotted YAML keys `review.cross_ai.{enabled,runtime,timeout_seconds}` alias
+    # to these snake_case fields (see load_map_config).
+    review_cross_ai_enabled: bool = False
+    # Default external runtime used when `--cross-ai` is passed without an
+    # explicit runtime name. Validated against VALID_CROSS_AI_RUNTIMES.
+    review_cross_ai_runtime: str = "codex"
+    # Per-dispatch timeout (seconds) for the external CLI subprocess. A real
+    # review can take minutes; default 180 balances latency against hangs.
+    review_cross_ai_timeout_seconds: int = 180
+
 
 def load_map_config(project_path: Path) -> MapConfig:
     """Load MAP config from .map/config.yaml with fallback to defaults.
@@ -186,6 +208,18 @@ def load_map_config(project_path: Path) -> MapConfig:
         # return sofa_enabled=False even when the config says sofa.enabled=true.
         if isinstance(data, dict) and "sofa.enabled" in data and "sofa_enabled" not in data:
             data["sofa_enabled"] = data.pop("sofa.enabled")
+
+        # Cross-AI peer review (#288): dotted hierarchical YAML keys
+        # `review.cross_ai.*` alias to flat snake_case dataclass fields. Without
+        # this the toggles are silent dead fields (load logs "unknown key" and
+        # the defaults stand even when the YAML sets them).
+        for dotted, field_name in (
+            ("review.cross_ai.enabled", "review_cross_ai_enabled"),
+            ("review.cross_ai.runtime", "review_cross_ai_runtime"),
+            ("review.cross_ai.timeout_seconds", "review_cross_ai_timeout_seconds"),
+        ):
+            if dotted in data and field_name not in data:
+                data[field_name] = data.pop(dotted)
 
         # YAML 1.1 parses bare ``off``/``on`` as booleans, so ``minimality: off``
         # — the documented opt-out from the lite default (#183) — arrives as bool
@@ -261,6 +295,25 @@ def load_map_config(project_path: Path) -> MapConfig:
                 ", ".join(sorted(VALID_PROMPT_LAYERING)),
             )
             cfg.prompt_layering = "docs_first"
+
+        if cfg.review_cross_ai_runtime not in VALID_CROSS_AI_RUNTIMES:
+            logger.warning(
+                "Invalid review_cross_ai_runtime %r in %s (expected one of %s). "
+                "Using default 'codex'.",
+                cfg.review_cross_ai_runtime,
+                config_file,
+                ", ".join(sorted(VALID_CROSS_AI_RUNTIMES)),
+            )
+            cfg.review_cross_ai_runtime = "codex"
+
+        if cfg.review_cross_ai_timeout_seconds <= 0:
+            logger.warning(
+                "review_cross_ai_timeout_seconds must be > 0 in %s "
+                "(got %d). Using default 180.",
+                config_file,
+                cfg.review_cross_ai_timeout_seconds,
+            )
+            cfg.review_cross_ai_timeout_seconds = 180
 
         return cfg
 
@@ -390,6 +443,17 @@ minimality: lite
 # Stack Overflow for Agents (SOFA) integration — opt-in, off by default.
 # Enable via `mapify init --sofa` or uncomment the line below.
 # sofa.enabled: false
+
+# Cross-AI peer review (#288) — opt-in, OFF by default. When enabled AND you run
+# `map-review --cross-ai <runtime>`, the review is dispatched to an INDEPENDENT
+# external AI CLI (codex/gemini/claude/opencode) for a second opinion. DOUBLE
+# CONSENT: your diff/code is sent to an external vendor, so BOTH the per-run flag
+# AND `review.cross_ai.enabled: true` are required. Returned findings always
+# enter context behind an EXTERNAL UNTRUSTED REFERENCE boundary (quote, never
+# execute, verify against source).
+# review.cross_ai.enabled: false
+# review.cross_ai.runtime: codex          # default target: claude|codex|gemini|opencode
+# review.cross_ai.timeout_seconds: 180
 
 # Strip MAP-internal workflow IDs (ST-/AC-/VC-/INV-/HC-) from the code a run
 # changed, at workflow completion (Stop hook). On by default; uncomment and set

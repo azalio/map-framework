@@ -90,6 +90,20 @@ HIGH_TRAFFIC_COMPACT_SKILL_REFS = {
     "map-check": "check-reference.md",
 }
 
+# Per-skill active-body line budget for the always-loaded SKILL.md (it costs
+# context on every invocation). Default history: 500→502→504→508 (see the
+# justification comment at the assertion). `map-review` carries THREE review
+# modes in one body — the default 4-section walkthrough PLUS the `--adversarial`
+# phase PLUS the `--cross-ai` (#288) phase — so it gets a deliberately higher cap
+# than the single-mode skills. Per the learned 'always-loaded skill body line
+# budget' rule: bump the budget, do NOT gut active control flow to fit (the
+# cross-AI status protocol and egress rationale already live in
+# review-reference.md; what remains is the irreducible flag/dispatch/branch flow).
+_DEFAULT_SKILL_BODY_BUDGET = 508
+HIGH_TRAFFIC_SKILL_BODY_BUDGETS = {
+    "map-review": 560,
+}
+
 CLAUDE_MUTATION_BOUNDARY_SURFACES = [
     Path("agents") / "actor.md",
     Path("skills") / "map-fast" / "SKILL.md",
@@ -464,10 +478,16 @@ class TestSkillStructure:
                 # clause on the clean-pass record — both are the active retry-loop
                 # control flow (full recipe lives in efficient-reference.md, not here).
                 # Do NOT remove content to fit — bump the budget instead (per learned rule
-                # 'always-loaded skill body line budget').
-                assert len(content.splitlines()) <= 508, (
-                    f"{skill_file} should keep the active workflow path compact; "
-                    "move examples, rationale, and troubleshooting into supporting files."
+                # 'always-loaded skill body line budget'). The cap is per-skill:
+                # single-mode skills stay at the 508 default; map-review's higher cap
+                # is justified at HIGH_TRAFFIC_SKILL_BODY_BUDGETS (three review modes).
+                budget = HIGH_TRAFFIC_SKILL_BODY_BUDGETS.get(
+                    skill_name, _DEFAULT_SKILL_BODY_BUDGET
+                )
+                assert len(content.splitlines()) <= budget, (
+                    f"{skill_file} should keep the active workflow path compact "
+                    f"(budget {budget} lines); move examples, rationale, and "
+                    "troubleshooting into supporting files."
                 )
                 assert f"[{reference_name}]({reference_name})" in content, (
                     f"{skill_file} should point to its bundled supporting reference."

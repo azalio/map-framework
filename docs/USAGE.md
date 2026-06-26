@@ -165,6 +165,48 @@ claude /map-review --compare-orderings --detached
 
 **Default behavior unchanged:** A plain `/map-review` invocation (no flags) continues to work exactly as before — section order is Architecture → Code Quality → Tests → Performance, single run, same verdict surface. The only unconditional change in all modes is neutral option presentation (options listed as A/B/C with the recommendation marker placed after the list, not first).
 
+### Cross-AI peer review (`--cross-ai <runtime>`)
+
+`/map-review --cross-ai codex` dispatches the review to an **independent external
+AI CLI** for a true second opinion — a different model/vendor with fresh context
+and no shared session state. Same-model review is "inbred"; an independent
+reviewer catches model-specific blind spots. Supported runtimes (slice 1):
+`codex`, `gemini`, `claude`, `opencode`. The runtime arg is optional — without it
+the configured `review.cross_ai.runtime` default is used.
+
+This sends your **git diff, spec, and review preferences to an external vendor —
+your code leaves the machine** — so it is **double-consent and off by default**:
+
+```yaml
+# .map/config.yaml — both the flag AND this gate are required
+review.cross_ai.enabled: true        # org kill-switch (default false)
+review.cross_ai.runtime: codex       # default target: claude|codex|gemini|opencode
+review.cross_ai.timeout_seconds: 180
+```
+
+Guardrails (all enforced in the Python step runner, not in prompt text):
+
+- **Outbound secret scan** — before dispatch, the assembled prompt is scanned for
+  high-confidence secrets (private keys, AWS/GitHub/Google/Slack credentials). A
+  match **blocks the dispatch** and reports only the pattern name, never the
+  value. Nothing is sent.
+- **`shell=False` literal-argv** invocation with a per-runtime adapter and a
+  configurable timeout — the prompt is never passed through a shell.
+- **Inbound untrusted boundary** — the external CLI's output is parsed for
+  findings but ALWAYS re-emitted behind an `EXTERNAL UNTRUSTED REFERENCE` fence
+  (link allowlist + injection scan), and findings are advisory-only
+  (`source: cross_ai`) — never auto-applied.
+- **Honest independence labeling** — `claude` reviewing a Claude-orchestrated
+  session is labeled `independent_vendor: false` (a same-vendor sanity check, not
+  a true second opinion).
+- **Non-blocking degradation** — if cross-AI is disabled, the CLI is missing or
+  unauthenticated, the call times out, the output is unparseable, or a secret was
+  blocked, the review prints the reason and **falls back to the normal in-session
+  review**. Cross-AI is a supplement, never a hard gate.
+
+`--cross-ai all` (multi-runtime consensus/disagreement aggregation) is a planned
+follow-up slice; slice 1 is single-runtime dispatch.
+
 ## Stack Overflow for Agents (SOFA)
 
 SOFA integration is an **opt-in, off-by-default, read-only** prior-art search.
