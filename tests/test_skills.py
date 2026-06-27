@@ -2238,7 +2238,11 @@ class TestMapEfficientPerSubtaskCommitAllowance:
         ref_content = reference.read_text(encoding="utf-8")
         commit_pos = ref_content.find("git commit -m \"ST-NNN")
         record_pos = ref_content.find("record_subtask_result \\")
-        validate_pos = ref_content.find("validate_step 2.4")
+        # The clean-pass close is the FIRST validate_step 2.4 at/after the
+        # record step in the commit recipe. Search from record_pos so an
+        # earlier, unrelated validate_step 2.4 (e.g. the flaky-defer
+        # `--disposition` route in the triage section above) does not match.
+        validate_pos = ref_content.find("validate_step 2.4", record_pos)
         assert 0 <= commit_pos < record_pos, (
             f"{reference}: commit must precede record_subtask_result so "
             "--commit-sha gets the real SHA, not the prior one."

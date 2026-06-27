@@ -142,6 +142,35 @@ def _write_flaky_triage_artifact(
     return path
 
 
+def _monitor_defer_envelope(
+    *,
+    valid: bool = False,
+    check_id: str = "pytest::test_flaky",
+    disposition_kind: str = "deferred_nondeterministic",
+    failed_checks: "list[str] | None" = None,
+    include_disposition: bool = True,
+) -> str:
+    """Build a complete Monitor JSON envelope signalling a flaky deferral.
+
+    Full required-key set so the existing 2.4 envelope gate passes, then a
+    structured `disposition` so validate_step's disposition binding can verify
+    it. Knobs flip individual anti-gaming preconditions for rejection tests.
+    """
+    env: dict[str, object] = {
+        "valid": valid,
+        "summary": "Confirmed flaky check; deferring with recorded evidence.",
+        "issues": [],
+        "passed_checks": ["correctness"],
+        "failed_checks": ["testability"] if failed_checks is None else failed_checks,
+        "feedback_for_actor": "Flaky test deferred; see triage sidecar.",
+        "estimated_fix_time": "5 minutes",
+        "mcp_tools_used": [],
+    }
+    if include_disposition:
+        env["disposition"] = {"kind": disposition_kind, "check_id": check_id}
+    return json.dumps(env)
+
+
 @pytest.fixture
 def sample_blueprint(tmp_path):
     """Create a sample blueprint JSON with a fan-out DAG."""
@@ -2084,6 +2113,314 @@ class TestDeferFlakySubtask:
         assert reloaded.workflow_status == "WORKFLOW_COMPLETE"
         assert reloaded.current_step_phase == "COMPLETE"
         assert reloaded.subtask_results["ST-001"]["status"] == "deferred_nondeterministic"
+
+
+class TestValidateStepDisposition:
+    """validate_step 2.4 --disposition routes the THIRD Monitor outcome.
+
+    A confirmed flaky check is deferred through the verdict path itself
+    (valid:false + deferred:true), not via an out-of-band command, and the
+    anti-gaming gate rejects every way of faking a deferral.
+    """
+
+    def _make_monitor_state(self, tmp_path, branch, **overrides):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        for k, v in overrides.items():
+            setattr(state, k, v)
+        state_file = tmp_path / ".map" / branch / "step_state.json"
+        state.save(state_file)
+        return state_file
+
+    def test_deferred_disposition_routes_to_deferral_and_advances(
+        self, branch_dir, tmp_path
+    ):
+        state_file = self._make_monitor_state(tmp_path, branch_dir)
+        _write_flaky_triage_artifact(tmp_path, branch_dir, check_id="pytest::test_flaky")
+
+        result = map_orchestrator.validate_step(
+            "2.4",
+            branch_dir,
+            recommendation="needs_investigation",
+            monitor_envelope=_monitor_defer_envelope(check_id="pytest::test_flaky"),
+            disposition="deferred_nondeterministic",
+            check_id="pytest::test_flaky",
+            files_changed=["src/service.py"],
+            summary="Monitor deferred a confirmed flaky check.",
+        )
+
+        # A deferred run is NON-GREEN: valid is false, but it is a routing
+        # outcome (deferred), not a hard-stop retry.
+        assert result["valid"] is False
+        assert result["deferred"] is True
+        assert result["non_green_outcome"] is True
+        assert result["disposition"] == "deferred_nondeterministic"
+        assert result["next_step"] == "2.2"
+        assert result["subtask_advanced_to"] == "ST-002"
+
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.current_subtask_id == "ST-002"
+        recorded = reloaded.subtask_results["ST-001"]
+        assert recorded["status"] == "deferred_nondeterministic"
+        assert recorded["non_green_outcome"] is True
+        assert recorded["files_changed"] == ["src/service.py"]
+        assert recorded["flaky_test_triage"]["check_id"] == "pytest::test_flaky"
+
+    def test_missing_sidecar_hard_stops_without_advancing(self, branch_dir, tmp_path):
+        state_file = self._make_monitor_state(tmp_path, branch_dir)
+        # No sidecar written at all.
+        result = map_orchestrator.validate_step(
+            "2.4",
+            branch_dir,
+            monitor_envelope=_monitor_defer_envelope(),
+            disposition="deferred_nondeterministic",
+            check_id="pytest::test_flaky",
+        )
+        assert result["valid"] is False
+        assert not result.get("deferred")
+        assert "deferral rejected" in result["message"].lower()
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert "ST-001" not in reloaded.subtask_results
+        assert reloaded.current_step_id == "2.4"
+
+    def test_deterministic_failure_sidecar_rejected(self, branch_dir, tmp_path):
+        self._make_monitor_state(tmp_path, branch_dir)
+        _write_flaky_triage_artifact(
+            tmp_path,
+            branch_dir,
+            check_id="pytest::test_flaky",
+            disposition="deterministic_failure",
+            pass_count=0,
+            fail_count=2,
+        )
+        result = map_orchestrator.validate_step(
+            "2.4",
+            branch_dir,
+            monitor_envelope=_monitor_defer_envelope(),
+            disposition="deferred_nondeterministic",
+            check_id="pytest::test_flaky",
+        )
+        assert result["valid"] is False
+        assert not result.get("deferred")
+
+    def test_check_id_not_in_sidecar_rejected(self, branch_dir, tmp_path):
+        self._make_monitor_state(tmp_path, branch_dir)
+        # Sidecar exists for a DIFFERENT check; the "borrowed flake" exploit.
+        _write_flaky_triage_artifact(tmp_path, branch_dir, check_id="pytest::other")
+        result = map_orchestrator.validate_step(
+            "2.4",
+            branch_dir,
+            monitor_envelope=_monitor_defer_envelope(check_id="pytest::test_flaky"),
+            disposition="deferred_nondeterministic",
+            check_id="pytest::test_flaky",
+        )
+        assert result["valid"] is False
+        assert not result.get("deferred")
+
+    def test_envelope_disposition_check_id_mismatch_rejected(
+        self, branch_dir, tmp_path
+    ):
+        self._make_monitor_state(tmp_path, branch_dir)
+        _write_flaky_triage_artifact(tmp_path, branch_dir, check_id="pytest::test_flaky")
+        # Envelope's structured disposition names a different check than --check-id.
+        envelope = _monitor_defer_envelope(check_id="pytest::DIFFERENT")
+        result = map_orchestrator.validate_step(
+            "2.4",
+            branch_dir,
+            monitor_envelope=envelope,
+            disposition="deferred_nondeterministic",
+            check_id="pytest::test_flaky",
+        )
+        assert result["valid"] is False
+        assert not result.get("deferred")
+        assert "binding failed" in result["message"].lower()
+
+    def test_envelope_valid_true_rejected(self, branch_dir, tmp_path):
+        self._make_monitor_state(tmp_path, branch_dir)
+        _write_flaky_triage_artifact(tmp_path, branch_dir, check_id="pytest::test_flaky")
+        result = map_orchestrator.validate_step(
+            "2.4",
+            branch_dir,
+            monitor_envelope=_monitor_defer_envelope(valid=True),
+            disposition="deferred_nondeterministic",
+            check_id="pytest::test_flaky",
+        )
+        assert result["valid"] is False
+        assert not result.get("deferred")
+        assert "binding failed" in result["message"].lower()
+
+    def test_empty_failed_checks_rejected(self, branch_dir, tmp_path):
+        self._make_monitor_state(tmp_path, branch_dir)
+        _write_flaky_triage_artifact(tmp_path, branch_dir, check_id="pytest::test_flaky")
+        result = map_orchestrator.validate_step(
+            "2.4",
+            branch_dir,
+            monitor_envelope=_monitor_defer_envelope(failed_checks=[]),
+            disposition="deferred_nondeterministic",
+            check_id="pytest::test_flaky",
+        )
+        assert result["valid"] is False
+        assert not result.get("deferred")
+        assert "binding failed" in result["message"].lower()
+
+    def test_contradictory_recommendation_rejected(self, branch_dir, tmp_path):
+        self._make_monitor_state(tmp_path, branch_dir)
+        _write_flaky_triage_artifact(tmp_path, branch_dir, check_id="pytest::test_flaky")
+        result = map_orchestrator.validate_step(
+            "2.4",
+            branch_dir,
+            recommendation="revise",  # contradicts a deferral
+            monitor_envelope=_monitor_defer_envelope(),
+            disposition="deferred_nondeterministic",
+            check_id="pytest::test_flaky",
+        )
+        assert result["valid"] is False
+        assert not result.get("deferred")
+        assert "contradict" in result["message"].lower()
+
+    def test_missing_monitor_envelope_rejected(self, branch_dir, tmp_path):
+        self._make_monitor_state(tmp_path, branch_dir)
+        _write_flaky_triage_artifact(tmp_path, branch_dir, check_id="pytest::test_flaky")
+        result = map_orchestrator.validate_step(
+            "2.4",
+            branch_dir,
+            disposition="deferred_nondeterministic",
+            check_id="pytest::test_flaky",
+        )
+        assert result["valid"] is False
+        assert not result.get("deferred")
+        assert "monitor-envelope" in result["message"].lower()
+
+    def test_missing_check_id_rejected(self, branch_dir, tmp_path):
+        self._make_monitor_state(tmp_path, branch_dir)
+        result = map_orchestrator.validate_step(
+            "2.4",
+            branch_dir,
+            monitor_envelope=_monitor_defer_envelope(),
+            disposition="deferred_nondeterministic",
+        )
+        assert result["valid"] is False
+        assert not result.get("deferred")
+        assert "check-id" in result["message"].lower()
+
+    def test_unknown_disposition_rejected(self, branch_dir, tmp_path):
+        self._make_monitor_state(tmp_path, branch_dir)
+        result = map_orchestrator.validate_step(
+            "2.4",
+            branch_dir,
+            monitor_envelope=_monitor_defer_envelope(),
+            disposition="totally_made_up",
+            check_id="pytest::test_flaky",
+        )
+        assert result["valid"] is False
+        assert not result.get("deferred")
+        assert "unknown monitor disposition" in result["message"].lower()
+
+    def test_normal_verdict_without_disposition_unaffected(
+        self, branch_dir, tmp_path
+    ):
+        # A disposition-less 2.4 close still behaves exactly as before.
+        state_file = self._make_monitor_state(tmp_path, branch_dir)
+        result = map_orchestrator.validate_step(
+            "2.4",
+            branch_dir,
+            recommendation="approve",
+        )
+        assert result["valid"] is True
+        assert not result.get("deferred")
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.current_subtask_id == "ST-002"
+
+    @staticmethod
+    def _make_project(root: Path) -> Path:
+        """Populate <root>/.map/scripts/ from the template (main() anchors cwd
+        to Path(__file__).parents[2], so the CLI must run from a real project
+        layout — not the rendered template tree)."""
+        import shutil
+
+        scripts_dir = root / ".map" / "scripts"
+        scripts_dir.mkdir(parents=True)
+        for py_file in ORCHESTRATOR_PATH.glob("*.py"):
+            shutil.copy(py_file, scripts_dir / py_file.name)
+        return scripts_dir / "map_orchestrator.py"
+
+    def test_cli_deferral_exits_zero(self, tmp_path):
+        # The CLI is the real consumer of the valid:false+deferred:true shape:
+        # a deferral must exit 0 so the skill does NOT treat it as a hard-stop.
+        project = tmp_path / "project"
+        project.mkdir()
+        script = self._make_project(project)
+        self._make_monitor_state(project, "test-branch")
+        _write_flaky_triage_artifact(project, "test-branch", check_id="pytest::test_flaky")
+        proc = subprocess.run(
+            [
+                sys.executable, str(script), "validate_step", "2.4",
+                "--branch", "test-branch",
+                "--disposition", "deferred_nondeterministic",
+                "--check-id", "pytest::test_flaky",
+                "--monitor-envelope", "-",
+            ],
+            input=_monitor_defer_envelope(check_id="pytest::test_flaky"),
+            cwd=str(project), capture_output=True, text=True, timeout=30,
+        )
+        assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+        payload = json.loads(proc.stdout)
+        assert payload["valid"] is False
+        assert payload["deferred"] is True
+        assert payload["next_step"] == "2.2"
+
+    def test_cli_rejected_deferral_exits_one(self, tmp_path):
+        # No sidecar → the deferral cannot be honored → real failure, exit 1.
+        project = tmp_path / "project"
+        project.mkdir()
+        script = self._make_project(project)
+        self._make_monitor_state(project, "test-branch")
+        proc = subprocess.run(
+            [
+                sys.executable, str(script), "validate_step", "2.4",
+                "--branch", "test-branch",
+                "--disposition", "deferred_nondeterministic",
+                "--check-id", "pytest::test_flaky",
+                "--monitor-envelope", "-",
+            ],
+            input=_monitor_defer_envelope(check_id="pytest::test_flaky"),
+            cwd=str(project), capture_output=True, text=True, timeout=30,
+        )
+        assert proc.returncode == 1, proc.stdout
+        payload = json.loads(proc.stdout)
+        assert payload["valid"] is False
+        assert not payload.get("deferred")
+
+
+class TestMonitorDispositionSingleSource:
+    """Drift guard: the SSOT dict, the prompt, and the CLI must agree."""
+
+    def test_prompt_names_every_disposition(self):
+        monitor_prompt = (
+            Path(__file__).resolve().parents[1]
+            / "src" / "mapify_cli" / "templates" / "agents" / "monitor.md"
+        ).read_text(encoding="utf-8")
+        for kind in map_orchestrator.MONITOR_DISPOSITIONS:
+            assert kind in monitor_prompt, (
+                f"disposition {kind!r} is in MONITOR_DISPOSITIONS but not named "
+                "in the rendered Monitor prompt — prompt/parser drift"
+            )
+
+    def test_cli_disposition_help_mentions_supported_kinds(self):
+        orchestrator_src = (ORCHESTRATOR_PATH / "map_orchestrator.py").read_text(
+            encoding="utf-8"
+        )
+        # The --disposition argparse help must name each supported kind so the
+        # CLI surface cannot silently drift from the routing policy.
+        for kind in map_orchestrator.MONITOR_DISPOSITIONS:
+            assert kind in orchestrator_src
 
 
 class TestWaveMonitorFailed:

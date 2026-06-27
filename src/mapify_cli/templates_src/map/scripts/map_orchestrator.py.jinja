@@ -886,6 +886,35 @@ DEFERRED_FOR_DEPS_PHASE = "deferred_for_deps"
 DEFERRED_NONDETERMINISTIC_STATUS = "deferred_nondeterministic"
 FLAKY_TEST_TRIAGE_MONITOR_POLICY = "not_valid_without_explicit_triage"
 
+# Single source of truth for the non-binary Monitor verdict outcomes and how
+# the verdict path routes each one. Consumed by validate_step's disposition
+# branch, the CLI --disposition choices, and the drift-guard test (which
+# asserts the Monitor prompt names every key here). A flat constants/policy
+# dict is deliberate for this bounded slice; Pydantic-driven prompt/parser
+# schema generation is the principled long-term target, out of scope here.
+#
+# Routing contract for a deferral:
+#   - Monitor MUST emit valid:false (a deferred flaky run is NOT green); the
+#     "defer, don't retry" decision is a *routing* decision separate from the
+#     verdict, so validate_step returns valid:false + deferred:true and the
+#     state machine advances on `deferred`, never on `valid`.
+#   - allowed_recommendations rejects a contradictory verdict (e.g.
+#     recommendation=revise says "Actor must fix" while a defer says "don't
+#     fix, it's flaky").
+MONITOR_DISPOSITIONS: dict[str, dict[str, object]] = {
+    DEFERRED_NONDETERMINISTIC_STATUS: {
+        "requires_valid_false": True,            # Monitor must emit valid:false
+        "requires_check_id": True,
+        "requires_sidecar": True,
+        "requires_non_empty_failed_checks": True,
+        "non_green_outcome": True,
+        # None (omitted) or "needs_investigation" only — revise/block contradict.
+        "allowed_recommendations": (None, "needs_investigation"),
+        "monitor_verdict_policy": FLAKY_TEST_TRIAGE_MONITOR_POLICY,
+        "route_action": "defer_flaky_subtask",
+    },
+}
+
 
 def _completed_subtask_ids_for_deps(state: "StepState") -> set[str]:
     """Return subtask IDs that count as "done" for dependency-resolution.
@@ -1257,21 +1286,21 @@ REJECT_RECOMMENDATIONS = {"revise", "block", "needs_investigation"}
 _MONITOR_REQUIRED_KEYS = ("valid", "summary", "issues")
 
 
-def _validate_monitor_envelope(monitor_text: str) -> Optional[str]:
-    """Return None when monitor_text is a complete Monitor JSON envelope.
+def _parse_monitor_envelope_json(
+    monitor_text: str,
+) -> tuple[Optional[dict], Optional[str]]:
+    """Parse a Monitor JSON envelope, with fenced ```json {...}``` recovery.
 
-    Returns an error message string when the envelope is broken — used
-    by validate_step 2.4 to reject prose-instead-of-JSON Monitor
-    responses orchestrator-side instead of relying on the operator to
-    eyeball it. Three failure modes match the skill's documented gate:
-    (a) doesn't parse as JSON, (b) missing required keys, (c) ends
-    mid-sentence (no closing `}`).
+    Returns ``(parsed_dict, None)`` on success or ``(None, error_message)`` on
+    failure. Shared by ``_validate_monitor_envelope`` (the structural 2.4 gate)
+    and ``_validate_monitor_disposition_binding`` (the anti-gaming defer gate)
+    so both see identical parse semantics — one parser, no drift.
     """
     if not monitor_text or not monitor_text.strip():
-        return "Monitor envelope is empty (prose-only response or truncation)"
+        return None, "Monitor envelope is empty (prose-only response or truncation)"
     stripped = monitor_text.strip()
     if not stripped.endswith(("}", "]")):
-        return (
+        return None, (
             "Monitor response ends mid-sentence (no closing `}`/`]`) — "
             "likely truncated; re-prompt with 'emit ONLY the JSON object'"
         )
@@ -1282,18 +1311,89 @@ def _validate_monitor_envelope(monitor_text: str) -> Optional[str]:
         import re as _re
         match = _re.search(r"\{(?:.|\n)*\}", stripped)
         if not match:
-            return f"Monitor response does not parse as JSON: {exc}"
+            return None, f"Monitor response does not parse as JSON: {exc}"
         try:
             parsed = json.loads(match.group(0))
         except json.JSONDecodeError:
-            return f"Monitor response does not parse as JSON: {exc}"
+            return None, f"Monitor response does not parse as JSON: {exc}"
     if not isinstance(parsed, dict):
-        return "Monitor response parsed but is not an object"
+        return None, "Monitor response parsed but is not an object"
+    return parsed, None
+
+
+def _validate_monitor_envelope(monitor_text: str) -> Optional[str]:
+    """Return None when monitor_text is a complete Monitor JSON envelope.
+
+    Returns an error message string when the envelope is broken — used
+    by validate_step 2.4 to reject prose-instead-of-JSON Monitor
+    responses orchestrator-side instead of relying on the operator to
+    eyeball it. Three failure modes match the skill's documented gate:
+    (a) doesn't parse as JSON, (b) missing required keys, (c) ends
+    mid-sentence (no closing `}`).
+    """
+    parsed, error = _parse_monitor_envelope_json(monitor_text)
+    if parsed is None:
+        return error
     missing = [k for k in _MONITOR_REQUIRED_KEYS if k not in parsed]
     if missing:
         return (
             f"Monitor JSON missing required keys {missing!r} — likely "
             "truncated; re-prompt for complete envelope"
+        )
+    return None
+
+
+def _validate_monitor_disposition_binding(
+    monitor_text: str, kind: str, check_id: str
+) -> Optional[str]:
+    """Verify a Monitor envelope structurally authorizes a deferral verdict.
+
+    Anti-gaming gate for validate_step's disposition path: a deferral is the
+    THIRD Monitor outcome (not a pass, not Actor-retry), so the verdict must
+    come from Monitor's own structured output, never a bare caller claim.
+    Returns None when the envelope authorizes the deferral, else an error.
+
+    On `check_id` vs `failed_checks`: the Monitor schema's ``failed_checks`` is
+    the list of failed quality *dimensions* (correctness, testability, …) — a
+    different namespace from a flaky test/check id — so the binding cannot be
+    "check_id in failed_checks". Instead it requires (a) Monitor admits the run
+    is non-green (``valid:false``) AND at least one dimension failed
+    (``failed_checks`` non-empty), and (b) Monitor's own structured
+    ``disposition`` names the same kind + check_id the caller is deferring. The
+    deterministic-vs-flaky defense lives in the sidecar (mixed pass/fail
+    evidence), which ``defer_flaky_subtask`` re-validates from disk.
+    """
+    parsed, error = _parse_monitor_envelope_json(monitor_text)
+    if parsed is None:
+        return error
+    if parsed.get("valid") is not False:
+        return (
+            "deferral requires Monitor valid:false (a deferred flaky run is not "
+            f"a clean pass); envelope has valid={parsed.get('valid')!r}"
+        )
+    failed_checks = parsed.get("failed_checks")
+    if not isinstance(failed_checks, list) or not failed_checks:
+        return (
+            "deferral requires a non-empty failed_checks list — Monitor must "
+            "admit a real dimension failure, not defer a green review"
+        )
+    disposition = parsed.get("disposition")
+    if not isinstance(disposition, dict):
+        return (
+            "Monitor envelope has no structured `disposition` object; the "
+            "deferral verdict must come from Monitor, not the caller"
+        )
+    env_kind = str(disposition.get("kind") or "").strip().lower()
+    if env_kind != kind:
+        return (
+            f"Monitor disposition.kind={env_kind!r} does not match the "
+            f"requested --disposition {kind!r}"
+        )
+    env_check = str(disposition.get("check_id") or "").strip()
+    if env_check != check_id.strip():
+        return (
+            f"Monitor disposition.check_id={env_check!r} does not match the "
+            f"requested --check-id {check_id.strip()!r}"
         )
     return None
 
@@ -1304,6 +1404,11 @@ def validate_step(
     *,
     recommendation: Optional[str] = None,
     monitor_envelope: Optional[str] = None,
+    disposition: Optional[str] = None,
+    check_id: Optional[str] = None,
+    files_changed: Optional[list[str]] = None,
+    summary: str = "",
+    commit_sha: Optional[str] = None,
 ) -> dict:
     """
     Validate step completion and update state.
@@ -1384,6 +1489,111 @@ def validate_step(
                     "prose-only response."
                 ),
                 "envelope_error": envelope_error,
+            }
+
+    # Non-binary disposition route — the THIRD Monitor outcome. When Monitor
+    # confirms a check is flaky/nondeterministic (not a deterministic
+    # regression), it emits a structured `disposition` and the caller pipes it
+    # here via --disposition/--check-id. We route to the existing
+    # defer_flaky_subtask (the single owner of the close+advance transaction),
+    # which re-validates the sidecar from disk. This branch sits BEFORE the
+    # recommendation gates so a defer carrying recommendation=needs_investigation
+    # routes to deferral instead of a hard-stop. Anti-gaming: the deferral is
+    # honored ONLY when the Monitor envelope structurally backs it (valid:false,
+    # non-empty failed_checks, matching disposition) AND the sidecar holds mixed
+    # pass/fail evidence — a Monitor cannot dodge a real deterministic failure
+    # by merely claiming "flaky". A deferred run is NOT green: this returns
+    # valid:false + deferred:true; the state machine routes on `deferred`.
+    if step_id == "2.4" and disposition:
+        norm_disposition = disposition.strip().lower()
+        policy = MONITOR_DISPOSITIONS.get(norm_disposition)
+        if policy is None:
+            return {
+                "valid": False,
+                "message": (
+                    f"Unknown Monitor disposition {norm_disposition!r}. "
+                    f"Supported: {sorted(MONITOR_DISPOSITIONS)}."
+                ),
+            }
+        if policy.get("requires_check_id") and not (check_id and check_id.strip()):
+            return {
+                "valid": False,
+                "message": (
+                    f"disposition {norm_disposition!r} requires --check-id "
+                    "(the flaky check id matching the triage sidecar)."
+                ),
+            }
+        # Contradiction guard: a defer verdict must not also tell the Actor to
+        # fix. recommendation may be omitted or needs_investigation only.
+        allowed_recs = policy.get("allowed_recommendations", (None,))
+        norm_rec = recommendation.strip().lower() if recommendation else None
+        if not isinstance(allowed_recs, (tuple, list)) or norm_rec not in allowed_recs:
+            return {
+                "valid": False,
+                "message": (
+                    f"Contradictory verdict: recommendation={norm_rec!r} with "
+                    f"disposition={norm_disposition!r}. A deferral must not also "
+                    "request an Actor fix — use recommendation=needs_investigation "
+                    "or omit it."
+                ),
+            }
+        # The deferral verdict must come from Monitor's structured output, not a
+        # bare caller claim — require and verify the full envelope.
+        if monitor_envelope is None:
+            return {
+                "valid": False,
+                "message": (
+                    "disposition route requires --monitor-envelope so the "
+                    "deferral verdict can be verified against Monitor's "
+                    "structured output (valid:false, non-empty failed_checks, "
+                    "matching disposition)."
+                ),
+            }
+        binding_error = _validate_monitor_disposition_binding(
+            monitor_envelope, norm_disposition, check_id or ""
+        )
+        if binding_error:
+            return {
+                "valid": False,
+                "message": f"Monitor disposition binding failed: {binding_error}",
+            }
+        # Delegate to defer_flaky_subtask: it re-validates the sidecar (check_id
+        # match + mixed pass/fail evidence + branch), records the non-green
+        # outcome, and closes 2.3+2.4 + advances. It is the single writer of
+        # this transition; validate_step's in-memory transactional 2.3->2.4
+        # close above is intentionally NOT persisted on this path.
+        if policy.get("route_action") == "defer_flaky_subtask":
+            defer_result = defer_flaky_subtask(
+                state.current_subtask_id or "",
+                branch,
+                check_id or "",
+                files_changed=files_changed,
+                summary=summary,
+                commit_sha=commit_sha,
+            )
+            if defer_result.get("status") != "success":
+                detail = defer_result.get("message", "deferral failed")
+                return {
+                    "valid": False,
+                    "message": f"Flaky deferral rejected: {detail}",
+                    "deferral": defer_result,
+                }
+            return {
+                "valid": False,
+                "deferred": True,
+                "non_green_outcome": True,
+                "disposition": norm_disposition,
+                "subtask_id": defer_result.get("subtask_id"),
+                "next_step": defer_result.get("next_step"),
+                "subtask_advanced_from": defer_result.get("subtask_advanced_from"),
+                "subtask_advanced_to": defer_result.get("subtask_advanced_to"),
+                "triage_path": defer_result.get("triage_path"),
+                "message": (
+                    f"Subtask {defer_result.get('subtask_id')} deferred "
+                    f"(disposition={norm_disposition}, check_id={check_id}). "
+                    "Non-green outcome recorded; workflow advanced."
+                ),
+                "deferral": defer_result,
             }
 
     # Recommendation-required gate: closing 2.4 without --recommendation
@@ -4215,6 +4425,18 @@ def main():
         ),
     )
     parser.add_argument(
+        "--disposition",
+        help=(
+            "Non-binary Monitor disposition (for validate_step 2.4). "
+            "Currently only 'deferred_nondeterministic': routes a confirmed "
+            "flaky check to deferral instead of a hard-stop retry. Requires "
+            "--check-id and --monitor-envelope, and a validated "
+            "flaky_test_triage sidecar with mixed pass/fail evidence. A "
+            "deferred run is non-green (valid:false + deferred:true), not a "
+            "clean pass."
+        ),
+    )
+    parser.add_argument(
         "--kind",
         help=(
             "Subtask completion kind (for mark_subtask_complete): one of "
@@ -4348,14 +4570,32 @@ def main():
                             file=sys.stderr,
                         )
                         sys.exit(1)
+            # --disposition routes a confirmed-flaky 2.4 close to deferral
+            # (the third Monitor outcome). It reuses --check-id/--files/
+            # --summary/--commit-sha (already parsed for defer_flaky_subtask).
+            validate_files_list: Optional[list[str]] = None
+            if args.files:
+                validate_files_list = [
+                    chunk.strip()
+                    for chunk in re.split(r"[,\s]+", args.files)
+                    if chunk.strip()
+                ]
             result = validate_step(
                 args.task_or_step,
                 branch,
                 recommendation=recommendation_arg,
                 monitor_envelope=monitor_envelope_text,
+                disposition=args.disposition,
+                check_id=args.check_id,
+                files_changed=validate_files_list,
+                summary=args.summary or "",
+                commit_sha=args.commit_sha,
             )
             print(json.dumps(result, indent=2))
-            if not result.get("valid", False):
+            # A deferral is a deliberate non-green-but-not-failed routing
+            # outcome (valid:false + deferred:true) — exit 0 so the skill does
+            # NOT treat it as a hard-stop. Only a true invalid verdict exits 1.
+            if not result.get("valid", False) and not result.get("deferred"):
                 sys.exit(1)
 
         elif args.command == "initialize":
