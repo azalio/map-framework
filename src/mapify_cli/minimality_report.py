@@ -344,7 +344,7 @@ def _summarize(
 
 def build_minimality_rollout_report(
     project_path: Path, min_complete_runs: int = 3
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Build a local telemetry report for the minimality Phase 3 gate.
 
     The report is read-only. It treats run-health reports that carry their own

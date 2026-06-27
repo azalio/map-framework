@@ -147,8 +147,47 @@ Design decisions (llm-council-reviewed, conv `461b92f9`):
 
 State lives in `.map/<branch>/worktrees.json` (sidecar) plus a `worktree`
 manifest stage; every guard returns a structured `{kind, message}` the skill
-branches on. Phase 2 (wave/DAG parallelism) and Phase 3 (context-budget hooks)
-remain open on #284.
+branches on.
+
+### Phase 2: parallel-wave merge coordinator
+
+`merge_wave_worktrees` accepts a whole **parallel wave** atomically. Every
+subtask of a wave runs in its own worktree cut off the same base (HEAD at wave
+start), so they cannot be merged one at a time — the first
+`merge_subtask_worktree` advances HEAD and the next trips `BASE_DIVERGED`. The
+coordinator relaxes *only* that guard to a wave-scoped form: it refuses
+**external** HEAD movement (`EXTERNAL_HEAD_MOVED`) but allows the sibling
+divergence each in-wave squash-merge creates. Design (llm-council-reviewed, conv
+`c29d6fa9`):
+
+- **Dedicated coordinator, not a flag.** Kept separate from the single-subtask
+  `merge_subtask_worktree` (zero blast radius on the shipped path); the two share
+  the extracted `_wt_freeze_and_verify` primitive (commit + per-worktree guards +
+  pre-merge verify) but stay separate compositions. `wave_base_sha` is derived
+  from the sidecar, never a caller parameter.
+- **Merge by frozen SHA, deterministic order.** Subtask ids are sorted; each
+  accepted worktree is squash-merged by its frozen head SHA (`git merge --squash`,
+  one runner commit per subtask — the one-commit-per-subtask contract holds).
+- **All-or-nothing.** Any textual conflict, commit failure, **or post-wave-gate
+  failure** rolls the whole working branch back to the wave base with `reset
+  --hard` + `clean -fd` (squash leaves no `MERGE_HEAD`, so `git merge --abort` is
+  never used; MAP runtime state is excluded from the clean) and leaves **every**
+  worktree intact for retry. No partial-wave state ever survives.
+- **One post-wave full gate inside the transaction.** Per-worktree pre-merge
+  verify is a local sanity gate; the post-wave `verification_checks` run on the
+  fully merged tree are the true correctness gate (they catch a semantic break
+  two subtasks create together — e.g. A renames a symbol B references — that no
+  textual merge can see). It runs inside the atomic transaction, so a red gate
+  rolls the wave back.
+- **Safety extras:** an advisory `flock` serializes coordinators
+  (`MERGE_IN_PROGRESS`); attached-/clean-target preconditions; conflicted paths
+  are attributed back to the subtasks that touched them (declared-disjoint
+  `affected_files` is only a scheduler hint, so actual changed-file overlap is
+  reported as advisory telemetry while git's textual conflict stays the hard
+  guard).
+
+Phase 3 (context-budget hooks: statusline, threshold warnings, heartbeat)
+remains open on #284.
 
 ## Stack Overflow for Agents (SOFA) Integration
 

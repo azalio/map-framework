@@ -10,6 +10,7 @@ Two layers:
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -313,3 +314,224 @@ class TestWorktreeGuards:
     @pytest.mark.usefixtures("repo")
     def test_merge_without_create_errors(self) -> None:
         assert m.merge_subtask_worktree("ST-019", verify_cmds=[])["kind"] == "NO_WORKTREE"
+
+
+# --------------------------------------------------------------------------- #
+# Wave merge coordinator (#284 Phase 2 — parallel wave / DAG)
+# --------------------------------------------------------------------------- #
+def _wt_with_files(sid: str, files: dict[str, str]) -> Path:
+    """Create a subtask worktree and write `files` (path -> content) into it."""
+    created = m.create_subtask_worktree(sid)
+    assert created["status"] == "success", created
+    wt = Path(str(created["worktree_path"]))
+    for rel, content in files.items():
+        (wt / rel).write_text(content, encoding="utf-8")
+    return wt
+
+
+class TestWaveWorktreeMerge:
+    def test_no_subtasks_errors(self, repo: Path) -> None:
+        del repo
+        assert m.merge_wave_worktrees([])["kind"] == "NO_SUBTASKS"
+
+    def test_unknown_subtask_errors(self, repo: Path) -> None:
+        del repo
+        result = m.merge_wave_worktrees(["ST-404"])
+        assert result["kind"] == "NO_WORKTREE"
+
+    def test_happy_path_two_disjoint_subtasks(self, repo: Path) -> None:
+        base = _git(["rev-parse", "HEAD"], repo).stdout.strip()
+        _wt_with_files("ST-001", {"b.txt": "from-001\n"})
+        _wt_with_files("ST-002", {"c.txt": "from-002\n"})
+
+        result = m.merge_wave_worktrees(
+            ["ST-002", "ST-001"], verify_cmds=[], post_wave_cmds=[]
+        )
+        assert result["status"] == "success", result
+        # Deterministic sorted merge order regardless of input order.
+        assert result["merged"] == ["ST-001", "ST-002"]
+        assert result["merged_count"] == 2
+        # Both disjoint files landed on the working branch.
+        assert (repo / "b.txt").read_text().strip() == "from-001"
+        assert (repo / "c.txt").read_text().strip() == "from-002"
+        # Exactly TWO squash commits (one per subtask) on top of init.
+        assert _git(["rev-list", "--count", "HEAD"], repo).stdout.strip() == "3"
+        # Commit subjects carry the subtask ids in sorted order (newest first).
+        subjects = _git(["log", "-2", "--format=%s"], repo).stdout.split("\n")
+        assert subjects[0].startswith("ST-002:")
+        assert subjects[1].startswith("ST-001:")
+        # HEAD advanced past the wave base.
+        assert _git(["rev-parse", "HEAD"], repo).stdout.strip() != base
+        # Worktrees cleaned up + sidecar emptied.
+        status = m.worktree_isolation_status()
+        assert status["active_worktrees"] == []
+        assert "map-wt/ST-001-0" not in _git(["branch"], repo).stdout
+        assert "map-wt/ST-002-0" not in _git(["branch"], repo).stdout
+
+    def test_conflict_rolls_whole_wave_back(self, repo: Path) -> None:
+        base = _git(["rev-parse", "HEAD"], repo).stdout.strip()
+        # Both subtasks rewrite the SAME line of a.txt differently -> real
+        # textual conflict on the second squash-merge.
+        _wt_with_files("ST-001", {"a.txt": "conflict-from-001\n"})
+        _wt_with_files("ST-002", {"a.txt": "conflict-from-002\n"})
+
+        result = m.merge_wave_worktrees(
+            ["ST-001", "ST-002"], verify_cmds=[], post_wave_cmds=[]
+        )
+        assert result["status"] == "error"
+        assert result["kind"] == "WAVE_MERGE_CONFLICT"
+        assert result["subtask_id"] == "ST-002"
+        assert "a.txt" in result["conflict_files"]
+        # Attribution names the culprits that touched a.txt.
+        attributed = {a["subtask_id"] for a in result["attribution"]}
+        assert "ST-002" in attributed
+        # All-or-nothing: working branch is back at the wave base, tree clean.
+        assert _git(["rev-parse", "HEAD"], repo).stdout.strip() == base
+        porcelain = [
+            ln
+            for ln in _git(["status", "--porcelain"], repo).stdout.splitlines()
+            if ln.strip() and ".map" not in ln
+        ]
+        assert porcelain == [], porcelain
+        # No MERGE_HEAD left behind (squash merge has none; abort would error).
+        assert not (repo / ".git" / "MERGE_HEAD").exists()
+        # Worktrees left intact for retry.
+        status = m.worktree_isolation_status()
+        slugs = {w["subtask_id"] for w in status["active_worktrees"]}
+        assert {"ST-001", "ST-002"} <= slugs
+
+    def test_external_head_movement_refused(self, repo: Path) -> None:
+        _wt_with_files("ST-001", {"b.txt": "x\n"})
+        _wt_with_files("ST-002", {"c.txt": "y\n"})
+        # An external commit advances HEAD past the wave base.
+        (repo / "external.txt").write_text("outside the wave\n")
+        _git(["add", "external.txt"], repo)
+        _git(["commit", "-q", "-m", "external"], repo)
+
+        result = m.merge_wave_worktrees(
+            ["ST-001", "ST-002"], verify_cmds=[], post_wave_cmds=[]
+        )
+        assert result["kind"] == "EXTERNAL_HEAD_MOVED"
+        # No merge attempted: the external commit is still HEAD, files unmerged.
+        assert not (repo / "b.txt").exists()
+
+    def test_post_wave_gate_failure_rolls_back(self, repo: Path) -> None:
+        base = _git(["rev-parse", "HEAD"], repo).stdout.strip()
+        _wt_with_files("ST-001", {"b.txt": "x\n"})
+        _wt_with_files("ST-002", {"c.txt": "y\n"})
+
+        result = m.merge_wave_worktrees(
+            ["ST-001", "ST-002"],
+            verify_cmds=[],
+            post_wave_cmds=['bash -lc "exit 7"'],
+        )
+        assert result["kind"] == "WAVE_VERIFY_FAILED"
+        assert result["returncode"] == 7
+        # Atomic rollback: branch at base, no squash commits survived.
+        assert _git(["rev-parse", "HEAD"], repo).stdout.strip() == base
+        assert not (repo / "b.txt").exists()
+        assert not (repo / "c.txt").exists()
+        # Worktrees intact for retry.
+        status = m.worktree_isolation_status()
+        assert len(status["active_worktrees"]) == 2
+
+    def test_post_wave_gate_pass_accepts(self, repo: Path) -> None:
+        _wt_with_files("ST-001", {"b.txt": "x\n"})
+        result = m.merge_wave_worktrees(
+            ["ST-001"], verify_cmds=[], post_wave_cmds=['bash -lc "exit 0"']
+        )
+        assert result["status"] == "success"
+        assert result["post_wave"]["status"] == "passed"
+        assert (repo / "b.txt").read_text().strip() == "x"
+
+    def test_per_worktree_verify_failure_aborts_before_merge(self, repo: Path) -> None:
+        base = _git(["rev-parse", "HEAD"], repo).stdout.strip()
+        _wt_with_files("ST-001", {"b.txt": "x\n"})
+        _wt_with_files("ST-002", {"c.txt": "y\n"})
+
+        result = m.merge_wave_worktrees(
+            ["ST-001", "ST-002"], verify_cmds=['bash -lc "exit 5"']
+        )
+        assert result["kind"] == "VERIFY_FAILED"
+        assert result["phase"] == "preflight"
+        # Aborted at preflight: working branch never touched.
+        assert _git(["rev-parse", "HEAD"], repo).stdout.strip() == base
+        assert not (repo / "b.txt").exists()
+        status = m.worktree_isolation_status()
+        assert len(status["active_worktrees"]) == 2
+
+    def test_no_change_subtask_counted_not_merged(self, repo: Path) -> None:
+        # ST-002 has real changes; ST-001's worktree is left empty (actor
+        # edited the main tree instead).
+        m.create_subtask_worktree("ST-001")
+        _wt_with_files("ST-002", {"c.txt": "y\n"})
+
+        result = m.merge_wave_worktrees(
+            ["ST-001", "ST-002"], verify_cmds=[], post_wave_cmds=[]
+        )
+        assert result["status"] == "success"
+        assert result["merged"] == ["ST-002"]
+        assert result["no_changes"] == ["ST-001"]
+        # Only ONE squash commit (ST-002); the no-op subtask added none.
+        assert _git(["rev-list", "--count", "HEAD"], repo).stdout.strip() == "2"
+
+    def test_overlap_reported_when_actual_files_auto_merge(self, repo: Path) -> None:
+        # Both subtasks touch a.txt but in DIFFERENT hunks (one appends, one
+        # prepends) -> git auto-merges, no textual conflict. The declared-disjoint
+        # scheduler hint was wrong, so the overlap telemetry must surface a.txt
+        # for attribution even though the merge succeeds.
+        _wt_with_files("ST-001", {"a.txt": "hello\nappended-by-001\n"})
+        _wt_with_files("ST-002", {"a.txt": "prepended-by-002\nhello\n"})
+
+        result = m.merge_wave_worktrees(
+            ["ST-001", "ST-002"], verify_cmds=[], post_wave_cmds=[]
+        )
+        assert result["status"] == "success", result
+        overlap_files = {f for o in result["overlaps"] for f in o["files"]}
+        assert "a.txt" in overlap_files
+        merged_a = (repo / "a.txt").read_text()
+        assert "appended-by-001" in merged_a
+        assert "prepended-by-002" in merged_a
+
+    def test_cli_wave_merge_happy_path(self, repo: Path) -> None:
+        _wt_with_files("ST-001", {"b.txt": "x\n"})
+        _wt_with_files("ST-002", {"c.txt": "y\n"})
+        runner = SCRIPTS_PATH / "map_step_runner.py"
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(runner),
+                "merge_wave_worktrees",
+                "ST-001",
+                "ST-002",
+                "--skip-verify",
+                "--skip-post-wave",
+            ],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, proc.stderr
+        out = json.loads(proc.stdout)
+        assert out["status"] == "success"
+        assert out["merged"] == ["ST-001", "ST-002"]
+        assert (repo / "b.txt").exists() and (repo / "c.txt").exists()
+
+    def test_cli_wave_merge_unknown_subtask_exits_nonzero(self, repo: Path) -> None:
+        runner = SCRIPTS_PATH / "map_step_runner.py"
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(runner),
+                "merge_wave_worktrees",
+                "ST-404",
+                "--skip-verify",
+                "--skip-post-wave",
+            ],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 1
+        out = json.loads(proc.stdout)
+        assert out["kind"] == "NO_WORKTREE"

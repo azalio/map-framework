@@ -15534,62 +15534,27 @@ def create_subtask_worktree(
     }
 
 
-def merge_subtask_worktree(
+def _wt_freeze_and_verify(
     subtask_id: str,
-    attempt: int = 0,
-    branch: Optional[str] = None,
+    record: dict,
+    project_dir: Path,
+    branch_name: str,
     verify_cmds: Optional[list[str]] = None,
     skip_verify: bool = False,
 ) -> dict[str, object]:
-    """Accept a subtask: commit worktree work, run pre-merge verification IN the
-    worktree, then squash-merge ONE commit into the working branch (#284).
+    """Commit a worktree's work + run per-worktree guards + pre-merge verify.
 
-    Council-mandated guards run BEFORE the merge touches the working branch:
-    base-divergence, runtime-state-in-diff, bulk-deletion, submodule-pointer,
-    detached-HEAD, and the pre-merge `verification_checks` gate. Any failure
-    leaves the working branch untouched and returns a structured ``kind``.
+    Operates ONLY inside the worktree — never touches the working branch. Shared
+    by ``merge_subtask_worktree`` (single) and ``merge_wave_worktrees`` (wave) so
+    the guard/verify logic has exactly one definition (council Q4: share
+    lower-level primitives, keep the two coordinators as separate compositions).
+    On success returns ``{"ok": True, "wt_head", "deleted", "no_changes",
+    "verification"}``; on any guard/verify failure returns a structured
+    ``_wt_error`` (``status=="error"``).
     """
-    project_dir = _wt_project_dir()
-    if not _wt_is_git_repo():
-        return _wt_error("NOT_A_REPO", "not inside a git work tree")
-    if _wt_cwd_is_managed_worktree():
-        return _wt_error(
-            "NESTED_WORKTREE", "run merge from the main checkout, not inside a worktree"
-        )
-    active = _wt_active_git_operation()
-    if active:
-        return _wt_error("ACTIVE_GIT_OP", f"a {active} is in progress; resolve it first")
-    slug = _wt_slug(subtask_id)
-    if slug is None:
-        return _wt_error("INVALID_SUBTASK_ID", f"unsafe subtask id: {subtask_id!r}")
-    branch_name = branch or get_branch_name()
-    state = _read_worktree_state(branch_name)
-    worktrees = state["worktrees"]
-    record = worktrees.get(slug) if isinstance(worktrees, dict) else None
-    if not isinstance(record, dict):
-        return _wt_error(
-            "NO_WORKTREE",
-            f"no recorded worktree for subtask {subtask_id!r}; create it first",
-        )
     wt_path = Path(str(record.get("path", "")))
     wt_branch = str(record.get("branch", ""))
     base_sha = str(record.get("base_sha", ""))
-    if not wt_path.is_dir() or not wt_branch or not base_sha:
-        return _wt_error(
-            "WORKTREE_MISSING",
-            "the recorded worktree is missing on disk; discard and recreate",
-        )
-
-    working_head = _wt_head_sha()
-    if working_head != base_sha:
-        return _wt_error(
-            "BASE_DIVERGED",
-            f"working branch advanced since the worktree was created "
-            f"(base={base_sha[:8]}, head={(working_head or '?')[:8]}); discard and "
-            "recreate the worktree off the new HEAD",
-            base_sha=base_sha,
-            working_head=working_head,
-        )
 
     add = _wt_git(["add", "-A"], cwd=wt_path)
     if add.returncode != 0:
@@ -15599,7 +15564,12 @@ def merge_subtask_worktree(
     staged = _wt_git(["diff", "--cached", "--quiet"], cwd=wt_path)
     if staged.returncode == 1:
         commit = _wt_git(
-            ["commit", "--no-verify", "-m", f"map-wt: {subtask_id} (attempt {record.get('attempt', 0)})"],
+            [
+                "commit",
+                "--no-verify",
+                "-m",
+                f"map-wt: {subtask_id} (attempt {record.get('attempt', 0)})",
+            ],
             cwd=wt_path,
         )
         if commit.returncode != 0:
@@ -15697,6 +15667,200 @@ def merge_subtask_worktree(
                     remediation="fix in the worktree and re-run merge, or discard to retry",
                 )
         verification = {"ran": True, "status": "passed", "checks": results}
+
+    return {
+        "status": "success",
+        "ok": True,
+        "wt_head": wt_head,
+        "deleted": deleted,
+        "no_changes": no_changes,
+        "verification": verification,
+    }
+
+
+def _wt_rollback(base_sha: str) -> None:
+    """Undo an in-progress wave merge: hard-reset to the wave base + clean.
+
+    A ``git merge --squash`` records NO ``MERGE_HEAD``, so ``git merge --abort``
+    is unusable (council Q2). ``reset --hard`` + ``clean -fd`` is the only correct
+    undo. MAP runtime state (.map/.codex/.agents) is EXCLUDED from the clean so a
+    rollback never destroys the worktree sidecar or step state.
+    """
+    _wt_git(["reset", "--hard", base_sha])
+    _wt_git(["clean", "-fd", "-e", ".map", "-e", ".codex", "-e", ".agents"])
+
+
+def _wt_unmerged_paths() -> list[str]:
+    """Paths left in a conflicted (unmerged) state after a failed squash merge."""
+    r = _wt_git(["diff", "--name-only", "--diff-filter=U"])
+    if r.returncode != 0:
+        return []
+    return [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+
+
+def _wt_changed_files(base_sha: str, wt_head: str, wt_path: Path) -> list[str]:
+    """The set of files a worktree actually changed vs the wave base."""
+    r = _wt_git(["diff", "--name-only", f"{base_sha}..{wt_head}"], cwd=wt_path)
+    if r.returncode != 0:
+        return []
+    return [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+
+
+def _wt_overlap_pairs(prepared: list[dict[str, Any]]) -> list[dict[str, object]]:
+    """Telemetry: subtask pairs whose ACTUAL changed-file sets intersect.
+
+    The scheduler's ``split_wave_by_file_conflicts`` only guarantees *declared*
+    ``affected_files`` are disjoint; an Actor can touch an unlisted file. Git's
+    textual-conflict abort is the HARD guard — this overlap report is advisory
+    attribution only (which subtasks "lied" about their boundaries).
+    """
+    out: list[dict[str, object]] = []
+    for i in range(len(prepared)):
+        for j in range(i + 1, len(prepared)):
+            a = set(prepared[i].get("changed_files") or [])
+            b = set(prepared[j].get("changed_files") or [])
+            shared = sorted(a & b)
+            if shared:
+                out.append(
+                    {
+                        "subtasks": [
+                            prepared[i]["subtask_id"],
+                            prepared[j]["subtask_id"],
+                        ],
+                        "files": shared[:50],
+                    }
+                )
+    return out
+
+
+def _wt_attribute_conflict(
+    conflict_files: list[str], prepared: list[dict[str, Any]]
+) -> list[dict[str, object]]:
+    """Map conflicted paths back to the wave subtasks that touched them."""
+    out: list[dict[str, object]] = []
+    cset = set(conflict_files)
+    for item in prepared:
+        touched = sorted(cset & set(item.get("changed_files") or []))
+        if touched:
+            out.append({"subtask_id": item["subtask_id"], "files": touched})
+    return out
+
+
+def _wt_merge_lock_path() -> Optional[Path]:
+    common = _wt_git_common_dir()
+    if common is None:
+        return None
+    return common / "map-framework" / "wave-merge.lock"
+
+
+def _wt_acquire_merge_lock() -> Optional[Any]:
+    """Advisory lock so two wave merges never interleave squash commits.
+
+    Returns an open file handle holding the lock, or None if the lock is already
+    held (the caller maps that to ``MERGE_IN_PROGRESS``). Degrades to a held-open
+    sentinel handle where ``fcntl`` is unavailable (non-POSIX) — concurrency
+    protection is best-effort there, but the release path stays uniform.
+    """
+    lock_path = _wt_merge_lock_path()
+    if lock_path is None:
+        return None
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = lock_path.open("w")
+    try:
+        import fcntl  # noqa: PLC0415
+    except ImportError:
+        return handle  # best-effort: no advisory lock available
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
+
+
+def _wt_release_merge_lock(handle: Optional[Any]) -> None:
+    if handle is None:
+        return
+    try:
+        import fcntl  # noqa: PLC0415
+
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+    except ImportError:
+        pass
+    try:
+        handle.close()
+    except OSError:
+        pass
+
+
+def merge_subtask_worktree(
+    subtask_id: str,
+    attempt: int = 0,
+    branch: Optional[str] = None,
+    verify_cmds: Optional[list[str]] = None,
+    skip_verify: bool = False,
+) -> dict[str, object]:
+    """Accept a subtask: commit worktree work, run pre-merge verification IN the
+    worktree, then squash-merge ONE commit into the working branch (#284).
+
+    Council-mandated guards run BEFORE the merge touches the working branch:
+    base-divergence, runtime-state-in-diff, bulk-deletion, submodule-pointer,
+    detached-HEAD, and the pre-merge `verification_checks` gate. Any failure
+    leaves the working branch untouched and returns a structured ``kind``.
+    """
+    project_dir = _wt_project_dir()
+    if not _wt_is_git_repo():
+        return _wt_error("NOT_A_REPO", "not inside a git work tree")
+    if _wt_cwd_is_managed_worktree():
+        return _wt_error(
+            "NESTED_WORKTREE", "run merge from the main checkout, not inside a worktree"
+        )
+    active = _wt_active_git_operation()
+    if active:
+        return _wt_error("ACTIVE_GIT_OP", f"a {active} is in progress; resolve it first")
+    slug = _wt_slug(subtask_id)
+    if slug is None:
+        return _wt_error("INVALID_SUBTASK_ID", f"unsafe subtask id: {subtask_id!r}")
+    branch_name = branch or get_branch_name()
+    state = _read_worktree_state(branch_name)
+    worktrees = state["worktrees"]
+    record = worktrees.get(slug) if isinstance(worktrees, dict) else None
+    if not isinstance(record, dict):
+        return _wt_error(
+            "NO_WORKTREE",
+            f"no recorded worktree for subtask {subtask_id!r}; create it first",
+        )
+    wt_path = Path(str(record.get("path", "")))
+    wt_branch = str(record.get("branch", ""))
+    base_sha = str(record.get("base_sha", ""))
+    if not wt_path.is_dir() or not wt_branch or not base_sha:
+        return _wt_error(
+            "WORKTREE_MISSING",
+            "the recorded worktree is missing on disk; discard and recreate",
+        )
+
+    working_head = _wt_head_sha()
+    if working_head != base_sha:
+        return _wt_error(
+            "BASE_DIVERGED",
+            f"working branch advanced since the worktree was created "
+            f"(base={base_sha[:8]}, head={(working_head or '?')[:8]}); discard and "
+            "recreate the worktree off the new HEAD",
+            base_sha=base_sha,
+            working_head=working_head,
+        )
+
+    prep = _wt_freeze_and_verify(
+        subtask_id, record, project_dir, branch_name, verify_cmds, skip_verify
+    )
+    if prep.get("status") == "error":
+        return prep
+    deleted = cast(list, prep["deleted"])
+    no_changes = bool(prep["no_changes"])
+    verification = cast(dict, prep["verification"])
 
     merged_sha = working_head
     if not no_changes:
@@ -15822,6 +15986,319 @@ def discard_subtask_worktree(
         "discarded": True,
         "patch_path": str(patch_path) if patch_path else None,
     }
+
+
+def merge_wave_worktrees(
+    subtask_ids: list[str],
+    branch: Optional[str] = None,
+    verify_cmds: Optional[list[str]] = None,
+    skip_verify: bool = False,
+    post_wave_cmds: Optional[list[str]] = None,
+    skip_post_wave: bool = False,
+) -> dict[str, object]:
+    """Accept a whole parallel wave atomically (#284 Phase 2, wave/DAG).
+
+    Every subtask in a wave ran in its own worktree cut off the SAME base (HEAD
+    at wave start). Merging them one-by-one via ``merge_subtask_worktree`` is
+    impossible: the first merge advances HEAD, so the second trips its
+    ``BASE_DIVERGED`` guard. This coordinator relaxes ONLY that guard to a
+    wave-scoped form — it refuses EXTERNAL HEAD movement but ALLOWS the sibling
+    divergence each in-wave squash-merge creates.
+
+    All-or-nothing (council Q2): any conflict, commit, or post-wave-gate failure
+    rolls the working branch back to the wave base via ``reset --hard`` +
+    ``clean -fd`` (squash merges leave no ``MERGE_HEAD`` so ``git merge --abort``
+    is NOT used) and leaves EVERY worktree intact for retry. Council-reviewed
+    (conv ``c29d6fa9``): dedicated coordinator over a flag on the single path;
+    ``wave_base_sha`` derived from the sidecar; merge by frozen SHA; per-worktree
+    pre-merge verify + ONE post-wave full gate inside the atomic transaction.
+    """
+    project_dir = _wt_project_dir()
+    if not _wt_is_git_repo():
+        return _wt_error("NOT_A_REPO", "not inside a git work tree")
+    if _wt_cwd_is_managed_worktree():
+        return _wt_error(
+            "NESTED_WORKTREE", "run wave merge from the main checkout, not inside a worktree"
+        )
+    active = _wt_active_git_operation()
+    if active:
+        return _wt_error("ACTIVE_GIT_OP", f"a {active} is in progress; resolve it first")
+
+    ids = sorted({str(s) for s in subtask_ids if str(s).strip()})
+    if not ids:
+        return _wt_error("NO_SUBTASKS", "no subtask ids supplied for the wave merge")
+
+    branch_name = branch or get_branch_name()
+    state = _read_worktree_state(branch_name)
+    worktrees = state["worktrees"]
+    if not isinstance(worktrees, dict):
+        return _wt_error("NO_WORKTREE", "no worktree state recorded for this branch")
+
+    # Resolve every subtask's record; validate slug + on-disk presence.
+    records: list[tuple[str, str, dict]] = []  # (subtask_id, slug, record)
+    base_shas: set[str] = set()
+    for sid in ids:
+        slug = _wt_slug(sid)
+        if slug is None:
+            return _wt_error("INVALID_SUBTASK_ID", f"unsafe subtask id: {sid!r}")
+        record = worktrees.get(slug)
+        if not isinstance(record, dict):
+            return _wt_error(
+                "NO_WORKTREE",
+                f"no recorded worktree for subtask {sid!r}; create it first",
+                subtask_id=sid,
+            )
+        wt_path = Path(str(record.get("path", "")))
+        if not wt_path.is_dir() or not record.get("branch") or not record.get("base_sha"):
+            return _wt_error(
+                "WORKTREE_MISSING",
+                f"the recorded worktree for {sid!r} is missing on disk; discard and recreate",
+                subtask_id=sid,
+            )
+        base_shas.add(str(record.get("base_sha")))
+        records.append((sid, slug, record))
+
+    # A coherent wave's worktrees all share one base (cut off the same HEAD).
+    if len(base_shas) != 1:
+        return _wt_error(
+            "WAVE_BASE_MISMATCH",
+            "worktrees in the wave were created off different bases; recreate them "
+            "off a single HEAD before a wave merge",
+            bases=sorted(b[:8] for b in base_shas),
+        )
+    wave_base_sha = next(iter(base_shas))
+
+    # External-movement guard: the working branch must still sit at the wave base.
+    # Sibling divergence WITHIN the wave is expected and allowed; commits made
+    # outside the wave are not (they invalidate every worktree's pre-merge state).
+    working_head = _wt_head_sha()
+    if working_head != wave_base_sha:
+        return _wt_error(
+            "EXTERNAL_HEAD_MOVED",
+            f"working branch advanced outside the wave (base={wave_base_sha[:8]}, "
+            f"head={(working_head or '?')[:8]}); recreate the wave worktrees off the "
+            "new HEAD",
+            base_sha=wave_base_sha,
+            working_head=working_head,
+        )
+
+    # The target must be an attached, clean branch before we touch it — rollback
+    # semantics depend on it. MAP runtime state is excluded from the dirty check.
+    cur = _wt_git(["rev-parse", "--abbrev-ref", "HEAD"], timeout=10)
+    if cur.returncode != 0 or cur.stdout.strip() == "HEAD":
+        return _wt_error(
+            "DETACHED_HEAD",
+            "refusing to wave-merge onto a detached HEAD; check out the working branch",
+        )
+    status = _wt_git(["status", "--porcelain"])
+    dirty = [
+        ln
+        for ln in status.stdout.splitlines()
+        if ln.strip() and not _wt_is_runtime_state_path(_wt_porcelain_path(ln))
+    ]
+    if dirty:
+        return _wt_error(
+            "DIRTY_TARGET",
+            "the working tree has uncommitted changes; commit/stash before a wave merge",
+            dirty=dirty[:20],
+        )
+
+    # Serialize coordinators so two waves never interleave squash commits.
+    lock_handle = _wt_acquire_merge_lock()
+    if lock_handle is None:
+        return _wt_error(
+            "MERGE_IN_PROGRESS",
+            "another wave merge is in progress on this repository; retry when it completes",
+        )
+
+    try:
+        # PHASE 1 — preflight every worktree (commit + guards + pre-merge verify)
+        # WITHOUT touching the working branch. A failure here aborts BEFORE any
+        # merge, so the working branch is trivially untouched.
+        prepared: list[dict[str, Any]] = []
+        for sid, slug, record in records:
+            prep = _wt_freeze_and_verify(
+                sid, record, project_dir, branch_name, verify_cmds, skip_verify
+            )
+            if prep.get("status") == "error":
+                prep.setdefault("subtask_id", sid)
+                prep["phase"] = "preflight"
+                return prep
+            changed_files = _wt_changed_files(
+                str(record.get("base_sha")),
+                str(prep["wt_head"]),
+                Path(str(record.get("path", ""))),
+            )
+            prepared.append(
+                {
+                    "subtask_id": sid,
+                    "slug": slug,
+                    "record": record,
+                    "wt_head": str(prep["wt_head"]),
+                    "no_changes": bool(prep["no_changes"]),
+                    "deleted": prep["deleted"],
+                    "changed_files": changed_files,
+                }
+            )
+
+        # Declared-disjoint is only a scheduler hint; report ACTUAL overlap for
+        # attribution. Git's textual-conflict abort below is the HARD guard.
+        overlaps = _wt_overlap_pairs(prepared)
+
+        # PHASE 2 — sequential squash-merge by FROZEN SHA onto the advancing HEAD.
+        merged: list[dict[str, Any]] = []
+        for item in prepared:
+            sid = str(item["subtask_id"])
+            if item["no_changes"]:
+                continue
+            wt_head = str(item["wt_head"])
+            merge = _wt_git(["merge", "--squash", wt_head])
+            if merge.returncode != 0:
+                conflict_files = _wt_unmerged_paths()
+                attribution = _wt_attribute_conflict(conflict_files, prepared)
+                _wt_rollback(wave_base_sha)
+                _wt_set_manifest(
+                    branch_name,
+                    "wave_failed",
+                    {
+                        "subtask_id": sid,
+                        "reason": "merge_conflict",
+                        "conflict_files": conflict_files[:50],
+                    },
+                )
+                return _wt_error(
+                    "WAVE_MERGE_CONFLICT",
+                    f"squash-merge of {sid} hit a conflict; rolled the wave back to "
+                    f"base {wave_base_sha[:8]} (NO subtask merged). The conflicting "
+                    "files were touched by more than one subtask — fix affected_files "
+                    "or re-decompose.",
+                    subtask_id=sid,
+                    conflict_files=conflict_files[:50],
+                    attribution=attribution,
+                    stderr_tail=_clip_probe_output(merge.stderr)[-2000:],
+                )
+            commit = _wt_git(
+                ["commit", "--no-verify", "-m", f"{sid}: merge isolated worktree (wave)"]
+            )
+            combined = (commit.stdout + commit.stderr).lower()
+            if commit.returncode != 0 and "nothing to commit" not in combined:
+                _wt_rollback(wave_base_sha)
+                _wt_set_manifest(
+                    branch_name, "wave_failed", {"subtask_id": sid, "reason": "commit_failed"}
+                )
+                return _wt_error(
+                    "WAVE_COMMIT_FAILED",
+                    commit.stderr.strip() or f"git commit failed after squash for {sid}",
+                    subtask_id=sid,
+                )
+            merged.append(
+                {
+                    "subtask_id": sid,
+                    "merged_sha": _wt_head_sha(),
+                    "deletions": len(item["deleted"]) if isinstance(item["deleted"], list) else 0,
+                }
+            )
+
+        # PHASE 3 — ONE post-wave full gate on the merged tree, INSIDE the atomic
+        # transaction (council Q3): a semantic break two subtasks create together
+        # (A renames a symbol B references) is caught here, not by git's textual
+        # merge. Failure rolls the WHOLE wave back.
+        post_checks = (
+            list(post_wave_cmds)
+            if post_wave_cmds is not None
+            else _wt_config_verification_checks(project_dir)
+        )
+        post_wave: dict[str, object] = {"ran": False, "status": "skipped", "checks": []}
+        if not skip_post_wave and post_checks and merged:
+            results: list[dict[str, object]] = []
+            top = _wt_toplevel() or Path(".")
+            for cmd in post_checks:
+                argv = shlex.split(cmd)
+                if not argv:
+                    continue
+                try:
+                    cp = subprocess.run(
+                        argv,
+                        cwd=str(top),
+                        capture_output=True,
+                        text=True,
+                        timeout=WORKTREE_VERIFY_TIMEOUT,
+                    )
+                except subprocess.TimeoutExpired:
+                    _wt_rollback(wave_base_sha)
+                    _wt_set_manifest(
+                        branch_name,
+                        "wave_failed",
+                        {"reason": "post_wave_timeout", "command": cmd},
+                    )
+                    return _wt_error(
+                        "WAVE_VERIFY_TIMEOUT",
+                        f"post-wave verification timed out: {cmd}; rolled back to base",
+                        command=cmd,
+                    )
+                except (OSError, subprocess.SubprocessError) as exc:
+                    _wt_rollback(wave_base_sha)
+                    return _wt_error(
+                        "WAVE_VERIFY_ERROR",
+                        f"post-wave verification failed to run: {cmd}: {exc}",
+                        command=cmd,
+                    )
+                results.append({"command": cmd, "returncode": cp.returncode})
+                if cp.returncode != 0:
+                    _wt_rollback(wave_base_sha)
+                    _wt_set_manifest(
+                        branch_name,
+                        "wave_failed",
+                        {"reason": "post_wave_failed", "command": cmd, "returncode": cp.returncode},
+                    )
+                    return _wt_error(
+                        "WAVE_VERIFY_FAILED",
+                        f"post-wave gate failed: {cmd} (exit {cp.returncode}); rolled the "
+                        f"wave back to base {wave_base_sha[:8]} (NO subtask merged)",
+                        command=cmd,
+                        returncode=cp.returncode,
+                        stderr_tail=_clip_probe_output(cp.stderr)[-2000:],
+                    )
+            post_wave = {"ran": True, "status": "passed", "checks": results}
+
+        # PHASE 4 — accept: remove every worktree+branch, drop from the sidecar.
+        state = _read_worktree_state(branch_name)
+        worktrees = state["worktrees"]
+        for item in prepared:
+            rec = cast(dict, item["record"])
+            _wt_force_remove(Path(str(rec.get("path", ""))), str(rec.get("branch", "")))
+            if isinstance(worktrees, dict):
+                worktrees.pop(str(item["slug"]), None)
+        _write_worktree_state(branch_name, state)
+        final_head = _wt_head_sha()
+        no_change_ids = [str(p["subtask_id"]) for p in prepared if p["no_changes"]]
+        merged_ids = [str(m["subtask_id"]) for m in merged]
+        _wt_set_manifest(
+            branch_name,
+            "wave_merged",
+            {
+                "subtasks": merged_ids,
+                "merged_count": len(merged),
+                "no_change_count": len(no_change_ids),
+                "final_sha": final_head,
+                "post_wave": post_wave.get("status"),
+            },
+        )
+
+        return {
+            "status": "success",
+            "ok": True,
+            "wave_base_sha": wave_base_sha,
+            "final_sha": final_head,
+            "merged": merged_ids,
+            "merged_count": len(merged),
+            "no_changes": no_change_ids,
+            "post_wave": post_wave,
+            "overlaps": overlaps,
+            "note": "all wave subtasks squash-merged atomically; worktrees cleaned up",
+        }
+    finally:
+        _wt_release_merge_lock(lock_handle)
 
 
 def worktree_isolation_status(branch: Optional[str] = None) -> dict[str, object]:
@@ -17295,6 +17772,36 @@ if __name__ == "__main__":
         _a = _p.parse_args(sys.argv[2:])
         _wt_r = merge_subtask_worktree(
             _a.subtask_id, _a.attempt, _a.branch, _a.verify_cmd, _a.skip_verify
+        )
+        print(json.dumps(_wt_r, indent=2))
+        if _wt_r.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "merge_wave_worktrees":
+        # CLI: merge_wave_worktrees <subtask_id> [<subtask_id> ...] [--branch B]
+        #      [--verify-cmd CMD ...] [--skip-verify]
+        #      [--post-wave-cmd CMD ...] [--skip-post-wave]
+        # Accept a whole parallel wave atomically: per-worktree pre-merge verify,
+        # sequential squash-merge by frozen SHA onto the advancing HEAD, ONE
+        # post-wave gate inside the transaction. Any failure rolls the wave back
+        # to base and exits 1; worktrees are left intact for retry.
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py merge_wave_worktrees")
+        _p.add_argument("subtask_ids", nargs="+")
+        _p.add_argument("--branch", default=None)
+        _p.add_argument("--verify-cmd", action="append", default=None)
+        _p.add_argument("--skip-verify", action="store_true")
+        _p.add_argument("--post-wave-cmd", action="append", default=None)
+        _p.add_argument("--skip-post-wave", action="store_true")
+        _a = _p.parse_args(sys.argv[2:])
+        _wt_r = merge_wave_worktrees(
+            _a.subtask_ids,
+            _a.branch,
+            _a.verify_cmd,
+            _a.skip_verify,
+            _a.post_wave_cmd,
+            _a.skip_post_wave,
         )
         print(json.dumps(_wt_r, indent=2))
         if _wt_r.get("status") == "error":

@@ -238,9 +238,28 @@ python3 .map/scripts/map_step_runner.py create_subtask_worktree ST-001
 python3 .map/scripts/map_step_runner.py merge_subtask_worktree ST-001
 # Reject (Monitor/Evaluator fail) — discard, retry starts from a clean HEAD:
 python3 .map/scripts/map_step_runner.py discard_subtask_worktree ST-001 --save-patch
+# Accept a whole PARALLEL wave atomically (≥2 disjoint subtasks; see below):
+python3 .map/scripts/map_step_runner.py merge_wave_worktrees ST-001 ST-002 ST-003
 # Inspect:
 python3 .map/scripts/map_step_runner.py worktree_isolation_status
 ```
+
+### Parallel waves (Phase 2)
+
+When a wave has ≥2 independent, disjoint-file subtasks and isolation is on, each
+subtask runs in its own worktree and the wave is accepted **atomically** with
+`merge_wave_worktrees ST-A ST-B …`. They cannot be merged one at a time: every
+worktree was cut off the same base, so the first single merge advances HEAD and
+the next trips `BASE_DIVERGED`. The coordinator squash-merges every accepted
+worktree by frozen SHA in sorted id order (one runner commit per subtask), then
+runs the **post-wave gate inside the same transaction**. It is **all-or-nothing**
+— any textual conflict, commit failure, or post-wave-gate failure rolls the whole
+wave back to the base (`reset --hard` + `clean -fd`; squash leaves no
+`MERGE_HEAD`, so `git merge --abort` is never used) and leaves every worktree
+intact for retry. Failure `kind`s: `WAVE_MERGE_CONFLICT` (with `attribution`
+naming the subtasks that touched each conflicted file), `WAVE_VERIFY_FAILED`,
+`EXTERNAL_HEAD_MOVED`, `WAVE_BASE_MISMATCH`, `DIRTY_TARGET`, `MERGE_IN_PROGRESS`.
+A concurrent second coordinator is blocked by an advisory lock.
 
 ### Safety model
 
@@ -259,8 +278,8 @@ python3 .map/scripts/map_step_runner.py worktree_isolation_status
   structured `{kind, message}` the skill branches on (e.g. `VERIFY_FAILED`,
   `BULK_DELETION`, `BASE_DIVERGED`).
 
-Phase 2 (wave/DAG parallelism across independent subtasks) and Phase 3
-(context-budget hooks) remain open on #284.
+Phase 2's wave-merge coordinator (`merge_wave_worktrees`) has landed; Phase 3
+(context-budget hooks) remains open on #284.
 
 ## Stack Overflow for Agents (SOFA)
 
