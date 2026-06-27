@@ -277,6 +277,8 @@ BOUNDED_MAP_CONTEXT=$(python3 .map/scripts/map_step_runner.py build_context_bloc
 
 Then substitute `$BOUNDED_MAP_CONTEXT` into the Actor prompt below.
 
+**Worktree isolation (opt-in, `worktree.isolation: true`):** when enabled, create the subtask's isolated git worktree before this dispatch and run the Actor inside it (dispatched WITHOUT harness-native isolation); the default disabled path is unchanged. Full recipe — commands, guard handling, Actor path instruction — in [efficient-reference.md](efficient-reference.md#worktree-isolation).
+
 ```text
 Task(
   subagent_type="actor",
@@ -370,6 +372,11 @@ Return JSON with valid, summary, issues, files_changed, tests_run, and escalatio
   Full recipe + "when NOT to commit" cases live in
   [efficient-reference.md](efficient-reference.md). Never `--no-verify`,
   never amend a published commit.
+  - **Worktree isolation (`worktree.isolation: true`):** accept via
+    `merge_subtask_worktree "$SUBTASK_ID"` instead of `git commit` (pre-merge
+    verify + squash ONE commit; use its `merged_sha` for `--commit-sha`). On its
+    `status:"error"` (treat the `kind` as a Monitor-class failure → discard +
+    retry) or `no_changes:true`, follow [efficient-reference.md](efficient-reference.md#worktree-isolation); do not record the subtask.
 - **Record the subtask result (REQUIRED on clean pass):**
   ```bash
   python3 .map/scripts/map_orchestrator.py record_subtask_result "$SUBTASK_ID" valid \
@@ -389,7 +396,7 @@ Return JSON with valid, summary, issues, files_changed, tests_run, and escalatio
   `refresh_blueprint_affected_files "$BRANCH" "$SUBTASK_ID"`; default mode
   merges observed files into the approved surface. Use `--replace` only for
   intentional contract rewrite; see [efficient-reference.md](efficient-reference.md).
-- If `valid=false`, write `code-review-N.md`, run `python3 .map/scripts/map_orchestrator.py monitor_failed --feedback "<feedback>"`, inspect `retry_isolation`, and invoke Predictor only when stuck/high-risk escalation rules apply. **If `monitor_failed` returns `status:"max_retries"` (budget exhausted), do NOT retry — run `python3 .map/scripts/map_step_runner.py build_escalation_outcome "$SUBTASK_ID" max_retries --retry-count <retry_count> --max-retries <max_retries>` and STOP with its `outcome` (surface the blocker to the user).**
+- If `valid=false`, write `code-review-N.md`, run `python3 .map/scripts/map_orchestrator.py monitor_failed --feedback "<feedback>"`, inspect `retry_isolation`, and invoke Predictor only when stuck/high-risk escalation rules apply. **Worktree isolation:** if enabled, run `discard_subtask_worktree "$SUBTASK_ID"` BEFORE retrying (atomic reject — a failed attempt is never merged; retry starts from a clean worktree). Recipe: [efficient-reference.md](efficient-reference.md#worktree-isolation). **If `monitor_failed` returns `status:"max_retries"` (budget exhausted), do NOT retry — run `python3 .map/scripts/map_step_runner.py build_escalation_outcome "$SUBTASK_ID" max_retries --retry-count <retry_count> --max-retries <max_retries>` and STOP with its `outcome` (surface the blocker to the user).**
 - **Intra-run failure memory + bounded-effort escalation (MANDATORY on every `valid=false`):** record the rejection with `python3 .map/scripts/map_step_runner.py record_failure_signature "<monitor feedback>" "$SUBTASK_ID"`. If `armed:true`, prepend the block from `build_anti_repeat_constraint "$SUBTASK_ID"` (add `--quarantine-active` when CLEAN_RETRY is set) to the TOP of the next Actor prompt. If `escalation_recommended:true` (#255), the 3rd identical failure means the bounded recovery act did not work — do NOT retry and do NOT run the legacy retry-3 Stuck-Recovery for this identical loop; run `python3 .map/scripts/map_step_runner.py build_escalation_outcome "$SUBTASK_ID" repeated_failure` (add `--quarantine-active` on a CLEAN_RETRY iteration) and STOP with its `outcome:"BLOCKED"`. A `status:"not_escalated"` means the latest failure was a NEW signature (the Actor moved off the dead end) — resume normal retries. Full recipe: [efficient-reference.md](efficient-reference.md).
 - If `retry_isolation=clean_retry_required`, validate `.map/<branch>/retry_quarantine.json` before CLEAN_RETRY. If a test/check fails inconsistently, collect repeated evidence with `run_flaky_test_triage ...` (or manually with `record_flaky_test_triage ...` if already collected), validate `.map/<branch>/flaky_test_triage.json`, then close via `python3 .map/scripts/map_orchestrator.py defer_flaky_subtask "$SUBTASK_ID" --check-id "<check-id>"`; this is not a passing gate and must not weaken/skip/delete the check. Full recipe: [efficient-reference.md](efficient-reference.md).
 - Treat test failures after Monitor approval as Monitor failure. **Cross-subtask regression gate (MANDATORY):** before the test gate, run `python3 .map/scripts/map_step_runner.py detect_cross_subtask_regression_risk "$BRANCH" "$SUBTASK_ID"`; if `recommended_gate == "full_suite"` you MUST run the FULL suite (never a `-k` subset) before commit / `record_subtask_result` — per-subtask Monitor is blind to regressions on prior subtasks' code. Recipe: [efficient-reference.md](efficient-reference.md).

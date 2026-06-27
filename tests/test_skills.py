@@ -91,7 +91,7 @@ HIGH_TRAFFIC_COMPACT_SKILL_REFS = {
 }
 
 # Per-skill active-body line budget for the always-loaded SKILL.md (it costs
-# context on every invocation). Default history: 500→502→504→508 (see the
+# context on every invocation). Default history: 500→502→504→508→515 (see the
 # justification comment at the assertion). `map-review` carries THREE review
 # modes in one body — the default 4-section walkthrough PLUS the `--adversarial`
 # phase PLUS the `--cross-ai` (#288) phase — so it gets a deliberately higher cap
@@ -99,7 +99,12 @@ HIGH_TRAFFIC_COMPACT_SKILL_REFS = {
 # budget' rule: bump the budget, do NOT gut active control flow to fit (the
 # cross-AI status protocol and egress rationale already live in
 # review-reference.md; what remains is the irreducible flag/dispatch/branch flow).
-_DEFAULT_SKILL_BODY_BUDGET = 508
+# Budget bumped from 508 → 515 (#284): the opt-in worktree-isolation wiring adds
+# the irreducible active branches in map-efficient/SKILL.md — create-before-Actor,
+# the merge_subtask_worktree accept branch replacing the per-subtask commit, and
+# the discard_subtask_worktree reject branch on valid=false. The full recipe
+# (bash, guard `kind`s, Actor path instruction) lives in efficient-reference.md.
+_DEFAULT_SKILL_BODY_BUDGET = 515
 HIGH_TRAFFIC_SKILL_BODY_BUDGETS = {
     "map-review": 560,
 }

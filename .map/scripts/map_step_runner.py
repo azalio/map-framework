@@ -211,6 +211,7 @@ ARTIFACT_STAGE_NAMES = (
     "qualitative_convergence",
     "anti_repeat",
     "escalation",
+    "worktree",
     "token_budget",
     "run_health",
     "learn_handoff",
@@ -15112,6 +15113,756 @@ def build_escalation_outcome(
     return outcome
 
 
+# --- Per-subtask git worktree isolation (#284) ---------------------------------
+# Runner-owned explicit worktrees (NOT the harness-native isolation="worktree").
+# llm-council-reviewed design (conv 461b92f9):
+#   * Storage lives OUT of the working tree, under the repo's common git dir
+#     (`<git-common-dir>/map-framework/worktrees/<branch>/<slug>-<attempt>`), so
+#     `git clean -fdx`, recursive scanners (rg, test runners, IDEs), and
+#     accidental commits can never touch it.
+#   * Branches are `map-wt/<slug>-<attempt>` — unique per (subtask, attempt) so
+#     Phase-2 parallelism never collides; `--attempt` is threaded from day one.
+#   * The runner is invoked from the MAIN checkout (orchestrator side); only the
+#     Actor Task runs INSIDE the worktree. MAP state (`.map/<branch>/...`) always
+#     resolves against the main checkout — state-mutating worktree commands
+#     refuse if invoked from inside a managed worktree (Q6 state-desync footgun).
+#   * Accept = squash-merge (one commit per subtask, never `--no-ff`), gated by
+#     pre-merge `verification_checks` run IN the worktree. Reject = discard the
+#     whole worktree so the working branch is never touched by a bad attempt.
+WORKTREE_ARTIFACT_NAME = "worktrees.json"
+WORKTREE_BRANCH_PREFIX = "map-wt/"
+WORKTREE_STORAGE_SUBDIR = "map-framework/worktrees"
+WORKTREE_PROTECTED_REFS = frozenset({"main", "master", "develop", "release"})
+WORKTREE_VERIFY_TIMEOUT = 1800  # 30 min hard cap on the pre-merge verify gate
+WORKTREE_GIT_TIMEOUT = 120  # per git invocation
+
+
+def _wt_git(
+    args: list[str], cwd: Optional[Path] = None, timeout: int = WORKTREE_GIT_TIMEOUT
+) -> subprocess.CompletedProcess[str]:
+    """Run a git command (shell=False, literal argv). Never raises on non-zero."""
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=str(cwd) if cwd is not None else None,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return subprocess.CompletedProcess(args, returncode=255, stdout="", stderr=str(exc))
+
+
+def _wt_error(kind: str, message: str, **extra: object) -> dict[str, object]:
+    """Structured guard failure the skill can branch on by ``kind``."""
+    payload: dict[str, object] = {
+        "status": "error",
+        "ok": False,
+        "kind": kind,
+        "message": message,
+    }
+    payload.update(extra)
+    return payload
+
+
+def _wt_is_git_repo() -> bool:
+    r = _wt_git(["rev-parse", "--is-inside-work-tree"], timeout=10)
+    return r.returncode == 0 and r.stdout.strip() == "true"
+
+
+def _wt_git_common_dir() -> Optional[Path]:
+    r = _wt_git(["rev-parse", "--git-common-dir"], timeout=10)
+    if r.returncode != 0:
+        return None
+    try:
+        return Path(r.stdout.strip()).resolve()
+    except OSError:
+        return None
+
+
+def _wt_toplevel() -> Optional[Path]:
+    r = _wt_git(["rev-parse", "--show-toplevel"], timeout=10)
+    if r.returncode != 0:
+        return None
+    try:
+        return Path(r.stdout.strip()).resolve()
+    except OSError:
+        return None
+
+
+def _wt_project_dir() -> Path:
+    """Project dir for config reads — the current work tree's toplevel."""
+    top = _wt_toplevel()
+    return top if top is not None else Path(".")
+
+
+def _wt_head_sha(cwd: Optional[Path] = None) -> Optional[str]:
+    r = _wt_git(["rev-parse", "HEAD"], cwd=cwd, timeout=10)
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def _wt_cwd_is_managed_worktree() -> bool:
+    """True when invoked from inside a runner-managed map-wt worktree.
+
+    State-mutating worktree commands must run from the MAIN checkout; running
+    them from inside a linked worktree would resolve `.map/<branch>/` against the
+    wrong root and silently desync workflow state (council Q6).
+    """
+    r = _wt_git(["rev-parse", "--abbrev-ref", "HEAD"], timeout=10)
+    if r.returncode == 0 and r.stdout.strip().startswith(WORKTREE_BRANCH_PREFIX):
+        return True
+    top = _wt_toplevel()
+    if top is None:
+        return False
+    return WORKTREE_STORAGE_SUBDIR.replace("/", os.sep) in str(top)
+
+
+def _wt_active_git_operation() -> Optional[str]:
+    """Return the label of an in-progress merge/rebase/etc., or None."""
+    common = _wt_git_common_dir()
+    if common is None:
+        return None
+    for name, label in (
+        ("MERGE_HEAD", "merge"),
+        ("rebase-merge", "rebase"),
+        ("rebase-apply", "rebase"),
+        ("CHERRY_PICK_HEAD", "cherry-pick"),
+        ("REVERT_HEAD", "revert"),
+        ("BISECT_LOG", "bisect"),
+    ):
+        if (common / name).exists():
+            return label
+    return None
+
+
+def _wt_slug(raw: str) -> Optional[str]:
+    """Slugify a subtask id into a safe branch/path component, or None.
+
+    Guards against refname injection and path traversal (council Q4 #11):
+    `../../main`, `HEAD`, `foo bar`, `foo.lock` are all rejected.
+    """
+    raw_s = str(raw).strip()
+    # Reject path separators / traversal outright rather than silently renaming
+    # them away — real MAP subtask ids are `ST-001`-style and never contain these.
+    if not raw_s or "/" in raw_s or "\\" in raw_s or ".." in raw_s:
+        return None
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", raw_s).strip("-._")
+    if not slug or slug == "HEAD" or slug.endswith(".lock"):
+        return None
+    check = _wt_git(
+        ["check-ref-format", f"refs/heads/{WORKTREE_BRANCH_PREFIX}{slug}"], timeout=10
+    )
+    return slug if check.returncode == 0 else None
+
+
+def _wt_branch_path_component(branch: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", branch).strip("-._") or "branch"
+
+
+def _wt_branch_name(slug: str, attempt: int) -> str:
+    return f"{WORKTREE_BRANCH_PREFIX}{slug}-{attempt}"
+
+
+def _wt_storage_root() -> Optional[Path]:
+    common = _wt_git_common_dir()
+    if common is None:
+        return None
+    return common / WORKTREE_STORAGE_SUBDIR
+
+
+def _wt_path_for(branch: str, slug: str, attempt: int) -> Optional[Path]:
+    root = _wt_storage_root()
+    if root is None:
+        return None
+    return root / _wt_branch_path_component(branch) / f"{slug}-{attempt}"
+
+
+def _worktree_artifact_path(branch: Optional[str] = None) -> Path:
+    """Return the branch-scoped worktree-state sidecar path (in the MAIN tree)."""
+    return get_branch_dir(branch) / WORKTREE_ARTIFACT_NAME
+
+
+def _read_worktree_state(branch: str) -> dict[str, object]:
+    data = _read_json_file(_worktree_artifact_path(branch))
+    if not isinstance(data, dict):
+        return {"schema_version": "1.0", "branch": branch, "worktrees": {}}
+    if not isinstance(data.get("worktrees"), dict):
+        data["worktrees"] = {}
+    return data
+
+
+def _write_worktree_state(branch: str, state: dict[str, object]) -> None:
+    state["branch"] = branch
+    state.setdefault("schema_version", "1.0")
+    _write_json_file(_worktree_artifact_path(branch), state)
+
+
+def _wt_set_manifest(branch: str, status: str, metadata: dict[str, object]) -> None:
+    manifest = load_artifact_manifest(branch)
+    _set_manifest_stage(
+        manifest,
+        "worktree",
+        status,
+        artifacts=[_artifact_ref(_worktree_artifact_path(branch), "worktree")],
+        metadata=metadata,
+    )
+    save_artifact_manifest(manifest, branch)
+
+
+def _wt_force_remove(path: Path, branch_ref: str) -> None:
+    """Remove a worktree + its branch idempotently (crash-safe recovery)."""
+    import shutil  # local import keeps module-level imports tidy (file convention)
+
+    _wt_git(["worktree", "remove", "--force", str(path)])
+    if path.exists():
+        shutil.rmtree(path, ignore_errors=True)
+    _wt_git(["worktree", "prune"])
+    if branch_ref:
+        _wt_git(["branch", "-D", branch_ref])
+
+
+def _wt_isolation_enabled(project_dir: Path) -> bool:
+    return _parse_boolish(_map_config_str(project_dir, "worktree.isolation", "false"))
+
+
+def _wt_max_deletions(project_dir: Path) -> int:
+    raw = _map_config_str(project_dir, "worktree.max_deletions", "50")
+    try:
+        n = int(str(raw).replace("_", ""))
+    except ValueError:
+        return 50
+    return n if n >= 0 else 50
+
+
+def _wt_config_verification_checks(project_dir: Path) -> list[str]:
+    """Read the `verification_checks` LIST from .map/config.yaml (lazy yaml)."""
+    config_path = project_dir / ".map" / "config.yaml"
+    if not config_path.is_file():
+        return []
+    try:
+        import yaml  # noqa: PLC0415
+    except ImportError:
+        return []
+    try:
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(data, dict):
+        return []
+    checks = data.get("verification_checks")
+    if not isinstance(checks, list):
+        return []
+    return [c for c in checks if isinstance(c, str) and c.strip()]
+
+
+def _wt_is_runtime_state_path(path: str) -> bool:
+    """True for MAP runtime-state paths that must never be merged into main."""
+    norm = path.replace("\\", "/")
+    if norm.startswith("./"):  # strip a leading "./" PREFIX (not a char set)
+        norm = norm[2:]
+    if norm == ".map/config.yaml":
+        return False  # tracked framework config is legitimate
+    return (
+        norm.startswith(".map/")
+        or norm.startswith(".codex/")
+        or norm.startswith(".agents/")
+    )
+
+
+def _wt_porcelain_path(line: str) -> str:
+    """Extract the path from a `git status --porcelain` line (XY + space + path)."""
+    body = line[3:] if len(line) > 3 else ""
+    if " -> " in body:  # rename/copy: take the destination
+        body = body.split(" -> ", 1)[1]
+    return body.strip().strip('"')
+
+
+def _wt_parse_name_status(text: str) -> tuple[list[str], list[str], int]:
+    """Parse `git diff --name-status` into (deleted, runtime_state, changed)."""
+    deleted: list[str] = []
+    runtime: list[str] = []
+    changed = 0
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        code = parts[0].strip()
+        paths = [p for p in parts[1:] if p]
+        if not paths:
+            continue
+        target = paths[-1]
+        changed += 1
+        if code.startswith("D"):
+            deleted.append(target)
+        for p in paths:
+            if _wt_is_runtime_state_path(p):
+                runtime.append(p)
+    return deleted, runtime, changed
+
+
+def create_subtask_worktree(
+    subtask_id: str,
+    attempt: int = 0,
+    branch: Optional[str] = None,
+    allow_dirty: bool = False,
+) -> dict[str, object]:
+    """Create an isolated git worktree for a subtask (#284).
+
+    Returns ``status="disabled"`` (exit 0) when ``worktree.isolation`` is off, so
+    the skill calls it unconditionally and no-ops on the default path. On success
+    returns the worktree path + branch + base_sha so the Actor can be told where
+    to work. Crash-safe: any stale worktree/branch for the same (subtask,
+    attempt) is force-removed and recreated, so a recovered run always starts
+    from a clean checkout (council Q4 #4: remove-and-recreate over reuse).
+    """
+    project_dir = _wt_project_dir()
+    if not _wt_isolation_enabled(project_dir):
+        return {"status": "disabled", "ok": False, "reason": "worktree.isolation is off"}
+    if not _wt_is_git_repo():
+        return _wt_error("NOT_A_REPO", "not inside a git work tree")
+    if _wt_cwd_is_managed_worktree():
+        return _wt_error(
+            "NESTED_WORKTREE",
+            "refusing to manage worktrees from inside a map-wt worktree; "
+            "run from the main checkout",
+        )
+    active = _wt_active_git_operation()
+    if active:
+        return _wt_error(
+            "ACTIVE_GIT_OP",
+            f"a {active} is in progress in the main checkout; resolve it first",
+        )
+    slug = _wt_slug(subtask_id)
+    if slug is None:
+        return _wt_error("INVALID_SUBTASK_ID", f"unsafe subtask id: {subtask_id!r}")
+    attempt = max(0, int(attempt))
+    branch_name = branch or get_branch_name()
+
+    cur = _wt_git(["rev-parse", "--abbrev-ref", "HEAD"], timeout=10)
+    cur_branch = cur.stdout.strip() if cur.returncode == 0 else ""
+    if cur_branch in WORKTREE_PROTECTED_REFS:
+        return _wt_error(
+            "PROTECTED_REF",
+            f"refusing to create a subtask worktree while HEAD is on protected "
+            f"ref {cur_branch!r}; switch to a feature branch first",
+        )
+
+    if not allow_dirty:
+        status = _wt_git(["status", "--porcelain"])
+        # Exclude MAP runtime state (.map/<branch>/, .codex/, .agents/): in a real
+        # target repo these are gitignored, but the dirty guard must care only
+        # about the USER's uncommitted source — never refuse because of our own
+        # state writes (council Q6 dirty-main/runtime-state interaction).
+        dirty = [
+            ln
+            for ln in status.stdout.splitlines()
+            if ln.strip() and not _wt_is_runtime_state_path(_wt_porcelain_path(ln))
+        ]
+        if dirty:
+            return _wt_error(
+                "DIRTY_MAIN",
+                "the main checkout has uncommitted changes; the worktree would "
+                "start from committed HEAD and silently diverge. Commit/stash "
+                "first, or pass --allow-dirty.",
+                dirty=dirty[:20],
+            )
+
+    storage = _wt_path_for(branch_name, slug, attempt)
+    if storage is None:
+        return _wt_error("NO_GIT_COMMON_DIR", "could not resolve git common dir")
+    wt_branch = _wt_branch_name(slug, attempt)
+    base_sha = _wt_head_sha()
+    if base_sha is None:
+        return _wt_error("NO_HEAD", "could not resolve HEAD sha (empty repo?)")
+
+    _wt_force_remove(storage, wt_branch)  # crash-safe clean slate
+    storage.parent.mkdir(parents=True, exist_ok=True)
+    add = _wt_git(["worktree", "add", "-b", wt_branch, str(storage), base_sha])
+    if add.returncode != 0:
+        return _wt_error(
+            "WORKTREE_ADD_FAILED", add.stderr.strip() or "git worktree add failed"
+        )
+
+    submodules = "none"
+    top = _wt_toplevel()
+    if top is not None and (top / ".gitmodules").is_file():
+        sm = _wt_git(
+            ["submodule", "update", "--init", "--recursive"], cwd=storage, timeout=600
+        )
+        if sm.returncode != 0:
+            _wt_force_remove(storage, wt_branch)
+            return _wt_error(
+                "SUBMODULE_INIT_FAILED",
+                sm.stderr.strip() or "git submodule update --init failed",
+            )
+        submodules = "initialized"
+
+    state = _read_worktree_state(branch_name)
+    worktrees = state["worktrees"]
+    if isinstance(worktrees, dict):
+        worktrees[slug] = {
+            "subtask_id": subtask_id,
+            "slug": slug,
+            "attempt": attempt,
+            "branch": wt_branch,
+            "path": str(storage),
+            "base_sha": base_sha,
+            "status": "created",
+        }
+    _write_worktree_state(branch_name, state)
+    _wt_set_manifest(
+        branch_name,
+        "created",
+        {"subtask_id": subtask_id, "branch": wt_branch, "base_sha": base_sha},
+    )
+
+    return {
+        "status": "success",
+        "ok": True,
+        "subtask_id": subtask_id,
+        "slug": slug,
+        "attempt": attempt,
+        "worktree_path": str(storage),
+        "worktree_branch": wt_branch,
+        "base_sha": base_sha,
+        "submodules": submodules,
+        "actor_instruction": (
+            f"Operate ONLY inside {storage} (an isolated git worktree). Edit and "
+            f"test files there, never in the main checkout. Do NOT run "
+            f"git fetch/pull/push from the worktree."
+        ),
+    }
+
+
+def merge_subtask_worktree(
+    subtask_id: str,
+    attempt: int = 0,
+    branch: Optional[str] = None,
+    verify_cmds: Optional[list[str]] = None,
+    skip_verify: bool = False,
+) -> dict[str, object]:
+    """Accept a subtask: commit worktree work, run pre-merge verification IN the
+    worktree, then squash-merge ONE commit into the working branch (#284).
+
+    Council-mandated guards run BEFORE the merge touches the working branch:
+    base-divergence, runtime-state-in-diff, bulk-deletion, submodule-pointer,
+    detached-HEAD, and the pre-merge `verification_checks` gate. Any failure
+    leaves the working branch untouched and returns a structured ``kind``.
+    """
+    project_dir = _wt_project_dir()
+    if not _wt_is_git_repo():
+        return _wt_error("NOT_A_REPO", "not inside a git work tree")
+    if _wt_cwd_is_managed_worktree():
+        return _wt_error(
+            "NESTED_WORKTREE", "run merge from the main checkout, not inside a worktree"
+        )
+    active = _wt_active_git_operation()
+    if active:
+        return _wt_error("ACTIVE_GIT_OP", f"a {active} is in progress; resolve it first")
+    slug = _wt_slug(subtask_id)
+    if slug is None:
+        return _wt_error("INVALID_SUBTASK_ID", f"unsafe subtask id: {subtask_id!r}")
+    branch_name = branch or get_branch_name()
+    state = _read_worktree_state(branch_name)
+    worktrees = state["worktrees"]
+    record = worktrees.get(slug) if isinstance(worktrees, dict) else None
+    if not isinstance(record, dict):
+        return _wt_error(
+            "NO_WORKTREE",
+            f"no recorded worktree for subtask {subtask_id!r}; create it first",
+        )
+    wt_path = Path(str(record.get("path", "")))
+    wt_branch = str(record.get("branch", ""))
+    base_sha = str(record.get("base_sha", ""))
+    if not wt_path.is_dir() or not wt_branch or not base_sha:
+        return _wt_error(
+            "WORKTREE_MISSING",
+            "the recorded worktree is missing on disk; discard and recreate",
+        )
+
+    working_head = _wt_head_sha()
+    if working_head != base_sha:
+        return _wt_error(
+            "BASE_DIVERGED",
+            f"working branch advanced since the worktree was created "
+            f"(base={base_sha[:8]}, head={(working_head or '?')[:8]}); discard and "
+            "recreate the worktree off the new HEAD",
+            base_sha=base_sha,
+            working_head=working_head,
+        )
+
+    add = _wt_git(["add", "-A"], cwd=wt_path)
+    if add.returncode != 0:
+        return _wt_error(
+            "WORKTREE_STAGE_FAILED", add.stderr.strip() or "git add -A failed in worktree"
+        )
+    staged = _wt_git(["diff", "--cached", "--quiet"], cwd=wt_path)
+    if staged.returncode == 1:
+        commit = _wt_git(
+            ["commit", "--no-verify", "-m", f"map-wt: {subtask_id} (attempt {record.get('attempt', 0)})"],
+            cwd=wt_path,
+        )
+        if commit.returncode != 0:
+            return _wt_error(
+                "WORKTREE_COMMIT_FAILED",
+                commit.stderr.strip() or "git commit failed in worktree",
+            )
+
+    head_branch = _wt_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=wt_path, timeout=10)
+    if head_branch.stdout.strip() != wt_branch:
+        return _wt_error(
+            "WORKTREE_HEAD_MOVED",
+            f"worktree HEAD is not on {wt_branch} (got "
+            f"{head_branch.stdout.strip()!r}); discard and recreate",
+        )
+
+    wt_head = _wt_head_sha(cwd=wt_path)
+    name_status = _wt_git(
+        ["diff", "--name-status", f"{base_sha}..{wt_head}"], cwd=wt_path
+    )
+    if name_status.returncode != 0:
+        return _wt_error("DIFF_FAILED", name_status.stderr.strip() or "git diff failed")
+    deleted, runtime_paths, changed = _wt_parse_name_status(name_status.stdout)
+
+    if runtime_paths:
+        return _wt_error(
+            "RUNTIME_STATE_IN_DIFF",
+            "the worktree branch modifies MAP runtime state; refusing to merge it "
+            "into the working branch",
+            paths=runtime_paths[:20],
+        )
+
+    max_del = _wt_max_deletions(project_dir)
+    if max_del > 0 and len(deleted) > max_del:
+        return _wt_error(
+            "BULK_DELETION",
+            f"merge would delete {len(deleted)} files (> max_deletions={max_del}); "
+            "refusing. Raise worktree.max_deletions if this is intentional.",
+            deleted=deleted[:50],
+            deleted_count=len(deleted),
+        )
+
+    sub = _wt_git(["diff", "--submodule=short", f"{base_sha}..{wt_head}"], cwd=wt_path)
+    if sub.returncode == 0 and "Subproject commit" in sub.stdout:
+        return _wt_error(
+            "SUBMODULE_CHANGED",
+            "the worktree changes a submodule pointer; refused in Slice 1",
+        )
+
+    no_changes = changed == 0
+
+    checks = list(verify_cmds) if verify_cmds else _wt_config_verification_checks(project_dir)
+    verification: dict[str, object] = {"ran": False, "status": "skipped", "checks": []}
+    if not skip_verify and checks and not no_changes:
+        results: list[dict[str, object]] = []
+        for cmd in checks:
+            argv = shlex.split(cmd)
+            if not argv:
+                continue
+            try:
+                cp = subprocess.run(
+                    argv,
+                    cwd=str(wt_path),
+                    capture_output=True,
+                    text=True,
+                    timeout=WORKTREE_VERIFY_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired:
+                _wt_set_manifest(
+                    branch_name, "verify_failed", {"subtask_id": subtask_id, "command": cmd}
+                )
+                return _wt_error(
+                    "VERIFY_TIMEOUT", f"verification command timed out: {cmd}", command=cmd
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                return _wt_error(
+                    "VERIFY_ERROR",
+                    f"verification command failed to run: {cmd}: {exc}",
+                    command=cmd,
+                )
+            results.append({"command": cmd, "returncode": cp.returncode})
+            if cp.returncode != 0:
+                _wt_set_manifest(
+                    branch_name,
+                    "verify_failed",
+                    {"subtask_id": subtask_id, "command": cmd, "returncode": cp.returncode},
+                )
+                return _wt_error(
+                    "VERIFY_FAILED",
+                    f"pre-merge verification failed in the worktree: {cmd} "
+                    f"(exit {cp.returncode}); working branch untouched",
+                    command=cmd,
+                    returncode=cp.returncode,
+                    stderr_tail=_clip_probe_output(cp.stderr)[-2000:],
+                    remediation="fix in the worktree and re-run merge, or discard to retry",
+                )
+        verification = {"ran": True, "status": "passed", "checks": results}
+
+    merged_sha = working_head
+    if not no_changes:
+        merge = _wt_git(["merge", "--squash", wt_branch])
+        if merge.returncode != 0:
+            _wt_git(["merge", "--abort"])
+            _wt_git(["reset", "--hard", base_sha])  # clear any staged squash residue
+            return _wt_error(
+                "MERGE_CONFLICT",
+                "squash-merge of the worktree branch hit a conflict; aborted, "
+                "working branch left at base",
+                stderr_tail=_clip_probe_output(merge.stderr)[-2000:],
+            )
+        commit = _wt_git(
+            ["commit", "--no-verify", "-m", f"{subtask_id}: merge isolated worktree"]
+        )
+        combined = (commit.stdout + commit.stderr).lower()
+        if commit.returncode != 0 and "nothing to commit" not in combined:
+            _wt_git(["reset", "--hard", base_sha])
+            return _wt_error(
+                "MERGE_COMMIT_FAILED", commit.stderr.strip() or "git commit failed after squash"
+            )
+        merged_sha = _wt_head_sha()
+
+    _wt_force_remove(wt_path, wt_branch)
+    state = _read_worktree_state(branch_name)
+    worktrees = state["worktrees"]
+    if isinstance(worktrees, dict):
+        worktrees.pop(slug, None)
+    _write_worktree_state(branch_name, state)
+    _wt_set_manifest(
+        branch_name,
+        "merged",
+        {
+            "subtask_id": subtask_id,
+            "merged_sha": merged_sha,
+            "deletions": len(deleted),
+            "verification": verification.get("status"),
+            "no_changes": no_changes,
+        },
+    )
+
+    return {
+        "status": "success",
+        "ok": True,
+        "subtask_id": subtask_id,
+        "merged": not no_changes,
+        "no_changes": no_changes,
+        "merged_sha": merged_sha,
+        "base_sha": base_sha,
+        "deletions": len(deleted),
+        "verification": verification,
+        "note": (
+            "no changes were captured in the worktree — the Actor may have edited "
+            "the main checkout instead of the worktree path"
+            if no_changes
+            else "squash-merged one commit into the working branch"
+        ),
+    }
+
+
+def discard_subtask_worktree(
+    subtask_id: str,
+    attempt: int = 0,
+    branch: Optional[str] = None,
+    save_patch: bool = False,
+) -> dict[str, object]:
+    """Atomic reject: discard a subtask's worktree + branch (#284).
+
+    Called on Monitor ``valid=false`` / Evaluator fail so the retry starts from a
+    clean HEAD — a failed attempt is NEVER merged. Idempotent. With
+    ``save_patch`` the attempt diff is preserved under
+    ``.map/<branch>/worktree_attempts/`` before the worktree is removed.
+    """
+    if not _wt_is_git_repo():
+        return _wt_error("NOT_A_REPO", "not inside a git work tree")
+    slug = _wt_slug(subtask_id)
+    if slug is None:
+        return _wt_error("INVALID_SUBTASK_ID", f"unsafe subtask id: {subtask_id!r}")
+    branch_name = branch or get_branch_name()
+    state = _read_worktree_state(branch_name)
+    worktrees = state["worktrees"]
+    record = worktrees.get(slug) if isinstance(worktrees, dict) else None
+    if not isinstance(record, dict):
+        return {
+            "status": "success",
+            "ok": True,
+            "subtask_id": subtask_id,
+            "discarded": False,
+            "reason": "no recorded worktree",
+        }
+    wt_path = Path(str(record.get("path", "")))
+    wt_branch = str(record.get("branch", ""))
+    base_sha = str(record.get("base_sha", ""))
+
+    patch_path: Optional[Path] = None
+    if save_patch and wt_path.is_dir() and base_sha:
+        # Capture the FULL rejected delta vs base, including uncommitted and
+        # untracked work — a Monitor-rejected attempt is usually never committed.
+        _wt_git(["add", "-A"], cwd=wt_path)
+        diff = _wt_git(["diff", "--cached", base_sha], cwd=wt_path)
+        if diff.returncode == 0 and diff.stdout.strip():
+            attempts_dir = get_branch_dir(branch_name) / "worktree_attempts"
+            attempts_dir.mkdir(parents=True, exist_ok=True)
+            patch_path = attempts_dir / f"{slug}-{record.get('attempt', 0)}.patch"
+            patch_path.write_text(diff.stdout, encoding="utf-8")
+
+    _wt_force_remove(wt_path, wt_branch)
+    state = _read_worktree_state(branch_name)
+    worktrees = state["worktrees"]
+    if isinstance(worktrees, dict):
+        worktrees.pop(slug, None)
+    _write_worktree_state(branch_name, state)
+    _wt_set_manifest(
+        branch_name,
+        "discarded",
+        {"subtask_id": subtask_id, "patch": str(patch_path) if patch_path else None},
+    )
+    return {
+        "status": "success",
+        "ok": True,
+        "subtask_id": subtask_id,
+        "discarded": True,
+        "patch_path": str(patch_path) if patch_path else None,
+    }
+
+
+def worktree_isolation_status(branch: Optional[str] = None) -> dict[str, object]:
+    """Report whether isolation is enabled + reconcile recorded vs live worktrees."""
+    project_dir = _wt_project_dir()
+    branch_name = branch or get_branch_name()
+    state = _read_worktree_state(branch_name)
+    recorded = state.get("worktrees", {})
+    active: list[dict[str, object]] = []
+    if isinstance(recorded, dict):
+        for slug, rec in recorded.items():
+            if not isinstance(rec, dict):
+                continue
+            p = str(rec.get("path", ""))
+            active.append(
+                {
+                    "subtask_id": rec.get("subtask_id", slug),
+                    "branch": rec.get("branch"),
+                    "path": p,
+                    "base_sha": rec.get("base_sha"),
+                    "on_disk": Path(p).is_dir() if p else False,
+                }
+            )
+    live: list[str] = []
+    if _wt_is_git_repo():
+        wl = _wt_git(["worktree", "list", "--porcelain"])
+        if wl.returncode == 0:
+            for line in wl.stdout.splitlines():
+                if line.startswith("worktree "):
+                    live.append(line[len("worktree ") :].strip())
+    return {
+        "status": "success",
+        "ok": True,
+        "enabled": _wt_isolation_enabled(project_dir),
+        "branch": branch_name,
+        "active_worktrees": active,
+        "live_git_worktrees": live,
+        "max_deletions": _wt_max_deletions(project_dir),
+    }
+
+
 if __name__ == "__main__":
     # Simple CLI interface for testing
     import sys
@@ -16505,6 +17256,80 @@ if __name__ == "__main__":
         )
         print(json.dumps(beo_result, indent=2))
         if beo_result.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "create_subtask_worktree":
+        # CLI: create_subtask_worktree <subtask_id> [--attempt N] [--branch B]
+        #      [--allow-dirty]
+        # Per-subtask git worktree isolation (#284). status="disabled" (exit 0)
+        # when worktree.isolation is off, so the skill calls it unconditionally.
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py create_subtask_worktree")
+        _p.add_argument("subtask_id")
+        _p.add_argument("--attempt", type=int, default=0)
+        _p.add_argument("--branch", default=None)
+        _p.add_argument("--allow-dirty", action="store_true")
+        _a = _p.parse_args(sys.argv[2:])
+        _wt_r = create_subtask_worktree(
+            _a.subtask_id, _a.attempt, _a.branch, _a.allow_dirty
+        )
+        print(json.dumps(_wt_r, indent=2))
+        if _wt_r.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "merge_subtask_worktree":
+        # CLI: merge_subtask_worktree <subtask_id> [--attempt N] [--branch B]
+        #      [--verify-cmd CMD ...] [--skip-verify]
+        # Accept a subtask: commit worktree work, pre-merge verify IN the
+        # worktree, squash-merge ONE commit into the working branch. Guard
+        # failures (BASE_DIVERGED, BULK_DELETION, VERIFY_FAILED, ...) exit 1.
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py merge_subtask_worktree")
+        _p.add_argument("subtask_id")
+        _p.add_argument("--attempt", type=int, default=0)
+        _p.add_argument("--branch", default=None)
+        _p.add_argument("--verify-cmd", action="append", default=None)
+        _p.add_argument("--skip-verify", action="store_true")
+        _a = _p.parse_args(sys.argv[2:])
+        _wt_r = merge_subtask_worktree(
+            _a.subtask_id, _a.attempt, _a.branch, _a.verify_cmd, _a.skip_verify
+        )
+        print(json.dumps(_wt_r, indent=2))
+        if _wt_r.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "discard_subtask_worktree":
+        # CLI: discard_subtask_worktree <subtask_id> [--attempt N] [--branch B]
+        #      [--save-patch]
+        # Atomic reject on Monitor/Evaluator fail — discard worktree+branch so the
+        # retry starts from a clean HEAD; a failed attempt is never merged.
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py discard_subtask_worktree")
+        _p.add_argument("subtask_id")
+        _p.add_argument("--attempt", type=int, default=0)
+        _p.add_argument("--branch", default=None)
+        _p.add_argument("--save-patch", action="store_true")
+        _a = _p.parse_args(sys.argv[2:])
+        _wt_r = discard_subtask_worktree(
+            _a.subtask_id, _a.attempt, _a.branch, _a.save_patch
+        )
+        print(json.dumps(_wt_r, indent=2))
+        if _wt_r.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "worktree_isolation_status":
+        # CLI: worktree_isolation_status [--branch B]
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py worktree_isolation_status")
+        _p.add_argument("--branch", default=None)
+        _a = _p.parse_args(sys.argv[2:])
+        _wt_r = worktree_isolation_status(_a.branch)
+        print(json.dumps(_wt_r, indent=2))
+        if _wt_r.get("status") == "error":
             sys.exit(1)
 
     else:

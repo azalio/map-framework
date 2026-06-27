@@ -103,6 +103,53 @@ Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json`
 - **Spec citation gate**: `.map/scripts/validate_spec_citations.py` and its template twin validate `file:line` references before `/map-plan` decomposes work.
 - **Documentation**: `README.md`, `docs/USAGE.md`, `docs/INSTALL.md`, and this document define expected behavior and invariants.
 
+## Worktree Isolation (per-subtask sandboxing)
+
+Per-subtask git worktree isolation (#284, opt-in via `worktree.isolation`, off by
+default) gives each `/map-efficient` subtask an isolated filesystem so a bad Actor
+attempt can never touch the working branch. It is **runner-owned**: the step
+runner creates explicit worktrees rather than using the harness-native
+`isolation="worktree"` — the native mode hides the worktree path, which makes the
+deterministic safety gates, structured conflict reports, and explicit
+squash-merge impossible to implement or unit-test. The two mechanisms are
+alternatives and must never both be active on the same subtask.
+
+Design decisions (llm-council-reviewed, conv `461b92f9`):
+
+- **Fresh context is orthogonal to the worktree.** Each Actor is already a
+  separate Task agent with a fresh window; the worktree adds *filesystem
+  isolation + atomic accept/reject*, which is the foundation Phase 2 (wave/DAG
+  parallelism) needs.
+- **Out-of-tree storage** under the repo's git common dir
+  (`<git-common-dir>/map-framework/worktrees/<branch>/<slug>-<attempt>`), immune
+  to `git clean -fdx`, recursive scanners, and accidental commits. Branches are
+  `map-wt/<slug>-<attempt>`, unique per (subtask, attempt) so Phase 2 never
+  collides; `--attempt` is threaded from day one.
+- **State-root separation.** The runner is invoked from the **main checkout**
+  (orchestrator side); only the Actor runs inside the worktree. MAP state
+  (`.map/<branch>/…`) always resolves against the main checkout, and
+  state-mutating worktree commands refuse if invoked from inside a managed
+  worktree — closing the silent state-desync footgun where a gate-pass write
+  would land in the worktree's `.map/` and evaporate on cleanup.
+- **Accept = squash-merge.** `merge_subtask_worktree` commits the Actor's
+  worktree work, runs `verification_checks` **in the worktree** (a pre-merge
+  gate — strictly stronger than the post-commit check, valid because a
+  base-divergence guard pins `working HEAD == base_sha`), then `git merge
+  --squash` + one runner-authored commit. Never `--no-ff`: that would add a merge
+  commit per subtask and break the one-commit-per-subtask manifest contract.
+  Guards run *before* the working branch is touched: base-divergence,
+  runtime-state-in-diff, configurable bulk-deletion (`worktree.max_deletions`),
+  submodule-pointer change, and detached-HEAD.
+- **Reject = discard.** `discard_subtask_worktree` removes the worktree + branch
+  on any Monitor/Evaluator failure, so the retry starts from a clean HEAD; a
+  failed attempt is never merged. `create_subtask_worktree` is crash-safe
+  (remove-and-recreate), so a recovered run always starts clean.
+
+State lives in `.map/<branch>/worktrees.json` (sidecar) plus a `worktree`
+manifest stage; every guard returns a structured `{kind, message}` the skill
+branches on. Phase 2 (wave/DAG parallelism) and Phase 3 (context-budget hooks)
+remain open on #284.
+
 ## Stack Overflow for Agents (SOFA) Integration
 
 SOFA is an **opt-in, off-by-default, read-only** prior-art search surface, enabled

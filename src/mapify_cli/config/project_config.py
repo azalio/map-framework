@@ -150,6 +150,24 @@ class MapConfig:
     # review can take minutes; default 180 balances latency against hangs.
     review_cross_ai_timeout_seconds: int = 180
 
+    # Per-subtask git worktree isolation (#284) — opt-in, OFF by default. When
+    # enabled, `/map-efficient` runs each subtask's Actor inside a dedicated git
+    # worktree (stored OUT of the working tree, under the repo's common git dir),
+    # then atomically squash-merges the result into the working branch ONLY after
+    # the configured `verification_checks` pass IN the worktree (pre-merge gate).
+    # A rejected attempt (Monitor/Evaluator fail) discards the worktree, so the
+    # working branch is never touched by a bad attempt. This is a TOP-LEVEL
+    # filesystem concern, deliberately NOT nested under review/sofa. Dotted YAML
+    # key `worktree.isolation` aliases to this snake_case field (see
+    # load_map_config). The step runner owns the lifecycle + safety guards.
+    worktree_isolation: bool = False
+    # Bulk-deletion guard threshold: the per-subtask merge refuses when the
+    # worktree branch deletes MORE than this many files vs the base commit
+    # (catches `rm -rf` / hallucinated mass deletion before it reaches the
+    # working branch). 0 disables the guard. Dotted YAML key
+    # `worktree.max_deletions`.
+    worktree_max_deletions: int = 50
+
 
 def load_map_config(project_path: Path) -> MapConfig:
     """Load MAP config from .map/config.yaml with fallback to defaults.
@@ -217,6 +235,8 @@ def load_map_config(project_path: Path) -> MapConfig:
             ("review.cross_ai.enabled", "review_cross_ai_enabled"),
             ("review.cross_ai.runtime", "review_cross_ai_runtime"),
             ("review.cross_ai.timeout_seconds", "review_cross_ai_timeout_seconds"),
+            ("worktree.isolation", "worktree_isolation"),
+            ("worktree.max_deletions", "worktree_max_deletions"),
         ):
             if dotted in data and field_name not in data:
                 data[field_name] = data.pop(dotted)
@@ -314,6 +334,15 @@ def load_map_config(project_path: Path) -> MapConfig:
                 cfg.review_cross_ai_timeout_seconds,
             )
             cfg.review_cross_ai_timeout_seconds = 180
+
+        if cfg.worktree_max_deletions < 0:
+            logger.warning(
+                "worktree_max_deletions must be >= 0 in %s "
+                "(got %d). Using default 50.",
+                config_file,
+                cfg.worktree_max_deletions,
+            )
+            cfg.worktree_max_deletions = 50
 
         return cfg
 
@@ -454,6 +483,16 @@ minimality: lite
 # review.cross_ai.enabled: false
 # review.cross_ai.runtime: codex          # default target: claude|codex|gemini|opencode
 # review.cross_ai.timeout_seconds: 180
+
+# Per-subtask git worktree isolation (#284) — opt-in, OFF by default. When on,
+# `/map-efficient` runs each subtask's Actor in a dedicated git worktree (stored
+# out of the working tree, under the repo's .git common dir) and atomically
+# squash-merges it back into the working branch ONLY after `verification_checks`
+# pass IN the worktree (pre-merge gate). A rejected attempt (Monitor/Evaluator
+# fail) is discarded, so the working branch is never touched by a bad attempt.
+# Top-level filesystem concern; the step runner owns the lifecycle + guards.
+# worktree.isolation: false
+# worktree.max_deletions: 50   # refuse a merge deleting more than N files (0 = off)
 
 # Strip MAP-internal workflow IDs (ST-/AC-/VC-/INV-/HC-) from the code a run
 # changed, at workflow completion (Stop hook). On by default; uncomment and set
