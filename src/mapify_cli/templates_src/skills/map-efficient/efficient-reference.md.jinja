@@ -492,6 +492,65 @@ When to call:
   commit section above — covers reality lock for the just-completed
   subtask).
 
+## Worktree isolation
+
+Per-subtask git worktree isolation (#284) is **opt-in, off by default**. Enable
+with `worktree.isolation: true` in `.map/config.yaml` (`worktree.max_deletions: N`
+caps the bulk-deletion guard, 0 = off). When enabled, each subtask's Actor runs
+in a dedicated throwaway git worktree (stored out of the working tree under the
+repo's `.git` common dir); the result is squash-merged back into the working
+branch ONLY after the configured `verification_checks` pass IN the worktree
+(pre-merge gate), and a rejected attempt is discarded so the working branch is
+never touched. The step runner owns the lifecycle + every safety guard
+(council-reviewed). Dispatch the Actor Task WITHOUT `isolation="worktree"` — the
+runner owns isolation; the two mechanisms must never both be active.
+
+**Before ACTOR — create the worktree (no-ops when disabled):**
+
+```bash
+WT_JSON=$(python3 .map/scripts/map_step_runner.py create_subtask_worktree "$SUBTASK_ID")
+WT_STATUS=$(printf '%s' "$WT_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("status",""))')
+WT_PATH=""
+if [ "$WT_STATUS" = "success" ]; then
+  WT_PATH=$(printf '%s' "$WT_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("worktree_path",""))')
+fi
+```
+
+`status:"disabled"` (exit 0) → flag off, proceed normally. `status:"error"` →
+STOP and surface the structured `kind`/`message` (`DIRTY_MAIN`, `PROTECTED_REF`,
+`NESTED_WORKTREE`, `ACTIVE_GIT_OP`, `INVALID_SUBTASK_ID`, …); fix the cause, do
+NOT silently fall back to the shared tree. When `WT_PATH` is non-empty, append to
+the Actor task prompt: *"All edits and test runs for this subtask MUST happen
+inside the git worktree at `$WT_PATH` — never edit the main checkout, and never
+run git fetch/pull/push from the worktree."*
+
+**Accept (after a clean Monitor + Evaluator pass)** — replaces the per-subtask
+`git commit`:
+
+```bash
+python3 .map/scripts/map_step_runner.py merge_subtask_worktree "$SUBTASK_ID"
+```
+
+It commits the Actor's worktree work, runs `verification_checks` in the worktree
+(pre-merge gate), then `git merge --squash` + one runner-authored commit (never
+`--no-ff`; the squash commit IS this subtask's commit — pass its `merged_sha` to
+`record_subtask_result --commit-sha`) and removes the worktree. Guard failures
+return `status:"error"` with a `kind` and leave the working branch untouched:
+`VERIFY_FAILED`, `MERGE_CONFLICT`, `BULK_DELETION`, `RUNTIME_STATE_IN_DIFF`,
+`BASE_DIVERGED`, `SUBMODULE_CHANGED`, `WORKTREE_HEAD_MOVED` → discard + retry. A
+`no_changes:true` success means the Actor edited the main checkout instead of the
+worktree — surface it and do NOT record the subtask.
+
+**Reject (Monitor `valid=false` / Evaluator fail)** — atomic discard before retry:
+
+```bash
+python3 .map/scripts/map_step_runner.py discard_subtask_worktree "$SUBTASK_ID" --save-patch
+```
+
+`--save-patch` keeps the rejected diff under `.map/<branch>/worktree_attempts/`.
+The retry creates a fresh worktree off the current HEAD. Inspect state any time
+with `worktree_isolation_status`.
+
 ## Troubleshooting
 
 - Blueprint validation fails: fix the decomposer output before Actor starts.

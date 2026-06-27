@@ -207,6 +207,61 @@ Guardrails (all enforced in the Python step runner, not in prompt text):
 `--cross-ai all` (multi-runtime consensus/disagreement aggregation) is a planned
 follow-up slice; slice 1 is single-runtime dispatch.
 
+## Worktree isolation (per-subtask sandboxing)
+
+Per-subtask git worktree isolation is an **opt-in, off-by-default** feature for
+`/map-efficient` (issue #284). With it disabled (the default), `/map-efficient`
+runs exactly as before — every worktree command no-ops with `status:"disabled"`.
+
+When enabled, each subtask's Actor runs in its own throwaway git worktree, and
+the result is squash-merged back into the working branch **only after the
+configured `verification_checks` pass inside the worktree** (a pre-merge gate). A
+rejected attempt (Monitor `valid=false` / Evaluator fail) is discarded, so the
+working branch is never touched by a bad attempt.
+
+### Enabling
+
+```yaml
+# .map/config.yaml
+worktree.isolation: true
+worktree.max_deletions: 50   # refuse a subtask merge deleting more than N files (0 = off)
+verification_checks:         # run inside the worktree before merge
+  - make check
+```
+
+### Lifecycle (step-runner commands; the skill drives these for you)
+
+```bash
+# Before Actor (no-ops with status:"disabled" when the flag is off):
+python3 .map/scripts/map_step_runner.py create_subtask_worktree ST-001
+# Accept after Monitor + Evaluator pass — pre-merge verify, then squash-merge ONE commit:
+python3 .map/scripts/map_step_runner.py merge_subtask_worktree ST-001
+# Reject (Monitor/Evaluator fail) — discard, retry starts from a clean HEAD:
+python3 .map/scripts/map_step_runner.py discard_subtask_worktree ST-001 --save-patch
+# Inspect:
+python3 .map/scripts/map_step_runner.py worktree_isolation_status
+```
+
+### Safety model
+
+- **Runner-owned, not harness-native.** The runner creates explicit worktrees;
+  the Actor Task must be dispatched **without** `isolation="worktree"` — the two
+  mechanisms are alternatives and must never both be active.
+- **Out-of-tree storage.** Worktrees live under the repo's git common dir
+  (`<git-common-dir>/map-framework/worktrees/`), so `git clean -fdx`, recursive
+  scanners, and accidental commits can never touch them.
+- **State stays in the main checkout.** MAP runtime state (`.map/<branch>/…`)
+  always resolves against the main checkout; state-mutating commands refuse if
+  invoked from inside a managed worktree (prevents silent state desync).
+- **Accept = squash-merge.** Exactly one commit per subtask (never `--no-ff`),
+  gated by base-divergence, runtime-state-in-diff, bulk-deletion, submodule, and
+  detached-HEAD checks plus the pre-merge verify. Every guard returns a
+  structured `{kind, message}` the skill branches on (e.g. `VERIFY_FAILED`,
+  `BULK_DELETION`, `BASE_DIVERGED`).
+
+Phase 2 (wave/DAG parallelism across independent subtasks) and Phase 3
+(context-budget hooks) remain open on #284.
+
 ## Stack Overflow for Agents (SOFA)
 
 SOFA integration is an **opt-in, off-by-default, read-only** prior-art search.
