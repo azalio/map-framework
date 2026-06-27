@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
@@ -621,6 +622,102 @@ def create_config_files(
             count += 1
 
     return count
+
+
+@dataclass
+class StatuslineResult:
+    """Outcome of :func:`ensure_map_statusline`.
+
+    ``wired`` is True only when a fresh ``statusLine`` entry was written.
+    ``reason`` is ``"wired"`` on success, or ``"existing:<scope>"`` when an
+    existing status line in the ``user`` / ``project`` / ``local`` scope was
+    detected and left untouched.
+    """
+
+    wired: bool
+    reason: str
+    settings_path: Path | None = None
+
+
+def _read_json_object(path: Path) -> dict | None:
+    """Return a parsed JSON object, or None if missing/unreadable/not an object."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _has_status_line(path: Path) -> bool:
+    """True when *path* is a settings JSON that already defines a ``statusLine``."""
+    obj = _read_json_object(path)
+    return bool(obj and obj.get("statusLine"))
+
+
+def ensure_map_statusline(
+    project_path: Path,
+    *,
+    home: Path | None = None,
+) -> StatuslineResult:
+    """Non-destructively wire the MAP context status line.
+
+    Claude Code's ``statusLine`` setting fully owns the status row, so MAP must
+    never overwrite a status line the user already configured. This detects an
+    existing ``statusLine`` in every scope MAP must respect — highest precedence
+    first —
+
+      * ``<project>/.claude/settings.local.json`` (project-local overrides)
+      * ``<project>/.claude/settings.json``       (project, MAP-managed)
+      * ``~/.claude/settings.json``               (user global)
+
+    and, only when NONE is present, merges a ``statusLine`` entry pointing at the
+    installed ``map-statusline.py`` hook into ``.claude/settings.local.json``.
+
+    ``settings.local.json`` is deliberately chosen over the MAP-managed
+    ``settings.json``: it is user-owned and never re-rendered by the managed
+    copier, so the injection introduces no template drift and creates no ``.bak``
+    churn on upgrade. The merge preserves any pre-existing keys in that file, and
+    the operation is idempotent — a second ``mapify init`` detects MAP's own
+    entry and skips.
+
+    Args:
+        project_path: Root of the target project.
+        home: Override for the user home directory (test seam). Defaults to
+            ``Path.home()``.
+
+    Returns:
+        StatuslineResult describing whether a status line was wired or skipped.
+    """
+    home_dir = home if home is not None else Path.home()
+    claude_dir = project_path / ".claude"
+    scope_paths = {
+        "local": claude_dir / "settings.local.json",
+        "project": claude_dir / "settings.json",
+        "user": home_dir / ".claude" / "settings.json",
+    }
+
+    # Highest-precedence scope first so the reported scope is the one that would
+    # actually win at runtime.
+    for scope in ("local", "project", "user"):
+        if _has_status_line(scope_paths[scope]):
+            return StatuslineResult(wired=False, reason=f"existing:{scope}")
+
+    local_settings = scope_paths["local"]
+    hook_path = claude_dir / "hooks" / "map-statusline.py"
+    # Absolute, quoted path: settings.local.json is machine-local, and quoting
+    # keeps the shell-invoked command correct when the project path has spaces.
+    command = f'"{hook_path}"'
+
+    settings = _read_json_object(local_settings) or {}
+    settings["statusLine"] = {"type": "command", "command": command}
+
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    local_settings.write_text(
+        json.dumps(settings, indent=2) + "\n", encoding="utf-8"
+    )
+    return StatuslineResult(
+        wired=True, reason="wired", settings_path=local_settings
+    )
 
 
 def create_rules_dir(

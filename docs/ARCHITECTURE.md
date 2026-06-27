@@ -186,8 +186,28 @@ divergence each in-wave squash-merge creates. Design (llm-council-reviewed, conv
   reported as advisory telemetry while git's textual conflict stays the hard
   guard).
 
-Phase 3 (context-budget hooks: statusline, threshold warnings, heartbeat)
-remains open on #284.
+Phase 3 (context-budget hooks) is the final slice of #284 and is now complete.
+**Threshold warnings** already ship via the `context-meter.py` `UserPromptSubmit`
+hook (a `/compact` nudge when `compression_threshold_tokens` is crossed) and the
+orchestrator's `_emit_context_budget_warning`. The **statusline** ships as
+`map-statusline.py`, a Claude Code `statusLine` render command: it reads the
+context-window usage Claude Code pre-computes on stdin
+(`context_window.used_percentage` / `context_window_size` /
+`total_input_tokens`) — no transcript parsing, no token counting, no network —
+and renders one line such as `[Opus] MAP ctx 47% (94k/200k) · branch · ST-003
+ACTOR` (branch read directly from `.git/HEAD`, active subtask from
+`.map/<branch>/step_state.json`; never blank, never crashes). It is wired
+**non-destructively** at install time by `ensure_map_statusline`, which merges
+the `statusLine` entry into the user-owned `.claude/settings.local.json` ONLY
+when no status line already exists in the local/project/user scope — so it never
+overrides a user's own status line and, because `settings.local.json` is not a
+MAP-managed file, introduces no template drift or `.bak` churn on upgrade
+(Claude provider only). The **heartbeat / SSE-keepalive** acceptance item is
+closed as **harness-owned**: MAP's orchestrator is prompt-driven and dispatches
+subagents through Claude Code's Task tool, which the harness keeps alive, so MAP
+ships no bespoke keepalive (a genuine crash-resume need would be tracked
+separately as durable checkpointing, not a network heartbeat). Design was
+llm-council-reviewed (conv `585f773b`).
 
 ## Stack Overflow for Agents (SOFA) Integration
 

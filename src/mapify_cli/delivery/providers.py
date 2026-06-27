@@ -14,6 +14,7 @@ from mapify_cli.delivery.file_copier import (
     create_config_files,
     create_map_tools,
     create_rules_dir,
+    ensure_map_statusline,
 )
 
 
@@ -53,6 +54,10 @@ class ClaudeProvider(BaseProvider):
     ) -> dict[str, int]:
         """Install Claude Code MAP files into target project."""
         servers = mcp_servers or []
+        # Statusline wiring is a Claude-only resource decision and stays inside
+        # this provider so it never leaks into the Codex install path. It is
+        # non-destructive: skips when the user already configured a statusLine.
+        statusline = ensure_map_statusline(project_path)
         return {
             "agents": create_agent_files(project_path, servers),
             "commands": create_command_files(project_path),
@@ -62,6 +67,7 @@ class ClaudeProvider(BaseProvider):
             "hooks": create_hook_files(project_path),
             "configs": create_config_files(project_path),
             "rules": create_rules_dir(project_path),
+            "statusline": 1 if statusline.wired else 0,
         }
 
 
@@ -83,6 +89,10 @@ class CodexProvider(BaseProvider):
         Returns:
             Mapping of category name to number of files created.
         """
+        # Codex configures agents via TOML, not MCP JSON: the interface
+        # parameter is accepted for BaseProvider conformance but intentionally
+        # unused. `del` documents that and satisfies reportUnusedParameter.
+        del mcp_servers
         # Deferred to avoid circular import (codex_copier imports from file_copier)
         from mapify_cli.delivery.codex_copier import create_codex_files
 

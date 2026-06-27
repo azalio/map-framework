@@ -2147,6 +2147,7 @@ class TestClaudeProviderInstall:
             "hooks",
             "configs",
             "rules",
+            "statusline",
         }
         assert (
             set(counts.keys()) == expected_keys
