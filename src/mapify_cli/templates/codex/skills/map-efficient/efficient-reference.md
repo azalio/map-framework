@@ -94,6 +94,20 @@ python3 .map/scripts/map_orchestrator.py advance_wave
 Do not mix wave APIs with the sequential `get_next_step` cursor for the same
 wave unless the orchestrator response explicitly tells you to fall back.
 
+When `worktree.isolation` is enabled and a wave runs in parallel (≥2 disjoint
+subtasks), give each subtask its own worktree and accept the whole wave
+atomically after all pass Monitor — never merge them one at a time (the first
+merge advances HEAD and the next trips `BASE_DIVERGED`):
+
+```bash
+python3 .map/scripts/map_step_runner.py merge_wave_worktrees "$ST_A" "$ST_B"
+```
+
+It runs the post-wave gate inside the transaction and rolls the whole wave back
+to base on any conflict or gate failure (worktrees kept for retry). On a single
+subtask's Monitor failure, `discard_subtask_worktree` that subtask and retry it
+before calling `merge_wave_worktrees`.
+
 ## TDD Mode
 
 `--tdd` inserts `TEST_WRITER` and `TEST_FAIL_GATE` before `ACTOR`.

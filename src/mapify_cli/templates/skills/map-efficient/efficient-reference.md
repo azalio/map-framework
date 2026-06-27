@@ -105,7 +105,7 @@ including clean passes — must carry concrete evidence references.
 
 ## Wave Execution
 
-Sequential is default. Parallel execution is allowed only when a wave has satisfied dependencies, low risk, and disjoint new-file writes, or when the user explicitly requests it. Use `get_wave_step`, `validate_wave_step`, and `advance_wave`; do not mix wave APIs with the single-current-subtask API.
+Sequential is default. Parallel execution is allowed only when a wave has satisfied dependencies, low risk, and disjoint new-file writes, or when the user explicitly requests it. Use `get_wave_step`, `validate_wave_step`, and `advance_wave`; do not mix wave APIs with the single-current-subtask API. When `worktree.isolation` is on and a wave runs in parallel, each subtask gets its own worktree and the wave is accepted atomically via `merge_wave_worktrees` — see [Parallel waves](#worktree-isolation) under Worktree isolation.
 
 ## Predictor Recovery
 
@@ -550,6 +550,43 @@ python3 .map/scripts/map_step_runner.py discard_subtask_worktree "$SUBTASK_ID" -
 `--save-patch` keeps the rejected diff under `.map/<branch>/worktree_attempts/`.
 The retry creates a fresh worktree off the current HEAD. Inspect state any time
 with `worktree_isolation_status`.
+
+### Parallel waves (≥2 worktree-isolated subtasks) — #284 Phase 2
+
+When `get_wave_step` returns `mode:"parallel"` (a wave with ≥2 disjoint-file
+subtasks) AND isolation is enabled, give EACH subtask its own worktree and
+dispatch the Actors concurrently (separate Task agents, each pinned to its own
+`$WT_PATH`). Do NOT merge them one at a time: every worktree was cut off the same
+HEAD, so the first `merge_subtask_worktree` advances the working branch and the
+next trips `BASE_DIVERGED`. Accept the whole wave atomically instead — only after
+EVERY subtask in the wave has passed Monitor (+ Evaluator):
+
+```bash
+python3 .map/scripts/map_step_runner.py merge_wave_worktrees "$ST_A" "$ST_B" "$ST_C"
+```
+
+The coordinator (council-reviewed, conv `c29d6fa9`): derives the wave base from
+the sidecar; refuses EXTERNAL HEAD movement but allows the sibling divergence each
+in-wave squash-merge creates; runs each worktree's pre-merge `verification_checks`,
+then squash-merges every accepted worktree by frozen SHA in sorted id order (one
+runner commit per subtask), then runs the post-wave full gate **inside the same
+transaction**. It is **all-or-nothing**: any textual conflict, commit failure, or
+post-wave-gate failure rolls the WHOLE wave back to the base (`reset --hard` +
+`clean -fd`, never `git merge --abort` — squash leaves no `MERGE_HEAD`) and leaves
+every worktree intact for retry. Pass each subtask's `merged_sha` from the result
+to `record_subtask_result --commit-sha`. This **replaces** the separate Per-Wave
+Gate when isolation is on — the post-wave gate runs inside `merge_wave_worktrees`.
+
+Failure `kind`s (working branch untouched / rolled back to base, worktrees kept):
+`WAVE_MERGE_CONFLICT` (with `attribution` naming the subtasks that touched each
+conflicted file — fix `affected_files` or re-decompose), `WAVE_VERIFY_FAILED`
+(post-wave gate red), `EXTERNAL_HEAD_MOVED` (a commit landed outside the wave —
+recreate the worktrees off the new HEAD), `WAVE_BASE_MISMATCH`, `DIRTY_TARGET`,
+`MERGE_IN_PROGRESS`, plus the per-worktree preflight `kind`s (`VERIFY_FAILED`,
+`BULK_DELETION`, … with `phase:"preflight"`). On any Monitor `valid=false` for a
+single wave subtask, `discard_subtask_worktree` THAT subtask and retry it; call
+`merge_wave_worktrees` only once the whole wave is green. The `overlaps` field is
+advisory telemetry (actual changed-file intersections), not a gate.
 
 ## Troubleshooting
 

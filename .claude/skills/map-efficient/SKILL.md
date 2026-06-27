@@ -419,7 +419,7 @@ Every Monitor failure must create a durable `code-review-N.md` with exact issue,
 
 ### Per-Wave Gates (after all subtasks in wave pass Monitor)
 
-Run build first, then tests, then linter. If build fails, skip tests/lint and reopen the owning subtask. Run the FULL test suite (not a `-k` subset) whenever any subtask in the wave tripped the cross-subtask regression gate (`recommended_gate == "full_suite"`) — a parallel wave that edits a shared file is the highest-risk case for a regression no single subtask's scoped run can see.
+Run build first, then tests, then linter. If build fails, skip tests/lint and reopen the owning subtask. Run the FULL test suite (not a `-k` subset) whenever any subtask in the wave tripped the cross-subtask regression gate (`recommended_gate == "full_suite"`) — a parallel wave that edits a shared file is the highest-risk case for a regression no single subtask's scoped run can see. **Worktree isolation, parallel wave:** when `worktree.isolation` is on and the wave has ≥2 isolated subtasks, accept the whole wave atomically with `merge_wave_worktrees` (never one at a time — the first merge trips `BASE_DIVERGED`); it runs this post-wave gate inside the transaction and rolls the wave back on failure — see [efficient-reference.md](efficient-reference.md#worktree-isolation).
 
 ## Step 2a: Validate Step Completion
 
