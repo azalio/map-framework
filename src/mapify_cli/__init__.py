@@ -933,6 +933,18 @@ def init(
         total_claude = sum(claude_counts.values())
         tracker.complete("create-claude", f"{total_claude} files")
 
+        # Surface the non-destructive statusline decision so the user knows
+        # whether the context status row was wired or their own was preserved.
+        if claude_counts.get("statusline"):
+            console.print(
+                "[dim]· Context statusline → .claude/settings.local.json "
+                "(remove the statusLine key there to disable)[/dim]"
+            )
+        else:
+            console.print(
+                "[dim]· Existing statusLine detected — MAP statusline not wired[/dim]"
+            )
+
         # Create default .map/config.yaml (project-level settings)
         tracker.add("map-config", "Create .map/config.yaml")
         tracker.start("map-config")

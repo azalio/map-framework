@@ -82,8 +82,16 @@ FORBID_GUARD = {
     "post-compact-context.py",
 }
 
-# Files in a hooks dir that are not themselves hooks.
-IGNORED_BASENAMES = {"README.md", "__init__.py"}
+# Files in a hooks dir that are not themselves MAP_INVOKED_BY recursion-guarded
+# event hooks.
+#   - README.md / __init__.py: not executable hooks at all.
+#   - map-statusline.py: a Claude Code ``statusLine`` render command, not a
+#     settings.json event hook. The harness owns its invocation cadence and it
+#     NEVER runs inside a MAP-spawned subprocess (subagents have no status line),
+#     so the recursion-guard contract does not apply. It must also stay
+#     guard-free: a MAP_INVOKED_BY early-exit would print nothing and blank the
+#     status row, which violates its never-blank output contract.
+IGNORED_BASENAMES = {"README.md", "__init__.py", "map-statusline.py"}
 
 ENV_FLAG = "MAP_INVOKED_BY"
 
