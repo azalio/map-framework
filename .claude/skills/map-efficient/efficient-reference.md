@@ -35,8 +35,13 @@ python3 .map/scripts/map_step_runner.py run_flaky_test_triage \
   --timeout 120 \
   -- python -m pytest tests/test_file.py::test_name
 python3 .map/scripts/map_step_runner.py validate_flaky_test_triage
-python3 .map/scripts/map_orchestrator.py defer_flaky_subtask "$SUBTASK_ID" \
-  --check-id "pytest::test_name"
+# Preferred close — the verdict-path route. Monitor emits valid:false plus
+# disposition {kind: deferred_nondeterministic, check_id: ...}; close 2.4 with
+# the same disposition piped through. The orchestrator routes to deferral ONLY
+# when the sidecar + envelope back it (see "Verdict-path route" below).
+echo "$MONITOR_JSON" | python3 .map/scripts/map_orchestrator.py \
+  validate_step 2.4 --disposition deferred_nondeterministic \
+  --check-id "pytest::test_name" --monitor-envelope -
 ```
 
 `run_flaky_test_triage` executes argv with `shell=False`; shell syntax is not
@@ -52,8 +57,6 @@ python3 .map/scripts/map_step_runner.py record_flaky_test_triage \
   --command "pytest tests/test_file.py::test_name" \
   --reason "Mixed pass/fail outcomes across repeated runs."
 python3 .map/scripts/map_step_runner.py validate_flaky_test_triage
-python3 .map/scripts/map_orchestrator.py defer_flaky_subtask "$SUBTASK_ID" \
-  --check-id "pytest::test_name"
 ```
 
 Mixed pass/fail evidence is classified as `deferred_nondeterministic` and
@@ -61,10 +64,23 @@ stored in `.map/<branch>/flaky_test_triage.json` plus the `flaky_test_triage`
 manifest stage. This is an explicit recorded defer, not a pass: the artifact
 sets `monitor_verdict_policy=not_valid_without_explicit_triage`, and Monitor
 must still report the deferred evidence rather than returning a silent green.
-After validation, close the subtask via `defer_flaky_subtask`, not the
-clean-pass close command; it records
+
+**Verdict-path route (preferred).** The third Monitor outcome is wired into the
+2.4 close itself: `validate_step 2.4 --disposition deferred_nondeterministic
+--check-id <id> --monitor-envelope -`. The deferral is honored ONLY when (a)
+the Monitor envelope is `valid:false` with a non-empty `failed_checks` and a
+structured `disposition` matching the flags, and (b) the sidecar holds mixed
+pass/fail evidence for that `check_id` — so a deterministic failure or a green
+check can never be deferred. A deferred run returns `valid:false` +
+`deferred:true` (non-green, exit 0, not a hard-stop); it records
 `status=deferred_nondeterministic` plus evidence metadata in `step_state.json`
-and advances without requeueing Actor.
+and advances without requeueing Actor. `recommendation` may be omitted or
+`needs_investigation`; `revise`/`block` are rejected as contradictory.
+
+**Lower-level command.** `defer_flaky_subtask "$SUBTASK_ID" --check-id <id>`
+performs the same close+advance directly (used when there is no Monitor
+envelope to verify, e.g. an operator deferral); the verdict-path route above
+calls it internally after the envelope/anti-gaming checks.
 
 If a command above ever returns `Unknown function`, grep `map_step_runner.py` for `func_name ==` to confirm the dispatch branch still exists; this list is the source of truth as of the PR that added it but the underlying dispatcher is the ground truth.
 

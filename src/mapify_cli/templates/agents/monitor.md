@@ -1607,6 +1607,21 @@ Do NOT invent issues to justify review effort. Empty `issues` array is valid.
   `valid: false`. Do not emit `valid: true` + `recommendation: "revise"`
   — it is a contradiction that downstream workflows treat as a clean
   pass and silently skip the recommended revision.
+- **Flaky / nondeterministic check → `disposition` (the third outcome).**
+  When a check fails but repeated runs of the EXACT command show mixed
+  pass/fail (real nondeterminism, NOT a deterministic regression you can
+  reproduce on demand), do NOT demand an Actor "fix" and do NOT return a
+  silent green. Emit `valid: false` PLUS
+  `"disposition": {"kind": "deferred_nondeterministic", "check_id": "<id>"}`,
+  list the failing dimension in `failed_checks`, and set `recommendation` to
+  `needs_investigation` or omit it (NEVER `revise`/`block` — that contradicts
+  the deferral). The `check_id` MUST match the id in the
+  `.map/<branch>/flaky_test_triage.json` sidecar. The skill closes the
+  subtask via `validate_step 2.4 --disposition deferred_nondeterministic
+  --check-id <id> --monitor-envelope -`, which honors the deferral ONLY when
+  the sidecar holds mixed pass/fail evidence — so you cannot defer a
+  deterministic failure or a green check. A deferral is a recorded non-green
+  outcome, never a pass.
 
 ### JSON Schema Definition (Complete)
 
@@ -1810,6 +1825,23 @@ Do NOT invent issues to justify review effort. Empty `issues` array is valid.
         "next_subtask_id": {
           "type": "string",
           "description": "ID of next subtask to mark as in_progress (optional)"
+        }
+      }
+    },
+    "disposition": {
+      "type": "object",
+      "description": "OPTIONAL non-binary verdict outcome. Include ONLY when valid:false AND the failure is a CONFIRMED flaky/nondeterministic check backed by repeated-run mixed pass/fail evidence (a flaky_test_triage sidecar) — never for a deterministic regression. Omit entirely for normal verdicts. Routes the subtask to a recorded deferral (non-green, not a hard-stop retry) instead of demanding an Actor fix.",
+      "required": ["kind", "check_id"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["deferred_nondeterministic"],
+          "description": "The deferral kind. deferred_nondeterministic = confirmed flaky, evidence recorded, advance without retry."
+        },
+        "check_id": {
+          "type": "string",
+          "description": "The flaky check id; MUST match the check_id recorded in .map/<branch>/flaky_test_triage.json."
         }
       }
     }
