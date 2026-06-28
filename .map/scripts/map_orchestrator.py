@@ -247,6 +247,10 @@ def _extract_subtask_ids_from_plan_artifacts(
 
 AGGRESSIVE_COMPRESSION_MULTIPLIER = 0.4
 
+# Slice 3: sequential-inside wave-loop. Slice 5 flips this to True when
+# concurrent Task dispatch is actually implemented and safe to enable.
+WAVE_CONCURRENCY_ENABLED = False
+
 
 def _read_map_config_scalars(project_dir: Path) -> dict[str, str]:
     """Read top-level scalar values from .map/config.yaml without dependencies."""
@@ -2345,6 +2349,9 @@ def get_wave_step(branch: str) -> dict:
         "wave_total": len(state.execution_waves),
         "subtasks": subtask_infos,
         "is_complete": False,
+        # concurrency_enabled=False: even when mode=="parallel" (width>=2 wave),
+        # dispatch is strictly sequential this slice. Slice 5 flips WAVE_CONCURRENCY_ENABLED.
+        "concurrency_enabled": WAVE_CONCURRENCY_ENABLED,
     }
 
 
@@ -2437,6 +2444,59 @@ def advance_wave(branch: str) -> dict:
         "current_wave_index": state.current_wave_index,
         "is_complete": is_complete,
         "wave_total": len(state.execution_waves),
+    }
+
+
+def select_execution_strategy(
+    branch: str, project_dir: Optional[Path] = None
+) -> dict:
+    """Determine whether to use wave_loop or legacy sequential walker.
+
+    Predicate: wave_loop IFF wave_mode in {on, auto} AND any color-group has
+    width >= 2.  Default config (wave_mode='off') always returns 'sequential'
+    so the legacy get_next_step path is byte-identical (HC-1).
+
+    Args:
+        branch: Git branch name (sanitized)
+        project_dir: Project root containing .map/config.yaml.
+                     Defaults to Path('.') consistent with other helpers.
+
+    Returns:
+        {
+          "strategy": "wave_loop" | "sequential",
+          "wave_mode": "off" | "auto" | "on",
+          "has_parallel_groups": bool,
+          "reason": str,
+        }
+    """
+    if project_dir is None:
+        project_dir = Path(".")
+
+    try:
+        from map_step_runner import _execution_wave_mode  # pyright: ignore[reportMissingImports]
+        wave_mode = _execution_wave_mode(project_dir)
+    except ImportError:
+        wave_mode = "off"
+
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+    has_parallel_groups = any(len(g) >= 2 for g in state.execution_waves)
+
+    if wave_mode in {"on", "auto"} and has_parallel_groups:
+        strategy = "wave_loop"
+        reason = f"wave_mode={wave_mode!r} and execution_waves has width>=2 group"
+    else:
+        if wave_mode not in {"on", "auto"}:
+            reason = f"wave_mode={wave_mode!r} (not on/auto) → legacy sequential"
+        else:
+            reason = "no color-group with width>=2 → sequential (all width-1 waves)"
+        strategy = "sequential"
+
+    return {
+        "strategy": strategy,
+        "wave_mode": wave_mode,
+        "has_parallel_groups": has_parallel_groups,
+        "reason": reason,
     }
 
 

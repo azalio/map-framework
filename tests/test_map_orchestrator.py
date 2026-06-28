@@ -4526,5 +4526,228 @@ class TestValidateStep24RequiredRecommendation:
         )
 
 
+# ---------------------------------------------------------------------------
+# ST-010: Slice 3 — predicate-gated sequential wave-loop
+# ---------------------------------------------------------------------------
+
+
+def _write_config(tmp_path: Path, wave_mode: str) -> None:
+    """Write a minimal .map/config.yaml with execution.wave_mode set."""
+    map_dir = tmp_path / ".map"
+    map_dir.mkdir(parents=True, exist_ok=True)
+    (map_dir / "config.yaml").write_text(
+        f"execution.wave_mode: {wave_mode}\n", encoding="utf-8"
+    )
+
+
+def _write_step_state(
+    branch: str,
+    tmp_path: Path,
+    execution_waves: list,
+    extra: dict | None = None,
+) -> None:
+    """Write a minimal step_state.json with given execution_waves."""
+    import json as _json
+
+    state: dict = {
+        "workflow": "map-efficient",
+        "started_at": "2026-01-01T00:00:00",
+        "current_subtask_id": None,
+        "subtask_index": 0,
+        "subtask_sequence": [],
+        "current_step_id": "1.0",
+        "current_step_phase": "DECOMPOSE",
+        "completed_steps": [],
+        "pending_steps": [],
+        "retry_count": 0,
+        "max_retries": 5,
+        "plan_approved": False,
+        "execution_mode": "batch",
+        "tdd_mode": False,
+        "skipped_steps": [],
+        "execution_waves": execution_waves,
+        "current_wave_index": 0,
+        "subtask_phases": {},
+        "subtask_retry_counts": {},
+        "workflow_status": "INITIALIZED",
+        "subtask_files_changed": {},
+        "guard_rework_counts": {},
+        "constraints": None,
+        "subtask_results": {},
+        "last_subtask_commit_sha": None,
+        "contract_ready_subtasks": {},
+        "clean_retry_count": 0,
+        "contaminated_retry_count": 0,
+        "scope_feedback_subtasks": [],
+        "progress_feedback_subtasks": [],
+        "retry_isolation_status": {},
+        "retry_quarantine_paths": {},
+        "completed_at": None,
+        "subtask_completion_reasons": {},
+    }
+    if extra:
+        state.update(extra)
+    branch_dir = tmp_path / ".map" / branch
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    (branch_dir / "step_state.json").write_text(
+        _json.dumps(state), encoding="utf-8"
+    )
+
+
+def test_vc1_wave_loop_sequential_no_concurrency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VC1 [HC-2]: get_wave_step returns concurrency_enabled=False even for width>=2 wave."""
+    monkeypatch.chdir(tmp_path)
+    branch = "test-st010-vc1"
+    # Two subtasks in one wave → mode="parallel" but concurrency_enabled must be False.
+    _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
+
+    result = map_orchestrator.get_wave_step(branch)
+
+    assert result["is_complete"] is False
+    assert result["mode"] == "parallel", f"expected parallel mode for width-2 wave: {result}"
+    assert result["concurrency_enabled"] is False, (
+        f"concurrency_enabled must be False in Slice 3 (no concurrent dispatch): {result}"
+    )
+    # One-subtask-at-a-time dispatch is the contract: caller iterates subtasks[]
+    # sequentially; concurrency_enabled=False is the explicit signal.
+    assert len(result["subtasks"]) == 2  # both listed; dispatcher iterates one at a time
+
+
+def test_vc2_wave_loop_predicate_gating_default_legacy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VC2 [AC-10]: select_execution_strategy gates on wave_mode AND has_parallel_groups."""
+    import types
+
+    monkeypatch.chdir(tmp_path)
+    branch = "test-st010-vc2"
+    # Build a state with a width>=2 wave.
+    _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
+
+    # 1. Default (wave_mode=off) → sequential regardless of wave width.
+    _write_config(tmp_path, "off")
+    monkeypatch.setattr(
+        map_orchestrator,
+        "select_execution_strategy",
+        map_orchestrator.select_execution_strategy,
+    )
+    # Inject a mock _execution_wave_mode returning "off" via the import path.
+    # select_execution_strategy imports from map_step_runner inside the function;
+    # we patch by injecting a fake module into sys.modules for the call scope.
+    import sys as _sys
+
+    def _const_mode(val: str):
+        def _f(_project_dir: object) -> str:
+            del _project_dir
+            return val
+        return _f
+
+    fake_runner_off = types.ModuleType("map_step_runner")
+    fake_runner_off._execution_wave_mode = _const_mode("off")  # type: ignore[attr-defined]
+    _sys.modules["map_step_runner"] = fake_runner_off
+    try:
+        result = map_orchestrator.select_execution_strategy(branch, tmp_path)
+    finally:
+        _sys.modules.pop("map_step_runner", None)
+    assert result["strategy"] == "sequential", f"off → sequential: {result}"
+    assert result["wave_mode"] == "off"
+    assert result["has_parallel_groups"] is True  # waves exist, but mode is off
+
+    # 2. wave_mode=on + has_parallel_groups → wave_loop.
+    _write_config(tmp_path, "on")
+    fake_runner_on = types.ModuleType("map_step_runner")
+    fake_runner_on._execution_wave_mode = _const_mode("on")  # type: ignore[attr-defined]
+    _sys.modules["map_step_runner"] = fake_runner_on
+    try:
+        result = map_orchestrator.select_execution_strategy(branch, tmp_path)
+    finally:
+        _sys.modules.pop("map_step_runner", None)
+    assert result["strategy"] == "wave_loop", f"on + width>=2 → wave_loop: {result}"
+    assert result["wave_mode"] == "on"
+
+    # 3. wave_mode=auto + has_parallel_groups → wave_loop.
+    fake_runner_auto = types.ModuleType("map_step_runner")
+    fake_runner_auto._execution_wave_mode = _const_mode("auto")  # type: ignore[attr-defined]
+    _sys.modules["map_step_runner"] = fake_runner_auto
+    try:
+        result = map_orchestrator.select_execution_strategy(branch, tmp_path)
+    finally:
+        _sys.modules.pop("map_step_runner", None)
+    assert result["strategy"] == "wave_loop", f"auto + width>=2 → wave_loop: {result}"
+
+    # 4. wave_mode=on but ALL waves are width-1 → sequential (has_parallel_groups=False).
+    _write_step_state(branch, tmp_path, execution_waves=[["ST-001"], ["ST-002"]])
+    fake_runner_on2 = types.ModuleType("map_step_runner")
+    fake_runner_on2._execution_wave_mode = _const_mode("on")  # type: ignore[attr-defined]
+    _sys.modules["map_step_runner"] = fake_runner_on2
+    try:
+        result = map_orchestrator.select_execution_strategy(branch, tmp_path)
+    finally:
+        _sys.modules.pop("map_step_runner", None)
+    assert result["strategy"] == "sequential", f"on + all width-1 → sequential: {result}"
+    assert result["has_parallel_groups"] is False
+
+
+def test_vc3_advance_wave_atomic_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VC3 [AC-10]: advance_wave atomically resets ALL per-wave sub-state."""
+    monkeypatch.chdir(tmp_path)
+    branch = "test-st010-vc3"
+    # Seed stale sub-state that must be cleared on advance.
+    _write_step_state(
+        branch,
+        tmp_path,
+        execution_waves=[["ST-001"], ["ST-002"]],
+        extra={
+            "current_wave_index": 0,
+            "subtask_phases": {"ST-001": "2.4"},
+            "subtask_retry_counts": {"ST-001": 3},
+            "pending_steps": ["2.3", "2.4"],
+            "completed_steps": ["1.0", "2.2"],
+            "skipped_steps": ["2.25"],
+            "current_step_id": "2.3",
+            "current_step_phase": "ACTOR",
+            "retry_count": 2,
+            "current_subtask_id": "ST-001",
+        },
+    )
+
+    result = map_orchestrator.advance_wave(branch)
+
+    assert result["status"] == "success", result
+    assert result["current_wave_index"] == 1
+
+    # Read back state and assert atomic reset of ALL per-wave sub-state.
+    import json as _json
+    state_path = tmp_path / ".map" / branch / "step_state.json"
+    state = _json.loads(state_path.read_text())
+
+    assert state["subtask_phases"] == {}, f"subtask_phases not reset: {state['subtask_phases']}"
+    assert state["subtask_retry_counts"] == {}, (
+        f"subtask_retry_counts not reset: {state['subtask_retry_counts']}"
+    )
+    assert state["completed_steps"] == [], f"completed_steps not reset: {state['completed_steps']}"
+    assert state["skipped_steps"] == [], f"skipped_steps not reset: {state['skipped_steps']}"
+    assert state["retry_count"] == 0, f"retry_count not reset: {state['retry_count']}"
+    # current_subtask_id and current_step_id must point at the new wave's first subtask.
+    assert state["current_subtask_id"] == "ST-002", (
+        f"current_subtask_id not advanced: {state['current_subtask_id']}"
+    )
+    assert state["current_step_id"] == "2.2", (
+        f"current_step_id not reset to research start: {state['current_step_id']}"
+    )
+    # pending_steps must be reset to the research-onward order (no stale entries).
+    assert state["pending_steps"], "pending_steps not repopulated for the new wave"
+    assert state["pending_steps"][0] == "2.2", (
+        f"pending_steps not reset to research start: {state['pending_steps']}"
+    )
+    assert "2.4" in state["pending_steps"], (
+        f"pending_steps missing later phases after reset: {state['pending_steps']}"
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
