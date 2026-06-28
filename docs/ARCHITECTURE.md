@@ -331,9 +331,9 @@ Information not available in current evidence.
 
 ## Freshness
 
-Last refreshed: 2026-06-05
+Last refreshed: 2026-06-28
 
-Refresh reason: Daily architecture refresh after committed cross-session memory hooks, host-conditional skill installation, and `mapify skill-eval` run/optimize/view work changed the top-level MAP runtime contract.
+Refresh reason: Bug fixes to `validate_spec_citations.py` (#301) and `/map-plan` Step 0 discovery artifact (#300).
 
 Evidence source files:
 - `README.md`
@@ -359,14 +359,11 @@ Evidence source files:
 - `Makefile`
 - `tests/`
 
-Current delta captured: MAP now documents and tests cross-session memory capture
-and recall through generated hooks plus `/map-memory-now`; host-conditional
-installation prunes skills whose commands are unavailable; `map-skill-eval` is a
-measurement-only skill backed by `mapify skill-eval run`; `mapify skill-eval
-optimize` uses train/test splits, overfit rejection, proposer iterations,
-optional template patching, and HTML reports; and skill-eval fixtures/tests now
-cover run logs, optimizer schemas, patch safety, viewer rendering, and the
-no-Anthropic invariant across optimizer modules.
+Current delta captured: Two bug fixes merged (PR #302):
+
+1. **`validate_spec_citations.py` bare-basename resolution (#301)**: Citations like `api.ts:80` now auto-resolve when exactly one file with that name exists in the repo, instead of hard-failing with "file does not exist". Ambiguous basenames (multiple matches) produce a non-blocking `warning`; missing basenames produce a clearer error. The `validate_spec` output now includes a `warnings` list alongside `failures`. 8 new tests cover all paths.
+
+2. **`/map-plan` Step 0 discovery artifact (#300)**: The `research-agent` subagent is now explicitly required to `Write` its full `file:line` report directly to `.map/<branch>/research/plan__discovery.md`. The parent falls back to the pipe only when the file wasn't written. Documentation clarifies that continuation requires `SendMessage` to the agent's task id — a new `Agent()` call starts fresh context and will hallucinate an unrelated report.
 
 ## Table of Contents
 
