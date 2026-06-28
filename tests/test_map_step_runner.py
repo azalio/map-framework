@@ -12143,3 +12143,45 @@ def test_cli_run_cross_ai_review_disabled_exit_zero(tmp_path):
     payload = json.loads(completed.stdout)
     assert payload["status"] == "disabled"
     assert payload["config"]["enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# ST-001: _execution_wave_mode tests
+# ---------------------------------------------------------------------------
+
+
+def test_vc1_wave_mode_absent_defaults_off(tmp_path: Path) -> None:
+    """Config without execution.wave_mode key must return 'off' (today's sequential default)."""
+    (tmp_path / ".map").mkdir()
+    # Write a config without any wave_mode key at all.
+    (tmp_path / ".map" / "config.yaml").write_text(
+        "some.other.key: value\n", encoding="utf-8"
+    )
+    assert map_step_runner._execution_wave_mode(tmp_path) == "off"
+
+
+def test_vc2_wave_mode_enum_and_unknown_fallback(tmp_path: Path) -> None:
+    """Known enum values parse; unknown or empty values fall back to 'off'."""
+    map_dir = tmp_path / ".map"
+    map_dir.mkdir()
+    config = map_dir / "config.yaml"
+
+    # Valid: "auto"
+    config.write_text("execution.wave_mode: auto\n", encoding="utf-8")
+    assert map_step_runner._execution_wave_mode(tmp_path) == "auto"
+
+    # Valid: "on"
+    config.write_text("execution.wave_mode: on\n", encoding="utf-8")
+    assert map_step_runner._execution_wave_mode(tmp_path) == "on"
+
+    # Valid: "off" explicit
+    config.write_text("execution.wave_mode: off\n", encoding="utf-8")
+    assert map_step_runner._execution_wave_mode(tmp_path) == "off"
+
+    # Unknown value -> "off"
+    config.write_text("execution.wave_mode: parallel\n", encoding="utf-8")
+    assert map_step_runner._execution_wave_mode(tmp_path) == "off"
+
+    # Empty value -> "off"
+    config.write_text("execution.wave_mode: \n", encoding="utf-8")
+    assert map_step_runner._execution_wave_mode(tmp_path) == "off"

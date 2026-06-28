@@ -146,6 +146,19 @@ def _map_config_int(project_dir: Path, key: str, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
+_WAVE_MODE_VALID = frozenset({"off", "auto", "on"})
+
+
+def _execution_wave_mode(project_dir: Path) -> str:
+    """Return the execution.wave_mode setting: 'off' | 'auto' | 'on'.
+
+    Any absent, unknown, or garbage value normalises to 'off' (today's
+    sequential behaviour).  Never raises.
+    """
+    raw = _map_config_str(project_dir, "execution.wave_mode", "off")
+    return raw if raw in _WAVE_MODE_VALID else "off"
+
+
 def _extract_transcript_usage(entry: dict) -> Optional[int]:
     message = entry.get("message")
     if not isinstance(message, dict):
