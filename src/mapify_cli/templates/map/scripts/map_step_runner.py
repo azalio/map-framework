@@ -15334,6 +15334,12 @@ def _wt_force_remove(path: Path, branch_ref: str) -> None:
         _wt_git(["branch", "-D", branch_ref])
 
 
+# Stable reason codes shared by resolve_worktree_isolation and ST-011 observability.
+_WT_REASON_NOT_GIT_REPO: str = "not_git_repo"
+_WT_REASON_UNSUPPORTED: str = "worktree_unsupported"
+_WT_REASON_CREATE_FAILED: str = "worktree_create_failed"
+_WT_REASON_DIRTY_MERGE_TARGET: str = "dirty_merge_target"
+
 _WT_ISOLATION_VALID = frozenset({"off", "auto", "required"})
 
 
@@ -15596,6 +15602,185 @@ def _require_clean_merge_target(project_dir: Path) -> dict[str, object]:
             "dirty": dirty[:20],
         }
     return {"status": "ok", "ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Slice 2 / ST-009: fallback matrix + orphan cleanup
+# ---------------------------------------------------------------------------
+
+
+def resolve_worktree_isolation(project_dir: Path) -> dict[str, object]:
+    """Classify the current environment and decide the execution decision.
+
+    HC-1 dormancy: when isolation is 'off' (the default), returns immediately
+    without running any git command.
+
+    Return schema
+    -------------
+    Dormant (off):
+        {"status": "dormant", "ok": False, "mode": "off", "decision": "sequential"}
+    Success (auto or required, all checks pass):
+        {"ok": True, "decision": "isolated", "degraded": False, "mode": <mode>}
+    Degraded (auto only, any fallback condition):
+        {"ok": True, "decision": "sequential", "degraded": True,
+         "reason": <code>, "warning": <loud message>}
+    Hard failure (required, any fallback condition):
+        {"status": "error", "ok": False, "kind": <UPPER_CODE>, ...}  # from _wt_error
+    """
+    mode = _worktree_isolation_mode(project_dir)
+    if mode == "off":
+        return {
+            "status": "dormant",
+            "ok": False,
+            "mode": "off",
+            "decision": "sequential",
+        }
+
+    # --- determine fallback condition (if any) ---
+
+    # 1. Not a git repo at all
+    if not _wt_is_git_repo():
+        reason_code = _WT_REASON_NOT_GIT_REPO
+        reason_msg = "not inside a git work tree; worktree isolation requires git"
+    else:
+        # 2. Worktree support probe
+        probe = _worktree_probe(project_dir)
+        if not probe.get("ok"):
+            # Probe failed → classify as unsupported or create-failed
+            # WORKTREE_PROBE_FAILED maps to unsupported (the git worktree add step
+            # is the minimum bar; any probe failure means we cannot create worktrees)
+            reason_code = _WT_REASON_UNSUPPORTED
+            reason_msg = str(probe.get("message", "worktree probe failed"))
+        else:
+            # 3. Dirty merge target
+            clean = _require_clean_merge_target(project_dir)
+            if not clean.get("ok") and clean.get("status") != "dormant":
+                reason_code = _WT_REASON_DIRTY_MERGE_TARGET
+                reason_msg = (
+                    "main checkout has uncommitted changes; worktree isolation "
+                    "requires a clean merge target. Commit or stash first."
+                )
+            else:
+                reason_code = ""
+                reason_msg = ""
+
+    if reason_code:
+        if mode == "auto":
+            # Degrade gracefully: warn and fall back to sequential
+            warning = (
+                f"[MAP] WARNING: worktree isolation degraded to sequential — "
+                f"{reason_msg} (reason={reason_code})"
+            )
+            return {
+                "ok": True,
+                "decision": "sequential",
+                "degraded": True,
+                "reason": reason_code,
+                "warning": warning,
+            }
+        else:  # mode == "required"
+            return _wt_error(
+                reason_code.upper(),
+                reason_msg,
+                decision="abort",
+            )
+
+    return {
+        "ok": True,
+        "decision": "isolated",
+        "degraded": False,
+        "mode": mode,
+    }
+
+
+def cleanup_orphan_worktrees(branch: str) -> dict[str, object]:
+    """Remove worktrees present in storage/git-list but NOT in the active registry.
+
+    HC-1 dormancy: when isolation is 'off', returns immediately without
+    running any git command.
+
+    Idempotent + crash-safe: a second call removes nothing and does not error.
+    NEVER removes a worktree recorded as active in _read_worktree_state(branch).
+
+    Returns {"removed": [...paths], "kept_active": [...paths], "ok": True}
+    """
+    # HC-1 dormancy: read isolation mode WITHOUT calling git.
+    # _map_config_str searches for .map/config.yaml starting from cwd upward, so
+    # we pass Path(".") to avoid _wt_project_dir() -> _wt_toplevel() -> _wt_git().
+    project_dir = Path(".")
+    mode = _worktree_isolation_mode(project_dir)
+    if mode == "off":
+        return {
+            "status": "dormant",
+            "ok": False,
+            "mode": "off",
+            "removed": [],
+            "kept_active": [],
+        }
+
+    # Build the set of active (registered) worktree paths from state
+    state = _read_worktree_state(branch)
+    worktrees_dict = state.get("worktrees", {})
+    if not isinstance(worktrees_dict, dict):
+        worktrees_dict = {}
+    active_paths: set[str] = {
+        str(Path(str(rec.get("path", ""))).resolve())
+        for rec in worktrees_dict.values()
+        if isinstance(rec, dict) and rec.get("path")
+    }
+
+    # Enumerate candidates from storage root + git worktree list
+    candidate_paths: set[Path] = set()
+
+    storage = _wt_storage_root()
+    if storage is not None and storage.exists():
+        try:
+            for entry in storage.iterdir():
+                if entry.is_dir() and not entry.name.startswith(".probe-"):
+                    # Recurse one level: storage/<branch-slug>/<subtask-slug>
+                    for sub in entry.iterdir():
+                        if sub.is_dir():
+                            candidate_paths.add(sub.resolve())
+        except OSError:
+            pass
+
+    # Also enumerate from `git worktree list --porcelain`
+    wl = _wt_git(["worktree", "list", "--porcelain"], timeout=15)
+    if wl.returncode == 0:
+        for raw_line in wl.stdout.splitlines():
+            line = raw_line.strip()
+            if line.startswith("worktree "):
+                wt_raw = line[len("worktree "):]
+                wt_path = Path(wt_raw.strip())
+                try:
+                    wt_path = wt_path.resolve()
+                except OSError:
+                    pass
+                # Include only map-managed worktrees (under our storage subdir)
+                if WORKTREE_STORAGE_SUBDIR.replace("/", os.sep) in str(wt_path):
+                    candidate_paths.add(wt_path)
+
+    removed: list[str] = []
+    kept_active: list[str] = []
+
+    for candidate in sorted(candidate_paths):
+        candidate_str = str(candidate)
+        if candidate_str in active_paths:
+            kept_active.append(candidate_str)
+            continue
+        # Orphan — remove it.  Derive the expected branch ref name from the
+        # directory name (best-effort; _wt_force_remove handles branch-not-found
+        # by ignoring the branch -D error).
+        orphan_branch_ref = f"{WORKTREE_BRANCH_PREFIX}{candidate.name}"
+        try:
+            _wt_force_remove(candidate, orphan_branch_ref)
+            removed.append(candidate_str)
+        except Exception:
+            # Non-fatal: log and continue.  A failed removal is not an error
+            # for the caller — next call will retry.
+            pass
+
+    return {"removed": removed, "kept_active": kept_active, "ok": True}
 
 
 def create_subtask_worktree(
