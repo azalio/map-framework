@@ -93,11 +93,28 @@ envelope/anti-gaming checks.
 
 ## Wave Execution
 
-Sequential execution is the default. Use wave APIs only when the blueprint has
-multiple ready subtasks whose writes are low-risk and disjoint, or when the user
-explicitly requests parallel execution.
+### Execution strategy decision table
 
-Commands:
+`select_execution_strategy` picks between the legacy sequential walker and the
+wave-loop on every run:
+
+| `execution.wave_mode` | Color group has ≥2 members? | Dispatcher selected |
+|---|---|---|
+| absent / `off` (default) | any | Legacy sequential walker (`get_next_step`) |
+| `auto` | no (all groups size 1) | Legacy sequential walker (`get_next_step`) |
+| `auto` | yes | Wave-loop (`get_wave_step` / `validate_wave_step` / `advance_wave`) |
+| `on` | no | Wave-loop (single-member groups, one at a time) |
+| `on` | yes | Wave-loop |
+
+With a stock `mapify init` config (no `execution.wave_mode` key), `wave_mode`
+defaults to `off` and the legacy sequential walker always runs.
+
+### Sequential walker
+
+Use `get_next_step` for all sequential (default) execution. Do not mix wave
+APIs with the sequential cursor for the same workflow.
+
+### Wave-loop commands
 
 ```bash
 python3 .map/scripts/map_orchestrator.py set_waves --blueprint ".map/${BRANCH}/blueprint.json"
@@ -108,6 +125,10 @@ python3 .map/scripts/map_orchestrator.py advance_wave
 
 Do not mix wave APIs with the sequential `get_next_step` cursor for the same
 wave unless the orchestrator response explicitly tells you to fall back.
+
+Use wave APIs only when the blueprint has multiple ready subtasks whose writes
+are low-risk and disjoint, or when the user explicitly requests parallel
+execution.
 
 When `worktree.isolation` is enabled and a wave runs in parallel (≥2 disjoint
 subtasks), give each subtask its own worktree and accept the whole wave
@@ -122,6 +143,41 @@ It runs the post-wave gate inside the transaction and rolls the whole wave back
 to base on any conflict or gate failure (worktrees kept for retry). On a single
 subtask's Monitor failure, `discard_subtask_worktree` that subtask and retry it
 before calling `merge_wave_worktrees`.
+
+### Concurrent Actor dispatch — GATED EXAMPLE
+
+> **IMPORTANT — read before using this example.**
+> Concurrent fan-out (emitting multiple Task calls in a single message) is
+> enabled **only when concurrency is shipped: Slice 5+ / `concurrency_enabled:
+> true` / `parallel_ready` flag set**. In the **current framework**
+> `concurrency_enabled` is **False**, so dispatch stays **SEQUENTIAL even when a
+> wave has `mode=="parallel"`**. The example below is reference material for when
+> that capability ships; do NOT treat it as an active instruction now.
+
+When concurrency is enabled (Slice 5+ only), a parallel wave with N subtasks
+dispatches all N Actors in **one message**:
+
+```text
+# CORRECT (Slice 5+ / concurrency_enabled=True only):
+Task(subagent_type="actor", description="Implement ST-003", prompt="...")
+Task(subagent_type="actor", description="Implement ST-004", prompt="...")
+
+# INCORRECT — one Task per turn (serial, defeats the wave):
+# Turn 1: Task(actor, ST-003)
+# Turn 2: Task(actor, ST-004)
+```
+
+**Self-audit before dispatch:** "I will emit {n} Task calls in one message."
+
+**`max_actors` cap:** Default 4–8 per wave. Groups larger than `max_actors` are
+pre-split into sequential batches before dispatch.
+
+### Anti-patterns
+
+- One Task per turn across N turns — serial loop, no concurrency.
+- Writing between Task calls (TodoWrite, etc.) — serializes the batch.
+- Waiting for one actor result before dispatching the next.
+- Mixing `get_next_step` and `get_wave_step` for the same wave.
 
 ## TDD Mode
 

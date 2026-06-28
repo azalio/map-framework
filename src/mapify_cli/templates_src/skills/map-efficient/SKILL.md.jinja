@@ -20,11 +20,11 @@ Use [efficient-reference.md](efficient-reference.md) for wave examples, TDD deta
 
 ```yaml
 thinking_policy: medium/adaptive
-parallel_tool_policy: guarded_wave_only
+parallel_tool_policy: wave_mode_aware
 ```
 
 - Use deeper reasoning only when a subtask is risky, blocked, under-specified, or repeatedly failing Monitor.
-- Keep execution sequential by default. Parallel waves are allowed only under the existing wave rules: all dependencies satisfied, low risk, disjoint new-file writes, and the wave API is used.
+- Execution strategy is determined by `select_execution_strategy`: the wave-loop engages only when `execution.wave_mode` is `on` or `auto` AND a color group has ≥2 members; otherwise the legacy sequential walker runs. With default config this is the sequential walker. See [efficient-reference.md](efficient-reference.md#wave-execution) for the decision table and dispatch mechanics.
 - Do not parallelize state transitions, Monitor retries for the same subtask, or writes to shared branch artifacts.
 
 ## Execution Rules
@@ -32,7 +32,7 @@ parallel_tool_policy: guarded_wave_only
 1. Execute the next state-machine step only; never skip phases.
 2. Use the exact agent type for the current phase.
 3. Max 5 retry iterations per subtask.
-4. Batch mode is default. Sequential subtask execution is default.
+4. Batch mode is default. Execution strategy is selected by `select_execution_strategy` (sequential walker by default; wave-loop only when wave_mode is enabled and a color group has ≥2 members).
 5. After Monitor pass, record files changed in `step_state.json` for guard isolation.
 6. Validate planning metadata before Actor starts: `expected_diff_size`, `concern_type`, `one_logical_step`, `split_rationale`, `concern_justification`, `coverage_map`, `hard_constraints`, `soft_constraints`, `validation_criteria`, `[AC-1]` bracket tags, and `tradeoff_rationale`.
 7. Script routing: `map_orchestrator.py` owns state-machine transitions (`get_next_step`, `validate_step`, `monitor_failed`, `record_subtask_result`, `set_waves`, `resume_from_plan`, …); `map_step_runner.py` owns every `detect_*` / `build_*` / `save_*` / `load_*` / `refresh_*` / `log_*` helper plus baseline `record_*` and artifact writers. Full table + the `record_*` / `validate_*` disambiguation in [efficient-reference.md#script-routing-dispatcher-reference](efficient-reference.md#script-routing-dispatcher-reference).
@@ -207,22 +207,12 @@ else
 fi
 ```
 
-Default to sequential execution. Use wave APIs only for low-risk disjoint new-file waves or explicit user-requested parallel execution. See [efficient-reference.md](efficient-reference.md#wave-execution) for the full wave loop.
+**Execution strategy:** `select_execution_strategy` chooses between the legacy sequential walker and the wave-loop. The wave-loop (`get_wave_step` / `validate_wave_step` / `advance_wave`) engages only when `execution.wave_mode ∈ {on, auto}` AND a color group has ≥2 members; otherwise `get_next_step` (sequential walker) runs. See [efficient-reference.md](efficient-reference.md#wave-execution) for the decision table and full wave loop.
 
 **Note on resume:** `resume_from_plan` (Step 0) now auto-invokes `set_waves`
 when `blueprint.json` is present, so resumed workflows do not need a manual
 `set_waves` dispatch. The result is reported in the `waves_computed` field of
 the resume response (`"success"`, `"error"`, or `"skipped"` if no blueprint).
-
-**Wave-loop vs sequential dispatcher:** `get_next_step` is the **sequential**
-walker (one phase at a time, in `subtask_sequence` order). The **wave-loop**
-(`get_wave_step` / `validate_wave_step` / `advance_wave`) honors
-`execution_waves` and is the canonical path when waves contain >1 subtask.
-For a single-Actor batch run with a fully-linear plan, `get_next_step` and
-the wave-loop converge on the same order, so the skill defaults to the
-sequential walker for simplicity. Switch to the wave-loop when (a) waves
-have ≥2 subtasks AND (b) the subtasks in that wave touch disjoint files
-(see `split_wave_by_file_conflicts`).
 
 ### No-op subtask short-circuit (before RESEARCH)
 

@@ -121,7 +121,87 @@ including clean passes — must carry concrete evidence references.
 
 ## Wave Execution
 
-Sequential is default. Parallel execution is allowed only when a wave has satisfied dependencies, low risk, and disjoint new-file writes, or when the user explicitly requests it. Use `get_wave_step`, `validate_wave_step`, and `advance_wave`; do not mix wave APIs with the single-current-subtask API. When `worktree.isolation` is on and a wave runs in parallel, each subtask gets its own worktree and the wave is accepted atomically via `merge_wave_worktrees` — see [Parallel waves](#worktree-isolation) under Worktree isolation.
+### Execution strategy decision table
+
+`select_execution_strategy` picks between the legacy sequential walker and the wave-loop on every run:
+
+| `execution.wave_mode` | Color group has ≥2 members? | Dispatcher selected |
+|---|---|---|
+| absent / `off` (default) | any | Legacy sequential walker (`get_next_step`) |
+| `auto` | no (all groups size 1) | Legacy sequential walker (`get_next_step`) |
+| `auto` | yes | Wave-loop (`get_wave_step` / `validate_wave_step` / `advance_wave`) |
+| `on` | no | Wave-loop (single-member groups execute one at a time) |
+| `on` | yes | Wave-loop |
+
+With a stock `mapify init` config (no `execution.wave_mode` key), `wave_mode` defaults to `off` and the legacy sequential walker always runs — behavior is byte-identical to pre-Slice-3.
+
+### Sequential walker
+
+Use `get_next_step` for all sequential (default) execution. One phase at a time, in `subtask_sequence` order. Do not mix wave APIs with the sequential cursor for the same workflow.
+
+### Wave-loop
+
+Use `get_wave_step`, `validate_wave_step`, and `advance_wave` when the wave-loop is active. Do not mix wave APIs with the sequential `get_next_step` cursor for the same wave unless the orchestrator response explicitly tells you to fall back.
+
+Parallel execution is allowed only when a wave has satisfied dependencies, low risk, and disjoint new-file writes, or when the user explicitly requests it. When `worktree.isolation` is on and a wave runs in parallel, each subtask gets its own worktree and the wave is accepted atomically via `merge_wave_worktrees` — see [Parallel waves](#worktree-isolation) under Worktree isolation.
+
+### Concurrent Actor dispatch — GATED EXAMPLE
+
+> **IMPORTANT — read before using this example.**
+> Concurrent fan-out (emitting multiple `Task(actor)` calls in a single message) is
+> enabled **only when concurrency is shipped: Slice 5+ / `concurrency_enabled: true` /
+> `parallel_ready` flag set**. In the **current framework** `concurrency_enabled` is
+> **False**, so dispatch stays **SEQUENTIAL even when a wave has `mode=="parallel"`**.
+> The example below is reference material for when that capability ships; do NOT
+> treat it as an active instruction now.
+
+When concurrency is enabled (Slice 5+ only), a parallel wave with N subtasks dispatches all N Actors in **one message** with N `Task` calls — not one per turn:
+
+```text
+# CORRECT (Slice 5+ / concurrency_enabled=True only) — N Task calls in one message:
+Task(
+  subagent_type="actor",
+  description="Implement ST-003",
+  prompt="..."
+)
+Task(
+  subagent_type="actor",
+  description="Implement ST-004",
+  prompt="..."
+)
+```
+
+```text
+# INCORRECT — one Task per turn (sequential, defeats the wave):
+# Turn 1: Task(actor, ST-003)
+# Turn 2: Task(actor, ST-004)   ← serial, not concurrent
+```
+
+**Self-audit before dispatch:** "I will emit {n} Task(actor) calls in one message for this wave." Confirm n matches the color group size.
+
+**`max_actors` cap:** Default 4–8 concurrent actors per wave. Groups larger than `max_actors` are pre-split into sequential batches of `max_actors` before dispatch; do not emit more than `max_actors` Task calls in a single message.
+
+### Anti-patterns (wave execution)
+
+- **One Task per turn across N turns** — serial actor loop that happens to use wave state; does not achieve concurrency.
+- **TodoWrite between actor dispatches** — a TodoWrite call between Task calls serializes the batch; emit all Task calls in one message.
+- **Waiting for one actor result before dispatching the next** — correct for sequential, wrong for concurrent waves.
+- **Mixing `get_next_step` and `get_wave_step` for the same wave** — corrupts the state-machine cursor.
+
+### Actor-boundary prompt template (worktree-isolated subtasks)
+
+When a subtask runs in its own worktree, prefix the Actor prompt with:
+
+```text
+You are working inside the isolated worktree for {SUBTASK_ID}.
+Worktree path: {WT_PATH}
+Frozen base SHA: {BASE_SHA}
+
+HARD CONSTRAINTS:
+- Write ONLY inside {WT_PATH}. Never touch the main tree or sibling worktrees.
+- Do not commit directly. Your output is merged by merge_subtask_worktree / merge_wave_worktrees.
+- On completion, return JSON: {"subtask_id": "{SUBTASK_ID}", "files_changed": [...], "tests_run": [...], "validation_notes": "...", "blocker": null}
+```
 
 ## Predictor Recovery
 
