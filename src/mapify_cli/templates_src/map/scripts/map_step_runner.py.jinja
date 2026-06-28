@@ -15369,6 +15369,41 @@ def _wt_max_deletions(project_dir: Path) -> int:
     return n if n >= 0 else 50
 
 
+_LINT_ENFORCEMENT_VALID = frozenset({"off", "warn", "repair_once", "strict"})
+
+
+def _lint_dependency_enforcement(project_dir: Path) -> str:
+    """Return the lint.dependency_enforcement setting.
+
+    Accepted values: 'off' | 'warn' | 'repair_once' | 'strict'.
+    Absent key or unknown/garbage value → 'warn' (today's no-op default).
+    Never raises.
+    """
+    raw = _map_config_str(project_dir, "lint.dependency_enforcement", "warn")
+    normalized = raw.strip().lower()
+    return normalized if normalized in _LINT_ENFORCEMENT_VALID else "warn"
+
+
+def _lint_auto_prune(project_dir: Path) -> bool:
+    """Return the lint.auto_prune setting (default False).
+
+    Absent key → False (no mutation today).  Never raises.
+    """
+    raw = _map_config_str(project_dir, "lint.auto_prune", "false")
+    return _parse_boolish(raw)
+
+
+def _observability_parallelism_enabled(project_dir: Path) -> bool:
+    """Return the observability.parallelism setting (default False).
+
+    This is the dormant no-op gate that ST-011's parallelism.json writer
+    will check.  Absent key → False (no observability writes today).
+    Never raises.
+    """
+    raw = _map_config_str(project_dir, "observability.parallelism", "false")
+    return _parse_boolish(raw)
+
+
 def _wt_config_verification_checks(project_dir: Path) -> list[str]:
     """Read the `verification_checks` LIST from .map/config.yaml (lazy yaml)."""
     config_path = project_dir / ".map" / "config.yaml"

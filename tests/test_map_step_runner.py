@@ -12252,3 +12252,67 @@ def test_vc2_worktree_isolation_enum_and_disabled_check_parity(tmp_path: Path) -
     config.write_text("worktree.isolation: maybe\n", encoding="utf-8")
     assert map_step_runner._worktree_isolation_mode(tmp_path) == "off"
     assert map_step_runner._wt_isolation_enabled(tmp_path) is False
+
+
+# ST-003: _lint_dependency_enforcement / _lint_auto_prune / _observability_parallelism_enabled
+
+
+def test_vc1_lint_toggle_defaults(tmp_path: Path) -> None:
+    """lint.dependency_enforcement defaults to 'warn' when absent; parses all enum values;
+    unknown values fall back to 'warn'. lint.auto_prune defaults to False; 'true' -> True."""
+    config = tmp_path / ".map" / "config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+
+    # absent key -> "warn"
+    config.write_text("", encoding="utf-8")
+    assert map_step_runner._lint_dependency_enforcement(tmp_path) == "warn"
+
+    # valid enum values
+    for value in ("off", "warn", "repair_once", "strict"):
+        config.write_text(f"lint.dependency_enforcement: {value}\n", encoding="utf-8")
+        assert map_step_runner._lint_dependency_enforcement(tmp_path) == value
+
+    # unknown/garbage -> "warn"
+    config.write_text("lint.dependency_enforcement: parallel\n", encoding="utf-8")
+    assert map_step_runner._lint_dependency_enforcement(tmp_path) == "warn"
+
+    config.write_text("lint.dependency_enforcement: \n", encoding="utf-8")
+    assert map_step_runner._lint_dependency_enforcement(tmp_path) == "warn"
+
+    # lint.auto_prune absent -> False
+    config.write_text("", encoding="utf-8")
+    assert map_step_runner._lint_auto_prune(tmp_path) is False
+
+    # lint.auto_prune "true" -> True
+    config.write_text("lint.auto_prune: true\n", encoding="utf-8")
+    assert map_step_runner._lint_auto_prune(tmp_path) is True
+
+    # lint.auto_prune "false" -> False
+    config.write_text("lint.auto_prune: false\n", encoding="utf-8")
+    assert map_step_runner._lint_auto_prune(tmp_path) is False
+
+
+def test_vc2_observability_toggle_defaults(tmp_path: Path) -> None:
+    """observability.parallelism defaults to False when absent; 'true' -> True.
+    Default config => all toggles are no-op: enforcement=='warn', auto_prune is False,
+    observability is False."""
+    config = tmp_path / ".map" / "config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+
+    # absent key -> False
+    config.write_text("", encoding="utf-8")
+    assert map_step_runner._observability_parallelism_enabled(tmp_path) is False
+
+    # "true" -> True
+    config.write_text("observability.parallelism: true\n", encoding="utf-8")
+    assert map_step_runner._observability_parallelism_enabled(tmp_path) is True
+
+    # "false" -> False
+    config.write_text("observability.parallelism: false\n", encoding="utf-8")
+    assert map_step_runner._observability_parallelism_enabled(tmp_path) is False
+
+    # Assert default config (empty) => all no-op
+    config.write_text("", encoding="utf-8")
+    assert map_step_runner._lint_dependency_enforcement(tmp_path) == "warn"
+    assert map_step_runner._lint_auto_prune(tmp_path) is False
+    assert map_step_runner._observability_parallelism_enabled(tmp_path) is False
