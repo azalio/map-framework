@@ -51,6 +51,27 @@ _IDENT_RE = re.compile(r"`([A-Za-z_][\w./\-]{1,79})`")
 # Citations whose path looks like one of these are skipped (not in-repo).
 _SKIP_PREFIXES = ("http://", "https://", "/Users/", "/home/", "~/", "$HOME")
 
+# Directories excluded from bare-basename searches to avoid false positives.
+_SKIP_DIRS = frozenset({
+    ".git", "__pycache__", "node_modules", ".tox", ".venv", "venv", ".mypy_cache",
+})
+
+
+def _find_by_basename(repo_root: Path, basename: str) -> list[Path]:
+    """Return regular files whose name equals ``basename`` under ``repo_root``.
+
+    Common non-source directories are skipped so results only reflect actual
+    project files and the search stays fast on large repos.
+    """
+    results = []
+    for p in repo_root.rglob(basename):
+        if not p.is_file():
+            continue
+        if any(part in _SKIP_DIRS for part in p.relative_to(repo_root).parts):
+            continue
+        results.append(p)
+    return results
+
 
 def _branch_slug() -> str:
     try:
@@ -110,13 +131,47 @@ def _check_citation(
             "reason": "resolved path escapes repo root",
         }
 
+    resolved_from_basename: str | None = None
     if not target.is_file():
-        return {
-            "path": raw_path,
-            "line": line_no,
-            "status": "error",
-            "reason": f"file does not exist at {target.relative_to(repo_root)}",
-        }
+        # Bare filename (no path separator): try repo-wide basename search so a
+        # citation like `api.ts:80` resolves to `web-review/src/api.ts:80` when
+        # that is the only file with that name.  Full paths that simply don't
+        # exist keep the original "file does not exist" error.
+        is_bare = "/" not in raw_path and "\\" not in raw_path
+        if is_bare:
+            matches = _find_by_basename(repo_root, raw_path)
+            if len(matches) == 1:
+                target = matches[0]
+                resolved_from_basename = str(target.relative_to(repo_root))
+            elif len(matches) > 1:
+                shown = sorted(str(m.relative_to(repo_root)) for m in matches)
+                preview = ", ".join(shown[:3]) + (" …" if len(shown) > 3 else "")
+                return {
+                    "path": raw_path,
+                    "line": line_no,
+                    "status": "warning",
+                    "reason": (
+                        f"ambiguous bare basename: {len(matches)} files match "
+                        f"({preview}) — use a repo-root-relative path"
+                    ),
+                }
+            else:
+                return {
+                    "path": raw_path,
+                    "line": line_no,
+                    "status": "error",
+                    "reason": (
+                        f"file does not exist: {raw_path!r} not found anywhere in the repo "
+                        "(consider a repo-root-relative path)"
+                    ),
+                }
+        else:
+            return {
+                "path": raw_path,
+                "line": line_no,
+                "status": "error",
+                "reason": f"file does not exist at {raw_path}",
+            }
 
     try:
         lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -153,6 +208,9 @@ def _check_citation(
         }
 
     ident = _nearest_identifier(spec_text, match.start())
+    _extra: dict[str, object] = (
+        {"resolved_to": resolved_from_basename} if resolved_from_basename else {}
+    )
     if ident is None:
         return {
             "path": raw_path,
@@ -160,6 +218,7 @@ def _check_citation(
             "end_line": end_no,
             "status": "ok-no-identifier",
             "reason": "path/line valid; no adjacent identifier to cross-check",
+            **_extra,
         }
 
     cited_block = "\n".join(lines[line_no - 1 : end_no])
@@ -170,6 +229,7 @@ def _check_citation(
             "end_line": end_no,
             "identifier": ident,
             "status": "ok",
+            **_extra,
         }
 
     return {
@@ -183,6 +243,7 @@ def _check_citation(
             + (f"-{end_no}" if end_no != line_no else "")
             + "; cited block does not contain it"
         ),
+        **_extra,
     }
 
 
@@ -192,11 +253,13 @@ def validate_spec(spec_path: Path, repo_root: Path) -> dict[str, object]:
         _check_citation(repo_root, text, m) for m in _CITATION_RE.finditer(text)
     ]
     failures = [r for r in results if r["status"] in ("error", "stale-citation")]
+    warnings = [r for r in results if r["status"] == "warning"]
     return {
         "spec_path": str(spec_path),
         "repo_root": str(repo_root),
         "total_citations": len(results),
         "failures": failures,
+        "warnings": warnings,
         "passed": len(failures) == 0,
         "details": results,
     }

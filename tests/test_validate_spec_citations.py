@@ -197,3 +197,103 @@ def test_picks_nearest_backticked_identifier_on_left(validator, tmp_path: Path):
     by_path = {d["path"]: d for d in result["details"]}
     assert by_path["b.py"]["identifier"] == "BETA"
     assert by_path["a.py"]["identifier"] == "ALPHA"
+
+
+# ---------------------------------------------------------------------------
+# Bare-basename resolution (#301)
+# ---------------------------------------------------------------------------
+
+
+def test_resolves_unique_bare_basename_no_identifier(validator, tmp_path: Path):
+    """A bare filename that is unique in the repo resolves to the full path."""
+    repo = _seed_repo(tmp_path, {"sub/pkg/mod.py": "line1\nline2\nline3\n"})
+    spec = _write_spec(repo, "See mod.py:2 for context.")
+    result = validator.validate_spec(spec, repo)
+    assert result["passed"] is True
+    detail = result["details"][0]
+    assert detail["status"] == "ok-no-identifier"
+    assert detail["path"] == "mod.py"
+    assert detail["resolved_to"] == "sub/pkg/mod.py"
+
+
+def test_resolves_unique_bare_basename_with_identifier(validator, tmp_path: Path):
+    """Bare-basename resolution still validates the identifier in the cited line."""
+    repo = _seed_repo(tmp_path, {"deep/api.ts": "first\nMY_SYMBOL = 1\nthird\n"})
+    spec = _write_spec(repo, "The `MY_SYMBOL` binding lives at `api.ts:2`.")
+    result = validator.validate_spec(spec, repo)
+    assert result["passed"] is True
+    detail = result["details"][0]
+    assert detail["status"] == "ok"
+    assert detail["resolved_to"] == "deep/api.ts"
+
+
+def test_bare_basename_stale_identifier_still_fails(validator, tmp_path: Path):
+    """Resolved bare basename that fails identifier check is stale-citation."""
+    repo = _seed_repo(tmp_path, {"deep/api.ts": "first\nOTHER = 1\nthird\n"})
+    # MY_SYMBOL doesn't appear at line 2
+    spec = _write_spec(repo, "The `MY_SYMBOL` binding lives at `api.ts:2`.")
+    result = validator.validate_spec(spec, repo)
+    assert result["passed"] is False
+    detail = result["failures"][0]
+    assert detail["status"] == "stale-citation"
+    assert detail["resolved_to"] == "deep/api.ts"
+
+
+def test_warns_on_ambiguous_bare_basename(validator, tmp_path: Path):
+    """A bare filename that matches multiple files in the repo → warning, not error."""
+    repo = _seed_repo(
+        tmp_path,
+        {
+            "pkg_a/utils.py": "line1\nline2\n",
+            "pkg_b/utils.py": "lineA\nlineB\n",
+        },
+    )
+    spec = _write_spec(repo, "See utils.py:1 for the helper.")
+    result = validator.validate_spec(spec, repo)
+    # Ambiguous basename: should NOT hard-fail the plan
+    assert result["passed"] is True
+    detail = result["details"][0]
+    assert detail["status"] == "warning"
+    assert "ambiguous" in detail["reason"]
+    # warnings list carries it
+    assert len(result["warnings"]) == 1
+
+
+def test_bare_basename_not_in_repo_is_error(validator, tmp_path: Path):
+    """A bare filename that doesn't exist anywhere in the repo → error."""
+    spec = _write_spec(tmp_path, "See phantom.py:1 for reference.")
+    result = validator.validate_spec(spec, tmp_path)
+    assert result["passed"] is False
+    detail = result["failures"][0]
+    assert detail["status"] == "error"
+    # Error message should not say misleadingly "file does not exist at phantom.py"
+    assert "phantom.py" in detail["reason"]
+
+
+def test_full_path_missing_is_still_error(validator, tmp_path: Path):
+    """An explicit repo-root-relative path that doesn't exist is a hard error."""
+    spec = _write_spec(tmp_path, "See `TOKEN` at `src/does/not/exist.py:5`.")
+    result = validator.validate_spec(spec, tmp_path)
+    assert result["passed"] is False
+    assert result["failures"][0]["status"] == "error"
+    assert "does not exist" in result["failures"][0]["reason"]
+
+
+def test_warnings_field_present_even_when_empty(validator, tmp_path: Path):
+    """validate_spec always includes 'warnings' in output."""
+    repo = _seed_repo(tmp_path, {"src/a.py": "x\n"})
+    spec = _write_spec(repo, "See `x` at `src/a.py:1`.")
+    result = validator.validate_spec(spec, repo)
+    assert "warnings" in result
+    assert result["warnings"] == []
+
+
+def test_skip_dirs_excluded_from_basename_search(validator, tmp_path: Path):
+    """Files inside .git / __pycache__ / node_modules are excluded from basename search."""
+    # Put the real file inside a skip dir only — should not resolve
+    repo = _seed_repo(tmp_path, {"node_modules/api.ts": "line1\nline2\n"})
+    spec = _write_spec(repo, "See api.ts:1 here.")
+    result = validator.validate_spec(spec, repo)
+    # The only match is in node_modules → treated as not found → error
+    assert result["passed"] is False
+    assert result["failures"][0]["status"] == "error"
