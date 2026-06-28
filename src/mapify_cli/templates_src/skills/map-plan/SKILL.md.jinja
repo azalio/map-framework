@@ -107,17 +107,23 @@ Task(
 <documents>
   <document source="user-request"><document_content>$ARGUMENTS</document_content></document>
 </documents>
-<task>Locate relevant code and return verified existing files, new files confirmed absent, patterns, risks, and unknowns. Also determine, with `file:line` evidence, which parts of the request are ALREADY IMPLEMENTED in the codebase (whole feature, or specific behaviors/acceptance criteria) versus genuinely missing. Do not assume absence — search for existing implementations before reporting a part as missing.</task>
-<expected_output>Markdown sections: Already Implemented (each entry cites the feature part + `file:line` proof), Existing Files, Files to Create, Patterns Found, Risks / Unknowns. If nothing matching the request exists, write "Already Implemented: none found (searched: <queries>)".</expected_output>
+<task>Locate relevant code and return verified existing files, new files confirmed absent, patterns, risks, and unknowns. Also determine, with `file:line` evidence, which parts of the request are ALREADY IMPLEMENTED in the codebase (whole feature, or specific behaviors/acceptance criteria) versus genuinely missing. Do not assume absence — search for existing implementations before reporting a part as missing.
+
+**MANDATORY artifact write:** When your research is complete, write the FULL detailed report (not a summary) directly to `.map/$BRANCH/research/plan__discovery.md` using the Write tool. Every `file:line` reference you found must appear in that file — downstream steps (Step 0.5 and Step 2a.5) read this file directly and will fail if it contains only a summary. After writing, confirm: "Written full discovery report to .map/$BRANCH/research/plan__discovery.md".</task>
+<expected_output>Write `.map/$BRANCH/research/plan__discovery.md` containing Markdown sections: Already Implemented (each entry cites the feature part + `file:line` proof), Existing Files, Files to Create, Patterns Found, Risks / Unknowns. If nothing matching the request exists, write "Already Implemented: none found (searched: &lt;queries&gt;)". Then return a brief confirmation to the parent (not a re-summary — the file is the canonical artifact).</expected_output>
 """
 )
 ```
 
-Save discovery to `.map/<branch>/research/plan__discovery.md` with the shared research API by feeding the researcher output on stdin:
+**Note on continuation:** If you need the research agent to elaborate on its findings after the Task returns, use `SendMessage` to the agent's task id — do NOT spawn a new `Agent` call, which starts with no prior context and will produce a hallucinated unrelated report.
+
+After the Task returns, verify the artifact was written directly (preferred path). Fall back to saving the returned text only if the agent did not write the file:
 
 ```bash
-printf '%s' "$PLAN_DISCOVERY" | \
-  python3 .map/scripts/map_step_runner.py save_research "$BRANCH" plan discovery
+if [ ! -f ".map/$BRANCH/research/plan__discovery.md" ]; then
+  printf '%s' "$PLAN_DISCOVERY" | \
+    python3 .map/scripts/map_step_runner.py save_research "$BRANCH" plan discovery
+fi
 ```
 
 ### Step 0.5: Already-Implemented Gate (MANDATORY when discovery ran)
