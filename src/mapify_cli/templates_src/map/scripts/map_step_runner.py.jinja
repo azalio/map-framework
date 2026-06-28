@@ -15470,6 +15470,134 @@ def _wt_parse_name_status(text: str) -> tuple[list[str], list[str], int]:
     return deleted, runtime, changed
 
 
+# ---------------------------------------------------------------------------
+# Worktree probe (Slice 2 / ST-008)
+# ---------------------------------------------------------------------------
+# Module-level cache: key = resolved toplevel path, value = probe result dict.
+# Reset between test runs via _WORKTREE_PROBE_CACHE.clear().
+_WORKTREE_PROBE_CACHE: dict[str, dict[str, object]] = {}
+
+
+def _worktree_probe(project_dir: Path) -> dict[str, object]:
+    """Safe detached worktree probe.  Cached per session keyed on toplevel.
+
+    HC-1 dormancy contract: when worktree.isolation is 'off' (the default),
+    this function returns immediately WITHOUT running any git command.
+
+    When mode is 'auto' or 'required':
+    * Resolves the storage root via _wt_storage_root() (never .map/worktrees/).
+    * Adds a detached probe worktree at <storage_root>/.probe-<pid> to test
+      `git worktree add --detach` support.
+    * Always removes the probe (force + prune) in a try/finally so no probe
+      leaks even on exception.
+    * Verifies we are in the primary checkout by comparing _wt_toplevel()
+      against the first `worktree` line from `git worktree list --porcelain`.
+    * Returns {"status":"ok","ok":True,"supported":True,"is_primary":bool} on
+      success, or _wt_error("WORKTREE_PROBE_FAILED", ...) on any failure.
+    """
+    mode = _worktree_isolation_mode(project_dir)
+    if mode == "off":
+        return {"status": "dormant", "ok": False, "reason": "worktree.isolation is off"}
+
+    # Check the session cache (keyed on resolved toplevel, falls back to str(project_dir))
+    toplevel = _wt_toplevel()
+    cache_key = str(toplevel) if toplevel is not None else str(project_dir.resolve())
+    if cache_key in _WORKTREE_PROBE_CACHE:
+        return _WORKTREE_PROBE_CACHE[cache_key]
+
+    # Verify primary checkout
+    is_primary = False
+    if toplevel is not None:
+        wl = _wt_git(["worktree", "list", "--porcelain"], timeout=15)
+        if wl.returncode == 0:
+            for raw_line in wl.stdout.splitlines():
+                line = raw_line.strip()
+                if line.startswith("worktree "):
+                    primary_path = Path(line[len("worktree "):].strip()).resolve()
+                    is_primary = primary_path == toplevel
+                    break  # first entry is always the main checkout
+
+    storage = _wt_storage_root()
+    if storage is None:
+        result = _wt_error(
+            "WORKTREE_PROBE_FAILED",
+            "could not resolve git common dir for probe storage",
+        )
+        _WORKTREE_PROBE_CACHE[cache_key] = result
+        return result
+
+    import os as _os  # noqa: PLC0415 — local to keep module-level clean
+
+    probe_path = storage / f".probe-{_os.getpid()}"
+    try:
+        storage.mkdir(parents=True, exist_ok=True)
+        add = _wt_git(
+            ["worktree", "add", "--detach", str(probe_path), "HEAD"],
+            timeout=30,
+        )
+        if add.returncode != 0:
+            result = _wt_error(
+                "WORKTREE_PROBE_FAILED",
+                add.stderr.strip() or "git worktree add --detach failed",
+            )
+            _WORKTREE_PROBE_CACHE[cache_key] = result
+            return result
+        result = {
+            "status": "ok",
+            "ok": True,
+            "supported": True,
+            "is_primary": is_primary,
+        }
+    except Exception as exc:
+        result = _wt_error("WORKTREE_PROBE_FAILED", str(exc))
+    finally:
+        _wt_git(["worktree", "remove", "--force", str(probe_path)], timeout=30)
+        _wt_git(["worktree", "prune"], timeout=15)
+
+    _WORKTREE_PROBE_CACHE[cache_key] = result
+    return result
+
+
+def _require_clean_merge_target(project_dir: Path) -> dict[str, object]:
+    """Check that the main checkout is clean enough for a worktree merge.
+
+    Dormant when worktree.isolation is 'off' (default — HC-1).
+    When the check is active AND require_clean_merge_target config is True
+    (default True), runs `git status --porcelain` and returns:
+      * {"status":"ok","ok":True}  when clean (excluding MAP runtime state)
+      * {"status":"dirty","ok":False,"kind":"DIRTY_MERGE_TARGET","dirty":[...]}
+        when uncommitted changes are present.
+    Never raises.
+    """
+    mode = _worktree_isolation_mode(project_dir)
+    if mode == "off":
+        return {"status": "dormant", "ok": False, "reason": "worktree.isolation is off"}
+
+    # Read the require_clean_merge_target flag (default True)
+    raw_require = _map_config_str(project_dir, "require_clean_merge_target", "true")
+    if not _parse_boolish(raw_require):
+        return {"status": "ok", "ok": True, "skipped": True}
+
+    st = _wt_git(["status", "--porcelain"], timeout=15)
+    if st.returncode != 0:
+        return _wt_error("CLEAN_CHECK_FAILED", st.stderr.strip() or "git status failed")
+
+    dirty = [
+        ln
+        for ln in st.stdout.splitlines()
+        if ln.strip() and not _wt_is_runtime_state_path(_wt_porcelain_path(ln))
+    ]
+    if dirty:
+        return {
+            "status": "dirty",
+            "ok": False,
+            "kind": "DIRTY_MERGE_TARGET",
+            "reason": "main checkout has uncommitted changes",
+            "dirty": dirty[:20],
+        }
+    return {"status": "ok", "ok": True}
+
+
 def create_subtask_worktree(
     subtask_id: str,
     attempt: int = 0,

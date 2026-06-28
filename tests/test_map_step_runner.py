@@ -12316,3 +12316,139 @@ def test_vc2_observability_toggle_defaults(tmp_path: Path) -> None:
     assert map_step_runner._lint_dependency_enforcement(tmp_path) == "warn"
     assert map_step_runner._lint_auto_prune(tmp_path) is False
     assert map_step_runner._observability_parallelism_enabled(tmp_path) is False
+
+
+# ST-008: _worktree_probe / _require_clean_merge_target
+
+
+def test_vc1_probe_dormant_when_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With isolation off (default), _worktree_probe returns dormant and runs NO git command.
+
+    Proves zero-git behavior by monkeypatching _wt_git to record calls and raise
+    if invoked, then asserting that the call list is empty and status=="dormant".
+    """
+    # Ensure isolation is off (default — config absent)
+    (tmp_path / ".map").mkdir()
+    (tmp_path / ".map" / "config.yaml").write_text("", encoding="utf-8")
+
+    # Monkeypatch _wt_git to track calls; any call = test failure
+    calls: list[list[str]] = []
+
+    def _no_git(args: list[str], **_kw: object) -> object:
+        del _kw
+        calls.append(args)
+        raise AssertionError(f"_wt_git must not be called when isolation is off; got {args!r}")
+
+    monkeypatch.setattr(map_step_runner, "_wt_git", _no_git)
+    # Also clear the probe cache so we don't hit a stale cached result
+    map_step_runner._WORKTREE_PROBE_CACHE.clear()
+
+    result = map_step_runner._worktree_probe(tmp_path)
+
+    assert result["status"] == "dormant", f"expected dormant, got {result}"
+    assert result["ok"] is False
+    assert "worktree.isolation is off" in str(result.get("reason", ""))
+    assert calls == [], "No git command should have been issued when isolation is off"
+
+    # Verify _require_clean_merge_target is also dormant (HC-1 symmetry)
+    result_clean = map_step_runner._require_clean_merge_target(tmp_path)
+    assert result_clean["status"] == "dormant"
+    assert result_clean["ok"] is False
+
+
+def test_vc2_probe_roundtrip_and_clean_target(tmp_path: Path) -> None:
+    """When isolation is 'auto': probe adds+removes the .probe-* worktree in try/finally,
+    and a dirty repo makes _require_clean_merge_target report not-clean.
+
+    Uses a real git init tmp repo; verifies the .probe-* directory is gone after the
+    call and that git worktree list shows no leftover probe entries.
+    """
+    import subprocess as _subprocess
+
+    # Build a minimal real git repo with a commit so HEAD exists
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+    _subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=str(repo), check=True, capture_output=True,
+    )
+    _subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=str(repo), check=True, capture_output=True,
+    )
+    (repo / "README.md").write_text("hello", encoding="utf-8")
+    _subprocess.run(["git", "add", "."], cwd=str(repo), check=True, capture_output=True)
+    _subprocess.run(
+        ["git", "commit", "-m", "init"],
+        cwd=str(repo), check=True, capture_output=True,
+    )
+
+    # Write config with isolation=auto
+    map_dir = repo / ".map"
+    map_dir.mkdir()
+    (map_dir / "config.yaml").write_text("worktree.isolation: auto\n", encoding="utf-8")
+
+    # Change cwd into the repo so _wt_git commands resolve against it
+    import os as _os
+
+    orig_cwd = Path.cwd()
+    try:
+        _os.chdir(repo)
+
+        # Clear probe cache before each probe call so we get a fresh run
+        map_step_runner._WORKTREE_PROBE_CACHE.clear()
+        result = map_step_runner._worktree_probe(repo)
+    finally:
+        _os.chdir(orig_cwd)
+
+    # The probe should succeed (git worktree add --detach supported in a normal repo)
+    assert result["status"] == "ok", f"probe expected ok, got {result}"
+    assert result["ok"] is True
+    assert result.get("supported") is True
+
+    # Verify no .probe-* worktrees leaked: list the storage root directory
+    # Storage root = <git-common-dir>/map-framework/worktrees
+    git_common_dir_proc = _subprocess.run(
+        ["git", "rev-parse", "--git-common-dir"],
+        cwd=str(repo), capture_output=True, text=True,
+    )
+    assert git_common_dir_proc.returncode == 0
+    git_common_dir = Path(git_common_dir_proc.stdout.strip()).resolve()
+    storage_root = git_common_dir / "map-framework" / "worktrees"
+
+    # Either the storage root does not exist, or it contains no .probe-* directories
+    probe_dirs = list(storage_root.glob(".probe-*")) if storage_root.exists() else []
+    assert probe_dirs == [], (
+        f"probe worktrees leaked after _worktree_probe: {probe_dirs}"
+    )
+
+    # Also confirm via `git worktree list` that no probe worktree remains registered
+    wl_proc = _subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=str(repo), capture_output=True, text=True,
+    )
+    probe_entries = [
+        ln for ln in wl_proc.stdout.splitlines()
+        if ln.startswith("worktree ") and ".probe-" in ln
+    ]
+    assert probe_entries == [], (
+        f"probe worktrees still registered in git: {probe_entries}"
+    )
+
+    # Now test _require_clean_merge_target with a dirty working tree
+    try:
+        _os.chdir(repo)
+        # Make the repo dirty
+        (repo / "dirty.txt").write_text("uncommitted", encoding="utf-8")
+        _subprocess.run(["git", "add", "dirty.txt"], cwd=str(repo), capture_output=True)
+        # clear probe cache (isolation mode the same, not probe cache, but be safe)
+        map_step_runner._WORKTREE_PROBE_CACHE.clear()
+        dirty_result = map_step_runner._require_clean_merge_target(repo)
+    finally:
+        _os.chdir(orig_cwd)
+
+    assert dirty_result["ok"] is False, f"expected not-clean, got {dirty_result}"
+    assert dirty_result["status"] == "dirty"
+    assert dirty_result.get("kind") == "DIRTY_MERGE_TARGET"
+    assert len(dirty_result.get("dirty", [])) >= 1
