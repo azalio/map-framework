@@ -12185,3 +12185,70 @@ def test_vc2_wave_mode_enum_and_unknown_fallback(tmp_path: Path) -> None:
     # Empty value -> "off"
     config.write_text("execution.wave_mode: \n", encoding="utf-8")
     assert map_step_runner._execution_wave_mode(tmp_path) == "off"
+
+
+# ---------------------------------------------------------------------------
+# ST-002: _worktree_isolation_mode tests
+# ---------------------------------------------------------------------------
+
+
+def test_vc1_worktree_isolation_legacy_bool_mapping(tmp_path: Path) -> None:
+    """Legacy boolean literals map correctly; absent key defaults to 'off'."""
+    map_dir = tmp_path / ".map"
+    map_dir.mkdir()
+    config = map_dir / "config.yaml"
+
+    # Absent key -> "off"
+    config.write_text("some.other.key: value\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "off"
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is False
+
+    # Legacy false -> "off"
+    config.write_text("worktree.isolation: false\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "off"
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is False
+
+    # Legacy true -> "required"
+    config.write_text("worktree.isolation: true\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "required"
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is True
+
+    # Legacy "1" -> "required"
+    config.write_text("worktree.isolation: 1\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "required"
+
+    # Legacy "0" -> "off"
+    config.write_text("worktree.isolation: 0\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "off"
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is False
+
+
+def test_vc2_worktree_isolation_enum_and_disabled_check_parity(tmp_path: Path) -> None:
+    """New enum strings parse directly; disabled-check is off only when mode=='off'."""
+    map_dir = tmp_path / ".map"
+    map_dir.mkdir()
+    config = map_dir / "config.yaml"
+
+    # Enum: "off"
+    config.write_text("worktree.isolation: off\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "off"
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is False
+
+    # Enum: "auto"
+    config.write_text("worktree.isolation: auto\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "auto"
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is True
+
+    # Enum: "required"
+    config.write_text("worktree.isolation: required\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "required"
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is True
+
+    # Case-insensitive enum
+    config.write_text("worktree.isolation: AUTO\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "auto"
+
+    # Unknown garbage -> "off" (disabled)
+    config.write_text("worktree.isolation: maybe\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "off"
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is False

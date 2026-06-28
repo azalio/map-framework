@@ -15334,8 +15334,30 @@ def _wt_force_remove(path: Path, branch_ref: str) -> None:
         _wt_git(["branch", "-D", branch_ref])
 
 
+_WT_ISOLATION_VALID = frozenset({"off", "auto", "required"})
+
+
+def _worktree_isolation_mode(project_dir: Path) -> str:
+    """Return the worktree.isolation setting: 'off' | 'auto' | 'required'.
+
+    Accepts the new enum strings directly (case-insensitive).
+    Legacy boolean compat: boolish-truthy (true/1/yes) → 'required';
+    boolish-false (false/0/no/'') → 'off'.
+    Absent key → 'off' (today's behavior).  Any unknown/garbage → 'off'.
+    Never raises.
+    """
+    raw = _map_config_str(project_dir, "worktree.isolation", "")
+    normalized = raw.strip().lower()
+    if normalized in _WT_ISOLATION_VALID:
+        return normalized
+    # Legacy boolean compat
+    if _parse_boolish(normalized):
+        return "required"
+    return "off"
+
+
 def _wt_isolation_enabled(project_dir: Path) -> bool:
-    return _parse_boolish(_map_config_str(project_dir, "worktree.isolation", "false"))
+    return _worktree_isolation_mode(project_dir) != "off"
 
 
 def _wt_max_deletions(project_dir: Path) -> int:
