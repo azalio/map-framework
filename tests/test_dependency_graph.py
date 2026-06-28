@@ -8,7 +8,7 @@ Validates the three validation criteria from ST-004:
 """
 
 import pytest
-from mapify_cli.dependency_graph import DependencyGraph, SubtaskNode
+from mapify_cli.dependency_graph import DependencyGraph, SubtaskNode, lint_dependency_graph
 
 
 class TestGetDependentsImmediate:
@@ -349,6 +349,66 @@ class TestSplitWaveByFileConflicts:
         """Empty wave returns empty list."""
         graph = DependencyGraph()
         assert graph.split_wave_by_file_conflicts([], {}) == []
+
+
+class TestLintDependencyGraphLayerA:
+    """ST-006: Layer A hard-error lint checks (always on)."""
+
+    def test_vc1_layer_a_hard_errors(self):
+        """Layer A detects self_loop, cycle, unknown_dep, duplicate_edge; valid DAG → zero errors."""
+        # --- self_loop ---
+        g = DependencyGraph()
+        g.add_node(SubtaskNode(id="ST-001", dependencies=["ST-001"]))
+        findings = lint_dependency_graph(g)
+        codes = [f.code for f in findings if f.severity == "error"]
+        assert "self_loop" in codes, f"Expected self_loop, got: {codes}"
+
+        # --- cycle (2-node) ---
+        g2 = DependencyGraph()
+        g2.add_node(SubtaskNode(id="ST-001", dependencies=["ST-002"]))
+        g2.add_node(SubtaskNode(id="ST-002", dependencies=["ST-001"]))
+        findings2 = lint_dependency_graph(g2)
+        codes2 = [f.code for f in findings2 if f.severity == "error"]
+        assert "cycle" in codes2, f"Expected cycle, got: {codes2}"
+        # self_loop must NOT be reported for a pure 2-node cycle
+        assert "self_loop" not in codes2, f"self_loop falsely reported for 2-node cycle: {codes2}"
+
+        # --- unknown_dep ---
+        g3 = DependencyGraph()
+        g3.add_node(SubtaskNode(id="ST-001", dependencies=["ST-MISSING"]))
+        findings3 = lint_dependency_graph(g3)
+        codes3 = [f.code for f in findings3 if f.severity == "error"]
+        assert "unknown_dep" in codes3, f"Expected unknown_dep, got: {codes3}"
+
+        # --- duplicate_edge ---
+        g4 = DependencyGraph()
+        g4.add_node(SubtaskNode(id="ST-001", dependencies=[]))
+        g4.add_node(SubtaskNode(id="ST-002", dependencies=["ST-001", "ST-001"]))
+        findings4 = lint_dependency_graph(g4)
+        codes4 = [f.code for f in findings4 if f.severity == "error"]
+        assert "duplicate_edge" in codes4, f"Expected duplicate_edge, got: {codes4}"
+
+        # --- valid DAG → zero error-severity findings ---
+        g5 = DependencyGraph()
+        g5.add_node(SubtaskNode(id="ST-001", dependencies=[]))
+        g5.add_node(SubtaskNode(id="ST-002", dependencies=["ST-001"]))
+        g5.add_node(SubtaskNode(id="ST-003", dependencies=["ST-001", "ST-002"]))
+        findings5 = lint_dependency_graph(g5)
+        errors5 = [f for f in findings5 if f.severity == "error"]
+        assert errors5 == [], f"Valid DAG should produce no errors, got: {errors5}"
+
+    def test_vc2_layer_a_always_on(self):
+        """Layer A errors are emitted for all enforcement values (always on)."""
+        # Graph with a self-loop — triggers a Layer A error regardless of enforcement
+        for enforcement in ("off", "warn", "repair_once", "strict"):
+            g = DependencyGraph()
+            g.add_node(SubtaskNode(id="ST-001", dependencies=["ST-001"]))
+            findings = lint_dependency_graph(g, enforcement=enforcement)
+            errors = [f for f in findings if f.severity == "error" and f.code == "self_loop"]
+            assert errors, (
+                f"Layer A self_loop error must be emitted for enforcement={enforcement!r}, "
+                f"but got: {findings}"
+            )
 
 
 if __name__ == "__main__":

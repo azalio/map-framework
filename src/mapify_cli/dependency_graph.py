@@ -21,8 +21,28 @@ Example:
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Set, Optional
+from typing import List, Dict, Set, Optional, Tuple
 from collections import deque
+
+
+@dataclass(frozen=True)
+class LintFinding:
+    """
+    A single finding from lint_dependency_graph.
+
+    Attributes:
+        severity: "error" | "warning" | "info"
+        code: Machine-readable finding code (e.g. "self_loop", "cycle")
+        message: Human-readable description
+        subtask_id: The subtask this finding relates to, if applicable
+        edge: The (from, to) edge this finding relates to, if applicable
+    """
+
+    severity: str
+    code: str
+    message: str
+    subtask_id: Optional[str] = None
+    edge: Optional[Tuple[str, str]] = None
 
 
 @dataclass
@@ -461,3 +481,122 @@ class DependencyGraph:
         Performance: O(1)
         """
         return len(self.nodes)
+
+
+def lint_dependency_graph(
+    graph: "DependencyGraph",
+    *,
+    affected_files_map: Dict[str, Set[str]] | None = None,
+    node_io: Dict[str, Dict[str, Set[str]]] | None = None,
+    enforcement: str = "warn",
+    auto_prune: bool = False,
+) -> List[LintFinding]:
+    """
+    Lint a DependencyGraph and return structured findings.
+
+    Layer A (always on, severity='error', regardless of enforcement):
+      - self_loop       : a subtask lists its own id in dependencies
+      - cycle           : a real cycle among >=2 distinct nodes
+      - unknown_dep     : a dependency id not present in graph.nodes
+      - duplicate_edge  : the same dependency id listed more than once
+
+    Layer A runs unconditionally; `enforcement` and `auto_prune` are accepted
+    for forward-compatibility with Layer B (ST-007) but have no effect here.
+    A valid DAG yields zero error-severity findings.
+
+    # --- Layer B insertion point (ST-007): soft-phrase check + INFO metrics ---
+
+    Args:
+        graph: DependencyGraph to lint
+        affected_files_map: (Layer B) subtask_id -> set of affected file paths
+        node_io: (Layer B) subtask_id -> {"inputs": set, "outputs": set}
+        enforcement: ignored by Layer A; Layer B will use it
+        auto_prune: ignored (no mutation in Layer A)
+
+    Returns:
+        List of LintFinding instances (Layer A only in this version).
+    """
+    # Reserved for Layer B (ST-007); accepted now to pin the public signature.
+    del affected_files_map, node_io, enforcement, auto_prune
+
+    findings: List[LintFinding] = []
+
+    # --- Layer A: hard errors, always on ---
+
+    # Pass 1: self-loops and duplicate edges (per-node, no graph-wide traversal needed)
+    self_loop_nodes: Set[str] = set()
+    for node_id, node in graph.nodes.items():
+        seen: Set[str] = set()
+        for dep in node.dependencies:
+            if dep == node_id:
+                # Report self-loop once per node even if listed multiple times
+                if node_id not in self_loop_nodes:
+                    self_loop_nodes.add(node_id)
+                    findings.append(
+                        LintFinding(
+                            severity="error",
+                            code="self_loop",
+                            message=f"Subtask '{node_id}' lists itself as a dependency.",
+                            subtask_id=node_id,
+                            edge=(node_id, node_id),
+                        )
+                    )
+            elif dep in seen:
+                findings.append(
+                    LintFinding(
+                        severity="error",
+                        code="duplicate_edge",
+                        message=(
+                            f"Subtask '{node_id}' lists dependency '{dep}' more than once."
+                        ),
+                        subtask_id=node_id,
+                        edge=(node_id, dep),
+                    )
+                )
+            else:
+                seen.add(dep)
+
+            # unknown_dep check (applies to self-loop deps too, but self-loop is primary)
+            if dep != node_id and dep not in graph.nodes:
+                findings.append(
+                    LintFinding(
+                        severity="error",
+                        code="unknown_dep",
+                        message=(
+                            f"Subtask '{node_id}' depends on '{dep}' which is not in the graph."
+                        ),
+                        subtask_id=node_id,
+                        edge=(node_id, dep),
+                    )
+                )
+
+    # Pass 2: cycle detection on a self-loop-free view to avoid double-reporting.
+    # Build a temporary graph excluding self-loop edges, then check has_cycle().
+    if not self_loop_nodes or any(
+        dep != node_id
+        for node_id, node in graph.nodes.items()
+        for dep in node.dependencies
+        if dep in graph.nodes
+    ):
+        # Build a view with self-loop edges stripped
+        clean_graph = DependencyGraph()
+        for node_id, node in graph.nodes.items():
+            clean_deps = [d for d in node.dependencies if d != node_id]
+            clean_graph.add_node(
+                SubtaskNode(
+                    id=node_id,
+                    dependencies=clean_deps,
+                    outputs=node.outputs,
+                    status=node.status,
+                )
+            )
+        if clean_graph.has_cycle():
+            findings.append(
+                LintFinding(
+                    severity="error",
+                    code="cycle",
+                    message="Dependency graph contains a cycle among 2 or more distinct nodes.",
+                )
+            )
+
+    return findings
