@@ -8,7 +8,13 @@ Validates the three validation criteria from ST-004:
 """
 
 import pytest
-from mapify_cli.dependency_graph import DependencyGraph, SubtaskNode, lint_dependency_graph
+from mapify_cli.dependency_graph import (
+    DependencyGraph,
+    LintFinding,
+    SubtaskNode,
+    lint_dependency_graph,
+)
+from tests.fixtures.wave_blueprints import conflict_split, linear_chain
 
 
 class TestGetDependentsImmediate:
@@ -409,6 +415,150 @@ class TestLintDependencyGraphLayerA:
                 f"Layer A self_loop error must be emitted for enforcement={enforcement!r}, "
                 f"but got: {findings}"
             )
+
+
+class TestLintDependencyGraphLayerB:
+    """ST-007: Layer B warn-only mechanical edge check + INFO metrics."""
+
+    def test_vc1_layer_b_thin_edge_and_samefile_info(self):
+        """
+        VC1: thin edge (empty io∩ AND empty files∩) → warning;
+             real data-flow edge → no thin_edge warning;
+             same-file pair in one wave → INFO (not error).
+
+        Uses two_wave_parallel (for thin/real edge checks) and
+        conflict_split (for same-file coloring in a wave).
+        """
+        # ---- thin_edge: build a graph with a deliberate ordering-only edge ----
+        # ST-A -> ST-B: no shared io, no shared files → thin
+        g = DependencyGraph()
+        g.add_node(SubtaskNode(id="ST-A", dependencies=[]))
+        g.add_node(SubtaskNode(id="ST-B", dependencies=["ST-A"]))
+        afm = {
+            "ST-A": {"src/alpha.py"},
+            "ST-B": {"src/beta.py"},  # disjoint files
+        }
+        # io that also have no overlap
+        io = {
+            "ST-A": {"inputs": set(), "outputs": {"out_a.txt"}},
+            "ST-B": {"inputs": {"in_b.txt"}, "outputs": {"out_b.txt"}},  # in_b ≠ out_a
+        }
+        findings = lint_dependency_graph(g, affected_files_map=afm, node_io=io)
+        assert all(isinstance(f, LintFinding) for f in findings)
+        thin = [f for f in findings if f.code == "thin_edge"]
+        assert thin, f"Expected thin_edge warning, got: {[f.code for f in findings]}"
+        assert thin[0].severity == "warning"
+        assert thin[0].edge == ("ST-A", "ST-B")
+
+        # ---- real data-flow edge: shared output/input → NOT flagged as thin ----
+        g2 = DependencyGraph()
+        g2.add_node(SubtaskNode(id="ST-001", dependencies=[]))
+        g2.add_node(SubtaskNode(id="ST-002", dependencies=["ST-001"]))
+        # ST-001 outputs config.yaml; ST-002 inputs config.yaml (real data-flow)
+        io2 = {
+            "ST-001": {"inputs": set(), "outputs": {"config.yaml"}},
+            "ST-002": {"inputs": {"config.yaml"}, "outputs": {"service_a.py"}},
+        }
+        afm2 = {"ST-001": {"config.yaml"}, "ST-002": {"src/service_a.py"}}
+        findings2 = lint_dependency_graph(g2, affected_files_map=afm2, node_io=io2)
+        thin2 = [f for f in findings2 if f.code == "thin_edge"]
+        assert not thin2, f"Real data-flow edge must NOT be flagged thin; got: {thin2}"
+
+        # ---- same_file_coloring: two subtasks in same wave share a file → INFO ----
+        fix2 = conflict_split()
+        g3 = fix2.build_graph()
+        # ST-002 and ST-004 share src/shared.py in wave 1
+        findings3 = lint_dependency_graph(g3, affected_files_map=fix2.affected_files_map)
+        coloring = [f for f in findings3 if f.code == "same_file_coloring"]
+        assert coloring, (
+            f"Expected same_file_coloring INFO for ST-002/ST-004 sharing src/shared.py; "
+            f"codes: {[f.code for f in findings3]}"
+        )
+        assert all(f.severity == "info" for f in coloring), (
+            f"same_file_coloring must be severity='info', got: {coloring}"
+        )
+        # must NOT be severity='error'
+        errors = [f for f in findings3 if f.severity == "error"]
+        assert not errors, f"No errors expected for valid conflict_split DAG; got: {errors}"
+
+    def test_vc2_fully_serialized_and_redundant_and_default_warn(self):
+        """
+        VC2: linear_chain (N=4, all width-1) → fully_serialized warning;
+             redundant edge (A->C where A->B->C) → INFO;
+             enforcement='off' → Layer B silent (only Layer A);
+             auto_prune=True performs NO mutation (graph unchanged);
+             default enforcement='warn' emits Layer B findings.
+        """
+        # ---- fully_serialized: linear_chain has N=4 and max wave width=1 ----
+        fix = linear_chain()
+        g = fix.build_graph()
+        findings = lint_dependency_graph(
+            g, affected_files_map=fix.affected_files_map, enforcement="warn"
+        )
+        assert all(isinstance(f, LintFinding) for f in findings)
+        serialized = [f for f in findings if f.code == "fully_serialized"]
+        assert serialized, (
+            f"Expected fully_serialized warning for 4-node linear chain; "
+            f"codes: {[f.code for f in findings]}"
+        )
+        assert serialized[0].severity == "warning"
+
+        # ---- redundant_edge: A->B->C AND A->C → A->C is redundant ----
+        g2 = DependencyGraph()
+        g2.add_node(SubtaskNode(id="ST-001", dependencies=[]))
+        g2.add_node(SubtaskNode(id="ST-002", dependencies=["ST-001"]))
+        # ST-003 depends on ST-001 directly AND via ST-002 → ST-001->ST-003 is redundant
+        g2.add_node(SubtaskNode(id="ST-003", dependencies=["ST-002", "ST-001"]))
+        findings2 = lint_dependency_graph(g2)
+        redundant = [f for f in findings2 if f.code == "redundant_edge"]
+        assert redundant, (
+            f"Expected redundant_edge INFO for ST-001->ST-003 (also reachable via ST-002); "
+            f"codes: {[f.code for f in findings2]}"
+        )
+        assert all(f.severity == "info" for f in redundant)
+
+        # ---- enforcement='off' → Layer B silent; Layer A still runs ----
+        g3 = DependencyGraph()
+        g3.add_node(SubtaskNode(id="ST-001", dependencies=[]))
+        g3.add_node(SubtaskNode(id="ST-002", dependencies=["ST-001"]))
+        g3.add_node(SubtaskNode(id="ST-003", dependencies=["ST-002", "ST-001"]))
+        findings_off = lint_dependency_graph(g3, enforcement="off")
+        layer_b_off = [
+            f for f in findings_off
+            if f.code in ("thin_edge", "same_file_coloring", "fully_serialized", "redundant_edge")
+        ]
+        assert not layer_b_off, (
+            f"enforcement='off' must suppress ALL Layer B findings; got: {layer_b_off}"
+        )
+
+        # ---- auto_prune=True performs NO mutation: graph unchanged after lint ----
+        g4 = DependencyGraph()
+        g4.add_node(SubtaskNode(id="ST-001", dependencies=[]))
+        g4.add_node(SubtaskNode(id="ST-002", dependencies=["ST-001"]))
+        g4.add_node(SubtaskNode(id="ST-003", dependencies=["ST-002", "ST-001"]))
+        node_ids_before = set(g4.nodes.keys())
+        deps_before = {nid: list(n.dependencies) for nid, n in g4.nodes.items()}
+        lint_dependency_graph(g4, auto_prune=True)
+        assert set(g4.nodes.keys()) == node_ids_before, "auto_prune must not remove nodes"
+        for nid in node_ids_before:
+            assert g4.nodes[nid].dependencies == deps_before[nid], (
+                f"auto_prune must not mutate dependencies of {nid}"
+            )
+
+        # ---- default enforcement='warn' emits Layer B (redundant_edge case) ----
+        g5 = DependencyGraph()
+        g5.add_node(SubtaskNode(id="ST-001", dependencies=[]))
+        g5.add_node(SubtaskNode(id="ST-002", dependencies=["ST-001"]))
+        g5.add_node(SubtaskNode(id="ST-003", dependencies=["ST-002", "ST-001"]))
+        findings_default = lint_dependency_graph(g5)  # default enforcement='warn'
+        layer_b_default = [
+            f for f in findings_default
+            if f.code in ("thin_edge", "same_file_coloring", "fully_serialized", "redundant_edge")
+        ]
+        assert layer_b_default, (
+            f"Default enforcement='warn' must emit Layer B findings; "
+            f"codes: {[f.code for f in findings_default]}"
+        )
 
 
 if __name__ == "__main__":
