@@ -249,3 +249,17 @@
   git commit -m "ST-006: ..."
   python3 .map/scripts/map_step_runner.py refresh_blueprint_affected_files "$BRANCH" ST-006
   ```
+
+- **Reserve-Parameter Forward-Compat: Pin a Public Function Signature Early With Unused Params to Prevent Caller-Rewrite Cascades Across Subtasks** (2026-06-29): In a multi-subtask agentic workflow where subtask N defines a function and subtasks N+1..N+K extend it, pin the FINAL intended public signature in subtask N even if some parameters are unused until a later subtask. Suppress unused-parameter warnings with `del param` in the function body (valid in `def`, not `lambda` — see [[del-is-illegal-inside-a-python-lambda-body]]). Without early pinning, each subtask that adds a parameter forces callers and tests from all previous subtasks to be rewritten — a cascade that risks regressions in already-validated outputs and forces Monitor re-validation of untouched subtasks. The unused-param comment must name the subtask that will consume it so Monitor can verify the suppression is intentional; remove the `del` and comment when the parameter becomes live. [workflow: map-efficient]
+  ```python
+  # WRONG: add parameters one subtask at a time; each addition cascades to all callers
+  # ST-006:  def lint_dependency_graph(graph): ...
+  # ST-007:  def lint_dependency_graph(graph, affected_files_map, node_io, enforcement, auto_prune): ...  # rewrites every ST-006 caller/test
+
+  # CORRECT: pin the final signature in ST-006; del-suppress params consumed later
+  def lint_dependency_graph(graph, affected_files_map=None, node_io=None,
+                            enforcement="warn", auto_prune=False) -> list[str]:
+      del affected_files_map, node_io, enforcement, auto_prune  # consumed in ST-007 (Layer B)
+      return _lint_layer_a(graph)
+  # ST-006 callers/tests already call the full signature; ST-007 just removes the del.
+  ```

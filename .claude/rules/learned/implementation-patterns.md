@@ -179,3 +179,30 @@ paths:
   from typing import Any
   def validate(bp) -> dict[str, Any]: ...   # 34 downstream errors cleared by 1 change site
   ```
+
+- **Behavior-Neutral Foundation: Gate Every New Path Behind a Flag That Defaults to Current Behavior, Plus Add a Default-Config Proof Test** (2026-06-29): When shipping a foundation subtask for a risky feature (parallel execution, new state machine, schema migration), every new code path must be predicate-gated behind a config key or compile-time constant that defaults to the existing behavior. A `WAVE_CONCURRENCY_ENABLED=False` constant (or equivalent) prevents any new dispatch path from being exercised by default. The proof is NOT "the tests still pass" — it is a dedicated test that loads the default (empty) config and asserts the old/sequential path is selected. Without this test, a subtle config-default bug can silently activate the new path on upgrade in every consumer repo. Ship the flag, ship the test, then the foundation can land without a soak period. [workflow: map-efficient]
+  ```python
+  # WRONG: new path always reachable; no behavioral gate
+  def select_wave_loop(config: MapConfig) -> WaveLoop:
+      if config.execution_wave_mode == 'parallel':
+          return ParallelWaveLoop(config)  # reachable if user misconfigures
+      return SequentialWaveLoop(config)
+
+  # CORRECT: compile-time kill-switch + proof test
+  WAVE_CONCURRENCY_ENABLED = False  # PR-level constant; flip only when feature is ready
+  def select_wave_loop(config: MapConfig) -> WaveLoop:
+      if not WAVE_CONCURRENCY_ENABLED or config.execution_wave_mode != 'parallel':
+          return SequentialWaveLoop(config)  # old path, guaranteed in this PR
+      return ParallelWaveLoop(config)
+
+  def test_default_config_selects_sequential_loop(tmp_path):
+      cfg = load_map_config(tmp_path / '.map' / 'config.yaml')  # no file -> defaults
+      assert isinstance(select_wave_loop(cfg), SequentialWaveLoop)
+  ```
+
+- **Shared .jinja Templates Rendering Into Multiple Provider Trees Must Not Contain Provider-Specific API Tokens in the Codex Variant** (2026-06-29): When a `.jinja` template in `templates_src/` renders into BOTH a Claude-family tree (`.claude/skills/`) AND a Codex/agents-family tree (`.agents/skills/`, `templates/codex/`), provider-specific Claude API identifiers — `subagent_type=`, `Agent(`, `AskUserQuestion(`, `Task(` — must not appear in the codex-rendered output. A CI test (`test_ac10_no_claude_refs_anywhere`) enforces this and hard-fails `make check`. The leak is easy to introduce when editing doc examples in a shared `.jinja` (you write from the Claude perspective). Fix: after `make render-templates`, grep the codex output paths for forbidden tokens; if found, use provider-neutral prose or a jinja conditional. Do not rely on the CI gate as first-line detection — grep after rendering, before commit. [workflow: map-efficient]
+  ```bash
+  make render-templates
+  grep -r 'subagent_type=\|AskUserQuestion\|Agent(\|Task(' .agents/skills/ src/mapify_cli/templates/codex/
+  # must be empty; otherwise use provider-neutral phrasing or {% if provider == 'claude' %}...{% else %}...{% endif %}
+  ```

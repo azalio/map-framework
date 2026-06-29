@@ -145,3 +145,25 @@
   python -c "import pytest; import truststore; import hypothesis"
   # ImportError here means venv-setup issue, not a code bug -> uv sync --all-extras --all-groups
   ```
+
+- **Decomposer Existence Claims Are Assumptions — Grep Before Dispatching Any 'Create New X' Subtask** (2026-06-29): A task-decomposer or plan that asserts "X does not exist yet" or scopes a subtask to "add X" is making an assumption about the live codebase, not a verified fact. Decomposers work from context summaries and miss existing implementations — especially in mature multi-module codebases. Acting on a false existence claim makes the actor implement a DUPLICATE of an existing component (e.g. duplicating a state machine from the orchestrator into the runner). Protocol: before dispatching any actor on a "create new function/class/module" subtask, grep the relevant source trees for the symbol; if it exists, fix the subtask scope before dispatch. A wrong existence claim that goes unverified propagates into duplicated machinery across all dependent subtasks. [workflow: map-efficient]
+  ```bash
+  # Plan: 'ST-010: add get_wave_step/validate_wave_step/advance_wave to runner — do not exist yet.'
+  # WRONG: trust the claim -> actor creates a duplicate state machine
+  # CORRECT: grep before dispatch
+  grep -r 'get_wave_step\|validate_wave_step\|advance_wave' src/mapify_cli/templates_src/
+  # -> map_orchestrator.py.jinja already defines them: claim is FALSE.
+  # Re-scope ST-010 to GATE the existing orchestrator functions, not recreate them.
+  # Any subtask verb 'add'/'create'/'implement new' requires a pre-dispatch grep.
+  ```
+
+- **Targeted Per-File Checks During a Subtask Are Not a Substitute for the Full Aggregate Lint Gate** (2026-06-29): Running `pyright <single-file>` / `mypy <single-file>` during a subtask is faster but has two systematic blind spots vs the project's aggregate gate (`make check` / `ruff check src tests`): (1) SCOPE — targeted checks run on one file; ruff F401/F811/E501 run across all of `src/` and `tests/`, surfacing unused imports introduced in any file touched this subtask; (2) RULE SET — pyright enforces type correctness; ruff enforces lint rules pyright ignores (unused imports, line length). A file that passes targeted pyright can still fail ruff at the aggregate level (it did: `sys`/`Any` F401 surfaced only at the final `make check`). Run the project's aggregate gate as part of each code subtask's verification step, not only at the final gate; per-file targeted checks are for fast iteration, not the commit-before-monitor gate. [workflow: map-efficient]
+  ```bash
+  # WRONG: per-subtask verification uses only a targeted single-file type-check
+  pyright src/mapify_cli/parallelism_observability.py   # passes; ruff F401 not checked
+  # CORRECT: run the aggregate gate the CI runs, at each code subtask:
+  ruff check src/ tests/        # ALL files, ALL rules incl. F401
+  python -m pyright src/         # ALL source files
+  pytest tests/ -x -q
+  # If make check fails on F401 after per-file pyright passed -> scope mismatch.
+  ```
