@@ -93,11 +93,34 @@ envelope/anti-gaming checks.
 
 ## Wave Execution
 
-Sequential execution is the default. Use wave APIs only when the blueprint has
-multiple ready subtasks whose writes are low-risk and disjoint, or when the user
-explicitly requests parallel execution.
+### Execution strategy decision table
 
-Commands:
+`select_execution_strategy` picks between the legacy sequential walker and the
+wave-loop on every run. The wave-loop engages **only when ALL THREE hold**
+(otherwise the legacy sequential walker `get_next_step` runs):
+
+1. `execution.wave_mode` ∈ {`auto`, `on`}, **AND**
+2. `worktree.isolation` ≠ `off`, **AND**
+3. at least one color group has ≥2 members.
+
+| `execution.wave_mode` | `worktree.isolation` | Color group ≥2? | Dispatcher selected |
+|---|---|---|---|
+| any | `off` (default) | any | Legacy sequential walker (`get_next_step`) |
+| `off` | any | any | Legacy sequential walker (`get_next_step`) |
+| `auto` / `on` | `auto` / `required` | no (all groups size 1) | Legacy sequential walker (`get_next_step`) |
+| `auto` / `on` | `auto` / `required` | yes | Wave-loop (`get_wave_step` / `validate_wave_step` / `advance_wave`) |
+
+**Defaults (canonical MapConfig):** `execution.wave_mode=auto`,
+`worktree.isolation=off`. The isolation gate fails by default, so a stock
+`mapify init` config always runs the legacy sequential walker. Even when the
+wave-loop engages, dispatch stays sequential until concurrency ships (Slice 5+).
+
+### Sequential walker
+
+Use `get_next_step` for all sequential (default) execution. Do not mix wave
+APIs with the sequential cursor for the same workflow.
+
+### Wave-loop commands
 
 ```bash
 python3 .map/scripts/map_orchestrator.py set_waves --blueprint ".map/${BRANCH}/blueprint.json"
@@ -108,6 +131,10 @@ python3 .map/scripts/map_orchestrator.py advance_wave
 
 Do not mix wave APIs with the sequential `get_next_step` cursor for the same
 wave unless the orchestrator response explicitly tells you to fall back.
+
+Use wave APIs only when the blueprint has multiple ready subtasks whose writes
+are low-risk and disjoint, or when the user explicitly requests parallel
+execution.
 
 When `worktree.isolation` is enabled and a wave runs in parallel (≥2 disjoint
 subtasks), give each subtask its own worktree and accept the whole wave
@@ -122,6 +149,43 @@ It runs the post-wave gate inside the transaction and rolls the whole wave back
 to base on any conflict or gate failure (worktrees kept for retry). On a single
 subtask's Monitor failure, `discard_subtask_worktree` that subtask and retry it
 before calling `merge_wave_worktrees`.
+
+### Concurrent Actor dispatch — GATED EXAMPLE
+
+> **IMPORTANT — read before using this example.**
+> Concurrent fan-out (dispatching multiple actor subagents in a single turn) is
+> enabled **only when concurrency is shipped: Slice 5+ / `concurrency_enabled:
+> true` / `parallel_ready` flag set**. In the **current framework**
+> `concurrency_enabled` is **False**, so dispatch stays **SEQUENTIAL even when a
+> wave has `mode=="parallel"`**. The example below is reference material for when
+> that capability ships; do NOT treat it as an active instruction now. Use your
+> Codex runtime's own parallel actor-subagent dispatch mechanism — this is the
+> provider-neutral shape, not a literal API call.
+
+When concurrency is enabled (Slice 5+ only), a parallel wave with N subtasks
+dispatches all N actor subagents in **one turn**:
+
+```text
+# CORRECT (Slice 5+ / concurrency_enabled=True only) — one turn, N actor subagents:
+dispatch actor subagent -> ST-003 (pinned to its own worktree)
+dispatch actor subagent -> ST-004 (pinned to its own worktree)
+
+# INCORRECT — one actor per turn (serial, defeats the wave):
+# Turn 1: actor -> ST-003
+# Turn 2: actor -> ST-004
+```
+
+**Self-audit before dispatch:** "I will dispatch {n} actor subagents in one turn."
+
+**`max_actors` cap:** Default 4–8 per wave. Groups larger than `max_actors` are
+pre-split into sequential batches before dispatch.
+
+### Anti-patterns
+
+- One actor dispatch per turn across N turns — serial loop, no concurrency.
+- Writing between dispatches (TodoWrite, etc.) — serializes the batch.
+- Waiting for one actor result before dispatching the next.
+- Mixing `get_next_step` and `get_wave_step` for the same wave.
 
 ## TDD Mode
 

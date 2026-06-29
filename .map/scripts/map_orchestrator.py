@@ -247,6 +247,10 @@ def _extract_subtask_ids_from_plan_artifacts(
 
 AGGRESSIVE_COMPRESSION_MULTIPLIER = 0.4
 
+# Slice 3: sequential-inside wave-loop. Slice 5 flips this to True when
+# concurrent Task dispatch is actually implemented and safe to enable.
+WAVE_CONCURRENCY_ENABLED = False
+
 
 def _read_map_config_scalars(project_dir: Path) -> dict[str, str]:
     """Read top-level scalar values from .map/config.yaml without dependencies."""
@@ -2300,6 +2304,7 @@ def get_wave_step(branch: str) -> dict:
             "wave_index": 0,
             "subtasks": [],
             "is_complete": True,
+            "concurrency_enabled": WAVE_CONCURRENCY_ENABLED,
             "message": "No execution waves configured. Use sequential mode.",
         }
 
@@ -2309,6 +2314,7 @@ def get_wave_step(branch: str) -> dict:
             "wave_index": state.current_wave_index,
             "subtasks": [],
             "is_complete": True,
+            "concurrency_enabled": WAVE_CONCURRENCY_ENABLED,
         }
 
     wave = state.execution_waves[state.current_wave_index]
@@ -2345,6 +2351,9 @@ def get_wave_step(branch: str) -> dict:
         "wave_total": len(state.execution_waves),
         "subtasks": subtask_infos,
         "is_complete": False,
+        # concurrency_enabled=False: even when mode=="parallel" (width>=2 wave),
+        # dispatch is strictly sequential this slice. Slice 5 flips WAVE_CONCURRENCY_ENABLED.
+        "concurrency_enabled": WAVE_CONCURRENCY_ENABLED,
     }
 
 
@@ -2437,6 +2446,73 @@ def advance_wave(branch: str) -> dict:
         "current_wave_index": state.current_wave_index,
         "is_complete": is_complete,
         "wave_total": len(state.execution_waves),
+    }
+
+
+def select_execution_strategy(
+    branch: str, project_dir: Optional[Path] = None
+) -> dict:
+    """Determine whether to use wave_loop or legacy sequential walker.
+
+    Predicate: wave_loop IFF wave_mode in {on, auto} AND worktree.isolation != 'off'
+    AND any color-group has width >= 2.  This mirrors the canonical MapConfig gating
+    (#305): execution_wave_mode defaults to 'auto' but the wave-loop stays dormant
+    because worktree.isolation defaults to 'off', so default config always returns
+    'sequential' and the legacy get_next_step path is byte-identical (HC-1).
+
+    Args:
+        branch: Git branch name (sanitized)
+        project_dir: Project root containing .map/config.yaml.
+                     Defaults to Path('.') consistent with other helpers.
+
+    Returns:
+        {
+          "strategy": "wave_loop" | "sequential",
+          "wave_mode": "off" | "auto" | "on",
+          "worktree_isolation": "off" | "auto" | "required",
+          "has_parallel_groups": bool,
+          "reason": str,
+        }
+    """
+    if project_dir is None:
+        project_dir = Path(".")
+
+    try:
+        from map_step_runner import (  # pyright: ignore[reportMissingImports]
+            _execution_wave_mode,
+            _worktree_isolation_mode,
+        )
+        wave_mode = _execution_wave_mode(project_dir)
+        isolation_mode = _worktree_isolation_mode(project_dir)
+    except ImportError:
+        wave_mode = "off"
+        isolation_mode = "off"
+
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+    has_parallel_groups = any(len(g) >= 2 for g in state.execution_waves)
+
+    if wave_mode in {"on", "auto"} and isolation_mode != "off" and has_parallel_groups:
+        strategy = "wave_loop"
+        reason = (
+            f"wave_mode={wave_mode!r}, worktree.isolation={isolation_mode!r}, "
+            "and execution_waves has width>=2 group"
+        )
+    else:
+        if wave_mode not in {"on", "auto"}:
+            reason = f"wave_mode={wave_mode!r} (not on/auto) → legacy sequential"
+        elif isolation_mode == "off":
+            reason = "worktree.isolation='off' → legacy sequential (no isolation, no parallel)"
+        else:
+            reason = "no color-group with width>=2 → sequential (all width-1 waves)"
+        strategy = "sequential"
+
+    return {
+        "strategy": strategy,
+        "wave_mode": wave_mode,
+        "worktree_isolation": isolation_mode,
+        "has_parallel_groups": has_parallel_groups,
+        "reason": reason,
     }
 
 

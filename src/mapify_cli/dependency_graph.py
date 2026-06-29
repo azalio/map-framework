@@ -21,8 +21,28 @@ Example:
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Set, Optional
+from typing import Any, List, Dict, Set, Optional, Tuple
 from collections import deque
+
+
+@dataclass(frozen=True)
+class LintFinding:
+    """
+    A single finding from lint_dependency_graph.
+
+    Attributes:
+        severity: "error" | "warning" | "info"
+        code: Machine-readable finding code (e.g. "self_loop", "cycle")
+        message: Human-readable description
+        subtask_id: The subtask this finding relates to, if applicable
+        edge: The (from, to) edge this finding relates to, if applicable
+    """
+
+    severity: str
+    code: str
+    message: str
+    subtask_id: Optional[str] = None
+    edge: Optional[Tuple[str, str]] = None
 
 
 @dataclass
@@ -461,3 +481,297 @@ class DependencyGraph:
         Performance: O(1)
         """
         return len(self.nodes)
+
+
+_SOFT_PHRASES = (
+    "logical ordering",
+    "do this first",
+    "natural order",
+    "for safety",
+)
+
+
+def soft_phrase_findings(
+    justifications: Dict[Tuple[str, str], str],
+) -> List[LintFinding]:
+    """
+    Flag edge justifications containing soft/vague ordering phrases.
+
+    Args:
+        justifications: mapping of (from_id, to_id) -> justification text
+
+    Returns:
+        LintFinding list with severity 'info' or 'warning' for flagged edges.
+    """
+    results: List[LintFinding] = []
+    for edge, text in justifications.items():
+        lower = text.lower()
+        for phrase in _SOFT_PHRASES:
+            if phrase in lower:
+                results.append(
+                    LintFinding(
+                        severity="warning",
+                        code="soft_phrase",
+                        message=(
+                            f"Edge {edge[0]!r} -> {edge[1]!r} justification contains "
+                            f"vague ordering phrase {phrase!r}: {text!r}"
+                        ),
+                        edge=edge,
+                    )
+                )
+                break  # one finding per edge
+    return results
+
+
+def _transitive_deps(graph: "DependencyGraph", node_id: str) -> Set[str]:
+    """Return set of all nodes reachable from node_id via dependency edges (BFS)."""
+    visited: Set[str] = set()
+    queue = list(graph.nodes.get(node_id, SubtaskNode(id=node_id)).dependencies)
+    while queue:
+        dep = queue.pop()
+        if dep in visited or dep not in graph.nodes:
+            continue
+        visited.add(dep)
+        queue.extend(graph.nodes[dep].dependencies)
+    return visited
+
+
+def lint_dependency_graph(
+    graph: "DependencyGraph",
+    *,
+    affected_files_map: Dict[str, Set[str]] | None = None,
+    node_io: Dict[str, Dict[str, Any]] | None = None,
+    enforcement: str = "warn",
+    auto_prune: bool = False,
+) -> List[LintFinding]:
+    """
+    Lint a DependencyGraph and return structured findings.
+
+    Layer A (always on, severity='error', regardless of enforcement):
+      - self_loop       : a subtask lists its own id in dependencies
+      - cycle           : a real cycle among >=2 distinct nodes
+      - unknown_dep     : a dependency id not present in graph.nodes
+      - duplicate_edge  : the same dependency id listed more than once
+
+    Layer B (warn-only; skipped when enforcement=='off'):
+      - thin_edge            : edge A->B with empty io-overlap AND empty file-overlap (warning)
+      - same_file_coloring   : two subtasks in same wave share a file (info)
+      - fully_serialized     : N>=4 nodes and max wave width==1 (warning)
+      - redundant_edge       : A->B where A is transitively reachable via other deps of B (info)
+      - soft_phrase          : justification text contains vague ordering phrases (warning)
+
+    auto_prune performs NO mutation in this slice (warn-only).
+
+    Args:
+        graph: DependencyGraph to lint
+        affected_files_map: (Layer B) subtask_id -> set of affected file paths
+        node_io: (Layer B) subtask_id -> {"inputs": set, "outputs": set,
+                  optionally "dep_justifications": {dep_id: text}}
+        enforcement: "off" suppresses Layer B; "warn"/"repair_once"/"strict" emit Layer B
+        auto_prune: accepted but performs no mutation in this slice
+
+    Returns:
+        List of LintFinding instances.
+    """
+    # auto_prune is accepted but intentionally performs no mutation in this slice.
+    del auto_prune
+
+    findings: List[LintFinding] = []
+
+    # --- Layer A: hard errors, always on ---
+
+    # Pass 1: self-loops and duplicate edges (per-node, no graph-wide traversal needed)
+    self_loop_nodes: Set[str] = set()
+    for node_id, node in graph.nodes.items():
+        seen: Set[str] = set()
+        for dep in node.dependencies:
+            if dep == node_id:
+                # Report self-loop once per node even if listed multiple times
+                if node_id not in self_loop_nodes:
+                    self_loop_nodes.add(node_id)
+                    findings.append(
+                        LintFinding(
+                            severity="error",
+                            code="self_loop",
+                            message=f"Subtask '{node_id}' lists itself as a dependency.",
+                            subtask_id=node_id,
+                            edge=(node_id, node_id),
+                        )
+                    )
+            elif dep in seen:
+                findings.append(
+                    LintFinding(
+                        severity="error",
+                        code="duplicate_edge",
+                        message=(
+                            f"Subtask '{node_id}' lists dependency '{dep}' more than once."
+                        ),
+                        subtask_id=node_id,
+                        edge=(node_id, dep),
+                    )
+                )
+            else:
+                seen.add(dep)
+
+            # unknown_dep check (applies to self-loop deps too, but self-loop is primary)
+            if dep != node_id and dep not in graph.nodes:
+                findings.append(
+                    LintFinding(
+                        severity="error",
+                        code="unknown_dep",
+                        message=(
+                            f"Subtask '{node_id}' depends on '{dep}' which is not in the graph."
+                        ),
+                        subtask_id=node_id,
+                        edge=(node_id, dep),
+                    )
+                )
+
+    # Pass 2: cycle detection on a self-loop-free view to avoid double-reporting.
+    # Build a temporary graph excluding self-loop edges, then check has_cycle().
+    if not self_loop_nodes or any(
+        dep != node_id
+        for node_id, node in graph.nodes.items()
+        for dep in node.dependencies
+        if dep in graph.nodes
+    ):
+        # Build a view with self-loop edges stripped
+        clean_graph = DependencyGraph()
+        for node_id, node in graph.nodes.items():
+            clean_deps = [d for d in node.dependencies if d != node_id]
+            clean_graph.add_node(
+                SubtaskNode(
+                    id=node_id,
+                    dependencies=clean_deps,
+                    outputs=node.outputs,
+                    status=node.status,
+                )
+            )
+        if clean_graph.has_cycle():
+            findings.append(
+                LintFinding(
+                    severity="error",
+                    code="cycle",
+                    message="Dependency graph contains a cycle among 2 or more distinct nodes.",
+                )
+            )
+
+    # --- Layer B: warn-only metrics; skipped when enforcement is "off" ---
+    if enforcement == "off":
+        return findings
+
+    afm = affected_files_map or {}
+    io = node_io or {}
+
+    # thin_edge: edge A->B where A.outputs ∩ B.inputs == ∅ AND files(A) ∩ files(B) == ∅
+    # Conservative: if data is absent for either node, do NOT flag (avoid false positives).
+    for node_id, node in graph.nodes.items():
+        b_io = io.get(node_id, {})
+        b_inputs: Set[str] = b_io.get("inputs", set()) or set()
+        b_files: Set[str] = afm.get(node_id, set()) or set()
+        for dep_id in node.dependencies:
+            if dep_id == node_id or dep_id not in graph.nodes:
+                continue  # skip self-loops and unknown deps (Layer A already handles these)
+            a_io = io.get(dep_id, {})
+            a_outputs: Set[str] = a_io.get("outputs", set()) or set()
+            a_files: Set[str] = afm.get(dep_id, set()) or set()
+            # Conservative: if any side lacks io AND files data, skip
+            if not (a_outputs or b_inputs) and not (a_files or b_files):
+                continue  # both sides are empty — no data at all, skip
+            # Real data-flow check: non-empty intersection on either dimension → not thin
+            io_overlap = a_outputs & b_inputs
+            file_overlap = a_files & b_files
+            if io_overlap or file_overlap:
+                continue  # real edge, not thin
+            # Both intersections empty → candidate thin edge. Be conservative:
+            # only flag when BOTH nodes have io data, otherwise an empty
+            # intersection is just unknown io on one side (false positive).
+            if not (a_io and b_io):
+                continue
+            findings.append(
+                LintFinding(
+                    severity="warning",
+                    code="thin_edge",
+                    message=(
+                        f"Edge '{dep_id}' -> '{node_id}' has no io-overlap and no "
+                        f"file-overlap; dependency may be ordering-only."
+                    ),
+                    edge=(dep_id, node_id),
+                )
+            )
+
+    # same_file_coloring: two subtasks in the same wave share an affected file → INFO
+    waves = graph.compute_waves()
+    if waves and afm:
+        for wave in waves:
+            if len(wave) < 2:
+                continue
+            for i in range(len(wave)):
+                for j in range(i + 1, len(wave)):
+                    sid_a, sid_b = wave[i], wave[j]
+                    fa = afm.get(sid_a, set()) or set()
+                    fb = afm.get(sid_b, set()) or set()
+                    if fa & fb:
+                        findings.append(
+                            LintFinding(
+                                severity="info",
+                                code="same_file_coloring",
+                                message=(
+                                    f"Subtasks '{sid_a}' and '{sid_b}' in the same wave "
+                                    f"share affected files: {sorted(fa & fb)!r}. "
+                                    f"Consider coloring (split_wave_by_file_conflicts)."
+                                ),
+                                edge=(sid_a, sid_b),
+                            )
+                        )
+
+    # fully_serialized: N>=4 AND every wave has width==1 → one warning
+    if waves is not None:
+        n = len(graph.nodes)
+        if n >= 4 and waves and max(len(w) for w in waves) == 1:
+            findings.append(
+                LintFinding(
+                    severity="warning",
+                    code="fully_serialized",
+                    message=(
+                        f"All {n} subtasks are fully serialized (every wave has width 1). "
+                        f"Consider whether some can run in parallel."
+                    ),
+                )
+            )
+
+    # redundant_edge: A->B where A is also reachable transitively via other deps of B → INFO
+    for node_id, node in graph.nodes.items():
+        for dep_id in node.dependencies:
+            if dep_id == node_id or dep_id not in graph.nodes:
+                continue
+            # Other deps of node_id (excluding dep_id itself)
+            other_deps = [d for d in node.dependencies if d != dep_id and d in graph.nodes]
+            # Check if dep_id is reachable transitively from any other dep
+            for other in other_deps:
+                if dep_id in _transitive_deps(graph, other):
+                    findings.append(
+                        LintFinding(
+                            severity="info",
+                            code="redundant_edge",
+                            message=(
+                                f"Edge '{dep_id}' -> '{node_id}' is redundant: "
+                                f"'{dep_id}' is already reachable transitively via '{other}'."
+                            ),
+                            edge=(dep_id, node_id),
+                        )
+                    )
+                    break  # one finding per edge
+
+    # soft_phrase: scan dep_justifications in node_io if present
+    justifications: Dict[Tuple[str, str], str] = {}
+    for node_id, node_data in io.items():
+        dep_justs = node_data.get("dep_justifications", {})
+        if dep_justs:
+            for dep_id, text in dep_justs.items():
+                if isinstance(text, str):
+                    justifications[(dep_id, node_id)] = text
+    if justifications:
+        findings.extend(soft_phrase_findings(justifications))
+
+    return findings

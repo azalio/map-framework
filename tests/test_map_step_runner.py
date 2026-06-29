@@ -12143,3 +12143,658 @@ def test_cli_run_cross_ai_review_disabled_exit_zero(tmp_path):
     payload = json.loads(completed.stdout)
     assert payload["status"] == "disabled"
     assert payload["config"]["enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# _execution_wave_mode tests
+# ---------------------------------------------------------------------------
+
+
+def test_wave_mode_absent_defaults_auto(tmp_path: Path) -> None:
+    """Config without execution.wave_mode key returns the canonical MapConfig
+    default 'auto' (still behavior-neutral: the wave-loop is gated on
+    worktree.isolation != 'off', which defaults to 'off')."""
+    (tmp_path / ".map").mkdir()
+    # Write a config without any wave_mode key at all.
+    (tmp_path / ".map" / "config.yaml").write_text(
+        "some.other.key: value\n", encoding="utf-8"
+    )
+    assert map_step_runner._execution_wave_mode(tmp_path) == "auto"
+
+
+def test_wave_mode_enum_and_unknown_fallback(tmp_path: Path) -> None:
+    """Known enum values parse; unknown or empty values fall back to 'off'."""
+    map_dir = tmp_path / ".map"
+    map_dir.mkdir()
+    config = map_dir / "config.yaml"
+
+    # Valid: "auto"
+    config.write_text("execution.wave_mode: auto\n", encoding="utf-8")
+    assert map_step_runner._execution_wave_mode(tmp_path) == "auto"
+
+    # Valid: "on"
+    config.write_text("execution.wave_mode: on\n", encoding="utf-8")
+    assert map_step_runner._execution_wave_mode(tmp_path) == "on"
+
+    # Valid: "off" explicit
+    config.write_text("execution.wave_mode: off\n", encoding="utf-8")
+    assert map_step_runner._execution_wave_mode(tmp_path) == "off"
+
+    # Unknown value -> "auto" (canonical MapConfig default)
+    config.write_text("execution.wave_mode: parallel\n", encoding="utf-8")
+    assert map_step_runner._execution_wave_mode(tmp_path) == "auto"
+
+    # Empty value -> "auto"
+    config.write_text("execution.wave_mode: \n", encoding="utf-8")
+    assert map_step_runner._execution_wave_mode(tmp_path) == "auto"
+
+
+# ---------------------------------------------------------------------------
+# _worktree_isolation_mode tests
+# ---------------------------------------------------------------------------
+
+
+def test_worktree_isolation_legacy_bool_mapping(tmp_path: Path) -> None:
+    """Legacy boolean literals map correctly; absent key defaults to 'off'."""
+    map_dir = tmp_path / ".map"
+    map_dir.mkdir()
+    config = map_dir / "config.yaml"
+
+    # Absent key -> "off"
+    config.write_text("some.other.key: value\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "off"
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is False
+
+    # Legacy false -> "off"
+    config.write_text("worktree.isolation: false\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "off"
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is False
+
+    # Legacy true -> "required"
+    config.write_text("worktree.isolation: true\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "required"
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is True
+
+    # Legacy "1" -> "required"
+    config.write_text("worktree.isolation: 1\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "required"
+
+    # Legacy "0" -> "off"
+    config.write_text("worktree.isolation: 0\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "off"
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is False
+
+
+def test_worktree_isolation_enum_and_disabled_check_parity(tmp_path: Path) -> None:
+    """New enum strings parse directly. Per the canonical MapConfig/#305 semantics,
+    _wt_isolation_enabled is True ONLY for 'required' (and legacy truthy): 'auto'
+    stays disabled in Slice 0 (parallel dispatch lands in Slice 5), 'off' disabled.
+    _worktree_isolation_mode still reports the full enum (off/auto/required) for the
+    probe/fallback paths."""
+    map_dir = tmp_path / ".map"
+    map_dir.mkdir()
+    config = map_dir / "config.yaml"
+
+    # Enum: "off"
+    config.write_text("worktree.isolation: off\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "off"
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is False
+
+    # Enum: "auto" — mode is 'auto' but isolation NOT enabled until Slice 5.
+    config.write_text("worktree.isolation: auto\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "auto"
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is False
+
+    # Enum: "required" — enabled (hard-fail on unavailability, same as legacy true).
+    config.write_text("worktree.isolation: required\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "required"
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is True
+
+    # Case-insensitive enum
+    config.write_text("worktree.isolation: AUTO\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "auto"
+
+    # Unknown garbage -> "off" (disabled)
+    config.write_text("worktree.isolation: maybe\n", encoding="utf-8")
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "off"
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is False
+
+
+# _lint_dependency_enforcement / _lint_auto_prune / _observability_parallelism_enabled
+
+
+def test_lint_toggle_defaults(tmp_path: Path) -> None:
+    """lint.dependency_enforcement defaults to 'warn' when absent; parses all enum values;
+    unknown values fall back to 'warn'. lint.auto_prune defaults to False; 'true' -> True."""
+    config = tmp_path / ".map" / "config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+
+    # absent key -> "warn"
+    config.write_text("", encoding="utf-8")
+    assert map_step_runner._lint_dependency_enforcement(tmp_path) == "warn"
+
+    # valid enum values
+    for value in ("off", "warn", "repair_once", "strict"):
+        config.write_text(f"lint.dependency_enforcement: {value}\n", encoding="utf-8")
+        assert map_step_runner._lint_dependency_enforcement(tmp_path) == value
+
+    # unknown/garbage -> "warn"
+    config.write_text("lint.dependency_enforcement: parallel\n", encoding="utf-8")
+    assert map_step_runner._lint_dependency_enforcement(tmp_path) == "warn"
+
+    config.write_text("lint.dependency_enforcement: \n", encoding="utf-8")
+    assert map_step_runner._lint_dependency_enforcement(tmp_path) == "warn"
+
+    # lint.auto_prune absent -> False
+    config.write_text("", encoding="utf-8")
+    assert map_step_runner._lint_auto_prune(tmp_path) is False
+
+    # lint.auto_prune "true" -> True
+    config.write_text("lint.auto_prune: true\n", encoding="utf-8")
+    assert map_step_runner._lint_auto_prune(tmp_path) is True
+
+    # lint.auto_prune "false" -> False
+    config.write_text("lint.auto_prune: false\n", encoding="utf-8")
+    assert map_step_runner._lint_auto_prune(tmp_path) is False
+
+
+def test_observability_toggle_defaults(tmp_path: Path) -> None:
+    """observability.parallelism defaults to False when absent; 'true' -> True.
+    Default config => all toggles are no-op: enforcement=='warn', auto_prune is False,
+    observability is False."""
+    config = tmp_path / ".map" / "config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+
+    # absent key -> False
+    config.write_text("", encoding="utf-8")
+    assert map_step_runner._observability_parallelism_enabled(tmp_path) is False
+
+    # "true" -> True
+    config.write_text("observability.parallelism: true\n", encoding="utf-8")
+    assert map_step_runner._observability_parallelism_enabled(tmp_path) is True
+
+    # "false" -> False
+    config.write_text("observability.parallelism: false\n", encoding="utf-8")
+    assert map_step_runner._observability_parallelism_enabled(tmp_path) is False
+
+    # Assert default config (empty) => all no-op
+    config.write_text("", encoding="utf-8")
+    assert map_step_runner._lint_dependency_enforcement(tmp_path) == "warn"
+    assert map_step_runner._lint_auto_prune(tmp_path) is False
+    assert map_step_runner._observability_parallelism_enabled(tmp_path) is False
+
+
+# _worktree_probe / _require_clean_merge_target
+
+
+def test_probe_dormant_when_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With isolation off (default), _worktree_probe returns dormant and runs NO git command.
+
+    Proves zero-git behavior by monkeypatching _wt_git to record calls and raise
+    if invoked, then asserting that the call list is empty and status=="dormant".
+    """
+    # Ensure isolation is off (default — config absent)
+    (tmp_path / ".map").mkdir()
+    (tmp_path / ".map" / "config.yaml").write_text("", encoding="utf-8")
+
+    # Monkeypatch _wt_git to track calls; any call = test failure
+    calls: list[list[str]] = []
+
+    def _no_git(args: list[str], **_kw: object) -> object:
+        del _kw
+        calls.append(args)
+        raise AssertionError(f"_wt_git must not be called when isolation is off; got {args!r}")
+
+    monkeypatch.setattr(map_step_runner, "_wt_git", _no_git)
+    # Also clear the probe cache so we don't hit a stale cached result
+    map_step_runner._WORKTREE_PROBE_CACHE.clear()
+
+    result = map_step_runner._worktree_probe(tmp_path)
+
+    assert result["status"] == "dormant", f"expected dormant, got {result}"
+    assert result["ok"] is False
+    assert "worktree.isolation is off" in str(result.get("reason", ""))
+    assert calls == [], "No git command should have been issued when isolation is off"
+
+    # Verify _require_clean_merge_target is also dormant ( symmetry)
+    result_clean = map_step_runner._require_clean_merge_target(tmp_path)
+    assert result_clean["status"] == "dormant"
+    assert result_clean["ok"] is False
+
+
+def test_probe_roundtrip_and_clean_target(tmp_path: Path) -> None:
+    """When isolation is 'auto': probe adds+removes the .probe-* worktree in try/finally,
+    and a dirty repo makes _require_clean_merge_target report not-clean.
+
+    Uses a real git init tmp repo; verifies the .probe-* directory is gone after the
+    call and that git worktree list shows no leftover probe entries.
+    """
+    import subprocess as _subprocess
+
+    # Build a minimal real git repo with a commit so HEAD exists
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+    _subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=str(repo), check=True, capture_output=True,
+    )
+    _subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=str(repo), check=True, capture_output=True,
+    )
+    (repo / "README.md").write_text("hello", encoding="utf-8")
+    _subprocess.run(["git", "add", "."], cwd=str(repo), check=True, capture_output=True)
+    _subprocess.run(
+        ["git", "commit", "-m", "init"],
+        cwd=str(repo), check=True, capture_output=True,
+    )
+
+    # Write config with isolation=auto
+    map_dir = repo / ".map"
+    map_dir.mkdir()
+    (map_dir / "config.yaml").write_text("worktree.isolation: auto\n", encoding="utf-8")
+
+    # Change cwd into the repo so _wt_git commands resolve against it
+    import os as _os
+
+    orig_cwd = Path.cwd()
+    try:
+        _os.chdir(repo)
+
+        # Clear probe cache before each probe call so we get a fresh run
+        map_step_runner._WORKTREE_PROBE_CACHE.clear()
+        result = map_step_runner._worktree_probe(repo)
+    finally:
+        _os.chdir(orig_cwd)
+
+    # The probe should succeed (git worktree add --detach supported in a normal repo)
+    assert result["status"] == "ok", f"probe expected ok, got {result}"
+    assert result["ok"] is True
+    assert result.get("supported") is True
+
+    # Verify no .probe-* worktrees leaked: list the storage root directory
+    # Storage root = <git-common-dir>/map-framework/worktrees
+    git_common_dir_proc = _subprocess.run(
+        ["git", "rev-parse", "--git-common-dir"],
+        cwd=str(repo), capture_output=True, text=True,
+    )
+    assert git_common_dir_proc.returncode == 0
+    git_common_dir = Path(git_common_dir_proc.stdout.strip()).resolve()
+    storage_root = git_common_dir / "map-framework" / "worktrees"
+
+    # Either the storage root does not exist, or it contains no .probe-* directories
+    probe_dirs = list(storage_root.glob(".probe-*")) if storage_root.exists() else []
+    assert probe_dirs == [], (
+        f"probe worktrees leaked after _worktree_probe: {probe_dirs}"
+    )
+
+    # Also confirm via `git worktree list` that no probe worktree remains registered
+    wl_proc = _subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=str(repo), capture_output=True, text=True,
+    )
+    probe_entries = [
+        ln for ln in wl_proc.stdout.splitlines()
+        if ln.startswith("worktree ") and ".probe-" in ln
+    ]
+    assert probe_entries == [], (
+        f"probe worktrees still registered in git: {probe_entries}"
+    )
+
+    # Now test _require_clean_merge_target with a dirty working tree
+    try:
+        _os.chdir(repo)
+        # Make the repo dirty
+        (repo / "dirty.txt").write_text("uncommitted", encoding="utf-8")
+        _subprocess.run(["git", "add", "dirty.txt"], cwd=str(repo), capture_output=True)
+        # clear probe cache (isolation mode the same, not probe cache, but be safe)
+        map_step_runner._WORKTREE_PROBE_CACHE.clear()
+        dirty_result = map_step_runner._require_clean_merge_target(repo)
+    finally:
+        _os.chdir(orig_cwd)
+
+    assert dirty_result["ok"] is False, f"expected not-clean, got {dirty_result}"
+    assert dirty_result["status"] == "dirty"
+    assert dirty_result.get("kind") == "DIRTY_MERGE_TARGET"
+    assert len(dirty_result.get("dirty", [])) >= 1
+
+
+# ---------------------------------------------------------------------------
+# resolve_worktree_isolation / cleanup_orphan_worktrees
+# ---------------------------------------------------------------------------
+
+
+def _make_git_repo(path: Path) -> None:
+    """Create a minimal real git repo with one commit at *path*."""
+    import subprocess as _sp
+
+    _sp.run(["git", "init", str(path)], check=True, capture_output=True)
+    _sp.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=str(path), check=True, capture_output=True,
+    )
+    _sp.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=str(path), check=True, capture_output=True,
+    )
+    (path / "README.md").write_text("hello", encoding="utf-8")
+    _sp.run(["git", "add", "."], cwd=str(path), check=True, capture_output=True)
+    _sp.run(
+        ["git", "commit", "-m", "init"],
+        cwd=str(path), check=True, capture_output=True,
+    )
+
+
+def _write_isolation_config(project_dir: Path, mode: str) -> None:
+    map_dir = project_dir / ".map"
+    map_dir.mkdir(exist_ok=True)
+    (map_dir / "config.yaml").write_text(
+        f"worktree.isolation: {mode}\n", encoding="utf-8"
+    )
+
+
+def test_fallback_auto_vs_required(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VC1 [AC-9]: Under isolation=auto each fallback condition degrades gracefully;
+    under isolation=required the same conditions hard-fail.
+
+    Conditions tested:
+      - not_git_repo (non_git_dir fixture equivalent: tmp_path with no .git)
+      - dirty_merge_target (monkeypatched _require_clean_merge_target)
+      - worktree_create_failed / worktree_unsupported (monkeypatched probe to fail)
+    """
+    import os as _os
+
+    # -----------------------------------------------------------------------
+    # Helper: run resolve under a specific isolation mode with given probe/clean
+    # patches, asserting on expected outcome shape.
+    # -----------------------------------------------------------------------
+
+    def _assert_auto_degrades(
+        project_dir: Path,
+        expected_reason: str,
+    ) -> None:
+        result = map_step_runner.resolve_worktree_isolation(project_dir)
+        assert result.get("ok") is True, f"auto should ok=True; got {result}"
+        assert result.get("decision") == "sequential", f"auto must degrade to sequential; got {result}"
+        assert result.get("degraded") is True, f"auto must set degraded=True; got {result}"
+        assert result.get("reason") == expected_reason, (
+            f"reason mismatch: expected {expected_reason!r}, got {result.get('reason')!r}"
+        )
+        warning = str(result.get("warning", ""))
+        assert len(warning) > 0, "auto must emit a non-empty warning string"
+
+    def _assert_required_hardfails(project_dir: Path) -> None:
+        result = map_step_runner.resolve_worktree_isolation(project_dir)
+        assert result.get("ok") is False, f"required must ok=False; got {result}"
+        assert result.get("status") == "error", (
+            f"required must status=error; got {result.get('status')!r}"
+        )
+        assert result.get("decision") == "abort", (
+            f"required must decision=abort; got {result.get('decision')!r}"
+        )
+
+    # -----------------------------------------------------------------------
+    # Condition 1: not_git_repo  — directory without a .git
+    # -----------------------------------------------------------------------
+    non_git = tmp_path / "non_git"
+    non_git.mkdir()
+    _write_isolation_config(non_git, "auto")
+    orig_cwd = Path.cwd()
+    try:
+        _os.chdir(non_git)
+        # _wt_is_git_repo() will return False here (no .git)
+        _assert_auto_degrades(non_git, map_step_runner._WT_REASON_NOT_GIT_REPO)
+    finally:
+        _os.chdir(orig_cwd)
+
+    _write_isolation_config(non_git, "required")
+    try:
+        _os.chdir(non_git)
+        _assert_required_hardfails(non_git)
+    finally:
+        _os.chdir(orig_cwd)
+
+    # -----------------------------------------------------------------------
+    # Condition 2: dirty_merge_target — real git repo, probe ok, dirty status
+    # -----------------------------------------------------------------------
+    dirty = tmp_path / "dirty_repo"
+    dirty.mkdir()
+    _make_git_repo(dirty)
+
+    # Monkeypatch probe to succeed (avoids needing real worktree add support)
+    # and _require_clean_merge_target to report dirty.
+    def _probe_ok(_project_dir: object) -> dict[str, object]:
+        del _project_dir
+        return {"status": "ok", "ok": True, "supported": True, "is_primary": True}
+
+    def _clean_dirty(_project_dir: object) -> dict[str, object]:
+        del _project_dir
+        return {
+            "status": "dirty",
+            "ok": False,
+            "kind": "DIRTY_MERGE_TARGET",
+            "reason": "main checkout has uncommitted changes",
+            "dirty": ["M README.md"],
+        }
+
+    monkeypatch.setattr(map_step_runner, "_worktree_probe", _probe_ok)
+    monkeypatch.setattr(map_step_runner, "_require_clean_merge_target", _clean_dirty)
+
+    _write_isolation_config(dirty, "auto")
+    try:
+        _os.chdir(dirty)
+        _assert_auto_degrades(dirty, map_step_runner._WT_REASON_DIRTY_MERGE_TARGET)
+    finally:
+        _os.chdir(orig_cwd)
+
+    _write_isolation_config(dirty, "required")
+    try:
+        _os.chdir(dirty)
+        _assert_required_hardfails(dirty)
+    finally:
+        _os.chdir(orig_cwd)
+
+    # -----------------------------------------------------------------------
+    # Condition 3: worktree_create_failed / probe failure
+    # -----------------------------------------------------------------------
+    probe_fail = tmp_path / "probe_fail_repo"
+    probe_fail.mkdir()
+    _make_git_repo(probe_fail)
+
+    def _probe_fail(_project_dir: object) -> dict[str, object]:
+        del _project_dir
+        return map_step_runner._wt_error(
+            "WORKTREE_PROBE_FAILED", "git worktree add --detach failed"
+        )
+
+    # Restore original _require_clean_merge_target first, then patch probe
+    def _clean_ok(_project_dir: object) -> dict[str, object]:
+        del _project_dir
+        return {"status": "ok", "ok": True}
+
+    monkeypatch.setattr(map_step_runner, "_require_clean_merge_target", _clean_ok)
+    monkeypatch.setattr(map_step_runner, "_worktree_probe", _probe_fail)
+
+    _write_isolation_config(probe_fail, "auto")
+    try:
+        _os.chdir(probe_fail)
+        _assert_auto_degrades(probe_fail, map_step_runner._WT_REASON_UNSUPPORTED)
+    finally:
+        _os.chdir(orig_cwd)
+
+    _write_isolation_config(probe_fail, "required")
+    try:
+        _os.chdir(probe_fail)
+        _assert_required_hardfails(probe_fail)
+    finally:
+        _os.chdir(orig_cwd)
+
+    # -----------------------------------------------------------------------
+    # Dormant path (isolation=off) — zero git regardless
+    # -----------------------------------------------------------------------
+    dormant = tmp_path / "dormant"
+    dormant.mkdir()
+    _write_isolation_config(dormant, "off")
+
+    calls: list[list[str]] = []
+
+    def _no_git_call(args: list[str], **_kw: object) -> object:
+        del _kw
+        calls.append(args)
+        raise AssertionError(f"_wt_git must not be called when isolation is off; got {args!r}")
+
+    monkeypatch.setattr(map_step_runner, "_wt_git", _no_git_call)
+    result = map_step_runner.resolve_worktree_isolation(dormant)
+    assert result["status"] == "dormant"
+    assert result["decision"] == "sequential"
+    assert result["ok"] is False
+    assert calls == [], "No git must run when isolation is off"
+
+
+def test_orphan_cleanup_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VC2 [AC-9]: cleanup_orphan_worktrees removes orphans, keeps active, is
+    idempotent (second call removes nothing), and is dormant when isolation=off.
+    """
+    import os as _os
+    import subprocess as _sp
+
+    # -----------------------------------------------------------------------
+    # Build a real git repo so git worktree list works
+    # -----------------------------------------------------------------------
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _make_git_repo(repo)
+
+    _write_isolation_config(repo, "auto")
+    orig_cwd = Path.cwd()
+
+    # -----------------------------------------------------------------------
+    # Resolve storage root for this repo
+    # -----------------------------------------------------------------------
+    try:
+        _os.chdir(repo)
+        git_common_dir_proc = _sp.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            capture_output=True, text=True,
+        )
+        assert git_common_dir_proc.returncode == 0
+        git_common_dir = Path(git_common_dir_proc.stdout.strip()).resolve()
+    finally:
+        _os.chdir(orig_cwd)
+
+    storage_root = git_common_dir / "map-framework" / "worktrees"
+
+    # -----------------------------------------------------------------------
+    # Create one REGISTERED active worktree entry (manually, no real wt needed)
+    # and one ORPHAN directory under the storage root.
+    # -----------------------------------------------------------------------
+    branch = "test-cleanup-branch"
+    branch_slug = "test-cleanup-branch"
+
+    # Active worktree dir (create the dir but NOT register it as orphan)
+    active_dir = storage_root / branch_slug / "active-ST-001-0"
+    active_dir.mkdir(parents=True, exist_ok=True)
+
+    # Orphan dir (exists on disk but NOT in the worktree state)
+    orphan_dir = storage_root / branch_slug / "orphan-ST-999-0"
+    orphan_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write the worktree state registering ONLY the active worktree
+    branch_dir = repo / ".map" / branch
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    import json as _json
+    state = {
+        "schema_version": "1.0",
+        "branch": branch,
+        "worktrees": {
+            "active-ST-001-0": {
+                "subtask_id": "ST-001",
+                "slug": "active-ST-001-0",
+                "attempt": 0,
+                "branch": "map-wt/active-ST-001-0",
+                "path": str(active_dir.resolve()),
+                "base_sha": "abc123",
+                "status": "created",
+            }
+        },
+    }
+    (branch_dir / "worktrees.json").write_text(
+        _json.dumps(state), encoding="utf-8"
+    )
+
+    # -----------------------------------------------------------------------
+    # Monkeypatch _wt_force_remove to avoid real git calls on non-git orphan dirs
+    # -----------------------------------------------------------------------
+    removed_by_force: list[str] = []
+
+    def _fake_force_remove(path: Path, branch_ref: str) -> None:
+        del branch_ref
+        removed_by_force.append(str(path.resolve()))
+        # Simulate removal by deleting the directory
+        import shutil as _shutil
+        _shutil.rmtree(str(path), ignore_errors=True)
+
+    monkeypatch.setattr(map_step_runner, "_wt_force_remove", _fake_force_remove)
+
+    try:
+        _os.chdir(repo)
+
+        # First call: should remove orphan, keep active
+        result1 = map_step_runner.cleanup_orphan_worktrees(branch)
+        assert result1["ok"] is True, f"expected ok, got {result1}"
+        removed1 = result1.get("removed", [])
+        kept1 = result1.get("kept_active", [])
+
+        orphan_str = str(orphan_dir.resolve())
+        active_str = str(active_dir.resolve())
+
+        assert orphan_str in removed1, (
+            f"orphan dir should be in removed list; removed={removed1}"
+        )
+        assert active_str in kept1, (
+            f"active dir should be in kept_active list; kept={kept1}"
+        )
+        assert active_str not in removed1, (
+            f"active dir must NOT be removed; removed={removed1}"
+        )
+
+        # Verify orphan_dir was actually deleted
+        assert not orphan_dir.exists(), "orphan directory should have been removed"
+
+        # Second call: idempotent — orphan no longer exists, nothing to remove
+        removed_by_force.clear()
+        result2 = map_step_runner.cleanup_orphan_worktrees(branch)
+        assert result2["ok"] is True, f"second call should be ok; got {result2}"
+        removed2 = result2.get("removed", [])
+        assert removed2 == [], (
+            f"second call should remove nothing (idempotent); removed={removed2}"
+        )
+
+    finally:
+        _os.chdir(orig_cwd)
+
+    # -----------------------------------------------------------------------
+    # Dormant when isolation=off: zero git calls
+    # -----------------------------------------------------------------------
+    _write_isolation_config(repo, "off")
+
+    git_calls: list[list[str]] = []
+
+    def _no_git(args: list[str], **_kw: object) -> object:
+        del _kw
+        git_calls.append(args)
+        raise AssertionError(f"_wt_git must not be called when isolation is off; got {args!r}")
+
+    monkeypatch.setattr(map_step_runner, "_wt_git", _no_git)
+
+    dormant_result = map_step_runner.cleanup_orphan_worktrees(branch)
+    assert dormant_result["status"] == "dormant", (
+        f"expected dormant when off; got {dormant_result}"
+    )
+    assert dormant_result["ok"] is False
+    assert git_calls == [], "No git must run when isolation is off"
