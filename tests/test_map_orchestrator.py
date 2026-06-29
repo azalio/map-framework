@@ -5095,5 +5095,170 @@ def test_vc3_get_wave_step_reason_codes(
     assert len(codes) == 3, f"reason codes must all be distinct: {codes}"
 
 
+# ---------------------------------------------------------------------------
+# ST-007: HC-1 default-config behavior-neutrality PROOF tests
+# ---------------------------------------------------------------------------
+# These tests use the REAL map_step_runner (no sys.modules mock) against an
+# actual filesystem project_dir with no .map/config.yaml (or an empty one),
+# proving that the real MapConfig defaults keep every dispatch path sequential.
+# The genuine proof: each test seeds a width>=2 wave (a parallelizable plan),
+# which WOULD trigger wave_loop if the config asked for it — but the isolation
+# gate (defaults to 'off') keeps everything on the legacy sequential path.
+
+
+def test_vc1_default_config_neutral_strategy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HC-1 proof: under default config (no .map/config.yaml), select_execution_strategy
+    returns strategy=='sequential', concurrency_allowed==False, and
+    worktree_isolation=='off' — even when a parallelizable (width>=2) wave exists.
+
+    This is non-tautological: the width>=2 wave makes has_parallel_groups=True, so
+    the isolation gate is the only thing keeping the result sequential. The test
+    exercises the real _execution_wave_mode + _worktree_isolation_mode functions
+    against a real (empty) project dir — no mocks.
+    """
+    import sys as _sys
+
+    monkeypatch.chdir(tmp_path)
+    branch = "test-st007-vc1-default-neutral"
+
+    # Seed a width>=2 execution wave — has_parallel_groups will be True.
+    # Without the isolation gate, this WOULD select strategy='wave_loop'.
+    _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
+
+    # No .map/config.yaml — real defaults apply: wave_mode='auto', isolation='off'.
+    # Evict any cached map_step_runner so the function does a fresh import with
+    # the real module reading from tmp_path (monkeypatched cwd).
+    _orig_msr = _sys.modules.pop("map_step_runner", None)
+    try:
+        result = map_orchestrator.select_execution_strategy(branch, tmp_path)
+    finally:
+        if _orig_msr is not None:
+            _sys.modules["map_step_runner"] = _orig_msr
+
+    assert result["strategy"] == "sequential", (
+        f"default config (no config.yaml) must give strategy='sequential': {result}"
+    )
+    assert result["concurrency_allowed"] is False, (
+        f"default config must give concurrency_allowed=False: {result}"
+    )
+    assert result["worktree_isolation"] == "off", (
+        f"default config must give worktree_isolation='off': {result}"
+    )
+    # Confirm the isolation gate is what blocked wave_loop — not missing waves.
+    assert result["has_parallel_groups"] is True, (
+        "has_parallel_groups must be True (width>=2 wave seeded) to prove the "
+        "isolation gate is what keeps the strategy sequential, not absence of a "
+        "parallelizable plan"
+    )
+
+
+def test_vc2_default_config_neutral_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HC-1 proof: under default config, get_wave_step returns dispatch_mode=='sequential'
+    and isolation_active==False, and create_subtask_worktree returns status=='disabled'
+    (no worktree created).
+
+    Width>=2 wave is seeded to prove the dispatch stays sequential regardless.
+    """
+    import sys as _sys
+
+    monkeypatch.chdir(tmp_path)
+    branch = "test-st007-vc2-default-neutral"
+
+    # Seed a width>=2 wave — concurrently dispatchable IF isolation were on.
+    _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
+
+    # No config.yaml — real isolation defaults to 'off'.
+    _orig_msr = _sys.modules.pop("map_step_runner", None)
+    try:
+        result = map_orchestrator.get_wave_step(branch)
+    finally:
+        if _orig_msr is not None:
+            _sys.modules["map_step_runner"] = _orig_msr
+
+    assert result["dispatch_mode"] == "sequential", (
+        f"default config: dispatch_mode must be 'sequential': {result}"
+    )
+    assert result["isolation_active"] is False, (
+        f"default config: isolation_active must be False (isolation='off'): {result}"
+    )
+    assert result["concurrency_enabled"] is False, (
+        f"default config: concurrency_enabled alias must be False: {result}"
+    )
+
+    # create_subtask_worktree must no-op (status='disabled') under default config.
+    # The real _wt_isolation_enabled reads from cwd/.map/config.yaml (absent here).
+    _orig_msr2 = _sys.modules.pop("map_step_runner", None)
+    try:
+        import map_step_runner as _msr  # noqa: E402  # pyright: ignore[reportMissingImports]
+
+        wt_result = _msr.create_subtask_worktree("ST-001")
+    finally:
+        if _orig_msr2 is not None:
+            _sys.modules["map_step_runner"] = _orig_msr2
+
+    assert wt_result["status"] == "disabled", (
+        f"default config: create_subtask_worktree must return status='disabled': {wt_result}"
+    )
+    assert wt_result["ok"] is False, (
+        f"default config: create_subtask_worktree must return ok=False: {wt_result}"
+    )
+
+
+def test_vc3_dormant_keys_do_not_flip_strategy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HC-1 proof: setting ONLY the dormant Slice-5a keys (execution.max_actors and
+    execution.retry_degraded_once) in config does NOT change strategy away from
+    sequential — strategy remains 'sequential' and concurrency_allowed remains False.
+
+    Proves that the dormant fields parsed by ST-005 have no effect on the execution
+    path in Slice 5a: they are parsed and validated, but no code reads them yet.
+    Width>=2 wave is seeded so the isolation gate (not missing parallelizable work)
+    is the only thing keeping the dispatch sequential.
+    """
+    import sys as _sys
+
+    monkeypatch.chdir(tmp_path)
+    branch = "test-st007-vc3-dormant-keys"
+
+    # Seed a width>=2 wave — parallelizable plan present.
+    _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
+
+    # Write config with ONLY the dormant ST-005 keys — no wave_mode, no worktree.isolation.
+    # Real MapConfig defaults for the missing keys: wave_mode='auto', isolation='off'.
+    map_dir = tmp_path / ".map"
+    map_dir.mkdir(parents=True, exist_ok=True)
+    (map_dir / "config.yaml").write_text(
+        "execution.max_actors: 3\n"
+        "execution.retry_degraded_once: true\n",
+        encoding="utf-8",
+    )
+
+    _orig_msr = _sys.modules.pop("map_step_runner", None)
+    try:
+        result = map_orchestrator.select_execution_strategy(branch, tmp_path)
+    finally:
+        if _orig_msr is not None:
+            _sys.modules["map_step_runner"] = _orig_msr
+
+    assert result["strategy"] == "sequential", (
+        f"dormant-keys-only config must not flip strategy away from 'sequential': {result}"
+    )
+    assert result["concurrency_allowed"] is False, (
+        f"dormant-keys-only config must not flip concurrency_allowed to True: {result}"
+    )
+    assert result["worktree_isolation"] == "off", (
+        f"worktree_isolation must remain 'off' when worktree.isolation key is absent: {result}"
+    )
+    assert result["has_parallel_groups"] is True, (
+        "has_parallel_groups must be True so the isolation gate — not absent waves — "
+        "is what keeps the strategy sequential"
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
