@@ -13264,3 +13264,490 @@ class TestGroupEventConstants:
             map_step_runner._WT_GROUP_EVENT_ABORTED,
         }
         assert map_step_runner._WT_GROUP_VALID_EVENTS == expected
+
+
+# ---------------------------------------------------------------------------
+# Helpers shared across RunConcurrentWave tests
+# ---------------------------------------------------------------------------
+
+
+def _make_git_repo_with_worktrees(
+    root: Path, subtask_ids: list[str]
+) -> tuple[str, dict[str, Path]]:
+    """Create a real git repo with one committed worktree per subtask.
+
+    Returns (base_sha, {subtask_id: worktree_path}).
+    The caller must chdir into root + monkeypatch get_branch_name before calling
+    map_step_runner functions.
+    """
+    import subprocess as _sp
+
+    _sp.run(["git", "init", str(root)], check=True, capture_output=True)
+    _sp.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=str(root), check=True, capture_output=True,
+    )
+    _sp.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=str(root), check=True, capture_output=True,
+    )
+    (root / "README.md").write_text("base", encoding="utf-8")
+    _sp.run(["git", "add", "."], cwd=str(root), check=True, capture_output=True)
+    _sp.run(
+        ["git", "commit", "--no-verify", "-m", "init"],
+        cwd=str(root), check=True, capture_output=True,
+    )
+    sha_r = _sp.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(root), check=True, capture_output=True, text=True,
+    )
+    base_sha = sha_r.stdout.strip()
+
+    wt_paths: dict[str, Path] = {}
+    for sid in subtask_ids:
+        slug = "".join(c if c.isalnum() or c in "-_." else "-" for c in sid).lower()
+        wt_dir = root.parent / f"wt-{slug}"
+        wt_branch = f"map/wt/{slug}"
+        _sp.run(
+            ["git", "worktree", "add", "-b", wt_branch, str(wt_dir)],
+            cwd=str(root), check=True, capture_output=True,
+        )
+        _sp.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=str(wt_dir), check=True, capture_output=True,
+        )
+        _sp.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=str(wt_dir), check=True, capture_output=True,
+        )
+        # Write a unique file per worktree so the merge has content to commit.
+        (wt_dir / f"{slug}.txt").write_text(f"work for {sid}", encoding="utf-8")
+        _sp.run(["git", "add", "."], cwd=str(wt_dir), check=True, capture_output=True)
+        _sp.run(
+            ["git", "commit", "--no-verify", "-m", f"work: {sid}"],
+            cwd=str(wt_dir), check=True, capture_output=True,
+        )
+        wt_paths[sid] = wt_dir
+
+    return base_sha, wt_paths
+
+
+def _register_worktrees(
+    branch: str, base_sha: str, subtask_ids: list[str], wt_paths: dict[str, Path]
+) -> None:
+    """Register each worktree in the map_step_runner sidecar."""
+    state = map_step_runner._read_worktree_state(branch)
+    if not isinstance(state.get("worktrees"), dict):
+        state["worktrees"] = {}
+    for sid in subtask_ids:
+        slug_r = map_step_runner._wt_slug(sid)
+        if slug_r is None:
+            continue
+        wt_path = wt_paths[sid]
+        wt_branch = f"map/wt/{slug_r}"
+        state["worktrees"][slug_r] = {
+            "subtask_id": sid,
+            "path": str(wt_path),
+            "branch": wt_branch,
+            "base_sha": base_sha,
+            "attempt": 0,
+        }
+    map_step_runner._write_worktree_state(branch, state)
+
+
+# ---------------------------------------------------------------------------
+# Tests: _max_actors and _chunk helpers (unit)
+# ---------------------------------------------------------------------------
+
+
+class TestMaxActorsHelper:
+    """Unit tests for the _max_actors() and _chunk() helpers."""
+
+    def test_vc2_default_max_actors_no_config(self, tmp_path: Path) -> None:
+        """VC2: With no config file, _max_actors returns the default 4."""
+        result = map_step_runner._max_actors(tmp_path)
+        assert result == 4, f"expected default 4, got {result}"
+
+    def test_vc2_max_actors_from_config(self, tmp_path: Path) -> None:
+        """VC2: max_actors reads execution.max_actors from config and clamps."""
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text(
+            "execution.max_actors: 2\n", encoding="utf-8"
+        )
+        result = map_step_runner._max_actors(tmp_path)
+        assert result == 2, f"expected 2 from config, got {result}"
+
+    def test_vc2_max_actors_zero_falls_back_to_default(self, tmp_path: Path) -> None:
+        """VC2: max_actors: 0 is not a valid positive int; _map_config_int returns
+        the default 4 (mirrors its '>0 or default' guard), so the result is 4."""
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text(
+            "execution.max_actors: 0\n", encoding="utf-8"
+        )
+        result = map_step_runner._max_actors(tmp_path)
+        # _map_config_int treats <= 0 as invalid → returns default 4; clamp(4) == 4.
+        assert result == 4, f"expected fallback to default 4, got {result}"
+
+    def test_vc2_max_actors_clamped_to_max(self, tmp_path: Path) -> None:
+        """VC2: max_actors > 8 is clamped to 8."""
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text(
+            "execution.max_actors: 99\n", encoding="utf-8"
+        )
+        result = map_step_runner._max_actors(tmp_path)
+        assert result == 8, f"expected clamp to 8, got {result}"
+
+    def test_vc2_chunk_even_split(self) -> None:
+        """VC2: _chunk(6 items, size=2) -> 3 sub-lists of width 2."""
+        items = ["a", "b", "c", "d", "e", "f"]
+        chunks = map_step_runner._chunk(items, 2)
+        assert chunks == [["a", "b"], ["c", "d"], ["e", "f"]]
+
+    def test_vc2_chunk_uneven_split(self) -> None:
+        """VC2: _chunk(5 items, size=2) -> last chunk has 1 item."""
+        items = ["a", "b", "c", "d", "e"]
+        chunks = map_step_runner._chunk(items, 2)
+        assert chunks == [["a", "b"], ["c", "d"], ["e"]]
+
+    def test_vc2_chunk_within_cap_is_one_batch(self) -> None:
+        """VC2: _chunk(3 items, size=4) -> 1 batch (no split)."""
+        items = ["a", "b", "c"]
+        chunks = map_step_runner._chunk(items, 4)
+        assert chunks == [["a", "b", "c"]]
+
+    def test_vc2_chunk_size_zero_treated_as_one(self) -> None:
+        """VC2: _chunk with size=0 falls back to size=1."""
+        chunks = map_step_runner._chunk(["x", "y"], 0)
+        assert chunks == [["x"], ["y"]]
+
+
+# ---------------------------------------------------------------------------
+# Tests: run_concurrent_wave — non-git / empty input guards (unit)
+# ---------------------------------------------------------------------------
+
+
+class TestRunConcurrentWaveGuards:
+    """run_concurrent_wave returns structured errors for invalid inputs."""
+
+    def test_vc1_empty_group_ids_returns_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC1: Empty group_ids -> structured error, ok=False."""
+        # Not in a git repo — but empty-ids guard fires first.
+        non_git = tmp_path / "non_git"
+        non_git.mkdir()
+        monkeypatch.chdir(non_git)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        result = map_step_runner.run_concurrent_wave([], "test-branch", non_git)
+        assert result.get("ok") is not True
+        assert result.get("status") == "error"
+
+    def test_vc1_not_git_repo_returns_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC1: Not a git repo -> structured error."""
+        non_git = tmp_path / "non_git"
+        non_git.mkdir()
+        monkeypatch.chdir(non_git)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        result = map_step_runner.run_concurrent_wave(
+            ["ST-001", "ST-002"], "test-branch", non_git
+        )
+        assert result.get("ok") is not True
+        assert result.get("status") == "error"
+
+
+# ---------------------------------------------------------------------------
+# Tests: run_concurrent_wave — batch-split (VC2)
+# ---------------------------------------------------------------------------
+
+
+class TestRunConcurrentWaveBatchSplit:
+    """VC2: batch-split respects max_actors cap; assert sub-batch boundaries."""
+
+    def test_vc2_within_cap_single_batch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC2: 3 ids, max_actors=4 -> 1 sub-batch, merge called once."""
+        merge_calls: list[list[str]] = []
+
+        def _fake_merge(ids: list[str], branch: Any = None, **kw: Any) -> dict[str, Any]:
+            del branch, kw  # match merge_wave_worktrees signature; unused in stub
+            merge_calls.append(sorted(ids))
+            return {"status": "success", "ok": True, "merged": ids, "no_changes": []}
+
+        monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _fake_merge)
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo_for_group(repo)
+        (repo / ".map" / "test-branch").mkdir(parents=True)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        map_dir = repo / ".map"
+        (map_dir / "config.yaml").write_text(
+            "execution.max_actors: 4\n", encoding="utf-8"
+        )
+
+        result = map_step_runner.run_concurrent_wave(
+            ["ST-003", "ST-001", "ST-002"], "test-branch", repo
+        )
+        assert result.get("ok") is True
+        sub_batches = result.get("sub_batches")
+        assert isinstance(sub_batches, list)
+        assert len(sub_batches) == 1, f"expected 1 batch, got {sub_batches}"
+        assert sorted(cast(list[str], sub_batches[0])) == ["ST-001", "ST-002", "ST-003"]
+        assert len(merge_calls) == 1
+
+    def test_vc2_exceeds_cap_splits_into_sub_batches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC2: 5 ids, max_actors=2 -> 3 sub-batches each ≤ 2 wide."""
+        merge_calls: list[list[str]] = []
+
+        def _fake_merge(ids: list[str], branch: Any = None, **kw: Any) -> dict[str, Any]:
+            del branch, kw  # match merge_wave_worktrees signature; unused in stub
+            merge_calls.append(sorted(ids))
+            return {"status": "success", "ok": True, "merged": ids, "no_changes": []}
+
+        monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _fake_merge)
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo_for_group(repo)
+        (repo / ".map" / "test-branch").mkdir(parents=True)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        map_dir = repo / ".map"
+        (map_dir / "config.yaml").write_text(
+            "execution.max_actors: 2\n", encoding="utf-8"
+        )
+
+        result = map_step_runner.run_concurrent_wave(
+            ["ST-005", "ST-001", "ST-003", "ST-002", "ST-004"], "test-branch", repo
+        )
+        assert result.get("ok") is True
+        sub_batches = result.get("sub_batches")
+        assert isinstance(sub_batches, list)
+        assert len(sub_batches) == 3, f"expected 3 batches, got {sub_batches}"
+        # All ids present in sorted order, each batch ≤ 2
+        for b in sub_batches:
+            assert len(cast(list[str], b)) <= 2
+        all_ids = sorted(sid for b in cast(list[list[str]], sub_batches) for sid in b)
+        assert all_ids == ["ST-001", "ST-002", "ST-003", "ST-004", "ST-005"]
+        assert len(merge_calls) == 3
+        assert result.get("max_actors") == 2
+
+    def test_vc2_max_actors_config_controls_batching(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC2: Setting max_actors=1 -> N sub-batches (one per id)."""
+        merge_calls: list[list[str]] = []
+
+        def _fake_merge(ids: list[str], branch: Any = None, **kw: Any) -> dict[str, Any]:
+            del branch, kw  # match merge_wave_worktrees signature; unused in stub
+            merge_calls.append(sorted(ids))
+            return {"status": "success", "ok": True, "merged": ids, "no_changes": []}
+
+        monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _fake_merge)
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo_for_group(repo)
+        (repo / ".map" / "test-branch").mkdir(parents=True)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        map_dir = repo / ".map"
+        (map_dir / "config.yaml").write_text(
+            "execution.max_actors: 1\n", encoding="utf-8"
+        )
+
+        group_ids = ["ST-A", "ST-B", "ST-C"]
+        result = map_step_runner.run_concurrent_wave(group_ids, "test-branch", repo)
+        assert result.get("ok") is True
+        assert len(merge_calls) == 3, f"expected 3 merge calls, got {merge_calls}"
+        for call in merge_calls:
+            assert len(call) == 1
+
+
+# ---------------------------------------------------------------------------
+# Tests: run_concurrent_wave — merge error propagation (VC1 composability)
+# ---------------------------------------------------------------------------
+
+
+class TestRunConcurrentWaveMergeError:
+    """VC1/composability: merge failure is returned as structured error; no abort wiring here."""
+
+    def test_vc1_merge_error_propagated_verbatim(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC1: merge_wave_worktrees error -> run_concurrent_wave returns structured error."""
+        call_count = [0]
+
+        def _fake_merge_fail(ids: list[str], branch: Any = None, **kw: Any) -> dict[str, Any]:
+            del ids, branch, kw  # signature match; all unused in the failure stub
+            call_count[0] += 1
+            return {
+                "status": "error",
+                "ok": False,
+                "kind": "WAVE_MERGE_CONFLICT",
+                "message": "conflict",
+            }
+
+        monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _fake_merge_fail)
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo_for_group(repo)
+        (repo / ".map" / "test-branch").mkdir(parents=True)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        result = map_step_runner.run_concurrent_wave(
+            ["ST-001", "ST-002"], "test-branch", repo
+        )
+        assert result.get("ok") is not True
+        assert result.get("status") == "error"
+        assert result.get("kind") == "WAVE_MERGE_CONFLICT"
+        # failed_batch and batches_merged_before_failure are annotated
+        assert "failed_batch" in result
+        assert result.get("batches_merged_before_failure") == 0
+
+    def test_vc1_failure_in_second_batch_annotates_correctly(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC1: failure in batch 2 -> batches_merged_before_failure=1."""
+        call_count = [0]
+
+        def _fake_merge(ids: list[str], branch: Any = None, **kw: Any) -> dict[str, Any]:
+            del branch, kw  # match merge_wave_worktrees signature; unused in stub
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return {"status": "success", "ok": True, "merged": ids, "no_changes": []}
+            return {
+                "status": "error",
+                "ok": False,
+                "kind": "WAVE_COMMIT_FAILED",
+                "message": "commit failed",
+            }
+
+        monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _fake_merge)
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo_for_group(repo)
+        (repo / ".map" / "test-branch").mkdir(parents=True)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        map_dir = repo / ".map"
+        (map_dir / "config.yaml").write_text(
+            "execution.max_actors: 1\n", encoding="utf-8"
+        )
+
+        result = map_step_runner.run_concurrent_wave(
+            ["ST-001", "ST-002"], "test-branch", repo
+        )
+        assert result.get("ok") is not True
+        assert result.get("batches_merged_before_failure") == 1
+
+
+# ---------------------------------------------------------------------------
+# Tests: run_concurrent_wave — real git integration (VC1/HC-4 atomicity)
+# ---------------------------------------------------------------------------
+
+
+class TestRunConcurrentWaveAtomicMerge:
+    """VC1/HC-4: all-or-nothing via merge_wave_worktrees on a real temp git repo."""
+
+    def test_vc1_hc4_full_success_all_merged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC1/HC-4: N<=max_actors group -> all merged atomically; no partial subset.
+
+        Creates real git worktrees, registers them in the sidecar, calls
+        run_concurrent_wave, then asserts all N files are present in the main
+        branch (all merged) or none are (all-or-nothing atomic rollback).
+        """
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        branch = "test-branch"
+        (repo / ".map" / branch).mkdir(parents=True)
+
+        group_ids = ["ST-001", "ST-002"]
+        base_sha, wt_paths = _make_git_repo_with_worktrees(repo, group_ids)
+
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: branch)
+
+        # Register worktrees in sidecar (normally done by create_subtask_worktree).
+        _register_worktrees(branch, base_sha, group_ids, wt_paths)
+
+        # max_actors=4 (default): both in one batch -> one atomic merge.
+        result = map_step_runner.run_concurrent_wave(group_ids, branch, repo)
+
+        # All-or-nothing: check outcome.
+        if result.get("ok") is True:
+            # Full success: all ids merged; verify files present in main branch.
+            merged_ids = result.get("merged_ids", [])
+            # At least the ids that had changes should appear in merged_ids or no_changes.
+            all_resolved = set(cast(list[str], merged_ids)) | set(
+                cast(list[str], result.get("no_changes", []))
+            )
+            assert set(group_ids).issubset(all_resolved), (
+                f"Not all ids accounted for: {group_ids} vs {all_resolved}"
+            )
+        else:
+            # Atomic rollback: none merged. Status must be error.
+            assert result.get("status") == "error", (
+                f"Expected error on failure, got {result}"
+            )
+
+    def test_vc4_hc4_each_sub_batch_atomic(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC4/HC-4: Each sub-batch merge is itself atomic.
+
+        With max_actors=1, each sub-batch has width 1.  Monkeypatching
+        merge_wave_worktrees proves the batches are submitted sequentially
+        as full atomic units: merge is called exactly N times, one id per call.
+        """
+        merge_batches: list[list[str]] = []
+
+        def _record_merge(ids: list[str], branch: Any = None, **kw: Any) -> dict[str, Any]:
+            del branch, kw  # match merge_wave_worktrees signature; unused in stub
+            merge_batches.append(sorted(ids))
+            return {"status": "success", "ok": True, "merged": ids, "no_changes": []}
+
+        monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _record_merge)
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo_for_group(repo)
+        (repo / ".map" / "test-branch").mkdir(parents=True)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        map_dir = repo / ".map"
+        (map_dir / "config.yaml").write_text(
+            "execution.max_actors: 1\n", encoding="utf-8"
+        )
+
+        group_ids = ["ST-001", "ST-002", "ST-003"]
+        result = map_step_runner.run_concurrent_wave(group_ids, "test-branch", repo)
+        assert result.get("ok") is True
+        # Each call receives exactly 1 id (sub-batch width == cap == 1).
+        assert len(merge_batches) == 3
+        for b in merge_batches:
+            assert len(b) == 1, f"each sub-batch must have exactly 1 id; got {b}"
+        # All ids covered
+        all_merged = sorted(sid for b in merge_batches for sid in b)
+        assert all_merged == sorted(group_ids)

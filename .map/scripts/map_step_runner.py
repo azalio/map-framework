@@ -17220,6 +17220,137 @@ def concurrency_ready(
     }
 
 
+# ---------------------------------------------------------------------------
+# Concurrent-wave COORDINATOR (5b.4, ST-005)
+# ---------------------------------------------------------------------------
+
+_MAX_ACTORS_MIN: int = 1
+_MAX_ACTORS_MAX: int = 8
+_MAX_ACTORS_DEFAULT: int = 4
+
+
+def _max_actors(project_dir: Optional[Path] = None) -> int:
+    """Read ``execution.max_actors`` from config and clamp to [1, 8].
+
+    Mirrors ``clamp_max_actors()`` from ``MapConfig`` without importing it.
+    Non-int / bool / absent values fall back to the default 4.
+    """
+    raw = _map_config_int(
+        project_dir or (_wt_project_dir() or Path(".")),
+        "execution.max_actors",
+        _MAX_ACTORS_DEFAULT,
+    )
+    # _map_config_int already returns > 0 or default; clamp to [1, 8].
+    return max(_MAX_ACTORS_MIN, min(_MAX_ACTORS_MAX, raw))
+
+
+def _chunk(items: list[str], size: int) -> list[list[str]]:
+    """Split *items* into ordered sub-lists each of width <= *size*."""
+    if size < 1:
+        size = 1
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+def run_concurrent_wave(
+    group_ids: list[str],
+    branch: Optional[str] = None,
+    project_dir: Optional[Path] = None,
+) -> dict[str, object]:
+    """Coordinate an N-way concurrent wave: batch-split + atomic sub-batch merge.
+
+    This function is the COORDINATOR side of concurrent dispatch.  It does NOT
+    spawn actor agents — the skill emits N Task blocks to start actors (ST-007).
+    Its responsibilities are:
+
+    1. **Batch-split**: read ``max_actors`` from config (via ``_max_actors()``),
+       clamp to [1, 8], then split the sorted ``group_ids`` into sequential
+       sub-batches each of width <= cap.  A group already within the cap is one
+       batch (no split).
+
+    2. **Atomic sub-batch merge**: for each sub-batch call the existing
+       ``merge_wave_worktrees(sub_batch, branch=...)`` which is all-or-nothing
+       (HC-4, #284 invariant).  The NEXT sub-batch branches from the prior
+       sub-batch's post-merge HEAD.  Do NOT re-implement merge.
+
+    3. **Telemetry / lifecycle**: call ``record_dispatch_actual`` CLI verb (via
+       ``begin_wave_group`` + ``record_group_lifecycle`` — these must be called
+       by the skill/coordinator before the actors run; this function only reads
+       state and calls merge).  Telemetry is emitted exactly ONCE per wave via
+       the ``record_dispatch_actual`` CLI (the skill wires that in ST-007).
+
+    4. **Rollback-on-failure composability**: on a ``merge_wave_worktrees``
+       error the structured error dict is returned as-is.  Abort / restart
+       wiring is ST-006 — this function stays composable.
+
+    Returns on full success::
+
+        {
+            "status": "success",
+            "ok": True,
+            "group_ids": [...],          # original sorted ids
+            "sub_batches": [[...], ...], # how ids were split
+            "max_actors": int,           # cap used
+            "batches_merged": int,       # number of sub-batches atomically merged
+            "merged_ids": [...],         # all ids that landed (may be < group_ids if no-change)
+            "no_changes": [...],         # ids with no-change-in-worktree
+        }
+
+    Returns on merge failure (structured, composable)::
+
+        {
+            "status": "error",
+            "ok": False,
+            "kind": ...,
+            "failed_batch": [...],
+            "batches_merged_before_failure": int,
+            ...                          # forwarded from merge_wave_worktrees
+        }
+    """
+    if not _wt_is_git_repo():
+        return _wt_error(_WT_REASON_NOT_GIT_REPO, "not inside a git work tree")
+
+    pd = project_dir or _wt_project_dir() or Path(".")
+    branch_name = branch or get_branch_name()
+
+    # Deterministic sorted list — order-of-call must not vary group membership.
+    ids_sorted = sorted(str(s) for s in group_ids if str(s).strip())
+    if not ids_sorted:
+        return _wt_error("NO_SUBTASKS", "no subtask ids supplied to run_concurrent_wave")
+
+    cap = _max_actors(pd)
+    sub_batches = _chunk(ids_sorted, cap)
+
+    merged_ids: list[str] = []
+    no_changes: list[str] = []
+    batches_merged = 0
+
+    for batch in sub_batches:
+        result = merge_wave_worktrees(batch, branch=branch_name, skip_post_wave=True)
+        if result.get("status") == "error" or not result.get("ok"):
+            # Propagate the merge error verbatim + annotate for callers.
+            error: dict[str, object] = dict(result)
+            error["failed_batch"] = batch
+            error["batches_merged_before_failure"] = batches_merged
+            return error
+        # Accumulate success data for the final return.
+        raw_merged = result.get("merged", [])
+        raw_no_changes = result.get("no_changes", [])
+        merged_ids.extend(list(raw_merged) if isinstance(raw_merged, list) else [])
+        no_changes.extend(list(raw_no_changes) if isinstance(raw_no_changes, list) else [])
+        batches_merged += 1
+
+    return {
+        "status": "success",
+        "ok": True,
+        "group_ids": ids_sorted,
+        "sub_batches": sub_batches,
+        "max_actors": cap,
+        "batches_merged": batches_merged,
+        "merged_ids": merged_ids,
+        "no_changes": no_changes,
+    }
+
+
 if __name__ == "__main__":
     # Simple CLI interface for testing
     import sys
@@ -18921,6 +19052,29 @@ if __name__ == "__main__":
             "report_written": _written,
             "out_path": str(_out_path) if _written else None,
         }, indent=2))
+
+    elif func_name == "run_concurrent_wave":
+        # CLI: run_concurrent_wave <subtask_id> [<subtask_id> ...] [--branch B]
+        #      [--project-dir P]
+        #
+        # Coordinator-owned N-way concurrent wave (5b.4 / ST-005).
+        # Batch-splits group_ids by max_actors (from config, clamped [1,8]),
+        # then atomically merges each sub-batch via merge_wave_worktrees.
+        # Does NOT spawn actors — the skill (ST-007) emits Task blocks.
+        # On merge failure returns the structured error and exits 1.
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py run_concurrent_wave")
+        _p.add_argument("group_ids", nargs="+", help="Subtask IDs in the concurrent wave")
+        _p.add_argument("--branch", default=None, help="Branch name (default: current branch)")
+        _p.add_argument("--project-dir", default=None, dest="project_dir",
+                        help="Project root (default: git top-level)")
+        _a = _p.parse_args(sys.argv[2:])
+        _pd = Path(_a.project_dir) if _a.project_dir else None
+        _wt_r = run_concurrent_wave(_a.group_ids, _a.branch, _pd)
+        print(json.dumps(_wt_r, indent=2))
+        if _wt_r.get("status") == "error" or not _wt_r.get("ok"):
+            sys.exit(1)
 
     else:
         # Helpful redirect: when the user passes a command that belongs to
