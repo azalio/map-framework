@@ -251,6 +251,11 @@ AGGRESSIVE_COMPRESSION_MULTIPLIER = 0.4
 # concurrent Task dispatch is actually implemented and safe to enable.
 WAVE_CONCURRENCY_ENABLED = False
 
+# Stable reason codes for get_wave_step return sites (ST-002).
+WAVE_REASON_NO_WAVES = "no_waves"
+WAVE_REASON_WAVE_COMPLETE = "wave_complete"
+WAVE_REASON_DISPATCH_SEQUENTIAL = "dispatch_sequential_5a"
+
 
 def _read_map_config_scalars(project_dir: Path) -> dict[str, str]:
     """Read top-level scalar values from .map/config.yaml without dependencies."""
@@ -2298,13 +2303,26 @@ def get_wave_step(branch: str) -> dict:
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
 
+    # Compute structured dispatch signal fields (ST-002).
+    dispatch_mode = "concurrent" if WAVE_CONCURRENCY_ENABLED else "sequential"
+    try:
+        from map_step_runner import (  # pyright: ignore[reportMissingImports]
+            _worktree_isolation_mode,
+        )
+        isolation_active = _worktree_isolation_mode(Path(".")) != "off"
+    except ImportError:
+        isolation_active = False
+
     if not state.execution_waves:
         return {
             "mode": "sequential",
             "wave_index": 0,
             "subtasks": [],
             "is_complete": True,
-            "concurrency_enabled": WAVE_CONCURRENCY_ENABLED,
+            "concurrency_enabled": dispatch_mode == "concurrent",
+            "dispatch_mode": dispatch_mode,
+            "isolation_active": isolation_active,
+            "reason": WAVE_REASON_NO_WAVES,
             "message": "No execution waves configured. Use sequential mode.",
         }
 
@@ -2314,7 +2332,10 @@ def get_wave_step(branch: str) -> dict:
             "wave_index": state.current_wave_index,
             "subtasks": [],
             "is_complete": True,
-            "concurrency_enabled": WAVE_CONCURRENCY_ENABLED,
+            "concurrency_enabled": dispatch_mode == "concurrent",
+            "dispatch_mode": dispatch_mode,
+            "isolation_active": isolation_active,
+            "reason": WAVE_REASON_WAVE_COMPLETE,
         }
 
     wave = state.execution_waves[state.current_wave_index]
@@ -2353,7 +2374,10 @@ def get_wave_step(branch: str) -> dict:
         "is_complete": False,
         # concurrency_enabled=False: even when mode=="parallel" (width>=2 wave),
         # dispatch is strictly sequential this slice. Slice 5 flips WAVE_CONCURRENCY_ENABLED.
-        "concurrency_enabled": WAVE_CONCURRENCY_ENABLED,
+        "concurrency_enabled": dispatch_mode == "concurrent",
+        "dispatch_mode": dispatch_mode,
+        "isolation_active": isolation_active,
+        "reason": WAVE_REASON_DISPATCH_SEQUENTIAL,
     }
 
 

@@ -4943,5 +4943,157 @@ def test_vc3_strategy_cli_handler(
     assert "has_parallel_groups" in data
 
 
+# ---------------------------------------------------------------------------
+# ST-002: structured dispatch signal in get_wave_step
+# ---------------------------------------------------------------------------
+
+
+def test_vc1_get_wave_step_dispatch_mode_sequential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VC1: dispatch_mode=='sequential' and isolation_active/reason non-empty for both
+    width-1 and width>=2 active waves while WAVE_CONCURRENCY_ENABLED is False."""
+    import types
+
+    monkeypatch.chdir(tmp_path)
+
+    def _fake_runner(isolation: str) -> "types.ModuleType":
+        mod = types.ModuleType("map_step_runner")
+
+        def _iso(_project_dir: object) -> str:
+            del _project_dir
+            return isolation
+
+        mod._worktree_isolation_mode = _iso  # type: ignore[attr-defined]
+        return mod
+
+    import sys as _sys
+
+    _orig_msr = _sys.modules.get("map_step_runner")
+    try:
+        # width-1 wave, isolation=required → isolation_active=True
+        _sys.modules["map_step_runner"] = _fake_runner("required")
+        branch1 = "test-st002-vc1-width1"
+        _write_step_state(branch1, tmp_path, execution_waves=[["ST-001"]])
+        result1 = map_orchestrator.get_wave_step(branch1)
+
+        assert result1["dispatch_mode"] == "sequential", (
+            f"width-1 wave: expected dispatch_mode='sequential', got: {result1}"
+        )
+        assert result1["isolation_active"] is True, (
+            f"width-1 wave: isolation='required' → isolation_active must be True: {result1}"
+        )
+        assert result1["reason"], f"width-1 wave: reason must be non-empty: {result1}"
+        assert result1["is_complete"] is False
+
+        # width-2 wave, isolation=off → isolation_active=False
+        _sys.modules["map_step_runner"] = _fake_runner("off")
+        branch2 = "test-st002-vc1-width2"
+        _write_step_state(branch2, tmp_path, execution_waves=[["ST-001", "ST-002"]])
+        result2 = map_orchestrator.get_wave_step(branch2)
+
+        assert result2["dispatch_mode"] == "sequential", (
+            f"width-2 wave: expected dispatch_mode='sequential', got: {result2}"
+        )
+        assert result2["isolation_active"] is False, (
+            f"width-2 wave: isolation='off' → isolation_active must be False: {result2}"
+        )
+        assert result2["reason"], f"width-2 wave: reason must be non-empty: {result2}"
+        assert result2["is_complete"] is False
+    finally:
+        if _orig_msr is None:
+            _sys.modules.pop("map_step_runner", None)
+        else:
+            _sys.modules["map_step_runner"] = _orig_msr
+
+
+def test_vc2_dispatch_mode_never_concurrent_in_5a(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VC2: dispatch_mode is 'sequential' (never 'concurrent') on every return path
+    while WAVE_CONCURRENCY_ENABLED is False."""
+    monkeypatch.chdir(tmp_path)
+    branch = "test-st002-vc2"
+
+    # Path 1: no waves → no_waves early return
+    _write_step_state(branch, tmp_path, execution_waves=[])
+    r_no_waves = map_orchestrator.get_wave_step(branch)
+    assert r_no_waves["dispatch_mode"] == "sequential", (
+        f"no-waves path: dispatch_mode must be 'sequential': {r_no_waves}"
+    )
+    assert r_no_waves["concurrency_enabled"] is False, (
+        f"no-waves path: concurrency_enabled alias must be False: {r_no_waves}"
+    )
+
+    # Path 2: wave exhausted → wave_complete early return
+    _write_step_state(
+        branch,
+        tmp_path,
+        execution_waves=[["ST-001"]],
+        extra={"current_wave_index": 99},
+    )
+    r_complete = map_orchestrator.get_wave_step(branch)
+    assert r_complete["dispatch_mode"] == "sequential", (
+        f"wave-complete path: dispatch_mode must be 'sequential': {r_complete}"
+    )
+    assert r_complete["concurrency_enabled"] is False, (
+        f"wave-complete path: concurrency_enabled alias must be False: {r_complete}"
+    )
+
+    # Path 3: active wave (width>=2) → main return
+    _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
+    r_active = map_orchestrator.get_wave_step(branch)
+    assert r_active["dispatch_mode"] == "sequential", (
+        f"active-wave path: dispatch_mode must be 'sequential': {r_active}"
+    )
+    assert r_active["concurrency_enabled"] is False, (
+        f"active-wave path: concurrency_enabled alias must be False: {r_active}"
+    )
+
+
+def test_vc3_get_wave_step_reason_codes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VC3: each of the three return paths emits its distinct stable reason code."""
+    monkeypatch.chdir(tmp_path)
+    branch = "test-st002-vc3"
+
+    # Path 1: no waves
+    _write_step_state(branch, tmp_path, execution_waves=[])
+    r_no_waves = map_orchestrator.get_wave_step(branch)
+    assert r_no_waves["reason"] == map_orchestrator.WAVE_REASON_NO_WAVES, (
+        f"no-waves path: expected reason={map_orchestrator.WAVE_REASON_NO_WAVES!r}: {r_no_waves}"
+    )
+
+    # Path 2: wave index exhausted
+    _write_step_state(
+        branch,
+        tmp_path,
+        execution_waves=[["ST-001"]],
+        extra={"current_wave_index": 99},
+    )
+    r_complete = map_orchestrator.get_wave_step(branch)
+    assert r_complete["reason"] == map_orchestrator.WAVE_REASON_WAVE_COMPLETE, (
+        f"wave-complete path: expected reason={map_orchestrator.WAVE_REASON_WAVE_COMPLETE!r}: "
+        f"{r_complete}"
+    )
+
+    # Path 3: active wave
+    _write_step_state(branch, tmp_path, execution_waves=[["ST-001"]])
+    r_active = map_orchestrator.get_wave_step(branch)
+    assert r_active["reason"] == map_orchestrator.WAVE_REASON_DISPATCH_SEQUENTIAL, (
+        f"active-wave path: expected reason={map_orchestrator.WAVE_REASON_DISPATCH_SEQUENTIAL!r}: "
+        f"{r_active}"
+    )
+
+    # All three codes must be distinct stable strings
+    codes = {
+        map_orchestrator.WAVE_REASON_NO_WAVES,
+        map_orchestrator.WAVE_REASON_WAVE_COMPLETE,
+        map_orchestrator.WAVE_REASON_DISPATCH_SEQUENTIAL,
+    }
+    assert len(codes) == 3, f"reason codes must all be distinct: {codes}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
