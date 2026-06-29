@@ -258,6 +258,9 @@ WAVE_REASON_DISPATCH_SEQUENTIAL = "dispatch_sequential_5a"
 # Stable reason codes for compute_dispatch_gate (ST-001, Slice 5b).
 WAVE_REASON_CONCURRENT_GATED = "concurrent_gated"
 WAVE_REASON_GATE_NOT_PARALLELIZABLE = "gate_not_parallelizable"
+# Current wave is width-1 even though a later wave is parallel; dispatch sequentially
+# for this wave — not an error, just the natural plan structure.
+WAVE_REASON_CURRENT_WAVE_SEQUENTIAL = "current_wave_sequential"
 
 
 class DispatchGateError(RuntimeError):
@@ -2580,7 +2583,13 @@ def compute_dispatch_gate(
        return sequential with WAVE_REASON_GATE_NOT_PARALLELIZABLE (not an error —
        the plan has no parallelizable groups).
 
-    4. If concurrent_dispatch is True AND isolation != 'off' AND concurrency_allowed:
+    4. If concurrent_dispatch is True AND isolation != 'off' AND concurrency_allowed
+       AND the CURRENT wave (execution_waves[current_wave_index]) has width < 2:
+       return sequential with WAVE_REASON_CURRENT_WAVE_SEQUENTIAL (not an error —
+       the current wave is width-1 even though a later wave is parallel).
+
+    5. If concurrent_dispatch is True AND isolation != 'off' AND concurrency_allowed
+       AND the CURRENT wave has width >= 2:
        return concurrent with WAVE_REASON_CONCURRENT_GATED.
 
     Args:
@@ -2633,7 +2642,7 @@ def compute_dispatch_gate(
             "Set worktree.isolation to 'auto' or 'required' to enable concurrent dispatch."
         )
 
-    # Step 3 & 4: check whether the plan is actually parallelizable.
+    # Step 3: check whether the plan is actually parallelizable (any wave has width>=2).
     strategy_result = select_execution_strategy(branch, project_dir)
     concurrency_allowed = strategy_result.get("concurrency_allowed", False)
 
@@ -2641,6 +2650,20 @@ def compute_dispatch_gate(
         return {
             "dispatch_mode": "sequential",
             "reason": WAVE_REASON_GATE_NOT_PARALLELIZABLE,
+        }
+
+    # Step 4: plan has at least one parallel wave, but gate on the ACTIVE wave.
+    # select_execution_strategy checks any wave (has_parallel_groups), not the
+    # current wave index. A width-1 current wave must dispatch sequentially even
+    # if a later wave is parallel — dispatch_mode is per-wave, not per-plan.
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+    waves = state.execution_waves
+    idx = state.current_wave_index
+    if idx >= len(waves) or len(waves[idx]) < 2:
+        return {
+            "dispatch_mode": "sequential",
+            "reason": WAVE_REASON_CURRENT_WAVE_SEQUENTIAL,
         }
 
     return {

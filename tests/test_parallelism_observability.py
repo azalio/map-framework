@@ -361,6 +361,21 @@ class TestClassifyDispatch:
         )
         assert outcome == DISPATCH_OUTCOME_PHANTOM_PARALLEL
 
+    def test_vc4_phantom_parallel_requires_both_signals_low(self) -> None:
+        # F1 guard: skill_reported=True, same_turn<=1, BUT max_in_flight>=2.
+        # Both objective signals must confirm ≤1 for phantom_parallel; contradictory
+        # evidence (skill_reported + same_turn<=1 BUT max_in_flight>=2) → unknown.
+        outcome = classify_dispatch(
+            same_turn_task_count=1,
+            max_in_flight=2,
+            base_shas=["sha-aaa"],
+            skill_reported_concurrent=True,
+        )
+        assert outcome == DISPATCH_OUTCOME_UNKNOWN, (
+            f"Contradictory evidence (skill_reported + same_turn<=1 + max_in_flight>=2) "
+            f"must resolve to unknown, not phantom_parallel; got {outcome!r}"
+        )
+
     # sequential_observed when same-turn ≤1 AND max_in_flight ≤1 (rule 5)
     def test_vc3_sequential_observed_single_task(self) -> None:
         outcome = classify_dispatch(

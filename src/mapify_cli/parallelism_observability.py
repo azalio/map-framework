@@ -167,8 +167,9 @@ def classify_dispatch(
        (both transcript count AND in-flight overlap confirm concurrency)
     3. ``same_turn_task_count >= 2 and max_in_flight <= 1``  →  same_turn_but_host_sequential
        (tasks queued same-turn but host ran them serially)
-    4. ``skill_reported_concurrent and same_turn_task_count <= 1``  →  phantom_parallel
-       (skill self-reported concurrency but evidence shows ≤1 task)
+    4. ``skill_reported_concurrent and same_turn_task_count <= 1 and max_in_flight <= 1``
+       →  phantom_parallel (skill self-reported concurrency but ALL objective evidence
+       shows ≤1 task; contradictory evidence same_turn<=1 BUT max_in_flight>=2 → unknown)
     5. ``same_turn_task_count <= 1 and max_in_flight <= 1``  →  sequential_observed
        (normal sequential execution)
     6. else  →  unknown
@@ -202,9 +203,12 @@ def classify_dispatch(
     if same_turn_task_count >= 2 and max_in_flight <= 1:
         return DISPATCH_OUTCOME_SAME_TURN_BUT_HOST_SEQUENTIAL
 
-    # Rule 4: skill self-report present but objective evidence says ≤1 task.
+    # Rule 4: skill self-report present but ALL objective evidence says ≤1 task.
+    # Both same_turn_task_count AND max_in_flight must confirm ≤1; if max_in_flight>=2
+    # the evidence is contradictory (skill_reported says concurrent but same-turn says
+    # ≤1 while in-flight says ≥2) → fall through to unknown (rule 6).
     # Self-report is consulted ONLY here; never treated as authoritative.
-    if skill_reported_concurrent and same_turn_task_count <= 1:
+    if skill_reported_concurrent and same_turn_task_count <= 1 and max_in_flight <= 1:
         return DISPATCH_OUTCOME_PHANTOM_PARALLEL
 
     # Rule 5: normal sequential execution confirmed.

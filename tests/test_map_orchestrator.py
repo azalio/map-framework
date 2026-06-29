@@ -5436,5 +5436,76 @@ def test_vc3_flag_on_isolation_required_concurrent_and_sequential(
     )
 
 
+def test_vc4_mixed_plan_current_width1_later_width2_sequential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F2 mixed-plan gate: width-1 current wave + width>=2 later wave -> sequential
+    with WAVE_REASON_CURRENT_WAVE_SEQUENTIAL (not WAVE_REASON_GATE_NOT_PARALLELIZABLE).
+
+    Non-tautology: pointing current_wave_index at the width-2 wave (Case B below)
+    yields concurrent — proving the two reason-code paths are distinct.
+    """
+    import sys as _sys
+
+    monkeypatch.chdir(tmp_path)
+
+    _write_config_keys(
+        tmp_path,
+        **{
+            "execution.concurrent_dispatch": "true",
+            "execution.wave_mode": "auto",
+            "worktree.isolation": "required",
+        },
+    )
+
+    # Case A: current wave is width-1 (index=0), later wave is width-2 (index=1).
+    branch_a = "test-st001-vc4-mixed-plan-current-1"
+    _write_step_state(
+        branch_a,
+        tmp_path,
+        execution_waves=[["ST-001"], ["ST-002", "ST-003"]],
+        extra={"current_wave_index": 0},
+    )
+
+    _orig_msr_a = _sys.modules.pop("map_step_runner", None)
+    try:
+        result_a = map_orchestrator.compute_dispatch_gate(branch_a, tmp_path)
+    finally:
+        if _orig_msr_a is not None:
+            _sys.modules["map_step_runner"] = _orig_msr_a
+
+    assert result_a["dispatch_mode"] == "sequential", (
+        f"width-1 current wave must yield sequential: {result_a}"
+    )
+    assert result_a["reason"] == map_orchestrator.WAVE_REASON_CURRENT_WAVE_SEQUENTIAL, (
+        f"mixed-plan with width-1 current wave must use WAVE_REASON_CURRENT_WAVE_SEQUENTIAL, "
+        f"not WAVE_REASON_GATE_NOT_PARALLELIZABLE: {result_a}"
+    )
+
+    # Case B (non-tautology probe): same plan, current_wave_index=1 (the width-2 wave)
+    # must return concurrent — proving Case A's reason is about CURRENT wave, not the plan.
+    branch_b = "test-st001-vc4-mixed-plan-current-2"
+    _write_step_state(
+        branch_b,
+        tmp_path,
+        execution_waves=[["ST-001"], ["ST-002", "ST-003"]],
+        extra={"current_wave_index": 1},
+    )
+
+    _orig_msr_b = _sys.modules.pop("map_step_runner", None)
+    try:
+        result_b = map_orchestrator.compute_dispatch_gate(branch_b, tmp_path)
+    finally:
+        if _orig_msr_b is not None:
+            _sys.modules["map_step_runner"] = _orig_msr_b
+
+    assert result_b["dispatch_mode"] == "concurrent", (
+        f"width-2 current wave (index=1) must yield concurrent: {result_b}"
+    )
+    assert result_b["reason"] == map_orchestrator.WAVE_REASON_CONCURRENT_GATED, (
+        f"width-2 current wave must use WAVE_REASON_CONCURRENT_GATED: {result_b}"
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
