@@ -48,14 +48,16 @@ def _write_config(tmp_path: Path, body: str) -> None:
 
 
 class TestWorktreeConfig:
-    def test_defaults_off(self) -> None:
+    def test_defaults_auto(self) -> None:
+        """Slice 6: worktree_isolation default flipped from 'off' to 'auto'."""
         cfg = MapConfig()
-        assert cfg.worktree_isolation == "off"
+        assert cfg.worktree_isolation == "auto"
         assert cfg.worktree_max_deletions == 50
 
     def test_absent_config_uses_defaults(self, tmp_path: Path) -> None:
+        """Slice 6: absent config → 'auto' (Slice 6 default, not 'off')."""
         cfg = load_map_config(tmp_path)
-        assert cfg.worktree_isolation == "off"
+        assert cfg.worktree_isolation == "auto"
         assert cfg.worktree_max_deletions == 50
 
     def test_dotted_keys_alias_to_fields(self, tmp_path: Path) -> None:
@@ -202,6 +204,7 @@ class TestWorktreeDisabled:
     def test_create_noops_when_disabled(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """Legacy bool 'false' maps to 'off' → create returns status='disabled'."""
         r = _make_repo(tmp_path)
         (r / ".map").mkdir()
         (r / ".map" / "config.yaml").write_text("worktree.isolation: false\n")
@@ -210,12 +213,22 @@ class TestWorktreeDisabled:
         assert result["status"] == "disabled"
         assert result["ok"] is False
 
-    def test_create_noops_when_no_config(
+    def test_create_noops_when_explicit_off(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """Explicit 'worktree.isolation: off' (per-repo opt-out) → status='disabled'.
+
+        Slice 6: replaced the old 'no config → disabled' test — without config the
+        default is now 'auto' (ON), so no-config produces a success (worktree created).
+        The per-repo opt-out uses the explicit 'off' enum value.
+        """
         r = _make_repo(tmp_path)
+        (r / ".map").mkdir()
+        (r / ".map" / "config.yaml").write_text("worktree.isolation: off\n")
         monkeypatch.chdir(r)
-        assert m.create_subtask_worktree("ST-001")["status"] == "disabled"
+        result = m.create_subtask_worktree("ST-001")
+        assert result["status"] == "disabled"
+        assert result["ok"] is False
 
 
 class TestWorktreeLifecycle:

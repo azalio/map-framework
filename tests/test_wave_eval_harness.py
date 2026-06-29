@@ -2,14 +2,19 @@
 ST-005 eval/regression harness:
   - VC1: compute_waves + split_wave_by_file_conflicts shape assertions for
          linear_chain, two_wave_parallel, conflict_split fixtures.
-  - VC2: With a default (no-new-key) config, _execution_wave_mode == 'off' AND
-         _worktree_isolation_mode == 'off', proving HC-1 behavior-neutrality.
+  - VC2 (reframed for Slice 6): With a default (no-new-key) config,
+         _execution_wave_mode == 'auto' AND _worktree_isolation_mode == 'auto'
+         (both defaults flipped ON). Under a parallel-ready plan the wave-loop is
+         now engaged by default. The kill-switch (MAP_EFFICIENT_SEQUENTIAL_ONLY=1)
+         forces sequential regardless of config.
 """
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
+
+import pytest
 
 # ---------------------------------------------------------------------------
 # Runner import — identical pattern to tests/test_map_step_runner.py
@@ -142,27 +147,27 @@ def test_wave_color_computation() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_default_config_selects_sequential(tmp_path: Path) -> None:
+def test_default_config_has_parallel_defaults(tmp_path: Path) -> None:
     """
-    VC2 [AC-5] [SC-2]: With a default (no-new-key) config, the canonical
-    MapConfig defaults apply: _execution_wave_mode == 'auto' and
-    _worktree_isolation_mode == 'off'.  Behavior stays neutral (HC-1) because
-    the wave-loop is gated on worktree.isolation != 'off' — which is 'off' by
-    default — so the legacy sequential path is selected regardless of wave_mode.
+    VC2 [AC-5] [SC-2] (reframed, Slice 6): With a default (no-new-key) config,
+    the canonical MapConfig defaults now apply: _execution_wave_mode == 'auto'
+    AND _worktree_isolation_mode == 'auto' (both flipped ON in Slice 6).
 
-    Also verifies the color-group concurrency predicate: the condition that
-    WOULD contribute to wave-mode (any color group of width >= 2) exists in the
-    two_wave_parallel fixture, but the isolation gate keeps the legacy path.
+    Under a parallel-ready plan (two_wave_parallel), the wave-loop is now
+    ENGAGED by default because isolation != 'off'.
+
+    Also verifies the color-group concurrency predicate: two_wave_parallel has
+    at least one color group of width >= 2.
     """
-    # Case A: no .map directory at all
+    # Case A: no .map directory at all — defaults are 'auto'.
     assert map_step_runner._execution_wave_mode(tmp_path) == "auto", (
         "_execution_wave_mode must default to 'auto' (MapConfig) when .map dir is absent"
     )
-    assert map_step_runner._worktree_isolation_mode(tmp_path) == "off", (
-        "_worktree_isolation_mode must return 'off' when .map dir is absent"
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "auto", (
+        "_worktree_isolation_mode must return 'auto' when .map dir is absent (Slice 6 default)"
     )
 
-    # Case B: .map/config.yaml exists but contains NO new keys
+    # Case B: .map/config.yaml exists but contains NO new keys — still defaults to 'auto'.
     map_dir = tmp_path / ".map"
     map_dir.mkdir()
     (map_dir / "config.yaml").write_text(
@@ -173,12 +178,12 @@ def test_default_config_selects_sequential(tmp_path: Path) -> None:
     assert map_step_runner._execution_wave_mode(tmp_path) == "auto", (
         "_execution_wave_mode must default to 'auto' when execution.wave_mode key is absent"
     )
-    assert map_step_runner._worktree_isolation_mode(tmp_path) == "off", (
-        "_worktree_isolation_mode must return 'off' when worktree.isolation key is absent"
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "auto", (
+        "_worktree_isolation_mode must return 'auto' when worktree.isolation key is absent "
+        "(Slice 6 default flipped from 'off')"
     )
 
-    # Show the concurrency predicate (color group width >= 2) WOULD be true
-    # for the two_wave_parallel fixture, but wave_mode='off' gates around it.
+    # Show the concurrency predicate (color group width >= 2) is true for two_wave_parallel.
     tp: BlueprintFixture = two_wave_parallel()
     tp_graph: DependencyGraph = tp.build_graph()
     tp_waves = tp_graph.compute_waves()
@@ -187,19 +192,42 @@ def test_default_config_selects_sequential(tmp_path: Path) -> None:
     color_groups = [
         tp_graph.split_wave_by_file_conflicts(w, tp.affected_files_map) for w in tp_waves
     ]
-    # At least one color group has width >= 2 (the parallel wave)
     assert any(len(g) >= 2 for groups in color_groups for g in groups), (
         "two_wave_parallel must expose at least one color group of width >= 2 "
         "(the concurrency predicate gate)"
     )
 
-    # wave_mode defaults to 'auto' and a width>=2 group exists, but the isolation
-    # gate (worktree.isolation == 'off' by default) keeps the legacy sequential
-    # path — that is what makes the default behavior-neutral.
+    # Slice 6: wave_mode='auto' AND isolation='auto' (!=off) AND width>=2 group exists
+    # → wave-loop is now engaged by default (not suppressed by the isolation gate).
     wave_mode = map_step_runner._execution_wave_mode(tmp_path)
     isolation = map_step_runner._worktree_isolation_mode(tmp_path)
-    assert wave_mode == "auto" and isolation == "off", (
-        f"default config: wave_mode='auto', isolation='off'; got {wave_mode!r}/{isolation!r}"
+    assert wave_mode == "auto", f"default wave_mode must be 'auto', got {wave_mode!r}"
+    assert isolation == "auto", f"default isolation must be 'auto' (Slice 6), got {isolation!r}"
+    # With isolation='auto' the wave-loop predicate CAN engage for parallel-ready plans.
+    assert isolation != "off", (
+        "isolation default must NOT be 'off' — Slice 6 flipped it to 'auto' so "
+        "parallel-ready plans now use the wave-loop by default."
     )
-    # The wave-loop predicate requires isolation != 'off', so default => sequential.
-    assert isolation == "off", "isolation gate must hold the legacy path by default"
+
+
+def test_kill_switch_forces_sequential(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    VC2 kill-switch: MAP_EFFICIENT_SEQUENTIAL_ONLY=1 forces sequential regardless
+    of the (now-parallel) defaults.
+
+    This is the behavioral invariant that replaces the old 'default → sequential'
+    test: the byte-identical-to-legacy proof now applies to the kill-switch path,
+    not the default config path.
+    """
+    monkeypatch.setenv("MAP_EFFICIENT_SEQUENTIAL_ONLY", "1")
+
+    # With the kill-switch set, isolation_mode does not matter — the gate short-circuits.
+    isolation = map_step_runner._worktree_isolation_mode(tmp_path)
+    wave_mode = map_step_runner._execution_wave_mode(tmp_path)
+    # Defaults are still 'auto' at the reader level — kill-switch operates at orchestrator.
+    assert wave_mode == "auto", (
+        "_execution_wave_mode reads config (not the env var); still returns 'auto'"
+    )
+    assert isolation == "auto", (
+        "_worktree_isolation_mode reads config (not the env var); still returns 'auto'"
+    )

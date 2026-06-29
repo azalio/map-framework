@@ -196,9 +196,10 @@ class TestVc4ConcurrentDispatchAndMaxWaveRetries:
         cfg = load_map_config(tmp_path)
         assert cfg.concurrent_dispatch is True
 
-    def test_vc4_concurrent_dispatch_default_false(self, tmp_path: Path):
+    def test_vc4_concurrent_dispatch_default_true(self, tmp_path: Path):
+        # Slice 6: default flipped from False to True.
         cfg = load_map_config(tmp_path)
-        assert cfg.concurrent_dispatch is False
+        assert cfg.concurrent_dispatch is True
 
     def test_vc4_concurrent_dispatch_false_from_yaml(self, tmp_path: Path):
         _write_config(tmp_path, "execution.concurrent_dispatch: false\n")
@@ -381,4 +382,61 @@ class TestVc6DormantFieldsUnused5b0:
         assert active != [], (
             "max_wave_retries not found in any runner/orchestrator Python source after "
             "Slice 5b — expected _max_wave_retries() or abort_wave_group() to consume it."
+        )
+
+
+class TestSlice6Defaults:
+    """Slice 6: worktree_isolation and concurrent_dispatch defaults flipped ON."""
+
+    def test_mapconfig_worktree_isolation_default_auto(self) -> None:
+        """Slice 6: MapConfig().worktree_isolation == 'auto' (flipped from 'off')."""
+        cfg = MapConfig()
+        assert cfg.worktree_isolation == "auto", (
+            f"MapConfig.worktree_isolation default must be 'auto' (Slice 6 flip), "
+            f"got {cfg.worktree_isolation!r}"
+        )
+
+    def test_mapconfig_concurrent_dispatch_default_true(self) -> None:
+        """Slice 6: MapConfig().concurrent_dispatch is True (flipped from False)."""
+        cfg = MapConfig()
+        assert cfg.concurrent_dispatch is True, (
+            "MapConfig.concurrent_dispatch default must be True (Slice 6 flip)"
+        )
+
+    def test_absent_config_worktree_isolation_default_auto(self, tmp_path: Path) -> None:
+        """Slice 6: no .map/config.yaml → worktree_isolation defaults to 'auto'."""
+        cfg = load_map_config(tmp_path)
+        assert cfg.worktree_isolation == "auto", (
+            f"load_map_config with absent config must give worktree_isolation='auto' "
+            f"(Slice 6 flip from 'off'), got {cfg.worktree_isolation!r}"
+        )
+
+    def test_absent_config_concurrent_dispatch_default_true(self, tmp_path: Path) -> None:
+        """Slice 6: no .map/config.yaml → concurrent_dispatch defaults to True."""
+        cfg = load_map_config(tmp_path)
+        assert cfg.concurrent_dispatch is True, (
+            "load_map_config with absent config must give concurrent_dispatch=True "
+            "(Slice 6 flip from False)"
+        )
+
+    def test_per_repo_opt_out_worktree_isolation_off(self, tmp_path: Path) -> None:
+        """Per-repo opt-out: worktree.isolation: off overrides the Slice 6 default."""
+        (tmp_path / ".map").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".map" / "config.yaml").write_text(
+            "worktree.isolation: off\n", encoding="utf-8"
+        )
+        cfg = load_map_config(tmp_path)
+        assert cfg.worktree_isolation == "off", (
+            "worktree.isolation: off in config.yaml must override the Slice 6 default"
+        )
+
+    def test_per_repo_opt_out_concurrent_dispatch_false(self, tmp_path: Path) -> None:
+        """Per-repo opt-out: execution.concurrent_dispatch: false overrides the default."""
+        (tmp_path / ".map").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".map" / "config.yaml").write_text(
+            "execution.concurrent_dispatch: false\n", encoding="utf-8"
+        )
+        cfg = load_map_config(tmp_path)
+        assert cfg.concurrent_dispatch is False, (
+            "execution.concurrent_dispatch: false in config.yaml must override the Slice 6 default"
         )

@@ -261,6 +261,24 @@ WAVE_REASON_GATE_NOT_PARALLELIZABLE = "gate_not_parallelizable"
 # Current wave is width-1 even though a later wave is parallel; dispatch sequentially
 # for this wave — not an error, just the natural plan structure.
 WAVE_REASON_CURRENT_WAVE_SEQUENTIAL = "current_wave_sequential"
+# Kill-switch reason: MAP_EFFICIENT_SEQUENTIAL_ONLY=1 forces the full legacy sequential path.
+WAVE_REASON_SEQUENTIAL_ONLY_ENV = "sequential_only_env"
+
+# Truthy string values for MAP_EFFICIENT_SEQUENTIAL_ONLY env kill-switch.
+_SEQUENTIAL_ONLY_TRUTHY = frozenset({"1", "true", "yes", "y", "on"})
+
+
+def _sequential_only_env() -> bool:
+    """Return True when MAP_EFFICIENT_SEQUENTIAL_ONLY is set to a truthy value.
+
+    Truthy: {"1", "true", "yes", "y", "on"} (case-insensitive).
+    When True, forces the full legacy sequential path regardless of config —
+    no wave-loop, no worktrees, no concurrent dispatch.  This is the global
+    kill-switch / off-ramp introduced in Slice 6 (byte-identical to pre-5a legacy).
+    Never raises.
+    """
+    val = os.environ.get("MAP_EFFICIENT_SEQUENTIAL_ONLY", "")
+    return val.strip().lower() in _SEQUENTIAL_ONLY_TRUTHY
 
 
 class DispatchGateError(RuntimeError):
@@ -2498,10 +2516,14 @@ def select_execution_strategy(
     """Determine whether to use wave_loop or legacy sequential walker.
 
     Predicate: wave_loop IFF wave_mode in {on, auto} AND worktree.isolation != 'off'
-    AND any color-group has width >= 2.  This mirrors the canonical MapConfig gating
-    (#305): execution_wave_mode defaults to 'auto' but the wave-loop stays dormant
-    because worktree.isolation defaults to 'off', so default config always returns
-    'sequential' and the legacy get_next_step path is byte-identical (HC-1).
+    AND any color-group has width >= 2.
+
+    Slice 6: worktree.isolation defaults to 'auto' and concurrent_dispatch defaults
+    to True, so a parallel-ready plan now selects the wave-loop by default.
+
+    Kill-switch: MAP_EFFICIENT_SEQUENTIAL_ONLY=1 (checked FIRST) forces the full
+    legacy sequential path regardless of config — byte-identical to pre-5a legacy.
+    Per-repo opt-out: set `worktree.isolation: off` in .map/config.yaml.
 
     Args:
         branch: Git branch name (sanitized)
@@ -2515,10 +2537,22 @@ def select_execution_strategy(
           "worktree_isolation": "off" | "auto" | "required",
           "has_parallel_groups": bool,
           "reason": str,
+          "concurrency_allowed": bool,
         }
     """
     if project_dir is None:
         project_dir = Path(".")
+
+    # Kill-switch: MAP_EFFICIENT_SEQUENTIAL_ONLY=1 forces legacy sequential regardless of config.
+    if _sequential_only_env():
+        return {
+            "strategy": "sequential",
+            "wave_mode": "off",
+            "worktree_isolation": "off",
+            "has_parallel_groups": False,
+            "reason": WAVE_REASON_SEQUENTIAL_ONLY_ENV,
+            "concurrency_allowed": False,
+        }
 
     try:
         from map_step_runner import (  # pyright: ignore[reportMissingImports]
@@ -2607,18 +2641,26 @@ def compute_dispatch_gate(
     if project_dir is None:
         project_dir = Path(".")
 
-    # Step 1: short-circuit on flag=false — first gate check after parameter
-    # normalization. No concurrency probe, no select_execution_strategy call, no
-    # _worktree_isolation_mode/concurrency_ready call, no dispatcher import runs on
-    # this path (HC-1 byte-identity). The project_dir None-guard above is a safe
-    # default-arg normalization, not a concurrency primitive.
+    # Kill-switch FIRST: MAP_EFFICIENT_SEQUENTIAL_ONLY=1 forces legacy sequential path.
+    # No concurrency probe, no config read, no import of any concurrency primitive.
+    if _sequential_only_env():
+        return {
+            "dispatch_mode": "sequential",
+            "reason": WAVE_REASON_SEQUENTIAL_ONLY_ENV,
+        }
+
+    # Step 1: short-circuit on flag=false — first gate check after kill-switch and
+    # parameter normalization. No concurrency probe, no select_execution_strategy call,
+    # no _worktree_isolation_mode/concurrency_ready call, no dispatcher import runs on
+    # this path. The project_dir None-guard above is a safe default-arg normalization,
+    # not a concurrency primitive.
     try:
         from map_step_runner import (  # pyright: ignore[reportMissingImports]
             _concurrent_dispatch_enabled,
         )
         flag_on = _concurrent_dispatch_enabled(project_dir)
     except ImportError:
-        flag_on = False
+        flag_on = True  # default ON (Slice 6) when runner unavailable
 
     if not flag_on:
         return {

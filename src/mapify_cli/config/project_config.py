@@ -163,14 +163,16 @@ class MapConfig:
     # key `worktree.isolation` aliases to this snake_case field (see
     # load_map_config). The step runner owns the lifecycle + safety guards.
     # Enum values:
-    #   "off"      — never create worktrees; sequential execution always (default).
+    #   "off"      — never create worktrees; sequential execution always.
     #   "auto"     — create per-subtask worktrees when a parallel color-group
     #                dispatches; degrade to sequential with a loud warning when git
     #                worktrees are unavailable (non-git repo, shallow clone, etc.).
+    #                default ON (Slice 6); disable via MAP_EFFICIENT_SEQUENTIAL_ONLY=1
+    #                or set `worktree.isolation: off` in .map/config.yaml.
     #   "required" — hard-fail before parallel dispatch if worktrees are unavailable.
     # Backward compat: YAML boolean `false` migrates to `"off"`, `true` to
     # `"required"` in load_map_config.
-    worktree_isolation: str = "off"
+    worktree_isolation: str = "auto"
     # Bulk-deletion guard threshold: the per-subtask merge refuses when the
     # worktree branch deletes MORE than this many files vs the base commit
     # (catches `rm -rf` / hallucinated mass deletion before it reaches the
@@ -208,13 +210,12 @@ class MapConfig:
     retry_degraded_once: bool = False
 
     # Enable same-turn concurrent Actor dispatch in a parallel wave (#303 Slice 5b).
-    # The ONLY user-facing switch that activates concurrent dispatch; `False` by
-    # default — Slice 6 flips this once the rollback path is proven stable.
+    # default ON (Slice 6); disable via MAP_EFFICIENT_SEQUENTIAL_ONLY=1 (global
+    # kill-switch) or set `execution.concurrent_dispatch: false` in .map/config.yaml.
     # Dotted YAML alias: `execution.concurrent_dispatch`.
     # YAML 1.1 bare off/on arrive as Python bool, which matches this field type —
     # no coercion needed (unlike the string enum fields).
-    # DORMANT in 5b.0 — consumed by ST-001's gate; no execution path reads it yet.
-    concurrent_dispatch: bool = False
+    concurrent_dispatch: bool = True
 
     # Bounded retry cap for whole-wave rollback/restart in Slice 5b (#303).
     # Range 1–10; values outside the range are clamped by clamp_max_wave_retries().
@@ -619,47 +620,53 @@ minimality: lite
 
 # Per-subtask git worktree isolation (#284). Controls filesystem isolation for
 # each Actor run in `/map-efficient`. Enum values:
-#   off      — never create worktrees; sequential execution always (default).
-#   auto     — create per-subtask worktrees when a parallel color-group dispatches;
-#              degrade to sequential with a warning when worktrees are unavailable.
+#   off      — never create worktrees; sequential execution always.
+#   auto     — (DEFAULT, Slice 6) create per-subtask worktrees when a parallel
+#              color-group dispatches; degrade gracefully to sequential when git
+#              worktrees are unavailable (non-git repo, shallow clone, etc.).
 #   required — hard-fail before dispatch if worktrees are unavailable (first-party
 #              repos that must never degrade silently).
 # When on (auto/required), each Actor runs inside a dedicated git worktree stored
 # under the repo's .git common dir and is squash-merged back ONLY after
 # verification_checks pass. A rejected attempt is discarded — the working branch
 # is never touched by a bad Actor attempt.
+# OFF-RAMPS: set worktree.isolation: off (per-repo opt-out) OR set env
+# MAP_EFFICIENT_SEQUENTIAL_ONLY=1 (global kill-switch — forces full legacy path).
 # Backward compat: the old boolean `false`/`true` still works (migrates to off/required).
-# worktree.isolation: off
+# worktree.isolation: auto   # default ON (Slice 6); use off to revert
 # worktree.max_deletions: 50   # refuse a merge deleting more than N files (0 = off)
 
 # Parallel wave execution mode (#303). Controls whether `/map-efficient` routes
 # multi-subtask waves through the parallel coordinator or the sequential walker.
 #   auto — (default) engage the wave-loop when >=2 independent subtasks AND
-#           worktree.isolation != off; otherwise sequential. Currently behaves as
-#           sequential everywhere (parallel dispatch lands in a later slice).
+#           worktree.isolation != off; otherwise sequential.
 #   off  — always sequential; instant rollback escape hatch.
-#   on   — always attempt parallel (reserved; same as auto until dispatch lands).
+#   on   — always attempt parallel (same as auto in Slice 6).
 # execution.wave_mode: auto
 
 # Concurrent Actor limit for parallel wave dispatch (#303 Slice 5b).
 # Valid range 1–8; values outside the range are clamped (0→1, 9→8).
 # Non-int / bool values fall back to the default 4.
-# DORMANT until Slice 5b — setting this in Slice 5a has no effect.
 # execution.max_actors: 4
 
 # Retry a crashed worker once before aborting the wave (Slice 5b).
-# DORMANT until Slice 5b — setting this in Slice 5a has no effect.
 # execution.retry_degraded_once: false
 
-# Enable same-turn concurrent Actor dispatch (#303 Slice 5b). The ONLY switch
-# that activates concurrent dispatch; false by default — Slice 6 flips this once
-# the rollback path is proven stable. YAML 1.1 bare off/on arrive as bool.
-# execution.concurrent_dispatch: false
+# Enable same-turn concurrent Actor dispatch (#303 Slice 6). DEFAULT True.
+# YAML 1.1 bare off/on arrive as bool.
+# OFF-RAMPS: set false here (per-repo opt-out) OR MAP_EFFICIENT_SEQUENTIAL_ONLY=1 (global).
+# execution.concurrent_dispatch: true   # default ON (Slice 6); use false to revert
 
 # Bounded retry cap for whole-wave rollback/restart (#303 Slice 5b).
 # Valid range 1–10; values outside the range are clamped (0→1, 99→10).
 # Non-int / bool values fall back to the default 3.
 # execution.max_wave_retries: 3
+
+# Global kill-switch (Slice 6 off-ramp). Forces the FULL legacy sequential path
+# regardless of any config — no wave-loop, no worktrees, no concurrent dispatch.
+# Byte-identical to pre-5a legacy behavior. Set as an environment variable:
+#   export MAP_EFFICIENT_SEQUENTIAL_ONLY=1   # or true/yes/y/on
+# Unset (or empty / "0" / "false") to restore default parallel behavior.
 
 # Strip MAP-internal workflow IDs (ST-/AC-/VC-/INV-/HC-) from the code a run
 # changed, at workflow completion (Stop hook). On by default; uncomment and set

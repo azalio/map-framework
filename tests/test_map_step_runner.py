@@ -12195,17 +12195,17 @@ def test_wave_mode_enum_and_unknown_fallback(tmp_path: Path) -> None:
 
 
 def test_worktree_isolation_legacy_bool_mapping(tmp_path: Path) -> None:
-    """Legacy boolean literals map correctly; absent key defaults to 'off'."""
+    """Legacy boolean literals map correctly; absent key defaults to 'auto' (Slice 6)."""
     map_dir = tmp_path / ".map"
     map_dir.mkdir()
     config = map_dir / "config.yaml"
 
-    # Absent key -> "off"
+    # Absent key → "auto" (Slice 6 default, was "off")
     config.write_text("some.other.key: value\n", encoding="utf-8")
-    assert map_step_runner._worktree_isolation_mode(tmp_path) == "off"
-    assert map_step_runner._wt_isolation_enabled(tmp_path) is False
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "auto"
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is True  # "auto" → enabled
 
-    # Legacy false -> "off"
+    # Legacy false -> "off" (explicit per-repo disable)
     config.write_text("worktree.isolation: false\n", encoding="utf-8")
     assert map_step_runner._worktree_isolation_mode(tmp_path) == "off"
     assert map_step_runner._wt_isolation_enabled(tmp_path) is False
@@ -12226,11 +12226,12 @@ def test_worktree_isolation_legacy_bool_mapping(tmp_path: Path) -> None:
 
 
 def test_worktree_isolation_enum_and_disabled_check_parity(tmp_path: Path) -> None:
-    """New enum strings parse directly. Per the canonical MapConfig/#305 semantics,
-    _wt_isolation_enabled is True ONLY for 'required' (and legacy truthy): 'auto'
-    stays disabled in Slice 0 (parallel dispatch lands in Slice 5), 'off' disabled.
-    _worktree_isolation_mode still reports the full enum (off/auto/required) for the
-    probe/fallback paths."""
+    """New enum strings parse directly. Slice 6 semantics:
+    - 'off' → disabled (False)
+    - 'auto' → enabled (True) — Slice 6 flip: auto is now ON
+    - 'required' → enabled (True, hard-fail on unavailability)
+    _worktree_isolation_mode reports the full enum (off/auto/required).
+    Unknown garbage → 'auto' (safe-degrade to ON in Slice 6)."""
     map_dir = tmp_path / ".map"
     map_dir.mkdir()
     config = map_dir / "config.yaml"
@@ -12240,10 +12241,10 @@ def test_worktree_isolation_enum_and_disabled_check_parity(tmp_path: Path) -> No
     assert map_step_runner._worktree_isolation_mode(tmp_path) == "off"
     assert map_step_runner._wt_isolation_enabled(tmp_path) is False
 
-    # Enum: "auto" — mode is 'auto' but isolation NOT enabled until Slice 5.
+    # Enum: "auto" — Slice 6: 'auto' is now enabled (ON by default).
     config.write_text("worktree.isolation: auto\n", encoding="utf-8")
     assert map_step_runner._worktree_isolation_mode(tmp_path) == "auto"
-    assert map_step_runner._wt_isolation_enabled(tmp_path) is False
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is True  # Slice 6: auto → ON
 
     # Enum: "required" — enabled (hard-fail on unavailability, same as legacy true).
     config.write_text("worktree.isolation: required\n", encoding="utf-8")
@@ -12254,10 +12255,10 @@ def test_worktree_isolation_enum_and_disabled_check_parity(tmp_path: Path) -> No
     config.write_text("worktree.isolation: AUTO\n", encoding="utf-8")
     assert map_step_runner._worktree_isolation_mode(tmp_path) == "auto"
 
-    # Unknown garbage -> "off" (disabled)
+    # Unknown garbage → "auto" (Slice 6: degrade gracefully to default ON)
     config.write_text("worktree.isolation: maybe\n", encoding="utf-8")
-    assert map_step_runner._worktree_isolation_mode(tmp_path) == "off"
-    assert map_step_runner._wt_isolation_enabled(tmp_path) is False
+    assert map_step_runner._worktree_isolation_mode(tmp_path) == "auto"
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is True  # auto → enabled
 
 
 # _lint_dependency_enforcement / _lint_auto_prune / _observability_parallelism_enabled
@@ -12328,14 +12329,18 @@ def test_observability_toggle_defaults(tmp_path: Path) -> None:
 
 
 def test_probe_dormant_when_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """With isolation off (default), _worktree_probe returns dormant and runs NO git command.
+    """With isolation explicitly set to 'off', _worktree_probe returns dormant and runs NO git.
 
     Proves zero-git behavior by monkeypatching _wt_git to record calls and raise
     if invoked, then asserting that the call list is empty and status=="dormant".
+
+    Slice 6: the old 'default → off' premise is gone (default is now 'auto'). The
+    test now uses an explicit 'worktree.isolation: off' config to model the per-repo
+    opt-out path.
     """
-    # Ensure isolation is off (default — config absent)
+    # Explicit isolation=off (per-repo opt-out); Slice 6 default is 'auto' (ON)
     (tmp_path / ".map").mkdir()
-    (tmp_path / ".map" / "config.yaml").write_text("", encoding="utf-8")
+    (tmp_path / ".map" / "config.yaml").write_text("worktree.isolation: off\n", encoding="utf-8")
 
     # Monkeypatch _wt_git to track calls; any call = test failure
     calls: list[list[str]] = []
@@ -12779,7 +12784,11 @@ def test_orphan_cleanup_idempotent(
         _os.chdir(orig_cwd)
 
     # -----------------------------------------------------------------------
-    # Dormant when isolation=off: zero git calls
+    # Dormant when isolation=off: zero git calls.
+    # Must be called from INSIDE repo dir so _worktree_isolation_mode reads
+    # the correct config.yaml (cleanup reads Path(".") for cwd-relative config).
+    # Slice 6: without chdir, orig_cwd has no config → default is now 'auto' (ON),
+    # so the dormancy check would NOT fire and _wt_git would be called.
     # -----------------------------------------------------------------------
     _write_isolation_config(repo, "off")
 
@@ -12792,7 +12801,12 @@ def test_orphan_cleanup_idempotent(
 
     monkeypatch.setattr(map_step_runner, "_wt_git", _no_git)
 
-    dormant_result = map_step_runner.cleanup_orphan_worktrees(branch)
+    try:
+        _os.chdir(repo)
+        dormant_result = map_step_runner.cleanup_orphan_worktrees(branch)
+    finally:
+        _os.chdir(orig_cwd)
+
     assert dormant_result["status"] == "dormant", (
         f"expected dormant when off; got {dormant_result}"
     )
@@ -13506,11 +13520,15 @@ class TestRunConcurrentWaveGuards:
     def test_vc1_f6_default_config_returns_concurrent_dispatch_disabled(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """F6/HC-1: default config (no concurrent_dispatch key) -> CONCURRENT_DISPATCH_DISABLED.
+        """F6/HC-1 (Slice 6 reframe): explicit per-repo concurrent_dispatch=false
+        → CONCURRENT_DISPATCH_DISABLED.
 
         Defense-in-depth: a direct CLI or coordinator call cannot trigger concurrent
-        merging under the default-off configuration even when inside a git repo.
-        This is the second line of defense after compute_dispatch_gate.
+        merging when per-repo opt-out is active. This is the second line of defense
+        after compute_dispatch_gate.
+
+        Slice 6: the old 'no config → disabled' premise is gone (default is now True).
+        Re-pointed to the explicit 'execution.concurrent_dispatch: false' per-repo opt-out.
         """
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -13519,14 +13537,19 @@ class TestRunConcurrentWaveGuards:
         monkeypatch.chdir(repo)
         monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
 
-        # No config.yaml at all — concurrent_dispatch defaults to False.
+        # Explicit per-repo opt-out: concurrent_dispatch=false.
+        (repo / ".map").mkdir(exist_ok=True)
+        (repo / ".map" / "config.yaml").write_text(
+            "execution.concurrent_dispatch: false\n", encoding="utf-8"
+        )
+
         result = map_step_runner.run_concurrent_wave(
             ["ST-001", "ST-002"], "test-branch", repo
         )
         assert result.get("ok") is not True
         assert result.get("status") == "error"
         assert result.get("kind") == "CONCURRENT_DISPATCH_DISABLED", (
-            f"Expected CONCURRENT_DISPATCH_DISABLED under default config; "
+            f"Expected CONCURRENT_DISPATCH_DISABLED with per-repo opt-out; "
             f"got kind={result.get('kind')!r}"
         )
 

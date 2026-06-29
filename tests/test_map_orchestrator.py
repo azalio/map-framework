@@ -4597,21 +4597,25 @@ def _write_step_state(
 def test_wave_loop_sequential_no_concurrency(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """VC1 [HC-2]: get_wave_step returns concurrency_enabled=False even for width>=2 wave."""
+    """VC1 [HC-2]: get_wave_step returns concurrency_enabled=False for width>=2 wave
+    when the kill-switch MAP_EFFICIENT_SEQUENTIAL_ONLY=1 is engaged.
+
+    Slice 6: the default is now ON (concurrent). Re-pointed to the kill-switch off-ramp
+    to prove the byte-identical-to-legacy contract still holds under the kill-switch.
+    """
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MAP_EFFICIENT_SEQUENTIAL_ONLY", "1")
     branch = "test-st010-vc1"
-    # Two subtasks in one wave → mode="parallel" but concurrency_enabled must be False.
+    # Two subtasks in one wave → concurrency_enabled=False under kill-switch.
     _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
 
     result = map_orchestrator.get_wave_step(branch)
 
     assert result["is_complete"] is False
-    assert result["mode"] == "parallel", f"expected parallel mode for width-2 wave: {result}"
     assert result["concurrency_enabled"] is False, (
-        f"concurrency_enabled must be False in Slice 3 (no concurrent dispatch): {result}"
+        f"concurrency_enabled must be False under MAP_EFFICIENT_SEQUENTIAL_ONLY=1: {result}"
     )
-    # One-subtask-at-a-time dispatch is the contract: caller iterates subtasks[]
-    # sequentially; concurrency_enabled=False is the explicit signal.
+    # Both subtasks still listed in the result; the dispatch mode is sequential.
     assert len(result["subtasks"]) == 2  # both listed; dispatcher iterates one at a time
 
 
@@ -4842,21 +4846,24 @@ def test_vc1_concurrency_allowed_gate(
             _sys.modules.pop("map_step_runner", None)
 
 
-def test_vc2_default_config_sequential(
+def test_vc2_default_config_concurrent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """VC2 [AC-10]: default config (no worktree.isolation key) gives strategy=='sequential'
-    AND concurrency_allowed==False AND pre-existing reason string is unchanged.
+    """VC2 [AC-10] (reframed Slice 6): default config (wave_mode=auto, isolation=auto)
+    with a parallel-ready plan now gives strategy=='wave_loop' AND concurrency_allowed==True.
+
+    The old premise (isolation defaults to 'off' → always sequential) is gone in Slice 6.
+    New proof: default config → concurrent for a parallel-ready plan.
     """
     import sys as _sys
     import types
 
     monkeypatch.chdir(tmp_path)
-    branch = "test-vc2-default-sequential"
-    # Seed a width>=2 wave so has_parallel_groups=True — isolation gate must block wave_loop.
+    branch = "test-vc2-default-concurrent"
+    # Seed a width>=2 wave so has_parallel_groups=True.
     _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
 
-    def _fake_runner_default(wave_mode: str, isolation: str) -> "types.ModuleType":
+    def _fake_runner_slice6(wave_mode: str, isolation: str) -> "types.ModuleType":
         mod = types.ModuleType("map_step_runner")
 
         def _wm(_project_dir: object) -> str:
@@ -4873,22 +4880,80 @@ def test_vc2_default_config_sequential(
 
     _orig_msr = _sys.modules.get("map_step_runner")
     try:
-        # Default: wave_mode=auto (MapConfig default), isolation=off (MapConfig default).
-        _sys.modules["map_step_runner"] = _fake_runner_default("auto", "off")
+        # Slice 6 defaults: wave_mode=auto, isolation=auto (!=off) → wave_loop for parallel plan.
+        _sys.modules["map_step_runner"] = _fake_runner_slice6("auto", "auto")
+        result = map_orchestrator.select_execution_strategy(branch, tmp_path)
+
+        assert result["strategy"] == "wave_loop", (
+            f"Slice 6 default config + parallel plan must give strategy='wave_loop': {result}"
+        )
+        assert result["concurrency_allowed"] is True, (
+            f"Slice 6 default config + parallel plan must give concurrency_allowed=True: {result}"
+        )
+    finally:
+        if _orig_msr is not None:
+            _sys.modules["map_step_runner"] = _orig_msr
+        else:
+            _sys.modules.pop("map_step_runner", None)
+
+
+def test_vc2_kill_switch_forces_sequential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VC2 kill-switch [AC-10]: MAP_EFFICIENT_SEQUENTIAL_ONLY=1 forces sequential
+    regardless of config — the byte-identical-to-legacy proof now applies to the
+    kill-switch path, not the default config path.
+
+    This re-points the old 'default config → sequential' contract to the kill-switch.
+    """
+    import sys as _sys
+    import types
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MAP_EFFICIENT_SEQUENTIAL_ONLY", "1")
+    branch = "test-vc2-kill-switch"
+    # Seed a parallel-ready plan — kill-switch must block it.
+    _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
+
+    def _fake_runner_parallel(wave_mode: str, isolation: str) -> "types.ModuleType":
+        mod = types.ModuleType("map_step_runner")
+
+        def _wm(_project_dir: object) -> str:
+            del _project_dir
+            return wave_mode
+
+        def _iso(_project_dir: object) -> str:
+            del _project_dir
+            return isolation
+
+        mod._execution_wave_mode = _wm  # type: ignore[attr-defined]
+        mod._worktree_isolation_mode = _iso  # type: ignore[attr-defined]
+        return mod
+
+    _orig_msr = _sys.modules.get("map_step_runner")
+    try:
+        # Even with parallel-ready defaults (wave_mode=auto, isolation=auto),
+        # the kill-switch short-circuits to sequential before reading config.
+        _sys.modules["map_step_runner"] = _fake_runner_parallel("auto", "auto")
         result = map_orchestrator.select_execution_strategy(branch, tmp_path)
 
         assert result["strategy"] == "sequential", (
-            f"default config must give strategy='sequential': {result}"
+            f"MAP_EFFICIENT_SEQUENTIAL_ONLY=1 must give strategy='sequential': {result}"
         )
         assert result["concurrency_allowed"] is False, (
-            f"default config must give concurrency_allowed=False: {result}"
+            f"MAP_EFFICIENT_SEQUENTIAL_ONLY=1 must give concurrency_allowed=False: {result}"
         )
-        # Pre-existing reason string for the isolation-off path must be unchanged.
-        assert "worktree.isolation='off'" in result["reason"], (
-            f"reason string for isolation=off path must contain worktree.isolation='off': {result['reason']!r}"
+        assert result["reason"] == map_orchestrator.WAVE_REASON_SEQUENTIAL_ONLY_ENV, (
+            f"Kill-switch reason must be WAVE_REASON_SEQUENTIAL_ONLY_ENV, got {result['reason']!r}"
         )
-        assert "legacy sequential" in result["reason"], (
-            f"reason string for isolation=off path must contain 'legacy sequential': {result['reason']!r}"
+
+        # Also verify compute_dispatch_gate short-circuits to sequential.
+        gate = map_orchestrator.compute_dispatch_gate(branch, tmp_path)
+        assert gate["dispatch_mode"] == "sequential", (
+            f"compute_dispatch_gate must return sequential under kill-switch: {gate}"
+        )
+        assert gate["reason"] == map_orchestrator.WAVE_REASON_SEQUENTIAL_ONLY_ENV, (
+            f"compute_dispatch_gate reason must be WAVE_REASON_SEQUENTIAL_ONLY_ENV: {gate}"
         )
     finally:
         if _orig_msr is not None:
@@ -4952,27 +5017,44 @@ def test_vc1_get_wave_step_dispatch_mode_sequential(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """VC1: dispatch_mode=='sequential' and isolation_active/reason non-empty for both
-    width-1 and width>=2 active waves while WAVE_CONCURRENCY_ENABLED is False."""
+    width-1 and width>=2 active waves.
+
+    Slice 6: concurrent_dispatch defaults to True, so the fake runner also exposes
+    _concurrent_dispatch_enabled. The 'isolation=off' case uses concurrent_dispatch=False
+    to avoid the config-contradiction DispatchGateError (isolation=off + dispatch=True
+    is an error, not a sequential fallback — per-repo opt-out requires BOTH flags).
+    """
     import types
 
     monkeypatch.chdir(tmp_path)
 
-    def _fake_runner(isolation: str) -> "types.ModuleType":
+    def _fake_runner(isolation: str, concurrent: bool = True) -> "types.ModuleType":
         mod = types.ModuleType("map_step_runner")
 
         def _iso(_project_dir: object) -> str:
             del _project_dir
             return isolation
 
+        def _dispatch(_project_dir: object) -> bool:
+            del _project_dir
+            return concurrent
+
+        def _wm(_project_dir: object) -> str:
+            del _project_dir
+            return "auto"
+
         mod._worktree_isolation_mode = _iso  # type: ignore[attr-defined]
+        mod._concurrent_dispatch_enabled = _dispatch  # type: ignore[attr-defined]
+        mod._execution_wave_mode = _wm  # type: ignore[attr-defined]
         return mod
 
     import sys as _sys
 
     _orig_msr = _sys.modules.get("map_step_runner")
     try:
-        # width-1 wave, isolation=required → isolation_active=True
-        _sys.modules["map_step_runner"] = _fake_runner("required")
+        # width-1 wave, isolation=required, dispatch=True → dispatch_mode=sequential
+        # (width-1 wave → WAVE_REASON_CURRENT_WAVE_SEQUENTIAL)
+        _sys.modules["map_step_runner"] = _fake_runner("required", concurrent=True)
         branch1 = "test-st002-vc1-width1"
         _write_step_state(branch1, tmp_path, execution_waves=[["ST-001"]])
         result1 = map_orchestrator.get_wave_step(branch1)
@@ -4986,8 +5068,10 @@ def test_vc1_get_wave_step_dispatch_mode_sequential(
         assert result1["reason"], f"width-1 wave: reason must be non-empty: {result1}"
         assert result1["is_complete"] is False
 
-        # width-2 wave, isolation=off → isolation_active=False
-        _sys.modules["map_step_runner"] = _fake_runner("off")
+        # width-2 wave, isolation=off, dispatch=False (per-repo opt-out) → isolation_active=False
+        # Note: isolation=off + dispatch=True would raise DispatchGateError (config contradiction).
+        # Per-repo opt-out: disable dispatch to get sequential without the error.
+        _sys.modules["map_step_runner"] = _fake_runner("off", concurrent=False)
         branch2 = "test-st002-vc1-width2"
         _write_step_state(branch2, tmp_path, execution_waves=[["ST-001", "ST-002"]])
         result2 = map_orchestrator.get_wave_step(branch2)
@@ -5007,15 +5091,21 @@ def test_vc1_get_wave_step_dispatch_mode_sequential(
             _sys.modules["map_step_runner"] = _orig_msr
 
 
-def test_vc2_dispatch_mode_never_concurrent_in_5a(
+def test_vc2_dispatch_mode_never_concurrent_on_kill_switch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """VC2: dispatch_mode is 'sequential' (never 'concurrent') on every return path
-    while WAVE_CONCURRENCY_ENABLED is False."""
+    """VC2 (reframed Slice 6): dispatch_mode is 'sequential' on every return path
+    when MAP_EFFICIENT_SEQUENTIAL_ONLY=1 (kill-switch engaged).
+
+    The old premise 'WAVE_CONCURRENCY_ENABLED is False → always sequential' no longer
+    holds for the default config in Slice 6 (defaults are ON). Re-pointed to the
+    kill-switch to prove the byte-identical-to-legacy contract.
+    """
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MAP_EFFICIENT_SEQUENTIAL_ONLY", "1")
     branch = "test-st002-vc2"
 
-    # Path 1: no waves → no_waves early return
+    # Path 1: no waves → no_waves early return (kill-switch is redundant here but consistent)
     _write_step_state(branch, tmp_path, execution_waves=[])
     r_no_waves = map_orchestrator.get_wave_step(branch)
     assert r_no_waves["dispatch_mode"] == "sequential", (
@@ -5040,14 +5130,14 @@ def test_vc2_dispatch_mode_never_concurrent_in_5a(
         f"wave-complete path: concurrency_enabled alias must be False: {r_complete}"
     )
 
-    # Path 3: active wave (width>=2) → main return
+    # Path 3: active wave (width>=2) → kill-switch forces sequential
     _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
     r_active = map_orchestrator.get_wave_step(branch)
     assert r_active["dispatch_mode"] == "sequential", (
-        f"active-wave path: dispatch_mode must be 'sequential': {r_active}"
+        f"active-wave path: dispatch_mode must be 'sequential' under kill-switch: {r_active}"
     )
     assert r_active["concurrency_enabled"] is False, (
-        f"active-wave path: concurrency_enabled alias must be False: {r_active}"
+        f"active-wave path: concurrency_enabled alias must be False under kill-switch: {r_active}"
     )
 
 
@@ -5078,19 +5168,23 @@ def test_vc3_get_wave_step_reason_codes(
         f"{r_complete}"
     )
 
-    # Path 3: active wave
+    # Path 3: active wave (width=1 → single subtask, not parallelizable)
     _write_step_state(branch, tmp_path, execution_waves=[["ST-001"]])
     r_active = map_orchestrator.get_wave_step(branch)
-    assert r_active["reason"] == map_orchestrator.WAVE_REASON_DISPATCH_SEQUENTIAL, (
-        f"active-wave path: expected reason={map_orchestrator.WAVE_REASON_DISPATCH_SEQUENTIAL!r}: "
-        f"{r_active}"
+    # Slice 6: with defaults ON, a width-1 wave returns gate_not_parallelizable
+    # (single task cannot form parallel groups); WAVE_REASON_DISPATCH_SEQUENTIAL is
+    # now only emitted on the legacy path (pre-dispatch gate, reached when worktree
+    # isolation is explicitly off or the dispatch gate short-circuits before color-grouping).
+    assert r_active["reason"] == map_orchestrator.WAVE_REASON_GATE_NOT_PARALLELIZABLE, (
+        f"active-wave path (width=1): expected reason="
+        f"{map_orchestrator.WAVE_REASON_GATE_NOT_PARALLELIZABLE!r}: {r_active}"
     )
 
     # All three codes must be distinct stable strings
     codes = {
         map_orchestrator.WAVE_REASON_NO_WAVES,
         map_orchestrator.WAVE_REASON_WAVE_COMPLETE,
-        map_orchestrator.WAVE_REASON_DISPATCH_SEQUENTIAL,
+        map_orchestrator.WAVE_REASON_GATE_NOT_PARALLELIZABLE,
     }
     assert len(codes) == 3, f"reason codes must all be distinct: {codes}"
 
@@ -5109,27 +5203,27 @@ def test_vc3_get_wave_step_reason_codes(
 def test_vc1_default_config_neutral_strategy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """HC-1 proof: under default config (no .map/config.yaml), select_execution_strategy
-    returns strategy=='sequential', concurrency_allowed==False, and
-    worktree_isolation=='off' — even when a parallelizable (width>=2) wave exists.
+    """HC-1 proof (Slice 6 reframe): with MAP_EFFICIENT_SEQUENTIAL_ONLY=1 (kill-switch),
+    select_execution_strategy returns strategy=='sequential', concurrency_allowed==False —
+    even when a parallelizable (width>=2) wave exists and the config defaults are ON.
 
-    This is non-tautological: the width>=2 wave makes has_parallel_groups=True, so
-    the isolation gate is the only thing keeping the result sequential. The test
-    exercises the real _execution_wave_mode + _worktree_isolation_mode functions
-    against a real (empty) project dir — no mocks.
+    This replaces the old 'default isolation=off keeps sequential' proof. Slice 6
+    flipped both defaults to ON (wave_mode='auto', isolation='auto'), so the old test
+    was asserting a premise that no longer holds. The kill-switch is the new
+    byte-identical-to-legacy off-ramp and is non-tautological: the width>=2 wave
+    makes has_parallel_groups=True (WOULD engage wave_loop without the kill-switch).
     """
     import sys as _sys
 
     monkeypatch.chdir(tmp_path)
-    branch = "test-st007-vc1-default-neutral"
+    monkeypatch.setenv("MAP_EFFICIENT_SEQUENTIAL_ONLY", "1")
+    branch = "test-st007-vc1-killswitch"
 
     # Seed a width>=2 execution wave — has_parallel_groups will be True.
-    # Without the isolation gate, this WOULD select strategy='wave_loop'.
+    # Without the kill-switch, Slice 6 defaults WOULD select strategy='wave_loop'.
     _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
 
-    # No .map/config.yaml — real defaults apply: wave_mode='auto', isolation='off'.
-    # Evict any cached map_step_runner so the function does a fresh import with
-    # the real module reading from tmp_path (monkeypatched cwd).
+    # No .map/config.yaml — defaults are ON ('auto'/'auto'), but kill-switch fires first.
     _orig_msr = _sys.modules.pop("map_step_runner", None)
     try:
         result = map_orchestrator.select_execution_strategy(branch, tmp_path)
@@ -5138,40 +5232,36 @@ def test_vc1_default_config_neutral_strategy(
             _sys.modules["map_step_runner"] = _orig_msr
 
     assert result["strategy"] == "sequential", (
-        f"default config (no config.yaml) must give strategy='sequential': {result}"
+        f"kill-switch must give strategy='sequential': {result}"
     )
     assert result["concurrency_allowed"] is False, (
-        f"default config must give concurrency_allowed=False: {result}"
+        f"kill-switch must give concurrency_allowed=False: {result}"
     )
-    assert result["worktree_isolation"] == "off", (
-        f"default config must give worktree_isolation='off': {result}"
-    )
-    # Confirm the isolation gate is what blocked wave_loop — not missing waves.
-    assert result["has_parallel_groups"] is True, (
-        "has_parallel_groups must be True (width>=2 wave seeded) to prove the "
-        "isolation gate is what keeps the strategy sequential, not absence of a "
-        "parallelizable plan"
+    assert result["reason"] == map_orchestrator.WAVE_REASON_SEQUENTIAL_ONLY_ENV, (
+        f"kill-switch must return WAVE_REASON_SEQUENTIAL_ONLY_ENV reason: {result}"
     )
 
 
 def test_vc2_default_config_neutral_dispatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """HC-1 proof: under default config, get_wave_step returns dispatch_mode=='sequential'
-    and isolation_active==False, and create_subtask_worktree returns status=='disabled'
-    (no worktree created).
+    """HC-1 proof (Slice 6 reframe): with MAP_EFFICIENT_SEQUENTIAL_ONLY=1 (kill-switch),
+    get_wave_step returns dispatch_mode=='sequential' and concurrency_enabled==False.
 
-    Width>=2 wave is seeded to prove the dispatch stays sequential regardless.
+    The old premise ('default isolation=off → dispatch sequential') no longer holds in
+    Slice 6 (defaults are ON). Re-pointed to the kill-switch path. Width>=2 wave seeded
+    to prove the gate stays sequential DESPITE a parallelizable plan.
     """
     import sys as _sys
 
     monkeypatch.chdir(tmp_path)
-    branch = "test-st007-vc2-default-neutral"
+    monkeypatch.setenv("MAP_EFFICIENT_SEQUENTIAL_ONLY", "1")
+    branch = "test-st007-vc2-killswitch"
 
-    # Seed a width>=2 wave — concurrently dispatchable IF isolation were on.
+    # Seed a width>=2 wave — WOULD be concurrently dispatched if kill-switch were off.
     _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
 
-    # No config.yaml — real isolation defaults to 'off'.
+    # Kill-switch fires before config/isolation is even read.
     _orig_msr = _sys.modules.pop("map_step_runner", None)
     try:
         result = map_orchestrator.get_wave_step(branch)
@@ -5180,17 +5270,22 @@ def test_vc2_default_config_neutral_dispatch(
             _sys.modules["map_step_runner"] = _orig_msr
 
     assert result["dispatch_mode"] == "sequential", (
-        f"default config: dispatch_mode must be 'sequential': {result}"
-    )
-    assert result["isolation_active"] is False, (
-        f"default config: isolation_active must be False (isolation='off'): {result}"
+        f"kill-switch: dispatch_mode must be 'sequential': {result}"
     )
     assert result["concurrency_enabled"] is False, (
-        f"default config: concurrency_enabled alias must be False: {result}"
+        f"kill-switch: concurrency_enabled alias must be False: {result}"
+    )
+    assert result["reason"] == map_orchestrator.WAVE_REASON_SEQUENTIAL_ONLY_ENV, (
+        f"kill-switch: reason must be WAVE_REASON_SEQUENTIAL_ONLY_ENV: {result}"
     )
 
-    # create_subtask_worktree must no-op (status='disabled') under default config.
-    # The real _wt_isolation_enabled reads from cwd/.map/config.yaml (absent here).
+    # create_subtask_worktree with per-repo isolation=off must still no-op.
+    # This covers the per-repo opt-out path (separate from kill-switch).
+    # Write a config with worktree.isolation: off explicitly.
+    map_dir = tmp_path / ".map"
+    map_dir.mkdir(parents=True, exist_ok=True)
+    (map_dir / "config.yaml").write_text("worktree.isolation: off\n", encoding="utf-8")
+
     _orig_msr2 = _sys.modules.pop("map_step_runner", None)
     try:
         import map_step_runner as _msr  # noqa: E402  # pyright: ignore[reportMissingImports]
@@ -5201,24 +5296,23 @@ def test_vc2_default_config_neutral_dispatch(
             _sys.modules["map_step_runner"] = _orig_msr2
 
     assert wt_result["status"] == "disabled", (
-        f"default config: create_subtask_worktree must return status='disabled': {wt_result}"
+        f"isolation=off: create_subtask_worktree must return status='disabled': {wt_result}"
     )
     assert wt_result["ok"] is False, (
-        f"default config: create_subtask_worktree must return ok=False: {wt_result}"
+        f"isolation=off: create_subtask_worktree must return ok=False: {wt_result}"
     )
 
 
 def test_vc3_dormant_keys_do_not_flip_strategy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """HC-1 proof: setting ONLY the dormant Slice-5a keys (execution.max_actors and
-    execution.retry_degraded_once) in config does NOT change strategy away from
-    sequential — strategy remains 'sequential' and concurrency_allowed remains False.
+    """HC-1 proof (Slice 6 reframe): dormant Slice-5a keys (execution.max_actors,
+    execution.retry_degraded_once) alone do NOT override the per-repo opt-out:
+    with worktree.isolation=off set explicitly, strategy remains 'sequential'.
 
-    Proves that the dormant fields parsed by ST-005 have no effect on the execution
-    path in Slice 5a: they are parsed and validated, but no code reads them yet.
-    Width>=2 wave is seeded so the isolation gate (not missing parallelizable work)
-    is the only thing keeping the dispatch sequential.
+    Proves that the dormant fields have no effect on the execution path.
+    Width>=2 wave seeded; the isolation=off config is the only thing keeping
+    dispatch sequential (non-tautological — would engage wave_loop if isolation=auto).
     """
     import sys as _sys
 
@@ -5228,13 +5322,14 @@ def test_vc3_dormant_keys_do_not_flip_strategy(
     # Seed a width>=2 wave — parallelizable plan present.
     _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
 
-    # Write config with ONLY the dormant ST-005 keys — no wave_mode, no worktree.isolation.
-    # Real MapConfig defaults for the missing keys: wave_mode='auto', isolation='off'.
+    # Config: dormant ST-005 keys + explicit worktree.isolation=off (per-repo opt-out).
+    # Slice 6 defaults are ON; the explicit isolation=off override keeps dispatch sequential.
     map_dir = tmp_path / ".map"
     map_dir.mkdir(parents=True, exist_ok=True)
     (map_dir / "config.yaml").write_text(
         "execution.max_actors: 3\n"
-        "execution.retry_degraded_once: true\n",
+        "execution.retry_degraded_once: true\n"
+        "worktree.isolation: off\n",
         encoding="utf-8",
     )
 
@@ -5246,17 +5341,17 @@ def test_vc3_dormant_keys_do_not_flip_strategy(
             _sys.modules["map_step_runner"] = _orig_msr
 
     assert result["strategy"] == "sequential", (
-        f"dormant-keys-only config must not flip strategy away from 'sequential': {result}"
+        f"per-repo isolation=off must keep strategy 'sequential': {result}"
     )
     assert result["concurrency_allowed"] is False, (
-        f"dormant-keys-only config must not flip concurrency_allowed to True: {result}"
+        f"per-repo isolation=off must keep concurrency_allowed=False: {result}"
     )
     assert result["worktree_isolation"] == "off", (
-        f"worktree_isolation must remain 'off' when worktree.isolation key is absent: {result}"
+        f"worktree_isolation must be 'off' (explicit per-repo override): {result}"
     )
     assert result["has_parallel_groups"] is True, (
-        "has_parallel_groups must be True so the isolation gate — not absent waves — "
-        "is what keeps the strategy sequential"
+        "has_parallel_groups must be True so isolation=off — not absent waves — "
+        "is what keeps the strategy sequential (non-tautological proof)"
     )
 
 
@@ -5309,33 +5404,46 @@ def test_vc1_concurrent_dispatch_on_isolation_off_raises(
 def test_vc2_flag_false_returns_sequential_no_side_effects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """VC2 [AC-1-GATE] [HC-1]: concurrent_dispatch=false (default) → sequential on
-    FIRST line; no DispatchGateError, no concurrent result, no concurrency_ready probe."""
+    """VC2 [AC-1-GATE] [HC-1] (Slice 6 reframe): per-repo concurrent_dispatch=false
+    and global kill-switch both force sequential with no DispatchGateError.
+
+    Sub-test A: MAP_EFFICIENT_SEQUENTIAL_ONLY=1 (kill-switch) → sequential.
+    Sub-test B: explicit false in config → sequential.
+    Sub-test C: get_wave_step under kill-switch stays sequential.
+    """
     import sys as _sys
 
     monkeypatch.chdir(tmp_path)
-    branch = "test-st001-vc2-default-sequential"
+    branch = "test-st001-vc2-sequential"
 
-    # Width>=2 wave — would be parallelizable if isolation were on.
+    # Width>=2 wave — would be parallelizable without the sequential gates.
     _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
 
-    # Sub-test A: no config at all (flag defaults to false).
+    # Sub-test A: kill-switch → sequential (no config needed).
+    monkeypatch.setenv("MAP_EFFICIENT_SEQUENTIAL_ONLY", "1")
     _orig_msr = _sys.modules.pop("map_step_runner", None)
     try:
         result_a = map_orchestrator.compute_dispatch_gate(branch, tmp_path)
     finally:
         if _orig_msr is not None:
             _sys.modules["map_step_runner"] = _orig_msr
+    monkeypatch.delenv("MAP_EFFICIENT_SEQUENTIAL_ONLY")
 
     assert result_a["dispatch_mode"] == "sequential", (
-        f"No config → dispatch_mode must be 'sequential': {result_a}"
+        f"Kill-switch → dispatch_mode must be 'sequential': {result_a}"
     )
-    assert result_a["reason"] == map_orchestrator.WAVE_REASON_DISPATCH_SEQUENTIAL, (
-        f"No config → reason must be WAVE_REASON_DISPATCH_SEQUENTIAL: {result_a}"
+    assert result_a["reason"] == map_orchestrator.WAVE_REASON_SEQUENTIAL_ONLY_ENV, (
+        f"Kill-switch → reason must be WAVE_REASON_SEQUENTIAL_ONLY_ENV: {result_a}"
     )
 
-    # Sub-test B: explicit false in config.
-    _write_config_keys(tmp_path, **{"execution.concurrent_dispatch": "false"})
+    # Sub-test B: explicit false in config (per-repo opt-out) → sequential.
+    _write_config_keys(
+        tmp_path,
+        **{
+            "execution.concurrent_dispatch": "false",
+            "worktree.isolation": "auto",  # isolation=auto so the dispatch flag is the gate
+        },
+    )
     _orig_msr2 = _sys.modules.pop("map_step_runner", None)
     try:
         result_b = map_orchestrator.compute_dispatch_gate(branch, tmp_path)
@@ -5350,20 +5458,22 @@ def test_vc2_flag_false_returns_sequential_no_side_effects(
         f"Explicit false → reason must be WAVE_REASON_DISPATCH_SEQUENTIAL: {result_b}"
     )
 
-    # Sub-test C: get_wave_step under default config stays sequential and never raises.
+    # Sub-test C: get_wave_step under kill-switch stays sequential and never raises.
     _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
+    monkeypatch.setenv("MAP_EFFICIENT_SEQUENTIAL_ONLY", "1")
     _orig_msr3 = _sys.modules.pop("map_step_runner", None)
     try:
         wave_result = map_orchestrator.get_wave_step(branch)
     finally:
         if _orig_msr3 is not None:
             _sys.modules["map_step_runner"] = _orig_msr3
+    monkeypatch.delenv("MAP_EFFICIENT_SEQUENTIAL_ONLY")
 
     assert wave_result["dispatch_mode"] == "sequential", (
-        f"get_wave_step default → dispatch_mode must be 'sequential': {wave_result}"
+        f"get_wave_step kill-switch → dispatch_mode must be 'sequential': {wave_result}"
     )
     assert wave_result["concurrency_enabled"] is False, (
-        f"get_wave_step default → concurrency_enabled must be False: {wave_result}"
+        f"get_wave_step kill-switch → concurrency_enabled must be False: {wave_result}"
     )
 
 

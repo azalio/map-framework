@@ -105,14 +105,20 @@ Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json`
 
 ## Worktree Isolation (per-subtask sandboxing)
 
-Per-subtask git worktree isolation (#284, opt-in via `worktree.isolation`, off by
-default) gives each `/map-efficient` subtask an isolated filesystem so a bad Actor
-attempt can never touch the working branch. It is **runner-owned**: the step
-runner creates explicit worktrees rather than using the harness-native
+Per-subtask git worktree isolation (#284, default **ON** via `worktree.isolation:
+auto` since Slice 6) gives each `/map-efficient` subtask an isolated filesystem
+so a bad Actor attempt can never touch the working branch. It is **runner-owned**:
+the step runner creates explicit worktrees rather than using the harness-native
 `isolation="worktree"` — the native mode hides the worktree path, which makes the
 deterministic safety gates, structured conflict reports, and explicit
 squash-merge impossible to implement or unit-test. The two mechanisms are
 alternatives and must never both be active on the same subtask.
+
+**Off-ramps:** `MAP_EFFICIENT_SEQUENTIAL_ONLY=1` (global env kill-switch, forces
+the full legacy sequential path byte-identical to pre-Slice-5a) or set
+`worktree.isolation: off` in `.map/config.yaml` (per-repo opt-out). The `auto`
+default degrades gracefully to sequential when git worktrees are unavailable
+(non-git repo, shallow clone, etc.).
 
 Design decisions (llm-council-reviewed, conv `461b92f9`):
 
@@ -186,19 +192,28 @@ divergence each in-wave squash-merge creates. Design (llm-council-reviewed, conv
   reported as advisory telemetry while git's textual conflict stays the hard
   guard).
 
-### Phase 3 / Slice 5b: concurrent Actor dispatch (flag-gated, default off)
+### Phase 3 / Slice 6: concurrent Actor dispatch (ON by default)
 
-Slice 5b activates same-turn concurrent dispatch of Actor subagents within a
-parallel wave. The entire path is guarded by `execution.concurrent_dispatch`
-(default `false`); with the flag off the code path is byte-identical to Slice 5a.
+Slice 6 flips the defaults: `execution.concurrent_dispatch` now defaults to
+`true` and `worktree.isolation` defaults to `"auto"`. Concurrent dispatch of
+Actor subagents within a parallel wave is active for any repo that is a git
+repo with a parallel-ready plan.
 
-**Dispatch gate (`compute_dispatch_gate`).** A strict conjunction of four
-conditions: `concurrent_dispatch` is true AND `concurrency_allowed` (platform
-supports parallel Task dispatch) AND `concurrency_ready` (runner state is
-consistent) AND `worktree.isolation != off`. Any single condition false → gate
-returns `disabled`. A config contradiction (e.g. `concurrent_dispatch: true` with
-isolation off) is a hard abort (`ConfigError`-equivalent) — fail-closed, never
-silent degradation.
+**Kill-switch.** `MAP_EFFICIENT_SEQUENTIAL_ONLY=1` (env var; truthy values:
+`1/true/yes/y/on`) is checked FIRST in both `select_execution_strategy` and
+`compute_dispatch_gate` — before any config read or concurrency probe. When set,
+the full legacy sequential path is taken, byte-identical to pre-Slice-5a. The
+stable reason code is `WAVE_REASON_SEQUENTIAL_ONLY_ENV`. Per-repo opt-out:
+`execution.concurrent_dispatch: false` or `worktree.isolation: off` in
+`.map/config.yaml`.
+
+**Dispatch gate (`compute_dispatch_gate`).** After the kill-switch check: a
+strict conjunction of four conditions: `concurrent_dispatch` is true AND
+`concurrency_allowed` (platform supports parallel Task dispatch) AND
+`concurrency_ready` (runner state is consistent) AND `worktree.isolation != off`.
+Any single condition false → gate returns sequential. A config contradiction
+(e.g. `concurrent_dispatch: true` with isolation off) is a hard abort
+(`ConfigError`-equivalent) — fail-closed, never silent degradation.
 
 **Group lifecycle.** `begin_wave_group` opens a dispatch group and records the
 base SHA from the sidecar. `record_group_lifecycle` appends structured events
