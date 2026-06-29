@@ -221,23 +221,30 @@ follow-up slice; slice 1 is single-runtime dispatch.
 
 ## Worktree isolation (per-subtask sandboxing)
 
-Per-subtask git worktree isolation is an **opt-in, off-by-default** feature for
-`/map-efficient` (issue #284). With it disabled (the default), `/map-efficient`
-runs exactly as before — every worktree command no-ops with `status:"disabled"`.
+Per-subtask git worktree isolation is **ON by default** (Slice 6, issue #284)
+for git repos with a parallel-ready plan. Each subtask's Actor runs in its own
+throwaway git worktree, and the result is squash-merged back into the working
+branch **only after the configured `verification_checks` pass inside the worktree**
+(a pre-merge gate). A rejected attempt (Monitor `valid=false` / Evaluator fail)
+is discarded, so the working branch is never touched by a bad attempt.
 
-When enabled, each subtask's Actor runs in its own throwaway git worktree, and
-the result is squash-merged back into the working branch **only after the
-configured `verification_checks` pass inside the worktree** (a pre-merge gate). A
-rejected attempt (Monitor `valid=false` / Evaluator fail) is discarded, so the
-working branch is never touched by a bad attempt.
+**Off-ramps (either is sufficient):**
 
-### Enabling
+1. **Global kill-switch** — set `MAP_EFFICIENT_SEQUENTIAL_ONLY=1` in your shell.
+   Forces the full legacy sequential path, byte-identical to pre-Slice-6, regardless
+   of any config. Unset to restore default parallel behavior.
+2. **Per-repo opt-out** — set `worktree.isolation: off` in `.map/config.yaml`.
+
+The `auto` mode degrades gracefully to sequential (with a logged warning) when git
+worktrees are unavailable (non-git repo, shallow clone, detached HEAD, locked ref).
+
+### Config
 
 ```yaml
 # .map/config.yaml
-worktree.isolation: true
-worktree.max_deletions: 50   # refuse a subtask merge deleting more than N files (0 = off)
-verification_checks:         # run inside the worktree before merge
+worktree.isolation: auto    # default ON (Slice 6); use off to revert
+worktree.max_deletions: 50  # refuse a subtask merge deleting more than N files (0 = off)
+verification_checks:        # run inside the worktree before merge
   - make check
 ```
 
@@ -293,28 +300,38 @@ A concurrent second coordinator is blocked by an advisory lock.
 Phase 2's wave-merge coordinator (`merge_wave_worktrees`) has landed; Phase 3
 (context-budget hooks) remains open on #284.
 
-### Concurrent dispatch (Slice 5b, opt-in)
+### Concurrent dispatch (Slice 6, ON by default)
 
-Concurrent Actor dispatch within a parallel wave is an **opt-in, off-by-default**
-feature controlled by three config keys. With `execution.concurrent_dispatch`
-unset or `false` (the default), wave dispatch is sequential — identical behavior
-to before Slice 5b.
+Concurrent Actor dispatch within a parallel wave is **ON by default** (Slice 6).
+For repos with a parallel-ready plan and a git worktree environment, `/map-efficient`
+will dispatch multiple Actor subagents concurrently within each parallel wave.
 
 ```yaml
 # .map/config.yaml
-execution.concurrent_dispatch: false   # set to true to enable same-turn concurrent dispatch
+execution.concurrent_dispatch: true    # default ON (Slice 6); use false to revert
 execution.max_actors: 4                # max parallel Actor agents per sub-batch (clamp [1,8])
 execution.max_wave_retries: 3          # max whole-group rollback+restart attempts (clamp [1,10])
 ```
 
-**Requirements when enabling:** `worktree.isolation` must be `auto` or `required`.
-Setting `execution.concurrent_dispatch: true` with isolation off (or `disabled`)
+**Requirements for concurrent dispatch:** `worktree.isolation` must be `auto` or
+`required`. Setting `execution.concurrent_dispatch: true` with isolation `off`
 produces a hard `ConfigError` abort — the gate fails closed rather than degrading
 silently.
 
-**Sequential default.** With `concurrent_dispatch: false` (or absent), every wave
-runs the same sequential Actor→merge loop as before; no config error is raised and
-none of the concurrent-dispatch code paths are exercised.
+**Off-ramps (either is sufficient):**
+1. `MAP_EFFICIENT_SEQUENTIAL_ONLY=1` — global kill-switch (env var).
+2. `execution.concurrent_dispatch: false` — per-repo opt-out in `.map/config.yaml`.
+
+**Kill-switch: `MAP_EFFICIENT_SEQUENTIAL_ONLY`**
+
+```bash
+export MAP_EFFICIENT_SEQUENTIAL_ONLY=1   # forces full legacy sequential path
+# or: true / yes / y / on
+```
+
+When set, ALL concurrent behavior is suppressed regardless of config: no wave-loop,
+no worktrees, no concurrent dispatch. The code path is byte-identical to pre-Slice-5a
+legacy. Unset or set to `0`/`false` to re-enable default parallel behavior.
 
 ## Stack Overflow for Agents (SOFA)
 

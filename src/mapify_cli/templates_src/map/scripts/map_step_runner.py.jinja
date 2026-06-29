@@ -153,13 +153,14 @@ _CONCURRENT_DISPATCH_TRUTHY = frozenset({"true", "yes", "y", "1", "on"})
 
 
 def _concurrent_dispatch_enabled(project_dir: Path) -> bool:
-    """Return True when execution.concurrent_dispatch is explicitly enabled.
+    """Return True when execution.concurrent_dispatch is enabled (default ON, Slice 6).
 
-    Mirrors the _wt_isolation_enabled pattern.  Default is False (off) so the
-    sequential path stays byte-identical to Slice 5a by default (HC-1).  Never
-    raises.
+    Default is True — Slice 6 flipped from False.  Disable via
+    MAP_EFFICIENT_SEQUENTIAL_ONLY=1 (global kill-switch) or set
+    `execution.concurrent_dispatch: false` in .map/config.yaml.
+    Mirrors the canonical MapConfig default (config/project_config.py).  Never raises.
     """
-    raw = _map_config_str(project_dir, "execution.concurrent_dispatch", "false")
+    raw = _map_config_str(project_dir, "execution.concurrent_dispatch", "true")
     return raw.strip().lower() in _CONCURRENT_DISPATCH_TRUTHY
 
 
@@ -167,10 +168,11 @@ def _execution_wave_mode(project_dir: Path) -> str:
     """Return the execution.wave_mode setting: 'off' | 'auto' | 'on'.
 
     Default + enum mirror the canonical MapConfig schema (config/project_config.py):
-    absent/unknown/garbage normalises to 'auto'.  'auto' is still behavior-neutral
-    by default because the wave-loop only engages when worktree.isolation != 'off'
-    (which itself defaults to 'off') AND a color group has >=2 members — see
-    select_execution_strategy.  Never raises.
+    absent/unknown/garbage normalises to 'auto'.  As of the Slice 6 flip,
+    worktree.isolation also defaults to 'auto', so the wave-loop IS engaged by
+    default for a parallel-ready plan (it engages when worktree.isolation != 'off'
+    AND a color group has >=2 members) — see select_execution_strategy.  Disable
+    via MAP_EFFICIENT_SEQUENTIAL_ONLY=1 or the per-repo opt-out keys.  Never raises.
     """
     raw = _map_config_str(project_dir, "execution.wave_mode", "auto")
     return raw if raw in _WAVE_MODE_VALID else "auto"
@@ -15381,6 +15383,8 @@ _WT_GROUP_VALID_EVENTS: frozenset[str] = frozenset({
 })
 
 _WT_ISOLATION_VALID = frozenset({"off", "auto", "required"})
+# Legacy YAML booleans that map to 'off' (explicit per-repo disable)
+_WT_ISOLATION_FALSY = frozenset({"false", "0", "no", "n"})
 
 
 def _worktree_isolation_mode(project_dir: Path) -> str:
@@ -15388,18 +15392,28 @@ def _worktree_isolation_mode(project_dir: Path) -> str:
 
     Accepts the new enum strings directly (case-insensitive).
     Legacy boolean compat: boolish-truthy (true/1/yes) → 'required';
-    boolish-false (false/0/no/'') → 'off'.
-    Absent key → 'off' (today's behavior).  Any unknown/garbage → 'off'.
+    boolish-false (false/0/no) → 'off'.
+    Absent key → 'auto' (default ON, Slice 6).  Any unknown/garbage → 'auto'.
+    Disable via MAP_EFFICIENT_SEQUENTIAL_ONLY=1 (global kill-switch) or set
+    `worktree.isolation: off` in .map/config.yaml.
+    Mirrors the canonical MapConfig default (config/project_config.py).
     Never raises.
     """
     raw = _map_config_str(project_dir, "worktree.isolation", "")
     normalized = raw.strip().lower()
     if normalized in _WT_ISOLATION_VALID:
         return normalized
-    # Legacy boolean compat
+    # Legacy boolean compat: truthy → 'required'
     if _parse_boolish(normalized):
         return "required"
-    return "off"
+    # Legacy boolean compat: explicit falsy (false/0/no/n) → 'off' (per-repo disable)
+    if normalized in _WT_ISOLATION_FALSY:
+        return "off"
+    # Absent key → default "auto" (Slice 6 flip from "off")
+    if not normalized:
+        return "auto"
+    # Unknown/garbage → safe default 'auto' (degrade gracefully)
+    return "auto"
 
 
 def _wt_isolation_enabled(project_dir: Path) -> bool:
@@ -15408,10 +15422,9 @@ def _wt_isolation_enabled(project_dir: Path) -> bool:
     Handles the enum migration (#303): the old boolean ``false``/``true`` raw
     strings (YAML 1.1 booleans are written as ``false``/``true`` when read
     line-by-line) still work.  New enum values:
-    - ``off``  -> False (disabled — default)
-    - ``auto`` -> False (Slice 0: sequential everywhere; parallel dispatch
-                  lands in Slice 5; the call site in create_subtask_worktree
-                  already degrades to sequential when this returns False)
+    - ``off``      -> False (disabled)
+    - ``auto``     -> True  (default ON, Slice 6; degrades gracefully when git
+                     worktrees are unavailable)
     - ``required`` -> True  (hard-fail on unavailability, same as old ``true``)
 
     Canonical enum vocabulary + default live in MapConfig
@@ -15419,8 +15432,8 @@ def _wt_isolation_enabled(project_dir: Path) -> bool:
     same `worktree.isolation` key for probe/fallback paths that need the full
     enum value (auto vs required), not just the enabled boolean.
     """
-    val = _map_config_str(project_dir, "worktree.isolation", "off").strip().lower()
-    return val in {"required", "true", "yes", "y", "1", "on"}
+    mode = _worktree_isolation_mode(project_dir)
+    return mode in {"auto", "required", "true", "yes", "y", "1", "on"}
 
 
 def _wt_max_deletions(project_dir: Path) -> int:
@@ -15544,8 +15557,9 @@ _WORKTREE_PROBE_CACHE: dict[str, dict[str, object]] = {}
 def _worktree_probe(project_dir: Path) -> dict[str, object]:
     """Safe detached worktree probe.  Cached per session keyed on toplevel.
 
-    HC-1 dormancy contract: when worktree.isolation is 'off' (the default),
-    this function returns immediately WITHOUT running any git command.
+    HC-1 dormancy contract: when worktree.isolation is 'off' (the per-repo
+    opt-out or MAP_EFFICIENT_SEQUENTIAL_ONLY off-ramp), this function returns
+    immediately WITHOUT running any git command.
 
     When mode is 'auto' or 'required':
     * Resolves the storage root via _wt_storage_root() (never .map/worktrees/).
@@ -15626,7 +15640,7 @@ def _worktree_probe(project_dir: Path) -> dict[str, object]:
 def _require_clean_merge_target(project_dir: Path) -> dict[str, object]:
     """Check that the main checkout is clean enough for a worktree merge.
 
-    Dormant when worktree.isolation is 'off' (default — HC-1).
+    Dormant when worktree.isolation is 'off' (per-repo opt-out / kill-switch — HC-1).
     When the check is active AND require_clean_merge_target config is True
     (default True), runs `git status --porcelain` and returns:
       * {"status":"ok","ok":True}  when clean (excluding MAP runtime state)
@@ -15671,8 +15685,8 @@ def _require_clean_merge_target(project_dir: Path) -> dict[str, object]:
 def resolve_worktree_isolation(project_dir: Path) -> dict[str, object]:
     """Classify the current environment and decide the execution decision.
 
-    HC-1 dormancy: when isolation is 'off' (the default), returns immediately
-    without running any git command.
+    HC-1 dormancy: when isolation is 'off' (per-repo opt-out / kill-switch),
+    returns immediately without running any git command.
 
     Return schema
     -------------
@@ -17460,10 +17474,13 @@ def run_concurrent_wave(
     spawn actor agents — the skill emits N Task blocks to start actors (ST-007).
     Its responsibilities are:
 
-    1. **Default-off guard** (HC-1, defense-in-depth): if ``concurrent_dispatch``
-       is not explicitly enabled in config, return ``CONCURRENT_DISPATCH_DISABLED``
-       immediately so a direct CLI or coordinator call cannot trigger concurrent
-       merging under the default-off configuration.
+    1. **Disabled-dispatch guard** (defense-in-depth): if ``concurrent_dispatch``
+       is disabled — via the per-repo opt-out (``execution.concurrent_dispatch:
+       false``) or the ``MAP_EFFICIENT_SEQUENTIAL_ONLY`` kill-switch — return
+       ``CONCURRENT_DISPATCH_DISABLED`` immediately so a direct CLI or coordinator
+       call cannot trigger concurrent merging when the operator has opted out.
+       (As of the Slice 6 flip the default is enabled; this guard catches the
+       explicit off-ramps.)
 
     2. **Batch-split**: read ``max_actors`` from config (via ``_max_actors()``),
        clamp to [1, 8], then split the sorted ``group_ids`` into sequential
@@ -17531,14 +17548,18 @@ def run_concurrent_wave(
     pd = project_dir or _wt_project_dir() or Path(".")
     branch_name = branch or get_branch_name()
 
-    # F6: Default-off guard (HC-1, defense-in-depth).  A direct CLI call or
-    # coordinator misconfiguration cannot trigger concurrent merging unless the
-    # flag is explicitly set.  This is a second line of defense after compute_dispatch_gate.
+    # F6: Disabled-dispatch guard (defense-in-depth).  A direct CLI call or
+    # coordinator misconfiguration cannot trigger concurrent merging when the
+    # operator has opted out.  Second line of defense after compute_dispatch_gate
+    # (which also honors the MAP_EFFICIENT_SEQUENTIAL_ONLY kill-switch upstream).
     if not _concurrent_dispatch_enabled(pd):
         return _wt_error(
             "CONCURRENT_DISPATCH_DISABLED",
-            "run_concurrent_wave requires execution.concurrent_dispatch=true in config; "
-            "default is off (HC-1). Set the flag explicitly to enable concurrent dispatch.",
+            "run_concurrent_wave: concurrent dispatch is disabled by this repo's "
+            "config (execution.concurrent_dispatch: false). It defaults to enabled "
+            "since the Slice 6 flip — remove that key or set it to true to enable "
+            "concurrent dispatch (or it may be the MAP_EFFICIENT_SEQUENTIAL_ONLY "
+            "kill-switch, which forces sequential everywhere).",
         )
 
     # Deterministic sorted list — order-of-call must not vary group membership.

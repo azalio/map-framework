@@ -1,16 +1,21 @@
-"""HC-1 leak-guard proof suite for Slice 5b concurrent dispatch (ST-008).
+"""Kill-switch / off-ramp leak-guard proof suite (updated for Slice 6, ST-008).
 
-Five non-tautological guards proving default-off (concurrent_dispatch=false)
-is behavior-neutral / byte-identical to Slice 5a:
+Five non-tautological guards proving MAP_EFFICIENT_SEQUENTIAL_ONLY=1 (the
+global kill-switch) suppresses all concurrent behavior — equivalent to the
+old default-off premise but now pinned to the off-ramp rather than the default:
 
 (a) prompt confinement guard — fanout instruction tokens exist ONLY inside the
     prose-gated 'Slice 5b' section, NOT in default/sequential paragraphs.
-(b) monkeypatch-fail guard — concurrent runner verbs do NOT fire under default config.
+(b) monkeypatch-fail guard — concurrent runner verbs do NOT fire under the kill-switch.
 (c) AST/static-import guard — sequential walker + flag-false branch contain NO
     references to concurrent runner verbs.
-(d) no-telemetry guard — no parallelism.json is created on the default path.
-(e) default-off baseline — get_wave_step returns dispatch_mode=='sequential' with
-    the 5a reason code; concurrency_enabled==False.
+(d) no-telemetry guard — no parallelism.json is created when the kill-switch is set.
+(e) kill-switch baseline — get_wave_step returns dispatch_mode=='sequential' with
+    the kill-switch reason code; concurrency_enabled==False.
+
+Slice 6 change: the DEFAULT config now routes to concurrent for parallel-ready plans.
+The kill-switch (MAP_EFFICIENT_SEQUENTIAL_ONLY=1) is the new behavioral gate these
+guards protect — they go RED if the kill-switch leaks concurrency.
 """
 
 from __future__ import annotations
@@ -57,14 +62,16 @@ import map_orchestrator  # noqa: E402  # pyright: ignore[reportMissingImports]
 
 @pytest.fixture
 def branch_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
-    """Minimal .map/<branch>/ directory with NO config.yaml → default config.
+    """Minimal .map/<branch>/ directory with MAP_EFFICIENT_SEQUENTIAL_ONLY=1.
 
-    No config.yaml → _concurrent_dispatch_enabled returns False (default off).
+    Slice 6: defaults are now ON. This fixture engages the kill-switch so the
+    guards protect the off-ramp path (not the old default-off path).
     """
     branch = "test-leak-guards"
     map_branch_dir = tmp_path / ".map" / branch
     map_branch_dir.mkdir(parents=True)
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MAP_EFFICIENT_SEQUENTIAL_ONLY", "1")
     monkeypatch.setattr(map_orchestrator, "get_branch_name", lambda: branch)
     return branch
 
@@ -206,13 +213,13 @@ class TestGuardA_PromptConfinement:
 # ===========================================================================
 
 class TestGuardB_MonkeypatchFail:
-    """Concurrent runner verbs must NOT be called under default config.
+    """Concurrent runner verbs must NOT be called when the kill-switch is set.
 
     What break turns this red:
       - If compute_dispatch_gate (or get_wave_step) calls begin_wave_group /
         abort_wave_group / run_concurrent_wave / record_dispatch_actual when
-        concurrent_dispatch is False (default), the monkeypatched stub raises
-        AssertionError and the test fails — catching the leak.
+        MAP_EFFICIENT_SEQUENTIAL_ONLY=1, the monkeypatched stub raises
+        AssertionError and the test fails — catching the kill-switch leak.
     """
 
     _CONCURRENT_VERBS = [
@@ -228,21 +235,20 @@ class TestGuardB_MonkeypatchFail:
             del _args, _kw  # suppress pyright unused-parameter; del valid in def
             raise AssertionError(
                 f"Concurrent runner verb {name!r} must NOT be called "
-                "when concurrent_dispatch=False (default config, HC-1)."
+                "when MAP_EFFICIENT_SEQUENTIAL_ONLY=1 (kill-switch engaged)."
             )
         return _stub
 
-    def test_vc1b_no_concurrent_verbs_fire_on_default_config(
+    def test_vc1b_no_concurrent_verbs_fire_on_kill_switch(
         self,
         branch_with_waves: str,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Under default config (no concurrent_dispatch key) none of the four
-        concurrent runner verbs fire when get_wave_step / compute_dispatch_gate
-        are called.
+        """Under MAP_EFFICIENT_SEQUENTIAL_ONLY=1 none of the four concurrent
+        runner verbs fire when get_wave_step / compute_dispatch_gate are called.
 
-        Stubs raise AssertionError on any call → a leak is immediately visible
-        as a test failure.
+        Stubs raise AssertionError on any call → a kill-switch leak is
+        immediately visible as a test failure.
         """
         import importlib
         try:
@@ -434,20 +440,20 @@ class TestGuardC_ASTImport:
 # ===========================================================================
 
 class TestGuardD_NoTelemetry:
-    """record_dispatch_actual must not create parallelism.json under default config.
+    """record_dispatch_actual must not create parallelism.json when the kill-switch is set.
 
     What break turns this red:
-      - If any code path under default config creates parallelism.json (which
-        record_dispatch_actual writes only on the DISPATCH_OUTCOME_CONCURRENT_OBSERVED
-        path), the file-existence assertion fires.
+      - If any code path under MAP_EFFICIENT_SEQUENTIAL_ONLY=1 creates parallelism.json
+        (which record_dispatch_actual writes only on the DISPATCH_OUTCOME_CONCURRENT_OBSERVED
+        path), the file-existence assertion fires — the kill-switch leaked concurrency.
     """
 
-    def test_vc1d_no_parallelism_json_created_on_default_path(
+    def test_vc1d_no_parallelism_json_created_on_kill_switch_path(
         self,
         branch_with_waves: str,
     ) -> None:
-        """Running get_wave_step + compute_dispatch_gate under default config must NOT
-        create any parallelism.json file.
+        """Running get_wave_step + compute_dispatch_gate under MAP_EFFICIENT_SEQUENTIAL_ONLY=1
+        must NOT create any parallelism.json file.
         """
         expected_telemetry = Path(f".map/{branch_with_waves}/parallelism.json")
         map_dir = Path(f".map/{branch_with_waves}")
@@ -471,7 +477,7 @@ class TestGuardD_NoTelemetry:
         new_files = after - before
         parallelism_new = {p for p in new_files if "parallelism" in p.name}
         assert not parallelism_new, (
-            f"New parallelism-related file(s) created under default config: "
+            f"New parallelism-related file(s) created under MAP_EFFICIENT_SEQUENTIAL_ONLY=1: "
             f"{parallelism_new}. Only step_state.json should be updated."
         )
 
@@ -480,84 +486,90 @@ class TestGuardD_NoTelemetry:
 # Guard (e): Default-off baseline
 # ===========================================================================
 
-class TestGuardE_DefaultOffBaseline:
-    """Under default config, gate and wave step must be sequential with 5a reason code.
+class TestGuardE_KillSwitchBaseline:
+    """Under MAP_EFFICIENT_SEQUENTIAL_ONLY=1, gate and wave step must be sequential
+    with the kill-switch reason code.
 
     What break turns this red:
-      - If concurrent_dispatch defaults to True (config-default bug), the
+      - If the kill-switch is ignored and the concurrent path executes, the
         dispatch_mode assertion fires.
-      - If the reason code drifts from WAVE_REASON_DISPATCH_SEQUENTIAL, the reason
+      - If the reason code drifts from WAVE_REASON_SEQUENTIAL_ONLY_ENV, the reason
         assertion fires — catching a silent rename or path change.
       - concurrency_enabled==False is a corollary: also asserted.
+
+    Slice 6 change: the DEFAULT is now concurrent for parallel-ready plans.
+    The kill-switch is the behavioral gate these guards prove.
     """
 
-    def test_vc1e_compute_dispatch_gate_sequential_by_default(
+    def test_vc1e_compute_dispatch_gate_sequential_on_kill_switch(
         self, branch_with_waves: str
     ) -> None:
-        """compute_dispatch_gate returns dispatch_mode=='sequential' and the 5a reason
-        code when no concurrent_dispatch key is present.
+        """compute_dispatch_gate returns dispatch_mode=='sequential' and the
+        kill-switch reason code when MAP_EFFICIENT_SEQUENTIAL_ONLY=1.
 
-        The reason must equal WAVE_REASON_DISPATCH_SEQUENTIAL — not a fallback from
-        later gate steps — proving the HC-1 short-circuit is the path that fires.
+        The reason must equal WAVE_REASON_SEQUENTIAL_ONLY_ENV — not a fallback from
+        later gate steps — proving the kill-switch short-circuit is the path that fires.
         """
         gate = map_orchestrator.compute_dispatch_gate(branch_with_waves, Path("."))
 
         assert gate["dispatch_mode"] == "sequential", (
-            f"compute_dispatch_gate returned {gate['dispatch_mode']!r} under default "
-            "config. Expected 'sequential' (HC-1)."
+            f"compute_dispatch_gate returned {gate['dispatch_mode']!r} under kill-switch. "
+            "Expected 'sequential' (MAP_EFFICIENT_SEQUENTIAL_ONLY=1)."
         )
-        assert gate["reason"] == map_orchestrator.WAVE_REASON_DISPATCH_SEQUENTIAL, (
+        assert gate["reason"] == map_orchestrator.WAVE_REASON_SEQUENTIAL_ONLY_ENV, (
             f"Gate reason {gate['reason']!r} != "
-            f"WAVE_REASON_DISPATCH_SEQUENTIAL ({map_orchestrator.WAVE_REASON_DISPATCH_SEQUENTIAL!r}). "
-            "HC-1 short-circuit must fire before any concurrency probe."
+            f"WAVE_REASON_SEQUENTIAL_ONLY_ENV "
+            f"({map_orchestrator.WAVE_REASON_SEQUENTIAL_ONLY_ENV!r}). "
+            "Kill-switch must fire before any concurrency probe."
         )
 
-    def test_vc1e_get_wave_step_concurrency_disabled_by_default(
+    def test_vc1e_get_wave_step_concurrency_disabled_on_kill_switch(
         self, branch_with_waves: str
     ) -> None:
         """get_wave_step returns concurrency_enabled==False and dispatch_mode==
-        'sequential' when concurrent_dispatch is not configured.
+        'sequential' when MAP_EFFICIENT_SEQUENTIAL_ONLY=1.
         """
         result = map_orchestrator.get_wave_step(branch_with_waves)
 
         assert result["dispatch_mode"] == "sequential", (
             f"get_wave_step returned dispatch_mode={result['dispatch_mode']!r}. "
-            "Expected 'sequential' under default config."
+            "Expected 'sequential' under MAP_EFFICIENT_SEQUENTIAL_ONLY=1."
         )
         assert result.get("concurrency_enabled") is False, (
             f"get_wave_step returned concurrency_enabled="
-            f"{result.get('concurrency_enabled')!r}. Must be False under default config."
+            f"{result.get('concurrency_enabled')!r}. Must be False under kill-switch."
         )
 
-    def test_vc1e_get_wave_step_reason_is_5a_code(
+    def test_vc1e_get_wave_step_reason_is_kill_switch_code(
         self, branch_with_waves: str
     ) -> None:
-        """The reason in get_wave_step must be WAVE_REASON_DISPATCH_SEQUENTIAL — the
-        5a stable code — when concurrent_dispatch is off.
+        """The reason in get_wave_step must be WAVE_REASON_SEQUENTIAL_ONLY_ENV when
+        MAP_EFFICIENT_SEQUENTIAL_ONLY=1.
 
         Failure scenario: if compute_dispatch_gate's wiring changed and the reason
         was overwritten or swallowed, a different (or missing) reason code appears.
         """
         result = map_orchestrator.get_wave_step(branch_with_waves)
 
-        assert result.get("reason") == map_orchestrator.WAVE_REASON_DISPATCH_SEQUENTIAL, (
+        assert result.get("reason") == map_orchestrator.WAVE_REASON_SEQUENTIAL_ONLY_ENV, (
             f"get_wave_step reason={result.get('reason')!r} != "
-            f"WAVE_REASON_DISPATCH_SEQUENTIAL={map_orchestrator.WAVE_REASON_DISPATCH_SEQUENTIAL!r}. "
-            "The 5a reason code is the stable HC-1 contract."
+            f"WAVE_REASON_SEQUENTIAL_ONLY_ENV={map_orchestrator.WAVE_REASON_SEQUENTIAL_ONLY_ENV!r}. "
+            "The kill-switch reason code is the stable contract under MAP_EFFICIENT_SEQUENTIAL_ONLY=1."
         )
 
-    def test_vc1e_select_execution_strategy_concurrency_not_allowed_by_default(
+    def test_vc1e_select_execution_strategy_concurrency_not_allowed_on_kill_switch(
         self, branch_with_waves: str
     ) -> None:
-        """select_execution_strategy returns concurrency_allowed==False under default
-        config (worktree.isolation defaults to 'off').
+        """select_execution_strategy returns concurrency_allowed==False when
+        MAP_EFFICIENT_SEQUENTIAL_ONLY=1 (kill-switch engaged).
 
         This covers the 'concurrency_allowed==False' clause of guard (e).
+        Slice 6: the DEFAULT config no longer implies False here — the kill-switch does.
         """
         strategy = map_orchestrator.select_execution_strategy(branch_with_waves, Path("."))
 
         assert strategy.get("concurrency_allowed") is False, (
             f"select_execution_strategy returned concurrency_allowed="
             f"{strategy.get('concurrency_allowed')!r}. "
-            "Must be False under default config (worktree.isolation defaults to 'off')."
+            "Must be False under MAP_EFFICIENT_SEQUENTIAL_ONLY=1 (kill-switch)."
         )
