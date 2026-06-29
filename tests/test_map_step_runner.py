@@ -12150,14 +12150,16 @@ def test_cli_run_cross_ai_review_disabled_exit_zero(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_wave_mode_absent_defaults_off(tmp_path: Path) -> None:
-    """Config without execution.wave_mode key must return 'off' (today's sequential default)."""
+def test_wave_mode_absent_defaults_auto(tmp_path: Path) -> None:
+    """Config without execution.wave_mode key returns the canonical MapConfig
+    default 'auto' (still behavior-neutral: the wave-loop is gated on
+    worktree.isolation != 'off', which defaults to 'off')."""
     (tmp_path / ".map").mkdir()
     # Write a config without any wave_mode key at all.
     (tmp_path / ".map" / "config.yaml").write_text(
         "some.other.key: value\n", encoding="utf-8"
     )
-    assert map_step_runner._execution_wave_mode(tmp_path) == "off"
+    assert map_step_runner._execution_wave_mode(tmp_path) == "auto"
 
 
 def test_wave_mode_enum_and_unknown_fallback(tmp_path: Path) -> None:
@@ -12178,13 +12180,13 @@ def test_wave_mode_enum_and_unknown_fallback(tmp_path: Path) -> None:
     config.write_text("execution.wave_mode: off\n", encoding="utf-8")
     assert map_step_runner._execution_wave_mode(tmp_path) == "off"
 
-    # Unknown value -> "off"
+    # Unknown value -> "auto" (canonical MapConfig default)
     config.write_text("execution.wave_mode: parallel\n", encoding="utf-8")
-    assert map_step_runner._execution_wave_mode(tmp_path) == "off"
+    assert map_step_runner._execution_wave_mode(tmp_path) == "auto"
 
-    # Empty value -> "off"
+    # Empty value -> "auto"
     config.write_text("execution.wave_mode: \n", encoding="utf-8")
-    assert map_step_runner._execution_wave_mode(tmp_path) == "off"
+    assert map_step_runner._execution_wave_mode(tmp_path) == "auto"
 
 
 # ---------------------------------------------------------------------------
@@ -12224,7 +12226,11 @@ def test_worktree_isolation_legacy_bool_mapping(tmp_path: Path) -> None:
 
 
 def test_worktree_isolation_enum_and_disabled_check_parity(tmp_path: Path) -> None:
-    """New enum strings parse directly; disabled-check is off only when mode=='off'."""
+    """New enum strings parse directly. Per the canonical MapConfig/#305 semantics,
+    _wt_isolation_enabled is True ONLY for 'required' (and legacy truthy): 'auto'
+    stays disabled in Slice 0 (parallel dispatch lands in Slice 5), 'off' disabled.
+    _worktree_isolation_mode still reports the full enum (off/auto/required) for the
+    probe/fallback paths."""
     map_dir = tmp_path / ".map"
     map_dir.mkdir()
     config = map_dir / "config.yaml"
@@ -12234,12 +12240,12 @@ def test_worktree_isolation_enum_and_disabled_check_parity(tmp_path: Path) -> No
     assert map_step_runner._worktree_isolation_mode(tmp_path) == "off"
     assert map_step_runner._wt_isolation_enabled(tmp_path) is False
 
-    # Enum: "auto"
+    # Enum: "auto" — mode is 'auto' but isolation NOT enabled until Slice 5.
     config.write_text("worktree.isolation: auto\n", encoding="utf-8")
     assert map_step_runner._worktree_isolation_mode(tmp_path) == "auto"
-    assert map_step_runner._wt_isolation_enabled(tmp_path) is True
+    assert map_step_runner._wt_isolation_enabled(tmp_path) is False
 
-    # Enum: "required"
+    # Enum: "required" — enabled (hard-fail on unavailability, same as legacy true).
     config.write_text("worktree.isolation: required\n", encoding="utf-8")
     assert map_step_runner._worktree_isolation_mode(tmp_path) == "required"
     assert map_step_runner._wt_isolation_enabled(tmp_path) is True

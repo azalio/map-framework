@@ -144,18 +144,19 @@ def test_wave_color_computation() -> None:
 
 def test_default_config_selects_sequential(tmp_path: Path) -> None:
     """
-    VC2 [AC-5] [SC-2]: With a default (no-new-key) config, both
-    _execution_wave_mode and _worktree_isolation_mode return 'off',
-    asserting the sequential default path is selected (HC-1 behavior-neutral).
+    VC2 [AC-5] [SC-2]: With a default (no-new-key) config, the canonical
+    MapConfig defaults apply: _execution_wave_mode == 'auto' and
+    _worktree_isolation_mode == 'off'.  Behavior stays neutral (HC-1) because
+    the wave-loop is gated on worktree.isolation != 'off' — which is 'off' by
+    default — so the legacy sequential path is selected regardless of wave_mode.
 
     Also verifies the color-group concurrency predicate: the condition that
-    WOULD gate wave-mode (any color group of width >= 2) is shown to exist in
-    the two_wave_parallel fixture, but with wave_mode=='off' the legacy path
-    is selected regardless.
+    WOULD contribute to wave-mode (any color group of width >= 2) exists in the
+    two_wave_parallel fixture, but the isolation gate keeps the legacy path.
     """
     # Case A: no .map directory at all
-    assert map_step_runner._execution_wave_mode(tmp_path) == "off", (
-        "_execution_wave_mode must return 'off' when .map dir is absent"
+    assert map_step_runner._execution_wave_mode(tmp_path) == "auto", (
+        "_execution_wave_mode must default to 'auto' (MapConfig) when .map dir is absent"
     )
     assert map_step_runner._worktree_isolation_mode(tmp_path) == "off", (
         "_worktree_isolation_mode must return 'off' when .map dir is absent"
@@ -169,8 +170,8 @@ def test_default_config_selects_sequential(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    assert map_step_runner._execution_wave_mode(tmp_path) == "off", (
-        "_execution_wave_mode must return 'off' when execution.wave_mode key is absent"
+    assert map_step_runner._execution_wave_mode(tmp_path) == "auto", (
+        "_execution_wave_mode must default to 'auto' when execution.wave_mode key is absent"
     )
     assert map_step_runner._worktree_isolation_mode(tmp_path) == "off", (
         "_worktree_isolation_mode must return 'off' when worktree.isolation key is absent"
@@ -192,8 +193,13 @@ def test_default_config_selects_sequential(tmp_path: Path) -> None:
         "(the concurrency predicate gate)"
     )
 
-    # But the default wave_mode is 'off' — sequential path is selected regardless
+    # wave_mode defaults to 'auto' and a width>=2 group exists, but the isolation
+    # gate (worktree.isolation == 'off' by default) keeps the legacy sequential
+    # path — that is what makes the default behavior-neutral.
     wave_mode = map_step_runner._execution_wave_mode(tmp_path)
-    assert wave_mode == "off", (
-        f"default config must select wave_mode='off' (sequential); got {wave_mode!r}"
+    isolation = map_step_runner._worktree_isolation_mode(tmp_path)
+    assert wave_mode == "auto" and isolation == "off", (
+        f"default config: wave_mode='auto', isolation='off'; got {wave_mode!r}/{isolation!r}"
     )
+    # The wave-loop predicate requires isolation != 'off', so default => sequential.
+    assert isolation == "off", "isolation gate must hold the legacy path by default"

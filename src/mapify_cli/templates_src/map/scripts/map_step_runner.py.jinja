@@ -152,11 +152,14 @@ _WAVE_MODE_VALID = frozenset({"off", "auto", "on"})
 def _execution_wave_mode(project_dir: Path) -> str:
     """Return the execution.wave_mode setting: 'off' | 'auto' | 'on'.
 
-    Any absent, unknown, or garbage value normalises to 'off' (today's
-    sequential behaviour).  Never raises.
+    Default + enum mirror the canonical MapConfig schema (config/project_config.py):
+    absent/unknown/garbage normalises to 'auto'.  'auto' is still behavior-neutral
+    by default because the wave-loop only engages when worktree.isolation != 'off'
+    (which itself defaults to 'off') AND a color group has >=2 members — see
+    select_execution_strategy.  Never raises.
     """
-    raw = _map_config_str(project_dir, "execution.wave_mode", "off")
-    return raw if raw in _WAVE_MODE_VALID else "off"
+    raw = _map_config_str(project_dir, "execution.wave_mode", "auto")
+    return raw if raw in _WAVE_MODE_VALID else "auto"
 
 
 def _extract_transcript_usage(entry: dict) -> Optional[int]:
@@ -15363,7 +15366,24 @@ def _worktree_isolation_mode(project_dir: Path) -> str:
 
 
 def _wt_isolation_enabled(project_dir: Path) -> bool:
-    return _worktree_isolation_mode(project_dir) != "off"
+    """Return True when worktree isolation is active for the current project.
+
+    Handles the enum migration (#303): the old boolean ``false``/``true`` raw
+    strings (YAML 1.1 booleans are written as ``false``/``true`` when read
+    line-by-line) still work.  New enum values:
+    - ``off``  -> False (disabled — default)
+    - ``auto`` -> False (Slice 0: sequential everywhere; parallel dispatch
+                  lands in Slice 5; the call site in create_subtask_worktree
+                  already degrades to sequential when this returns False)
+    - ``required`` -> True  (hard-fail on unavailability, same as old ``true``)
+
+    Canonical enum vocabulary + default live in MapConfig
+    (config/project_config.py). `_worktree_isolation_mode` above mirrors the
+    same `worktree.isolation` key for probe/fallback paths that need the full
+    enum value (auto vs required), not just the enabled boolean.
+    """
+    val = _map_config_str(project_dir, "worktree.isolation", "off").strip().lower()
+    return val in {"required", "true", "yes", "y", "1", "on"}
 
 
 def _wt_max_deletions(project_dir: Path) -> int:

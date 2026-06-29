@@ -2454,9 +2454,11 @@ def select_execution_strategy(
 ) -> dict:
     """Determine whether to use wave_loop or legacy sequential walker.
 
-    Predicate: wave_loop IFF wave_mode in {on, auto} AND any color-group has
-    width >= 2.  Default config (wave_mode='off') always returns 'sequential'
-    so the legacy get_next_step path is byte-identical (HC-1).
+    Predicate: wave_loop IFF wave_mode in {on, auto} AND worktree.isolation != 'off'
+    AND any color-group has width >= 2.  This mirrors the canonical MapConfig gating
+    (#305): execution_wave_mode defaults to 'auto' but the wave-loop stays dormant
+    because worktree.isolation defaults to 'off', so default config always returns
+    'sequential' and the legacy get_next_step path is byte-identical (HC-1).
 
     Args:
         branch: Git branch name (sanitized)
@@ -2467,6 +2469,7 @@ def select_execution_strategy(
         {
           "strategy": "wave_loop" | "sequential",
           "wave_mode": "off" | "auto" | "on",
+          "worktree_isolation": "off" | "auto" | "required",
           "has_parallel_groups": bool,
           "reason": str,
         }
@@ -2475,21 +2478,31 @@ def select_execution_strategy(
         project_dir = Path(".")
 
     try:
-        from map_step_runner import _execution_wave_mode  # pyright: ignore[reportMissingImports]
+        from map_step_runner import (  # pyright: ignore[reportMissingImports]
+            _execution_wave_mode,
+            _worktree_isolation_mode,
+        )
         wave_mode = _execution_wave_mode(project_dir)
+        isolation_mode = _worktree_isolation_mode(project_dir)
     except ImportError:
         wave_mode = "off"
+        isolation_mode = "off"
 
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
     has_parallel_groups = any(len(g) >= 2 for g in state.execution_waves)
 
-    if wave_mode in {"on", "auto"} and has_parallel_groups:
+    if wave_mode in {"on", "auto"} and isolation_mode != "off" and has_parallel_groups:
         strategy = "wave_loop"
-        reason = f"wave_mode={wave_mode!r} and execution_waves has width>=2 group"
+        reason = (
+            f"wave_mode={wave_mode!r}, worktree.isolation={isolation_mode!r}, "
+            "and execution_waves has width>=2 group"
+        )
     else:
         if wave_mode not in {"on", "auto"}:
             reason = f"wave_mode={wave_mode!r} (not on/auto) → legacy sequential"
+        elif isolation_mode == "off":
+            reason = "worktree.isolation='off' → legacy sequential (no isolation, no parallel)"
         else:
             reason = "no color-group with width>=2 → sequential (all width-1 waves)"
         strategy = "sequential"
@@ -2497,6 +2510,7 @@ def select_execution_strategy(
     return {
         "strategy": strategy,
         "wave_mode": wave_mode,
+        "worktree_isolation": isolation_mode,
         "has_parallel_groups": has_parallel_groups,
         "reason": reason,
     }

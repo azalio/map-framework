@@ -123,17 +123,20 @@ including clean passes — must carry concrete evidence references.
 
 ### Execution strategy decision table
 
-`select_execution_strategy` picks between the legacy sequential walker and the wave-loop on every run:
+`select_execution_strategy` picks between the legacy sequential walker and the wave-loop on every run. The wave-loop engages **only when ALL THREE hold**; otherwise the legacy sequential walker (`get_next_step`) runs:
 
-| `execution.wave_mode` | Color group has ≥2 members? | Dispatcher selected |
-|---|---|---|
-| absent / `off` (default) | any | Legacy sequential walker (`get_next_step`) |
-| `auto` | no (all groups size 1) | Legacy sequential walker (`get_next_step`) |
-| `auto` | yes | Wave-loop (`get_wave_step` / `validate_wave_step` / `advance_wave`) |
-| `on` | no (all groups size 1) | Legacy sequential walker (`get_next_step`) |
-| `on` | yes | Wave-loop |
+1. `execution.wave_mode` ∈ {`auto`, `on`}, **AND**
+2. `worktree.isolation` ≠ `off`, **AND**
+3. at least one color group has ≥2 members.
 
-With a stock `mapify init` config (no `execution.wave_mode` key), `wave_mode` defaults to `off` and the legacy sequential walker always runs — behavior is byte-identical to pre-Slice-3.
+| `execution.wave_mode` | `worktree.isolation` | Color group ≥2? | Dispatcher selected |
+|---|---|---|---|
+| any | `off` (default) | any | Legacy sequential walker (`get_next_step`) |
+| `off` | any | any | Legacy sequential walker (`get_next_step`) |
+| `auto` / `on` | `auto` / `required` | no (all groups size 1) | Legacy sequential walker (`get_next_step`) |
+| `auto` / `on` | `auto` / `required` | yes | Wave-loop (`get_wave_step` / `validate_wave_step` / `advance_wave`) |
+
+**Defaults (canonical MapConfig):** `execution.wave_mode=auto`, `worktree.isolation=off`. Because the isolation gate (#2) fails by default, a stock `mapify init` config always runs the legacy sequential walker — byte-identical to pre-Slice-3. Even when the wave-loop does engage, dispatch stays sequential until concurrency ships (Slice 5+, `concurrency_enabled=False`).
 
 ### Sequential walker
 
