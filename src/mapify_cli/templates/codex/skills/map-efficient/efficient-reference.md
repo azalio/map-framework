@@ -115,7 +115,9 @@ wave-loop on every run. The wave-loop engages **only when ALL THREE hold**
 `mapify init` config always runs the legacy sequential walker. Even when the
 wave-loop engages, dispatch remains **sequential** in Slice 5a (`isolation_active=True`,
 `dispatch_mode` from `get_wave_step` keyed to `sequential`); concurrent fan-out
-is Slice 5b (`dispatch_mode==concurrent`, `concurrency_enabled=True`, not yet shipped).
+is Slice 5b (`dispatch_mode==concurrent`, `concurrency_enabled=True`),
+**ACTIVE when opted in** via `execution.concurrent_dispatch: true`
+(gate: `dispatch_mode == 'concurrent'`).
 
 ### Sequential walker
 
@@ -158,24 +160,26 @@ to base on any conflict or gate failure (worktrees kept for retry). On a single
 subtask's Monitor failure, `discard_subtask_worktree` that subtask and retry it
 before calling `merge_wave_worktrees`.
 
-### Concurrent actor dispatch — **Slice 5b only** (`dispatch_mode == 'concurrent'`) — GATED EXAMPLE
+### Concurrent actor dispatch — **Slice 5b** (`dispatch_mode == 'concurrent'`) — **ACTIVE when opted in**
 
-> **IMPORTANT — read before using this example.**
-> Concurrent fan-out (dispatching multiple actor subagents in a single turn) is
-> **Slice 5b** and is enabled **only when `concurrency_enabled: true` /
-> `parallel_ready` flag set / `dispatch_mode == 'concurrent'`**. In the **current
-> framework** (`concurrency_enabled=False`, Slice 5a), dispatch stays **SEQUENTIAL
+> **IMPORTANT — read before using this section.**
+> Concurrent fan-out (dispatching N actor subagents in a single turn) is
+> **ACTIVE when opted in** via `execution.concurrent_dispatch: true`
+> (gate: `dispatch_mode == 'concurrent'`). With the **default config**
+> (`concurrent_dispatch=false`, Slice 5a), dispatch stays **SEQUENTIAL
 > even when a wave has `mode=="parallel"`** — one actor subagent per turn, each
-> pinned to its own worktree. The example below is reference material for when
-> Slice 5b ships; do NOT treat it as an active instruction now. Use your runtime's
+> pinned to its own worktree. Act on the instructions below **only** when
+> `get_wave_step` returns `dispatch_mode == 'concurrent'`. Use your runtime's
 > own parallel actor-subagent dispatch mechanism — this is the provider-neutral
 > shape, not a literal API call.
 
-When Slice 5b concurrency is enabled, a parallel wave with N subtasks dispatches
-all N actor subagents in **one turn**:
+**Runtime wiring:** when `get_wave_step` returns `dispatch_mode == 'concurrent'`,
+call `run_concurrent_wave` (runner), which batch-splits the wave by `max_actors`
+and merges each sub-batch atomically via `merge_wave_worktrees`. For each sub-batch,
+dispatch all N actor subagents **in one turn** — not one per turn:
 
 ```text
-# CORRECT (Slice 5b / concurrency_enabled=True / dispatch_mode=='concurrent' only) — one turn, N actor subagents:
+# CORRECT (dispatch_mode=='concurrent' only) — N actor subagents in one turn:
 dispatch actor subagent -> ST-003 (pinned to its own worktree)
 dispatch actor subagent -> ST-004 (pinned to its own worktree)
 
@@ -188,6 +192,13 @@ dispatch actor subagent -> ST-004 (pinned to its own worktree)
 
 **`max_actors` cap:** Default 4–8 per wave. Groups larger than `max_actors` are
 pre-split into sequential batches before dispatch.
+
+**Retry-discard on failure:** on any actor failure, timeout, or Monitor-reject
+within a concurrent group, the runner calls `abort_wave_group`, which discards
+the **entire group** (cancels siblings, resets all worktrees to base SHA, removes
+group branches) and reruns from base. Retries are bounded by `max_wave_retries`
+(default 3); on exhaustion the runner escalates to a human and does **not**
+auto-restart. Never merges a successful subset — discard-all-or-merge-all (HC-4).
 
 ### Anti-patterns — Slice 5b concurrent dispatch only
 

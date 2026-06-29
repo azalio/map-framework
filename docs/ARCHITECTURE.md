@@ -186,6 +186,52 @@ divergence each in-wave squash-merge creates. Design (llm-council-reviewed, conv
   reported as advisory telemetry while git's textual conflict stays the hard
   guard).
 
+### Phase 3 / Slice 5b: concurrent Actor dispatch (flag-gated, default off)
+
+Slice 5b activates same-turn concurrent dispatch of Actor subagents within a
+parallel wave. The entire path is guarded by `execution.concurrent_dispatch`
+(default `false`); with the flag off the code path is byte-identical to Slice 5a.
+
+**Dispatch gate (`compute_dispatch_gate`).** A strict conjunction of four
+conditions: `concurrent_dispatch` is true AND `concurrency_allowed` (platform
+supports parallel Task dispatch) AND `concurrency_ready` (runner state is
+consistent) AND `worktree.isolation != off`. Any single condition false → gate
+returns `disabled`. A config contradiction (e.g. `concurrent_dispatch: true` with
+isolation off) is a hard abort (`ConfigError`-equivalent) — fail-closed, never
+silent degradation.
+
+**Group lifecycle.** `begin_wave_group` opens a dispatch group and records the
+base SHA from the sidecar. `record_group_lifecycle` appends structured events
+(started, dispatched, merged, aborted). `verify_group_clean` asserts no group is
+open before a new wave starts. `reconcile_orphan_groups` detects and cleans up
+groups that were opened but never closed (e.g. runner crash mid-wave).
+
+**`record_dispatch_actual` — clock-free classifier.** Determines whether actors
+ran with actual concurrency or only phantom parallelism (dispatched concurrently
+but serialized by the harness). Uses `max_in_flight` replay over dispatch
+timestamps recorded in the sidecar — no wall-clock reads, no `time.sleep`. A
+worktree SHA proves isolation (each actor worked on its own tree) but does NOT
+prove concurrency; the classifier emits `phantom_parallel: true` when the
+evidence is isolation-only. Evidence hierarchy: overlapping dispatch windows →
+concurrent; non-overlapping with worktree SHAs → isolated-sequential; no
+worktree SHAs → unverifiable.
+
+**`run_concurrent_wave`.** Splits the wave's subtask list into sub-batches of
+`execution.max_actors` (clamped `[1, 8]`). Dispatches each sub-batch as
+concurrent Actor Tasks, then calls `merge_wave_worktrees` atomically for that
+sub-batch. A sub-batch failure triggers `abort_wave_group` for the whole group.
+
+**`abort_wave_group` — bounded rollback.** On any sub-batch failure, reverts
+every worktree in the group back to wave base (`discard_subtask_worktree` for
+each member). Retries the whole group up to `execution.max_wave_retries` (clamped
+`[1, 10]`, default 3). Exhausted retries → escalation (same path as
+`build_escalation_outcome`).
+
+**Test harness.** Uses barrier-based determinism — actors synchronise on a shared
+`threading.Barrier` rather than sleeping, so tests are deterministic regardless of
+scheduling. The HC-1 leak-guard suite asserts no cross-subtask state leaks
+(worktree files, MAP sidecar entries, git refs) under concurrent dispatch.
+
 Phase 3 (context-budget hooks) is the final slice of #284 and is now complete.
 **Threshold warnings** already ship via the `context-meter.py` `UserPromptSubmit`
 hook (a `/compact` nudge when `compression_threshold_tokens` is crossed) and the

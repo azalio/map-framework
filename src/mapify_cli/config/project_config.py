@@ -207,6 +207,23 @@ class MapConfig:
     # DORMANT in Slice 5a — parsed and validated but no execution path reads it yet.
     retry_degraded_once: bool = False
 
+    # Enable same-turn concurrent Actor dispatch in a parallel wave (#303 Slice 5b).
+    # The ONLY user-facing switch that activates concurrent dispatch; `False` by
+    # default — Slice 6 flips this once the rollback path is proven stable.
+    # Dotted YAML alias: `execution.concurrent_dispatch`.
+    # YAML 1.1 bare off/on arrive as Python bool, which matches this field type —
+    # no coercion needed (unlike the string enum fields).
+    # DORMANT in 5b.0 — consumed by ST-001's gate; no execution path reads it yet.
+    concurrent_dispatch: bool = False
+
+    # Bounded retry cap for whole-wave rollback/restart in Slice 5b (#303).
+    # Range 1–10; values outside the range are clamped by clamp_max_wave_retries().
+    # Non-int / bool values fall back to the default 3.
+    # Dotted YAML alias: `execution.max_wave_retries`.
+    # DORMANT in 5b.0 — consumed by ST-006's rollback path; no execution path reads
+    # it yet.
+    max_wave_retries: int = 3
+
 
 def clamp_max_actors(n: object) -> int:
     """Clamp max_actors to the valid range [1, 8], or return the default 4.
@@ -222,6 +239,22 @@ def clamp_max_actors(n: object) -> int:
     if isinstance(n, bool) or not isinstance(n, int):
         return 4
     return max(1, min(8, n))
+
+
+def clamp_max_wave_retries(n: object) -> int:
+    """Clamp max_wave_retries to the valid range [1, 10], or return the default 3.
+
+    Non-int values (including bool, str, None) return the default 3.
+    int values are clamped: below 1 → 1, above 10 → 10.
+
+    Note: bool is explicitly excluded (isinstance(True, int) is True in Python)
+    because a YAML boolean arriving here is a misconfiguration, not an int.
+    The floor is 1 — a valid-but-low int (e.g. 0) is clamped to 1 (minimum
+    legal value), while a non-int/bool/None falls back to the default 3.
+    """
+    if isinstance(n, bool) or not isinstance(n, int):
+        return 3
+    return max(1, min(10, n))
 
 
 def load_map_config(project_path: Path) -> MapConfig:
@@ -295,6 +328,8 @@ def load_map_config(project_path: Path) -> MapConfig:
             ("execution.wave_mode", "execution_wave_mode"),
             ("execution.max_actors", "max_actors"),
             ("execution.retry_degraded_once", "retry_degraded_once"),
+            ("execution.concurrent_dispatch", "concurrent_dispatch"),
+            ("execution.max_wave_retries", "max_wave_retries"),
         ):
             if dotted in data and field_name not in data:
                 data[field_name] = data.pop(dotted)
@@ -436,8 +471,11 @@ def load_map_config(project_path: Path) -> MapConfig:
             cfg.execution_wave_mode = "auto"
 
         # Clamp max_actors to [1, 8]; non-int/bool → default 4.
-        # retry_degraded_once is a plain bool handled by the generic type-check loop.
+        # retry_degraded_once and concurrent_dispatch are plain bools handled by
+        # the generic type-check loop.
         cfg.max_actors = clamp_max_actors(cfg.max_actors)
+        # Clamp max_wave_retries to [1, 10]; non-int/bool → default 3.
+        cfg.max_wave_retries = clamp_max_wave_retries(cfg.max_wave_retries)
 
         return cfg
 
@@ -612,6 +650,16 @@ minimality: lite
 # Retry a crashed worker once before aborting the wave (Slice 5b).
 # DORMANT until Slice 5b — setting this in Slice 5a has no effect.
 # execution.retry_degraded_once: false
+
+# Enable same-turn concurrent Actor dispatch (#303 Slice 5b). The ONLY switch
+# that activates concurrent dispatch; false by default — Slice 6 flips this once
+# the rollback path is proven stable. YAML 1.1 bare off/on arrive as bool.
+# execution.concurrent_dispatch: false
+
+# Bounded retry cap for whole-wave rollback/restart (#303 Slice 5b).
+# Valid range 1–10; values outside the range are clamped (0→1, 99→10).
+# Non-int / bool values fall back to the default 3.
+# execution.max_wave_retries: 3
 
 # Strip MAP-internal workflow IDs (ST-/AC-/VC-/INV-/HC-) from the code a run
 # changed, at workflow completion (Stop hook). On by default; uncomment and set

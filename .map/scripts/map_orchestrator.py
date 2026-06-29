@@ -255,6 +255,19 @@ WAVE_CONCURRENCY_ENABLED = False
 WAVE_REASON_NO_WAVES = "no_waves"
 WAVE_REASON_WAVE_COMPLETE = "wave_complete"
 WAVE_REASON_DISPATCH_SEQUENTIAL = "dispatch_sequential_5a"
+# Stable reason codes for compute_dispatch_gate (ST-001, Slice 5b).
+WAVE_REASON_CONCURRENT_GATED = "concurrent_gated"
+WAVE_REASON_GATE_NOT_PARALLELIZABLE = "gate_not_parallelizable"
+# Current wave is width-1 even though a later wave is parallel; dispatch sequentially
+# for this wave — not an error, just the natural plan structure.
+WAVE_REASON_CURRENT_WAVE_SEQUENTIAL = "current_wave_sequential"
+
+
+class DispatchGateError(RuntimeError):
+    """Raised when concurrent_dispatch=true but a required prerequisite is missing.
+
+    HC-3: never silent-degrade — callers must handle explicitly.
+    """
 
 
 def _read_map_config_scalars(project_dir: Path) -> dict[str, str]:
@@ -2303,8 +2316,16 @@ def get_wave_step(branch: str) -> dict:
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
 
-    # Compute structured dispatch signal fields (ST-002).
-    dispatch_mode = "concurrent" if WAVE_CONCURRENCY_ENABLED else "sequential"
+    # Compute structured dispatch signal via config-driven gate (ST-001, Slice 5b).
+    # compute_dispatch_gate short-circuits to sequential on the first line when
+    # concurrent_dispatch=false (default), touching no new code/probe/import (HC-1).
+    gate = compute_dispatch_gate(branch, Path("."))
+    dispatch_mode = gate["dispatch_mode"]
+    dispatch_reason = gate["reason"]
+    # concurrency_enabled alias: True iff dispatch_mode resolved to "concurrent".
+    # WAVE_CONCURRENCY_ENABLED is kept as a dormant unused const (backward compat).
+    concurrency_enabled = dispatch_mode == "concurrent"
+
     try:
         from map_step_runner import (  # pyright: ignore[reportMissingImports]
             _worktree_isolation_mode,
@@ -2319,8 +2340,8 @@ def get_wave_step(branch: str) -> dict:
             "wave_index": 0,
             "subtasks": [],
             "is_complete": True,
-            "concurrency_enabled": dispatch_mode == "concurrent",
-            "dispatch_mode": dispatch_mode,
+            "concurrency_enabled": concurrency_enabled,
+            "dispatch_mode": "sequential",
             "isolation_active": isolation_active,
             "reason": WAVE_REASON_NO_WAVES,
             "message": "No execution waves configured. Use sequential mode.",
@@ -2332,8 +2353,8 @@ def get_wave_step(branch: str) -> dict:
             "wave_index": state.current_wave_index,
             "subtasks": [],
             "is_complete": True,
-            "concurrency_enabled": dispatch_mode == "concurrent",
-            "dispatch_mode": dispatch_mode,
+            "concurrency_enabled": concurrency_enabled,
+            "dispatch_mode": "sequential",
             "isolation_active": isolation_active,
             "reason": WAVE_REASON_WAVE_COMPLETE,
         }
@@ -2372,12 +2393,10 @@ def get_wave_step(branch: str) -> dict:
         "wave_total": len(state.execution_waves),
         "subtasks": subtask_infos,
         "is_complete": False,
-        # concurrency_enabled=False: even when mode=="parallel" (width>=2 wave),
-        # dispatch is strictly sequential this slice. Slice 5 flips WAVE_CONCURRENCY_ENABLED.
-        "concurrency_enabled": dispatch_mode == "concurrent",
+        "concurrency_enabled": concurrency_enabled,
         "dispatch_mode": dispatch_mode,
         "isolation_active": isolation_active,
-        "reason": WAVE_REASON_DISPATCH_SEQUENTIAL,
+        "reason": dispatch_reason,
     }
 
 
@@ -2543,6 +2562,113 @@ def select_execution_strategy(
         "has_parallel_groups": has_parallel_groups,
         "reason": reason,
         "concurrency_allowed": concurrency_allowed,
+    }
+
+
+def compute_dispatch_gate(
+    branch: str, project_dir: Optional[Path] = None
+) -> dict:
+    """Compute the dispatch mode for the current wave, fail-closed on config contradiction.
+
+    Gate logic (evaluated in order):
+
+    1. If concurrent_dispatch is False (default): return sequential immediately.
+       FIRST executable line — no probe, no select_execution_strategy call, no import
+       of any concurrency primitive (HC-1 byte-identity).
+
+    2. If concurrent_dispatch is True AND worktree.isolation == 'off':
+       raise DispatchGateError — config contradiction, HC-3 never silent-degrade.
+
+    3. If concurrent_dispatch is True AND isolation != 'off' AND NOT concurrency_allowed:
+       return sequential with WAVE_REASON_GATE_NOT_PARALLELIZABLE (not an error —
+       the plan has no parallelizable groups).
+
+    4. If concurrent_dispatch is True AND isolation != 'off' AND concurrency_allowed
+       AND the CURRENT wave (execution_waves[current_wave_index]) has width < 2:
+       return sequential with WAVE_REASON_CURRENT_WAVE_SEQUENTIAL (not an error —
+       the current wave is width-1 even though a later wave is parallel).
+
+    5. If concurrent_dispatch is True AND isolation != 'off' AND concurrency_allowed
+       AND the CURRENT wave has width >= 2:
+       return concurrent with WAVE_REASON_CONCURRENT_GATED.
+
+    Args:
+        branch: Git branch name (sanitized).
+        project_dir: Project root containing .map/config.yaml.
+                     Defaults to Path('.').
+
+    Returns:
+        {"dispatch_mode": "sequential" | "concurrent", "reason": <stable code>}
+
+    Raises:
+        DispatchGateError: When concurrent_dispatch=true but worktree.isolation='off'
+                           (HC-3: config contradiction must never be silently degraded).
+    """
+    if project_dir is None:
+        project_dir = Path(".")
+
+    # Step 1: short-circuit on flag=false — first gate check after parameter
+    # normalization. No concurrency probe, no select_execution_strategy call, no
+    # _worktree_isolation_mode/concurrency_ready call, no dispatcher import runs on
+    # this path (HC-1 byte-identity). The project_dir None-guard above is a safe
+    # default-arg normalization, not a concurrency primitive.
+    try:
+        from map_step_runner import (  # pyright: ignore[reportMissingImports]
+            _concurrent_dispatch_enabled,
+        )
+        flag_on = _concurrent_dispatch_enabled(project_dir)
+    except ImportError:
+        flag_on = False
+
+    if not flag_on:
+        return {
+            "dispatch_mode": "sequential",
+            "reason": WAVE_REASON_DISPATCH_SEQUENTIAL,
+        }
+
+    # Step 2: flag is on — check isolation config.
+    try:
+        from map_step_runner import (  # pyright: ignore[reportMissingImports]
+            _worktree_isolation_mode as _wt_iso,
+        )
+        isolation = _wt_iso(project_dir)
+    except ImportError:
+        isolation = "off"
+
+    if isolation == "off":
+        raise DispatchGateError(
+            "concurrent_dispatch=true requires worktree.isolation != 'off', "
+            f"but worktree.isolation is 'off' in {project_dir}. "
+            "Set worktree.isolation to 'auto' or 'required' to enable concurrent dispatch."
+        )
+
+    # Step 3: check whether the plan is actually parallelizable (any wave has width>=2).
+    strategy_result = select_execution_strategy(branch, project_dir)
+    concurrency_allowed = strategy_result.get("concurrency_allowed", False)
+
+    if not concurrency_allowed:
+        return {
+            "dispatch_mode": "sequential",
+            "reason": WAVE_REASON_GATE_NOT_PARALLELIZABLE,
+        }
+
+    # Step 4: plan has at least one parallel wave, but gate on the ACTIVE wave.
+    # select_execution_strategy checks any wave (has_parallel_groups), not the
+    # current wave index. A width-1 current wave must dispatch sequentially even
+    # if a later wave is parallel — dispatch_mode is per-wave, not per-plan.
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+    waves = state.execution_waves
+    idx = state.current_wave_index
+    if idx >= len(waves) or len(waves[idx]) < 2:
+        return {
+            "dispatch_mode": "sequential",
+            "reason": WAVE_REASON_CURRENT_WAVE_SEQUENTIAL,
+        }
+
+    return {
+        "dispatch_mode": "concurrent",
+        "reason": WAVE_REASON_CONCURRENT_GATED,
     }
 
 

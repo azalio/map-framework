@@ -293,6 +293,29 @@ A concurrent second coordinator is blocked by an advisory lock.
 Phase 2's wave-merge coordinator (`merge_wave_worktrees`) has landed; Phase 3
 (context-budget hooks) remains open on #284.
 
+### Concurrent dispatch (Slice 5b, opt-in)
+
+Concurrent Actor dispatch within a parallel wave is an **opt-in, off-by-default**
+feature controlled by three config keys. With `execution.concurrent_dispatch`
+unset or `false` (the default), wave dispatch is sequential — identical behavior
+to before Slice 5b.
+
+```yaml
+# .map/config.yaml
+execution.concurrent_dispatch: false   # set to true to enable same-turn concurrent dispatch
+execution.max_actors: 4                # max parallel Actor agents per sub-batch (clamp [1,8])
+execution.max_wave_retries: 3          # max whole-group rollback+restart attempts (clamp [1,10])
+```
+
+**Requirements when enabling:** `worktree.isolation` must be `auto` or `required`.
+Setting `execution.concurrent_dispatch: true` with isolation off (or `disabled`)
+produces a hard `ConfigError` abort — the gate fails closed rather than degrading
+silently.
+
+**Sequential default.** With `concurrent_dispatch: false` (or absent), every wave
+runs the same sequential Actor→merge loop as before; no config error is raised and
+none of the concurrent-dispatch code paths are exercised.
+
 ## Stack Overflow for Agents (SOFA)
 
 SOFA integration is an **opt-in, off-by-default, read-only** prior-art search.
