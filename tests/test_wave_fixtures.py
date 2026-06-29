@@ -8,8 +8,11 @@ VC2: Fixture module source contains no TODO/FIXME/... placeholders.
 from __future__ import annotations
 
 import ast
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 from tests.fixtures.wave_blueprints import (
     BlueprintFixture,
@@ -105,6 +108,8 @@ class TestAllFixturesLoadable:
     # --- git-shape fixtures ---
 
     def test_all_fixtures_loadable_non_git_dir(self, tmp_path: Path) -> None:
+        if shutil.which("git") is None:
+            pytest.skip("git not available")
         repo = non_git_dir(tmp_path)
         assert repo.is_dir()
         # must NOT be a git repo

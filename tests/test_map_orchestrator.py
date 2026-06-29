@@ -4644,50 +4644,48 @@ def test_wave_loop_predicate_gating_default_legacy(
             return val
         return _f
 
-    fake_runner_off = types.ModuleType("map_step_runner")
-    fake_runner_off._execution_wave_mode = _const_mode("off")  # type: ignore[attr-defined]
-    _sys.modules["map_step_runner"] = fake_runner_off
+    # Save any real map_step_runner so we restore (not erase) it afterwards —
+    # other tests in the session may rely on the genuine imported module.
+    _orig_msr = _sys.modules.get("map_step_runner")
     try:
+        # 1. wave_mode=off → sequential
+        fake_runner_off = types.ModuleType("map_step_runner")
+        fake_runner_off._execution_wave_mode = _const_mode("off")  # type: ignore[attr-defined]
+        _sys.modules["map_step_runner"] = fake_runner_off
         result = map_orchestrator.select_execution_strategy(branch, tmp_path)
-    finally:
-        _sys.modules.pop("map_step_runner", None)
-    assert result["strategy"] == "sequential", f"off → sequential: {result}"
-    assert result["wave_mode"] == "off"
-    assert result["has_parallel_groups"] is True  # waves exist, but mode is off
+        assert result["strategy"] == "sequential", f"off → sequential: {result}"
+        assert result["wave_mode"] == "off"
+        assert result["has_parallel_groups"] is True  # waves exist, but mode is off
 
-    # 2. wave_mode=on + has_parallel_groups → wave_loop.
-    _write_config(tmp_path, "on")
-    fake_runner_on = types.ModuleType("map_step_runner")
-    fake_runner_on._execution_wave_mode = _const_mode("on")  # type: ignore[attr-defined]
-    _sys.modules["map_step_runner"] = fake_runner_on
-    try:
+        # 2. wave_mode=on + has_parallel_groups → wave_loop.
+        _write_config(tmp_path, "on")
+        fake_runner_on = types.ModuleType("map_step_runner")
+        fake_runner_on._execution_wave_mode = _const_mode("on")  # type: ignore[attr-defined]
+        _sys.modules["map_step_runner"] = fake_runner_on
         result = map_orchestrator.select_execution_strategy(branch, tmp_path)
-    finally:
-        _sys.modules.pop("map_step_runner", None)
-    assert result["strategy"] == "wave_loop", f"on + width>=2 → wave_loop: {result}"
-    assert result["wave_mode"] == "on"
+        assert result["strategy"] == "wave_loop", f"on + width>=2 → wave_loop: {result}"
+        assert result["wave_mode"] == "on"
 
-    # 3. wave_mode=auto + has_parallel_groups → wave_loop.
-    fake_runner_auto = types.ModuleType("map_step_runner")
-    fake_runner_auto._execution_wave_mode = _const_mode("auto")  # type: ignore[attr-defined]
-    _sys.modules["map_step_runner"] = fake_runner_auto
-    try:
+        # 3. wave_mode=auto + has_parallel_groups → wave_loop.
+        fake_runner_auto = types.ModuleType("map_step_runner")
+        fake_runner_auto._execution_wave_mode = _const_mode("auto")  # type: ignore[attr-defined]
+        _sys.modules["map_step_runner"] = fake_runner_auto
         result = map_orchestrator.select_execution_strategy(branch, tmp_path)
-    finally:
-        _sys.modules.pop("map_step_runner", None)
-    assert result["strategy"] == "wave_loop", f"auto + width>=2 → wave_loop: {result}"
+        assert result["strategy"] == "wave_loop", f"auto + width>=2 → wave_loop: {result}"
 
-    # 4. wave_mode=on but ALL waves are width-1 → sequential (has_parallel_groups=False).
-    _write_step_state(branch, tmp_path, execution_waves=[["ST-001"], ["ST-002"]])
-    fake_runner_on2 = types.ModuleType("map_step_runner")
-    fake_runner_on2._execution_wave_mode = _const_mode("on")  # type: ignore[attr-defined]
-    _sys.modules["map_step_runner"] = fake_runner_on2
-    try:
+        # 4. wave_mode=on but ALL waves are width-1 → sequential (has_parallel_groups=False).
+        _write_step_state(branch, tmp_path, execution_waves=[["ST-001"], ["ST-002"]])
+        fake_runner_on2 = types.ModuleType("map_step_runner")
+        fake_runner_on2._execution_wave_mode = _const_mode("on")  # type: ignore[attr-defined]
+        _sys.modules["map_step_runner"] = fake_runner_on2
         result = map_orchestrator.select_execution_strategy(branch, tmp_path)
+        assert result["strategy"] == "sequential", f"on + all width-1 → sequential: {result}"
+        assert result["has_parallel_groups"] is False
     finally:
-        _sys.modules.pop("map_step_runner", None)
-    assert result["strategy"] == "sequential", f"on + all width-1 → sequential: {result}"
-    assert result["has_parallel_groups"] is False
+        if _orig_msr is not None:
+            _sys.modules["map_step_runner"] = _orig_msr
+        else:
+            _sys.modules.pop("map_step_runner", None)
 
 
 def test_advance_wave_atomic_reset(

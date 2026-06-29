@@ -683,9 +683,10 @@ def lint_dependency_graph(
             file_overlap = a_files & b_files
             if io_overlap or file_overlap:
                 continue  # real edge, not thin
-            # Both intersections empty AND at least one side has data → thin edge
-            # But be conservative: if either node lacks io data entirely, skip to avoid FP
-            if not (a_io or b_io):
+            # Both intersections empty → candidate thin edge. Be conservative:
+            # only flag when BOTH nodes have io data, otherwise an empty
+            # intersection is just unknown io on one side (false positive).
+            if not (a_io and b_io):
                 continue
             findings.append(
                 LintFinding(

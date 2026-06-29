@@ -15525,12 +15525,12 @@ def _worktree_probe(project_dir: Path) -> dict[str, object]:
 
     storage = _wt_storage_root()
     if storage is None:
-        result = _wt_error(
+        # Not cached: only successful probes are memoized so a transient
+        # failure never becomes a permanent session verdict.
+        return _wt_error(
             "WORKTREE_PROBE_FAILED",
             "could not resolve git common dir for probe storage",
         )
-        _WORKTREE_PROBE_CACHE[cache_key] = result
-        return result
 
     import os as _os  # noqa: PLC0415 — local to keep module-level clean
 
@@ -15542,12 +15542,11 @@ def _worktree_probe(project_dir: Path) -> dict[str, object]:
             timeout=30,
         )
         if add.returncode != 0:
-            result = _wt_error(
+            # Transient create failure — do NOT cache; let auto/required retry.
+            return _wt_error(
                 "WORKTREE_PROBE_FAILED",
                 add.stderr.strip() or "git worktree add --detach failed",
             )
-            _WORKTREE_PROBE_CACHE[cache_key] = result
-            return result
         result = {
             "status": "ok",
             "ok": True,
@@ -15560,7 +15559,10 @@ def _worktree_probe(project_dir: Path) -> dict[str, object]:
         _wt_git(["worktree", "remove", "--force", str(probe_path)], timeout=30)
         _wt_git(["worktree", "prune"], timeout=15)
 
-    _WORKTREE_PROBE_CACHE[cache_key] = result
+    # Memoize ONLY successful probes; a transient failure must not stick for the
+    # session (auto can recover, required stops aborting once the repo is fixed).
+    if result.get("ok"):
+        _WORKTREE_PROBE_CACHE[cache_key] = result
     return result
 
 
@@ -15756,9 +15758,16 @@ def cleanup_orphan_worktrees(branch: str) -> dict[str, object]:
                     wt_path = wt_path.resolve()
                 except OSError:
                     pass
-                # Include only map-managed worktrees (under our storage subdir)
-                if WORKTREE_STORAGE_SUBDIR.replace("/", os.sep) in str(wt_path):
-                    candidate_paths.add(wt_path)
+                # Include only map-managed worktrees: real resolved-path ancestry
+                # under the storage root, NOT a substring match (a substring check
+                # can misclassify e.g. `<root>/worktrees-backup/...` as managed and
+                # destroy an unrelated worktree).
+                if storage is not None:
+                    try:
+                        if wt_path.is_relative_to(storage.resolve()):
+                            candidate_paths.add(wt_path)
+                    except (OSError, ValueError):
+                        pass
 
     removed: list[str] = []
     kept_active: list[str] = []

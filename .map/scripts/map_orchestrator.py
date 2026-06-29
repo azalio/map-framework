@@ -2304,6 +2304,7 @@ def get_wave_step(branch: str) -> dict:
             "wave_index": 0,
             "subtasks": [],
             "is_complete": True,
+            "concurrency_enabled": WAVE_CONCURRENCY_ENABLED,
             "message": "No execution waves configured. Use sequential mode.",
         }
 
@@ -2313,6 +2314,7 @@ def get_wave_step(branch: str) -> dict:
             "wave_index": state.current_wave_index,
             "subtasks": [],
             "is_complete": True,
+            "concurrency_enabled": WAVE_CONCURRENCY_ENABLED,
         }
 
     wave = state.execution_waves[state.current_wave_index]

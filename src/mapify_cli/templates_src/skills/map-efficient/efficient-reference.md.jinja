@@ -130,7 +130,7 @@ including clean passes — must carry concrete evidence references.
 | absent / `off` (default) | any | Legacy sequential walker (`get_next_step`) |
 | `auto` | no (all groups size 1) | Legacy sequential walker (`get_next_step`) |
 | `auto` | yes | Wave-loop (`get_wave_step` / `validate_wave_step` / `advance_wave`) |
-| `on` | no | Wave-loop (single-member groups execute one at a time) |
+| `on` | no (all groups size 1) | Legacy sequential walker (`get_next_step`) |
 | `on` | yes | Wave-loop |
 
 With a stock `mapify init` config (no `execution.wave_mode` key), `wave_mode` defaults to `off` and the legacy sequential walker always runs — behavior is byte-identical to pre-Slice-3.
