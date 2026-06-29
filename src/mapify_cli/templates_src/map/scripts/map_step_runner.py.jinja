@@ -18791,6 +18791,137 @@ if __name__ == "__main__":
         if not _wt_r.get("ok"):
             sys.exit(1)
 
+    elif func_name == "record_dispatch_actual":
+        # CLI: record_dispatch_actual <group_key> <run_id> <out_path>
+        #      [--branch B] [--same-turn-count N] [--skill-reported-concurrent]
+        #
+        # Coordinator-owned dispatch telemetry (5b.2 / ST-003).
+        # Replays the ST-002 lifecycle events recorded under wave_groups to
+        # compute max_in_flight deterministically (sorted-seq sweep, no wall-clock),
+        # then calls classify_dispatch() with the typed evidence inputs, and
+        # persists a ParallelismReport via record_dispatch_actual() ONLY when
+        # the outcome is concurrent_observed.  All other outcomes are no-ops.
+        #
+        # Producer-owns-parse: the runner parses lifecycle/sidecar here; the
+        # classifier (in parallelism_observability) receives only typed ints.
+        import argparse as _ap
+        import sys as _sys
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py record_dispatch_actual")
+        _p.add_argument("group_key", help="Canonical group key (sorted subtask IDs joined by '|')")
+        _p.add_argument("run_id", help="Run identifier for the parallelism.json path")
+        _p.add_argument("out_path", help="Destination path for parallelism.json")
+        _p.add_argument("--branch", default=None)
+        _p.add_argument(
+            "--same-turn-count",
+            type=int,
+            default=0,
+            dest="same_turn_count",
+            help="Number of Task tool calls in the same turn (from coordinator transcript)",
+        )
+        _p.add_argument(
+            "--skill-reported-concurrent",
+            action="store_true",
+            dest="skill_reported_concurrent",
+            help="Set when the skill or Actor self-reported concurrent dispatch",
+        )
+        _a = _p.parse_args(sys.argv[2:])
+
+        # --- Step 1: read the wave_groups sidecar for this branch ---
+        _branch_name = _a.branch or get_branch_name()
+        _state = _read_worktree_state(_branch_name)
+        _wave_groups = _state.get("wave_groups") or {}
+
+        # --- Step 2: extract base_shas and lifecycle events for this group ---
+        _group_data = _wave_groups.get(_a.group_key) if isinstance(_wave_groups, dict) else None
+        _base_shas: list[str] = []
+        _all_events: list[dict] = []
+
+        if isinstance(_group_data, dict):
+            _recorded_sha = _group_data.get("base_sha")
+            if isinstance(_recorded_sha, str) and _recorded_sha:
+                _base_shas.append(_recorded_sha)
+            _lifecycle = _group_data.get("lifecycle") or {}
+            if isinstance(_lifecycle, dict):
+                for _sid_events in _lifecycle.values():
+                    if isinstance(_sid_events, list):
+                        for _ev in _sid_events:
+                            if isinstance(_ev, dict):
+                                _all_events.append(_ev)
+
+        # --- Step 3: compute max_in_flight by replaying sorted lifecycle events ---
+        # Sweep events sorted by monotonic seq number.  Only "started" and
+        # "finished" affect the in-flight counter.  This is deterministic and
+        # completely clock-free (HC-5 — seq, not ts).
+        _all_events.sort(key=lambda _e: int(_e.get("seq", 0)))
+        _in_flight = 0
+        _max_in_flight = 0
+        for _ev in _all_events:
+            _ev_type = _ev.get("event", "")
+            if _ev_type == _WT_GROUP_EVENT_STARTED:
+                _in_flight += 1
+                if _in_flight > _max_in_flight:
+                    _max_in_flight = _in_flight
+            elif _ev_type == _WT_GROUP_EVENT_FINISHED:
+                _in_flight = max(0, _in_flight - 1)
+
+        # --- Step 4: classify using the evidence hierarchy ---
+        # Import is intentionally lazy so the sequential path never loads this module.
+        try:
+            from mapify_cli.parallelism_observability import (
+                classify_dispatch as _classify_dispatch,
+                record_dispatch_actual as _record_dispatch_actual,
+                ParallelismReport as _ParallelismReport,
+                ColorGroupDecision as _ColorGroupDecision,
+            )
+        except ImportError:
+            print(json.dumps({
+                "ok": False,
+                "error": "mapify_cli not importable from this runner context; "
+                         "record_dispatch_actual requires the mapify_cli package",
+            }, indent=2))
+            _sys.exit(1)
+
+        _outcome = _classify_dispatch(
+            same_turn_task_count=_a.same_turn_count,
+            max_in_flight=_max_in_flight,
+            base_shas=_base_shas,
+            skill_reported_concurrent=_a.skill_reported_concurrent,
+        )
+
+        # --- Step 5: persist ONE report only on the concurrent path ---
+        _out_path = Path(_a.out_path)
+        _group_ids = _a.group_key.split("|") if _a.group_key else []
+        _group_record: _ColorGroupDecision = {
+            "group_id": _a.group_key,
+            "planned_mode": "concurrent",
+            "actual_mode": _outcome,
+            "worktree_status": "ok" if _base_shas else "unknown",
+            "reason_code": None,
+            "dispatch_count": len(_group_ids),
+        }
+        _report: _ParallelismReport = {
+            "schema_version": "1.0.0",
+            "run_id": _a.run_id,
+            "generated_at": "",  # caller supplies; runner never calls datetime.now()
+            "total_subtasks": len(_group_ids),
+            "total_edges": 0,
+            "total_waves": 1,
+            "max_wave_width": _max_in_flight,
+            "color_group_breakdown": [_group_record],
+        }
+        _written = _record_dispatch_actual(_report, _out_path, _outcome)
+
+        print(json.dumps({
+            "ok": True,
+            "group_key": _a.group_key,
+            "outcome": _outcome,
+            "max_in_flight": _max_in_flight,
+            "base_shas": _base_shas,
+            "report_written": _written,
+            "out_path": str(_out_path) if _written else None,
+        }, indent=2))
+
     else:
         # Helpful redirect: when the user passes a command that belongs to
         # the orchestrator (record_subtask_result, mark_subtask_complete,
