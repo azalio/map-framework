@@ -13,7 +13,11 @@ final verifier unless an explicit subagent dispatch is available and useful.
 
 Use [efficient-reference.md](efficient-reference.md) for wave details, retry
 recipes, TDD mode, commit policy, and troubleshooting. Read only the referenced
-section when the workflow below points to it.
+section when the workflow below points to it. Under `isolation_active` (Slice 5a),
+the wave-loop creates per-member worktrees, dispatches actor subagents
+**sequentially** (one per turn), verifies via `concurrency_ready`, then accepts
+atomically via `merge_wave_worktrees`; concurrent fan-out is Slice 5b
+(`dispatch_mode==concurrent`).
 
 ## Mutation Boundary Constraints
 

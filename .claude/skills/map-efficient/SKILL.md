@@ -207,7 +207,7 @@ else
 fi
 ```
 
-**Execution strategy:** `select_execution_strategy` chooses between the legacy sequential walker and the wave-loop. The wave-loop (`get_wave_step` / `validate_wave_step` / `advance_wave`) engages only when `execution.wave_mode ∈ {on, auto}` AND a color group has ≥2 members; otherwise `get_next_step` (sequential walker) runs. See [efficient-reference.md](efficient-reference.md#wave-execution) for the decision table and full wave loop.
+**Execution strategy:** `select_execution_strategy` chooses between the legacy sequential walker and the wave-loop. The wave-loop (`get_wave_step` / `validate_wave_step` / `advance_wave`) engages only when `execution.wave_mode ∈ {on, auto}` AND a color group has ≥2 members; otherwise `get_next_step` (sequential walker) runs. Under `isolation_active` (Slice 5a), the wave-loop creates per-member worktrees, dispatches Actors **sequentially** (one per turn, `HC-3`), verifies via `concurrency_ready`, then accepts atomically via `merge_wave_worktrees`; concurrent fan-out is Slice 5b (`dispatch_mode==concurrent`). See [efficient-reference.md](efficient-reference.md#wave-execution) for the decision table and full wave loop.
 
 **Note on resume:** `resume_from_plan` (Step 0) now auto-invokes `set_waves`
 when `blueprint.json` is present, so resumed workflows do not need a manual
