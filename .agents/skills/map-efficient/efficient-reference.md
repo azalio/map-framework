@@ -147,35 +147,37 @@ before calling `merge_wave_worktrees`.
 ### Concurrent Actor dispatch — GATED EXAMPLE
 
 > **IMPORTANT — read before using this example.**
-> Concurrent fan-out (emitting multiple Task calls in a single message) is
+> Concurrent fan-out (dispatching multiple actor subagents in a single turn) is
 > enabled **only when concurrency is shipped: Slice 5+ / `concurrency_enabled:
 > true` / `parallel_ready` flag set**. In the **current framework**
 > `concurrency_enabled` is **False**, so dispatch stays **SEQUENTIAL even when a
 > wave has `mode=="parallel"`**. The example below is reference material for when
-> that capability ships; do NOT treat it as an active instruction now.
+> that capability ships; do NOT treat it as an active instruction now. Use your
+> Codex runtime's own parallel actor-subagent dispatch mechanism — this is the
+> provider-neutral shape, not a literal API call.
 
 When concurrency is enabled (Slice 5+ only), a parallel wave with N subtasks
-dispatches all N Actors in **one message**:
+dispatches all N actor subagents in **one turn**:
 
 ```text
-# CORRECT (Slice 5+ / concurrency_enabled=True only):
-Task(subagent_type="actor", description="Implement ST-003", prompt="...")
-Task(subagent_type="actor", description="Implement ST-004", prompt="...")
+# CORRECT (Slice 5+ / concurrency_enabled=True only) — one turn, N actor subagents:
+dispatch actor subagent -> ST-003 (pinned to its own worktree)
+dispatch actor subagent -> ST-004 (pinned to its own worktree)
 
-# INCORRECT — one Task per turn (serial, defeats the wave):
-# Turn 1: Task(actor, ST-003)
-# Turn 2: Task(actor, ST-004)
+# INCORRECT — one actor per turn (serial, defeats the wave):
+# Turn 1: actor -> ST-003
+# Turn 2: actor -> ST-004
 ```
 
-**Self-audit before dispatch:** "I will emit {n} Task calls in one message."
+**Self-audit before dispatch:** "I will dispatch {n} actor subagents in one turn."
 
 **`max_actors` cap:** Default 4–8 per wave. Groups larger than `max_actors` are
 pre-split into sequential batches before dispatch.
 
 ### Anti-patterns
 
-- One Task per turn across N turns — serial loop, no concurrency.
-- Writing between Task calls (TodoWrite, etc.) — serializes the batch.
+- One actor dispatch per turn across N turns — serial loop, no concurrency.
+- Writing between dispatches (TodoWrite, etc.) — serializes the batch.
 - Waiting for one actor result before dispatching the next.
 - Mixing `get_next_step` and `get_wave_step` for the same wave.
 
