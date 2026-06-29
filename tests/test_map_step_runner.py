@@ -12798,3 +12798,469 @@ def test_orphan_cleanup_idempotent(
     )
     assert dormant_result["ok"] is False
     assert git_calls == [], "No git must run when isolation is off"
+
+
+# ---------------------------------------------------------------------------
+# Group lifecycle verbs — VC1/VC2/VC3/VC4 (ST-002 / 5b.1)
+# ---------------------------------------------------------------------------
+
+
+def _make_git_repo_for_group(path: Path) -> str:
+    """Create a minimal git repo and return its HEAD sha."""
+    import subprocess as _sp
+
+    _sp.run(["git", "init", str(path)], check=True, capture_output=True)
+    _sp.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=str(path), check=True, capture_output=True,
+    )
+    _sp.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=str(path), check=True, capture_output=True,
+    )
+    (path / "README.md").write_text("hello", encoding="utf-8")
+    _sp.run(["git", "add", "."], cwd=str(path), check=True, capture_output=True)
+    _sp.run(
+        ["git", "commit", "-m", "init"],
+        cwd=str(path), check=True, capture_output=True,
+    )
+    sha_r = _sp.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(path), check=True, capture_output=True, text=True,
+    )
+    return sha_r.stdout.strip()
+
+
+class TestBeginWaveGroup:
+    """VC1: begin_wave_group records base_sha + skeleton; idempotent."""
+
+    def test_vc1_records_base_sha_and_skeleton(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        head_sha = _make_git_repo_for_group(repo)
+
+        map_dir = repo / ".map" / "test-branch"
+        map_dir.mkdir(parents=True)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        result = map_step_runner.begin_wave_group(["ST-001", "ST-002"], "test-branch")
+
+        assert result["ok"] is True, f"begin_wave_group failed: {result}"
+        assert result["base_sha"] == head_sha
+        assert sorted(result["subtask_ids"]) == ["ST-001", "ST-002"]  # type: ignore[arg-type]
+
+        # Verify sidecar was written
+        state = map_step_runner._read_worktree_state("test-branch")
+        wave_groups = state.get("wave_groups")
+        assert isinstance(wave_groups, dict) and wave_groups, "wave_groups must be populated"
+        group_key = result["group_key"]
+        assert group_key in wave_groups
+        grp = wave_groups[group_key]
+        assert isinstance(grp, dict)
+        assert grp["base_sha"] == head_sha
+        assert isinstance(grp.get("lifecycle"), dict)
+
+    def test_vc1_idempotent_no_duplicate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        head_sha = _make_git_repo_for_group(repo)
+
+        map_dir = repo / ".map" / "test-branch"
+        map_dir.mkdir(parents=True)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        r1 = map_step_runner.begin_wave_group(["ST-003", "ST-004"], "test-branch")
+        assert r1["ok"] is True
+
+        # Mutate lifecycle to simulate partial progress
+        state = map_step_runner._read_worktree_state("test-branch")
+        gk = r1["group_key"]
+        state["wave_groups"][gk]["lifecycle"]["ST-003"] = [  # type: ignore[index]
+            {"seq": 1, "event": "started", "ts": 0.0}
+        ]
+        map_step_runner._write_worktree_state("test-branch", state)
+
+        # Second call must NOT clobber existing data
+        r2 = map_step_runner.begin_wave_group(["ST-003", "ST-004"], "test-branch")
+        assert r2["ok"] is True
+        assert r2["base_sha"] == head_sha
+
+        state2 = map_step_runner._read_worktree_state("test-branch")
+        # lifecycle for ST-003 must still have the event we manually wrote
+        lc = state2["wave_groups"][gk]["lifecycle"]  # type: ignore[index]
+        assert isinstance(lc, dict)
+        assert len(lc.get("ST-003", [])) == 1, "idempotent call must not erase lifecycle"
+
+    def test_vc1_not_git_repo_returns_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        non_git = tmp_path / "non_git"
+        non_git.mkdir()
+        monkeypatch.chdir(non_git)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        result = map_step_runner.begin_wave_group(["ST-001"], "test-branch")
+        assert result.get("ok") is not True
+        assert result.get("kind") == map_step_runner._WT_REASON_NOT_GIT_REPO
+
+
+class TestRecordGroupLifecycle:
+    """VC2: record_group_lifecycle appends in sorted seq order; replay is deterministic;
+    invalid event is rejected."""
+
+    def _setup(self, repo: Path, branch: str = "test-branch") -> str:
+        """Init git repo + begin_wave_group; returns group_key."""
+        _make_git_repo_for_group(repo)
+        map_dir = repo / ".map" / branch
+        map_dir.mkdir(parents=True)
+        r = map_step_runner.begin_wave_group(["ST-010", "ST-011"], branch)
+        assert r["ok"] is True
+        return str(r["group_key"])
+
+    def test_vc2_appends_in_seq_order(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        gk = self._setup(repo)
+
+        events = ["created", "started", "finished"]
+        seqs = []
+        for ev in events:
+            r = map_step_runner.record_group_lifecycle(gk, "ST-010", ev, "test-branch")
+            assert r["ok"] is True, f"unexpected failure: {r}"
+            seqs.append(r["seq"])
+
+        # Sequence numbers must be strictly increasing
+        assert seqs == sorted(seqs), f"seqs not sorted: {seqs}"
+        assert len(set(seqs)) == len(seqs), "seq values must be unique"
+
+    def test_vc2_deterministic_replay_reconstructs_timeline(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Replaying events sorted by seq reconstructs a deterministic in-flight
+        timeline regardless of wall-clock ordering."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        gk = self._setup(repo)
+
+        # Record interleaved events for two subtasks
+        map_step_runner.record_group_lifecycle(gk, "ST-010", "created", "test-branch")
+        map_step_runner.record_group_lifecycle(gk, "ST-011", "created", "test-branch")
+        map_step_runner.record_group_lifecycle(gk, "ST-010", "started", "test-branch")
+        map_step_runner.record_group_lifecycle(gk, "ST-011", "started", "test-branch")
+
+        state = map_step_runner._read_worktree_state("test-branch")
+        lifecycle = state["wave_groups"][gk]["lifecycle"]  # type: ignore[index]
+
+        # Collect all events across all subtasks and sort by seq
+        all_events: list[dict[str, object]] = []
+        for evs in lifecycle.values():
+            if isinstance(evs, list):
+                all_events.extend(e for e in evs if isinstance(e, dict))
+        all_events_sorted = sorted(all_events, key=lambda e: cast("int", e["seq"]))
+
+        # Seq must be strictly monotonic globally
+        seqs = [cast("int", e["seq"]) for e in all_events_sorted]
+        assert seqs == sorted(seqs)
+        assert len(set(seqs)) == len(seqs)
+
+        # created events must precede started events for each subtask in replay
+        for sid in ("ST-010", "ST-011"):
+            sid_events_sorted = sorted(
+                [e for e in all_events if e in lifecycle.get(sid, [])],
+                key=lambda e: cast("int", e["seq"]),
+            )
+            event_names = [e["event"] for e in sid_events_sorted]
+            if "created" in event_names and "started" in event_names:
+                ci = event_names.index("created")
+                si = event_names.index("started")
+                assert ci < si, f"{sid}: created must precede started in replay"
+
+    def test_vc2_invalid_event_rejected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        gk = self._setup(repo)
+        result = map_step_runner.record_group_lifecycle(
+            gk, "ST-010", "INVALID_EVENT_CODE", "test-branch"
+        )
+        assert result.get("ok") is not True
+        assert result.get("kind") == "invalid_event"
+
+    def test_vc2_unknown_group_rejected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+        _make_git_repo_for_group(repo)
+        (repo / ".map" / "test-branch").mkdir(parents=True)
+
+        result = map_step_runner.record_group_lifecycle(
+            "no|such|group", "ST-001", "started", "test-branch"
+        )
+        assert result.get("ok") is not True
+        assert result.get("kind") == "unknown_group"
+
+
+class TestVerifyGroupClean:
+    """VC3: verify_group_clean returns clean iff HEAD==base_sha AND tree clean AND
+    zero group worktrees remain; test the false branches too."""
+
+    def test_vc3_clean_when_no_groups_and_clean_tree(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        head_sha = _make_git_repo_for_group(repo)
+        (repo / ".map" / "test-branch").mkdir(parents=True)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        result = map_step_runner.verify_group_clean("test-branch")
+        assert result["clean"] is True, f"expected clean; got {result}"
+        assert result["head_sha"] == head_sha
+
+    def test_vc3_not_clean_when_groups_remain(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo_for_group(repo)
+        (repo / ".map" / "test-branch").mkdir(parents=True)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        # Begin a group but never complete it
+        r = map_step_runner.begin_wave_group(["ST-020"], "test-branch")
+        assert r["ok"] is True
+
+        result = map_step_runner.verify_group_clean("test-branch")
+        assert result["clean"] is False
+        # Either GROUP_WORKTREES_REMAIN (groups present) is the reason
+        assert result["reason"] in (
+            map_step_runner._WT_REASON_GROUP_WORKTREES_REMAIN,
+            map_step_runner._WT_REASON_GROUP_HEAD_MISMATCH,
+        )
+
+    def test_vc3_not_clean_when_tree_dirty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo_for_group(repo)
+        (repo / ".map" / "test-branch").mkdir(parents=True)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        # No groups in sidecar — but make a dirty file
+        (repo / "dirty.py").write_text("x = 1", encoding="utf-8")
+
+        result = map_step_runner.verify_group_clean("test-branch")
+        assert result["clean"] is False
+        assert result["reason"] == map_step_runner._WT_REASON_GROUP_DIRTY_TREE
+
+    def test_vc3_not_clean_head_mismatch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo_for_group(repo)
+        (repo / ".map" / "test-branch").mkdir(parents=True)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        # Write a group sidecar with a stale base_sha
+        state = map_step_runner._read_worktree_state("test-branch")
+        state["wave_groups"] = {
+            "ST-030": {
+                "base_sha": "deadbeef" * 5,  # wrong sha
+                "subtask_ids": ["ST-030"],
+                "lifecycle": {},
+            }
+        }
+        map_step_runner._write_worktree_state("test-branch", state)
+
+        result = map_step_runner.verify_group_clean("test-branch")
+        assert result["clean"] is False
+        assert result["reason"] == map_step_runner._WT_REASON_GROUP_HEAD_MISMATCH
+
+    def test_vc3_not_git_repo(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        non_git = tmp_path / "non_git"
+        non_git.mkdir()
+        monkeypatch.chdir(non_git)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        result = map_step_runner.verify_group_clean("test-branch")
+        assert result["clean"] is False
+        assert result["reason"] == map_step_runner._WT_REASON_NOT_GIT_REPO
+
+
+class TestReconcileOrphanGroups:
+    """VC3 (reconcile): reconcile_orphan_groups sweeps a synthetic mid-flight group."""
+
+    def test_vc3_sweeps_orphan_group_no_lifecycle(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A group with no lifecycle events (crashed before start) is swept."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo_for_group(repo)
+        (repo / ".map" / "test-branch").mkdir(parents=True)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        # Write a synthetic orphan group with no lifecycle events
+        state = map_step_runner._read_worktree_state("test-branch")
+        state["wave_groups"] = {
+            "orphan|group": {
+                "base_sha": "abc123",
+                "subtask_ids": ["orphan"],
+                "lifecycle": {},  # empty — never started
+            }
+        }
+        map_step_runner._write_worktree_state("test-branch", state)
+
+        result = map_step_runner.reconcile_orphan_groups("test-branch")
+        assert result["ok"] is True, f"reconcile failed: {result}"
+        assert result["swept"] == 1
+
+        # Sidecar must be clean after sweep
+        state2 = map_step_runner._read_worktree_state("test-branch")
+        wave_groups2 = state2.get("wave_groups", {})
+        assert wave_groups2 == {} or "orphan|group" not in wave_groups2
+
+    def test_vc3_sweeps_terminated_group(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A group where all subtasks have a terminal event (merged) is swept."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo_for_group(repo)
+        (repo / ".map" / "test-branch").mkdir(parents=True)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        state = map_step_runner._read_worktree_state("test-branch")
+        state["wave_groups"] = {
+            "ST-100|ST-101": {
+                "base_sha": "abc123",
+                "subtask_ids": ["ST-100", "ST-101"],
+                "lifecycle": {
+                    "ST-100": [{"seq": 1, "event": "merged", "ts": 0.0}],
+                    "ST-101": [{"seq": 2, "event": "merged", "ts": 0.0}],
+                },
+            }
+        }
+        map_step_runner._write_worktree_state("test-branch", state)
+
+        result = map_step_runner.reconcile_orphan_groups("test-branch")
+        assert result["ok"] is True
+        assert result["swept"] >= 1
+
+    def test_vc3_preserves_active_group(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A group with only non-terminal events is preserved."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo_for_group(repo)
+        (repo / ".map" / "test-branch").mkdir(parents=True)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        state = map_step_runner._read_worktree_state("test-branch")
+        state["wave_groups"] = {
+            "ST-200|ST-201": {
+                "base_sha": "abc123",
+                "subtask_ids": ["ST-200", "ST-201"],
+                "lifecycle": {
+                    "ST-200": [{"seq": 1, "event": "started", "ts": 0.0}],
+                    "ST-201": [{"seq": 2, "event": "created", "ts": 0.0}],
+                },
+            }
+        }
+        map_step_runner._write_worktree_state("test-branch", state)
+
+        result = map_step_runner.reconcile_orphan_groups("test-branch")
+        assert result["ok"] is True
+        assert result["swept"] == 0, "active group must not be swept"
+
+        # Group must still be in sidecar
+        state2 = map_step_runner._read_worktree_state("test-branch")
+        assert "ST-200|ST-201" in state2.get("wave_groups", {})
+
+    def test_vc3_idempotent_second_call(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Second reconcile call after everything is clean returns swept=0."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo_for_group(repo)
+        (repo / ".map" / "test-branch").mkdir(parents=True)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        # No wave_groups at all
+        result1 = map_step_runner.reconcile_orphan_groups("test-branch")
+        assert result1["ok"] is True
+        result2 = map_step_runner.reconcile_orphan_groups("test-branch")
+        assert result2["ok"] is True
+        assert result2["swept"] == 0
+
+
+class TestGroupEventConstants:
+    """VC4 (SC-1): New reason/event codes follow the _WT_REASON_* / _WT_GROUP_EVENT_*
+    constant style (str type, non-empty, lower_snake_case)."""
+
+    def test_vc4_event_constants_are_lowercase_str(self) -> None:
+        for name in (
+            "_WT_GROUP_EVENT_CREATED",
+            "_WT_GROUP_EVENT_STARTED",
+            "_WT_GROUP_EVENT_FINISHED",
+            "_WT_GROUP_EVENT_MERGED",
+            "_WT_GROUP_EVENT_ABORTED",
+        ):
+            val = getattr(map_step_runner, name)
+            assert isinstance(val, str) and val, f"{name} must be non-empty str"
+            assert val == val.lower(), f"{name}={val!r} must be lowercase"
+
+    def test_vc4_reason_constants_are_lowercase_str(self) -> None:
+        for name in (
+            "_WT_REASON_GROUP_HEAD_MISMATCH",
+            "_WT_REASON_GROUP_DIRTY_TREE",
+            "_WT_REASON_GROUP_WORKTREES_REMAIN",
+        ):
+            val = getattr(map_step_runner, name)
+            assert isinstance(val, str) and val, f"{name} must be non-empty str"
+            assert val == val.lower(), f"{name}={val!r} must be lowercase"
+
+    def test_vc4_valid_events_frozenset_contains_all_codes(self) -> None:
+        expected = {
+            map_step_runner._WT_GROUP_EVENT_CREATED,
+            map_step_runner._WT_GROUP_EVENT_STARTED,
+            map_step_runner._WT_GROUP_EVENT_FINISHED,
+            map_step_runner._WT_GROUP_EVENT_MERGED,
+            map_step_runner._WT_GROUP_EVENT_ABORTED,
+        }
+        assert map_step_runner._WT_GROUP_VALID_EVENTS == expected

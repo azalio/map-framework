@@ -15362,6 +15362,23 @@ _WT_REASON_PATH_MISSING: str = "path_missing"
 _WT_REASON_NOT_REGISTERED: str = "not_registered"
 _WT_REASON_HEAD_MISMATCH: str = "head_mismatch"
 _WT_REASON_DIRTY: str = "dirty"
+# group lifecycle reason codes (5b.1)
+_WT_REASON_GROUP_HEAD_MISMATCH: str = "group_head_mismatch"
+_WT_REASON_GROUP_DIRTY_TREE: str = "group_dirty_tree"
+_WT_REASON_GROUP_WORKTREES_REMAIN: str = "group_worktrees_remain"
+# group lifecycle event codes (5b.1) — stable set; classifier replays these
+_WT_GROUP_EVENT_CREATED: str = "created"
+_WT_GROUP_EVENT_STARTED: str = "started"
+_WT_GROUP_EVENT_FINISHED: str = "finished"
+_WT_GROUP_EVENT_MERGED: str = "merged"
+_WT_GROUP_EVENT_ABORTED: str = "aborted"
+_WT_GROUP_VALID_EVENTS: frozenset[str] = frozenset({
+    _WT_GROUP_EVENT_CREATED,
+    _WT_GROUP_EVENT_STARTED,
+    _WT_GROUP_EVENT_FINISHED,
+    _WT_GROUP_EVENT_MERGED,
+    _WT_GROUP_EVENT_ABORTED,
+})
 
 _WT_ISOLATION_VALID = frozenset({"off", "auto", "required"})
 
@@ -15830,6 +15847,289 @@ def cleanup_orphan_worktrees(branch: str) -> dict[str, object]:
             pass
 
     return {"removed": removed, "kept_active": kept_active, "ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Group lifecycle verbs (5b.1) — coordinator-owned, idempotent
+# ---------------------------------------------------------------------------
+
+
+def begin_wave_group(
+    group_ids: list[str],
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Record the base_sha anchor + per-subtask lifecycle skeleton for a parallel group.
+
+    Stores state under ``wave_groups[group_id]`` in the branch-scoped worktree-state
+    sidecar.  Idempotent: re-invoking with the same group_ids does not duplicate
+    entries or overwrite ``base_sha`` if already set (crash-safe recovery).
+
+    Returns::
+
+        {
+            "ok": True,
+            "group_id": <canonical group key>,
+            "base_sha": <HEAD sha>,
+            "subtask_ids": [...],
+        }
+    """
+    if not _wt_is_git_repo():
+        return _wt_error(_WT_REASON_NOT_GIT_REPO, "not inside a git work tree")
+
+    branch_name = branch or get_branch_name()
+    base_sha = _wt_head_sha()
+    if base_sha is None:
+        return _wt_error("no_head_sha", "could not resolve HEAD sha")
+
+    # Canonical group key: sorted ids joined so order-of-call doesn't vary the key.
+    ids_sorted = sorted(str(s) for s in group_ids if str(s).strip())
+    group_key = "|".join(ids_sorted)
+
+    state = _read_worktree_state(branch_name)
+    if not isinstance(state.get("wave_groups"), dict):
+        state["wave_groups"] = {}
+    wave_groups = state["wave_groups"]
+    if not isinstance(wave_groups, dict):
+        wave_groups = {}
+        state["wave_groups"] = wave_groups
+
+    if group_key not in wave_groups:
+        wave_groups[group_key] = {
+            "base_sha": base_sha,
+            "subtask_ids": ids_sorted,
+            "lifecycle": {},  # subtask_id -> list of {seq, event, ts}
+        }
+    else:
+        # Idempotent: fill in missing skeleton fields without overwriting base_sha.
+        existing = wave_groups[group_key]
+        if not isinstance(existing, dict):
+            existing = {}
+            wave_groups[group_key] = existing
+        existing.setdefault("base_sha", base_sha)
+        existing.setdefault("subtask_ids", ids_sorted)
+        if not isinstance(existing.get("lifecycle"), dict):
+            existing["lifecycle"] = {}
+        # Ensure every id has a slot
+        for sid in ids_sorted:
+            existing["lifecycle"].setdefault(sid, [])
+
+    _write_worktree_state(branch_name, state)
+    return {
+        "ok": True,
+        "group_key": group_key,
+        "base_sha": base_sha,
+        "subtask_ids": ids_sorted,
+    }
+
+
+def record_group_lifecycle(
+    group_key: str,
+    subtask_id: str,
+    event: str,
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Append a lifecycle event for *subtask_id* inside *group_key*.
+
+    Events are appended with a monotonically-increasing sequence number so
+    replaying the list in ``seq`` order reconstructs a deterministic in-flight
+    timeline (used by the classifier in ST-003 to derive ``max_in_flight``).
+
+    *event* must be one of the stable codes in ``_WT_GROUP_VALID_EVENTS``
+    (created / started / finished / merged / aborted).
+
+    Returns::
+
+        {
+            "ok": True,
+            "group_key": ...,
+            "subtask_id": ...,
+            "event": ...,
+            "seq": <int>,
+        }
+    """
+    if event not in _WT_GROUP_VALID_EVENTS:
+        return _wt_error(
+            "invalid_event",
+            f"event {event!r} not in valid set {sorted(_WT_GROUP_VALID_EVENTS)}",
+        )
+
+    branch_name = branch or get_branch_name()
+    state = _read_worktree_state(branch_name)
+
+    wave_groups = state.get("wave_groups")
+    if not isinstance(wave_groups, dict) or group_key not in wave_groups:
+        return _wt_error("unknown_group", f"group {group_key!r} not found; call begin_wave_group first")
+
+    group = wave_groups[group_key]
+    if not isinstance(group, dict):
+        return _wt_error("corrupt_group", f"group record for {group_key!r} is malformed")
+
+    lifecycle = group.get("lifecycle")
+    if not isinstance(lifecycle, dict):
+        lifecycle = {}
+        group["lifecycle"] = lifecycle
+
+    sid = str(subtask_id).strip()
+    if sid not in lifecycle:
+        lifecycle[sid] = []
+    events_list = lifecycle[sid]
+    if not isinstance(events_list, list):
+        events_list = []
+        lifecycle[sid] = events_list
+
+    # Monotonic seq: max of all existing seqs across ALL subtasks in this group + 1.
+    max_seq = 0
+    for ev_list in lifecycle.values():
+        if isinstance(ev_list, list):
+            for ev in ev_list:
+                if isinstance(ev, dict):
+                    max_seq = max(max_seq, int(ev.get("seq", 0)))
+    seq = max_seq + 1
+
+    import time as _time  # local import — keeps module-level imports minimal
+    events_list.append({"seq": seq, "event": event, "ts": _time.time()})
+
+    _write_worktree_state(branch_name, state)
+    return {"ok": True, "group_key": group_key, "subtask_id": sid, "event": event, "seq": seq}
+
+
+def verify_group_clean(
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Read-only check: repo is in a clean state after a wave group completes.
+
+    Returns ``clean=True`` iff ALL of:
+      1. HEAD sha == the recorded ``base_sha`` for every group (HEAD not diverged).
+      2. Working tree is clean (``git status --porcelain`` minus runtime-state paths).
+      3. Zero group worktrees remain (``wave_groups`` dict is empty or all groups
+         have been removed from the sidecar).
+
+    Returns::
+
+        {
+            "clean": bool,
+            "reason": <reason code> | None,
+            "head_sha": ...,
+            "base_sha": ...,
+        }
+    """
+    if not _wt_is_git_repo():
+        return {
+            "clean": False,
+            "reason": _WT_REASON_NOT_GIT_REPO,
+            "head_sha": None,
+            "base_sha": None,
+        }
+
+    branch_name = branch or get_branch_name()
+    head_sha = _wt_head_sha()
+    state = _read_worktree_state(branch_name)
+
+    # Collect base_shas from all groups
+    wave_groups = state.get("wave_groups")
+    if isinstance(wave_groups, dict) and wave_groups:
+        # Any group that has a recorded base_sha must match HEAD.
+        for _gk, grp in wave_groups.items():
+            if not isinstance(grp, dict):
+                continue
+            recorded_base = grp.get("base_sha")
+            if recorded_base and head_sha != recorded_base:
+                return {
+                    "clean": False,
+                    "reason": _WT_REASON_GROUP_HEAD_MISMATCH,
+                    "head_sha": head_sha,
+                    "base_sha": recorded_base,
+                }
+        # Groups still present means group worktrees remain.
+        return {
+            "clean": False,
+            "reason": _WT_REASON_GROUP_WORKTREES_REMAIN,
+            "head_sha": head_sha,
+            "base_sha": None,
+        }
+
+    # No groups remain — check tree cleanliness.
+    status = _wt_git(["status", "--porcelain"], timeout=15)
+    if status.returncode != 0:
+        return {
+            "clean": False,
+            "reason": _WT_REASON_DIRTY,
+            "head_sha": head_sha,
+            "base_sha": None,
+        }
+    dirty_lines = [
+        ln for ln in status.stdout.splitlines()
+        if ln.strip() and not _wt_is_runtime_state_path(_wt_porcelain_path(ln))
+    ]
+    if dirty_lines:
+        return {
+            "clean": False,
+            "reason": _WT_REASON_GROUP_DIRTY_TREE,
+            "head_sha": head_sha,
+            "base_sha": None,
+        }
+
+    return {"clean": True, "reason": None, "head_sha": head_sha, "base_sha": head_sha}
+
+
+def reconcile_orphan_groups(
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Startup sweep: find groups left mid-flight and invoke cleanup.
+
+    Composes the existing ``cleanup_orphan_worktrees`` to remove physical worktrees,
+    then removes stale group entries from the wave_groups sidecar.  Idempotent:
+    a second call after everything is clean returns ``swept=0``.
+
+    Returns::
+
+        {
+            "ok": True,
+            "swept": <count of stale group entries removed from sidecar>,
+            "cleanup": <result from cleanup_orphan_worktrees>,
+        }
+    """
+    branch_name = branch or get_branch_name()
+
+    # Step 1: remove physical orphan worktrees (existing helper).
+    cleanup_result = cleanup_orphan_worktrees(branch_name)
+
+    # Step 2: remove stale wave_group entries from sidecar.
+    state = _read_worktree_state(branch_name)
+    wave_groups = state.get("wave_groups")
+    swept = 0
+    if isinstance(wave_groups, dict) and wave_groups:
+        # A group is stale if all its lifecycle events include a terminal event
+        # (merged or aborted) OR if it has no lifecycle events at all (never started).
+        _terminal = {_WT_GROUP_EVENT_MERGED, _WT_GROUP_EVENT_ABORTED}
+        stale_keys: list[str] = []
+        for gk, grp in list(wave_groups.items()):
+            if not isinstance(grp, dict):
+                stale_keys.append(gk)
+                continue
+            lifecycle = grp.get("lifecycle", {})
+            if not isinstance(lifecycle, dict) or not lifecycle:
+                # No lifecycle events recorded — orphan from a crash before start.
+                stale_keys.append(gk)
+                continue
+            # Check if every subtask has at least one terminal event.
+            all_terminal = all(
+                any(
+                    isinstance(ev, dict) and ev.get("event") in _terminal
+                    for ev in evs
+                )
+                for evs in lifecycle.values()
+                if isinstance(evs, list)
+            )
+            if all_terminal:
+                stale_keys.append(gk)
+        for key in stale_keys:
+            del wave_groups[key]
+            swept += 1
+        if swept:
+            _write_worktree_state(branch_name, state)
+
+    return {"ok": True, "swept": swept, "cleanup": cleanup_result}
 
 
 def create_subtask_worktree(
@@ -18431,6 +18731,64 @@ if __name__ == "__main__":
         _wt_r = worktree_isolation_status(_a.branch)
         print(json.dumps(_wt_r, indent=2))
         if _wt_r.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "begin_wave_group":
+        # CLI: begin_wave_group <subtask_id> [<subtask_id> ...] [--branch B]
+        # Record the group base_sha + per-subtask lifecycle skeleton (5b.1).
+        # Idempotent: re-running with the same ids does not duplicate state.
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py begin_wave_group")
+        _p.add_argument("group_ids", nargs="+")
+        _p.add_argument("--branch", default=None)
+        _a = _p.parse_args(sys.argv[2:])
+        _wt_r = begin_wave_group(_a.group_ids, _a.branch)
+        print(json.dumps(_wt_r, indent=2))
+        if not _wt_r.get("ok"):
+            sys.exit(1)
+
+    elif func_name == "record_group_lifecycle":
+        # CLI: record_group_lifecycle <group_key> <subtask_id> <event> [--branch B]
+        # Append a lifecycle event (created/started/finished/merged/aborted) (5b.1).
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py record_group_lifecycle")
+        _p.add_argument("group_key")
+        _p.add_argument("subtask_id")
+        _p.add_argument("event")
+        _p.add_argument("--branch", default=None)
+        _a = _p.parse_args(sys.argv[2:])
+        _wt_r = record_group_lifecycle(_a.group_key, _a.subtask_id, _a.event, _a.branch)
+        print(json.dumps(_wt_r, indent=2))
+        if not _wt_r.get("ok"):
+            sys.exit(1)
+
+    elif func_name == "verify_group_clean":
+        # CLI: verify_group_clean [--branch B]
+        # Read-only: clean iff HEAD==base_sha AND tree clean AND zero group worktrees.
+        # Exits 0 when clean=True; exits 1 when clean=False (usable as a gate).
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py verify_group_clean")
+        _p.add_argument("--branch", default=None)
+        _a = _p.parse_args(sys.argv[2:])
+        _wt_r = verify_group_clean(_a.branch)
+        print(json.dumps(_wt_r, indent=2))
+        if not _wt_r.get("clean"):
+            sys.exit(1)
+
+    elif func_name == "reconcile_orphan_groups":
+        # CLI: reconcile_orphan_groups [--branch B]
+        # Startup sweep: remove stale wave_group sidecar entries + orphan worktrees.
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py reconcile_orphan_groups")
+        _p.add_argument("--branch", default=None)
+        _a = _p.parse_args(sys.argv[2:])
+        _wt_r = reconcile_orphan_groups(_a.branch)
+        print(json.dumps(_wt_r, indent=2))
+        if not _wt_r.get("ok"):
             sys.exit(1)
 
     else:
