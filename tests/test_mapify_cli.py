@@ -1175,6 +1175,10 @@ class TestMcpJsonConfig:
         parsed = json.loads(content)
         assert parsed == config
 
+    @pytest.mark.skipif(
+        __import__("os").getuid() == 0,
+        reason="root bypasses file-permission enforcement; test is meaningless when running as root",
+    )
     def test_write_project_mcp_json_permission_error(self, tmp_path):
         """Test write_project_mcp_json raises OSError on permission denied."""
         mcp_file = tmp_path / ".mcp.json"
@@ -1183,11 +1187,12 @@ class TestMcpJsonConfig:
 
         config = {"mcpServers": {"test": {"command": "test"}}}
 
-        with pytest.raises(OSError):
-            write_project_mcp_json(mcp_file, config)
-
-        # Cleanup: restore permissions so tmp_path cleanup works
-        mcp_file.chmod(0o644)
+        try:
+            with pytest.raises(OSError):
+                write_project_mcp_json(mcp_file, config)
+        finally:
+            # Restore permissions so tmp_path cleanup works
+            mcp_file.chmod(0o644)
 
     def test_merge_mcp_json_preserves_existing(self):
         """Test that merge preserves existing servers."""
