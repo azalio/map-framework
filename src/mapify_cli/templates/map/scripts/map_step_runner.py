@@ -15322,7 +15322,19 @@ def _wt_force_remove(path: Path, branch_ref: str) -> None:
 
 
 def _wt_isolation_enabled(project_dir: Path) -> bool:
-    return _parse_boolish(_map_config_str(project_dir, "worktree.isolation", "false"))
+    """Return True when worktree isolation is active for the current project.
+
+    Handles the enum migration (#303): the old boolean ``false``/``true`` raw
+    strings (YAML 1.1 booleans are written as ``false``/``true`` when read
+    line-by-line) still work.  New enum values:
+    - ``off``  -> False (disabled — default)
+    - ``auto`` -> False (Slice 0: sequential everywhere; parallel dispatch
+                  lands in Slice 5; the call site in create_subtask_worktree
+                  already degrades to sequential when this returns False)
+    - ``required`` -> True  (hard-fail on unavailability, same as old ``true``)
+    """
+    val = _map_config_str(project_dir, "worktree.isolation", "off").strip().lower()
+    return val in {"required", "true", "yes", "y", "1", "on"}
 
 
 def _wt_max_deletions(project_dir: Path) -> int:

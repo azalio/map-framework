@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 VALID_MINIMALITY = frozenset({"off", "lite", "full", "ultra"})
 VALID_PROMPT_LAYERING = frozenset({"docs_first", "stable_first"})
+VALID_WORKTREE_ISOLATION = frozenset({"off", "auto", "required"})
+VALID_WAVE_MODE = frozenset({"off", "auto", "on"})
 
 # Cross-AI peer review (#288): external AI CLI runtimes map-review can dispatch
 # to. Keep in sync with CROSS_AI_RUNTIMES in the rendered step runner
@@ -160,13 +162,37 @@ class MapConfig:
     # filesystem concern, deliberately NOT nested under review/sofa. Dotted YAML
     # key `worktree.isolation` aliases to this snake_case field (see
     # load_map_config). The step runner owns the lifecycle + safety guards.
-    worktree_isolation: bool = False
+    # Enum values:
+    #   "off"      — never create worktrees; sequential execution always (default).
+    #   "auto"     — create per-subtask worktrees when a parallel color-group
+    #                dispatches; degrade to sequential with a loud warning when git
+    #                worktrees are unavailable (non-git repo, shallow clone, etc.).
+    #   "required" — hard-fail before parallel dispatch if worktrees are unavailable.
+    # Backward compat: YAML boolean `false` migrates to `"off"`, `true` to
+    # `"required"` in load_map_config.
+    worktree_isolation: str = "off"
     # Bulk-deletion guard threshold: the per-subtask merge refuses when the
     # worktree branch deletes MORE than this many files vs the base commit
     # (catches `rm -rf` / hallucinated mass deletion before it reaches the
     # working branch). 0 disables the guard. Dotted YAML key
     # `worktree.max_deletions`.
     worktree_max_deletions: int = 50
+
+    # Parallel wave execution mode (#303, Slice 0 scaffolding — no behavior change
+    # until Slice 3/5 promote the wave-loop to default). Controls whether
+    # `/map-efficient` routes multi-subtask waves through the parallel wave
+    # coordinator or the sequential single-subtask walker.
+    # Enum values:
+    #   "auto" — (default) engage the wave-loop when the color-group has >=2
+    #             independent subtasks AND worktree.isolation != "off"; degrade to
+    #             sequential otherwise. Slice 0: behaves as sequential everywhere
+    #             (the wave-loop promotion and concurrent dispatch land in Slice 3/5).
+    #   "off"  — always sequential; the legacy walker; instant rollback escape hatch.
+    #   "on"   — always attempt parallel dispatch (reserved for Slice 5/6; same as
+    #             "auto" until the concurrent-dispatch step lands).
+    # Dotted YAML key `execution.wave_mode` aliases to this field. YAML 1.1 parses
+    # bare `off`/`on` as booleans — load_map_config migrates them to strings.
+    execution_wave_mode: str = "auto"
 
 
 def load_map_config(project_path: Path) -> MapConfig:
@@ -237,9 +263,23 @@ def load_map_config(project_path: Path) -> MapConfig:
             ("review.cross_ai.timeout_seconds", "review_cross_ai_timeout_seconds"),
             ("worktree.isolation", "worktree_isolation"),
             ("worktree.max_deletions", "worktree_max_deletions"),
+            ("execution.wave_mode", "execution_wave_mode"),
         ):
             if dotted in data and field_name not in data:
                 data[field_name] = data.pop(dotted)
+
+        # Backward compat: worktree_isolation was a bool field; YAML `false`/`true`
+        # (and YAML 1.1 `off`/`on`) arrive as Python booleans. Migrate to the new
+        # enum string before the type-check loop (which expects str).
+        if isinstance(data.get("worktree_isolation"), bool):
+            data["worktree_isolation"] = (
+                "required" if data["worktree_isolation"] else "off"
+            )
+
+        # YAML 1.1 parses bare `off`/`on` as booleans for execution.wave_mode too.
+        # Coerce back to strings: False->"off", True->"on".
+        if isinstance(data.get("execution_wave_mode"), bool):
+            data["execution_wave_mode"] = "on" if data["execution_wave_mode"] else "off"
 
         # YAML 1.1 parses bare ``off``/``on`` as booleans, so ``minimality: off``
         # — the documented opt-out from the lite default (#183) — arrives as bool
@@ -343,6 +383,26 @@ def load_map_config(project_path: Path) -> MapConfig:
                 cfg.worktree_max_deletions,
             )
             cfg.worktree_max_deletions = 50
+
+        if cfg.worktree_isolation not in VALID_WORKTREE_ISOLATION:
+            logger.warning(
+                "Invalid worktree_isolation %r in %s (expected one of %s). "
+                "Using default 'off'.",
+                cfg.worktree_isolation,
+                config_file,
+                ", ".join(sorted(VALID_WORKTREE_ISOLATION)),
+            )
+            cfg.worktree_isolation = "off"
+
+        if cfg.execution_wave_mode not in VALID_WAVE_MODE:
+            logger.warning(
+                "Invalid execution_wave_mode %r in %s (expected one of %s). "
+                "Using default 'auto'.",
+                cfg.execution_wave_mode,
+                config_file,
+                ", ".join(sorted(VALID_WAVE_MODE)),
+            )
+            cfg.execution_wave_mode = "auto"
 
         return cfg
 
@@ -484,15 +544,29 @@ minimality: lite
 # review.cross_ai.runtime: codex          # default target: claude|codex|gemini|opencode
 # review.cross_ai.timeout_seconds: 180
 
-# Per-subtask git worktree isolation (#284) — opt-in, OFF by default. When on,
-# `/map-efficient` runs each subtask's Actor in a dedicated git worktree (stored
-# out of the working tree, under the repo's .git common dir) and atomically
-# squash-merges it back into the working branch ONLY after `verification_checks`
-# pass IN the worktree (pre-merge gate). A rejected attempt (Monitor/Evaluator
-# fail) is discarded, so the working branch is never touched by a bad attempt.
-# Top-level filesystem concern; the step runner owns the lifecycle + guards.
-# worktree.isolation: false
+# Per-subtask git worktree isolation (#284). Controls filesystem isolation for
+# each Actor run in `/map-efficient`. Enum values:
+#   off      — never create worktrees; sequential execution always (default).
+#   auto     — create per-subtask worktrees when a parallel color-group dispatches;
+#              degrade to sequential with a warning when worktrees are unavailable.
+#   required — hard-fail before dispatch if worktrees are unavailable (first-party
+#              repos that must never degrade silently).
+# When on (auto/required), each Actor runs inside a dedicated git worktree stored
+# under the repo's .git common dir and is squash-merged back ONLY after
+# verification_checks pass. A rejected attempt is discarded — the working branch
+# is never touched by a bad Actor attempt.
+# Backward compat: the old boolean `false`/`true` still works (migrates to off/required).
+# worktree.isolation: off
 # worktree.max_deletions: 50   # refuse a merge deleting more than N files (0 = off)
+
+# Parallel wave execution mode (#303). Controls whether `/map-efficient` routes
+# multi-subtask waves through the parallel coordinator or the sequential walker.
+#   auto — (default) engage the wave-loop when >=2 independent subtasks AND
+#           worktree.isolation != off; otherwise sequential. Currently behaves as
+#           sequential everywhere (parallel dispatch lands in a later slice).
+#   off  — always sequential; instant rollback escape hatch.
+#   on   — always attempt parallel (reserved; same as auto until dispatch lands).
+# execution.wave_mode: auto
 
 # Strip MAP-internal workflow IDs (ST-/AC-/VC-/INV-/HC-) from the code a run
 # changed, at workflow completion (Stop hook). On by default; uncomment and set

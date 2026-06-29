@@ -1,8 +1,9 @@
-"""Per-subtask git worktree isolation (#284).
+"""Per-subtask git worktree isolation (#284) and parallel wave execution (#303).
 
 Two layers:
-- Config: the MapConfig fields, dotted-key YAML aliasing (`worktree.*` ->
-  snake_case), bounds-validation fallback, and the generated default-config doc.
+- Config: the MapConfig fields, dotted-key YAML aliasing (`worktree.*` /
+  `execution.*` -> snake_case), enum validation, backward-compat bool migration,
+  and the generated default-config doc.
 - Runtime: the step-runner lifecycle (create/merge/discard/status), the
   disabled no-op path, and every council-mandated safety guard, exercised
   against real throwaway git repos.
@@ -19,6 +20,8 @@ import pytest
 
 from mapify_cli.config.project_config import (
     MapConfig,
+    VALID_WAVE_MODE,
+    VALID_WORKTREE_ISOLATION,
     generate_default_config,
     load_map_config,
 )
@@ -47,20 +50,22 @@ def _write_config(tmp_path: Path, body: str) -> None:
 class TestWorktreeConfig:
     def test_defaults_off(self) -> None:
         cfg = MapConfig()
-        assert cfg.worktree_isolation is False
+        assert cfg.worktree_isolation == "off"
         assert cfg.worktree_max_deletions == 50
 
     def test_absent_config_uses_defaults(self, tmp_path: Path) -> None:
         cfg = load_map_config(tmp_path)
-        assert cfg.worktree_isolation is False
+        assert cfg.worktree_isolation == "off"
         assert cfg.worktree_max_deletions == 50
 
     def test_dotted_keys_alias_to_fields(self, tmp_path: Path) -> None:
+        # YAML `true` is a bool in Python; the backward-compat migration maps it
+        # to the enum string "required".
         _write_config(
             tmp_path, "worktree.isolation: true\nworktree.max_deletions: 7\n"
         )
         cfg = load_map_config(tmp_path)
-        assert cfg.worktree_isolation is True
+        assert cfg.worktree_isolation == "required"
         assert cfg.worktree_max_deletions == 7
 
     def test_negative_max_deletions_falls_back(self, tmp_path: Path) -> None:
@@ -75,14 +80,87 @@ class TestWorktreeConfig:
         assert cfg.worktree_max_deletions == 0
 
     def test_wrong_type_isolation_ignored(self, tmp_path: Path) -> None:
-        _write_config(tmp_path, "worktree.isolation: notabool\n")
+        # An unknown string is not a valid enum value -> falls back to "off".
+        _write_config(tmp_path, "worktree.isolation: notanenum\n")
         cfg = load_map_config(tmp_path)
-        assert cfg.worktree_isolation is False
+        assert cfg.worktree_isolation == "off"
 
     def test_generated_config_documents_keys(self) -> None:
         body = generate_default_config(include_comments=True)
-        assert "worktree.isolation: false" in body
+        assert "worktree.isolation: off" in body
         assert "worktree.max_deletions" in body
+
+    # ------------------------------------------------------------------ #
+    # Enum string values
+    # ------------------------------------------------------------------ #
+    @pytest.mark.parametrize("value", sorted(VALID_WORKTREE_ISOLATION))
+    def test_valid_isolation_enum_values_accepted(
+        self, tmp_path: Path, value: str
+    ) -> None:
+        _write_config(tmp_path, f"worktree.isolation: {value}\n")
+        cfg = load_map_config(tmp_path)
+        assert cfg.worktree_isolation == value
+
+    # ------------------------------------------------------------------ #
+    # Backward-compat: YAML bool -> string migration
+    # ------------------------------------------------------------------ #
+    def test_bool_false_migrates_to_off(self, tmp_path: Path) -> None:
+        # YAML `false` is parsed as Python False by yaml.safe_load.
+        # load_map_config migrates it to the new enum string "off".
+        _write_config(tmp_path, "worktree.isolation: false\n")
+        cfg = load_map_config(tmp_path)
+        assert cfg.worktree_isolation == "off"
+
+    def test_bool_true_migrates_to_required(self, tmp_path: Path) -> None:
+        # YAML `true` is parsed as Python True by yaml.safe_load.
+        # load_map_config migrates it to "required" (the strict opt-in).
+        _write_config(tmp_path, "worktree.isolation: true\n")
+        cfg = load_map_config(tmp_path)
+        assert cfg.worktree_isolation == "required"
+
+
+# --------------------------------------------------------------------------- #
+# execution_wave_mode config (#303 Slice 0)
+# --------------------------------------------------------------------------- #
+class TestWaveModeConfig:
+    def test_default_is_auto(self) -> None:
+        cfg = MapConfig()
+        assert cfg.execution_wave_mode == "auto"
+
+    def test_absent_config_uses_default(self, tmp_path: Path) -> None:
+        cfg = load_map_config(tmp_path)
+        assert cfg.execution_wave_mode == "auto"
+
+    @pytest.mark.parametrize("value", sorted(VALID_WAVE_MODE))
+    def test_valid_wave_mode_values_accepted(
+        self, tmp_path: Path, value: str
+    ) -> None:
+        _write_config(tmp_path, f"execution.wave_mode: {value}\n")
+        cfg = load_map_config(tmp_path)
+        assert cfg.execution_wave_mode == value
+
+    def test_invalid_wave_mode_falls_back_to_auto(self, tmp_path: Path) -> None:
+        _write_config(tmp_path, "execution.wave_mode: superfast\n")
+        cfg = load_map_config(tmp_path)
+        assert cfg.execution_wave_mode == "auto"
+
+    def test_yaml11_off_bool_migrates_to_string(self, tmp_path: Path) -> None:
+        # YAML 1.1 parses bare `off` as Python False.  load_map_config must
+        # coerce it back to the string "off" before the type-check loop.
+        _write_config(tmp_path, "execution.wave_mode: off\n")
+        cfg = load_map_config(tmp_path)
+        assert cfg.execution_wave_mode == "off"
+
+    def test_yaml11_on_bool_migrates_to_string(self, tmp_path: Path) -> None:
+        # YAML 1.1 parses bare `on` as Python True.  load_map_config must
+        # coerce it to "on".
+        _write_config(tmp_path, "execution.wave_mode: on\n")
+        cfg = load_map_config(tmp_path)
+        assert cfg.execution_wave_mode == "on"
+
+    def test_generated_config_documents_wave_mode(self) -> None:
+        body = generate_default_config(include_comments=True)
+        assert "execution.wave_mode: auto" in body
 
 
 # --------------------------------------------------------------------------- #
