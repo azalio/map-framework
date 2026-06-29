@@ -15342,6 +15342,12 @@ _WT_REASON_NOT_GIT_REPO: str = "not_git_repo"
 _WT_REASON_UNSUPPORTED: str = "worktree_unsupported"
 _WT_REASON_CREATE_FAILED: str = "worktree_create_failed"
 _WT_REASON_DIRTY_MERGE_TARGET: str = "dirty_merge_target"
+# concurrency_ready reason codes
+_WT_REASON_NO_RECORD: str = "no_record"
+_WT_REASON_PATH_MISSING: str = "path_missing"
+_WT_REASON_NOT_REGISTERED: str = "not_registered"
+_WT_REASON_HEAD_MISMATCH: str = "head_mismatch"
+_WT_REASON_DIRTY: str = "dirty"
 
 _WT_ISOLATION_VALID = frozenset({"off", "auto", "required"})
 
@@ -16749,6 +16755,154 @@ def worktree_isolation_status(branch: Optional[str] = None) -> dict[str, object]
         "active_worktrees": active,
         "live_git_worktrees": live,
         "max_deletions": _wt_max_deletions(project_dir),
+    }
+
+
+def concurrency_ready(
+    subtask_ids: list[str],
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Read-only wave-worktree readiness check (coordinator-owned, council Q1).
+
+    For each supplied subtask verifies:
+      1. A worktree record exists in the branch-scoped sidecar.
+      2. The recorded path exists on disk AND is git-registered (appears in
+         ``git worktree list --porcelain``).
+      3. HEAD in the worktree == the recorded base_sha (frozen-SHA invariant #284).
+      4. The worktree tree is clean, ignoring MAP runtime-state paths.
+
+    Returns::
+
+        {
+            "ready": bool,
+            "per_subtask": {sid: {"ok": bool, "reason": code | None, ...}},
+            "reason": <first-failure code> | None,
+        }
+
+    This function NEVER creates, merges, removes, or commits anything.
+    When not inside a git repo or no worktrees are recorded the function
+    returns a structured non-error result (ready=False) rather than raising.
+    """
+    if not _wt_is_git_repo():
+        return {
+            "ready": False,
+            "per_subtask": {},
+            "reason": _WT_REASON_NOT_GIT_REPO,
+        }
+
+    branch_name = branch or get_branch_name()
+    state = _read_worktree_state(branch_name)
+    worktrees = state.get("worktrees", {})
+    if not isinstance(worktrees, dict) or not worktrees:
+        return {
+            "ready": False,
+            "per_subtask": {},
+            "reason": _WT_REASON_NO_RECORD,
+        }
+
+    # Build a set of paths registered with git for O(1) membership checks.
+    registered_paths: set[str] = set()
+    wl = _wt_git(["worktree", "list", "--porcelain"], timeout=15)
+    if wl.returncode == 0:
+        for raw_line in wl.stdout.splitlines():
+            line = raw_line.strip()
+            if line.startswith("worktree "):
+                try:
+                    registered_paths.add(
+                        str(Path(line[len("worktree "):].strip()).resolve())
+                    )
+                except OSError:
+                    pass
+
+    per_subtask: dict[str, object] = {}
+    first_failure: Optional[str] = None
+
+    ids = sorted({str(s) for s in subtask_ids if str(s).strip()})
+    for sid in ids:
+        slug = _wt_slug(sid)
+        if slug is None:
+            reason = "invalid_subtask_id"
+            per_subtask[sid] = {"ok": False, "reason": reason}
+            if first_failure is None:
+                first_failure = reason
+            continue
+
+        record = worktrees.get(slug)
+        if not isinstance(record, dict):
+            per_subtask[sid] = {"ok": False, "reason": _WT_REASON_NO_RECORD}
+            if first_failure is None:
+                first_failure = _WT_REASON_NO_RECORD
+            continue
+
+        raw_path = str(record.get("path", ""))
+        base_sha = str(record.get("base_sha", ""))
+        wt_path = Path(raw_path) if raw_path else None
+
+        # (1) Path exists on disk
+        if wt_path is None or not wt_path.is_dir():
+            per_subtask[sid] = {
+                "ok": False,
+                "reason": _WT_REASON_PATH_MISSING,
+                "path": raw_path,
+            }
+            if first_failure is None:
+                first_failure = _WT_REASON_PATH_MISSING
+            continue
+
+        # (2) git-registered
+        try:
+            resolved = str(wt_path.resolve())
+        except OSError:
+            resolved = raw_path
+        if resolved not in registered_paths:
+            per_subtask[sid] = {
+                "ok": False,
+                "reason": _WT_REASON_NOT_REGISTERED,
+                "path": raw_path,
+            }
+            if first_failure is None:
+                first_failure = _WT_REASON_NOT_REGISTERED
+            continue
+
+        # (3) HEAD == base_sha
+        head = _wt_head_sha(wt_path)
+        if head != base_sha:
+            per_subtask[sid] = {
+                "ok": False,
+                "reason": _WT_REASON_HEAD_MISMATCH,
+                "expected": base_sha[:8] if base_sha else None,
+                "actual": head[:8] if head else None,
+            }
+            if first_failure is None:
+                first_failure = _WT_REASON_HEAD_MISMATCH
+            continue
+
+        # (4) Clean tree (ignoring MAP runtime-state paths)
+        st = _wt_git(["status", "--porcelain"], cwd=wt_path)
+        dirty_lines = [
+            ln
+            for ln in st.stdout.splitlines()
+            if ln.strip() and not _wt_is_runtime_state_path(_wt_porcelain_path(ln))
+        ]
+        if dirty_lines:
+            per_subtask[sid] = {
+                "ok": False,
+                "reason": _WT_REASON_DIRTY,
+                "dirty": dirty_lines[:10],
+            }
+            if first_failure is None:
+                first_failure = _WT_REASON_DIRTY
+            continue
+
+        per_subtask[sid] = {"ok": True, "reason": None}
+
+    ready = bool(ids) and all(
+        isinstance(v, dict) and v.get("ok") for v in per_subtask.values()
+    )
+    return {
+        "ready": ready,
+        "per_subtask": per_subtask,
+        "reason": first_failure,
     }
 
 
@@ -18218,6 +18372,20 @@ if __name__ == "__main__":
         print(json.dumps(_wt_r, indent=2))
         if _wt_r.get("status") == "error":
             sys.exit(1)
+
+    elif func_name == "concurrency_ready":
+        # CLI: concurrency_ready <subtask_id> [<subtask_id> ...] [--branch B]
+        # Coordinator-owned read-only wave-worktree readiness check (council Q1).
+        # Returns JSON; exits 0 even when ready=False (a structural result, not an
+        # error); exits 1 only on argument/parse errors.
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py concurrency_ready")
+        _p.add_argument("subtask_ids", nargs="+")
+        _p.add_argument("--branch", default=None)
+        _a = _p.parse_args(sys.argv[2:])
+        _wt_r = concurrency_ready(_a.subtask_ids, _a.branch)
+        print(json.dumps(_wt_r, indent=2))
 
     elif func_name == "discard_subtask_worktree":
         # CLI: discard_subtask_worktree <subtask_id> [--attempt N] [--branch B]
