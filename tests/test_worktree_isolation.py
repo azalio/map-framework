@@ -613,3 +613,71 @@ class TestWaveWorktreeMerge:
         assert proc.returncode == 1
         out = json.loads(proc.stdout)
         assert out["kind"] == "NO_WORKTREE"
+
+
+# --------------------------------------------------------------------------- #
+# concurrency_ready — coordinator-owned read-only readiness check (ST-003/AC-3)
+# --------------------------------------------------------------------------- #
+class TestConcurrencyReady:
+    def test_vc1_concurrency_ready_all_clean(self, repo: Path) -> None:
+        """VC1: returns ready=True when all worktrees exist, registered, HEAD==base, clean."""
+        del repo
+        _wt_with_files("ST-010", {})
+        _wt_with_files("ST-011", {})
+        result = m.concurrency_ready(["ST-010", "ST-011"])
+        assert result["ready"] is True
+        assert result["reason"] is None
+        per = result["per_subtask"]
+        assert isinstance(per, dict)
+        assert per["ST-010"]["ok"] is True
+        assert per["ST-011"]["ok"] is True
+
+    def test_vc1_concurrency_ready_dirty_member(self, repo: Path) -> None:
+        """VC1: returns ready=False with dirty reason when one worktree has uncommitted changes."""
+        del repo
+        created = m.create_subtask_worktree("ST-020")
+        assert created["status"] == "success"
+        wt = Path(str(created["worktree_path"]))
+        # Write a real (non-runtime-state) file to make the worktree dirty.
+        (wt / "dirty.txt").write_text("uncommitted\n", encoding="utf-8")
+
+        m.create_subtask_worktree("ST-021")
+
+        result = m.concurrency_ready(["ST-020", "ST-021"])
+        assert result["ready"] is False
+        per = result["per_subtask"]
+        assert per["ST-020"]["ok"] is False
+        assert per["ST-020"]["reason"] == "dirty"
+        assert per["ST-021"]["ok"] is True
+        assert result["reason"] == "dirty"
+
+    def test_vc2_concurrency_ready_readonly(self, repo: Path) -> None:
+        """VC2: calling concurrency_ready does NOT create/merge/remove worktrees or move HEAD."""
+        _wt_with_files("ST-030", {})
+        _wt_with_files("ST-031", {})
+
+        wl_before = _git(["worktree", "list", "--porcelain"], repo).stdout
+        head_before = _git(["rev-parse", "HEAD"], repo).stdout.strip()
+
+        result = m.concurrency_ready(["ST-030", "ST-031"])
+        assert result["ready"] is True
+
+        wl_after = _git(["worktree", "list", "--porcelain"], repo).stdout
+        head_after = _git(["rev-parse", "HEAD"], repo).stdout.strip()
+
+        assert wl_before == wl_after, "concurrency_ready must not add/remove worktrees"
+        assert head_before == head_after, "concurrency_ready must not move HEAD"
+
+    def test_vc3_concurrency_ready_disabled(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC3: when isolation is off / no worktrees recorded, returns structured result, never raises."""
+        r = _make_repo(tmp_path)
+        # No worktree.isolation config -> isolation is off, no worktrees recorded.
+        monkeypatch.chdir(r)
+        result = m.concurrency_ready(["ST-040"])
+        # Must not raise; must return a structured dict with ready=False.
+        assert isinstance(result, dict)
+        assert result["ready"] is False
+        assert "reason" in result
+        assert "per_subtask" in result
