@@ -194,6 +194,35 @@ class MapConfig:
     # bare `off`/`on` as booleans — load_map_config migrates them to strings.
     execution_wave_mode: str = "auto"
 
+    # Maximum number of concurrent Actor workers in a parallel wave dispatch (#303
+    # Slice 5b). Range 1–8; out-of-range values are clamped by clamp_max_actors().
+    # Non-int / bool values fall back to the default 4 (see clamp_max_actors).
+    # Dotted YAML key: `execution.max_actors`.
+    # DORMANT in Slice 5a — parsed and validated but no execution path reads it yet.
+    max_actors: int = 4
+
+    # When True, a single worker that crashes with a transient error in a parallel
+    # wave will be retried once before the wave is aborted. Pairs with max_actors
+    # in Slice 5b concurrent dispatch. Dotted YAML key: `execution.retry_degraded_once`.
+    # DORMANT in Slice 5a — parsed and validated but no execution path reads it yet.
+    retry_degraded_once: bool = False
+
+
+def clamp_max_actors(n: object) -> int:
+    """Clamp max_actors to the valid range [1, 8], or return the default 4.
+
+    Non-int values (including bool, str, None) return the default 4.
+    int values are clamped: below 1 → 1, above 8 → 8.
+
+    Note: bool is explicitly excluded (isinstance(True, int) is True in Python)
+    because a YAML boolean arriving here is a misconfiguration, not an int.
+    The floor is 1, NOT the default 4 — a valid-but-low int (e.g. 0) is clamped
+    to 1 (minimum legal value), while a non-int/bool/None falls back to 4.
+    """
+    if isinstance(n, bool) or not isinstance(n, int):
+        return 4
+    return max(1, min(8, n))
+
 
 def load_map_config(project_path: Path) -> MapConfig:
     """Load MAP config from .map/config.yaml with fallback to defaults.
@@ -264,6 +293,8 @@ def load_map_config(project_path: Path) -> MapConfig:
             ("worktree.isolation", "worktree_isolation"),
             ("worktree.max_deletions", "worktree_max_deletions"),
             ("execution.wave_mode", "execution_wave_mode"),
+            ("execution.max_actors", "max_actors"),
+            ("execution.retry_degraded_once", "retry_degraded_once"),
         ):
             if dotted in data and field_name not in data:
                 data[field_name] = data.pop(dotted)
@@ -403,6 +434,10 @@ def load_map_config(project_path: Path) -> MapConfig:
                 ", ".join(sorted(VALID_WAVE_MODE)),
             )
             cfg.execution_wave_mode = "auto"
+
+        # Clamp max_actors to [1, 8]; non-int/bool → default 4.
+        # retry_degraded_once is a plain bool handled by the generic type-check loop.
+        cfg.max_actors = clamp_max_actors(cfg.max_actors)
 
         return cfg
 
@@ -567,6 +602,16 @@ minimality: lite
 #   off  — always sequential; instant rollback escape hatch.
 #   on   — always attempt parallel (reserved; same as auto until dispatch lands).
 # execution.wave_mode: auto
+
+# Concurrent Actor limit for parallel wave dispatch (#303 Slice 5b).
+# Valid range 1–8; values outside the range are clamped (0→1, 9→8).
+# Non-int / bool values fall back to the default 4.
+# DORMANT until Slice 5b — setting this in Slice 5a has no effect.
+# execution.max_actors: 4
+
+# Retry a crashed worker once before aborting the wave (Slice 5b).
+# DORMANT until Slice 5b — setting this in Slice 5a has no effect.
+# execution.retry_degraded_once: false
 
 # Strip MAP-internal workflow IDs (ST-/AC-/VC-/INV-/HC-) from the code a run
 # changed, at workflow completion (Stop hook). On by default; uncomment and set
