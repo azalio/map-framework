@@ -5260,5 +5260,181 @@ def test_vc3_dormant_keys_do_not_flip_strategy(
     )
 
 
+# ---------------------------------------------------------------------------
+# ST-001: compute_dispatch_gate — config-driven fail-closed concurrency gate
+# ---------------------------------------------------------------------------
+
+
+def _write_config_keys(tmp_path: Path, **keys: str) -> None:
+    """Write a .map/config.yaml with arbitrary dotted keys (ST-001 helper)."""
+    map_dir = tmp_path / ".map"
+    map_dir.mkdir(parents=True, exist_ok=True)
+    lines = "\n".join(f"{k}: {v}" for k, v in keys.items())
+    (map_dir / "config.yaml").write_text(lines + "\n", encoding="utf-8")
+
+
+def test_vc1_concurrent_dispatch_on_isolation_off_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VC1 [AC-1-GATE] [HC-3]: concurrent_dispatch=true + isolation='off' raises
+    DispatchGateError — never silently degrades to sequential."""
+    import sys as _sys
+
+    monkeypatch.chdir(tmp_path)
+    branch = "test-st001-vc1-gate"
+
+    _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
+    # Config: flag on, isolation off (the forbidden contradiction).
+    _write_config_keys(
+        tmp_path,
+        **{
+            "execution.concurrent_dispatch": "true",
+            "worktree.isolation": "off",
+        },
+    )
+
+    _orig_msr = _sys.modules.pop("map_step_runner", None)
+    try:
+        with pytest.raises(map_orchestrator.DispatchGateError) as exc_info:
+            map_orchestrator.compute_dispatch_gate(branch, tmp_path)
+    finally:
+        if _orig_msr is not None:
+            _sys.modules["map_step_runner"] = _orig_msr
+
+    assert "isolation" in str(exc_info.value).lower(), (
+        f"DispatchGateError message should mention isolation: {exc_info.value}"
+    )
+
+
+def test_vc2_flag_false_returns_sequential_no_side_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VC2 [AC-1-GATE] [HC-1]: concurrent_dispatch=false (default) → sequential on
+    FIRST line; no DispatchGateError, no concurrent result, no concurrency_ready probe."""
+    import sys as _sys
+
+    monkeypatch.chdir(tmp_path)
+    branch = "test-st001-vc2-default-sequential"
+
+    # Width>=2 wave — would be parallelizable if isolation were on.
+    _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
+
+    # Sub-test A: no config at all (flag defaults to false).
+    _orig_msr = _sys.modules.pop("map_step_runner", None)
+    try:
+        result_a = map_orchestrator.compute_dispatch_gate(branch, tmp_path)
+    finally:
+        if _orig_msr is not None:
+            _sys.modules["map_step_runner"] = _orig_msr
+
+    assert result_a["dispatch_mode"] == "sequential", (
+        f"No config → dispatch_mode must be 'sequential': {result_a}"
+    )
+    assert result_a["reason"] == map_orchestrator.WAVE_REASON_DISPATCH_SEQUENTIAL, (
+        f"No config → reason must be WAVE_REASON_DISPATCH_SEQUENTIAL: {result_a}"
+    )
+
+    # Sub-test B: explicit false in config.
+    _write_config_keys(tmp_path, **{"execution.concurrent_dispatch": "false"})
+    _orig_msr2 = _sys.modules.pop("map_step_runner", None)
+    try:
+        result_b = map_orchestrator.compute_dispatch_gate(branch, tmp_path)
+    finally:
+        if _orig_msr2 is not None:
+            _sys.modules["map_step_runner"] = _orig_msr2
+
+    assert result_b["dispatch_mode"] == "sequential", (
+        f"Explicit false → dispatch_mode must be 'sequential': {result_b}"
+    )
+    assert result_b["reason"] == map_orchestrator.WAVE_REASON_DISPATCH_SEQUENTIAL, (
+        f"Explicit false → reason must be WAVE_REASON_DISPATCH_SEQUENTIAL: {result_b}"
+    )
+
+    # Sub-test C: get_wave_step under default config stays sequential and never raises.
+    _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
+    _orig_msr3 = _sys.modules.pop("map_step_runner", None)
+    try:
+        wave_result = map_orchestrator.get_wave_step(branch)
+    finally:
+        if _orig_msr3 is not None:
+            _sys.modules["map_step_runner"] = _orig_msr3
+
+    assert wave_result["dispatch_mode"] == "sequential", (
+        f"get_wave_step default → dispatch_mode must be 'sequential': {wave_result}"
+    )
+    assert wave_result["concurrency_enabled"] is False, (
+        f"get_wave_step default → concurrency_enabled must be False: {wave_result}"
+    )
+
+
+def test_vc3_flag_on_isolation_required_concurrent_and_sequential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VC3 [AC-1-GATE]: dispatch_mode=='concurrent' iff full conjunction holds;
+    non-parallelizable plan → sequential+WAVE_REASON_GATE_NOT_PARALLELIZABLE (not error);
+    reason codes are stable and distinct."""
+    import sys as _sys
+
+    monkeypatch.chdir(tmp_path)
+    branch_conc = "test-st001-vc3-concurrent"
+    branch_seq = "test-st001-vc3-seq-no-parallel"
+
+    # --- Case A: flag=true, isolation=required, width>=2 wave → concurrent ---
+    _write_step_state(branch_conc, tmp_path, execution_waves=[["ST-001", "ST-002"]])
+    _write_config_keys(
+        tmp_path,
+        **{
+            "execution.concurrent_dispatch": "true",
+            "execution.wave_mode": "on",
+            "worktree.isolation": "required",
+        },
+    )
+
+    _orig_msr = _sys.modules.pop("map_step_runner", None)
+    try:
+        result_conc = map_orchestrator.compute_dispatch_gate(branch_conc, tmp_path)
+    finally:
+        if _orig_msr is not None:
+            _sys.modules["map_step_runner"] = _orig_msr
+
+    assert result_conc["dispatch_mode"] == "concurrent", (
+        f"flag=true + isolation=required + width>=2 → expected concurrent: {result_conc}"
+    )
+    assert result_conc["reason"] == map_orchestrator.WAVE_REASON_CONCURRENT_GATED, (
+        f"concurrent path → reason must be WAVE_REASON_CONCURRENT_GATED: {result_conc}"
+    )
+
+    # --- Case B: flag=true, isolation=required, all width-1 → sequential (not error) ---
+    _write_step_state(branch_seq, tmp_path, execution_waves=[["ST-001"], ["ST-002"]])
+    # Keep same config (flag=true, isolation=required, wave_mode=on)
+
+    _orig_msr2 = _sys.modules.pop("map_step_runner", None)
+    try:
+        result_seq = map_orchestrator.compute_dispatch_gate(branch_seq, tmp_path)
+    finally:
+        if _orig_msr2 is not None:
+            _sys.modules["map_step_runner"] = _orig_msr2
+
+    assert result_seq["dispatch_mode"] == "sequential", (
+        f"flag=true + isolation=required + all-width-1 → expected sequential: {result_seq}"
+    )
+    assert result_seq["reason"] == map_orchestrator.WAVE_REASON_GATE_NOT_PARALLELIZABLE, (
+        f"not-parallelizable → reason must be WAVE_REASON_GATE_NOT_PARALLELIZABLE: {result_seq}"
+    )
+
+    # --- Reason codes are stable non-empty distinct strings ---
+    codes = {
+        map_orchestrator.WAVE_REASON_CONCURRENT_GATED,
+        map_orchestrator.WAVE_REASON_GATE_NOT_PARALLELIZABLE,
+        map_orchestrator.WAVE_REASON_DISPATCH_SEQUENTIAL,
+        map_orchestrator.WAVE_REASON_NO_WAVES,
+        map_orchestrator.WAVE_REASON_WAVE_COMPLETE,
+    }
+    assert len(codes) == 5, f"All five reason codes must be distinct: {codes}"
+    assert all(isinstance(c, str) and c for c in codes), (
+        f"All reason codes must be non-empty strings: {codes}"
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

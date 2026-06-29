@@ -148,6 +148,20 @@ def _map_config_int(project_dir: Path, key: str, default: int) -> int:
 
 _WAVE_MODE_VALID = frozenset({"off", "auto", "on"})
 
+# Truthy string values for boolean-style config flags.
+_CONCURRENT_DISPATCH_TRUTHY = frozenset({"true", "yes", "y", "1", "on"})
+
+
+def _concurrent_dispatch_enabled(project_dir: Path) -> bool:
+    """Return True when execution.concurrent_dispatch is explicitly enabled.
+
+    Mirrors the _wt_isolation_enabled pattern.  Default is False (off) so the
+    sequential path stays byte-identical to Slice 5a by default (HC-1).  Never
+    raises.
+    """
+    raw = _map_config_str(project_dir, "execution.concurrent_dispatch", "false")
+    return raw.strip().lower() in _CONCURRENT_DISPATCH_TRUTHY
+
 
 def _execution_wave_mode(project_dir: Path) -> str:
     """Return the execution.wave_mode setting: 'off' | 'auto' | 'on'.
