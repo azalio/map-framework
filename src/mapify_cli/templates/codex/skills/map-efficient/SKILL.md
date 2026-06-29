@@ -17,7 +17,10 @@ section when the workflow below points to it. Under `isolation_active` (Slice 5a
 the wave-loop creates per-member worktrees, dispatches actor subagents
 **sequentially** (one per turn), verifies via `concurrency_ready`, then accepts
 atomically via `merge_wave_worktrees`; concurrent fan-out is Slice 5b
-(`dispatch_mode==concurrent`).
+(`dispatch_mode==concurrent`). Under `dispatch_mode==concurrent` (opt-in via
+`execution.concurrent_dispatch: true`), call `run_concurrent_wave`: dispatch N
+actor subagents in **one turn** per sub-batch; on any failure `abort_wave_group`
+discards the whole group and reruns from base (bounded by `max_wave_retries`).
 
 ## Mutation Boundary Constraints
 

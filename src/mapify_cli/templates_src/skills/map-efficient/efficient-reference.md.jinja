@@ -136,7 +136,7 @@ including clean passes — must carry concrete evidence references.
 | `auto` / `on` | `auto` / `required` | no (all groups size 1) | Legacy sequential walker (`get_next_step`) |
 | `auto` / `on` | `auto` / `required` | yes | Wave-loop (`get_wave_step` / `validate_wave_step` / `advance_wave`) |
 
-**Defaults (canonical MapConfig):** `execution.wave_mode=auto`, `worktree.isolation=off`. Because the isolation gate (#2) fails by default, a stock `mapify init` config always runs the legacy sequential walker — byte-identical to pre-Slice-3. Even when the wave-loop does engage, dispatch remains **sequential** in Slice 5a (`isolation_active=True`, `dispatch_mode` from `get_wave_step` keyed to `sequential`); concurrent fan-out is Slice 5b (`dispatch_mode==concurrent`, `concurrency_enabled=True`, not yet shipped).
+**Defaults (canonical MapConfig):** `execution.wave_mode=auto`, `worktree.isolation=off`. Because the isolation gate (#2) fails by default, a stock `mapify init` config always runs the legacy sequential walker — byte-identical to pre-Slice-3. Even when the wave-loop does engage, dispatch remains **sequential** in Slice 5a (`isolation_active=True`, `dispatch_mode` from `get_wave_step` keyed to `sequential`); concurrent fan-out is Slice 5b (`dispatch_mode==concurrent`, `concurrency_enabled=True`), **ACTIVE when opted in** via `execution.concurrent_dispatch: true` (gate: `dispatch_mode == 'concurrent'`).
 
 ### Sequential walker
 
@@ -148,21 +148,24 @@ Use `get_wave_step`, `validate_wave_step`, and `advance_wave` when the wave-loop
 
 When the wave-loop engages AND `isolation_active` is true (`worktree.isolation` ∈ {`auto`, `required`}), the Slice 5a flow applies: (a) create a worktree per wave member via `create_subtask_worktree`; (b) dispatch the member Actors **sequentially** — one per turn, each pinned to its own worktree path (`HC-3`); (c) call `concurrency_ready` (ST-003) to verify all member worktrees before merge; (d) accept the whole wave atomically via `merge_wave_worktrees` — never one-at-a-time, with whole-wave rollback on any failure. See [Parallel waves](#worktree-isolation) under Worktree isolation for the full protocol. Concurrent fan-out (dispatching all Actors in one message) is Slice 5b (`dispatch_mode==concurrent`) and is not yet active.
 
-### Concurrent Actor dispatch — **Slice 5b only** (`dispatch_mode == 'concurrent'`) — GATED EXAMPLE
+### Concurrent Actor dispatch — **Slice 5b** (`dispatch_mode == 'concurrent'`) — **ACTIVE when opted in**
 
-> **IMPORTANT — read before using this example.**
+> **IMPORTANT — read before using this section.**
 > Concurrent fan-out (emitting multiple `Task(actor)` calls in a single message) is
-> **Slice 5b** and is enabled **only when `concurrency_enabled: true` /
-> `parallel_ready` flag set / `dispatch_mode == 'concurrent'`**. In the **current
-> framework** (`concurrency_enabled=False`, Slice 5a), dispatch stays **SEQUENTIAL
+> **ACTIVE when opted in** via `execution.concurrent_dispatch: true`
+> (gate: `dispatch_mode == 'concurrent'`). With the **default config**
+> (`concurrent_dispatch=false`, Slice 5a), dispatch stays **SEQUENTIAL
 > even when a wave has `mode=="parallel"`** — one Actor per turn, each pinned to
-> its own worktree. The example below is reference material for when Slice 5b ships;
-> do NOT treat it as an active instruction now.
+> its own worktree. Act on the instructions below **only** when `get_wave_step`
+> returns `dispatch_mode == 'concurrent'`.
 
-When Slice 5b concurrency is enabled, a parallel wave with N subtasks dispatches all N Actors in **one message** with N `Task` calls — not one per turn:
+**Runtime wiring:** when `get_wave_step` returns `dispatch_mode == 'concurrent'`,
+call `run_concurrent_wave` (runner), which batch-splits the wave by `max_actors`
+and merges each sub-batch atomically via `merge_wave_worktrees`. For each sub-batch,
+emit all N `Task(actor)` calls in **one assistant message** — not one per turn:
 
 ```text
-# CORRECT (Slice 5b / concurrency_enabled=True / dispatch_mode=='concurrent' only) — N Task calls in one message:
+# CORRECT (dispatch_mode=='concurrent' only) — N Task calls in one message:
 Task(
   subagent_type="actor",
   description="Implement ST-003",
@@ -184,6 +187,8 @@ Task(
 **Self-audit before dispatch:** "I will emit {n} Task(actor) calls in one message for this wave." Confirm n matches the color group size.
 
 **`max_actors` cap:** Default 4–8 concurrent actors per wave. Groups larger than `max_actors` are pre-split into sequential batches of `max_actors` before dispatch; do not emit more than `max_actors` Task calls in a single message.
+
+**Retry-discard on failure:** on any actor failure, timeout, or Monitor-reject within a concurrent group, the runner calls `abort_wave_group`, which discards the **entire group** (cancels siblings, resets all worktrees to base SHA, removes group branches) and reruns from base. Retries are bounded by `max_wave_retries` (default 3); on exhaustion the runner escalates to a human and does **not** auto-restart. Never merges a successful subset — discard-all-or-merge-all (HC-4).
 
 ### Anti-patterns — Slice 5b concurrent dispatch only
 
