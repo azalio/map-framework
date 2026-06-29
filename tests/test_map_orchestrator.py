@@ -4757,5 +4757,191 @@ def test_advance_wave_atomic_reset(
     )
 
 
+def test_vc1_concurrency_allowed_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VC1 [AC-1]: concurrency_allowed truth table for select_execution_strategy.
+
+    True only when strategy==wave_loop AND isolation in {auto,required} AND has_parallel_groups.
+    Each condition is toggled off in turn to verify the AND semantics.
+    """
+    import sys as _sys
+    import types
+
+    monkeypatch.chdir(tmp_path)
+    branch = "test-vc1-concurrency-allowed"
+    # Seed a step_state with a width>=2 execution_waves group.
+    _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
+
+    def _fake_runner(wave_mode: str, isolation: str) -> "types.ModuleType":
+        mod = types.ModuleType("map_step_runner")
+
+        def _wm(_project_dir: object) -> str:
+            del _project_dir
+            return wave_mode
+
+        def _iso(_project_dir: object) -> str:
+            del _project_dir
+            return isolation
+
+        mod._execution_wave_mode = _wm  # type: ignore[attr-defined]
+        mod._worktree_isolation_mode = _iso  # type: ignore[attr-defined]
+        return mod
+
+    _orig_msr = _sys.modules.get("map_step_runner")
+    try:
+        # True: all three conditions satisfied (wave_loop + auto isolation + parallel groups).
+        _sys.modules["map_step_runner"] = _fake_runner("on", "auto")
+        result = map_orchestrator.select_execution_strategy(branch, tmp_path)
+        assert result["concurrency_allowed"] is True, (
+            f"on+auto+width>=2 must give concurrency_allowed=True: {result}"
+        )
+        assert result["strategy"] == "wave_loop"
+
+        # True: isolation=required also qualifies.
+        _sys.modules["map_step_runner"] = _fake_runner("on", "required")
+        result = map_orchestrator.select_execution_strategy(branch, tmp_path)
+        assert result["concurrency_allowed"] is True, (
+            f"on+required+width>=2 must give concurrency_allowed=True: {result}"
+        )
+
+        # True: wave_mode=auto also qualifies.
+        _sys.modules["map_step_runner"] = _fake_runner("auto", "required")
+        result = map_orchestrator.select_execution_strategy(branch, tmp_path)
+        assert result["concurrency_allowed"] is True, (
+            f"auto+required+width>=2 must give concurrency_allowed=True: {result}"
+        )
+
+        # False: condition 1 off — wave_mode=off → strategy=sequential.
+        _sys.modules["map_step_runner"] = _fake_runner("off", "required")
+        result = map_orchestrator.select_execution_strategy(branch, tmp_path)
+        assert result["concurrency_allowed"] is False, (
+            f"wave_mode=off must give concurrency_allowed=False: {result}"
+        )
+        assert result["strategy"] == "sequential"
+
+        # False: condition 2 off — isolation=off → strategy=sequential.
+        _sys.modules["map_step_runner"] = _fake_runner("on", "off")
+        result = map_orchestrator.select_execution_strategy(branch, tmp_path)
+        assert result["concurrency_allowed"] is False, (
+            f"isolation=off must give concurrency_allowed=False: {result}"
+        )
+
+        # False: condition 3 off — all waves width-1 → has_parallel_groups=False.
+        _write_step_state(branch, tmp_path, execution_waves=[["ST-001"], ["ST-002"]])
+        _sys.modules["map_step_runner"] = _fake_runner("on", "required")
+        result = map_orchestrator.select_execution_strategy(branch, tmp_path)
+        assert result["concurrency_allowed"] is False, (
+            f"all width-1 waves must give concurrency_allowed=False: {result}"
+        )
+        assert result["has_parallel_groups"] is False
+    finally:
+        if _orig_msr is not None:
+            _sys.modules["map_step_runner"] = _orig_msr
+        else:
+            _sys.modules.pop("map_step_runner", None)
+
+
+def test_vc2_default_config_sequential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VC2 [AC-10]: default config (no worktree.isolation key) gives strategy=='sequential'
+    AND concurrency_allowed==False AND pre-existing reason string is unchanged.
+    """
+    import sys as _sys
+    import types
+
+    monkeypatch.chdir(tmp_path)
+    branch = "test-vc2-default-sequential"
+    # Seed a width>=2 wave so has_parallel_groups=True — isolation gate must block wave_loop.
+    _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
+
+    def _fake_runner_default(wave_mode: str, isolation: str) -> "types.ModuleType":
+        mod = types.ModuleType("map_step_runner")
+
+        def _wm(_project_dir: object) -> str:
+            del _project_dir
+            return wave_mode
+
+        def _iso(_project_dir: object) -> str:
+            del _project_dir
+            return isolation
+
+        mod._execution_wave_mode = _wm  # type: ignore[attr-defined]
+        mod._worktree_isolation_mode = _iso  # type: ignore[attr-defined]
+        return mod
+
+    _orig_msr = _sys.modules.get("map_step_runner")
+    try:
+        # Default: wave_mode=auto (MapConfig default), isolation=off (MapConfig default).
+        _sys.modules["map_step_runner"] = _fake_runner_default("auto", "off")
+        result = map_orchestrator.select_execution_strategy(branch, tmp_path)
+
+        assert result["strategy"] == "sequential", (
+            f"default config must give strategy='sequential': {result}"
+        )
+        assert result["concurrency_allowed"] is False, (
+            f"default config must give concurrency_allowed=False: {result}"
+        )
+        # Pre-existing reason string for the isolation-off path must be unchanged.
+        assert "worktree.isolation='off'" in result["reason"], (
+            f"reason string for isolation=off path must contain worktree.isolation='off': {result['reason']!r}"
+        )
+        assert "legacy sequential" in result["reason"], (
+            f"reason string for isolation=off path must contain 'legacy sequential': {result['reason']!r}"
+        )
+    finally:
+        if _orig_msr is not None:
+            _sys.modules["map_step_runner"] = _orig_msr
+        else:
+            _sys.modules.pop("map_step_runner", None)
+
+
+def test_vc3_strategy_cli_handler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VC3 [render-parity]: CLI 'select_execution_strategy <branch>' prints JSON with concurrency_allowed.
+
+    Invokes the generated .map/scripts/map_orchestrator.py via subprocess to prove
+    the CLI handler is wired in the rendered tree after make render-templates.
+    """
+    import shutil
+
+    monkeypatch.chdir(tmp_path)
+    branch = "test-vc3-cli-handler"
+
+    # Copy the rendered scripts into <tmp_path>/.map/scripts/ (same pattern as other CLI tests).
+    scripts_dir = tmp_path / ".map" / "scripts"
+    scripts_dir.mkdir(parents=True)
+    for py_file in ORCHESTRATOR_PATH.glob("*.py"):
+        shutil.copy(py_file, scripts_dir / py_file.name)
+
+    script = scripts_dir / "map_orchestrator.py"
+
+    # Seed branch state: sequential (no config.yaml → isolation defaults to off).
+    _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
+
+    proc = subprocess.run(
+        [sys.executable, str(script), "select_execution_strategy", "--branch", branch],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 0, (
+        f"CLI exited {proc.returncode}\nstdout={proc.stdout!r}\nstderr={proc.stderr!r}"
+    )
+    data = json.loads(proc.stdout)
+    assert "concurrency_allowed" in data, (
+        f"CLI output missing 'concurrency_allowed' key: {data}"
+    )
+    assert isinstance(data["concurrency_allowed"], bool), (
+        f"concurrency_allowed must be bool, got {type(data['concurrency_allowed'])}: {data}"
+    )
+    assert "strategy" in data
+    assert "worktree_isolation" in data
+    assert "has_parallel_groups" in data
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

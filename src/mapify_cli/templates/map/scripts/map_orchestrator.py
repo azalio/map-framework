@@ -2507,12 +2507,18 @@ def select_execution_strategy(
             reason = "no color-group with width>=2 → sequential (all width-1 waves)"
         strategy = "sequential"
 
+    concurrency_allowed = (
+        strategy == "wave_loop"
+        and isolation_mode in {"auto", "required"}
+        and has_parallel_groups
+    )
     return {
         "strategy": strategy,
         "wave_mode": wave_mode,
         "worktree_isolation": isolation_mode,
         "has_parallel_groups": has_parallel_groups,
         "reason": reason,
+        "concurrency_allowed": concurrency_allowed,
     }
 
 
@@ -4418,6 +4424,7 @@ def main():
             "get_wave_step",
             "validate_wave_step",
             "advance_wave",
+            "select_execution_strategy",
             "resume_single_subtask",
             "get_plan_progress",
             "monitor_failed",
@@ -4802,6 +4809,10 @@ def main():
 
         elif args.command == "get_wave_step":
             result = get_wave_step(branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "select_execution_strategy":
+            result = select_execution_strategy(branch)
             print(json.dumps(result, indent=2))
 
         elif args.command == "validate_wave_step":
