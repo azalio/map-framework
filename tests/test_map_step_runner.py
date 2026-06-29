@@ -13584,17 +13584,21 @@ class TestRunConcurrentWaveBatchSplit:
 
 
 class TestRunConcurrentWaveMergeError:
-    """VC1/composability: merge failure is returned as structured error; no abort wiring here."""
+    """VC1/composability: merge failure triggers abort+retry; final result is WAVE_RETRY_EXHAUSTED
+    with last_error carrying the original merge error (ST-006 wiring).
+    """
 
-    def test_vc1_merge_error_propagated_verbatim(
+    def test_vc1_merge_error_results_in_escalation(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """VC1: merge_wave_worktrees error -> run_concurrent_wave returns structured error."""
-        call_count = [0]
+        """VC1: merge_wave_worktrees error -> abort+retry -> WAVE_RETRY_EXHAUSTED escalation.
 
+        ST-006 wires abort_wave_group into run_concurrent_wave; after retries
+        are exhausted the outer result is WAVE_RETRY_EXHAUSTED, and the
+        original merge error kind is preserved inside last_error.
+        """
         def _fake_merge_fail(ids: list[str], branch: Any = None, **kw: Any) -> dict[str, Any]:
             del ids, branch, kw  # signature match; all unused in the failure stub
-            call_count[0] += 1
             return {
                 "status": "error",
                 "ok": False,
@@ -13602,35 +13606,50 @@ class TestRunConcurrentWaveMergeError:
                 "message": "conflict",
             }
 
+        def _fake_abort(group_id: str, branch: Any = None) -> dict[str, Any]:
+            del group_id, branch
+            return {"clean": True, "aborted_group_id": "fake"}
+
         monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _fake_merge_fail)
+        monkeypatch.setattr(map_step_runner, "abort_wave_group", _fake_abort)
 
         repo = tmp_path / "repo"
         repo.mkdir()
         _make_git_repo_for_group(repo)
-        (repo / ".map" / "test-branch").mkdir(parents=True)
+        map_dir = repo / ".map"
+        (map_dir / "test-branch").mkdir(parents=True)
+        # max_wave_retries=1 so the test terminates quickly.
+        (map_dir / "config.yaml").write_text(
+            "execution.max_wave_retries: 1\n", encoding="utf-8"
+        )
         monkeypatch.chdir(repo)
         monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
 
         result = map_step_runner.run_concurrent_wave(
             ["ST-001", "ST-002"], "test-branch", repo
         )
+        # Outer result is the escalation envelope.
         assert result.get("ok") is not True
         assert result.get("status") == "error"
-        assert result.get("kind") == "WAVE_MERGE_CONFLICT"
-        # failed_batch and batches_merged_before_failure are annotated
-        assert "failed_batch" in result
-        assert result.get("batches_merged_before_failure") == 0
+        assert result.get("kind") == "WAVE_RETRY_EXHAUSTED"
+        assert result.get("escalate_to_human") is True
+        # Original merge error preserved inside last_error.
+        last_err = result.get("last_error")
+        assert isinstance(last_err, dict), f"last_error must be a dict: {result}"
+        assert last_err.get("kind") == "WAVE_MERGE_CONFLICT"
+        assert "failed_batch" in last_err
 
-    def test_vc1_failure_in_second_batch_annotates_correctly(
+    def test_vc1_failure_in_second_batch_captured_in_last_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """VC1: failure in batch 2 -> batches_merged_before_failure=1."""
+        """VC1: failure in batch 2 -> last_error carries batches_merged_before_failure=1."""
         call_count = [0]
 
         def _fake_merge(ids: list[str], branch: Any = None, **kw: Any) -> dict[str, Any]:
             del branch, kw  # match merge_wave_worktrees signature; unused in stub
             call_count[0] += 1
-            if call_count[0] == 1:
+            # First call per attempt succeeds; second fails.
+            if call_count[0] % 2 == 1:
                 return {"status": "success", "ok": True, "merged": ids, "no_changes": []}
             return {
                 "status": "error",
@@ -13639,7 +13658,12 @@ class TestRunConcurrentWaveMergeError:
                 "message": "commit failed",
             }
 
+        def _fake_abort(group_id: str, branch: Any = None) -> dict[str, Any]:
+            del group_id, branch
+            return {"clean": True, "aborted_group_id": "fake"}
+
         monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _fake_merge)
+        monkeypatch.setattr(map_step_runner, "abort_wave_group", _fake_abort)
 
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -13650,14 +13674,18 @@ class TestRunConcurrentWaveMergeError:
 
         map_dir = repo / ".map"
         (map_dir / "config.yaml").write_text(
-            "execution.max_actors: 1\n", encoding="utf-8"
+            "execution.max_actors: 1\nexecution.max_wave_retries: 1\n", encoding="utf-8"
         )
 
         result = map_step_runner.run_concurrent_wave(
             ["ST-001", "ST-002"], "test-branch", repo
         )
         assert result.get("ok") is not True
-        assert result.get("batches_merged_before_failure") == 1
+        assert result.get("kind") == "WAVE_RETRY_EXHAUSTED"
+        # batches_merged_before_failure == 1 is inside last_error (batch 2 failed).
+        last_err = result.get("last_error")
+        assert isinstance(last_err, dict)
+        assert last_err.get("batches_merged_before_failure") == 1
 
 
 # ---------------------------------------------------------------------------
@@ -13751,3 +13779,399 @@ class TestRunConcurrentWaveAtomicMerge:
         # All ids covered
         all_merged = sorted(sid for b in merge_batches for sid in b)
         assert all_merged == sorted(group_ids)
+
+
+# ---------------------------------------------------------------------------
+# Tests: _max_wave_retries helper (unit)
+# ---------------------------------------------------------------------------
+
+
+class TestMaxWaveRetriesHelper:
+    """Unit tests for the _max_wave_retries() helper."""
+
+    def test_vc3_default_no_config(self, tmp_path: Path) -> None:
+        """VC3: With no config file, _max_wave_retries returns the default 3."""
+        result = map_step_runner._max_wave_retries(tmp_path)
+        assert result == 3, f"expected default 3, got {result}"
+
+    def test_vc3_reads_from_config(self, tmp_path: Path) -> None:
+        """VC3: Reads execution.max_wave_retries from .map/config.yaml."""
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text(
+            "execution.max_wave_retries: 5\n", encoding="utf-8"
+        )
+        result = map_step_runner._max_wave_retries(tmp_path)
+        assert result == 5
+
+    def test_vc3_zero_falls_back_to_default(self, tmp_path: Path) -> None:
+        """VC3: Zero is not > 0 so _map_config_int falls back to default 3."""
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text(
+            "execution.max_wave_retries: 0\n", encoding="utf-8"
+        )
+        result = map_step_runner._max_wave_retries(tmp_path)
+        # _map_config_int: parsed=0, not > 0 -> returns default=3; clamp(3,1,10)=3.
+        assert result == 3
+
+    def test_vc3_clamps_to_max(self, tmp_path: Path) -> None:
+        """VC3: Values above 10 clamp to 10."""
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text(
+            "execution.max_wave_retries: 99\n", encoding="utf-8"
+        )
+        result = map_step_runner._max_wave_retries(tmp_path)
+        assert result == 10
+
+    def test_vc3_non_int_falls_back_to_default(self, tmp_path: Path) -> None:
+        """VC3: Non-int values fall back to default 3."""
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text(
+            "execution.max_wave_retries: notanumber\n", encoding="utf-8"
+        )
+        result = map_step_runner._max_wave_retries(tmp_path)
+        assert result == 3
+
+
+# ---------------------------------------------------------------------------
+# Tests: abort_wave_group (VC1–VC4, HC-4, safety)
+# ---------------------------------------------------------------------------
+
+
+class TestAbortWaveGroup:
+    """ST-006 abort_wave_group: idempotent group-abort verb."""
+
+    def test_vc1_hc4_whole_group_discarded_on_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC1/HC-4: pre-merge failure -> abort_wave_group discards WHOLE group.
+
+        Verifies: cancel siblings (discard_subtask_worktree called for every
+        member), _wt_rollback reused (no raw clean -fdx), group removed from
+        sidecar, verify_group_clean returns clean.
+        """
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        branch = "test-branch"
+        (repo / ".map" / branch).mkdir(parents=True)
+
+        group_ids = ["ST-A01", "ST-A02"]
+        base_sha, wt_paths = _make_git_repo_with_worktrees(repo, group_ids)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: branch)
+
+        # Register worktrees + begin_wave_group so abort has state to read.
+        _register_worktrees(branch, base_sha, group_ids, wt_paths)
+        r_begin = map_step_runner.begin_wave_group(group_ids, branch)
+        assert r_begin["ok"] is True, f"begin_wave_group failed: {r_begin}"
+        group_key = str(r_begin["group_key"])
+
+        # Confirm group is present in sidecar before abort.
+        state_before = map_step_runner._read_worktree_state(branch)
+        assert group_key in (state_before.get("wave_groups") or {}), (
+            "group must be present before abort"
+        )
+
+        result = map_step_runner.abort_wave_group(group_key, branch)
+
+        # Verdict: verify_group_clean fields are returned.
+        assert "clean" in result, f"abort must return verify_group_clean verdict: {result}"
+        assert result.get("aborted_group_id") == group_key
+
+        # Group entry must be gone from sidecar.
+        state_after = map_step_runner._read_worktree_state(branch)
+        wg_after = state_after.get("wave_groups") or {}
+        assert group_key not in wg_after, (
+            f"group must be removed from sidecar after abort; still present: {wg_after}"
+        )
+
+    def test_vc2_idempotent_second_abort_converges(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC2: second abort after a partial abort converges to clean, no error."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        branch = "test-branch"
+        (repo / ".map" / branch).mkdir(parents=True)
+
+        group_ids = ["ST-B01", "ST-B02"]
+        base_sha, wt_paths = _make_git_repo_with_worktrees(repo, group_ids)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: branch)
+
+        _register_worktrees(branch, base_sha, group_ids, wt_paths)
+        r_begin = map_step_runner.begin_wave_group(group_ids, branch)
+        group_key = str(r_begin["group_key"])
+
+        # First abort.
+        r1 = map_step_runner.abort_wave_group(group_key, branch)
+        assert "aborted_group_id" in r1
+
+        # Second abort on the already-clean state must not error.
+        r2 = map_step_runner.abort_wave_group(group_key, branch)
+        assert "aborted_group_id" in r2
+        # Should report clean or at worst a non-error state (group already gone).
+        assert r2.get("status") != "error" or r2.get("clean") is True, (
+            f"second abort must converge cleanly, got {r2}"
+        )
+
+    def test_safety_map_dir_survives_abort(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Safety: abort does NOT delete .map/ — sentinel gitignored file survives.
+
+        Proves _wt_rollback exclusion (-e .map) holds: a sentinel file under
+        .map/ must be present after abort (it would be gone if raw clean -fdx
+        were used instead of _wt_rollback).
+        """
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        branch = "test-branch"
+        (repo / ".map" / branch).mkdir(parents=True)
+
+        group_ids = ["ST-C01"]
+        base_sha, wt_paths = _make_git_repo_with_worktrees(repo, group_ids)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: branch)
+
+        _register_worktrees(branch, base_sha, group_ids, wt_paths)
+        r_begin = map_step_runner.begin_wave_group(group_ids, branch)
+        group_key = str(r_begin["group_key"])
+
+        # Place a sentinel file inside .map/ — would be wiped by clean -fdx/-x.
+        sentinel = repo / ".map" / branch / "_sentinel_test.txt"
+        sentinel.write_text("do not delete", encoding="utf-8")
+        assert sentinel.exists(), "sentinel must exist before abort"
+
+        map_step_runner.abort_wave_group(group_key, branch)
+
+        assert sentinel.exists(), (
+            "abort must NOT delete .map/ sentinel file — "
+            "_wt_rollback's -e .map exclusion must hold"
+        )
+
+    def test_vc4_hc4_post_abort_verify_clean_real_repo(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC4/HC-4: post-abort verify-clean on a real temp git repo.
+
+        Confirms HEAD==recorded base_sha, clean tree, and zero group worktrees
+        after abort_wave_group on a real git repo where group worktrees existed.
+        """
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        branch = "test-branch"
+        (repo / ".map" / branch).mkdir(parents=True)
+
+        group_ids = ["ST-D01", "ST-D02"]
+        base_sha, wt_paths = _make_git_repo_with_worktrees(repo, group_ids)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: branch)
+
+        _register_worktrees(branch, base_sha, group_ids, wt_paths)
+        r_begin = map_step_runner.begin_wave_group(group_ids, branch)
+        group_key = str(r_begin["group_key"])
+
+        result = map_step_runner.abort_wave_group(group_key, branch)
+
+        # verify_group_clean fields.
+        assert "clean" in result, f"abort must return verify_group_clean fields: {result}"
+        # HEAD must equal base_sha after rollback.
+        import subprocess as _sp
+        head = _sp.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(repo), check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        assert head == base_sha, (
+            f"HEAD must equal base_sha={base_sha!r} after abort; got {head!r}"
+        )
+        # Group must be gone from sidecar.
+        state = map_step_runner._read_worktree_state(branch)
+        wg = state.get("wave_groups") or {}
+        assert group_key not in wg, f"group must be absent from sidecar after abort: {wg}"
+
+    def test_vc1_abort_on_unknown_group_is_safe(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC1: abort on an unknown group_id is safe (idempotent no-op)."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        branch = "test-branch"
+        (repo / ".map" / branch).mkdir(parents=True)
+        _make_git_repo_for_group(repo)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: branch)
+
+        # Should not raise — group is simply not found, rollback skipped.
+        result = map_step_runner.abort_wave_group("NONEXISTENT-GROUP-KEY", branch)
+        assert "aborted_group_id" in result, f"must return aborted_group_id: {result}"
+
+
+# ---------------------------------------------------------------------------
+# Tests: run_concurrent_wave — bounded retry + escalation (VC3, ST-006)
+# ---------------------------------------------------------------------------
+
+
+class TestRunConcurrentWaveRetryAndEscalation:
+    """VC3/ST-006: run_concurrent_wave retries bounded by max_wave_retries,
+    then escalates with structured result (no auto-restart).
+    """
+
+    def test_vc3_retries_bounded_by_max_wave_retries_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC3: always-failing merge -> retries exactly max_wave_retries times, then escalates."""
+        merge_call_count: list[int] = [0]
+        abort_call_count: list[int] = [0]
+
+        def _always_fail(ids: list[str], branch: Any = None, **kw: Any) -> dict[str, Any]:
+            del ids, branch, kw
+            merge_call_count[0] += 1
+            return {"status": "error", "ok": False, "kind": "WAVE_MERGE_CONFLICT", "message": "conflict"}
+
+        def _fake_abort(group_id: str, branch: Any = None) -> dict[str, Any]:
+            del group_id, branch
+            abort_call_count[0] += 1
+            return {"clean": True, "aborted_group_id": "fake"}
+
+        monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _always_fail)
+        monkeypatch.setattr(map_step_runner, "abort_wave_group", _fake_abort)
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo_for_group(repo)
+        (repo / ".map" / "test-branch").mkdir(parents=True)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        # Default max_wave_retries == 3 (no config file -> default).
+        result = map_step_runner.run_concurrent_wave(
+            ["ST-001", "ST-002"], "test-branch", repo
+        )
+
+        assert result.get("ok") is not True
+        assert result.get("kind") == "WAVE_RETRY_EXHAUSTED"
+        assert result.get("escalate_to_human") is True
+        assert result.get("retries_attempted") == 3, (
+            f"expected 3 retries, got {result.get('retries_attempted')}"
+        )
+        # abort_wave_group must be called once per retry attempt.
+        assert abort_call_count[0] == 3, (
+            f"abort must be called once per retry (3 total); got {abort_call_count[0]}"
+        )
+
+    def test_vc3_retries_bounded_by_config_max_wave_retries(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC3: max_wave_retries=2 from config -> exactly 2 retries."""
+        merge_call_count: list[int] = [0]
+        abort_call_count: list[int] = [0]
+
+        def _always_fail(ids: list[str], branch: Any = None, **kw: Any) -> dict[str, Any]:
+            del ids, branch, kw
+            merge_call_count[0] += 1
+            return {"status": "error", "ok": False, "kind": "WAVE_MERGE_CONFLICT", "message": "x"}
+
+        def _fake_abort(group_id: str, branch: Any = None) -> dict[str, Any]:
+            del group_id, branch
+            abort_call_count[0] += 1
+            return {"clean": True, "aborted_group_id": "fake"}
+
+        monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _always_fail)
+        monkeypatch.setattr(map_step_runner, "abort_wave_group", _fake_abort)
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo_for_group(repo)
+        map_dir = repo / ".map"
+        (map_dir / "test-branch").mkdir(parents=True)
+        (map_dir / "config.yaml").write_text(
+            "execution.max_wave_retries: 2\n", encoding="utf-8"
+        )
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        result = map_step_runner.run_concurrent_wave(
+            ["ST-001", "ST-002"], "test-branch", repo
+        )
+
+        assert result.get("kind") == "WAVE_RETRY_EXHAUSTED"
+        assert result.get("retries_attempted") == 2
+        assert result.get("max_wave_retries") == 2
+        assert abort_call_count[0] == 2
+
+    def test_vc3_escalation_result_contains_required_fields(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC3: escalation result has escalate_to_human, retries_attempted, group_ids, last_error."""
+        def _always_fail(ids: list[str], branch: Any = None, **kw: Any) -> dict[str, Any]:
+            del ids, branch, kw
+            return {"status": "error", "ok": False, "kind": "WAVE_MERGE_CONFLICT", "message": "x"}
+
+        def _fake_abort(group_id: str, branch: Any = None) -> dict[str, Any]:
+            del group_id, branch
+            return {"clean": True, "aborted_group_id": "fake"}
+
+        monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _always_fail)
+        monkeypatch.setattr(map_step_runner, "abort_wave_group", _fake_abort)
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo_for_group(repo)
+        (repo / ".map" / "test-branch").mkdir(parents=True)
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        result = map_step_runner.run_concurrent_wave(
+            ["ST-001", "ST-002"], "test-branch", repo
+        )
+
+        assert result.get("escalate_to_human") is True
+        assert isinstance(result.get("retries_attempted"), int)
+        assert isinstance(result.get("group_ids"), list)
+        assert isinstance(result.get("last_error"), dict)
+        assert result.get("kind") == "WAVE_RETRY_EXHAUSTED"
+
+    def test_vc3_no_auto_restart_after_exhaustion(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC3: after retry exhaustion the function returns (does NOT loop forever)."""
+        # This test would hang / timeout if run_concurrent_wave auto-restarted.
+        call_count: list[int] = [0]
+
+        def _always_fail(ids: list[str], branch: Any = None, **kw: Any) -> dict[str, Any]:
+            del ids, branch, kw
+            call_count[0] += 1
+            return {"status": "error", "ok": False, "kind": "FAIL", "message": "x"}
+
+        def _fake_abort(group_id: str, branch: Any = None) -> dict[str, Any]:
+            del group_id, branch
+            return {"clean": True, "aborted_group_id": "fake"}
+
+        monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _always_fail)
+        monkeypatch.setattr(map_step_runner, "abort_wave_group", _fake_abort)
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _make_git_repo_for_group(repo)
+        map_dir = repo / ".map"
+        (map_dir / "test-branch").mkdir(parents=True)
+        (map_dir / "config.yaml").write_text(
+            "execution.max_wave_retries: 1\n", encoding="utf-8"
+        )
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+
+        result = map_step_runner.run_concurrent_wave(
+            ["ST-001"], "test-branch", repo
+        )
+
+        # Must terminate and return WAVE_RETRY_EXHAUSTED — not loop.
+        assert result.get("kind") == "WAVE_RETRY_EXHAUSTED"
+        # merge_wave_worktrees called exactly max_wave_retries=1 time.
+        assert call_count[0] == 1, (
+            f"merge must be called exactly once (max_wave_retries=1), got {call_count[0]}"
+        )

@@ -17221,12 +17221,16 @@ def concurrency_ready(
 
 
 # ---------------------------------------------------------------------------
-# Concurrent-wave COORDINATOR (5b.4, ST-005)
+# Concurrent-wave COORDINATOR (5b.4, ST-005) + group-abort (5b.5, ST-006)
 # ---------------------------------------------------------------------------
 
 _MAX_ACTORS_MIN: int = 1
 _MAX_ACTORS_MAX: int = 8
 _MAX_ACTORS_DEFAULT: int = 4
+
+_MAX_WAVE_RETRIES_MIN: int = 1
+_MAX_WAVE_RETRIES_MAX: int = 10
+_MAX_WAVE_RETRIES_DEFAULT: int = 3
 
 
 def _max_actors(project_dir: Optional[Path] = None) -> int:
@@ -17244,11 +17248,120 @@ def _max_actors(project_dir: Optional[Path] = None) -> int:
     return max(_MAX_ACTORS_MIN, min(_MAX_ACTORS_MAX, raw))
 
 
+def _max_wave_retries(project_dir: Optional[Path] = None) -> int:
+    """Read ``execution.max_wave_retries`` from config and clamp to [1, 10].
+
+    Default is 3.  Non-int / bool / absent values fall back to the default.
+    Mirrors the _max_actors pattern.
+    """
+    raw = _map_config_int(
+        project_dir or (_wt_project_dir() or Path(".")),
+        "execution.max_wave_retries",
+        _MAX_WAVE_RETRIES_DEFAULT,
+    )
+    return max(_MAX_WAVE_RETRIES_MIN, min(_MAX_WAVE_RETRIES_MAX, raw))
+
+
 def _chunk(items: list[str], size: int) -> list[list[str]]:
     """Split *items* into ordered sub-lists each of width <= *size*."""
     if size < 1:
         size = 1
     return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+def abort_wave_group(
+    group_id: str,
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Idempotent, runner-owned group-abort verb (HC-4, ST-006).
+
+    On ANY pre-merge actor failure / timeout / cancel / Monitor-reject, discard
+    the WHOLE group and return to base.  NEVER partially merges a subset.
+
+    Steps (each is idempotent on re-entry):
+
+    1. Read the group's recorded ``base_sha`` from the lifecycle sidecar
+       (written by ``begin_wave_group``).
+    2. If ``_wt_active_git_operation()`` reports a mid-merge, run
+       ``git merge --abort`` first.
+    3. **Reuse** ``_wt_rollback(base_sha)`` — hard-reset to base_sha + clean
+       with ``-e .map -e .codex -e .agents`` so the gitignored runtime state
+       (step_state.json, worktree sidecar) is NEVER deleted.
+       DO NOT call ``git clean -fdx`` or ``git clean -x`` directly.
+    4. Discard every group worktree + branch via ``discard_subtask_worktree``
+       (which uses ``_wt_force_remove`` internally).
+    5. Mark the group ``aborted`` in the lifecycle sidecar and remove the
+       group entry from ``wave_groups`` so ``verify_group_clean`` sees zero
+       groups.
+    6. Call ``verify_group_clean`` and return its verdict.
+
+    Idempotent: a second invocation after a partial abort converges to
+    ``verify_group_clean == True`` without error.
+
+    Returns ``verify_group_clean`` dict augmented with ``aborted_group_id``.
+    """
+    if not _wt_is_git_repo():
+        return _wt_error(_WT_REASON_NOT_GIT_REPO, "not inside a git work tree")
+
+    branch_name = branch or get_branch_name()
+    state = _read_worktree_state(branch_name)
+    wave_groups = state.get("wave_groups")
+
+    # Resolve the canonical group key from the sidecar.  The caller may pass
+    # the raw group_id string (could be the canonical key, or a single subtask id).
+    group_key: Optional[str] = None
+    base_sha: Optional[str] = None
+    subtask_ids: list[str] = []
+    if isinstance(wave_groups, dict):
+        if group_id in wave_groups:
+            group_key = group_id
+        else:
+            # Tolerate a caller passing one member subtask id — scan for it.
+            for gk, grp in wave_groups.items():
+                if isinstance(grp, dict):
+                    sids = grp.get("subtask_ids", [])
+                    if isinstance(sids, list) and group_id in sids:
+                        group_key = gk
+                        break
+        if group_key is not None:
+            grp = wave_groups[group_key]
+            if isinstance(grp, dict):
+                base_sha = str(grp.get("base_sha", "")) or None
+                raw_sids = grp.get("subtask_ids", [])
+                subtask_ids = list(raw_sids) if isinstance(raw_sids, list) else []
+
+    # Step 2: abort any in-progress merge (idempotent — fails safely if none).
+    active_op = _wt_active_git_operation()
+    if active_op == "merge":
+        _wt_git(["merge", "--abort"])
+
+    # Step 3: rollback to base_sha if we have one.
+    # MUST reuse _wt_rollback — it excludes .map/.codex/.agents from the clean.
+    if base_sha:
+        _wt_rollback(base_sha)
+
+    # Step 4: discard every group worktree + branch.
+    for sid in subtask_ids:
+        discard_subtask_worktree(sid, branch=branch_name)
+
+    # Step 5: mark aborted in sidecar and remove the group entry so
+    # verify_group_clean sees zero groups.
+    if group_key is not None:
+        # Record aborted event for every subtask (best-effort).
+        for sid in subtask_ids:
+            record_group_lifecycle(group_key, sid, _WT_GROUP_EVENT_ABORTED, branch_name)
+        # Re-read state (record_group_lifecycle writes it).
+        state2 = _read_worktree_state(branch_name)
+        wg2 = state2.get("wave_groups")
+        if isinstance(wg2, dict) and group_key in wg2:
+            del wg2[group_key]
+            _write_worktree_state(branch_name, state2)
+
+    # Step 6: verify clean and return.
+    verdict = verify_group_clean(branch_name)
+    result: dict[str, object] = dict(verdict)
+    result["aborted_group_id"] = group_id
+    return result
 
 
 def run_concurrent_wave(
@@ -17278,9 +17391,11 @@ def run_concurrent_wave(
        state and calls merge).  Telemetry is emitted exactly ONCE per wave via
        the ``record_dispatch_actual`` CLI (the skill wires that in ST-007).
 
-    4. **Rollback-on-failure composability**: on a ``merge_wave_worktrees``
-       error the structured error dict is returned as-is.  Abort / restart
-       wiring is ST-006 — this function stays composable.
+    4. **Rollback-on-failure with bounded retry** (ST-006): on a
+       ``merge_wave_worktrees`` error, invoke ``abort_wave_group`` to discard the
+       WHOLE group and reset to base (HC-4), then retry from base bounded by
+       ``_max_wave_retries`` (default 3, clamped [1, 10]).  On exhaustion,
+       return a structured human-escalation result and do NOT auto-restart.
 
     Returns on full success::
 
@@ -17295,15 +17410,17 @@ def run_concurrent_wave(
             "no_changes": [...],         # ids with no-change-in-worktree
         }
 
-    Returns on merge failure (structured, composable)::
+    Returns on retry exhaustion (structured human-escalation)::
 
         {
             "status": "error",
             "ok": False,
-            "kind": ...,
-            "failed_batch": [...],
-            "batches_merged_before_failure": int,
-            ...                          # forwarded from merge_wave_worktrees
+            "kind": "WAVE_RETRY_EXHAUSTED",
+            "escalate_to_human": True,
+            "retries_attempted": int,
+            "max_wave_retries": int,
+            "group_ids": [...],
+            "last_error": {...},         # last merge_wave_worktrees error
         }
     """
     if not _wt_is_git_repo():
@@ -17318,36 +17435,56 @@ def run_concurrent_wave(
         return _wt_error("NO_SUBTASKS", "no subtask ids supplied to run_concurrent_wave")
 
     cap = _max_actors(pd)
+    max_retries = _max_wave_retries(pd)
     sub_batches = _chunk(ids_sorted, cap)
 
-    merged_ids: list[str] = []
-    no_changes: list[str] = []
-    batches_merged = 0
+    last_error: dict[str, object] = {}
+    for attempt in range(max_retries):
+        merged_ids: list[str] = []
+        no_changes: list[str] = []
+        batches_merged = 0
+        failed = False
 
-    for batch in sub_batches:
-        result = merge_wave_worktrees(batch, branch=branch_name, skip_post_wave=True)
-        if result.get("status") == "error" or not result.get("ok"):
-            # Propagate the merge error verbatim + annotate for callers.
-            error: dict[str, object] = dict(result)
-            error["failed_batch"] = batch
-            error["batches_merged_before_failure"] = batches_merged
-            return error
-        # Accumulate success data for the final return.
-        raw_merged = result.get("merged", [])
-        raw_no_changes = result.get("no_changes", [])
-        merged_ids.extend(list(raw_merged) if isinstance(raw_merged, list) else [])
-        no_changes.extend(list(raw_no_changes) if isinstance(raw_no_changes, list) else [])
-        batches_merged += 1
+        for batch in sub_batches:
+            result = merge_wave_worktrees(batch, branch=branch_name, skip_post_wave=True)
+            if result.get("status") == "error" or not result.get("ok"):
+                # Discard the whole group and reset to base before retrying.
+                group_key = "|".join(ids_sorted)
+                abort_wave_group(group_key, branch_name)
+                last_error = dict(result)
+                last_error["failed_batch"] = batch
+                last_error["batches_merged_before_failure"] = batches_merged
+                failed = True
+                break
+            raw_merged = result.get("merged", [])
+            raw_no_changes = result.get("no_changes", [])
+            merged_ids.extend(list(raw_merged) if isinstance(raw_merged, list) else [])
+            no_changes.extend(list(raw_no_changes) if isinstance(raw_no_changes, list) else [])
+            batches_merged += 1
 
+        if not failed:
+            return {
+                "status": "success",
+                "ok": True,
+                "group_ids": ids_sorted,
+                "sub_batches": sub_batches,
+                "max_actors": cap,
+                "batches_merged": batches_merged,
+                "merged_ids": merged_ids,
+                "no_changes": no_changes,
+            }
+        # else: retry loop continues
+
+    # All retries exhausted — escalate to human, do NOT auto-restart.
     return {
-        "status": "success",
-        "ok": True,
+        "status": "error",
+        "ok": False,
+        "kind": "WAVE_RETRY_EXHAUSTED",
+        "escalate_to_human": True,
+        "retries_attempted": max_retries,
+        "max_wave_retries": max_retries,
         "group_ids": ids_sorted,
-        "sub_batches": sub_batches,
-        "max_actors": cap,
-        "batches_merged": batches_merged,
-        "merged_ids": merged_ids,
-        "no_changes": no_changes,
+        "last_error": last_error,
     }
 
 
@@ -19074,6 +19211,23 @@ if __name__ == "__main__":
         _wt_r = run_concurrent_wave(_a.group_ids, _a.branch, _pd)
         print(json.dumps(_wt_r, indent=2))
         if _wt_r.get("status") == "error" or not _wt_r.get("ok"):
+            sys.exit(1)
+
+    elif func_name == "abort_wave_group":
+        # CLI: abort_wave_group <group_id> [--branch B]
+        #
+        # Idempotent group-abort verb (5b.5 / ST-006).
+        # Discards the WHOLE group + resets to base_sha via _wt_rollback.
+        # Never merges a subset (HC-4).
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py abort_wave_group")
+        _p.add_argument("group_id", help="Canonical group key (or member subtask id)")
+        _p.add_argument("--branch", default=None, help="Branch name (default: current branch)")
+        _a = _p.parse_args(sys.argv[2:])
+        _wt_r = abort_wave_group(_a.group_id, _a.branch)
+        print(json.dumps(_wt_r, indent=2))
+        if not _wt_r.get("clean"):
             sys.exit(1)
 
     else:

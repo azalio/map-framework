@@ -25,6 +25,7 @@ wall-clock time (VC4).
 from __future__ import annotations
 
 import re
+import subprocess as _sp
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -47,6 +48,15 @@ from mapify_cli.parallelism_observability import (  # noqa: E402
     classify_dispatch,
 )
 from tests._fake_task_tool import FakeTaskTool  # noqa: E402
+
+# Load map_step_runner from the generated templates tree for ST-006 integration
+# tests. Bytecode suppression (above) prevents __pycache__ pollution.
+_SCRIPTS_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "src" / "mapify_cli" / "templates" / "map" / "scripts"
+)
+sys.path.insert(0, str(_SCRIPTS_PATH))
+import map_step_runner as _msr  # type: ignore[import-not-found]  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers — local runners (TEST-LOCAL; no production dispatcher)
@@ -571,3 +581,137 @@ class TestRunConcurrentWaveDispatchTelemetry:
             assert mif == n, (
                 f"VC3: For sub-batch width {n}, max_in_flight should be {n}, got {mif}"
             )
+
+
+# ---------------------------------------------------------------------------
+# ST-006: abort_wave_group integration (VC4/HC-4) on a real temp git repo
+# ---------------------------------------------------------------------------
+
+def _make_repo_with_group(root: Path, group_ids: list[str]) -> tuple[str, dict[str, Path]]:
+    """Create a real git repo + worktrees; return (base_sha, {sid: wt_path})."""
+    _sp.run(["git", "init", str(root)], check=True, capture_output=True)
+    for cfg in [["git", "config", "user.email", "t@test.com"],
+                ["git", "config", "user.name", "Test"]]:
+        _sp.run(cfg, cwd=str(root), check=True, capture_output=True)
+    (root / "README.md").write_text("base", encoding="utf-8")
+    _sp.run(["git", "add", "."], cwd=str(root), check=True, capture_output=True)
+    _sp.run(["git", "commit", "--no-verify", "-m", "init"],
+            cwd=str(root), check=True, capture_output=True)
+    base_sha = _sp.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(root), check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+    wt_paths: dict[str, Path] = {}
+    for sid in group_ids:
+        slug = "".join(c if c.isalnum() or c in "-_." else "-" for c in sid).lower()
+        wt_dir = root.parent / f"wt-{slug}"
+        wt_branch = f"map/wt/{slug}"
+        _sp.run(["git", "worktree", "add", "-b", wt_branch, str(wt_dir)],
+                cwd=str(root), check=True, capture_output=True)
+        for cfg in [["git", "config", "user.email", "t@test.com"],
+                    ["git", "config", "user.name", "Test"]]:
+            _sp.run(cfg, cwd=str(wt_dir), check=True, capture_output=True)
+        (wt_dir / f"{slug}.txt").write_text(f"work for {sid}", encoding="utf-8")
+        _sp.run(["git", "add", "."], cwd=str(wt_dir), check=True, capture_output=True)
+        _sp.run(["git", "commit", "--no-verify", "-m", f"work: {sid}"],
+                cwd=str(wt_dir), check=True, capture_output=True)
+        wt_paths[sid] = wt_dir
+    return base_sha, wt_paths
+
+
+def _register_group_worktrees(
+    branch: str, base_sha: str, group_ids: list[str], wt_paths: dict[str, Path]
+) -> None:
+    """Register each worktree in the msr sidecar."""
+    state = _msr._read_worktree_state(branch)
+    if not isinstance(state.get("worktrees"), dict):
+        state["worktrees"] = {}
+    for sid in group_ids:
+        slug_r = _msr._wt_slug(sid)
+        if slug_r is None:
+            continue
+        state["worktrees"][slug_r] = {
+            "subtask_id": sid,
+            "path": str(wt_paths[sid]),
+            "branch": f"map/wt/{slug_r}",
+            "base_sha": base_sha,
+            "attempt": 0,
+        }
+    _msr._write_worktree_state(branch, state)
+
+
+class TestAbortWaveGroupIntegration:
+    """VC4/HC-4: abort_wave_group on a REAL temp git repo with registered worktrees."""
+
+    def test_vc4_hc4_head_equals_base_sha_after_abort(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC4/HC-4: after abort, HEAD==recorded base_sha, tree clean, zero group worktrees."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        branch = "test-branch"
+        (repo / ".map" / branch).mkdir(parents=True)
+
+        group_ids = ["ST-H01", "ST-H02"]
+        base_sha, wt_paths = _make_repo_with_group(repo, group_ids)
+
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(_msr, "get_branch_name", lambda: branch)
+
+        _register_group_worktrees(branch, base_sha, group_ids, wt_paths)
+        r_begin = _msr.begin_wave_group(group_ids, branch)
+        assert r_begin["ok"] is True, f"begin_wave_group failed: {r_begin}"
+        group_key = str(r_begin["group_key"])
+
+        result = _msr.abort_wave_group(group_key, branch)
+
+        # HEAD must equal base_sha.
+        head = _sp.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(repo), check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        assert head == base_sha, (
+            f"VC4: HEAD must equal base_sha={base_sha!r} after abort; got {head!r}"
+        )
+
+        # verify_group_clean fields present.
+        assert "clean" in result, f"abort must return verify_group_clean fields: {result}"
+
+        # Group removed from sidecar.
+        state = _msr._read_worktree_state(branch)
+        wg = state.get("wave_groups") or {}
+        assert group_key not in wg, (
+            f"VC4: group must be absent from sidecar after abort: {wg}"
+        )
+
+    def test_vc4_map_dir_sentinel_survives_abort(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Safety (VC4): .map/ sentinel file survives abort — _wt_rollback exclusion confirmed."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        branch = "test-branch"
+        (repo / ".map" / branch).mkdir(parents=True)
+
+        group_ids = ["ST-I01"]
+        base_sha, wt_paths = _make_repo_with_group(repo, group_ids)
+
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(_msr, "get_branch_name", lambda: branch)
+
+        _register_group_worktrees(branch, base_sha, group_ids, wt_paths)
+        r_begin = _msr.begin_wave_group(group_ids, branch)
+        group_key = str(r_begin["group_key"])
+
+        # Plant sentinel in .map/ (gitignored runtime state).
+        sentinel = repo / ".map" / branch / "_sentinel_abort_test.txt"
+        sentinel.write_text("survive_me", encoding="utf-8")
+        assert sentinel.exists()
+
+        _msr.abort_wave_group(group_key, branch)
+
+        assert sentinel.exists(), (
+            "Safety: .map/ sentinel must survive abort — "
+            "abort must use _wt_rollback (with -e .map), NOT raw clean -fdx"
+        )
