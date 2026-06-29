@@ -12146,11 +12146,11 @@ def test_cli_run_cross_ai_review_disabled_exit_zero(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# ST-001: _execution_wave_mode tests
+# _execution_wave_mode tests
 # ---------------------------------------------------------------------------
 
 
-def test_vc1_wave_mode_absent_defaults_off(tmp_path: Path) -> None:
+def test_wave_mode_absent_defaults_off(tmp_path: Path) -> None:
     """Config without execution.wave_mode key must return 'off' (today's sequential default)."""
     (tmp_path / ".map").mkdir()
     # Write a config without any wave_mode key at all.
@@ -12160,7 +12160,7 @@ def test_vc1_wave_mode_absent_defaults_off(tmp_path: Path) -> None:
     assert map_step_runner._execution_wave_mode(tmp_path) == "off"
 
 
-def test_vc2_wave_mode_enum_and_unknown_fallback(tmp_path: Path) -> None:
+def test_wave_mode_enum_and_unknown_fallback(tmp_path: Path) -> None:
     """Known enum values parse; unknown or empty values fall back to 'off'."""
     map_dir = tmp_path / ".map"
     map_dir.mkdir()
@@ -12188,11 +12188,11 @@ def test_vc2_wave_mode_enum_and_unknown_fallback(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# ST-002: _worktree_isolation_mode tests
+# _worktree_isolation_mode tests
 # ---------------------------------------------------------------------------
 
 
-def test_vc1_worktree_isolation_legacy_bool_mapping(tmp_path: Path) -> None:
+def test_worktree_isolation_legacy_bool_mapping(tmp_path: Path) -> None:
     """Legacy boolean literals map correctly; absent key defaults to 'off'."""
     map_dir = tmp_path / ".map"
     map_dir.mkdir()
@@ -12223,7 +12223,7 @@ def test_vc1_worktree_isolation_legacy_bool_mapping(tmp_path: Path) -> None:
     assert map_step_runner._wt_isolation_enabled(tmp_path) is False
 
 
-def test_vc2_worktree_isolation_enum_and_disabled_check_parity(tmp_path: Path) -> None:
+def test_worktree_isolation_enum_and_disabled_check_parity(tmp_path: Path) -> None:
     """New enum strings parse directly; disabled-check is off only when mode=='off'."""
     map_dir = tmp_path / ".map"
     map_dir.mkdir()
@@ -12254,10 +12254,10 @@ def test_vc2_worktree_isolation_enum_and_disabled_check_parity(tmp_path: Path) -
     assert map_step_runner._wt_isolation_enabled(tmp_path) is False
 
 
-# ST-003: _lint_dependency_enforcement / _lint_auto_prune / _observability_parallelism_enabled
+# _lint_dependency_enforcement / _lint_auto_prune / _observability_parallelism_enabled
 
 
-def test_vc1_lint_toggle_defaults(tmp_path: Path) -> None:
+def test_lint_toggle_defaults(tmp_path: Path) -> None:
     """lint.dependency_enforcement defaults to 'warn' when absent; parses all enum values;
     unknown values fall back to 'warn'. lint.auto_prune defaults to False; 'true' -> True."""
     config = tmp_path / ".map" / "config.yaml"
@@ -12292,7 +12292,7 @@ def test_vc1_lint_toggle_defaults(tmp_path: Path) -> None:
     assert map_step_runner._lint_auto_prune(tmp_path) is False
 
 
-def test_vc2_observability_toggle_defaults(tmp_path: Path) -> None:
+def test_observability_toggle_defaults(tmp_path: Path) -> None:
     """observability.parallelism defaults to False when absent; 'true' -> True.
     Default config => all toggles are no-op: enforcement=='warn', auto_prune is False,
     observability is False."""
@@ -12318,10 +12318,10 @@ def test_vc2_observability_toggle_defaults(tmp_path: Path) -> None:
     assert map_step_runner._observability_parallelism_enabled(tmp_path) is False
 
 
-# ST-008: _worktree_probe / _require_clean_merge_target
+# _worktree_probe / _require_clean_merge_target
 
 
-def test_vc1_probe_dormant_when_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_probe_dormant_when_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """With isolation off (default), _worktree_probe returns dormant and runs NO git command.
 
     Proves zero-git behavior by monkeypatching _wt_git to record calls and raise
@@ -12350,13 +12350,13 @@ def test_vc1_probe_dormant_when_off(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert "worktree.isolation is off" in str(result.get("reason", ""))
     assert calls == [], "No git command should have been issued when isolation is off"
 
-    # Verify _require_clean_merge_target is also dormant (HC-1 symmetry)
+    # Verify _require_clean_merge_target is also dormant ( symmetry)
     result_clean = map_step_runner._require_clean_merge_target(tmp_path)
     assert result_clean["status"] == "dormant"
     assert result_clean["ok"] is False
 
 
-def test_vc2_probe_roundtrip_and_clean_target(tmp_path: Path) -> None:
+def test_probe_roundtrip_and_clean_target(tmp_path: Path) -> None:
     """When isolation is 'auto': probe adds+removes the .probe-* worktree in try/finally,
     and a dirty repo makes _require_clean_merge_target report not-clean.
 
@@ -12455,7 +12455,7 @@ def test_vc2_probe_roundtrip_and_clean_target(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# ST-009: resolve_worktree_isolation / cleanup_orphan_worktrees
+# resolve_worktree_isolation / cleanup_orphan_worktrees
 # ---------------------------------------------------------------------------
 
 
@@ -12488,7 +12488,7 @@ def _write_isolation_config(project_dir: Path, mode: str) -> None:
     )
 
 
-def test_vc1_fallback_auto_vs_required(
+def test_fallback_auto_vs_required(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """VC1 [AC-9]: Under isolation=auto each fallback condition degrades gracefully;
@@ -12648,7 +12648,7 @@ def test_vc1_fallback_auto_vs_required(
     assert calls == [], "No git must run when isolation is off"
 
 
-def test_vc2_orphan_cleanup_idempotent(
+def test_orphan_cleanup_idempotent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """VC2 [AC-9]: cleanup_orphan_worktrees removes orphans, keeps active, is

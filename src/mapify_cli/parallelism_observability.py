@@ -115,7 +115,7 @@ class ParallelismReport(TypedDict):
 
 
 # ---------------------------------------------------------------------------
-# Dormant writer — NO-OP by default (HC-1, SC-1)
+# Dormant writer — NO-OP by default (, SC-1)
 # ---------------------------------------------------------------------------
 
 

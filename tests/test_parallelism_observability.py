@@ -71,11 +71,11 @@ def _sample_report(run_id: str = "run-test-001") -> ParallelismReport:
 
 
 # ---------------------------------------------------------------------------
-# VC1: writer is no-op by default
+# writer is no-op by default
 # ---------------------------------------------------------------------------
 
 
-def test_vc1_writer_noop_by_default(tmp_path: Path) -> None:
+def test_writer_noop_by_default(tmp_path: Path) -> None:
     """Calling write_parallelism_report with default enabled=False must not
     create the output file and must return False."""
     out_path = tmp_path / "parallelism.json"
@@ -87,7 +87,7 @@ def test_vc1_writer_noop_by_default(tmp_path: Path) -> None:
     )
 
 
-def test_vc1_writer_noop_explicit_false(tmp_path: Path) -> None:
+def test_writer_noop_explicit_false(tmp_path: Path) -> None:
     """Explicit enabled=False also keeps writer dormant."""
     out_path = tmp_path / "runs" / "r1" / "parallelism.json"
     result = write_parallelism_report(_sample_report(), out_path, enabled=False)
@@ -96,7 +96,7 @@ def test_vc1_writer_noop_explicit_false(tmp_path: Path) -> None:
     assert not out_path.exists()
 
 
-def test_vc1_writer_active_when_enabled(tmp_path: Path) -> None:
+def test_writer_active_when_enabled(tmp_path: Path) -> None:
     """Sanity: enabled=True actually writes the file (gates work both ways)."""
     out_path = tmp_path / "runs" / "r2" / "parallelism.json"
     result = write_parallelism_report(_sample_report("r2"), out_path, enabled=True)
@@ -106,11 +106,11 @@ def test_vc1_writer_active_when_enabled(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# VC2: schema and reason-code constants importable; ALL_REASON_CODES complete
+# schema and reason-code constants importable; ALL_REASON_CODES complete
 # ---------------------------------------------------------------------------
 
 
-def test_vc2_schema_and_reason_codes_importable() -> None:
+def test_schema_and_reason_codes_importable() -> None:
     """ParallelismReport, ColorGroupDecision, and all reason-code constants
     import cleanly; ALL_REASON_CODES contains exactly the 9 canonical codes;
     a sample dict conforms to the TypedDict shape."""
@@ -162,7 +162,7 @@ def test_vc2_schema_and_reason_codes_importable() -> None:
     assert not missing_group, f"ColorGroupDecision missing fields: {missing_group}"
 
 
-def test_vc2_detection_not_implemented() -> None:
+def test_detection_not_implemented() -> None:
     """Detection-by-tool-call-count must NOT be present in the module."""
     import mapify_cli.parallelism_observability as mod
 

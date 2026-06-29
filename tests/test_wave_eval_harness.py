@@ -29,7 +29,7 @@ sys.path.insert(0, str(SCRIPTS_PATH))
 import map_step_runner  # noqa: E402  # type: ignore[import-not-found]
 
 # ---------------------------------------------------------------------------
-# Fixtures import (ST-004)
+# Fixtures import
 # ---------------------------------------------------------------------------
 
 from tests.fixtures.wave_blueprints import (  # noqa: E402
@@ -47,11 +47,11 @@ from mapify_cli.dependency_graph import DependencyGraph  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# VC1: wave / color-group shape assertions
+# wave / color-group shape assertions
 # ---------------------------------------------------------------------------
 
 
-def test_vc1_wave_color_computation() -> None:
+def test_wave_color_computation() -> None:
     """
     VC1 [AC-5]: compute_waves + split_wave_by_file_conflicts produce the
     expected wave/color-group shapes for the three blueprint fixtures.
@@ -111,7 +111,7 @@ def test_vc1_wave_color_computation() -> None:
     assert len(cs_waves) == 2, f"expected 2 waves, got {len(cs_waves)}: {cs_waves}"
 
     conflict_wave = cs_waves[1]
-    # ST-002, ST-003, ST-004 are all in wave 1
+    # are all in wave 1
     assert sorted(conflict_wave) == ["ST-002", "ST-003", "ST-004"], (
         f"conflict wave members mismatch: {conflict_wave}"
     )
@@ -119,12 +119,12 @@ def test_vc1_wave_color_computation() -> None:
     sub_waves_cs = cs_graph.split_wave_by_file_conflicts(
         conflict_wave, cs.affected_files_map
     )
-    # Must produce at least 2 sub-waves because ST-002 and ST-004 share 'src/shared.py'
+    # Must produce at least 2 sub-waves because and share 'src/shared.py'
     assert len(sub_waves_cs) >= 2, (
         f"conflict_split must produce >= 2 sub-waves, got {len(sub_waves_cs)}: {sub_waves_cs}"
     )
 
-    # ST-002 and ST-004 must be in different sub-waves
+    # and must be in different sub-waves
     def _sub_wave_index(subtask_id: str) -> int:
         for idx, sw in enumerate(sub_waves_cs):
             if subtask_id in sw:
@@ -138,11 +138,11 @@ def test_vc1_wave_color_computation() -> None:
 
 
 # ---------------------------------------------------------------------------
-# VC2: default config selects the sequential / legacy path (HC-1)
+# default config selects the sequential / legacy path
 # ---------------------------------------------------------------------------
 
 
-def test_vc2_default_config_selects_sequential(tmp_path: Path) -> None:
+def test_default_config_selects_sequential(tmp_path: Path) -> None:
     """
     VC2 [AC-5] [SC-2]: With a default (no-new-key) config, both
     _execution_wave_mode and _worktree_isolation_mode return 'off',

@@ -27,11 +27,11 @@ _FIXTURE_SRC = Path(__file__).parent / "fixtures" / "wave_blueprints.py"
 
 
 # ---------------------------------------------------------------------------
-# VC1 — all fixtures loadable and expose documented fields
+# — all fixtures loadable and expose documented fields
 # ---------------------------------------------------------------------------
 
 
-class TestVC1AllFixturesLoadable:
+class TestAllFixturesLoadable:
     """VC1: Each fixture constructs without error and exposes the documented fields."""
 
     # --- blueprint-shape fixtures ---
@@ -49,7 +49,7 @@ class TestVC1AllFixturesLoadable:
             assert isinstance(spec.inputs, list)
             assert isinstance(spec.affected_files, set)
 
-    def test_vc1_all_fixtures_loadable_linear_chain(self) -> None:
+    def test_all_fixtures_loadable_linear_chain(self) -> None:
         fix = linear_chain()
         self._assert_blueprint_fields(fix)
         assert len(fix.subtasks) == 4, "linear_chain must have 4 subtasks"
@@ -61,7 +61,7 @@ class TestVC1AllFixturesLoadable:
         assert fix.subtasks[2].dependencies == ["ST-002"]
         assert fix.subtasks[3].dependencies == ["ST-003"]
 
-    def test_vc1_all_fixtures_loadable_two_wave_parallel(self) -> None:
+    def test_all_fixtures_loadable_two_wave_parallel(self) -> None:
         fix = two_wave_parallel()
         self._assert_blueprint_fields(fix)
         root = fix.subtasks[0]
@@ -79,7 +79,7 @@ class TestVC1AllFixturesLoadable:
                         "wave must be truly parallel"
                     )
 
-    def test_vc1_all_fixtures_loadable_conflict_split(self) -> None:
+    def test_all_fixtures_loadable_conflict_split(self) -> None:
         fix = conflict_split()
         self._assert_blueprint_fields(fix)
         # must have at least one shared file among the parallel subtasks
@@ -92,7 +92,7 @@ class TestVC1AllFixturesLoadable:
         )
         assert found_conflict, "conflict_split must have at least one shared file"
 
-    def test_vc1_all_fixtures_loadable_build_graph(self) -> None:
+    def test_all_fixtures_loadable_build_graph(self) -> None:
         """build_graph() works for all three blueprint fixtures."""
         from mapify_cli.dependency_graph import DependencyGraph
 
@@ -104,7 +104,7 @@ class TestVC1AllFixturesLoadable:
 
     # --- git-shape fixtures ---
 
-    def test_vc1_all_fixtures_loadable_non_git_dir(self, tmp_path: Path) -> None:
+    def test_all_fixtures_loadable_non_git_dir(self, tmp_path: Path) -> None:
         repo = non_git_dir(tmp_path)
         assert repo.is_dir()
         # must NOT be a git repo
@@ -116,7 +116,7 @@ class TestVC1AllFixturesLoadable:
         )
         assert result.returncode != 0, "non_git_dir must not be a git repository"
 
-    def test_vc1_all_fixtures_loadable_shallow_clone(self, tmp_path: Path) -> None:
+    def test_all_fixtures_loadable_shallow_clone(self, tmp_path: Path) -> None:
         repo = shallow_clone(tmp_path)
         assert repo.is_dir()
         # must be a git repo
@@ -131,7 +131,7 @@ class TestVC1AllFixturesLoadable:
         shallow_file = repo / ".git" / "shallow"
         assert shallow_file.exists(), ".git/shallow marker must exist for shallow_clone"
 
-    def test_vc1_all_fixtures_loadable_submodule_repo(self, tmp_path: Path) -> None:
+    def test_all_fixtures_loadable_submodule_repo(self, tmp_path: Path) -> None:
         repo = submodule_repo(tmp_path)
         assert repo.is_dir()
         # .gitmodules must exist
@@ -145,7 +145,7 @@ class TestVC1AllFixturesLoadable:
         )
         assert result.returncode == 0, f"git submodule status failed: {result.stderr}"
 
-    def test_vc1_all_fixtures_loadable_dirty_repo(self, tmp_path: Path) -> None:
+    def test_all_fixtures_loadable_dirty_repo(self, tmp_path: Path) -> None:
         repo = dirty_repo(tmp_path)
         assert repo.is_dir()
         result = subprocess.run(
@@ -161,14 +161,14 @@ class TestVC1AllFixturesLoadable:
 
 
 # ---------------------------------------------------------------------------
-# VC2 — no placeholder TODO/FIXME/... values in the fixture module
+# — no placeholder TODO/FIXME/... values in the fixture module
 # ---------------------------------------------------------------------------
 
 
-class TestVC2FixturesNoPlaceholders:
+class TestFixturesNoPlaceholders:
     """VC2: Fixture source has no TODO/FIXME/ellipsis placeholders."""
 
-    def test_vc2_fixtures_no_placeholders(self) -> None:
+    def test_fixtures_no_placeholders(self) -> None:
         source = _FIXTURE_SRC.read_text()
         forbidden = ["TODO", "FIXME"]
         for token in forbidden:
@@ -187,7 +187,7 @@ class TestVC2FixturesNoPlaceholders:
                         f"in {_FIXTURE_SRC}"
                     )
 
-    def test_vc2_fixtures_blueprint_affected_files_nonempty(self) -> None:
+    def test_fixtures_blueprint_affected_files_nonempty(self) -> None:
         """Blueprint fixtures' affected_files are non-empty for each subtask."""
         for factory in (linear_chain, two_wave_parallel, conflict_split):
             fix = factory()
@@ -197,7 +197,7 @@ class TestVC2FixturesNoPlaceholders:
                     "lint and wave computations require at least one file"
                 )
 
-    def test_vc2_fixtures_affected_files_map_matches_subtasks(self) -> None:
+    def test_fixtures_affected_files_map_matches_subtasks(self) -> None:
         """affected_files_map keys match subtask ids for all blueprint fixtures."""
         for factory in (linear_chain, two_wave_parallel, conflict_split):
             fix = factory()

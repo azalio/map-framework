@@ -360,7 +360,7 @@ class TestSplitWaveByFileConflicts:
 class TestLintDependencyGraphLayerA:
     """ST-006: Layer A hard-error lint checks (always on)."""
 
-    def test_vc1_layer_a_hard_errors(self):
+    def test_layer_a_hard_errors(self):
         """Layer A detects self_loop, cycle, unknown_dep, duplicate_edge; valid DAG → zero errors."""
         # --- self_loop ---
         g = DependencyGraph()
@@ -403,7 +403,7 @@ class TestLintDependencyGraphLayerA:
         errors5 = [f for f in findings5 if f.severity == "error"]
         assert errors5 == [], f"Valid DAG should produce no errors, got: {errors5}"
 
-    def test_vc2_layer_a_always_on(self):
+    def test_layer_a_always_on(self):
         """Layer A errors are emitted for all enforcement values (always on)."""
         # Graph with a self-loop — triggers a Layer A error regardless of enforcement
         for enforcement in ("off", "warn", "repair_once", "strict"):
@@ -420,7 +420,7 @@ class TestLintDependencyGraphLayerA:
 class TestLintDependencyGraphLayerB:
     """ST-007: Layer B warn-only mechanical edge check + INFO metrics."""
 
-    def test_vc1_layer_b_thin_edge_and_samefile_info(self):
+    def test_layer_b_thin_edge_and_samefile_info(self):
         """
         VC1: thin edge (empty io∩ AND empty files∩) → warning;
              real data-flow edge → no thin_edge warning;
@@ -454,7 +454,7 @@ class TestLintDependencyGraphLayerB:
         g2 = DependencyGraph()
         g2.add_node(SubtaskNode(id="ST-001", dependencies=[]))
         g2.add_node(SubtaskNode(id="ST-002", dependencies=["ST-001"]))
-        # ST-001 outputs config.yaml; ST-002 inputs config.yaml (real data-flow)
+        # outputs config.yaml; inputs config.yaml (real data-flow)
         io2 = {
             "ST-001": {"inputs": set(), "outputs": {"config.yaml"}},
             "ST-002": {"inputs": {"config.yaml"}, "outputs": {"service_a.py"}},
@@ -467,7 +467,7 @@ class TestLintDependencyGraphLayerB:
         # ---- same_file_coloring: two subtasks in same wave share a file → INFO ----
         fix2 = conflict_split()
         g3 = fix2.build_graph()
-        # ST-002 and ST-004 share src/shared.py in wave 1
+        # and share src/shared.py in wave 1
         findings3 = lint_dependency_graph(g3, affected_files_map=fix2.affected_files_map)
         coloring = [f for f in findings3 if f.code == "same_file_coloring"]
         assert coloring, (
@@ -481,7 +481,7 @@ class TestLintDependencyGraphLayerB:
         errors = [f for f in findings3 if f.severity == "error"]
         assert not errors, f"No errors expected for valid conflict_split DAG; got: {errors}"
 
-    def test_vc2_fully_serialized_and_redundant_and_default_warn(self):
+    def test_fully_serialized_and_redundant_and_default_warn(self):
         """
         VC2: linear_chain (N=4, all width-1) → fully_serialized warning;
              redundant edge (A->C where A->B->C) → INFO;
@@ -507,7 +507,7 @@ class TestLintDependencyGraphLayerB:
         g2 = DependencyGraph()
         g2.add_node(SubtaskNode(id="ST-001", dependencies=[]))
         g2.add_node(SubtaskNode(id="ST-002", dependencies=["ST-001"]))
-        # ST-003 depends on ST-001 directly AND via ST-002 → ST-001->ST-003 is redundant
+        # depends on directly AND via → -> is redundant
         g2.add_node(SubtaskNode(id="ST-003", dependencies=["ST-002", "ST-001"]))
         findings2 = lint_dependency_graph(g2)
         redundant = [f for f in findings2 if f.code == "redundant_edge"]

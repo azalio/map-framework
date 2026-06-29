@@ -4527,7 +4527,7 @@ class TestValidateStep24RequiredRecommendation:
 
 
 # ---------------------------------------------------------------------------
-# ST-010: Slice 3 — predicate-gated sequential wave-loop
+# Slice 3 — predicate-gated sequential wave-loop
 # ---------------------------------------------------------------------------
 
 
@@ -4594,7 +4594,7 @@ def _write_step_state(
     )
 
 
-def test_vc1_wave_loop_sequential_no_concurrency(
+def test_wave_loop_sequential_no_concurrency(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """VC1 [HC-2]: get_wave_step returns concurrency_enabled=False even for width>=2 wave."""
@@ -4615,7 +4615,7 @@ def test_vc1_wave_loop_sequential_no_concurrency(
     assert len(result["subtasks"]) == 2  # both listed; dispatcher iterates one at a time
 
 
-def test_vc2_wave_loop_predicate_gating_default_legacy(
+def test_wave_loop_predicate_gating_default_legacy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """VC2 [AC-10]: select_execution_strategy gates on wave_mode AND has_parallel_groups."""
@@ -4690,7 +4690,7 @@ def test_vc2_wave_loop_predicate_gating_default_legacy(
     assert result["has_parallel_groups"] is False
 
 
-def test_vc3_advance_wave_atomic_reset(
+def test_advance_wave_atomic_reset(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """VC3 [AC-10]: advance_wave atomically resets ALL per-wave sub-state."""

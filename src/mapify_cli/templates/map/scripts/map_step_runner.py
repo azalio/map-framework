@@ -15334,7 +15334,7 @@ def _wt_force_remove(path: Path, branch_ref: str) -> None:
         _wt_git(["branch", "-D", branch_ref])
 
 
-# Stable reason codes shared by resolve_worktree_isolation and ST-011 observability.
+# Stable reason codes shared by resolve_worktree_isolation and observability.
 _WT_REASON_NOT_GIT_REPO: str = "not_git_repo"
 _WT_REASON_UNSUPPORTED: str = "worktree_unsupported"
 _WT_REASON_CREATE_FAILED: str = "worktree_create_failed"
@@ -15477,7 +15477,7 @@ def _wt_parse_name_status(text: str) -> tuple[list[str], list[str], int]:
 
 
 # ---------------------------------------------------------------------------
-# Worktree probe (Slice 2 / ST-008)
+# Worktree probe (Slice 2 / )
 # ---------------------------------------------------------------------------
 # Module-level cache: key = resolved toplevel path, value = probe result dict.
 # Reset between test runs via _WORKTREE_PROBE_CACHE.clear().
@@ -15605,7 +15605,7 @@ def _require_clean_merge_target(project_dir: Path) -> dict[str, object]:
 
 
 # ---------------------------------------------------------------------------
-# Slice 2 / ST-009: fallback matrix + orphan cleanup
+# Slice 2 / : fallback matrix + orphan cleanup
 # ---------------------------------------------------------------------------
 
 
@@ -15704,7 +15704,7 @@ def cleanup_orphan_worktrees(branch: str) -> dict[str, object]:
 
     Returns {"removed": [...paths], "kept_active": [...paths], "ok": True}
     """
-    # HC-1 dormancy: read isolation mode WITHOUT calling git.
+    # dormancy: read isolation mode WITHOUT calling git.
     # _map_config_str searches for .map/config.yaml starting from cwd upward, so
     # we pass Path(".") to avoid _wt_project_dir() -> _wt_toplevel() -> _wt_git().
     project_dir = Path(".")
