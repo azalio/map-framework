@@ -1,13 +1,13 @@
-"""ST-005: MapConfig dormant fields max_actors + retry_degraded_once, and clamp helper.
-ST-000: MapConfig fields concurrent_dispatch + max_wave_retries (5b.0 config half).
+"""ST-005: MapConfig fields max_actors + retry_degraded_once, and clamp helper.
+ST-000: MapConfig fields concurrent_dispatch + max_wave_retries (5b config).
 
 Covers:
   VC1 — dotted-key aliasing and field parsing from YAML
   VC2 — clamp_max_actors truth table
-  VC3 — no runner/orchestrator .jinja in templates_src reads these fields
+  VC3 — max_actors is ACTIVE in runner/orchestrator (Slice 5b); retry_degraded_once remains dormant
   VC4 (ST-000) — concurrent_dispatch and max_wave_retries parsed/clamped correctly
   VC5 (ST-000) — clamp_max_wave_retries truth table
-  VC6 (ST-000) — concurrent_dispatch + max_wave_retries are DORMANT in 5b.0
+  VC6 (ST-000) — concurrent_dispatch + max_wave_retries are ACTIVE in runner/orchestrator (Slice 5b)
 """
 
 from __future__ import annotations
@@ -116,7 +116,9 @@ class TestVc2ClampMaxActors:
 
 
 class TestVc3DormantKeysUnused:
-    """VC3: no execution path in templates_src runner/orchestrator reads the fields."""
+    """VC3 (updated for Slice 5b): max_actors is now ACTIVE in runner/orchestrator.
+    retry_degraded_once remains DORMANT (Slice 6+).
+    """
 
     def _grep_templates_src(self, field_name: str) -> list[str]:
         """Return lines from runner/orchestrator .jinja files that reference field_name."""
@@ -136,11 +138,12 @@ class TestVc3DormantKeysUnused:
                     matches.append(f"{jinja_file}:{lineno}: {line.rstrip()}")
         return matches
 
-    def test_vc3_max_actors_not_consumed_in_runner_orchestrator(self):
+    def test_vc3_max_actors_consumed_in_runner_orchestrator(self):
+        """Slice 5b activated max_actors: runner/orchestrator .jinja must reference it."""
         hits = self._grep_templates_src("max_actors")
-        assert hits == [], (
-            "max_actors is DORMANT in Slice 5a — no runner/orchestrator .jinja "
-            "should reference it yet.\nFound:\n" + "\n".join(hits)
+        assert hits != [], (
+            "max_actors should be ACTIVE in Slice 5b — runner/orchestrator .jinja "
+            "must reference it (run_concurrent_wave / _max_actors helper)."
         )
 
     def test_vc3_retry_degraded_once_not_consumed_in_runner_orchestrator(self):
@@ -156,14 +159,8 @@ class TestVc3DormantKeysUnused:
         assert hasattr(cfg, "max_actors")
         assert hasattr(cfg, "retry_degraded_once")
 
-    def test_vc3_grep_subprocess_confirms_no_runner_orchestrator_consumer(self):
-        """Subprocess grep across runner/orchestrator/step_runner Python sources.
-
-        VC3 dormant means: no execution dispatch path reads the fields.
-        Documentation files (.md, .md.jinja) and observability modules are
-        permitted to mention max_actors by name; only the runner/orchestrator
-        execution paths are forbidden in Slice 5a.
-        """
+    def test_vc3_grep_subprocess_confirms_runner_orchestrator_consumer(self):
+        """Subprocess grep: runner/orchestrator Python sources now consume max_actors (Slice 5b active)."""
         src_root = Path(__file__).parent.parent / "src" / "mapify_cli"
         result = subprocess.run(
             ["grep", "-rl", "max_actors", str(src_root)],
@@ -173,18 +170,16 @@ class TestVc3DormantKeysUnused:
         files_with_max_actors = [
             line for line in result.stdout.splitlines() if line.strip()
         ]
-        # Runner/orchestrator Python source files are forbidden in Slice 5a.
-        # Documentation (.md, .jinja) and observability modules are allowed.
-        _FORBIDDEN_STEMS = ("runner", "orchestrator", "step_runner", "wave_coordinator")
-        forbidden = [
+        # Slice 5b: max_actors must be consumed by at least one runner/orchestrator source.
+        _ACTIVE_STEMS = ("runner", "orchestrator", "step_runner", "wave_coordinator")
+        active = [
             f for f in files_with_max_actors
-            if any(stem in Path(f).stem for stem in _FORBIDDEN_STEMS)
+            if any(stem in Path(f).stem for stem in _ACTIVE_STEMS)
             and f.endswith(".py")
         ]
-        assert forbidden == [], (
-            "max_actors found in runner/orchestrator Python sources in Slice 5a "
-            "(DORMANT violation — field must not be consumed until Slice 5b):\n"
-            + "\n".join(forbidden)
+        assert active != [], (
+            "max_actors not found in any runner/orchestrator Python source after Slice 5b — "
+            "expected _max_actors() or run_concurrent_wave() to consume it."
         )
 
 
@@ -309,9 +304,10 @@ class TestVc5ClampMaxWaveRetries:
 
 
 class TestVc6DormantFieldsUnused5b0:
-    """VC6: concurrent_dispatch and max_wave_retries are DORMANT in 5b.0.
+    """VC6 (updated for Slice 5b): concurrent_dispatch and max_wave_retries are now ACTIVE.
 
-    No runner/orchestrator .jinja or Python source should consume them yet.
+    Slice 5b activated concurrent dispatch; these fields must now be consumed by
+    runner/orchestrator .jinja and compiled Python sources.
     """
 
     def _grep_templates_src(self, field_name: str) -> list[str]:
@@ -331,22 +327,24 @@ class TestVc6DormantFieldsUnused5b0:
                     matches.append(f"{jinja_file}:{lineno}: {line.rstrip()}")
         return matches
 
-    def test_vc6_concurrent_dispatch_not_consumed_in_runner_orchestrator(self):
+    def test_vc6_concurrent_dispatch_consumed_in_runner_orchestrator(self):
+        """Slice 5b: concurrent_dispatch must be referenced in runner/orchestrator .jinja."""
         hits = self._grep_templates_src("concurrent_dispatch")
-        assert hits == [], (
-            "concurrent_dispatch is DORMANT in 5b.0 — no runner/orchestrator "
-            ".jinja should reference it yet.\nFound:\n" + "\n".join(hits)
+        assert hits != [], (
+            "concurrent_dispatch should be ACTIVE in Slice 5b — runner/orchestrator "
+            ".jinja must reference it (compute_dispatch_gate / _concurrent_dispatch_enabled)."
         )
 
-    def test_vc6_max_wave_retries_not_consumed_in_runner_orchestrator(self):
+    def test_vc6_max_wave_retries_consumed_in_runner_orchestrator(self):
+        """Slice 5b: max_wave_retries must be referenced in runner/orchestrator .jinja."""
         hits = self._grep_templates_src("max_wave_retries")
-        assert hits == [], (
-            "max_wave_retries is DORMANT in 5b.0 — no runner/orchestrator "
-            ".jinja should reference it yet.\nFound:\n" + "\n".join(hits)
+        assert hits != [], (
+            "max_wave_retries should be ACTIVE in Slice 5b — runner/orchestrator "
+            ".jinja must reference it (_max_wave_retries helper / abort_wave_group)."
         )
 
-    def test_vc6_grep_subprocess_no_runner_consumer_concurrent_dispatch(self):
-        """Subprocess grep: no runner/orchestrator Python source reads concurrent_dispatch."""
+    def test_vc6_grep_subprocess_runner_consumer_concurrent_dispatch(self):
+        """Subprocess grep: runner/orchestrator Python sources now consume concurrent_dispatch."""
         src_root = Path(__file__).parent.parent / "src" / "mapify_cli"
         result = subprocess.run(
             ["grep", "-rl", "concurrent_dispatch", str(src_root)],
@@ -354,19 +352,19 @@ class TestVc6DormantFieldsUnused5b0:
             text=True,
         )
         files_with_field = [line for line in result.stdout.splitlines() if line.strip()]
-        _FORBIDDEN_STEMS = ("runner", "orchestrator", "step_runner", "wave_coordinator")
-        forbidden = [
+        _ACTIVE_STEMS = ("runner", "orchestrator", "step_runner", "wave_coordinator")
+        active = [
             f for f in files_with_field
-            if any(stem in Path(f).stem for stem in _FORBIDDEN_STEMS)
+            if any(stem in Path(f).stem for stem in _ACTIVE_STEMS)
             and f.endswith(".py")
         ]
-        assert forbidden == [], (
-            "concurrent_dispatch found in runner/orchestrator Python sources in 5b.0 "
-            "(DORMANT violation):\n" + "\n".join(forbidden)
+        assert active != [], (
+            "concurrent_dispatch not found in any runner/orchestrator Python source after "
+            "Slice 5b — expected compute_dispatch_gate or _concurrent_dispatch_enabled."
         )
 
-    def test_vc6_grep_subprocess_no_runner_consumer_max_wave_retries(self):
-        """Subprocess grep: no runner/orchestrator Python source reads max_wave_retries."""
+    def test_vc6_grep_subprocess_runner_consumer_max_wave_retries(self):
+        """Subprocess grep: runner/orchestrator Python sources now consume max_wave_retries."""
         src_root = Path(__file__).parent.parent / "src" / "mapify_cli"
         result = subprocess.run(
             ["grep", "-rl", "max_wave_retries", str(src_root)],
@@ -374,13 +372,13 @@ class TestVc6DormantFieldsUnused5b0:
             text=True,
         )
         files_with_field = [line for line in result.stdout.splitlines() if line.strip()]
-        _FORBIDDEN_STEMS = ("runner", "orchestrator", "step_runner", "wave_coordinator")
-        forbidden = [
+        _ACTIVE_STEMS = ("runner", "orchestrator", "step_runner", "wave_coordinator")
+        active = [
             f for f in files_with_field
-            if any(stem in Path(f).stem for stem in _FORBIDDEN_STEMS)
+            if any(stem in Path(f).stem for stem in _ACTIVE_STEMS)
             and f.endswith(".py")
         ]
-        assert forbidden == [], (
-            "max_wave_retries found in runner/orchestrator Python sources in 5b.0 "
-            "(DORMANT violation):\n" + "\n".join(forbidden)
+        assert active != [], (
+            "max_wave_retries not found in any runner/orchestrator Python source after "
+            "Slice 5b — expected _max_wave_retries() or abort_wave_group() to consume it."
         )
