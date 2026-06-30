@@ -5943,6 +5943,62 @@ class TestRecordTestBaseline:
         assert report["status"] == "no_baseline"
         assert report["baseline_failures"] == []
 
+    def test_baseline_timeout_is_unknown_not_clean(
+        self, branch_workspace, monkeypatch
+    ):
+        """Regression #307: a timed-out baseline must NOT look like a clean run.
+
+        When the suite exceeds the timeout the subprocess never finishes, so
+        baseline_failures is always [] — indistinguishable from a genuinely
+        green suite unless the caller checks baseline_complete / timed_out.
+        This test verifies that both record_test_baseline and list_baseline_failures
+        surface the timeout as an explicit 'unknown' signal, not a clean pass.
+        """
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+
+        import subprocess as _subprocess
+
+        def fake_run_timeout(cmd, **kwargs):
+            raise _subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 1))
+
+        monkeypatch.setattr(map_step_runner.subprocess, "run", fake_run_timeout)
+
+        report = map_step_runner.record_test_baseline(
+            "test-branch", "pytest", timeout_seconds=1
+        )
+        # Must NOT report as success or baseline_failures with empty list
+        assert report["status"] == "timed_out", (
+            f"Expected 'timed_out' status, got {report['status']!r}"
+        )
+        assert report["baseline_complete"] is False
+        assert report["timed_out"] is True
+        assert report["baseline_failures"] == []
+
+        # list_baseline_failures must propagate the incomplete-baseline signal
+        listed = map_step_runner.list_baseline_failures("test-branch")
+        assert listed["status"] == "success"
+        assert listed["baseline_complete"] is False
+        assert listed["timed_out"] is True
+        assert "warning" in listed, "list_baseline_failures must emit a warning on timed-out baseline"
+        assert listed["baseline_failures"] == []
+
+    def test_baseline_complete_true_on_normal_run(
+        self, branch_workspace, monkeypatch
+    ):
+        """baseline_complete is True when the suite runs to completion (#307)."""
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.record_test_baseline("test-branch", "true")
+        assert report["status"] == "success"
+        assert report["baseline_complete"] is True
+        assert report["timed_out"] is False
+
+        listed = map_step_runner.list_baseline_failures("test-branch")
+        assert listed["baseline_complete"] is True
+        assert listed["timed_out"] is False
+        assert "warning" not in listed
+
 
 class TestRecordSubtaskResultFilesSeparatorParsing:
     """Fix #2 (2026-05-26): CLI must accept --files with comma OR

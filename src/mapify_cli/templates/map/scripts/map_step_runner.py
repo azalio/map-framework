@@ -11705,7 +11705,7 @@ def record_test_baseline(
     test_command: str = "",
     *,
     module_dir: str = "",
-    timeout_seconds: int = 120,
+    timeout_seconds: int = 600,
 ) -> dict[str, object]:
     """Record a pre-flight test baseline so subtasks can distinguish
     "this regression is mine" from "this was broken before I started".
@@ -11867,9 +11867,17 @@ def record_test_baseline(
         if m:
             failures.append(m.group(1))
 
+    if timed_out:
+        status = "timed_out"
+    elif returncode == 0:
+        status = "success"
+    else:
+        status = "baseline_failures"
+
     payload: dict[str, object] = {
         "branch": branch_name,
-        "status": "success" if returncode == 0 else "baseline_failures",
+        "status": status,
+        "baseline_complete": not timed_out,
         "command": cmd_str,
         "auto_detected": bool(auto_detected_command),
         "module_dir": detected_module_dir,
@@ -11907,14 +11915,26 @@ def list_baseline_failures(branch: str) -> dict[str, object]:
     failures = data.get("baseline_failures", [])
     if not isinstance(failures, list):
         failures = []
-    return {
+    baseline_complete = data.get("baseline_complete", not data.get("timed_out", False))
+    timed_out_flag = data.get("timed_out", False)
+    result: dict[str, object] = {
         "status": "success",
         "branch": branch_name,
         "command": data.get("command", ""),
         "returncode": data.get("returncode"),
+        "baseline_complete": baseline_complete,
+        "timed_out": timed_out_flag,
         "baseline_failures": failures,
         "recorded_at": data.get("recorded_at"),
     }
+    if timed_out_flag:
+        result["warning"] = (
+            "Baseline timed out — baseline_failures is empty because the suite "
+            "did not finish, not because there were no pre-existing failures. "
+            "Treat this baseline as UNKNOWN, not clean. Re-run record_test_baseline "
+            "with a longer --timeout or a faster --command."
+        )
+    return result
 
 
 def _acknowledged_diagnostics_path(branch: str) -> Path:
@@ -18578,7 +18598,7 @@ if __name__ == "__main__":
         baseline_branch = sys.argv[2]
         baseline_cmd = ""
         baseline_module_dir = ""
-        baseline_timeout = 120
+        baseline_timeout = 600
         if "--command" in sys.argv:
             c_idx = sys.argv.index("--command")
             if c_idx + 1 < len(sys.argv):
