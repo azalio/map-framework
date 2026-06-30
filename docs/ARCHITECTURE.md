@@ -392,9 +392,9 @@ Information not available in current evidence.
 
 ## Freshness
 
-Last refreshed: 2026-06-05
+Last refreshed: 2026-06-30
 
-Refresh reason: Daily architecture refresh after committed cross-session memory hooks, host-conditional skill installation, and `mapify skill-eval` run/optimize/view work changed the top-level MAP runtime contract.
+Refresh reason: Bug fix #307 — `record_test_baseline` timeout is now fail-safe. Status field is `"timed_out"` (not the ambiguous `"baseline_failures"` with empty list) when the subprocess is killed. New `baseline_complete: bool` field lets consumers distinguish an unknown baseline from a clean one. Default timeout raised from 120 s → 600 s. `list_baseline_failures` propagates `baseline_complete`, `timed_out`, and a `warning` key on incomplete baselines.
 
 Evidence source files:
 - `README.md`
