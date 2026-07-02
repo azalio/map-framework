@@ -198,8 +198,12 @@ if [[ -n "$LAST_TAG" ]]; then
   # maintenance commits, which otherwise make this heuristic chase its own fixes.
   COMMITS_SINCE=$(git log ${LAST_TAG}..HEAD --no-merges --format="%s" | awk '!/^(docs\(changelog\)|chore\(release\):)/ { count++ } END { print count + 0 }')
 
-  # Count CHANGELOG entries in [Unreleased] section
-  CHANGELOG_ENTRIES=$(awk '/## \[Unreleased\]/,/## \[/' CHANGELOG.md | grep -cE "^- " || echo "0")
+  # Count CHANGELOG entries in [Unreleased] section.
+  # NOTE: a range-pattern awk (/start/,/end/) collapses to the single
+  # matching line when start and end match the SAME line — and "##
+  # [Unreleased]" matches both "/## \[Unreleased\]/" and "/## \[/". Use an
+  # explicit flag instead so the range spans past the heading line itself.
+  CHANGELOG_ENTRIES=$(awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md | grep -cE "^- " || echo "0")
 
   echo "Counted commits since $LAST_TAG: $COMMITS_SINCE"
   echo "(excluding docs(changelog) and chore(release) maintenance commits)"
@@ -216,7 +220,7 @@ if [[ -n "$LAST_TAG" ]]; then
     echo "════════════════════════════════════════════════════════"
     echo ""
     echo "Current CHANGELOG [Unreleased] content:"
-    awk '/## \[Unreleased\]/,/## \[/' CHANGELOG.md | sed '$d'
+    awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md
     echo ""
 
     # Ask user to update CHANGELOG
@@ -289,7 +293,7 @@ Read CHANGELOG.md [Unreleased] section to determine bump type:
 
 ```bash
 # Extract unreleased changes
-UNRELEASED_CHANGES=$(awk '/## \[Unreleased\]/,/## \[/' CHANGELOG.md | sed '$d')
+UNRELEASED_CHANGES=$(awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md)
 ```
 
 **Semantic Versioning Rules:**
