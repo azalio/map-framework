@@ -22,8 +22,13 @@ if git log -1 --format=%B | grep -iE 'twin of |sibling |mirror of |port of ' >/d
   REVIEW_MODE="sibling-aware"
   SIBLING_HINT=$(git log -1 --format=%B | grep -oiE '(twin of|sibling|mirror of|port of)[^.]*' | head -1)
 fi
-echo "{\"mode\":\"$REVIEW_MODE\",\"sibling_hint\":\"$SIBLING_HINT\"}" \
-  > .map/$BRANCH/review-mode.json
+REVIEW_MODE="$REVIEW_MODE" SIBLING_HINT="$SIBLING_HINT" BRANCH="$BRANCH" python3 -c '
+import json, os
+out = {"mode": os.environ["REVIEW_MODE"], "sibling_hint": os.environ.get("SIBLING_HINT", "")}
+branch = os.environ["BRANCH"]
+with open(f".map/{branch}/review-mode.json", "w") as f:
+    json.dump(out, f)
+'
 ```
 
 Mode semantics:
@@ -102,9 +107,11 @@ COMPLEXITY_LENS_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import
 COMPLEXITY_LENS_ENABLED=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); print("true" if data.get("prompts",{}).get("complexity_lens") else "false")')
 ```
 
-```
+```text
 spawn_agent(agent_type="monitor", message=MONITOR_PROMPT)
+# Full mode only — skip in lightweight mode (monitor-only):
 spawn_agent(agent_type="predictor", message=PREDICTOR_PROMPT)
+# Full mode only — skip in lightweight mode (monitor-only):
 spawn_agent(agent_type="evaluator", message=EVALUATOR_PROMPT)
 # When COMPLEXITY_LENS_ENABLED=true only:
 spawn_agent(agent_type="evaluator", message=COMPLEXITY_LENS_PROMPT)

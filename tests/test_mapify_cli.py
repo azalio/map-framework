@@ -1726,7 +1726,7 @@ class TestCodexProvider:
         ).exists(), ".agents/skills/map-efficient/efficient-reference.md must exist"
 
     # ------------------------------------------------------------------ #
-    # AC-9: Codex map-review skill and its reference files exist          #
+    # AC-9 (map-review port spec): Codex map-review skill + refs exist    #
     # ------------------------------------------------------------------ #
 
     @pytest.mark.skipif(
@@ -1753,9 +1753,9 @@ class TestCodexProvider:
         reason="review-reference.md.jinja / adversarial-reference.md.jinja not authored yet",
     )
     def test_ac09_codex_map_review_skill_exists(self, codex_project):
-        """AC-9: Codex map-review skill and its two reference files must exist
-        under both the shipped templates root and the official .agents/skills
-        root post-init."""
+        """AC-9 (map-review port spec): Codex map-review skill and its two
+        reference files must exist under both the shipped templates root
+        and the official .agents/skills root post-init."""
         templates_dir = (
             Path(__file__).resolve().parents[1]
             / "src"

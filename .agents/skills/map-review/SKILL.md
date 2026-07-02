@@ -59,7 +59,9 @@ These constraints apply before any write-capable step:
    building the bundle. See [review-reference.md](review-reference.md#modes).
 4. Build the review bundle before launching reviewer agents.
 5. Build bounded review prompts before launching reviewer agents.
-6. Launch reviewer agents exactly once per review run.
+6. Launch each reviewer agent once per fan-out (full mode: monitor +
+   predictor + evaluator; lightweight mode: monitor only) — the single
+   truncation retry in Step A.2b is the only exception.
 7. Monitor `valid=false` requires verification, not immediate publication —
    every finding needs evidence and must be introduced by this change
    before it reaches presentation.
@@ -147,15 +149,17 @@ evaluator; lightweight mode runs monitor only. When
 to `lite`/`full`/`ultra`), also dispatch the complexity lens using the
 `evaluator` agent type with the `complexity_lens` prompt.
 
-```
+```text
 spawn_agent(
   agent_type="monitor",
   message=MONITOR_PROMPT
 )
+# Full mode only — skip in lightweight mode (monitor-only):
 spawn_agent(
   agent_type="predictor",
   message=PREDICTOR_PROMPT
 )
+# Full mode only — skip in lightweight mode (monitor-only):
 spawn_agent(
   agent_type="evaluator",
   message=EVALUATOR_PROMPT

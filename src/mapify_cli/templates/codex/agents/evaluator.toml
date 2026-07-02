@@ -228,7 +228,8 @@ Output MUST be valid JSON only -- no markdown, no extra text. Required structure
 }
 
 Validation rules: all fields required, incomplete JSON is invalid. Scores are integers
-1-10 (never 0, never floats). overall_score is a float 1.0-10.0 to 2 decimal places.
+1-10 (never 0, never floats; use 1 for the "0-1" rubric bucket floor). overall_score is
+a float 1.0-10.0 to 2 decimal places.
 `recommendation` MUST logically follow from critical_check and overall_score: if either
 critical_check flag is false, recommendation MUST be "reconsider". strengths has 2-5
 specific items; weaknesses has 0-7 specific items; next_steps has 3-7 items unless
