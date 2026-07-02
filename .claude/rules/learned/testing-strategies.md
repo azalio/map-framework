@@ -232,3 +232,15 @@ paths:
   render_templates(tmp)
   assert committed.read_bytes() != snapshot, "render should have updated the stale file"
   ```
+
+- **Shared-Fixture Edits Need an Aggregate Suite Run at the Origin Subtask, Not Deferred to Whichever Later Subtask Notices** (2026-07-02): When a subtask edits a shared config/fixture source (e.g. config.toml.jinja consumed by a golden-fixture test elsewhere), running only that subtask's OWN scoped/targeted tests is insufficient even though it's the correct fast-iteration default — the drift it introduces into a golden fixture used by a DIFFERENT, unrelated test can lie dormant for multiple subsequent subtasks until something finally runs the full aggregate suite. In one workflow, two early subtasks registered new agents in a shared config.toml.jinja and both passed their own scoped tests cleanly, but a golden fixture asserted against by an unrelated test only surfaced as stale 4 subtasks later, when the full aggregate pytest suite finally ran. The origin subtask and the surfacing subtask were different, purely due to test-run granularity, not code causality. Rule: any subtask whose affected_files include a file consumed by golden/snapshot fixtures elsewhere in the repo should trigger at least one full aggregate suite run before that subtask closes, not defer it to whichever later subtask happens to run the full suite first. Distinct from "Targeted Per-File Checks Are Not a Substitute for the Full Aggregate Lint Gate" (that rule is about lint scope within ONE subtask); this is about a defect's ORIGIN subtask being different from its SURFACING subtask purely because the aggregate suite wasn't run until later. [workflow: map-efficient]
+  ```bash
+  # Subtask edits a shared render source (e.g. config.toml.jinja):
+  # WRONG -- only scoped tests, golden fixture drift goes undetected for N subtasks:
+  pytest tests/test_config_toml_render.py -x -q   # passes; fixture staleness invisible
+
+  # CORRECT -- grep affected_files against known golden-fixture consumers, then run aggregate:
+  grep -rl 'fixtures/codex/config.toml' tests/   # finds the golden-fixture test
+  pytest tests/ -x -q                             # full suite -- catches it at the origin
+                                                   # subtask, not N subtasks later
+  ```
