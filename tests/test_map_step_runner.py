@@ -8111,11 +8111,13 @@ class TestPrepareDetachedReview:
 
         # "worktree add" is the one permitted mutation (creates a new worktree entry).
         # All other staging/checkout/destructive git subcommands must never appear.
+        # Check individual argv tokens, not a joined string — a joined-string substring
+        # check false-positives when an unrelated argument (e.g. a pytest tmp_path
+        # component) happens to contain "rm" or another mutating-command substring.
         mutating = ("checkout", "stash", "reset", "restore", "commit", "rm")
         for call in recorded_calls:
-            joined = " ".join(call)
             for bad in mutating:
-                assert bad not in joined, (
+                assert bad not in call, (
                     f"mutating git command {bad!r} found in call: {call}"
                 )
             # bare "git add <path>" (staging) must not appear; "worktree add" is fine
