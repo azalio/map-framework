@@ -399,8 +399,9 @@ If `--force` is undesirable, the minimum manual steps are:
    `src/mapify_cli/templates/map/scripts/map_step_runner.py` to pick up
    `create_review_bundle()` and `prepare_detached_review()`.
 2. Overwrite `.claude/skills/map-review/SKILL.md` (and the Codex mirror at
-   `.codex/skills/map-review/SKILL.md` if applicable) so the skill invokes the
-   bundle helpers and surfaces the `--detached` flag.
+   `.agents/skills/map-review/SKILL.md`, plus its `review-reference.md` and
+   `adversarial-reference.md` siblings) so the skill invokes the bundle
+   helpers and surfaces the `--detached` flag.
 3. Re-run `make render-templates` inside the MAP repo if you maintain a fork —
    the render parity gate is enforced by `make check-render` and
    `pytest tests/test_template_render.py`.
