@@ -1726,6 +1726,57 @@ class TestCodexProvider:
         ).exists(), ".agents/skills/map-efficient/efficient-reference.md must exist"
 
     # ------------------------------------------------------------------ #
+    # AC-9 (map-review port spec): Codex map-review skill + refs exist    #
+    # ------------------------------------------------------------------ #
+
+    @pytest.mark.skipif(
+        not (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "mapify_cli"
+            / "templates_src"
+            / "codex"
+            / "skills"
+            / "map-review"
+            / "review-reference.md.jinja"
+        ).exists()
+        or not (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "mapify_cli"
+            / "templates_src"
+            / "codex"
+            / "skills"
+            / "map-review"
+            / "adversarial-reference.md.jinja"
+        ).exists(),
+        reason="review-reference.md.jinja / adversarial-reference.md.jinja not authored yet",
+    )
+    def test_ac09_codex_map_review_skill_exists(self, codex_project):
+        """AC-9 (map-review port spec): Codex map-review skill and its two
+        reference files must exist under both the shipped templates root
+        and the official .agents/skills root post-init."""
+        templates_dir = (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "mapify_cli"
+            / "templates"
+            / "codex"
+            / "skills"
+            / "map-review"
+        )
+        for filename in ("SKILL.md", "review-reference.md", "adversarial-reference.md"):
+            assert (
+                templates_dir / filename
+            ).exists(), f"templates/codex/skills/map-review/{filename} must exist"
+
+        agents_skills_dir = codex_project / ".agents" / "skills" / "map-review"
+        for filename in ("SKILL.md", "review-reference.md", "adversarial-reference.md"):
+            assert (
+                agents_skills_dir / filename
+            ).exists(), f".agents/skills/map-review/{filename} must exist"
+
+    # ------------------------------------------------------------------ #
     # AC-12: hooks.json and workflow-gate.py both created                 #
     # ------------------------------------------------------------------ #
 

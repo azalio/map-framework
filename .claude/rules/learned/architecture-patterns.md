@@ -263,3 +263,44 @@
       return _lint_layer_a(graph)
   # ST-006 callers/tests already call the full signature; ST-007 just removes the del.
   ```
+
+- **Monitor Scope-Correction via Same-Thread Re-Argument, Not Actor Retry, for Forward-Reference False Positives** (2026-07-02): When a Monitor/reviewer agent issues a completeness-style CRITICAL (dangling reference, missing file, unimplemented link) against work that spans a multi-subtask blueprint, do not immediately dispatch Actor rework. First check whether the referenced artifact is a DECLARED deliverable of a LATER subtask (per blueprint.json dependencies and the current subtask's own VC list) — if so, the dangling reference is complete-by-design, not a defect, and forward-reference patterns may already be an established convention in the workflow. The correct recovery is to re-send the SAME Monitor agent thread (via SendMessage, not a fresh dispatch) with quoted blueprint evidence — the subtask's own dependency list and VC scope — so Monitor can re-evaluate against the correct reference frame rather than a whole-file completeness bar. This preserves Monitor's context and avoids wasted Actor rework on code that was never wrong. Only dispatch Actor rework when the missing artifact is NOT a later subtask's declared deliverable. [workflow: map-efficient]
+  ```python
+  # WRONG: any Monitor CRITICAL about a dangling ref -> immediate Actor retry
+  if monitor_result['valid'] == False:
+      dispatch_agent('actor', subtask_prompt_with_fix_instructions)
+
+  # CORRECT: check blueprint scope first; re-argue to the SAME Monitor if it's a scope error
+  finding = monitor_result['findings'][0]
+  referenced_file = extract_referenced_path(finding)  # e.g. 'review-reference.md'
+  later_subtask = find_subtask_declaring_deliverable(blueprint, referenced_file)
+  current_deps = blueprint['subtasks'][current_id]['dependencies']
+  current_vcs = blueprint['subtasks'][current_id]['verification_criteria']
+
+  if later_subtask and later_subtask not in current_deps and referenced_file not in ' '.join(current_vcs):
+      # Forward reference is by design -- re-send SAME Monitor thread with evidence
+      send_message(to=monitor_agent_id, content=(
+          f"Re-check: ST-005 deps={current_deps} (not {later_subtask}); "
+          f"VC1-VC4={current_vcs} never mention {referenced_file}. "
+          f"{referenced_file} is {later_subtask}'s own declared deliverable, sequenced after this one."
+      ))
+  else:
+      dispatch_agent('actor', subtask_prompt_with_fix_instructions)  # genuine defect
+  ```
+
+- **Three-Way Spec/Source/Output Text Drift: Satisfy the Machine-Checkable Contract, Log the Disagreement** (2026-07-02): When porting content between two variants of the same document (e.g. a canonical source and its ported counterpart), a three-way inconsistency can exist simultaneously between the machine-checkable spec (blueprint VC wording), the human-authored source-of-truth being ported FROM, and the actual output being ported TO — all three can use different literal text for the same conceptual element (e.g. `## Architecture` vs `### Section: Architecture` vs `### Architecture`), and none of the three may agree. When this is discovered mid-subtask, resolve by satisfying the machine-checkable contract (the blueprint VC's literal wording) over source-fidelity, because the VC is what downstream automation (dispatch parsing, section-based diffing) actually depends on — but explicitly log the three-way disagreement so a follow-up can reconcile the spec and the human source, since silently picking one without noting the drift leaves the other two inconsistent for the next port. [workflow: map-efficient]
+  ```markdown
+  <!-- Discovered during a Codex port: -->
+  <!-- Canonical source-of-truth:                 ### Section: Architecture -->
+  <!-- Blueprint VC1 (machine-checkable):          ## Architecture -->
+  <!-- Actor's first attempt (nested heading):     ### Architecture -->
+
+  <!-- Resolution: match the blueprint VC literally (machine-checkable contract wins) -->
+  ## Architecture
+  ...
+  ## Code Quality
+  ...
+  <!-- Follow-up note (not blocking this subtask): file a doc-drift note so the
+       canonical source and the blueprint spec text get reconciled to agree with
+       each other, not just with this one port -->
+  ```

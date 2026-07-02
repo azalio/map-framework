@@ -15,3 +15,11 @@ config_file = "./agents/monitor.toml"
 [agents.researcher]
 description = "Codebase exploration agent for context gathering"
 config_file = "./agents/researcher.toml"
+
+[agents.predictor]
+description = "Predicts consequences and dependency impact of changes (MAP)"
+config_file = "./agents/predictor.toml"
+
+[agents.evaluator]
+description = "Evaluates solution quality and completeness (MAP)"
+config_file = "./agents/evaluator.toml"
