@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.21.0] - 2026-07-02
+
 ### Changed
 - **Parallel execution defaults flipped ON (`worktree.isolation` off→auto, `execution.concurrent_dispatch` false→true, Slice 6 of #303).** Concurrent wave execution is now **ON by default** for repositories that are git repos with a parallel-ready plan (>=2 independent subtasks in a wave). Off-ramps (either is sufficient): (1) **global kill-switch** — set `MAP_EFFICIENT_SEQUENTIAL_ONLY=1` in your environment; forces the full legacy sequential path, byte-identical to pre-5a behavior, regardless of config; (2) **per-repo opt-out** — set `worktree.isolation: off` and/or `execution.concurrent_dispatch: false` in `.map/config.yaml`. The `auto` isolation mode degrades gracefully to sequential with a warning when git worktrees are unavailable (non-git repo, shallow clone, detached HEAD). Default `worktree.isolation` `MapConfig` value: `"off"` → `"auto"`; `concurrent_dispatch` `MapConfig` value: `False` → `True`; matching defaults in the step-runner config readers (`_worktree_isolation_mode`, `_concurrent_dispatch_enabled`). The `select_execution_strategy` and `compute_dispatch_gate` functions now check the kill-switch as their **first** gate (before any config read or concurrency probe), backed by a new shared `_sequential_only_env()` helper and a stable `WAVE_REASON_SEQUENTIAL_ONLY_ENV` reason code.
 
