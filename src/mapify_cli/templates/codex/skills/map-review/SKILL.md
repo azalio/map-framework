@@ -1,0 +1,244 @@
+---
+name: map-review
+description: "Interactive 4-section code review using monitor, predictor, and evaluator agents on current changes. Use when reviewing a diff, PR, or staged work before merge. Do NOT use to plan or implement; use map-plan or map-efficient."
+---
+
+# $map-review - MAP Review Workflow
+
+Interactive, structured code review of current changes using monitor,
+predictor, and evaluator agents. This skill is the Codex counterpart to
+Claude `/map-review`: it uses Codex-native dispatch (`spawn_agent`) for
+independent reviewer passes, and the current Codex session drives bundle
+setup, verification gates, and presentation.
+
+Task: `$ARGUMENTS`
+
+Use [review-reference.md](review-reference.md) for detailed examples,
+section rubrics, mode semantics, and troubleshooting. Use
+[adversarial-reference.md](adversarial-reference.md) for the `--adversarial`
+step-by-step commands. Read a reference file only when the workflow below
+points to it — it is not assumed to already be in context.
+
+## Mutation Boundary Constraints
+
+These constraints apply before any write-capable step:
+
+- Do not edit unrelated files, even if they are nearby or easy to clean up.
+- Do not add, remove, or upgrade dependencies unless the current change
+  explicitly names that dependency change.
+- Do not refactor neighboring code unless the review's own findings require
+  that exact refactor.
+- If a dependency change, broad refactor, or scope expansion seems
+  necessary, report it as a blocker/tradeoff instead of doing it silently.
+
+## Flags
+
+- `--ci` / `--auto`: non-interactive mode; auto-select the line whose text
+  contains the `(Recommended)` marker substring.
+- `--detached`: prepare an isolated review worktree so reviewer agents read
+  source without touching the active branch. Graceful degradation to
+  in-place review when unavailable.
+- `--reverse-sections` / `--shuffle-sections` / `--seed <int>` /
+  `--compare-orderings`: control section presentation order. See
+  [review-reference.md](review-reference.md#compare-orderings) for the
+  compare-orderings loop; it cannot combine with `--shuffle-sections`.
+- `--adversarial` (optional `--quick`, `--show-raw-findings`): run
+  independent adversarial reviewers instead of the normal fan-out. See
+  [adversarial-reference.md](adversarial-reference.md).
+- `--cross-ai <runtime>`: dispatch the review to an independent external AI
+  CLI for a true second opinion. Off by default and double-consent (the
+  flag AND `review.cross_ai.enabled: true`) — your diff/code leaves the
+  machine. See [review-reference.md](review-reference.md#cross-ai).
+
+## Execution Rules
+
+1. Execute all phases in order.
+2. **Lint/test precheck FIRST** — reviewer findings the project's existing
+   automation already catches do not belong in the walkthrough.
+3. Detect review mode (`lightweight` / `sibling-aware` / `full`) before
+   building the bundle. See [review-reference.md](review-reference.md#modes).
+4. Build the review bundle before launching reviewer agents.
+5. Build bounded review prompts before launching reviewer agents.
+6. Launch reviewer agents exactly once per review run.
+7. Monitor `valid=false` requires verification, not immediate publication —
+   every finding needs evidence and must be introduced by this change
+   before it reaches presentation.
+8. Present options neutrally as A/B/C. Append `(Recommended)` after the
+   option label, not by position.
+
+## Step 0: Detect CI Mode and Flags
+
+```bash
+CI_MODE=false
+if echo "$ARGUMENTS" | grep -qE -- '--(ci|auto)'; then
+  CI_MODE=true
+fi
+
+ADVERSARIAL_FLAG=false
+if echo "$ARGUMENTS" | grep -q -- '--adversarial'; then
+  ADVERSARIAL_FLAG=true
+fi
+
+CROSS_AI_FLAG=false
+CROSS_AI_RUNTIME=""
+if echo "$ARGUMENTS" | grep -qE -- '--cross-ai'; then
+  CROSS_AI_FLAG=true
+  CROSS_AI_RUNTIME=$(echo "$ARGUMENTS" | sed -nE 's/.*--cross-ai[ =]([a-z][a-z0-9-]*).*/\1/p')
+fi
+```
+
+Parse the remaining ordering/adversarial flags the same way; see
+[review-reference.md](review-reference.md#flag-parsing) for the full flag
+table when a flag beyond CI/adversarial/cross-ai is requested.
+
+## Phase A: Collection
+
+### Step A.0: Lint / test precheck (MANDATORY first step)
+
+Run the project's existing automation before any reviewer agent so findings
+the automation already catches don't become walkthrough items. Adapt
+commands to the detected project type (Makefile `test`/`lint` targets,
+`golangci-lint`, `ruff`) the same way `$map-efficient` detects project
+tooling.
+
+### Step A.0b: Detect review mode
+
+See [review-reference.md](review-reference.md#modes) for the full
+detection logic (`lightweight` when the bundle is empty, `sibling-aware`
+when the commit message references a twin/sibling controller, `full`
+otherwise) and mode semantics.
+
+### Step A.1: Gather changes
+
+```bash
+git diff HEAD
+git status
+```
+
+### Step A.1b: Load canonical review context (bundle + handoff)
+
+Run this before any reviewer agent:
+
+```bash
+BUNDLE_JSON=$(python3 .map/scripts/map_step_runner.py create_review_bundle)
+BUNDLE_JSON_PATH=$(printf '%s' "$BUNDLE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['bundle_path_json'])")
+```
+
+This creates `.map/<branch>/review-bundle.json` and
+`.map/<branch>/review-bundle.md`. These are PRIMARY review context. The
+bundle includes prior-stage consumption status; missing inputs are review
+evidence, not invisible setup noise.
+
+### Step A.2: Launch reviewer agents
+
+Before dispatch, build bounded reviewer prompts:
+
+```bash
+REVIEW_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_review_prompts \
+  --review-preferences "[paste Review Preferences section]")
+```
+
+Dispatch each reviewer with `spawn_agent(agent_type=...)` using the
+extracted prompt for that role — see
+[review-reference.md](review-reference.md#dispatch) for the exact prompt
+extraction and dispatch sequence, matching `$map-efficient`'s subagent
+dispatch conventions (`researcher`, `decomposer`, `monitor`) for configured
+Codex agents. Full mode runs monitor + predictor + evaluator; lightweight
+mode runs monitor only.
+
+### Step A.2b: Truncated-response gate (MANDATORY — post-fan-out, pre-verification)
+
+After each reviewer returns, validate its output by piping the response
+body via stdin — never pass agent output as an argv positional:
+
+```bash
+printf '%s' "$MONITOR_RESPONSE" | \
+  python3 .map/scripts/map_step_runner.py detect_truncated_agent_output --agent review-monitor
+```
+
+Use `--agent predictor` / `--agent evaluator` for the other roles. On
+truncation, log the failure and re-invoke that reviewer once using the
+retry prompt built from the same stdin-piped pattern; if still malformed,
+stop with CLARIFICATION_NEEDED. See
+[review-reference.md](review-reference.md#truncation-gate) for the full
+recipe.
+
+### Step A.3: Verification gate (MANDATORY before any presentation)
+
+For every monitor/predictor finding, verify evidence, pre-existing status,
+sibling coverage, and precheck duplication before it reaches the
+walkthrough. See
+[review-reference.md](review-reference.md#verification-gate) for the full
+five-check sequence and the cross-agent challenge step.
+
+## Phase B: Cross-AI Peer Review (--cross-ai only)
+
+When `CROSS_AI_FLAG=true`, dispatch the review to an independent external
+AI CLI instead of the in-session fan-out. Any dispatch failure falls back
+to the normal in-session review — do not hard-stop. Full status protocol,
+egress/secret-scan, and independence semantics are in
+[review-reference.md](review-reference.md#cross-ai); read that section
+first.
+
+## Phase B: Adversarial Review (--adversarial only)
+
+When `--adversarial` is set (and `--cross-ai` is not), skip the normal
+fan-out and the 4-section interactive walkthrough. Instead run independent
+adversarial reviewers with isolated contexts, then aggregate. See
+[adversarial-reference.md](adversarial-reference.md) for the detailed
+step-by-step commands (prompt building, dispatch, validation, aggregation,
+presentation, verdict).
+
+## Phase B: Interactive Presentation (4 Sections) — NORMAL MODE ONLY
+
+This phase runs only when `ADVERSARIAL_FLAG=false` and cross-AI status is
+not `success`. Skip it entirely when `--adversarial` is set or cross-AI
+succeeded.
+
+Sections, presented in the order returned by the section-ordering helper:
+**Architecture**, **Code Quality**, **Tests**, **Performance**. See
+[review-reference.md](review-reference.md#sections) for the focus of each
+section and the ordering helper invocation.
+
+## Final Verdict
+
+Choose exactly one:
+
+- `PROCEED`: no blocking findings remain.
+- `REVISE`: actionable changes are required before review can pass.
+- `BLOCK`: external, safety, or correctness blocker prevents review
+  completion.
+
+## Workflow Gate Unlock (REVISE/BLOCK only) and Handoff Artifacts
+
+Write the stage gate and durable handoff artifacts (`active-issues`,
+`pr-draft`, `learning-handoff`, `run_health_report`) so the owning workflow
+can continue. See
+[review-reference.md](review-reference.md#handoff-artifacts) for the exact
+command sequence.
+
+## CI/Auto Mode Behavior
+
+CI mode auto-selects options marked `(Recommended)`, records the selected
+path, writes the same artifacts, and exits non-zero for `REVISE` or `BLOCK`
+when the caller expects gate semantics.
+
+## Optional: Preserve Review Learnings
+
+After review closes, run `$map-learn` (when available) if this review
+produced reusable rules, gotchas, or repeated issues.
+
+## MCP Tools Used
+
+No MCP tool is required. Prefer repo-local artifacts and git state.
+
+## Examples
+
+See [review-reference.md](review-reference.md#examples) for normal, CI,
+detached, shuffle, and compare-ordering examples.
+
+## Troubleshooting
+
+See [review-reference.md](review-reference.md#troubleshooting) for
+unavailable detached worktrees, missing review bundles, review prompt
+clipping, and ordering drift.
