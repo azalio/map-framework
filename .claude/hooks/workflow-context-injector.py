@@ -86,6 +86,12 @@ SIGNIFICANT_PATTERNS = [
     r"\bcp\s+-r",
 ]
 
+# Step IDs that indicate the workflow has reached a terminal/completed state.
+# When current_step_id or current_step_phase matches, format_reminder returns
+# None so the hook injects nothing — stale COMPLETE state on a branch must not
+# surface as an active requirement in a new session.
+_TERMINAL_STEP_IDS: frozenset[str] = frozenset({"COMPLETE"})
+
 # Verification-class invocations: legitimate during ACTOR / TEST_WRITER for
 # the agent to self-check before MONITOR. They count as "significant" so the
 # base reminder still emits, but the closing "REQUIRED: Run Actor" pressure
@@ -579,6 +585,13 @@ def format_reminder(
 
     step_id = state_string(state, "current_step_id")
     step_phase = state_string(state, "current_step_phase")
+
+    # Suppress injection when the workflow is in a terminal/completed state.
+    # A stale COMPLETE step_state.json on a branch (e.g. from a previous run)
+    # must not surface misleading "REQUIRED: Complete phase COMPLETE" context.
+    if step_id in _TERMINAL_STEP_IDS or step_phase in _TERMINAL_STEP_IDS:
+        return None
+
     subtask_id = state_string(state, "current_subtask_id", "-") or "-"
 
     seq_value = state.get("subtask_sequence")

@@ -1267,3 +1267,211 @@ def test_vc5_promote_idempotency_rule_documented_in_shipped_skill():
                 f"promote idempotency behaviour marker {marker!r} missing "
                 f"from {skill}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for issue #317:
+# workflow-context-injector must inject NOTHING when step_state.json
+# reflects a terminal/completed MAP workflow state (current_step_id or
+# current_step_phase == "COMPLETE").  Previously the hook emitted a
+# misleading "REQUIRED: Complete phase COMPLETE" banner.
+# ---------------------------------------------------------------------------
+
+
+class TestTerminalStateSuppress:
+    """Regression: terminal COMPLETE state must produce {} output, not an
+    active-looking reminder.  Covers both the subprocess (integration) and
+    the format_reminder pure-function (unit) paths.
+    """
+
+    def _seed_terminal_state(
+        self,
+        project_dir: Path,
+        branch: str = "default",
+        *,
+        step_id: str = "COMPLETE",
+        step_phase: str = "COMPLETE",
+    ) -> Path:
+        state_dir = project_dir / ".map" / branch
+        state_dir.mkdir(parents=True, exist_ok=True)
+        state_file = state_dir / "step_state.json"
+        state_file.write_text(
+            json.dumps(
+                {
+                    "current_step_id": step_id,
+                    "current_step_phase": step_phase,
+                    "current_subtask_id": "ST-005",
+                    "subtask_index": 4,
+                    "subtask_sequence": [
+                        "ST-001",
+                        "ST-002",
+                        "ST-003",
+                        "ST-004",
+                        "ST-005",
+                    ],
+                    "plan_approved": True,
+                    "execution_mode": "batch",
+                    "workflow_status": "complete",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return state_file
+
+    def test_edit_on_completed_branch_injects_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """Exact scenario from issue #317: stale COMPLETE step_state + Edit
+        tool must produce {} and never surface 'REQUIRED: Complete phase COMPLETE'.
+        """
+        self._seed_terminal_state(tmp_path, branch="default")
+        code, out, err = _run_hook(
+            tmp_path,
+            {"tool_name": "Edit", "tool_input": {"file_path": "src/foo.py"}},
+        )
+        assert code == 0
+        assert err == ""
+        assert out == "{}", (
+            f"Terminal COMPLETE state must produce empty output; got: {out!r}"
+        )
+
+    def test_write_on_completed_branch_injects_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        self._seed_terminal_state(tmp_path, branch="default")
+        code, out, err = _run_hook(
+            tmp_path,
+            {"tool_name": "Write", "tool_input": {"file_path": "docs/x.md", "content": "x"}},
+        )
+        assert code == 0
+        assert err == ""
+        assert out == "{}"
+
+    def test_significant_bash_on_completed_branch_injects_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        self._seed_terminal_state(tmp_path, branch="default")
+        code, out, err = _run_hook(
+            tmp_path,
+            {"tool_name": "Bash", "tool_input": {"command": "pytest -q"}},
+        )
+        assert code == 0
+        assert err == ""
+        assert out == "{}"
+
+    def test_only_step_id_complete_suppresses(self, tmp_path: Path) -> None:
+        """step_id=COMPLETE with non-terminal phase is still terminal."""
+        self._seed_terminal_state(
+            tmp_path, branch="default", step_id="COMPLETE", step_phase="CLOSEOUT"
+        )
+        code, out, err = _run_hook(
+            tmp_path,
+            {"tool_name": "Edit", "tool_input": {"file_path": "x"}},
+        )
+        assert code == 0
+        assert err == ""
+        assert out == "{}"
+
+    def test_only_step_phase_complete_suppresses(self, tmp_path: Path) -> None:
+        """step_phase=COMPLETE with non-matching step_id is still terminal."""
+        self._seed_terminal_state(
+            tmp_path, branch="default", step_id="CLOSEOUT", step_phase="COMPLETE"
+        )
+        code, out, err = _run_hook(
+            tmp_path,
+            {"tool_name": "Edit", "tool_input": {"file_path": "x"}},
+        )
+        assert code == 0
+        assert err == ""
+        assert out == "{}"
+
+    def test_no_misleading_required_complete_phase_text(
+        self, tmp_path: Path
+    ) -> None:
+        """Ensure the specific misleading text from issue #317 never appears."""
+        self._seed_terminal_state(tmp_path, branch="default")
+        _code, out, _err = _run_hook(
+            tmp_path,
+            {"tool_name": "Edit", "tool_input": {"file_path": "x"}},
+        )
+        assert "REQUIRED" not in out
+        assert "Complete phase COMPLETE" not in out
+
+    def test_format_reminder_returns_none_for_complete_step_id(
+        self, hook_mod, tmp_path: Path, branch_name: str
+    ) -> None:
+        """Unit test: format_reminder must return None for terminal step_id."""
+        os.environ["CLAUDE_PROJECT_DIR"] = str(tmp_path)
+        try:
+            state = {
+                "current_step_id": "COMPLETE",
+                "current_step_phase": "COMPLETE",
+                "current_subtask_id": "ST-005",
+                "subtask_index": 4,
+                "subtask_sequence": ["ST-001", "ST-002", "ST-003", "ST-004", "ST-005"],
+                "plan_approved": True,
+                "execution_mode": "batch",
+            }
+            result = hook_mod.format_reminder(state, branch_name)
+        finally:
+            os.environ.pop("CLAUDE_PROJECT_DIR", None)
+
+        assert result is None, (
+            f"format_reminder must return None for COMPLETE state; got: {result!r}"
+        )
+
+    def test_format_reminder_returns_none_for_complete_phase_only(
+        self, hook_mod, tmp_path: Path, branch_name: str
+    ) -> None:
+        """Unit test: format_reminder must return None when phase=COMPLETE."""
+        os.environ["CLAUDE_PROJECT_DIR"] = str(tmp_path)
+        try:
+            state = {
+                "current_step_id": "3.0",
+                "current_step_phase": "COMPLETE",
+                "current_subtask_id": "ST-003",
+                "subtask_index": 2,
+                "subtask_sequence": ["ST-001", "ST-002", "ST-003"],
+                "plan_approved": True,
+                "execution_mode": "batch",
+            }
+            result = hook_mod.format_reminder(state, branch_name)
+        finally:
+            os.environ.pop("CLAUDE_PROJECT_DIR", None)
+
+        assert result is None, (
+            f"format_reminder must return None when step_phase=COMPLETE; got: {result!r}"
+        )
+
+    def test_non_terminal_state_still_injects(
+        self, tmp_path: Path
+    ) -> None:
+        """Sanity: an active ACTOR state must still emit the reminder."""
+        branch = "default"
+        state_dir = tmp_path / ".map" / branch
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "current_step_id": "2.3",
+                    "current_step_phase": "ACTOR",
+                    "current_subtask_id": "ST-001",
+                    "subtask_index": 0,
+                    "subtask_sequence": ["ST-001"],
+                    "plan_approved": True,
+                    "execution_mode": "batch",
+                }
+            ),
+            encoding="utf-8",
+        )
+        code, out, err = _run_hook(
+            tmp_path,
+            {"tool_name": "Edit", "tool_input": {"file_path": "src/foo.py"}},
+        )
+        assert code == 0
+        assert err == ""
+        payload = json.loads(out)
+        assert "hookSpecificOutput" in payload
+        ctx = payload["hookSpecificOutput"]["additionalContext"]
+        assert "[MAP]" in ctx
+        assert "ACTOR" in ctx
