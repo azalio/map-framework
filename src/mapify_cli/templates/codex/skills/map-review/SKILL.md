@@ -138,13 +138,40 @@ REVIEW_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_review_promp
   --review-preferences "[paste Review Preferences section]")
 ```
 
-Dispatch each reviewer with `spawn_agent(agent_type=...)` using the
-extracted prompt for that role — see
+Extract each role's prompt from `REVIEW_PROMPTS_JSON`, then dispatch with
+`spawn_agent(agent_type=...)` — see
 [review-reference.md](review-reference.md#dispatch) for the exact prompt
-extraction and dispatch sequence, matching `$map-efficient`'s subagent
-dispatch conventions (`researcher`, `decomposer`, `monitor`) for configured
-Codex agents. Full mode runs monitor + predictor + evaluator; lightweight
-mode runs monitor only.
+extraction shell one-liners. Full mode runs monitor + predictor +
+evaluator; lightweight mode runs monitor only. When
+`COMPLEXITY_LENS_ENABLED=true` (i.e. `.map/config.yaml` sets `minimality`
+to `lite`/`full`/`ultra`), also dispatch the complexity lens using the
+`evaluator` agent type with the `complexity_lens` prompt.
+
+```
+spawn_agent(
+  agent_type="monitor",
+  message=MONITOR_PROMPT
+)
+spawn_agent(
+  agent_type="predictor",
+  message=PREDICTOR_PROMPT
+)
+spawn_agent(
+  agent_type="evaluator",
+  message=EVALUATOR_PROMPT
+)
+# When COMPLEXITY_LENS_ENABLED=true only:
+spawn_agent(
+  agent_type="evaluator",
+  message=COMPLEXITY_LENS_PROMPT
+)
+```
+
+When enabled, the complexity lens is advisory only. It lists
+over-engineering as `delete:`, `stdlib:`, `native:`, `yagni:`, or `shrink:`
+findings, ends with `net: -<N> lines possible.` or `Lean already. Ship.`,
+samples `map:simplification:` marker claims, and never feeds Actor retries
+or verdict gates.
 
 ### Step A.2b: Truncated-response gate (MANDATORY — post-fan-out, pre-verification)
 
@@ -243,10 +270,42 @@ This phase runs only when `ADVERSARIAL_FLAG=false` and cross-AI status is
 not `success`. Skip it entirely when `--adversarial` is set or cross-AI
 succeeded.
 
-Sections, presented in the order returned by the section-ordering helper:
-**Architecture**, **Code Quality**, **Tests**, **Performance**. See
-[review-reference.md](review-reference.md#sections) for the focus of each
-section and the ordering helper invocation.
+### Step B.0: Determine section presentation order
+
+```bash
+SECTIONS_JSON=$(python3 .map/scripts/map_step_runner.py shuffle-sections "$MODE_FLAG" "$SEED_RAW")
+```
+
+Iterate over the helper-returned order and summarize before the next
+section. Present up to four issues per section with file/line evidence,
+show 2-3 A/B/C options neutrally, append `(Recommended)` after the
+recommended option label, ask the user unless CI mode is active. See
+[review-reference.md](review-reference.md#sections) for the ordering
+helper invocation detail.
+
+## Architecture
+
+Focus on design boundaries, hidden coupling, state lifecycle, hard/soft
+constraints, and reviewability.
+
+## Code Quality
+
+Focus on clarity, duplication, error handling, maintainability, and fit
+with existing patterns.
+
+If the complexity lens ran, show its raw "what to delete" lines after Code
+Quality as advisory-only calibration. Do not turn `net: -N` into a
+REVISE/BLOCK condition.
+
+## Tests
+
+Focus on changed behavior, failure modes, fixtures, and whether tests
+prove the contract rather than the implementation.
+
+## Performance
+
+Focus only on plausible measurable impact, hot paths, accidental N+1
+behavior, large artifacts, or prompt/context blowups.
 
 ## Final Verdict
 
@@ -256,6 +315,12 @@ Choose exactly one:
 - `REVISE`: actionable changes are required before review can pass.
 - `BLOCK`: external, safety, or correctness blocker prevents review
   completion.
+
+Exactly one Final Verdict value is emitted per review run, regardless of
+which mode produced it (cross-AI success, adversarial aggregation, or the
+normal 4-section walkthrough) — the same convergence rule Claude
+`/map-review` uses. Set `FINAL_VERDICT` to this value before Workflow Gate
+Unlock and Handoff Artifacts below.
 
 ## Workflow Gate Unlock (REVISE/BLOCK only) and Handoff Artifacts
 
