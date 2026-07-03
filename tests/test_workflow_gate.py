@@ -181,7 +181,7 @@ class TestWorkflowGate:
         """Read, Bash, and other non-editing tools should always be allowed."""
         for tool_name in ["Read", "Bash", "Grep", "Glob", "Task"]:
             code, stdout, _ = self.run_hook(
-                {"tool_name": tool_name, "tool_input": {"file_path": "/test.py"}},
+                {"tool_name": tool_name, "tool_input": {"file_path": "test.py"}},
                 tmp_path,
             )
             assert code == 0, f"{tool_name} should be allowed"
@@ -192,7 +192,7 @@ class TestWorkflowGate:
     def test_allows_edit_when_no_state_files(self, tmp_path: Path) -> None:
         """Edit allowed when no step_state.json exists."""
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
         )
         assert code == 0
@@ -205,7 +205,7 @@ class TestWorkflowGate:
         (map_dir / "step_state.json").write_text("not valid json {")
 
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
         )
         assert code == 0
@@ -233,7 +233,7 @@ class TestWorkflowGate:
         """
         self._setup_step_state(tmp_path, "master", "MONITOR")
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
         )
         assert code == 0
@@ -243,7 +243,7 @@ class TestWorkflowGate:
         """Edit blocked during DECOMPOSE phase."""
         self._setup_step_state(tmp_path, "master", "DECOMPOSE")
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
         )
         assert code == 0
@@ -253,7 +253,7 @@ class TestWorkflowGate:
         """Edit blocked during PREDICTOR phase."""
         self._setup_step_state(tmp_path, "master", "PREDICTOR")
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
         )
         assert code == 0
@@ -263,7 +263,7 @@ class TestWorkflowGate:
         """Edit allowed during ACTOR phase."""
         self._setup_step_state(tmp_path, "master", "ACTOR")
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
         )
         assert code == 0
@@ -273,7 +273,7 @@ class TestWorkflowGate:
         """Edit allowed during APPLY phase."""
         self._setup_step_state(tmp_path, "master", "APPLY")
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
         )
         assert code == 0
@@ -283,7 +283,7 @@ class TestWorkflowGate:
         """Edit allowed during TEST_WRITER phase (TDD mode)."""
         self._setup_step_state(tmp_path, "master", "TEST_WRITER")
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
         )
         assert code == 0
@@ -293,7 +293,7 @@ class TestWorkflowGate:
         """Write blocked like Edit during non-editing phases."""
         self._setup_step_state(tmp_path, "master", "PREDICTOR")
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Write", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Write", "tool_input": {"file_path": "test.py"}},
             tmp_path,
         )
         assert code == 0
@@ -303,7 +303,7 @@ class TestWorkflowGate:
         """MultiEdit blocked like Edit during non-editing phases."""
         self._setup_step_state(tmp_path, "master", "PREDICTOR")
         code, stdout, _ = self.run_hook(
-            {"tool_name": "MultiEdit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "MultiEdit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
         )
         assert code == 0
@@ -320,7 +320,7 @@ class TestWorkflowGate:
             subtask_phases={"ST-001": "PREDICTOR", "ST-002": "ACTOR"},
         )
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
         )
         assert code == 0
@@ -335,7 +335,7 @@ class TestWorkflowGate:
             subtask_phases={"ST-001": "PREDICTOR", "ST-002": "DECOMPOSE"},
         )
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
         )
         assert code == 0
@@ -352,7 +352,7 @@ class TestWorkflowGate:
             subtask_phases={"ST-001": "2.3"},
         )
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
         )
         assert code == 0
@@ -369,7 +369,7 @@ class TestWorkflowGate:
             subtask_phases={"ST-001": "2.25"},
         )
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
         )
         assert code == 0
@@ -386,7 +386,7 @@ class TestWorkflowGate:
             subtask_phases={"ST-001": "2.2"},
         )
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
         )
         assert code == 0
@@ -462,7 +462,7 @@ class TestWorkflowGate:
         """
         self._setup_step_state(tmp_path, "master", "RESEARCH")
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
         )
         assert code == 0
@@ -623,10 +623,12 @@ class TestWorkflowGate:
         reason = self._assert_denied(stdout)
         assert "scope_glob" in reason
 
-    def test_research_orthogonal_out_of_repo_blocks(self, tmp_path: Path) -> None:
-        """An out-of-repo path is not a repo-relative affected_files member, but
-        the relief is conservative and does NOT open arbitrary out-of-repo
-        writes during RESEARCH — it stays blocked.
+    def test_research_orthogonal_out_of_repo_allowed(self, tmp_path: Path) -> None:
+        """#164 (second report): a path outside the repo entirely is
+        unconditionally orthogonal — no subtask's affected_files can ever
+        legitimately name a path outside the repo tree it was declared in,
+        so there's no "current subtask context" for it to belong to. Allowed
+        during RESEARCH regardless of the subtask's declared affected_files.
         """
         self._setup_step_state(tmp_path, "master", "RESEARCH", subtask_id="ST-001")
         self._setup_blueprint(
@@ -639,7 +641,7 @@ class TestWorkflowGate:
             tmp_path,
         )
         assert code == 0
-        self._assert_denied(stdout)
+        self._assert_allowed(stdout)
 
     def test_research_orthogonal_handles_nested_blueprint(
         self, tmp_path: Path
@@ -664,6 +666,98 @@ class TestWorkflowGate:
         assert code == 0
         self._assert_allowed(stdout)
 
+    # --- Orthogonal relief generalized to ALL blocking phases (#164 second report) ---
+
+    def test_init_state_allows_orthogonal_edit_outside_affected_files(
+        self, tmp_path: Path
+    ) -> None:
+        """#164 (second report): the orthogonal-file relief originally shipped
+        RESEARCH-only. The identical block recurred during INIT_STATE — an
+        edit outside ST-001's affected_files must be allowed there too, not
+        just during RESEARCH.
+        """
+        self._setup_step_state(tmp_path, "master", "INIT_STATE", subtask_id="ST-001")
+        self._setup_blueprint(
+            tmp_path,
+            "master",
+            [{"id": "ST-001", "affected_files": ["src/app.py"]}],
+        )
+        code, stdout, _ = self.run_hook(
+            {
+                "tool_name": "Edit",
+                "tool_input": {"file_path": str(tmp_path / "src" / "other.py")},
+            },
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_allowed(stdout)
+
+    def test_init_state_blocks_edit_inside_affected_files(self, tmp_path: Path) -> None:
+        """Counter-test: INIT_STATE still blocks a file IN the current
+        subtask's affected_files — the relief only lifts the block for
+        orthogonal files, not for the subtask's own protected surface.
+        """
+        self._setup_step_state(tmp_path, "master", "INIT_STATE", subtask_id="ST-001")
+        self._setup_blueprint(
+            tmp_path,
+            "master",
+            [{"id": "ST-001", "affected_files": ["src/app.py"]}],
+        )
+        code, stdout, _ = self.run_hook(
+            {
+                "tool_name": "Edit",
+                "tool_input": {"file_path": str(tmp_path / "src" / "app.py")},
+            },
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_denied(stdout)
+
+    def test_init_state_out_of_repo_path_allowed(self, tmp_path: Path) -> None:
+        """#164 (second report) repro: a MAP session mid-INIT_STATE blocked an
+        Edit to a path entirely outside the repo (``~/.claude/CLAUDE.md``
+        while a session in a *different* repo was active). An out-of-repo
+        path is unconditionally orthogonal regardless of phase.
+        """
+        self._setup_step_state(tmp_path, "master", "INIT_STATE", subtask_id="ST-001")
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": "/etc/hosts"}},
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_allowed(stdout)
+
+    def test_decompose_out_of_repo_path_allowed_without_blueprint(
+        self, tmp_path: Path
+    ) -> None:
+        """The out-of-repo relief needs no blueprint/affected_files at all —
+        it is decided purely by path resolution — so it also fires during
+        DECOMPOSE, before any subtask work has been scoped.
+        """
+        self._setup_step_state(tmp_path, "master", "DECOMPOSE")
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": "/etc/hosts"}},
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_allowed(stdout)
+
+    def test_decompose_in_repo_edit_still_blocked_without_blueprint(
+        self, tmp_path: Path
+    ) -> None:
+        """Counter-test: an in-repo path during DECOMPOSE with no blueprint to
+        derive affected_files stays blocked (conservative default) — only
+        paths that resolve entirely outside the repo get an unconditional
+        pass.
+        """
+        self._setup_step_state(tmp_path, "master", "DECOMPOSE")
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": "src/other.py"}},
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_denied(stdout)
+
     def test_monitor_strict_mode_blocks_edit(self, tmp_path: Path) -> None:
         """MAP_MONITOR_HOTFIX=0 restores strict read-only MONITOR. The deny
         message must document the opt-out and the monitor_failed path so
@@ -681,7 +775,7 @@ class TestWorkflowGate:
             )
         )
         code, stdout, _ = self.run_hook_with_project_dir(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
             extra_env={"MAP_MONITOR_HOTFIX": "0"},
         )
@@ -713,7 +807,7 @@ class TestWorkflowGate:
 
         # On master (no state) → fail-open → allow
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
             branch="master",
         )
@@ -736,7 +830,7 @@ class TestWorkflowGate:
         self._setup_step_state(tmp_path, sanitized, "ACTOR")
 
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
             branch=branch_name,
         )
@@ -900,7 +994,7 @@ class TestWorkflowGate:
         """Edit allowed after workflow completes (current_step_phase == 'COMPLETE')."""
         self._setup_step_state(tmp_path, "master", "COMPLETE")
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
         )
         assert code == 0
@@ -948,7 +1042,7 @@ class TestWorkflowGate:
             subtask_phases={"ST-001": "COMPLETE"},
         )
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}},
             tmp_path,
         )
         assert code == 0
