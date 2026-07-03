@@ -167,3 +167,18 @@
   pytest tests/ -x -q
   # If make check fails on F401 after per-file pyright passed -> scope mismatch.
   ```
+
+- **Awk Two-Address Range Silently Collapses When Start and End Patterns Co-Match the Same Line** (2026-07-03): An awk range `/start/,/end/` is NOT guaranteed to span multiple lines — if the start and end regexes are not mutually exclusive and can both match the SAME line (e.g. end is an unanchored prefix-superset of start, like `/## \[/` matching `## [Unreleased]`), awk closes the range immediately after that one line and the extraction silently degenerates to a single line instead of erroring. This is dangerous specifically because it fails SILENTLY: downstream consumers (a bullet-point counter via `grep -c`, a content-display step) receive a plausible-but-wrong single-line result and report a confidently-wrong number (here: a CHANGELOG-completeness gate always reported 0 entries) rather than crashing, so the defect can survive undetected across many runs/releases until someone manually cross-checks the output against ground truth. Fix by replacing the range with an explicit flag state machine, using `next` to exclude the start line from also being tested against the end pattern. [workflow: map-release]
+  ```bash
+  # WRONG: range collapses to exactly 1 line whenever start and end co-match
+  awk '/## \[Unreleased\]/,/## \[/' CHANGELOG.md
+  # CHANGELOG.md's actual heading '## [Unreleased]' matches BOTH regexes on the
+  # same line -> awk opens AND closes the range there -> output is just that heading
+  # -> grep -cE '^- ' on this output is always 0, even with 9 real entries below it.
+
+  # CORRECT: explicit flag; 'next' skips the start line so it can't also end the range
+  awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md
+  # f=1 set on start line, but 'next' means this line is never tested against
+  # the end pattern or printed; f=0 clears on the FIRST subsequent '## [' heading,
+  # also excluded from output ('f' block only prints when flag is already 1).
+  ```

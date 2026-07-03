@@ -244,3 +244,20 @@ paths:
   pytest tests/ -x -q                             # full suite -- catches it at the origin
                                                    # subtask, not N subtasks later
   ```
+
+- **Argv Token Membership, Never Substring-in-Joined-String, for "Bad Command Not Called" Assertions** (2026-07-03): When a test asserts that a list of discrete tokens (subprocess argv, CLI flags, path segments) does NOT contain any of a set of "bad" values, check list/token membership directly (`bad not in call`) — never flatten the list to a string first (`bad not in " ".join(call)`). Flattening changes the check from "is this exact token present" to "does this substring occur anywhere in the concatenated text", which also matches incidental fragments inside unrelated data: file paths, UUIDs, tmp directory names, commit SHAs. This produces environment-dependent flakiness — a test failed on macOS CI only because pytest's `tmp_path` fixture happened to generate a random directory name containing the banned substring "rm" (e.g. `cx43xdqhzy2rmp6tqr`), inside an unrelated git-worktree path argument, not as an actual `rm` subcommand invocation. [workflow: map-release]
+  ```python
+  # WRONG: substring-in-joined-string check — false positive when tmp_path contains 'rm'
+  for call in recorded_calls:
+      joined = " ".join(call)
+      for bad in ("checkout", "stash", "reset", "restore", "commit", "rm"):
+          assert bad not in joined
+          # e.g. call = ['git', 'worktree', 'add', '--detach',
+          #              '/tmp/pytest-x/cx43xdqhzy2rmp6tqr/', 'abc123']
+          # joined contains 'rm' inside 'cx43xdqhzy2rmp6tqr' -> assertion fails on CI only
+
+  # CORRECT: token-list membership — checks discrete elements, immune to substring noise
+  for call in recorded_calls:
+      for bad in ("checkout", "stash", "reset", "restore", "commit", "rm"):
+          assert bad not in call  # 'rm' as a whole argv element, not a text fragment
+  ```
