@@ -2797,18 +2797,22 @@ def parse_requirements_index(spec_text: str) -> dict[str, object]:
       (open) and ``<!-- /mapify:requirements-index:v1 -->`` (close).  Only the
       fenced ```yaml block between those two sentinels is authoritative; a
       sentinel-shaped string anywhere else in the prose is ignored.
-    - Parses the inner YAML via a lazy ``import yaml``; both ``ImportError`` and
-      ``yaml.YAMLError`` yield ``status='malformed'`` — never an uncaught exception.
+    - Parses the inner YAML via a lazy ``import yaml``.  ``ImportError`` (PyYAML not
+      installed) yields ``status='pyyaml_missing'`` with an honest message; genuine
+      ``yaml.YAMLError`` yields ``status='malformed'`` — never an uncaught exception.
     - Returns::
 
         {
             'requirements': [{'id': str, 'kind': str}, ...],
-            'status': 'absent' | 'malformed' | 'present_empty' | 'present_nonempty',
+            'status': 'absent' | 'pyyaml_missing' | 'malformed' | 'present_empty' | 'present_nonempty',
             'warnings': [str, ...],
         }
 
     Status semantics:
     - ``absent``          — sentinel pair not found in the text.
+    - ``pyyaml_missing``  — open sentinel found, YAML block present, but PyYAML is
+                            not installed in the running Python environment.  This is
+                            an environment problem, NOT a spec formatting problem.
     - ``malformed``       — open sentinel found but: no close sentinel, no inner
                             yaml fence, YAML parse error, or top-level shape is not
                             ``{requirements: list}``.
@@ -2854,9 +2858,23 @@ def parse_requirements_index(spec_text: str) -> dict[str, object]:
 
     yaml_text = after_fence[:fence_close]
 
-    # Step 4: parse YAML (lazy import; treat ImportError == YAMLError == malformed).
+    # Step 4: parse YAML (lazy import).
+    # ImportError means PyYAML is not installed — an environment problem, not a spec
+    # formatting problem.  Return a distinct status so callers can surface an honest
+    # "install pyyaml" message instead of the misleading "Requirements Index is malformed".
     try:
         import yaml  # noqa: PLC0415
+    except ImportError:
+        return {
+            "requirements": [],
+            "status": "pyyaml_missing",
+            "warnings": warnings
+            + [
+                "PyYAML is not installed; cannot parse Requirements Index. "
+                "Run: pip install pyyaml"
+            ],
+        }
+    try:
         data = yaml.safe_load(yaml_text)
     except Exception:
         return {"requirements": [], "status": "malformed", "warnings": warnings}
@@ -3497,6 +3515,15 @@ def validate_blueprint_contract(
                     errors.append(_fc_msg)
                 else:
                     warnings.append(_fc_msg)
+        elif _fc_status == "pyyaml_missing":
+            # PyYAML not installed — environment problem, not a spec formatting problem.
+            _fc_confidence = "low"
+            _fc_basis = "PyYAML not installed; cannot parse Requirements Index"
+            errors.append(
+                "Forward-coverage: Cannot validate Requirements Index — "
+                "PyYAML is not installed in this Python environment. "
+                "Run: pip install pyyaml"
+            )
         elif _fc_status == "malformed":
             # HC-5 / HC-3: malformed is always a hard error regardless of strict flag.
             _fc_confidence = "low"

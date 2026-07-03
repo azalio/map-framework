@@ -499,6 +499,64 @@ class TestErrorHandling:
 
 
 # =============================================================================
+# Regression Tests — Bug #321: Directory Name False Positives
+# =============================================================================
+
+
+class TestDirectoryNameFalsePositives:
+    """Regression tests for bug #321.
+
+    Files with safe names inside directories with security-related names
+    (e.g. 'secrets-injector', 'stackland-secrets-webhook') must NOT be blocked.
+    The pattern check must match against the file basename only, never the full path.
+    """
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            # Directory contains 'secret' but the FILE is a plain config file.
+            "deploy/secrets-injector/values.yaml",
+            "k8s/stackland-secrets-webhook/config.json",
+            "infra/secrets-manager/deployment.yaml",
+            # Directory contains 'credential' but the file is not a credential file.
+            "apps/credential-service/main.py",
+            # Directory contains 'token' but the file is not a token store.
+            "services/token-validator/handler.go",
+            # Directory contains 'key' but the file is not a private key.
+            "apps/api-key-service/schema.sql",
+            # Directory contains 'password' but the file is documentation.
+            "docs/password-policy/README.md",
+            # Directory contains 'private' but the file is a public module.
+            "libs/private-utils/public_api.py",
+        ],
+    )
+    def test_safe_file_in_dangerous_directory_not_blocked(self, path):
+        """A file with a safe basename must not be blocked even if its parent
+        directory name matches a dangerous pattern (regression for bug #321)."""
+        exit_code, stdout, _ = run_hook_file("Read", path)
+        assert exit_code == 0
+        assert _parse_stdout(stdout) == {}, (
+            f"Path '{path}' was incorrectly blocked — basename is safe; "
+            "only the directory name contains a dangerous-looking word"
+        )
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            # The FILE itself is dangerous — must still be blocked.
+            "deploy/secrets-injector/secrets.yaml",
+            "k8s/app/.env",
+            "infra/deploy/credentials.json",
+        ],
+    )
+    def test_dangerous_file_in_any_directory_still_blocked(self, path):
+        """A file with a dangerous basename must be blocked regardless of where it lives."""
+        exit_code, stdout, _ = run_hook_file("Read", path)
+        assert exit_code == 0
+        _assert_denied(_parse_stdout(stdout))
+
+
+# =============================================================================
 # Performance Tests
 # =============================================================================
 
