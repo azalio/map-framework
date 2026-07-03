@@ -2058,9 +2058,11 @@ class TestCodexProvider:
         ), "RESEARCH must NOT be in EDITING_PHASES"
         assert "ACTOR" in editing_phases, "ACTOR must be in EDITING_PHASES"
 
-        # Simulate gate invocation: Edit tool during RESEARCH phase → should block
+        # Simulate gate invocation: Edit tool during RESEARCH phase → should block.
+        # Path must be in-repo (relative) — an out-of-repo path is unconditionally
+        # orthogonal (#164) and would be allowed regardless of phase.
         payload_block = _json.dumps(
-            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}}
+            {"tool_name": "Edit", "tool_input": {"file_path": "test.py"}}
         )
         branch_dir = codex_project / ".map" / "default"
         branch_dir.mkdir(parents=True, exist_ok=True)

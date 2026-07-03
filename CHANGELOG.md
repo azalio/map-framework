@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`workflow-gate.py` orthogonal-file relief now applies to every blocking phase, and out-of-repo paths are always allowed (closes #164).** A prior fix (#174) scoped the RESEARCH-phase block to the current subtask's `affected_files`, allowing Edit/Write to files outside that surface — but only during RESEARCH, and it deliberately kept blocking paths that resolve entirely outside the repository. Both choices reproduced the original friction: a report against `neuro-vlad` hit the identical block during INIT_STATE while editing `~/.claude/CLAUDE.md`, a path outside that repo's tree entirely. `is_orthogonal_to_current_subtask()` now treats out-of-repo paths as unconditionally orthogonal (no subtask's `affected_files` can ever legitimately name a path outside the repo it was declared in), and the orthogonal-relief exception in `main()` fires for any blocking phase, not just RESEARCH. The Bash-write bypass (`cat >`, `tee`, `sed -i`) remains a documented, deliberately deferred limitation.
+
 ## [3.21.0] - 2026-07-02
 
 ### Changed

@@ -12,9 +12,13 @@ ENFORCEMENT:
   - Edit blocked during all other phases (DECOMPOSE, MONITOR, PREDICTOR, etc.)
   - Fail-open: missing or unreadable step_state.json → allow
   - Always allows: .map/ artifacts, non-editing tools
-  - RESEARCH blocks only the CURRENT subtask's declared affected_files;
-    docs-only surfaces and files orthogonal to that subtask are allowed so
-    out-of-band hotfixes don't have to be smuggled through Bash (#164).
+  - Every blocking phase (RESEARCH, INIT_STATE, DECOMPOSE, ...) blocks only
+    the CURRENT subtask's declared affected_files; files orthogonal to that
+    subtask are allowed in ANY phase so out-of-band hotfixes don't have to
+    be smuggled through Bash (#164). RESEARCH additionally allows docs-only
+    surfaces. A path that resolves entirely outside the repository is
+    always orthogonal — no subtask's affected_files can name a path outside
+    the repo tree — and is allowed regardless of phase (#164).
 
 CONSTRAINTS (from step_state.json):
   - scope_glob: restrict edits to matching file patterns
@@ -330,19 +334,24 @@ def _current_subtask_affected_files(branch: str) -> Optional[set[str]]:
 
 def is_orthogonal_to_current_subtask(branch: str, file_path: str) -> bool:
     """Return True iff *file_path* is provably OUTSIDE the current subtask's
-    affected_files — an orthogonal edit RESEARCH does not protect.
+    affected_files — an orthogonal edit the phase gate does not protect.
 
-    Conservative by construction: returns False ("keep blocking") whenever
-    the current subtask's mutation surface cannot be determined, or the
-    target resolves outside the repo. The RESEARCH block is lifted only on
-    positive evidence that the file belongs to no part of the current
-    subtask's declared work.
+    A path that resolves entirely outside the repository (PROJECT_DIR) is
+    unconditionally orthogonal: no subtask's affected_files is ever a path
+    outside the repo tree it was declared in, so there is no "current
+    subtask context" for such a path to belong to (#164 — a path like
+    ``~/.claude/CLAUDE.md`` blocked while a MAP session in a different repo
+    was mid-INIT_STATE). For in-repo paths, conservative by construction:
+    returns False ("keep blocking") whenever the current subtask's mutation
+    surface cannot be determined. The phase block is lifted only on positive
+    evidence that the file belongs to no part of the current subtask's
+    declared work.
     """
-    affected = _current_subtask_affected_files(branch)
-    if not affected:
-        return False
     rel = _to_repo_relative(file_path)
     if rel is None:
+        return True
+    affected = _current_subtask_affected_files(branch)
+    if not affected:
         return False
     return rel not in affected
 
@@ -398,7 +407,8 @@ def is_editing_phase(branch: str) -> tuple[bool, Optional[str]]:
             "\n"
             f"Note: this block is scoped to {subtask}'s affected_files. Edits to\n"
             "files OUTSIDE that surface (orthogonal hotfixes, repo-root config,\n"
-            "an unrelated failing test) are allowed during RESEARCH."
+            "an unrelated failing test, or any path outside this repo) are\n"
+            "allowed regardless of phase."
         )
     if current_phase == "MONITOR":
         return False, (
@@ -417,7 +427,12 @@ def is_editing_phase(branch: str) -> tuple[bool, Optional[str]]:
         f"Workflow gate: Edit blocked during phase '{current_phase}' "
         f"(subtask {subtask}).\n"
         f"Edit is only allowed during: {', '.join(sorted(EDITING_PHASES))}.\n"
-        "Call the Actor agent first — it will apply code changes."
+        "Call the Actor agent first — it will apply code changes.\n"
+        "\n"
+        f"Note: this block is scoped to {subtask}'s affected_files. Edits to\n"
+        "files OUTSIDE that surface (orthogonal hotfixes, repo-root config,\n"
+        "an unrelated failing test, or any path outside this repo) are\n"
+        "allowed regardless of phase."
     )
 
 
@@ -529,23 +544,21 @@ def main() -> None:
                 if constraint_error:
                     deny(constraint_error)
                 allow()
-            # RESEARCH exception #2 (orthogonal hotfix): the RESEARCH gate
-            # exists to force research-before-code for the CURRENT subtask's
-            # files. Edits to files OUTSIDE that subtask's declared
-            # affected_files (a repo-root config, an unrelated failing test, an
-            # out-of-band hotfix the operator asked for) are not what RESEARCH
-            # protects — blocking them only pushed those edits into Bash
-            # heredocs (#164). Allow them when EVERY target is provably
-            # orthogonal, still subject to scope_glob / constraints so the
-            # relief cannot silently widen scope. A single in-scope target in
-            # the batch (mixed edit) falls through to the block.
-            if (
-                research
-                and target_paths
-                and all(
-                    is_orthogonal_to_current_subtask(branch, p)
-                    for p in target_paths
-                )
+            # Exception #2 (orthogonal hotfix): every blocking phase exists to
+            # force process-before-code for the CURRENT subtask's files.
+            # Edits to files OUTSIDE that subtask's declared affected_files (a
+            # repo-root config, an unrelated failing test, an out-of-band
+            # hotfix the operator asked for, or a path outside the repo
+            # entirely) are not what any blocking phase protects — blocking
+            # them only pushed those edits into Bash heredocs. Originally
+            # scoped to RESEARCH only; #164's second report hit the identical
+            # block during INIT_STATE, so the relief applies to ANY blocking
+            # phase. Allow when EVERY target is provably orthogonal, still
+            # subject to scope_glob / constraints so the relief cannot
+            # silently widen scope. A single in-scope target in the batch
+            # (mixed edit) falls through to the block.
+            if target_paths and all(
+                is_orthogonal_to_current_subtask(branch, p) for p in target_paths
             ):
                 constraint_error = check_constraints(branch, target_paths)
                 if constraint_error:
