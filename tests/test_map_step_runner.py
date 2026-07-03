@@ -10524,6 +10524,32 @@ class TestST003ParseRequirementsIndex:
         assert result["status"] == "absent"
         assert result["requirements"] == []
 
+    def test_st003_pyyaml_missing_returns_distinct_status(self) -> None:
+        """Regression for bug #319: ImportError (missing PyYAML) must return
+        status='pyyaml_missing', NOT status='malformed'.
+
+        Previously both ImportError and yaml.YAMLError were caught by the same
+        ``except Exception``, causing a misleading 'malformed' verdict when the
+        environment simply lacked PyYAML.
+        """
+        import sys
+        from unittest import mock
+
+        spec = _make_spec("requirements:\n  - id: AC-1\n    kind: acceptance_criterion\n")
+        # Simulate a missing PyYAML by making 'import yaml' raise ImportError.
+        with mock.patch.dict(sys.modules, {"yaml": None}):
+            result = map_step_runner.parse_requirements_index(spec)
+
+        assert result["status"] == "pyyaml_missing", (
+            f"Expected status='pyyaml_missing' when PyYAML is unavailable, "
+            f"got status={result['status']!r}. "
+            "Bug #319: ImportError was previously mis-classified as 'malformed'."
+        )
+        assert result["requirements"] == []
+        assert any("pyyaml" in w.lower() or "pip install" in w.lower() for w in result["warnings"]), (
+            "Expected a warning mentioning PyYAML installation"
+        )
+
 
 # ============================================================================
 # ST-005: forward-gate 5 outcomes via validate_blueprint_contract

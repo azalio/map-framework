@@ -130,17 +130,22 @@ def check_file_safety(path: str) -> tuple[bool, str]:
     if is_safe_path(path):
         return True, ""
 
-    # Check dangerous patterns
-    path_lower = path.lower()
+    # Check dangerous patterns against the basename only, not the full path.
+    # Matching the full path causes false positives when a directory name contains
+    # security-related words (e.g. "secrets-injector", "stackland-secrets-webhook"):
+    # a legitimate file like "values.yaml" inside such a directory would be blocked
+    # even though the file itself is not a credential file.  The patterns are designed
+    # to catch files with dangerous *names* — anchoring to the basename is correct.
+    basename_lower = os.path.basename(path).lower()
     if DANGEROUS_FILE_PATTERNS == _DEFAULT_DANGEROUS_FILE_PATTERNS and not any(
-        marker in path_lower for marker in _DEFAULT_DANGEROUS_FILE_MARKERS
+        marker in basename_lower for marker in _DEFAULT_DANGEROUS_FILE_MARKERS
     ):
         return True, ""
 
     import re
 
     for pattern in DANGEROUS_FILE_PATTERNS:
-        if re.search(pattern, path_lower, re.IGNORECASE):
+        if re.search(pattern, basename_lower, re.IGNORECASE):
             return (
                 False,
                 f"Blocked: Access to sensitive file pattern '{pattern}' in path: {path}",

@@ -5617,5 +5617,124 @@ def test_vc4_mixed_plan_current_width1_later_width2_sequential(
     )
 
 
+# ============================================================================
+# Regression Tests — Bug #320: set_waves ImportError fallback for uv tool installs
+# ============================================================================
+
+
+class TestSetWavesImportFallback:
+    """Regression tests for bug #320.
+
+    Previously the ImportError fallback in set_waves only searched source-checkout
+    layout paths (src/mapify_cli/dependency_graph.py relative to parents of __file__).
+    When mapify-cli is installed via 'uv tool install' or 'pipx install', the package
+    lives in ~/.local/share/uv/tools/mapify-cli/lib/python3.X/site-packages/, so the
+    fallback silently failed.
+
+    Fix: extend the candidate list to include common installed-package locations.
+    """
+
+    def test_set_waves_error_message_mentions_uv_tool_path(
+        self, branch_dir: str, tmp_path: Path
+    ) -> None:
+        """When dependency_graph cannot be found anywhere, the error message must
+        mention the uv-tool Python path so users know how to fix it (regression #320)."""
+        from unittest import mock
+
+        # Write a minimal blueprint so we can get past the file-reading step.
+        bp_dir = tmp_path / ".map" / branch_dir
+        bp_dir.mkdir(parents=True, exist_ok=True)
+        blueprint = {
+            "subtasks": [
+                {"id": "ST-001", "dependencies": [], "affected_files": []},
+            ]
+        }
+        bp_file = bp_dir / "blueprint.json"
+        bp_file.write_text(json.dumps(blueprint), encoding="utf-8")
+
+        # Simulate a totally missing dependency_graph: make importlib.util.spec_from_file_location
+        # always return None (as if no candidate file exists), and make Path.home() point to an
+        # empty tmp dir (so no uv/pipx tool dirs exist to find).
+        empty_home = tmp_path / "fake_home"
+        empty_home.mkdir()
+
+        with (
+            mock.patch.object(
+                map_orchestrator.importlib.util,
+                "spec_from_file_location",
+                return_value=None,
+            ) if hasattr(map_orchestrator, "importlib") else mock.patch("importlib.util.spec_from_file_location", return_value=None),
+            mock.patch("pathlib.Path.home", return_value=empty_home),
+            mock.patch.dict(sys.modules, {"mapify_cli.dependency_graph": None}),
+        ):
+            result = map_orchestrator.set_waves(branch_dir, str(bp_file))
+
+        assert result["status"] == "error"
+        msg = result.get("message", "")
+        assert "uv tool install" in msg or "uv-tool" in msg or "mapify-cli" in msg, (
+            f"Error message should guide users to the uv-tool install path. Got: {msg!r}. "
+            "Bug #320: previously had no guidance for uv tool install users."
+        )
+
+    def test_set_waves_fallback_finds_module_in_fake_uv_tool_dir(
+        self, branch_dir: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """set_waves must succeed when dependency_graph.py is only available
+        at the uv-tool install layout path (regression for bug #320).
+
+        We build a fake uv-tool directory tree rooted at a tmp home, plant the
+        REAL dependency_graph.py there, then simulate the package-level import
+        failing so the fallback path is exercised.
+        """
+        import shutil
+        from unittest import mock
+
+        # Build the fake uv-tool installed-package layout.
+        fake_home = tmp_path / "fake_home"
+        py_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+        site_packages = (
+            fake_home
+            / ".local" / "share" / "uv" / "tools" / "mapify-cli"
+            / "lib" / py_version / "site-packages" / "mapify_cli"
+        )
+        site_packages.mkdir(parents=True)
+
+        # Copy the real dependency_graph.py into the fake site-packages.
+        real_dg = (
+            Path(__file__).resolve().parents[1]
+            / "src" / "mapify_cli" / "dependency_graph.py"
+        )
+        shutil.copy(real_dg, site_packages / "dependency_graph.py")
+
+        # Write a blueprint to work with.
+        bp_dir = tmp_path / ".map" / branch_dir
+        bp_dir.mkdir(parents=True, exist_ok=True)
+        blueprint = {
+            "subtasks": [
+                {"id": "ST-001", "dependencies": [], "affected_files": []},
+                {"id": "ST-002", "dependencies": ["ST-001"], "affected_files": []},
+            ]
+        }
+        bp_file = bp_dir / "blueprint.json"
+        bp_file.write_text(json.dumps(blueprint), encoding="utf-8")
+
+        # Patch Path.home() so the fallback search lands in our fake tree.
+        monkeypatch.setattr(map_orchestrator.Path, "home", staticmethod(lambda: fake_home))
+
+        # Force the package-level import to raise ImportError so the fallback runs.
+        with mock.patch.dict(sys.modules, {"mapify_cli.dependency_graph": None}):
+            result = map_orchestrator.set_waves(branch_dir, str(bp_file))
+
+        assert result["status"] == "success", (
+            f"set_waves should succeed when dependency_graph is found in the fake "
+            f"uv-tool install dir. status={result.get('status')!r}, "
+            f"message={result.get('message')!r}. "
+            "Bug #320: fallback didn't include uv tool install paths."
+        )
+        waves = result["execution_waves"]
+        assert waves[0] == ["ST-001"]
+        assert waves[1] == ["ST-002"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

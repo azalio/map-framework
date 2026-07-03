@@ -2230,12 +2230,29 @@ def set_waves(branch: str, blueprint_path: Optional[str] = None) -> dict:
         from mapify_cli.dependency_graph import DependencyGraph, SubtaskNode
     except ImportError:
         # When running as a standalone script, dependency_graph.py may not be
-        # importable from sys.path. Walk upward and look for src/mapify_cli/.
+        # importable from sys.path.  Try in order:
+        #   1. Source-checkout layout: src/mapify_cli/ relative to this file or cwd.
+        #   2. Installed-package layout: uv tool install / pipx venv locations
+        #      (~/.local/share/uv/tools/mapify-cli/... or
+        #       ~/.local/pipx/venvs/mapify-cli/...).
         import importlib.util
 
-        dg_candidates = [Path("src/mapify_cli/dependency_graph.py")]
+        dg_candidates: list[Path] = [Path("src/mapify_cli/dependency_graph.py")]
         for parent in Path(__file__).resolve().parents:
             dg_candidates.append(parent / "src" / "mapify_cli" / "dependency_graph.py")
+
+        # Common installed-package locations (uv tool install, pipx install).
+        _home = Path.home()
+        for _tool_dir in [
+            _home / ".local" / "share" / "uv" / "tools" / "mapify-cli",
+            _home / ".local" / "pipx" / "venvs" / "mapify-cli",
+        ]:
+            if _tool_dir.exists():
+                for _py_dir in sorted(_tool_dir.glob("lib/python3.*"), reverse=True)[:1]:
+                    dg_candidates.append(
+                        _py_dir / "site-packages" / "mapify_cli" / "dependency_graph.py"
+                    )
+
         loaded = False
         for candidate in dg_candidates:
             if candidate.exists():
@@ -2252,7 +2269,13 @@ def set_waves(branch: str, blueprint_path: Optional[str] = None) -> dict:
         if not loaded:
             return {
                 "status": "error",
-                "message": "Cannot import dependency_graph module",
+                "message": (
+                    "Cannot import dependency_graph module. "
+                    "If mapify-cli was installed via 'uv tool install', invoke this "
+                    "script with the uv-tool Python interpreter directly: "
+                    "~/.local/share/uv/tools/mapify-cli/bin/python3 "
+                    ".map/scripts/map_orchestrator.py ..."
+                ),
             }
 
     if blueprint_path is None:
