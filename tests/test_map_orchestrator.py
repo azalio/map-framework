@@ -10,6 +10,7 @@ Validates:
 """
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -4436,6 +4437,149 @@ class TestCwdIndependence:
         assert "ST-001" in flat and "ST-X" not in flat, (
             f"set_waves resolved blueprint relative to cwd (project_b) "
             f"instead of script project (project_a). got: {out}"
+        )
+
+    def test_claude_project_dir_takes_priority_over_script_anchor(
+        self, tmp_path
+    ):
+        """CLAUDE_PROJECT_DIR wins over the script-anchored root (issue #328).
+
+        project_a holds the script and is at COMPLETE state. project_b is at
+        step 1.0. With CLAUDE_PROJECT_DIR=project_b the orchestrator must read
+        project_b's state, not project_a's.
+        """
+        project_a = tmp_path / "project_a"
+        project_a.mkdir()
+        script = self._make_project(project_a)
+        self._seed_state(
+            project_a,
+            "test-branch",
+            current_step_id="2.4",
+            current_step_phase="MONITOR",
+            completed=["1.0", "1.5", "1.55", "1.56", "1.6", "2.2", "2.3"],
+            pending=[],
+        )
+
+        project_b = tmp_path / "project_b"
+        self._seed_state(
+            project_b,
+            "test-branch",
+            current_step_id="1.0",
+            current_step_phase="DECOMPOSE",
+            completed=[],
+            pending=["1.5", "1.55", "1.56", "1.6"],
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "get_next_step",
+                "--branch",
+                "test-branch",
+            ],
+            cwd=str(project_a),
+            capture_output=True,
+            text=True,
+            env={**os.environ, "CLAUDE_PROJECT_DIR": str(project_b)},
+        )
+        assert result.returncode == 0, (
+            f"orchestrator failed: stdout={result.stdout!r} "
+            f"stderr={result.stderr!r}"
+        )
+        out = json.loads(result.stdout)
+        # CLAUDE_PROJECT_DIR wins → project_b state (pending step 1.5).
+        # If script-anchored root won instead → project_a state (COMPLETE /
+        # is_complete=True).
+        assert out.get("is_complete") is not True, (
+            f"orchestrator returned COMPLETE — it read project_a (script-anchored) "
+            f"instead of project_b (CLAUDE_PROJECT_DIR). got {out!r}. "
+            f"stderr: {result.stderr!r}"
+        )
+        assert out.get("step_id") == "1.5", (
+            f"orchestrator did not honour CLAUDE_PROJECT_DIR (expected "
+            f"step_id='1.5' from project_b, got {out!r}). "
+            f"stderr: {result.stderr!r}"
+        )
+
+    def test_git_toplevel_from_caller_cwd_takes_priority_over_script_anchor(
+        self, tmp_path
+    ):
+        """git rev-parse --show-toplevel from the caller's cwd wins over the
+        script-anchored root when no CLAUDE_PROJECT_DIR is set (issue #328).
+
+        This reproduces the worktree scenario: the script lives in project_a
+        (not a git repo), but the caller's cwd is project_b (a real git repo).
+        The orchestrator must resolve project_b as the project root and read
+        state from there instead of from project_a.
+        """
+        project_a = tmp_path / "project_a"
+        project_a.mkdir()
+        script = self._make_project(project_a)
+        # project_a: COMPLETE state (wrong answer if script-anchor wins)
+        self._seed_state(
+            project_a,
+            "test-branch",
+            current_step_id="2.4",
+            current_step_phase="MONITOR",
+            completed=["1.0", "1.5", "1.55", "1.56", "1.6", "2.2", "2.3"],
+            pending=[],
+        )
+
+        # project_b: a real git repo (simulates a git worktree checkout).
+        # git rev-parse --show-toplevel works after `git init` alone — no
+        # commit is required for toplevel detection.
+        project_b = tmp_path / "project_b"
+        project_b.mkdir()
+        subprocess.run(
+            ["git", "init", str(project_b)],
+            check=True,
+            capture_output=True,
+        )
+        # project_b: step 1.0 state (correct answer if git-toplevel wins)
+        self._seed_state(
+            project_b,
+            "test-branch",
+            current_step_id="1.0",
+            current_step_phase="DECOMPOSE",
+            completed=[],
+            pending=["1.5", "1.55", "1.56", "1.6"],
+        )
+
+        # Strip CLAUDE_PROJECT_DIR so only the git-toplevel path is exercised
+        env_no_cpd = {
+            k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"
+        }
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "get_next_step",
+                "--branch",
+                "test-branch",
+            ],
+            cwd=str(project_b),  # caller's cwd IS a git repo
+            capture_output=True,
+            text=True,
+            env=env_no_cpd,
+        )
+        assert result.returncode == 0, (
+            f"orchestrator failed: stdout={result.stdout!r} "
+            f"stderr={result.stderr!r}"
+        )
+        out = json.loads(result.stdout)
+        # git-toplevel wins → project_b state (pending step 1.5).
+        # If script-anchored root won instead → project_a state (COMPLETE /
+        # is_complete=True).
+        assert out.get("is_complete") is not True, (
+            f"orchestrator returned COMPLETE — it read project_a (script-anchored) "
+            f"instead of project_b (git-toplevel). got {out!r}. "
+            f"stderr: {result.stderr!r}"
+        )
+        assert out.get("step_id") == "1.5", (
+            f"orchestrator did not resolve project root from caller's git repo "
+            f"(expected step_id='1.5' from project_b, got {out!r}). "
+            f"stderr: {result.stderr!r}"
         )
 
 
