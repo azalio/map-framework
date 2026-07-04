@@ -4771,38 +4771,66 @@ def main():
 
     args = parser.parse_args()
 
-    # Anchor cwd to the project root before any state lookup or branch
-    # detection. The script lives at ``<project>/.map/scripts/map_orchestrator.py``,
-    # so ``parents[2]`` is the project root regardless of how the script was
-    # invoked. Without this chdir, an absolute-path call from a different cwd
-    # silently reads ``.map/<branch>/`` from the caller's directory and
-    # returns misleading "step mismatch" errors.
-    script_anchored_root = Path(__file__).resolve().parents[2]
-    os.chdir(script_anchored_root)
+    # Resolve the project root before any state lookup or branch detection.
+    # Priority (highest first):
+    #   1. CLAUDE_PROJECT_DIR env var (explicit operator intent)
+    #   2. git rev-parse --show-toplevel from the *caller's* cwd (handles
+    #      git worktrees: the worktree root is the correct anchor, not the
+    #      main clone where the script file lives — issue #328)
+    #   3. Path(__file__).resolve().parents[2] — script-anchored fallback
+    #      (legacy behaviour for the normal case where the caller's cwd is
+    #      not a git repo, or git is unavailable)
+    import subprocess as _sp  # noqa: PLC0415 — local import keeps top clean
 
-    # Project-root sanity check: if CLAUDE_PROJECT_DIR is set and points
-    # somewhere other than the script-anchored root, the user almost
-    # certainly invoked the WRONG project's orchestrator. Common failure
-    # mode: `cd /tmp/sibling-repo && python3 .map/scripts/map_orchestrator.py`
-    # silently reads sibling-repo's state instead of the project the
-    # operator's session is bound to. We warn (to stderr, never block),
-    # so the deviation is loud but not fatal — the operator may have a
-    # legitimate reason.
+    script_anchored_root = Path(__file__).resolve().parents[2]
+    caller_cwd = Path.cwd()
+    project_root: Optional[Path] = None
+
+    # 1. CLAUDE_PROJECT_DIR
     env_project_dir = os.environ.get("CLAUDE_PROJECT_DIR", "").strip()
     if env_project_dir:
         try:
-            env_resolved = Path(env_project_dir).resolve()
+            candidate = Path(env_project_dir).resolve()
+            if candidate.is_dir():
+                project_root = candidate
+            else:
+                print(
+                    f"WARNING: CLAUDE_PROJECT_DIR={env_project_dir!r} is not a "
+                    "directory; falling back to git/script-anchored root resolution.",
+                    file=sys.stderr,
+                )
         except OSError:
-            env_resolved = None
-        if env_resolved and env_resolved != script_anchored_root:
-            print(
-                f"WARNING: orchestrator project mismatch. "
-                f"CLAUDE_PROJECT_DIR={env_resolved} but this script lives at "
-                f"{script_anchored_root}. Reading state from "
-                f"{script_anchored_root}/.map/ — if you meant the other "
-                "project, run that project's .map/scripts/map_orchestrator.py.",
-                file=sys.stderr,
+            pass
+
+    # 2. git toplevel from the caller's cwd
+    if project_root is None:
+        try:
+            _git = _sp.run(
+                ["git", "-C", str(caller_cwd), "rev-parse", "--show-toplevel"],
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
+            if _git.returncode == 0:
+                project_root = Path(_git.stdout.strip()).resolve()
+        except Exception:
+            pass
+
+    # 3. Script-anchored fallback
+    if project_root is None:
+        project_root = script_anchored_root
+
+    # Inform (never block) when operating from a different root than where
+    # the script file lives — expected and correct for git worktrees.
+    if project_root != script_anchored_root:
+        print(
+            f"INFO: orchestrator resolved project root to {project_root} "
+            f"(script lives in {script_anchored_root}). "
+            "Operating on the resolved root — expected for git worktrees.",
+            file=sys.stderr,
+        )
+
+    os.chdir(project_root)
 
     # Get branch. ``--branch`` arrives unsanitized from the CLI; route it
     # through the same sanitiser used by ``get_branch_name()`` so the value
