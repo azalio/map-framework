@@ -1,4 +1,4 @@
-"""Tests for the install manifest/lock (issue #313).
+"""Tests for the install manifest/lock (issues #313 and #314).
 
 Covers:
   VC1: Claude install writes manifest with correct entries.
@@ -10,6 +10,14 @@ Covers:
   VC7: read_manifest returns None for missing/corrupt manifest.
   VC8: management_mode is inferred correctly (fenced vs full vs hooks-merge).
   VC9: Local-only paths are excluded from the committed manifest.
+  VC10 (#314): Config entries for MCP servers are detected and recorded.
+  VC11 (#314): Config entries for statusline are detected and recorded.
+  VC12 (#314): User-modified MCP servers are NOT recorded as MAP-owned.
+  VC13 (#314): reconcile_config removes MAP-owned MCP server entry.
+  VC14 (#314): reconcile_config preserves user-modified MCP server.
+  VC15 (#314): reconcile_config removes MAP-owned statusline.
+  VC16 (#314): reconcile_config refuses to remove user-defined statusline.
+  VC17 (#314): read_manifest backward-compat — old manifest without config_entries.
 """
 
 from __future__ import annotations
@@ -31,9 +39,12 @@ from mapify_cli.install_manifest import (
     InstallManifest,
     _build_entry_from_file,
     _infer_management_mode,
+    _scan_mcp_config_entries,
+    _scan_statusline_config_entry,
     build_manifest,
     check_installed,
     read_manifest,
+    reconcile_config,
     write_manifest,
 )
 
@@ -535,3 +546,346 @@ class TestCheckInstalledNoManifest:
         assert result.orphaned == []
         assert result.drifted == []
         assert result.ok == []
+
+
+# ---------------------------------------------------------------------------
+# VC10: Config entries for MCP servers are detected
+# ---------------------------------------------------------------------------
+
+_MAP_SERVER_NAME = "sequential-thinking"
+_MAP_SERVER_CONFIG = {
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+}
+_TIMESTAMP = "2026-07-05T00:00:00Z"
+
+
+def _write_mcp_json(project: Path, servers: dict) -> None:
+    """Write .mcp.json with the given mcpServers dict."""
+    (project / ".mcp.json").write_text(
+        __import__("json").dumps({"mcpServers": servers}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_statusline_local(project: Path, command: str) -> None:
+    """Write .claude/settings.local.json with the given statusLine command."""
+    settings = project / ".claude" / "settings.local.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(
+        __import__("json").dumps(
+            {"statusLine": {"type": "command", "command": command}}, indent=2
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+
+class TestVC10McpConfigEntries:
+    def test_map_server_detected_when_value_matches(self, tmp_path: Path) -> None:
+        _write_mcp_json(tmp_path, {_MAP_SERVER_NAME: _MAP_SERVER_CONFIG})
+        entries = _scan_mcp_config_entries(tmp_path, VERSION, _TIMESTAMP)
+        assert len(entries) == 1
+        e = entries[0]
+        assert e.file == ".mcp.json"
+        assert e.key_path == f"mcpServers.{_MAP_SERVER_NAME}"
+        assert e.installed_at == _TIMESTAMP
+        assert e.mapify_version == VERSION
+
+    def test_no_mcp_json_returns_empty(self, tmp_path: Path) -> None:
+        entries = _scan_mcp_config_entries(tmp_path, VERSION, _TIMESTAMP)
+        assert entries == []
+
+    def test_empty_mcp_servers_returns_empty(self, tmp_path: Path) -> None:
+        _write_mcp_json(tmp_path, {})
+        entries = _scan_mcp_config_entries(tmp_path, VERSION, _TIMESTAMP)
+        assert entries == []
+
+    def test_build_manifest_includes_mcp_config_entries(self, tmp_path: Path) -> None:
+        _setup_claude_install(tmp_path)
+        _write_mcp_json(tmp_path, {_MAP_SERVER_NAME: _MAP_SERVER_CONFIG})
+        manifest = build_manifest(tmp_path, "claude", VERSION)
+        assert len(manifest.config_entries) >= 1
+        keys = [e.key_path for e in manifest.config_entries]
+        assert f"mcpServers.{_MAP_SERVER_NAME}" in keys
+
+    def test_config_entries_empty_for_codex_provider(self, tmp_path: Path) -> None:
+        _setup_codex_install(tmp_path)
+        # Even if .mcp.json exists, codex provider doesn't own MCP entries
+        _write_mcp_json(tmp_path, {_MAP_SERVER_NAME: _MAP_SERVER_CONFIG})
+        manifest = build_manifest(tmp_path, "codex", VERSION)
+        assert manifest.config_entries == []
+
+    def test_config_entry_has_no_absolute_paths(self, tmp_path: Path) -> None:
+        _write_mcp_json(tmp_path, {_MAP_SERVER_NAME: _MAP_SERVER_CONFIG})
+        entries = _scan_mcp_config_entries(tmp_path, VERSION, _TIMESTAMP)
+        for e in entries:
+            assert not e.file.startswith("/"), "file must be relative"
+            assert not e.key_path.startswith("/"), "key_path must not contain absolute path"
+
+
+# ---------------------------------------------------------------------------
+# VC11: Config entries for statusline are detected
+# ---------------------------------------------------------------------------
+
+class TestVC11StatuslineConfigEntry:
+    def test_map_statusline_detected(self, tmp_path: Path) -> None:
+        _write_statusline_local(tmp_path, '"/abs/path/to/.claude/hooks/map-statusline.py"')
+        entry = _scan_statusline_config_entry(tmp_path, VERSION, _TIMESTAMP)
+        assert entry is not None
+        assert entry.file == ".claude/settings.local.json"
+        assert entry.key_path == "statusLine"
+        assert entry.installed_at == _TIMESTAMP
+        assert entry.mapify_version == VERSION
+
+    def test_no_settings_local_returns_none(self, tmp_path: Path) -> None:
+        entry = _scan_statusline_config_entry(tmp_path, VERSION, _TIMESTAMP)
+        assert entry is None
+
+    def test_user_defined_statusline_returns_none(self, tmp_path: Path) -> None:
+        _write_statusline_local(tmp_path, "my-custom-statusline.sh")
+        entry = _scan_statusline_config_entry(tmp_path, VERSION, _TIMESTAMP)
+        assert entry is None
+
+    def test_missing_statusline_key_returns_none(self, tmp_path: Path) -> None:
+        settings = tmp_path / ".claude" / "settings.local.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        settings.write_text('{"theme": "dark"}\n', encoding="utf-8")
+        entry = _scan_statusline_config_entry(tmp_path, VERSION, _TIMESTAMP)
+        assert entry is None
+
+    def test_statusline_not_a_dict_returns_none(self, tmp_path: Path) -> None:
+        settings = tmp_path / ".claude" / "settings.local.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        settings.write_text('{"statusLine": "some-string"}\n', encoding="utf-8")
+        entry = _scan_statusline_config_entry(tmp_path, VERSION, _TIMESTAMP)
+        assert entry is None
+
+    def test_build_manifest_includes_statusline_config_entry(self, tmp_path: Path) -> None:
+        _setup_claude_install(tmp_path)
+        _write_statusline_local(tmp_path, '"/path/to/map-statusline.py"')
+        manifest = build_manifest(tmp_path, "claude", VERSION)
+        keys = [e.key_path for e in manifest.config_entries]
+        assert "statusLine" in keys
+
+
+# ---------------------------------------------------------------------------
+# VC12: User-modified MCP servers are NOT recorded as MAP-owned
+# ---------------------------------------------------------------------------
+
+class TestVC12UserModifiedMcp:
+    def test_user_modified_server_not_recorded(self, tmp_path: Path) -> None:
+        user_config = {"command": "npx", "args": ["-y", "my-custom-version"]}
+        _write_mcp_json(tmp_path, {_MAP_SERVER_NAME: user_config})
+        entries = _scan_mcp_config_entries(tmp_path, VERSION, _TIMESTAMP)
+        assert entries == [], "user-modified config must not be recorded as MAP-owned"
+
+    def test_extra_user_server_not_recorded(self, tmp_path: Path) -> None:
+        _write_mcp_json(tmp_path, {
+            _MAP_SERVER_NAME: _MAP_SERVER_CONFIG,
+            "user-custom-server": {"command": "node", "args": ["server.js"]},
+        })
+        entries = _scan_mcp_config_entries(tmp_path, VERSION, _TIMESTAMP)
+        keys = [e.key_path for e in entries]
+        assert f"mcpServers.{_MAP_SERVER_NAME}" in keys
+        assert "mcpServers.user-custom-server" not in keys
+
+
+# ---------------------------------------------------------------------------
+# VC13: reconcile_config removes MAP-owned MCP server entry
+# ---------------------------------------------------------------------------
+
+class TestVC13ReconcileMcpRemove:
+    def test_removes_map_owned_server(self, tmp_path: Path) -> None:
+        _setup_claude_install(tmp_path)
+        _write_mcp_json(tmp_path, {_MAP_SERVER_NAME: _MAP_SERVER_CONFIG})
+        manifest = build_manifest(tmp_path, "claude", VERSION)
+        write_manifest(tmp_path, manifest)
+
+        result = reconcile_config(tmp_path)
+        assert f".mcp.json:mcpServers.{_MAP_SERVER_NAME}" in result.removed
+
+        # Verify the server was actually removed from disk
+        mcp_json = __import__("json").loads(
+            (tmp_path / ".mcp.json").read_text(encoding="utf-8")
+        )
+        assert _MAP_SERVER_NAME not in mcp_json.get("mcpServers", {})
+
+    def test_preserves_other_top_level_keys(self, tmp_path: Path) -> None:
+        (tmp_path / ".mcp.json").write_text(
+            __import__("json").dumps({
+                "mcpServers": {_MAP_SERVER_NAME: _MAP_SERVER_CONFIG},
+                "globalShortcut": "Cmd+Shift+.",
+            }, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        manifest = build_manifest(tmp_path, "claude", VERSION)
+        write_manifest(tmp_path, manifest)
+
+        reconcile_config(tmp_path)
+
+        mcp_json = __import__("json").loads(
+            (tmp_path / ".mcp.json").read_text(encoding="utf-8")
+        )
+        assert "globalShortcut" in mcp_json, "user top-level keys must be preserved"
+
+    def test_no_manifest_returns_empty_result(self, tmp_path: Path) -> None:
+        result = reconcile_config(tmp_path)
+        assert result.removed == []
+        assert result.skipped == []
+        assert result.missing == []
+
+    def test_already_absent_server_is_missing(self, tmp_path: Path) -> None:
+        _write_mcp_json(tmp_path, {_MAP_SERVER_NAME: _MAP_SERVER_CONFIG})
+        manifest = build_manifest(tmp_path, "claude", VERSION)
+        write_manifest(tmp_path, manifest)
+
+        # Remove the server before reconciling
+        (tmp_path / ".mcp.json").write_text(
+            '{"mcpServers": {}}\n', encoding="utf-8"
+        )
+
+        result = reconcile_config(tmp_path)
+        assert f".mcp.json:mcpServers.{_MAP_SERVER_NAME}" in result.missing
+        assert result.removed == []
+
+
+# ---------------------------------------------------------------------------
+# VC14: reconcile_config preserves user-modified MCP server
+# ---------------------------------------------------------------------------
+
+class TestVC14ReconcilePreservesUserModified:
+    def test_user_modified_server_skipped(self, tmp_path: Path) -> None:
+        # Install with MAP config
+        _write_mcp_json(tmp_path, {_MAP_SERVER_NAME: _MAP_SERVER_CONFIG})
+        manifest = build_manifest(tmp_path, "claude", VERSION)
+        write_manifest(tmp_path, manifest)
+
+        # User later modifies the server config
+        user_modified = {"command": "npx", "args": ["-y", "my-custom-version"]}
+        _write_mcp_json(tmp_path, {_MAP_SERVER_NAME: user_modified})
+
+        result = reconcile_config(tmp_path)
+        assert f".mcp.json:mcpServers.{_MAP_SERVER_NAME}" in result.skipped
+        assert result.removed == []
+
+        # Verify the user's config is still on disk
+        mcp_json = __import__("json").loads(
+            (tmp_path / ".mcp.json").read_text(encoding="utf-8")
+        )
+        assert mcp_json["mcpServers"][_MAP_SERVER_NAME] == user_modified
+
+
+# ---------------------------------------------------------------------------
+# VC15: reconcile_config removes MAP-owned statusline
+# ---------------------------------------------------------------------------
+
+class TestVC15ReconcileStatuslineRemove:
+    def test_removes_map_owned_statusline(self, tmp_path: Path) -> None:
+        _setup_claude_install(tmp_path)
+        _write_statusline_local(tmp_path, '"/path/to/map-statusline.py"')
+        manifest = build_manifest(tmp_path, "claude", VERSION)
+        write_manifest(tmp_path, manifest)
+
+        result = reconcile_config(tmp_path)
+        assert ".claude/settings.local.json:statusLine" in result.removed
+
+        # Verify the statusLine key was removed from disk
+        settings = __import__("json").loads(
+            (tmp_path / ".claude" / "settings.local.json").read_text(encoding="utf-8")
+        )
+        assert "statusLine" not in settings
+
+    def test_preserves_other_settings_keys(self, tmp_path: Path) -> None:
+        settings = tmp_path / ".claude" / "settings.local.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        settings.write_text(
+            __import__("json").dumps({
+                "statusLine": {"type": "command", "command": '"/path/map-statusline.py"'},
+                "permissions": {"allow": ["Bash"]},
+            }, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        manifest = build_manifest(tmp_path, "claude", VERSION)
+        write_manifest(tmp_path, manifest)
+
+        reconcile_config(tmp_path)
+
+        remaining = __import__("json").loads(
+            settings.read_text(encoding="utf-8")
+        )
+        assert "permissions" in remaining, "user settings keys must be preserved"
+        assert "statusLine" not in remaining
+
+
+# ---------------------------------------------------------------------------
+# VC16: reconcile_config refuses to remove user-defined statusline
+# ---------------------------------------------------------------------------
+
+class TestVC16ReconcileRefusesUserStatusline:
+    def test_user_defined_statusline_skipped(self, tmp_path: Path) -> None:
+        # Build manifest with MAP statusline
+        _write_statusline_local(tmp_path, '"/path/to/map-statusline.py"')
+        manifest = build_manifest(tmp_path, "claude", VERSION)
+        write_manifest(tmp_path, manifest)
+
+        # User replaces the statusline with their own
+        _write_statusline_local(tmp_path, "my-custom-status-command")
+
+        result = reconcile_config(tmp_path)
+        assert ".claude/settings.local.json:statusLine" in result.skipped
+        assert result.removed == []
+
+    def test_no_statusline_key_is_missing(self, tmp_path: Path) -> None:
+        # Build manifest that expects a statusLine
+        _write_statusline_local(tmp_path, '"/path/to/map-statusline.py"')
+        manifest = build_manifest(tmp_path, "claude", VERSION)
+        write_manifest(tmp_path, manifest)
+
+        # User removes the key manually
+        settings = tmp_path / ".claude" / "settings.local.json"
+        settings.write_text('{"theme": "dark"}\n', encoding="utf-8")
+
+        result = reconcile_config(tmp_path)
+        assert ".claude/settings.local.json:statusLine" in result.missing
+        assert result.removed == []
+
+
+# ---------------------------------------------------------------------------
+# VC17: read_manifest backward compatibility — old manifest without config_entries
+# ---------------------------------------------------------------------------
+
+class TestVC17BackwardCompat:
+    def test_old_manifest_without_config_entries_readable(self, tmp_path: Path) -> None:
+        old_manifest = {
+            "mapify_version": "3.10.0",
+            "provider": "claude",
+            "installed_at": "2026-01-01T00:00:00Z",
+            "entries": [],
+            # config_entries deliberately absent (old format)
+        }
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir(parents=True, exist_ok=True)
+        (map_dir / "mapify.lock.json").write_text(
+            __import__("json").dumps(old_manifest, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        manifest = read_manifest(tmp_path)
+        assert manifest is not None
+        assert manifest.mapify_version == "3.10.0"
+        assert manifest.config_entries == [], "old manifests must deserialize with empty config_entries"
+
+    def test_idempotent_build_does_not_duplicate_config_entries(self, tmp_path: Path) -> None:
+        _write_mcp_json(tmp_path, {_MAP_SERVER_NAME: _MAP_SERVER_CONFIG})
+        _write_statusline_local(tmp_path, '"/path/map-statusline.py"')
+
+        m1 = build_manifest(tmp_path, "claude", VERSION)
+        write_manifest(tmp_path, m1)
+
+        m2 = build_manifest(tmp_path, "claude", VERSION)
+        write_manifest(tmp_path, m2)
+
+        m_read = read_manifest(tmp_path)
+        assert m_read is not None
+        config_keys = [e.key_path for e in m_read.config_entries]
+        assert len(config_keys) == len(set(config_keys)), "no duplicate config entries"

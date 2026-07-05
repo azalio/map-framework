@@ -5,11 +5,17 @@ Writes .map/mapify.lock.json during ``mapify init`` and provides
 file installed by the provider so the installed surface can be audited
 as a whole rather than file-by-file.
 
+Also records out-of-band ownership of config-merge entries (MCP servers,
+statusline) via ``config_entries`` so ``mapify uninstall`` can safely
+remove only MAP-owned keys without touching user config.
+
 Security invariants:
 - No absolute paths stored in the committed manifest.
 - Local-only files (statusline, machine-specific state) are excluded from
   the committed manifest.
 - No secrets or credential paths are written here.
+- Provider strict-schema files (e.g. .mcp.json) are never given extra
+  metadata keys (see #270); ownership is tracked out-of-band here.
 """
 
 from __future__ import annotations
@@ -104,13 +110,31 @@ class ManifestEntry:
 
 
 @dataclass
+class ConfigEntry:
+    """One MAP-owned config-merge entry (e.g. an MCP server key or statusLine).
+
+    These live in files MAP merges INTO rather than files MAP fully owns.
+    Ownership is tracked out-of-band here so provider strict schemas are
+    never given extra metadata keys (see #270 guardrail).
+    No absolute paths or secrets are stored.
+    """
+
+    file: str             # relative POSIX path of the config file (e.g. ".mcp.json")
+    key_path: str         # dot-notation path to the owned key
+                          #   e.g. "mcpServers.sequential-thinking" or "statusLine"
+    installed_at: str     # ISO 8601 UTC timestamp (manifest write time)
+    mapify_version: str   # mapify-cli version that wrote this entry
+
+
+@dataclass
 class InstallManifest:
     """Aggregate install lock for all MAP-managed provider surfaces."""
 
     mapify_version: str
     provider: str
-    installed_at: str     # manifest write timestamp
+    installed_at: str       # manifest write timestamp
     entries: list[ManifestEntry] = field(default_factory=list)
+    config_entries: list[ConfigEntry] = field(default_factory=list)
 
 
 @dataclass
@@ -121,6 +145,15 @@ class CheckResult:
     orphaned: list[str] = field(default_factory=list)  # MAP-managed on disk, not in manifest
     drifted: list[str] = field(default_factory=list)   # template_hash differs vs manifest
     ok: list[str] = field(default_factory=list)        # present and matching
+
+
+@dataclass
+class ReconcileResult:
+    """Outcome of reconcile_config()."""
+
+    removed: list[str] = field(default_factory=list)   # MAP-owned entries removed
+    skipped: list[str] = field(default_factory=list)   # user-modified, preserved
+    missing: list[str] = field(default_factory=list)   # already absent from disk
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +263,209 @@ def _scan_file(project_path: Path, rel_file: str) -> Optional[ManifestEntry]:
 
 
 # ---------------------------------------------------------------------------
+# Config-entry scanning (out-of-band ownership for config-merge surfaces)
+# ---------------------------------------------------------------------------
+
+
+def _scan_mcp_config_entries(
+    project_path: Path, version: str, timestamp: str
+) -> list[ConfigEntry]:
+    """Detect MAP-owned mcpServers entries in .mcp.json.
+
+    An entry is MAP-owned when its key name is in MAP's canonical server list
+    AND its current value exactly matches MAP's expected config.  User-
+    modified or user-pre-existing entries with different values are excluded.
+    No absolute paths are stored.
+    """
+    try:
+        from mapify_cli.config.mcp import build_standard_mcp_servers, read_project_mcp_json
+    except ImportError:
+        return []
+
+    mcp_data = read_project_mcp_json(project_path / ".mcp.json")
+    if not mcp_data:
+        return []
+
+    existing_servers = mcp_data.get("mcpServers", {})
+    map_servers = build_standard_mcp_servers()
+
+    entries: list[ConfigEntry] = []
+    for name, expected_config in map_servers.items():
+        if existing_servers.get(name) == expected_config:
+            entries.append(ConfigEntry(
+                file=".mcp.json",
+                key_path=f"mcpServers.{name}",
+                installed_at=timestamp,
+                mapify_version=version,
+            ))
+    return entries
+
+
+def _scan_statusline_config_entry(
+    project_path: Path, version: str, timestamp: str
+) -> Optional[ConfigEntry]:
+    """Detect if MAP's statusline is present in settings.local.json.
+
+    MAP-owned statusline entries always invoke map-statusline.py; that
+    substring is the ownership marker.  No absolute path is stored in
+    the manifest — only the key path (``statusLine``).
+    """
+    settings_local = project_path / ".claude" / "settings.local.json"
+    if not settings_local.is_file() or settings_local.is_symlink():
+        return None
+    try:
+        data = json.loads(settings_local.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    status_line = data.get("statusLine")
+    if not isinstance(status_line, dict):
+        return None
+    command = status_line.get("command", "")
+    if "map-statusline.py" not in command:
+        return None
+    return ConfigEntry(
+        file=".claude/settings.local.json",
+        key_path="statusLine",
+        installed_at=timestamp,
+        mapify_version=version,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Config-entry reconcile (uninstall MAP-owned config keys)
+# ---------------------------------------------------------------------------
+
+
+def _remove_mcp_server(project_path: Path, server_name: str) -> bool:
+    """Remove a MAP-owned MCP server from .mcp.json.
+
+    Refuses to remove if the current value differs from MAP's canonical
+    config (i.e. the user modified it).  Returns True when the entry was
+    removed; False when it was absent or user-modified.
+    """
+    try:
+        from mapify_cli.config.mcp import (
+            build_standard_mcp_servers,
+            read_project_mcp_json,
+            write_project_mcp_json,
+        )
+    except ImportError:
+        return False
+
+    mcp_json_path = project_path / ".mcp.json"
+    mcp_data = read_project_mcp_json(mcp_json_path)
+    if not mcp_data:
+        return False
+
+    servers = mcp_data.get("mcpServers", {})
+    if server_name not in servers:
+        return False  # already gone
+
+    expected = build_standard_mcp_servers().get(server_name)
+    if servers[server_name] != expected:
+        return False  # user-modified: refuse to remove
+
+    del servers[server_name]
+    mcp_data["mcpServers"] = servers
+    write_project_mcp_json(mcp_json_path, mcp_data)
+    return True
+
+
+def _remove_statusline(project_path: Path, rel_file: str) -> bool:
+    """Remove MAP's statusLine key from the given settings file.
+
+    Only removes when the command contains ``map-statusline.py``.
+    Returns True when removed; False when absent or user-defined.
+    """
+    settings_path = project_path / rel_file
+    if not settings_path.is_file() or settings_path.is_symlink():
+        return False
+    try:
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+
+    sl = data.get("statusLine")
+    if not isinstance(sl, dict):
+        return False
+    if "map-statusline.py" not in sl.get("command", ""):
+        return False  # user-defined statusline: refuse to remove
+
+    del data["statusLine"]
+    settings_path.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    return True
+
+
+def reconcile_config(project_path: Path) -> ReconcileResult:
+    """Remove all MAP-owned config entries recorded in the install manifest.
+
+    For each ``ConfigEntry`` in the manifest:
+    - If the entry is absent from disk: recorded as ``missing``.
+    - If the value was user-modified (differs from MAP's canonical): recorded
+      as ``skipped`` (ownership preserved, key left intact).
+    - If the value still matches MAP's canonical: removed and recorded as
+      ``removed``.
+
+    Returns a :class:`ReconcileResult` describing what happened.
+    """
+    result = ReconcileResult()
+    manifest = read_manifest(project_path)
+    if manifest is None:
+        return result
+
+    for entry in manifest.config_entries:
+        label = f"{entry.file}:{entry.key_path}"
+
+        if entry.file == ".mcp.json" and entry.key_path.startswith("mcpServers."):
+            server_name = entry.key_path[len("mcpServers."):]
+            try:
+                from mapify_cli.config.mcp import (
+                    build_standard_mcp_servers,
+                    read_project_mcp_json,
+                )
+                mcp_data = read_project_mcp_json(project_path / ".mcp.json")
+            except ImportError:
+                result.missing.append(label)
+                continue
+
+            if not mcp_data or server_name not in mcp_data.get("mcpServers", {}):
+                result.missing.append(label)
+            elif mcp_data["mcpServers"][server_name] != build_standard_mcp_servers().get(server_name):
+                result.skipped.append(label)
+            else:
+                _remove_mcp_server(project_path, server_name)
+                result.removed.append(label)
+
+        elif entry.key_path == "statusLine":
+            settings_path = project_path / entry.file
+            if not settings_path.is_file():
+                result.missing.append(label)
+                continue
+            try:
+                data = json.loads(settings_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                result.missing.append(label)
+                continue
+
+            sl = data.get("statusLine") if isinstance(data, dict) else None
+            if not isinstance(sl, dict):
+                result.missing.append(label)
+            elif "map-statusline.py" not in sl.get("command", ""):
+                result.skipped.append(label)
+            else:
+                _remove_statusline(project_path, entry.file)
+                result.removed.append(label)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Manifest building
 # ---------------------------------------------------------------------------
 
@@ -266,11 +502,24 @@ def build_manifest(
     # Stable sort: alphabetical by dest path
     entries.sort(key=lambda e: e.dest)
 
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Config-entry ownership (only for providers that do config merges)
+    config_entries: list[ConfigEntry] = []
+    if provider == "claude":
+        config_entries.extend(_scan_mcp_config_entries(project_path, version, timestamp))
+        ce = _scan_statusline_config_entry(project_path, version, timestamp)
+        if ce is not None:
+            config_entries.append(ce)
+    # Stable sort: alphabetical by file+key_path
+    config_entries.sort(key=lambda e: (e.file, e.key_path))
+
     return InstallManifest(
         mapify_version=version,
         provider=provider,
-        installed_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        installed_at=timestamp,
         entries=entries,
+        config_entries=config_entries,
     )
 
 
@@ -306,11 +555,14 @@ def read_manifest(project_path: Path) -> Optional[InstallManifest]:
     try:
         raw_entries = data.get("entries", [])
         entries = [ManifestEntry(**e) for e in raw_entries if isinstance(e, dict)]
+        raw_config = data.get("config_entries", [])
+        config_entries = [ConfigEntry(**e) for e in raw_config if isinstance(e, dict)]
         return InstallManifest(
             mapify_version=data.get("mapify_version", ""),
             provider=data.get("provider", ""),
             installed_at=data.get("installed_at", ""),
             entries=entries,
+            config_entries=config_entries,
         )
     except (TypeError, KeyError):
         return None
