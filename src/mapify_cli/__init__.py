@@ -1661,6 +1661,86 @@ def check_installed(
         raise typer.Exit(1)
 
 
+@app.command()
+def uninstall(
+    project_path: Optional[Path] = typer.Argument(
+        None,
+        help="Project root directory (defaults to current directory).",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip confirmation prompt.",
+    ),
+) -> None:
+    """Remove MAP-owned config entries from provider config files.
+
+    Reads .map/mapify.lock.json and removes only the config-merge entries
+    MAP injected (MCP server keys in .mcp.json, the MAP statusline in
+    settings.local.json).  User-modified or user-owned entries are
+    preserved.  Installed files (.claude/, .map/scripts/, etc.) are
+    NOT removed by this command.
+
+    Exit codes: 0 = ok / nothing to remove, 1 = error, 2 = no manifest.
+    """
+    from mapify_cli.install_manifest import read_manifest, reconcile_config
+
+    target = project_path or Path.cwd()
+
+    manifest = read_manifest(target)
+    if manifest is None:
+        console.print(
+            f"[yellow]No install manifest found at "
+            f"{target / '.map' / 'mapify.lock.json'}[/yellow]"
+        )
+        console.print("[dim]Run [cyan]mapify init .[/cyan] to generate the manifest.[/dim]")
+        raise typer.Exit(2)
+
+    if not manifest.config_entries:
+        console.print("[green]No MAP-owned config entries in the manifest.[/green]")
+        return
+
+    console.print(
+        f"[bold]MAP config entries to remove[/bold] "
+        f"(provider: [cyan]{manifest.provider}[/cyan]):"
+    )
+    for entry in manifest.config_entries:
+        console.print(f"  [dim]{entry.file}[/dim]  [cyan]{entry.key_path}[/cyan]")
+
+    console.print()
+    if not yes:
+        confirm = typer.confirm(
+            "Remove these MAP-owned config entries?",
+            default=False,
+        )
+        if not confirm:
+            console.print("[dim]Aborted.[/dim]")
+            return
+
+    result = reconcile_config(target)
+
+    if result.removed:
+        console.print(f"[green]Removed ({len(result.removed)}):[/green]")
+        for label in result.removed:
+            console.print(f"  [green]✓[/green] {label}")
+
+    if result.skipped:
+        console.print(
+            f"[yellow]Skipped ({len(result.skipped)}) — user-modified, preserved:[/yellow]"
+        )
+        for label in result.skipped:
+            console.print(f"  [yellow]~[/yellow] {label}")
+
+    if result.missing:
+        console.print(f"[dim]Already absent ({len(result.missing)}):[/dim]")
+        for label in result.missing:
+            console.print(f"  [dim]-[/dim] {label}")
+
+    if not result.removed and not result.skipped and not result.missing:
+        console.print("[dim]Nothing to do.[/dim]")
+
+
 # Research localization eval commands
 
 
