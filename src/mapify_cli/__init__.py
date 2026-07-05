@@ -1003,6 +1003,22 @@ def init(
             else:
                 tracker.error("git", "failed")
 
+    # Write install manifest (.map/mapify.lock.json) — scan-based, after all files
+    # have been installed by both providers.
+    tracker.add("manifest", "Write install manifest")
+    tracker.start("manifest")
+    try:
+        from mapify_cli.install_manifest import build_manifest, write_manifest
+
+        manifest = build_manifest(project_path, provider, __version__)
+        manifest_path = write_manifest(project_path, manifest)
+        tracker.complete(
+            "manifest",
+            f"{len(manifest.entries)} entries → {manifest_path.relative_to(project_path)}",
+        )
+    except Exception as _manifest_exc:
+        tracker.error("manifest", f"skipped: {_manifest_exc}")
+
     tracker.add("finalize", "Finalize")
     tracker.complete("finalize", "project ready")
 
@@ -1569,6 +1585,80 @@ def upgrade():
         "[dim]To refresh this project's MAP files with the new templates, run "
         "[cyan]mapify init . --force[/cyan].[/dim]"
     )
+
+
+@app.command("check-installed")
+def check_installed(
+    project_path: Optional[Path] = typer.Argument(
+        None,
+        help="Project root directory (defaults to current directory).",
+    ),
+) -> None:
+    """Compare installed MAP files against .map/mapify.lock.json.
+
+    Reports missing files (in manifest but absent from disk), orphaned files
+    (MAP-managed on disk but not recorded in the manifest), and drifted files
+    (template hash differs from the manifest record).
+
+    Exit codes: 0 = all ok, 1 = issues found, 2 = no manifest.
+    """
+    from mapify_cli.install_manifest import check_installed as _check_installed
+    from mapify_cli.install_manifest import read_manifest
+
+    target = project_path or Path.cwd()
+
+    manifest = read_manifest(target)
+    if manifest is None:
+        console.print(
+            f"[yellow]No install manifest found at {target / '.map' / 'mapify.lock.json'}[/yellow]"
+        )
+        console.print(
+            "[dim]Run [cyan]mapify init .[/cyan] to generate the manifest.[/dim]"
+        )
+        raise typer.Exit(2)
+
+    console.print(
+        f"[bold]MAP install manifest[/bold] — provider: [cyan]{manifest.provider}[/cyan], "
+        f"version: [cyan]{manifest.mapify_version}[/cyan], "
+        f"installed: [dim]{manifest.installed_at}[/dim]"
+    )
+    console.print(f"[dim]{len(manifest.entries)} entries recorded[/dim]")
+    console.print()
+
+    result = _check_installed(target)
+
+    has_issues = False
+
+    if result.missing:
+        has_issues = True
+        console.print(f"[red]Missing ({len(result.missing)} files):[/red]")
+        for path in result.missing:
+            console.print(f"  [red]✗[/red] {path}")
+
+    if result.orphaned:
+        has_issues = True
+        console.print(f"[yellow]Orphaned ({len(result.orphaned)} files):[/yellow]")
+        for path in result.orphaned:
+            console.print(f"  [yellow]?[/yellow] {path}")
+
+    if result.drifted:
+        has_issues = True
+        console.print(f"[yellow]Drifted ({len(result.drifted)} files):[/yellow]")
+        for path in result.drifted:
+            console.print(f"  [yellow]~[/yellow] {path}")
+
+    if result.ok and not has_issues:
+        console.print(
+            f"[green]✅ All {len(result.ok)} managed files match the manifest.[/green]"
+        )
+    elif not has_issues:
+        console.print("[green]✅ No issues found.[/green]")
+    else:
+        console.print()
+        console.print(
+            "[dim]Run [cyan]mapify init . --force[/cyan] to refresh managed files.[/dim]"
+        )
+        raise typer.Exit(1)
 
 
 # Research localization eval commands
