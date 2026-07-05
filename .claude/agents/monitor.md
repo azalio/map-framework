@@ -880,6 +880,50 @@ Include in JSON output when validation_criteria provided:
   - If `security_critical == true`: set `valid: false` (missing executable enforcement is a release blocker).
   - Otherwise: add a **testability** issue and require Actor to add tests.
 
+### TDD Violation Detection (when tdd.enforce=true)
+
+When the project config has `tdd.enforce: true`, apply this check to EVERY Actor submission before the 11-dimension model. A violation sets `valid: false` immediately.
+
+**TDD violation criteria** — any of the following is a `tdd_violation`:
+1. Tests were written AFTER implementation (tests reference implementation details unavailable from the spec alone, or the implementation was clearly written first)
+2. Tests pass WITHOUT the implementation (trivial pass, over-mocked, testing structure not behavior)
+3. No new test exists for the new behavior introduced by this subtask
+4. Actor output claims "TDD" but shows tests written simultaneously with or after code
+
+**How to check** (examine the diff):
+- Test files should introduce assertions on behavior described in the spec, not on internal implementation structure
+- Implementation files should be adding code that satisfies pre-existing test contracts
+- If tests and implementation appear to be written together (same commit, same session), check whether tests assert behavior or structure
+- A test that only checks `isinstance(result, SomeClass)` or a single attribute is structural, not behavioral
+
+**Rationalization detection** — flag any of these patterns in Actor output as a violation signal:
+- "Tests written simultaneously with code" → likely violation; verify manually
+- "Tests verify implementation structure" → violation (must verify behavior)
+- "I added tests after to ensure coverage" → violation
+- "This is too simple to need a test first" → violation
+- "The test is obvious so I wrote code first" → violation
+
+**TDD verdict output** (include in JSON when tdd.enforce is true):
+
+```json
+{
+  "tdd_check": {
+    "enforced": true,
+    "violation": false,
+    "test_written_first": true,
+    "test_fails_without_impl": true,
+    "test_behavior_not_structure": true,
+    "verdict": "tdd_compliant"
+  }
+}
+```
+
+If `violation: true`:
+- Set `valid: false`
+- Use verdict `tdd_violation`
+- Include message: `"TDD violation: [specific reason]. Implementation must be deleted and restarted with failing tests first."`
+- Do NOT suggest "just add tests" — the implementation must be deleted and rewritten test-first per the Iron Law.
+
 </Monitor_Contract_Validation>
 
 <Monitor_11D_Validation_v3_0>
