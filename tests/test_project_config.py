@@ -1,5 +1,6 @@
 """ST-005: MapConfig fields max_actors + retry_degraded_once, and clamp helper.
 ST-000: MapConfig fields concurrent_dispatch + max_wave_retries (5b config).
+Issue #285: tdd_enforce config flag and template content.
 
 Covers:
   VC1 — dotted-key aliasing and field parsing from YAML
@@ -8,6 +9,8 @@ Covers:
   VC4 (ST-000) — concurrent_dispatch and max_wave_retries parsed/clamped correctly
   VC5 (ST-000) — clamp_max_wave_retries truth table
   VC6 (ST-000) — concurrent_dispatch + max_wave_retries are ACTIVE in runner/orchestrator (Slice 5b)
+  VC7 (#285) — tdd.enforce dotted-key alias and field defaults
+  VC8 (#285) — map-tdd SKILL.md and monitor.md template content
 """
 
 from __future__ import annotations
@@ -439,4 +442,145 @@ class TestSlice6Defaults:
         cfg = load_map_config(tmp_path)
         assert cfg.concurrent_dispatch is False, (
             "execution.concurrent_dispatch: false in config.yaml must override the Slice 6 default"
+        )
+
+
+# ---------------------------------------------------------------------------
+# VC7 — tdd.enforce config flag (#285)
+# ---------------------------------------------------------------------------
+
+
+class TestVc7TddEnforce:
+    """VC7: tdd_enforce field defaults to False; tdd.enforce YAML alias is live."""
+
+    def test_vc7_default_is_false(self) -> None:
+        cfg = MapConfig()
+        assert cfg.tdd_enforce is False, (
+            "MapConfig.tdd_enforce must default to False so existing workflows "
+            "are unaffected when the field is absent from config.yaml"
+        )
+
+    def test_vc7_absent_config_returns_false(self, tmp_path: Path) -> None:
+        cfg = load_map_config(tmp_path)
+        assert cfg.tdd_enforce is False
+
+    def test_vc7_dotted_key_true_sets_field(self, tmp_path: Path) -> None:
+        _write_config(tmp_path, "tdd.enforce: true\n")
+        cfg = load_map_config(tmp_path)
+        assert cfg.tdd_enforce is True, (
+            "tdd.enforce: true in config.yaml must set tdd_enforce=True — "
+            "alias is a dead toggle if this fails"
+        )
+
+    def test_vc7_dotted_key_false_leaves_field_false(self, tmp_path: Path) -> None:
+        _write_config(tmp_path, "tdd.enforce: false\n")
+        cfg = load_map_config(tmp_path)
+        assert cfg.tdd_enforce is False
+
+    def test_vc7_alias_not_a_dead_toggle(self, tmp_path: Path) -> None:
+        """Per learned rule: dotted-YAML → snake_case alias must be explicitly verified."""
+        _write_config(tmp_path, "tdd.enforce: true\n")
+        cfg = load_map_config(tmp_path)
+        assert cfg.tdd_enforce is True, (
+            "tdd.enforce alias is a dead toggle — load_map_config sees the dotted key "
+            "but no snake_case field 'tdd_enforce' matched, so the value was silently "
+            "discarded. Add ('tdd.enforce', 'tdd_enforce') to the alias loop."
+        )
+
+    def test_vc7_field_exists_on_mapconfig(self) -> None:
+        assert hasattr(MapConfig(), "tdd_enforce"), (
+            "MapConfig must have a 'tdd_enforce' field (#285)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# VC8 — template content: map-tdd SKILL.md and monitor.md (#285)
+# ---------------------------------------------------------------------------
+
+_RENDERED_SKILLS = Path(__file__).parent.parent / ".claude" / "skills"
+_RENDERED_AGENTS = Path(__file__).parent.parent / ".claude" / "agents"
+
+
+class TestVc8TddTemplateContent:
+    """VC8: rendered templates contain required #285 enforcement content."""
+
+    def _skill_content(self) -> str:
+        path = _RENDERED_SKILLS / "map-tdd" / "SKILL.md"
+        assert path.exists(), f"map-tdd/SKILL.md not found at {path}"
+        return path.read_text(encoding="utf-8")
+
+    def _monitor_content(self) -> str:
+        path = _RENDERED_AGENTS / "monitor.md"
+        assert path.exists(), f"monitor.md not found at {path}"
+        return path.read_text(encoding="utf-8")
+
+    def test_vc8_iron_law_present(self) -> None:
+        assert "NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST" in self._skill_content(), (
+            "map-tdd/SKILL.md must contain the Iron Law enforcement text (#285)"
+        )
+
+    def test_vc8_red_green_refactor_cycle_present(self) -> None:
+        content = self._skill_content()
+        assert "RED-GREEN-REFACTOR" in content, (
+            "map-tdd/SKILL.md must describe the RED-GREEN-REFACTOR mandatory cycle (#285)"
+        )
+
+    def test_vc8_rationalization_table_present(self) -> None:
+        content = self._skill_content()
+        assert "Rationalization Table" in content, (
+            "map-tdd/SKILL.md must include the Rationalization Table (#285)"
+        )
+        assert "Sunk cost fallacy" in content, (
+            "Rationalization Table must include the sunk-cost-fallacy counter (#285)"
+        )
+
+    def test_vc8_red_flags_list_present(self) -> None:
+        content = self._skill_content()
+        assert "Red Flags" in content, (
+            "map-tdd/SKILL.md must include the Red Flags self-detection list (#285)"
+        )
+
+    def test_vc8_spec_compliance_reviewer_present(self) -> None:
+        content = self._skill_content()
+        assert "Spec Compliance Reviewer" in content, (
+            "map-tdd/SKILL.md must include the Spec Compliance Reviewer subagent (#285)"
+        )
+        assert "SPEC-COMPLIANT" in content, (
+            "Spec compliance reviewer must use SPEC-COMPLIANT verdict language (#285)"
+        )
+
+    def test_vc8_code_quality_reviewer_present(self) -> None:
+        content = self._skill_content()
+        assert "Code Quality Reviewer" in content, (
+            "map-tdd/SKILL.md must include the Code Quality Reviewer subagent (#285)"
+        )
+
+    def test_vc8_sequential_gate_present(self) -> None:
+        content = self._skill_content()
+        assert "Sequential gate" in content or "sequential gate" in content.lower(), (
+            "map-tdd/SKILL.md must document the spec-first/code-second sequential gate (#285)"
+        )
+
+    def test_vc8_tdd_enforce_config_check_present(self) -> None:
+        content = self._skill_content()
+        assert "tdd.enforce" in content, (
+            "map-tdd/SKILL.md must reference tdd.enforce config key (#285)"
+        )
+
+    def test_vc8_monitor_tdd_violation_detection_present(self) -> None:
+        content = self._monitor_content()
+        assert "TDD Violation Detection" in content, (
+            "monitor.md must contain TDD Violation Detection section (#285)"
+        )
+
+    def test_vc8_monitor_tdd_violation_verdict_present(self) -> None:
+        content = self._monitor_content()
+        assert "tdd_violation" in content, (
+            "monitor.md must reference tdd_violation verdict for hard-stop enforcement (#285)"
+        )
+
+    def test_vc8_monitor_rationalization_detection_present(self) -> None:
+        content = self._monitor_content()
+        assert "Rationalization detection" in content or "rationalization" in content.lower(), (
+            "monitor.md must include rationalization detection patterns (#285)"
         )

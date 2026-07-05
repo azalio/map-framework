@@ -225,6 +225,15 @@ class MapConfig:
     # it yet.
     max_wave_retries: int = 3
 
+    # Enforce TDD discipline project-wide (#285).  When true, /map-efficient routes
+    # Actor-phase dispatches through the TEST_WRITER → TEST_FAIL_GATE → ACTOR
+    # sequence automatically, equivalent to always running /map-tdd.  Code written
+    # before a failing test is treated as a violation: Monitor emits a TDD_VIOLATION
+    # finding.  spec-compliance and code-quality reviewer subagents run after each
+    # subtask.  Default OFF so existing workflows are unaffected.
+    # Dotted YAML key: `tdd.enforce`  (aliased in load_map_config).
+    tdd_enforce: bool = False
+
 
 def clamp_max_actors(n: object) -> int:
     """Clamp max_actors to the valid range [1, 8], or return the default 4.
@@ -331,6 +340,7 @@ def load_map_config(project_path: Path) -> MapConfig:
             ("execution.retry_degraded_once", "retry_degraded_once"),
             ("execution.concurrent_dispatch", "concurrent_dispatch"),
             ("execution.max_wave_retries", "max_wave_retries"),
+            ("tdd.enforce", "tdd_enforce"),
         ):
             if dotted in data and field_name not in data:
                 data[field_name] = data.pop(dotted)

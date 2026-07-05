@@ -107,6 +107,10 @@ HIGH_TRAFFIC_COMPACT_SKILL_REFS = {
 _DEFAULT_SKILL_BODY_BUDGET = 515
 HIGH_TRAFFIC_SKILL_BODY_BUDGETS = {
     "map-review": 560,
+    # map-tdd carries Iron Law enforcement (rationalization table, Red Flags,
+    # RED-GREEN-REFACTOR cycle), spec compliance reviewer dispatch, and code
+    # quality reviewer dispatch — all irreducible active control flow (#285).
+    "map-tdd": 545,
 }
 
 CLAUDE_MUTATION_BOUNDARY_SURFACES = [
