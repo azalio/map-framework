@@ -246,6 +246,7 @@ mapify init . --no-autonomy     # remove the autonomy posture
 |-------|-------------|
 | [Installation](docs/INSTALL.md) | All install methods, PATH setup, troubleshooting |
 | [Usage Guide](docs/USAGE.md) | Workflows, examples, cost optimization, playbook |
+| [Prompt Library](docs/PROMPT_LIBRARY.md) | Copyable prompt recipes by SDLC phase and role |
 | [Architecture](docs/ARCHITECTURE.md) | Agents, MCP integration, customization |
 | [Platform Spec](docs/MAP_PLATFORM_SPEC.md) | Platform refactor roadmap, codebase analysis |
 
