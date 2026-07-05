@@ -1848,6 +1848,127 @@ def research_eval_score(
         raise typer.Exit(1)
 
 
+@research_eval_app.command("compare")
+def research_eval_compare(
+    baseline_file: Path = typer.Argument(
+        ...,
+        help="ResearchEvidence JSON/text from the baseline discovery arm (e.g. glob_grep)",
+    ),
+    treatment_file: Path = typer.Argument(
+        ...,
+        help="ResearchEvidence JSON/text from the treatment discovery arm (e.g. structural-map)",
+    ),
+    expected_file: Path = typer.Argument(
+        ...,
+        help="JSON list, or object with expected_locations, of target file ranges",
+    ),
+    baseline_name: str = typer.Option(
+        "baseline",
+        "--baseline-name",
+        help="Display name for the baseline arm",
+    ),
+    treatment_name: str = typer.Option(
+        "treatment",
+        "--treatment-name",
+        help="Display name for the treatment arm",
+    ),
+    repo_root: Optional[Path] = typer.Option(
+        None,
+        "--repo-root",
+        help="Fixture repository root for path existence (stale detection) and line validation",
+    ),
+    min_treatment_file_f1: float = typer.Option(
+        0.0,
+        "--min-file-f1",
+        min=0.0,
+        max=1.0,
+        help="Hard quality floor on treatment file-level F1 (token-only wins are not enough)",
+    ),
+    min_treatment_line_f1: float = typer.Option(
+        0.0,
+        "--min-line-f1",
+        min=0.0,
+        max=1.0,
+        help="Hard quality floor on treatment line-level F1",
+    ),
+    max_stale_regression: int = typer.Option(
+        0,
+        "--max-stale-regression",
+        min=0,
+        help="Max allowed increase in stale/missing-file locations for treatment vs baseline",
+    ),
+    overbroad_line_threshold: int = typer.Option(
+        50,
+        "--overbroad-line-threshold",
+        min=1,
+        help="Locations with span above this are counted as over-broad",
+    ),
+    no_warn_regression: bool = typer.Option(
+        False,
+        "--no-warn-regression",
+        help="Suppress quality-regression warnings (treatment vs baseline delta)",
+    ),
+    out: Optional[Path] = typer.Option(
+        None,
+        "--out",
+        help="Write JSON report to this file (default: stdout only)",
+    ),
+) -> None:
+    """Compare two ResearchEvidence discovery arms (baseline vs treatment).
+
+    Scores quality (precision/recall/F1) and exploration-cost metrics
+    (location_count, stale_count, overbroad_count) separately so token/LOC
+    reduction cannot mask lower evidence quality.
+
+    Exit codes:
+      0 - Treatment meets all hard quality floors and stale-regression limits
+      1 - Hard failure: quality floor not met or stale regression exceeded
+      2 - Input files are missing or malformed
+    """
+    import json
+
+    from mapify_cli.research_eval_compare import compare_research_files
+
+    for label, path in [
+        ("baseline", baseline_file),
+        ("treatment", treatment_file),
+        ("expected", expected_file),
+    ]:
+        if not path.is_file():
+            console.print(f"[bold red]Error:[/bold red] {label} file not found: {path}")
+            raise typer.Exit(2)
+
+    root = repo_root.resolve() if repo_root else None
+    try:
+        report = compare_research_files(
+            baseline_file,
+            treatment_file,
+            expected_file,
+            baseline_name=baseline_name,
+            treatment_name=treatment_name,
+            repo_root=root,
+            overbroad_line_threshold=overbroad_line_threshold,
+            min_treatment_file_f1=min_treatment_file_f1,
+            min_treatment_line_f1=min_treatment_line_f1,
+            max_stale_regression=max_stale_regression,
+            warn_on_quality_regression=not no_warn_regression,
+        )
+    except (OSError, ValueError) as exc:
+        console.print(f"[bold red]Error:[/bold red] {exc}")
+        raise typer.Exit(2)
+
+    payload = report.as_dict()
+    output_json = json.dumps(payload, indent=2, sort_keys=True)
+    print(output_json)
+
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(output_json + "\n", encoding="utf-8")
+
+    if not report.passed:
+        raise typer.Exit(1)
+
+
 # Skill-eval commands
 
 
