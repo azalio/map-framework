@@ -152,6 +152,13 @@ research_eval_app = typer.Typer(
 
 app.add_typer(research_eval_app, name="research-eval")
 
+code_map_app = typer.Typer(
+    name="code-map",
+    help="Structural code-map provider for MAP research (Python AST fallback).",
+)
+
+app.add_typer(code_map_app, name="code-map")
+
 
 def version_callback(value: bool):
     """Callback to show version and exit."""
@@ -2407,3 +2414,56 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ---------------------------------------------------------------------------
+# Code-map commands
+# ---------------------------------------------------------------------------
+
+
+@code_map_app.command("query")
+def code_map_query(
+    query: str = typer.Argument(..., help="Symbol name or keyword to search for."),
+    repo_root: Path = typer.Option(
+        Path("."),
+        "--repo-root",
+        "-r",
+        help="Root of the repository to index (default: current directory).",
+    ),
+    max_results: int = typer.Option(
+        5,
+        "--max-results",
+        "-n",
+        min=1,
+        max=20,
+        help="Maximum number of locations to return (default 5).",
+    ),
+    out: Optional[Path] = typer.Option(
+        None,
+        "--out",
+        help="Write ResearchEvidence JSON to this file (default: stdout only).",
+    ),
+) -> None:
+    """Query the structural code map for a symbol and emit ResearchEvidence JSON.
+
+    Scans all Python files under REPO_ROOT using AST parsing (no external
+    dependencies required) and returns matching symbol locations compatible
+    with the existing ResearchEvidence contract.
+
+    Exit codes:
+      0 - One or more matching locations found.
+      1 - No matches found, empty index, or error.
+    """
+    from mapify_cli.code_map import query_code_map
+
+    result = query_code_map(query, repo_root.resolve(), max_results=max_results)
+    evidence = result.as_research_evidence()
+
+    print(evidence)
+
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(evidence + "\n", encoding="utf-8")
+
+    if result.status not in ("ok",):
+        raise typer.Exit(1)
