@@ -1,6 +1,7 @@
 """ST-005: MapConfig fields max_actors + retry_degraded_once, and clamp helper.
 ST-000: MapConfig fields concurrent_dispatch + max_wave_retries (5b config).
 Issue #285: tdd_enforce config flag and template content.
+Issue #340: generate_default_config() must document all active config options.
 
 Covers:
   VC1 — dotted-key aliasing and field parsing from YAML
@@ -11,6 +12,7 @@ Covers:
   VC6 (ST-000) — concurrent_dispatch + max_wave_retries are ACTIVE in runner/orchestrator (Slice 5b)
   VC7 (#285) — tdd.enforce dotted-key alias and field defaults
   VC8 (#285) — map-tdd SKILL.md and monitor.md template content
+  VC9 (#340) — generate_default_config() documents every active config option
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from mapify_cli.config.project_config import (
     MapConfig,
     clamp_max_actors,
     clamp_max_wave_retries,
+    generate_default_config,
     load_map_config,
 )
 
@@ -583,4 +586,44 @@ class TestVc8TddTemplateContent:
         content = self._monitor_content()
         assert "Rationalization detection" in content or "rationalization" in content.lower(), (
             "monitor.md must include rationalization detection patterns (#285)"
+        )
+
+
+class TestVc9DefaultConfigCompleteness:
+    """VC9 (#340): generate_default_config() must document every active config option.
+
+    Regression guard: any new MapConfig field that adds a load_map_config() alias
+    must also have a commented example block in generate_default_config() so users
+    can discover the option via `mapify init`.
+    """
+
+    def test_vc9_tdd_enforce_in_default_config(self) -> None:
+        cfg = generate_default_config()
+        assert "tdd.enforce" in cfg, (
+            "tdd.enforce must appear as a commented option in generate_default_config() "
+            "so users can discover it after `mapify init` (#340). "
+            "Add a commented block like '# tdd.enforce: false' to generate_default_config()."
+        )
+
+    def test_vc9_default_config_is_valid_yaml(self) -> None:
+        import yaml
+
+        cfg = generate_default_config()
+        # Strip comment-only lines to get parseable YAML
+        uncommented = "\n".join(
+            line for line in cfg.splitlines() if not line.lstrip().startswith("#")
+        )
+        # Must not raise
+        yaml.safe_load(uncommented)
+
+    def test_vc9_default_config_contains_known_options(self) -> None:
+        cfg = generate_default_config()
+        expected_options = [
+            "execution.max_actors",
+            "tdd.enforce",
+        ]
+        missing = [opt for opt in expected_options if opt not in cfg]
+        assert not missing, (
+            f"generate_default_config() is missing documentation for: {missing}. "
+            "Each MapConfig alias must have a corresponding commented block (#340)."
         )
