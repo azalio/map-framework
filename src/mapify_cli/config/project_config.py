@@ -682,6 +682,13 @@ minimality: lite
 # changed, at workflow completion (Stop hook). On by default; uncomment and set
 # to false to keep the IDs the framework wrote into comments/strings/test names.
 # scrub_internal_ids: true
+
+# TDD enforcement (#285). When true, /map-efficient automatically routes each
+# subtask's Actor phase through the TEST_WRITER → TEST_FAIL_GATE → ACTOR sequence
+# (equivalent to always running /map-tdd). Code written before a failing test is
+# treated as a TDD_VIOLATION by Monitor; spec-compliance and code-quality reviewer
+# subagents run after each subtask. Default OFF — existing workflows are unaffected.
+# tdd.enforce: false
 """
 
 
