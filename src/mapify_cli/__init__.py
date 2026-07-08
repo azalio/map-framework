@@ -166,6 +166,13 @@ domain_skill_app = typer.Typer(
 
 app.add_typer(domain_skill_app, name="domain-skill")
 
+governance_app = typer.Typer(
+    name="governance",
+    help="Inventory and audit MAP behavior-shaping assets installed in a project.",
+)
+
+app.add_typer(governance_app, name="governance")
+
 
 def version_callback(value: bool):
     """Callback to show version and exit."""
@@ -2541,3 +2548,73 @@ def domain_skill_init(
             f"[yellow]Skipped:[/yellow] {rel} already exists"
             " (use --overwrite to replace)"
         )
+
+
+# ---------------------------------------------------------------------------
+# Governance commands
+# ---------------------------------------------------------------------------
+
+
+@governance_app.command("report")
+def governance_report(
+    project_path: Optional[str] = typer.Argument(
+        None,
+        help="Project directory to audit (default: current directory)",
+    ),
+    output_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Output the report as JSON instead of Markdown",
+    ),
+    out: Optional[str] = typer.Option(
+        None,
+        "--out",
+        help="Write the report to a file instead of stdout",
+    ),
+) -> None:
+    """Generate a governance report for MAP behavior-shaping assets.
+
+    Inventories installed skills, hooks, references, and learned rules in the
+    .claude/ directory and classifies each asset under six governance categories:
+    Charter, Policy, Context, Harness, Oversight, Learning.
+
+    Distinguishes enforced controls (runtime hooks) from prompt-only guidance
+    (skills, references, learned rules) and lists governance gaps where
+    policy claims rely solely on prompt text without a backing harness control.
+
+    Examples:
+
+        mapify governance report
+
+        mapify governance report /path/to/project
+
+        mapify governance report --json --out .map/governance.json
+    """
+    from mapify_cli.delivery.governance_report import build_governance_report
+
+    target = Path(project_path) if project_path else Path.cwd()
+    if not target.exists():
+        console.print(f"[red]Error:[/red] Path does not exist: {target}")
+        raise typer.Exit(1)
+
+    report = build_governance_report(target)
+
+    if not report.assets:
+        console.print(
+            f"[yellow]No MAP assets found[/yellow] in {target} — "
+            "run 'mapify init' first to install the MAP framework."
+        )
+        raise typer.Exit(1)
+
+    content = report.as_json() if output_json else report.as_markdown()
+
+    if out is not None:
+        out_path = Path(out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(content, encoding="utf-8")
+        console.print(f"[green]Written[/green] {out_path}")
+    elif output_json:
+        # Bypass Rich to avoid ANSI escape codes in JSON output
+        typer.echo(content)
+    else:
+        console.print(content)

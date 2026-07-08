@@ -35,6 +35,11 @@ from mapify_cli.delivery.managed_file_copier import (
     compute_hash,
 )
 from mapify_cli.delivery.domain_skill import create_domain_skill
+from mapify_cli.delivery.governance_report import (
+    GovernanceAsset,
+    GovernanceReport,
+    build_governance_report,
+)
 
 __all__ = [
     "BaseProvider",
@@ -63,4 +68,7 @@ __all__ = [
     "extract_metadata",
     "compute_hash",
     "create_domain_skill",
+    "GovernanceAsset",
+    "GovernanceReport",
+    "build_governance_report",
 ]
