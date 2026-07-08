@@ -159,6 +159,13 @@ code_map_app = typer.Typer(
 
 app.add_typer(code_map_app, name="code-map")
 
+domain_skill_app = typer.Typer(
+    name="domain-skill",
+    help="Bootstrap a project-local domain/reference skill for Claude Code.",
+)
+
+app.add_typer(domain_skill_app, name="domain-skill")
+
 
 def version_callback(value: bool):
     """Callback to show version and exit."""
@@ -2467,3 +2474,70 @@ def code_map_query(
 
     if result.status not in ("ok",):
         raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Domain-skill commands
+# ---------------------------------------------------------------------------
+
+
+@domain_skill_app.command("init")
+def domain_skill_init(
+    project_path: Optional[str] = typer.Argument(
+        None,
+        help="Project directory to bootstrap the domain skill in (default: current directory)",
+    ),
+    name: Optional[str] = typer.Option(
+        None,
+        "--name",
+        help="Skill name in kebab-case (default: <project-name>-domain)",
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Overwrite an existing domain skill file",
+    ),
+) -> None:
+    """Bootstrap a project-local domain/reference skill.
+
+    Scans README.md, pyproject.toml, package.json, go.mod, and Makefile to
+    extract factual content. Missing facts become explicit placeholders for you
+    to fill. No content is fabricated, and secrets are never read or emitted.
+
+    The generated .claude/skills/<name>/SKILL.md is yours — it is not a
+    MAP-managed shipped template and will not be overwritten by mapify init.
+
+    This differs from /map-learn: this skill provides day-one project context
+    before any workflow runs; /map-learn captures lessons after a run completes.
+
+    Examples:
+
+        mapify domain-skill init
+
+        mapify domain-skill init . --name myproject-domain
+
+        mapify domain-skill init /path/to/project --overwrite
+    """
+    from mapify_cli.delivery.domain_skill import create_domain_skill
+
+    target = Path(project_path) if project_path else Path.cwd()
+    if not target.exists():
+        console.print(f"[red]Error:[/red] Path does not exist: {target}")
+        raise typer.Exit(1)
+
+    skill_file, created = create_domain_skill(target, skill_name=name, overwrite=overwrite)
+
+    rel = skill_file.relative_to(target)
+    if created:
+        console.print(f"[green]Created[/green] {rel}")
+        console.print(
+            "[dim]Edit the file and replace placeholders with real project facts.[/dim]"
+        )
+        console.print(
+            "[dim]Do not commit secrets, tokens, passwords, or API keys into this file.[/dim]"
+        )
+    else:
+        console.print(
+            f"[yellow]Skipped:[/yellow] {rel} already exists"
+            " (use --overwrite to replace)"
+        )
