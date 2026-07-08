@@ -34,6 +34,7 @@ from mapify_cli.delivery.managed_file_copier import (
     extract_metadata,
     compute_hash,
 )
+from mapify_cli.delivery.domain_skill import create_domain_skill
 
 __all__ = [
     "BaseProvider",
@@ -61,4 +62,5 @@ __all__ = [
     "inject_metadata",
     "extract_metadata",
     "compute_hash",
+    "create_domain_skill",
 ]
