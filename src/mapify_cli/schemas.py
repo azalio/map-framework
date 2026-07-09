@@ -818,6 +818,8 @@ ARTIFACT_MANIFEST_SCHEMA = {
                 "qualitative_convergence": ARTIFACT_STAGE_SCHEMA,
                 "anti_repeat": ARTIFACT_STAGE_SCHEMA,
                 "escalation": ARTIFACT_STAGE_SCHEMA,
+                "approval_hold": ARTIFACT_STAGE_SCHEMA,
+                "worktree": ARTIFACT_STAGE_SCHEMA,
                 "token_budget": ARTIFACT_STAGE_SCHEMA,
                 "run_health": ARTIFACT_STAGE_SCHEMA,
                 "learn_handoff": ARTIFACT_STAGE_SCHEMA,

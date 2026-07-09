@@ -14691,3 +14691,527 @@ class TestAbortWaveGroupRollbackMismatch:
             f"group entry must be PRESERVED in sidecar when rollback fails; "
             f"group_key={group_key!r}, wave_groups={list(wg_after.keys())}"
         )
+
+
+# --- Durable approval-hold artifacts (#344) ---
+
+
+class TestApprovalHoldCreate:
+    """Tests for create_approval_hold: artifact creation, idempotency, and validation."""
+
+    def test_creates_json_store_and_md_report(self, branch_workspace: Path) -> None:
+        del branch_workspace
+        result = map_step_runner.create_approval_hold(
+            kind="safety_guardrail",
+            reason="The requested git push --force targets main.",
+            summary="Force-push main to recover from bad merge.",
+            source="ST-007",
+            branch="test-branch",
+        )
+        assert result["status"] == "ok"
+        assert result["idempotent"] is False
+        assert result["hold_id"] == "hold-001"
+        assert result["state"] == "pending"
+
+        # JSON store written
+        store_path = Path(result["path"])
+        assert store_path.exists()
+        store = json.loads(store_path.read_text(encoding="utf-8"))
+        assert store["schema_version"] == "1.0"
+        assert "hold-001" in store["holds"]
+        rec = store["holds"]["hold-001"]
+        assert rec["kind"] == "safety_guardrail"
+        assert rec["state"] == "pending"
+        assert rec["source"] == "ST-007"
+
+        # Human-readable Markdown report written
+        md_path = Path(result["md_path"])
+        assert md_path.exists()
+        body = md_path.read_text(encoding="utf-8")
+        assert "# Approval Hold: hold-001" in body
+        assert "Force-push main to recover from bad merge." in body
+        assert "The requested git push --force targets main." in body
+
+        # Manifest stage registered as 'pending'
+        manifest_path = store_path.parent / "artifact_manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert manifest["stages"]["approval_hold"]["status"] == "pending"
+        assert manifest["stages"]["approval_hold"]["metadata"]["hold_id"] == "hold-001"
+
+    def test_idempotent_for_pending_with_same_fingerprint(
+        self, branch_workspace: Path
+    ) -> None:
+        del branch_workspace
+        kwargs: dict[str, Any] = {
+            "kind": "autonomy_git_block",
+            "reason": "Force-push blocked by autonomy gate.",
+            "summary": "git push --force origin main",
+            "source": "ST-003",
+            "branch": "test-branch",
+        }
+        first = map_step_runner.create_approval_hold(**kwargs)
+        assert first["status"] == "ok"
+        assert first["idempotent"] is False
+        first_id = first["hold_id"]
+
+        # Same call returns the existing pending hold
+        second = map_step_runner.create_approval_hold(**kwargs)
+        assert second["status"] == "ok"
+        assert second["idempotent"] is True
+        assert second["hold_id"] == first_id
+
+        # Only one hold in the store
+        store = json.loads(Path(first["path"]).read_text(encoding="utf-8"))
+        assert len(store["holds"]) == 1
+
+    def test_different_fingerprint_creates_new_hold(
+        self, branch_workspace: Path
+    ) -> None:
+        del branch_workspace
+        r1 = map_step_runner.create_approval_hold(
+            kind="other",
+            reason="reason A",
+            summary="summary A",
+            branch="test-branch",
+        )
+        r2 = map_step_runner.create_approval_hold(
+            kind="other",
+            reason="reason B",
+            summary="summary B different",
+            branch="test-branch",
+        )
+        assert r1["hold_id"] != r2["hold_id"]
+        store = json.loads(Path(r1["path"]).read_text(encoding="utf-8"))
+        assert len(store["holds"]) == 2
+
+    def test_invalid_kind_returns_error(self, branch_workspace: Path) -> None:
+        del branch_workspace
+        result = map_step_runner.create_approval_hold(
+            kind="totally_invalid_kind",
+            reason="Some reason.",
+            summary="Some summary.",
+            branch="test-branch",
+        )
+        assert result["status"] == "error"
+        assert any("kind" in r for r in result["reasons"])
+
+    def test_empty_kind_returns_error(self, branch_workspace: Path) -> None:
+        del branch_workspace
+        result = map_step_runner.create_approval_hold(
+            kind="",
+            reason="Some reason.",
+            summary="Some summary.",
+            branch="test-branch",
+        )
+        assert result["status"] == "error"
+        assert any("kind" in r for r in result["reasons"])
+
+    def test_empty_reason_returns_error(self, branch_workspace: Path) -> None:
+        del branch_workspace
+        result = map_step_runner.create_approval_hold(
+            kind="safety_guardrail",
+            reason="",
+            summary="Some summary.",
+            branch="test-branch",
+        )
+        assert result["status"] == "error"
+        assert any("reason" in r for r in result["reasons"])
+
+    def test_empty_summary_returns_error(self, branch_workspace: Path) -> None:
+        del branch_workspace
+        result = map_step_runner.create_approval_hold(
+            kind="safety_guardrail",
+            reason="Some reason.",
+            summary="",
+            branch="test-branch",
+        )
+        assert result["status"] == "error"
+        assert any("summary" in r for r in result["reasons"])
+
+    def test_sequential_ids_increment(self, branch_workspace: Path) -> None:
+        del branch_workspace
+        ids = []
+        for i in range(3):
+            r = map_step_runner.create_approval_hold(
+                kind="other",
+                reason=f"reason {i}",
+                summary=f"summary {i} unique",
+                branch="test-branch",
+            )
+            assert r["status"] == "ok"
+            ids.append(r["hold_id"])
+        assert ids == ["hold-001", "hold-002", "hold-003"]
+
+
+class TestApprovalHoldDecide:
+    """Tests for decide_approval_hold: state transitions, idempotency, and validation."""
+
+    def _make_hold(self, **kwargs: Any) -> dict[str, Any]:
+        defaults: dict[str, Any] = {
+            "kind": "workflow_approval",
+            "reason": "Workflow wants to delete production data.",
+            "summary": "DROP TABLE users;",
+            "branch": "test-branch",
+        }
+        defaults.update(kwargs)
+        r = map_step_runner.create_approval_hold(**defaults)
+        assert r["status"] == "ok", f"hold creation failed: {r}"
+        return r
+
+    def test_pending_to_approved(self, branch_workspace: Path) -> None:
+        del branch_workspace
+        created = self._make_hold()
+        hold_id = created["hold_id"]
+
+        result = map_step_runner.decide_approval_hold(
+            hold_id, "approved", note="Reviewed and approved by engineer.", branch="test-branch"
+        )
+        assert result["status"] == "ok"
+        assert result["idempotent"] is False
+        assert result["state"] == "approved"
+        assert result["pending_count"] == 0
+
+        # JSON store updated
+        store = json.loads(Path(result["path"]).read_text(encoding="utf-8"))
+        rec = store["holds"][hold_id]
+        assert rec["state"] == "approved"
+        assert rec["decision"] == "approved"
+        assert rec["decision_note"] == "Reviewed and approved by engineer."
+        assert rec["decided_at"] is not None
+
+        # MD report updated with decision
+        md_path = Path(created["md_path"])
+        body = md_path.read_text(encoding="utf-8")
+        assert "approved" in body
+        assert "Reviewed and approved by engineer." in body
+
+        # Manifest status updated to 'all_decided'
+        store_path = Path(result["path"])
+        manifest_path = store_path.parent / "artifact_manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert manifest["stages"]["approval_hold"]["status"] == "all_decided"
+
+    def test_pending_to_denied(self, branch_workspace: Path) -> None:
+        del branch_workspace
+        created = self._make_hold()
+        result = map_step_runner.decide_approval_hold(
+            created["hold_id"], "denied", branch="test-branch"
+        )
+        assert result["status"] == "ok"
+        assert result["state"] == "denied"
+
+    def test_pending_to_cancelled(self, branch_workspace: Path) -> None:
+        del branch_workspace
+        created = self._make_hold()
+        result = map_step_runner.decide_approval_hold(
+            created["hold_id"], "cancelled", branch="test-branch"
+        )
+        assert result["status"] == "ok"
+        assert result["state"] == "cancelled"
+
+    def test_idempotent_for_already_terminal_hold(
+        self, branch_workspace: Path
+    ) -> None:
+        del branch_workspace
+        created = self._make_hold()
+        hold_id = created["hold_id"]
+        map_step_runner.decide_approval_hold(hold_id, "approved", branch="test-branch")
+
+        # Second decide call returns existing outcome without rewriting
+        second = map_step_runner.decide_approval_hold(
+            hold_id, "denied", branch="test-branch"
+        )
+        assert second["status"] == "ok"
+        assert second["idempotent"] is True
+        # State must remain 'approved', not changed to 'denied'
+        assert second["state"] == "approved"
+
+    def test_manifest_stays_pending_when_other_holds_remain(
+        self, branch_workspace: Path
+    ) -> None:
+        del branch_workspace
+        r1 = self._make_hold(summary="first unique action")
+        r2 = self._make_hold(summary="second unique action")
+
+        # Decide only one; the other is still pending.
+        map_step_runner.decide_approval_hold(r1["hold_id"], "approved", branch="test-branch")
+        store_path = Path(r1["path"])
+        manifest_path = store_path.parent / "artifact_manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        # r2 is still pending -> manifest status should be 'pending'
+        assert manifest["stages"]["approval_hold"]["status"] == "pending"
+
+        # Now decide the second hold.
+        map_step_runner.decide_approval_hold(r2["hold_id"], "denied", branch="test-branch")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert manifest["stages"]["approval_hold"]["status"] == "all_decided"
+
+    def test_unknown_hold_id_returns_error(self, branch_workspace: Path) -> None:
+        del branch_workspace
+        result = map_step_runner.decide_approval_hold(
+            "hold-999", "approved", branch="test-branch"
+        )
+        assert result["status"] == "error"
+        assert any("hold-999" in r or "not found" in r for r in result["reasons"])
+
+    def test_invalid_decision_returns_error(self, branch_workspace: Path) -> None:
+        del branch_workspace
+        created = self._make_hold()
+        result = map_step_runner.decide_approval_hold(
+            created["hold_id"], "pending", branch="test-branch"
+        )
+        assert result["status"] == "error"
+        assert any("decision" in r or "pending" in r for r in result["reasons"])
+
+    def test_empty_hold_id_returns_error(self, branch_workspace: Path) -> None:
+        del branch_workspace
+        result = map_step_runner.decide_approval_hold("", "approved", branch="test-branch")
+        assert result["status"] == "error"
+        assert any("hold_id" in r for r in result["reasons"])
+
+
+class TestApprovalHoldList:
+    """Tests for list_approval_holds and get_pending_holds."""
+
+    def test_empty_store_returns_empty_list(self, branch_workspace: Path) -> None:
+        del branch_workspace
+        result = map_step_runner.list_approval_holds(branch="test-branch")
+        assert result["status"] == "ok"
+        assert result["holds"] == []
+        assert result["total"] == 0
+        assert result["pending_count"] == 0
+
+    def test_lists_all_holds_without_filter(self, branch_workspace: Path) -> None:
+        del branch_workspace
+        map_step_runner.create_approval_hold(
+            kind="other", reason="r1", summary="s1", branch="test-branch"
+        )
+        map_step_runner.create_approval_hold(
+            kind="other", reason="r2", summary="s2", branch="test-branch"
+        )
+        result = map_step_runner.list_approval_holds(branch="test-branch")
+        assert result["status"] == "ok"
+        assert result["total"] == 2
+        assert result["pending_count"] == 2
+
+    def test_filter_by_pending_state(self, branch_workspace: Path) -> None:
+        del branch_workspace
+        r1 = map_step_runner.create_approval_hold(
+            kind="other", reason="r1", summary="s1 unique", branch="test-branch"
+        )
+        map_step_runner.create_approval_hold(
+            kind="other", reason="r2", summary="s2 unique", branch="test-branch"
+        )
+        map_step_runner.decide_approval_hold(r1["hold_id"], "approved", branch="test-branch")
+
+        result = map_step_runner.list_approval_holds(branch="test-branch", state_filter="pending")
+        assert result["status"] == "ok"
+        assert result["total"] == 1
+        all_states = [h["state"] for h in result["holds"]]
+        assert all(s == "pending" for s in all_states)
+
+    def test_filter_by_approved_state(self, branch_workspace: Path) -> None:
+        del branch_workspace
+        r1 = map_step_runner.create_approval_hold(
+            kind="other", reason="r1", summary="s1 unique", branch="test-branch"
+        )
+        map_step_runner.create_approval_hold(
+            kind="other", reason="r2", summary="s2 unique", branch="test-branch"
+        )
+        map_step_runner.decide_approval_hold(r1["hold_id"], "approved", branch="test-branch")
+
+        result = map_step_runner.list_approval_holds(branch="test-branch", state_filter="approved")
+        assert result["status"] == "ok"
+        assert result["total"] == 1
+        assert result["holds"][0]["state"] == "approved"
+
+    def test_invalid_state_filter_returns_error(self, branch_workspace: Path) -> None:
+        del branch_workspace
+        result = map_step_runner.list_approval_holds(
+            branch="test-branch", state_filter="definitely_not_a_valid_state"
+        )
+        assert result["status"] == "error"
+        assert any("state_filter" in r for r in result["reasons"])
+
+
+class TestGetPendingHolds:
+    """Tests for get_pending_holds."""
+
+    def test_no_holds_returns_has_pending_false(self, branch_workspace: Path) -> None:
+        del branch_workspace
+        result = map_step_runner.get_pending_holds(branch="test-branch")
+        assert result["status"] == "ok"
+        assert result["has_pending"] is False
+        assert result["pending_count"] == 0
+        assert result["holds"] == []
+
+    def test_pending_hold_returns_has_pending_true(
+        self, branch_workspace: Path
+    ) -> None:
+        del branch_workspace
+        map_step_runner.create_approval_hold(
+            kind="template_overwrite",
+            reason="Installer wants to overwrite user-customized skill.",
+            summary="Overwrite .claude/skills/map-plan/SKILL.md",
+            branch="test-branch",
+        )
+        result = map_step_runner.get_pending_holds(branch="test-branch")
+        assert result["status"] == "ok"
+        assert result["has_pending"] is True
+        assert result["pending_count"] == 1
+        assert len(result["holds"]) == 1
+        assert result["holds"][0]["kind"] == "template_overwrite"
+
+    def test_all_decided_returns_has_pending_false(
+        self, branch_workspace: Path
+    ) -> None:
+        del branch_workspace
+        r = map_step_runner.create_approval_hold(
+            kind="other", reason="reason", summary="action", branch="test-branch"
+        )
+        map_step_runner.decide_approval_hold(r["hold_id"], "approved", branch="test-branch")
+
+        result = map_step_runner.get_pending_holds(branch="test-branch")
+        assert result["status"] == "ok"
+        assert result["has_pending"] is False
+        assert result["pending_count"] == 0
+
+
+class TestApprovalHoldCli:
+    """CLI subprocess tests for approval-hold commands (#344)."""
+
+    def test_cli_create_approval_hold_writes_artifact(self, tmp_path: Path) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS_PATH / "map_step_runner.py"),
+                "create_approval_hold",
+                "--kind", "safety_guardrail",
+                "--reason", "Force-push blocked by safety policy.",
+                "--summary", "git push --force origin main",
+                "--source", "cli-test",
+                "--branch", "cli-branch",
+            ],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        payload = json.loads(completed.stdout)
+        assert payload["status"] == "ok"
+        assert payload["hold_id"] == "hold-001"
+        assert (tmp_path / ".map" / "cli-branch" / "approval_holds.json").exists()
+
+    def test_cli_create_approval_hold_invalid_kind_exits_nonzero(
+        self, tmp_path: Path
+    ) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS_PATH / "map_step_runner.py"),
+                "create_approval_hold",
+                "--kind", "NOTAVALIDKIND",
+                "--reason", "some reason",
+                "--summary", "some summary",
+                "--branch", "cli-branch",
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode != 0
+        payload = json.loads(completed.stdout)
+        assert payload["status"] == "error"
+
+    def test_cli_decide_approval_hold_transitions_state(self, tmp_path: Path) -> None:
+        # Create a hold first
+        subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS_PATH / "map_step_runner.py"),
+                "create_approval_hold",
+                "--kind", "other",
+                "--reason", "policy",
+                "--summary", "risky action",
+                "--branch", "cli-branch",
+            ],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        # Now decide it
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS_PATH / "map_step_runner.py"),
+                "decide_approval_hold",
+                "hold-001",
+                "approved",
+                "--note", "Approved in review.",
+                "--branch", "cli-branch",
+            ],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        payload = json.loads(completed.stdout)
+        assert payload["status"] == "ok"
+        assert payload["state"] == "approved"
+        assert payload["pending_count"] == 0
+
+    def test_cli_list_approval_holds_empty(self, tmp_path: Path) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS_PATH / "map_step_runner.py"),
+                "list_approval_holds",
+                "--branch", "cli-branch",
+            ],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        payload = json.loads(completed.stdout)
+        assert payload["status"] == "ok"
+        assert payload["holds"] == []
+        assert payload["total"] == 0
+
+    def test_cli_get_pending_holds_empty(self, tmp_path: Path) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS_PATH / "map_step_runner.py"),
+                "get_pending_holds",
+                "--branch", "cli-branch",
+            ],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        payload = json.loads(completed.stdout)
+        assert payload["status"] == "ok"
+        assert payload["has_pending"] is False
+
+    def test_cli_list_approval_holds_invalid_state_exits_nonzero(
+        self, tmp_path: Path
+    ) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS_PATH / "map_step_runner.py"),
+                "list_approval_holds",
+                "--state", "bogus_state",
+                "--branch", "cli-branch",
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode != 0
+        payload = json.loads(completed.stdout)
+        assert payload["status"] == "error"
