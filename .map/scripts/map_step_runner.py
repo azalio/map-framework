@@ -243,6 +243,7 @@ ARTIFACT_STAGE_NAMES = (
     "qualitative_convergence",
     "anti_repeat",
     "escalation",
+    "approval_hold",
     "worktree",
     "token_budget",
     "run_health",
@@ -431,6 +432,20 @@ ESCALATION_OUTCOME_BY_REASON = {
     "max_retries": "CLARIFICATION_NEEDED",
 }
 ESCALATION_MAX_EVIDENCE_RECORDS = 3  # cap repeated-failure samples in the outcome
+
+# --- Approval Hold constants (#344) ------------------------------------------
+APPROVAL_HOLD_ARTIFACT_NAME = "approval_holds.json"
+APPROVAL_HOLD_KINDS = frozenset(
+    {
+        "safety_guardrail",    # hard-deny safety hook triggered
+        "autonomy_posture",    # git commit/push blocked by autonomy setting
+        "template_overwrite",  # risky managed-file overwrite decision
+        "plan_approval",       # explicit plan approval gate
+        "dangerous_action",    # generic risky action not otherwise categorised
+    }
+)
+APPROVAL_HOLD_TERMINAL_STATES = frozenset({"approved", "denied", "expired", "cancelled"})
+APPROVAL_HOLD_ALL_STATES = frozenset({"pending"}) | APPROVAL_HOLD_TERMINAL_STATES
 
 # Truncation infrastructure deleted by user directive ("убери транкейт уже
 # вообще"). build_context_block / _budget_review_prompt now emit raw text;
@@ -15192,6 +15207,279 @@ def build_escalation_outcome(
     return outcome
 
 
+# --- Durable Approval-Hold Artifacts (#344) ------------------------------------
+# A durable branch-scoped record for risky MAP workflow actions that need an
+# explicit human decision before the workflow can safely continue.  Holds are
+# written to `.map/<branch>/approval_holds.json` with one human-readable
+# `.map/<branch>/approval_hold_<id>.md` per hold.  State machine:
+#   pending → approved | denied | expired | cancelled
+# A "/map-resume" integration point surfaces pending holds so operators know
+# a decision is required before re-entering a blocked workflow.
+
+
+def _approval_holds_path(branch: Optional[str] = None) -> Path:
+    """Return the branch-scoped approval-holds aggregate artifact path."""
+    return get_branch_dir(branch) / APPROVAL_HOLD_ARTIFACT_NAME
+
+
+def _approval_hold_report_path(hold_id: str, branch: Optional[str] = None) -> Path:
+    """Return the branch-scoped human-readable report path for one hold."""
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", (hold_id or "hold").strip()) or "hold"
+    return get_branch_dir(branch) / f"approval_hold_{safe}.md"
+
+
+def _load_approval_holds(path: Path, branch_name: str) -> dict[str, Any]:
+    """Load the approval-holds store, returning a fresh skeleton on missing/corrupt."""
+    loaded = _read_json_file(path)
+    if isinstance(loaded, dict) and loaded.get("branch") == branch_name:
+        loaded.setdefault("holds", {})
+        loaded.setdefault("next_id", 1)
+        return loaded
+    return {"branch": branch_name, "holds": {}, "next_id": 1, "updated_at": ""}
+
+
+def _render_approval_hold_report(hold: dict[str, Any]) -> str:
+    """Render a human-readable Markdown report for a single approval hold."""
+    lines: list[str] = [
+        f"# Approval Hold: {hold['id']}",
+        "",
+        f"- **Kind:** {hold['kind']}",
+        f"- **State:** {hold['state']}",
+        f"- **Branch:** {hold['branch']}",
+        f"- **Created:** {hold['created_at']}",
+        "",
+        "## Policy Reason",
+        "",
+        hold.get("reason", ""),
+        "",
+        "## Requested Action",
+        "",
+        hold.get("request_summary", ""),
+        "",
+        "## Source",
+        "",
+        hold.get("source") or "(not specified)",
+        "",
+    ]
+    safe_continuation = hold.get("safe_continuation", "")
+    if safe_continuation:
+        lines += ["## Safe Continuation", "", safe_continuation, ""]
+    if hold.get("decision"):
+        lines += [
+            "## Decision",
+            "",
+            f"- **Verdict:** {hold['decision']}",
+            f"- **Decided At:** {hold.get('decided_at', '')}",
+            f"- **Note:** {hold.get('decision_note', '')}",
+            "",
+        ]
+    return "\n".join(lines)
+
+
+def create_approval_hold(
+    kind: str,
+    reason: str,
+    request_summary: str,
+    source: str = "",
+    branch: Optional[str] = None,
+    safe_continuation: str = "",
+) -> dict[str, Any]:
+    """Create a durable approval-hold artifact for a risky action (#344).
+
+    Idempotent: if a ``pending`` hold with the same ``kind`` and
+    ``request_summary`` already exists on the branch, the existing hold is
+    returned without creating a duplicate.
+    """
+    branch_name = branch or get_branch_name()
+    path = _approval_holds_path(branch_name)
+    base: dict[str, Any] = {"status": "ok", "branch": branch_name, "path": str(path)}
+
+    if kind not in APPROVAL_HOLD_KINDS:
+        return {
+            **base,
+            "status": "error",
+            "reasons": [f"kind {kind!r} is not one of {sorted(APPROVAL_HOLD_KINDS)}"],
+        }
+    if not reason.strip():
+        return {**base, "status": "error", "reasons": ["reason is required"]}
+    if not request_summary.strip():
+        return {**base, "status": "error", "reasons": ["request_summary is required"]}
+
+    store = _load_approval_holds(path, branch_name)
+    holds = cast(dict[str, Any], store["holds"])
+
+    # Idempotency: return an existing pending hold with identical kind+summary.
+    for existing in holds.values():
+        if (
+            isinstance(existing, dict)
+            and existing.get("kind") == kind
+            and existing.get("request_summary") == request_summary.strip()
+            and existing.get("state") == "pending"
+        ):
+            return {
+                **base,
+                "hold_id": existing["id"],
+                "hold": existing,
+                "idempotent": True,
+            }
+
+    now = _utc_timestamp()
+    next_id = int(store.get("next_id") or 1)
+    hold_id = f"hold-{next_id:03d}"
+    hold: dict[str, Any] = {
+        "id": hold_id,
+        "kind": kind,
+        "reason": reason.strip(),
+        "request_summary": request_summary.strip(),
+        "source": source.strip(),
+        "branch": branch_name,
+        "state": "pending",
+        "created_at": now,
+        "decision": None,
+        "decision_note": "",
+        "decided_at": None,
+        "safe_continuation": safe_continuation.strip(),
+    }
+    holds[hold_id] = hold
+    store["holds"] = holds
+    store["next_id"] = next_id + 1
+    store["updated_at"] = now
+    _write_json_file(path, store)
+
+    report_path = _approval_hold_report_path(hold_id, branch_name)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(_render_approval_hold_report(hold), encoding="utf-8")
+
+    manifest = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        manifest,
+        "approval_hold",
+        "pending",
+        artifacts=[_artifact_ref(report_path, "approval_hold")],
+        metadata={"hold_id": hold_id, "kind": kind},
+    )
+    save_artifact_manifest(manifest, branch_name)
+
+    return {**base, "hold_id": hold_id, "hold": hold, "idempotent": False}
+
+
+def decide_approval_hold(
+    hold_id: str,
+    decision: str,
+    note: str = "",
+    branch: Optional[str] = None,
+) -> dict[str, Any]:
+    """Transition an approval hold: pending → approved|denied|expired|cancelled.
+
+    Idempotent: re-deciding with the same decision on an already-terminal hold
+    returns the current hold without error.
+    """
+    branch_name = branch or get_branch_name()
+    path = _approval_holds_path(branch_name)
+    base: dict[str, Any] = {
+        "status": "ok",
+        "branch": branch_name,
+        "hold_id": hold_id,
+        "path": str(path),
+    }
+
+    if decision not in APPROVAL_HOLD_TERMINAL_STATES:
+        return {
+            **base,
+            "status": "error",
+            "reasons": [
+                f"decision {decision!r} is not one of "
+                f"{sorted(APPROVAL_HOLD_TERMINAL_STATES)}"
+            ],
+        }
+
+    store = _load_approval_holds(path, branch_name)
+    holds = cast(dict[str, Any], store["holds"])
+    hold = holds.get(hold_id)
+    if not isinstance(hold, dict):
+        return {**base, "status": "error", "reasons": [f"hold {hold_id!r} not found"]}
+
+    current_state = hold.get("state", "")
+    if current_state != "pending":
+        if current_state == decision:
+            return {**base, "hold": hold, "idempotent": True}
+        return {
+            **base,
+            "status": "error",
+            "reasons": [
+                f"hold {hold_id!r} is already in terminal state {current_state!r}; "
+                f"cannot transition to {decision!r}"
+            ],
+        }
+
+    now = _utc_timestamp()
+    hold["state"] = decision
+    hold["decision"] = decision
+    hold["decision_note"] = note.strip()
+    hold["decided_at"] = now
+    holds[hold_id] = hold
+    store["updated_at"] = now
+    _write_json_file(path, store)
+
+    report_path = _approval_hold_report_path(hold_id, branch_name)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(_render_approval_hold_report(hold), encoding="utf-8")
+
+    pending_remaining = any(
+        isinstance(h, dict) and h.get("state") == "pending" for h in holds.values()
+    )
+    manifest = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        manifest,
+        "approval_hold",
+        "pending" if pending_remaining else "decided",
+        metadata={"last_decided": hold_id, "decision": decision},
+    )
+    save_artifact_manifest(manifest, branch_name)
+
+    return {**base, "hold": hold, "idempotent": False}
+
+
+def list_approval_holds(
+    branch: Optional[str] = None,
+    state: Optional[str] = None,
+) -> dict[str, Any]:
+    """List all approval holds for a branch, optionally filtered by state."""
+    branch_name = branch or get_branch_name()
+    path = _approval_holds_path(branch_name)
+    base: dict[str, Any] = {"status": "ok", "branch": branch_name, "path": str(path)}
+
+    if state is not None and state not in APPROVAL_HOLD_ALL_STATES:
+        return {
+            **base,
+            "status": "error",
+            "reasons": [
+                f"state {state!r} is not one of {sorted(APPROVAL_HOLD_ALL_STATES)}"
+            ],
+        }
+
+    store = _load_approval_holds(path, branch_name)
+    holds = cast(dict[str, Any], store["holds"])
+    result = [h for h in holds.values() if isinstance(h, dict)]
+    if state is not None:
+        result = [h for h in result if h.get("state") == state]
+    result.sort(key=lambda h: str(h.get("created_at", "")))
+
+    return {**base, "holds": result, "count": len(result)}
+
+
+def get_pending_holds(branch: Optional[str] = None) -> dict[str, Any]:
+    """Return pending holds for a branch; ``resume_blocked`` signals /map-resume."""
+    result = list_approval_holds(branch=branch, state="pending")
+    pending = cast(list[Any], result.get("holds", []))
+    return {
+        **result,
+        "has_pending": bool(pending),
+        "pending_count": len(pending),
+        "resume_blocked": bool(pending),
+    }
+
+
 # --- Per-subtask git worktree isolation (#284) ---------------------------------
 # Runner-owned explicit worktrees (NOT the harness-native isolation="worktree").
 # llm-council-reviewed design (conv 461b92f9):
@@ -19439,6 +19727,76 @@ if __name__ == "__main__":
         print(json.dumps(_wt_r, indent=2))
         if not _wt_r.get("clean"):
             sys.exit(1)
+
+    elif func_name == "create_approval_hold":
+        # CLI: create_approval_hold --kind <kind> --reason <text>
+        #                           --request-summary <text> [--source <src>]
+        #                           [--safe-continuation <text>] [--branch B]
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py create_approval_hold")
+        _p.add_argument("--kind", required=True, help=f"Hold kind: {sorted(APPROVAL_HOLD_KINDS)}")
+        _p.add_argument("--reason", required=True, help="Policy reason for the hold")
+        _p.add_argument("--request-summary", required=True, dest="request_summary",
+                        help="Summary of the requested action")
+        _p.add_argument("--source", default="", help="Source hook/step name")
+        _p.add_argument("--safe-continuation", default="", dest="safe_continuation",
+                        help="What to do next (safe continuation guidance)")
+        _p.add_argument("--branch", default=None, help="Branch name (default: current branch)")
+        _a = _p.parse_args(sys.argv[2:])
+        _r = create_approval_hold(
+            _a.kind, _a.reason, _a.request_summary, _a.source, _a.branch, _a.safe_continuation
+        )
+        print(json.dumps(_r, indent=2))
+        if _r.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "decide_approval_hold":
+        # CLI: decide_approval_hold <hold-id> <decision> [--note <text>] [--branch B]
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py decide_approval_hold")
+        _p.add_argument("hold_id", help="Hold ID (e.g. hold-001)")
+        _p.add_argument(
+            "decision",
+            choices=sorted(APPROVAL_HOLD_TERMINAL_STATES),
+            help="Decision to record",
+        )
+        _p.add_argument("--note", default="", help="Optional decision note")
+        _p.add_argument("--branch", default=None, help="Branch name (default: current branch)")
+        _a = _p.parse_args(sys.argv[2:])
+        _r = decide_approval_hold(_a.hold_id, _a.decision, _a.note, _a.branch)
+        print(json.dumps(_r, indent=2))
+        if _r.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "list_approval_holds":
+        # CLI: list_approval_holds [--state <state>] [--branch B]
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py list_approval_holds")
+        _p.add_argument(
+            "--state",
+            default=None,
+            choices=sorted(APPROVAL_HOLD_ALL_STATES),
+            help="Filter by state (default: all)",
+        )
+        _p.add_argument("--branch", default=None, help="Branch name (default: current branch)")
+        _a = _p.parse_args(sys.argv[2:])
+        _r = list_approval_holds(_a.branch, _a.state)
+        print(json.dumps(_r, indent=2))
+        if _r.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "get_pending_holds":
+        # CLI: get_pending_holds [--branch B]
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py get_pending_holds")
+        _p.add_argument("--branch", default=None, help="Branch name (default: current branch)")
+        _a = _p.parse_args(sys.argv[2:])
+        _r = get_pending_holds(_a.branch)
+        print(json.dumps(_r, indent=2))
 
     else:
         # Helpful redirect: when the user passes a command that belongs to
