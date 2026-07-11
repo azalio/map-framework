@@ -3188,10 +3188,11 @@ class TestValidateStepAutoMutationBoundary:
         assert "Mutation-boundary violation" in result["message"]
 
     def test_warning_routes_feedback_to_actor_once(self, branch_dir, tmp_path, monkeypatch):
-        """Option ii: a non-strict scope leak does NOT hard-fail, but the FIRST
-        MONITOR validate routes it back to the Actor as feedback (valid=False +
-        'Scope warning'); the subtask is recorded in scope_feedback_subtasks so a
-        SECOND validate with the same leak passes (guard prevents retry-burn)."""
+        """A non-strict scope leak never hard-fails the gate. The FIRST call with
+        a warning records the subtask in scope_feedback_subtasks and surfaces the
+        out-of-scope files as advisory scope_warning metadata in the success
+        response (valid=True). The SECOND call with the same leak advances normally
+        with no scope_warning (guard prevents repeated advisory noise)."""
         state = map_orchestrator.StepState()
         state.workflow_status = "IN_PROGRESS"
         state.subtask_sequence = ["ST-001"]
@@ -3218,15 +3219,16 @@ class TestValidateStepAutoMutationBoundary:
         monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
 
         r1 = map_orchestrator.validate_step("2.4", branch_dir, recommendation="proceed")
-        assert r1["valid"] is False, r1
-        assert "Scope warning" in r1["message"], r1
-        assert "leak.py" in r1["message"], r1
+        assert r1["valid"] is True, r1  # advisory only — gate passes on first occurrence
+        assert "scope_warning" in r1, r1
+        assert "leak.py" in str(r1["scope_warning"].get("unexpected", [])), r1
         persisted = map_orchestrator.StepState.load(state_file)
         assert "ST-001" in persisted.scope_feedback_subtasks, persisted.scope_feedback_subtasks
 
-        # Same leak persists, but the once-guard now lets the gate pass (no hard block).
+        # Same leak persists; second call: guard already fired, no scope_warning metadata.
         r2 = map_orchestrator.validate_step("2.4", branch_dir, recommendation="proceed")
         assert r2["valid"] is True, r2
+        assert "scope_warning" not in r2, r2
 
     def test_false_progress_routes_feedback_when_nothing_changed(
         self, branch_dir, tmp_path, monkeypatch

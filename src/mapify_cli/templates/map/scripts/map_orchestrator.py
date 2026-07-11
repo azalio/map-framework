@@ -1719,6 +1719,7 @@ def validate_step(
     # MAP_STRICT_SCOPE=1 escalates a "violation" to a hard reject. Best-effort:
     # if blueprint or git aren't available (e.g., unit tests that exercise
     # just the orchestrator), skip silently rather than block the gate.
+    _scope_warning_meta: Optional[dict] = None
     if step_id == "2.4" and state.current_subtask_id:
         blueprint_present = Path(f".map/{branch}/blueprint.json").exists()
         if blueprint_present:
@@ -1754,27 +1755,29 @@ def validate_step(
                     state.save(state_file)
                     unexpected = scope_report.get("unexpected", [])
                     hint = scope_report.get("diagnostic_hint", "")
-                    return {
-                        "valid": False,
-                        "message": (
-                            "Scope warning (mutation-boundary): these files are "
-                            f"outside {state.current_subtask_id}'s affected_files: "
-                            f"{unexpected}. Revert the out-of-scope changes; OR, if "
-                            "they are genuinely required, STOP and report a blocker "
-                            "for a contract update — do not silently keep them. "
-                            + (f"({hint})" if hint else "")
-                        ).strip(),
+                    _scope_warning_meta = {
+                        "unexpected": unexpected,
+                        "subtask_id": state.current_subtask_id,
+                        **({"hint": hint} if hint else {}),
                     }
+                    # Advisory-only: do NOT block the gate. The warning is surfaced
+                    # as scope_warning metadata in the success response so callers
+                    # can log or display it without a double-call being required.
                 # false-progress (correctness): MONITOR is approving, but the
                 # subtask changed NOTHING despite declaring affected_files. Same
                 # warn->actor-feedback trick (once per subtask via
                 # progress_feedback_subtasks): nudge the Actor to implement the
                 # change or report a blocker, rather than silently closing a
                 # subtask that did nothing.
+                _st_result = state.subtask_results.get(state.current_subtask_id) or {}
+                _has_recorded_commit = bool(
+                    isinstance(_st_result, dict) and _st_result.get("commit_sha")
+                )
                 if (
                     scope_status != "error"
                     and scope_report.get("expected")
                     and not scope_report.get("actual")
+                    and not _has_recorded_commit
                     and state.current_subtask_id not in state.progress_feedback_subtasks
                 ):
                     state.progress_feedback_subtasks.append(state.current_subtask_id)
@@ -1891,6 +1894,8 @@ def validate_step(
         response["skipped_for_deps"] = skipped_for_deps
     if next_step_signal == "BLOCKED_ON_DEPS":
         response["blocked_subtasks"] = blocked_remaining
+    if _scope_warning_meta is not None:
+        response["scope_warning"] = _scope_warning_meta
     return response
 
 
