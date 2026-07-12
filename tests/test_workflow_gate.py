@@ -175,6 +175,56 @@ class TestWorkflowGate:
         payload = {"blueprint": body} if nested else body
         (map_dir / "blueprint.json").write_text(json.dumps(payload))
 
+    # --- Terminal / end-of-flow behavior ---
+
+    def test_allows_edit_when_workflow_status_complete_despite_stale_phase(
+        self, tmp_path: Path
+    ) -> None:
+        """A finished workflow (workflow_status=WORKFLOW_COMPLETE) must fail-open
+        the gate even if current_step_phase is a non-editing label (a legacy
+        state, or a run that stalled before the phase was updated). Prevents the
+        post-completion hard-block the end-of-MAP-flow work fixes.
+        """
+        map_dir = tmp_path / ".map" / "master"
+        map_dir.mkdir(parents=True, exist_ok=True)
+        (map_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "current_step_phase": "DECOMPOSE",
+                    "current_subtask_id": "ST-001",
+                    "workflow_status": "WORKFLOW_COMPLETE",
+                }
+            )
+        )
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": "src/x.py"}},
+            tmp_path,
+            branch="master",
+        )
+        assert code == 0
+        self._assert_allowed(stdout)
+
+    def test_block_message_guides_to_archive_not_actor_when_done(
+        self, tmp_path: Path
+    ) -> None:
+        """The non-terminal block message must never tell the agent to blindly
+        'Call the Actor agent first', and must point at the clean exits
+        (archive / review) with an explicit STOP-and-report — the anti-thrash
+        guidance that replaces the old misleading message.
+        """
+        self._setup_step_state(tmp_path, "master", "DECOMPOSE")
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": "src/x.py"}},
+            tmp_path,
+            branch="master",
+        )
+        assert code == 0
+        reason = self._assert_denied(stdout)
+        assert "Call the Actor agent first" not in reason
+        assert "map_orchestrator.py archive" in reason
+        assert "STOP" in reason
+        assert "/map-review" in reason
+
     # --- Non-editing tools ---
 
     def test_allows_non_editing_tools(self, tmp_path: Path) -> None:

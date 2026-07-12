@@ -385,6 +385,16 @@ def is_editing_phase(branch: str) -> tuple[bool, Optional[str]]:
     if current_phase in ALLOWED_PHASES:
         return True, None
 
+    # Terminal completeness is also a permissive signal. A workflow whose
+    # canonical status is WORKFLOW_COMPLETE is closed regardless of the phase
+    # label — the same terminal flag mark_workflow_complete / validate_step set
+    # atomically alongside phase=COMPLETE. Honoring it here keeps the gate
+    # robust to any state (a legacy file, or a future path) that carries the
+    # terminal status without the matching phase, so a finished branch never
+    # hard-blocks post-completion edits.
+    if str(state.get("workflow_status", "")).strip().upper() == "WORKFLOW_COMPLETE":
+        return True, None
+
     # Not in an editing phase → block
     subtask = state.get("current_subtask_id", "?")
     # Phase-specific guidance: RESEARCH is the most common pre-ACTOR
@@ -427,7 +437,16 @@ def is_editing_phase(branch: str) -> tuple[bool, Optional[str]]:
         f"Workflow gate: Edit blocked during phase '{current_phase}' "
         f"(subtask {subtask}).\n"
         f"Edit is only allowed during: {', '.join(sorted(EDITING_PHASES))}.\n"
-        "Call the Actor agent first — it will apply code changes.\n"
+        "If this subtask still needs code changes, dispatch the Actor agent "
+        "(it applies edits in the ACTOR phase).\n"
+        "\n"
+        "If instead this MAP workflow is already DONE and you just want a quick\n"
+        "follow-up edit or a new task on this branch: do NOT edit .map/ state or\n"
+        "the MAP runner/hooks to force the write through — STOP and tell the\n"
+        "user. To retire a finished branch run\n"
+        "  python3 .map/scripts/map_orchestrator.py archive\n"
+        "(the gate then fail-opens); to reopen a completed run for review fixes\n"
+        "use /map-review.\n"
         "\n"
         f"Note: this block is scoped to {subtask}'s affected_files. Edits to\n"
         "files OUTSIDE that surface (orthogonal hotfixes, repo-root config,\n"

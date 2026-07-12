@@ -1867,16 +1867,29 @@ def validate_step(
                 sid for sid in state.subtask_sequence if sid not in completed
             ]
             if not blocked_remaining:
+                # Atomic terminal transition: set workflow_status + completed_at
+                # together with the phase, the same invariant that
+                # mark_workflow_complete / mark_subtask_complete enforce. Omitting
+                # them left sequential runs at workflow_status=IN_PROGRESS while
+                # phase=COMPLETE, silently disabling every WORKFLOW_COMPLETE-gated
+                # hook (scrub-internal-ids, teardown/archival) for the most common
+                # completion path.
                 state.current_step_id = "COMPLETE"
                 state.current_step_phase = "COMPLETE"
+                state.workflow_status = "WORKFLOW_COMPLETE"
+                state.completed_at = _utc_timestamp()
                 next_step_signal = "COMPLETE"
             else:
                 state.current_step_id = "BLOCKED_ON_DEPS"
                 state.current_step_phase = "BLOCKED_ON_DEPS"
                 next_step_signal = "BLOCKED_ON_DEPS"
     else:
+        # Atomic terminal transition (see the blocked_remaining branch above):
+        # workflow_status + completed_at must land together with phase=COMPLETE.
         state.current_step_id = "COMPLETE"
         state.current_step_phase = "COMPLETE"
+        state.workflow_status = "WORKFLOW_COMPLETE"
+        state.completed_at = _utc_timestamp()
         next_step_signal = "COMPLETE"
 
     # Save updated state
@@ -1912,16 +1925,31 @@ def initialize_workflow(task: str, branch: str) -> dict:
     """
     state_file = Path(f".map/{branch}/step_state.json")
 
+    # Auto-archive a previously COMPLETED workflow on this branch so a reused
+    # branch starts clean (see archive_completed_workflow). Only a terminal
+    # workflow is retired here — an in-flight run is never clobbered; that
+    # stays an explicit operator decision.
+    archived_prior = None
+    if state_file.exists():
+        prior = StepState.load(state_file)
+        if _is_workflow_complete(prior):
+            archive_result = archive_completed_workflow(branch)
+            if archive_result.get("status") == "archived":
+                archived_prior = archive_result.get("archive_file")
+
     # Create fresh state
     state = StepState()
     state.save(state_file)
 
-    return {
+    result = {
         "status": "initialized",
         "state_file": str(state_file),
         "task": task,
         "branch": branch,
     }
+    if archived_prior:
+        result["archived_prior"] = archived_prior
+    return result
 
 
 def set_plan_approved(value: str, branch: str) -> dict:
@@ -3915,6 +3943,72 @@ def reopen_for_fixes(branch: str, feedback: str = "") -> dict:
     }
 
 
+def archive_completed_workflow(branch: str) -> dict:
+    """Retire a COMPLETED workflow so the branch returns to a clean state.
+
+    Renames ``.map/<branch>/step_state.json`` to
+    ``step_state.completed-<utc-timestamp>.json``. Once the active state file is
+    gone, ``workflow-gate.py`` fail-opens (edits allowed) and
+    ``workflow-context-injector.py`` stops surfacing workflow context — so a
+    later session, a quick follow-up edit, or a new unrelated task on the same
+    branch no longer trips the gate or misleads the agent into "fixing" a
+    workflow that is already done.
+
+    Deferred by design: archival does NOT fire automatically the instant a
+    workflow reaches COMPLETE, because ``/map-review`` -> ``reopen_for_fixes``
+    needs the active state file present to reopen the run for post-review
+    fixes. Archival happens only on an explicit call to this command, or
+    automatically when a NEW workflow is initialised on the branch
+    (``initialize_workflow``).
+
+    Idempotent and safe:
+      - no active state file -> ``status="noop"`` (nothing to archive)
+      - active workflow not terminal -> ``status="error"`` (refuses to archive
+        an in-flight run; finish or abandon it first)
+      - terminal -> renamed, ``status="archived"``
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    if not state_file.exists():
+        return {
+            "status": "noop",
+            "message": (
+                f"No active step_state.json at {state_file}; nothing to archive."
+            ),
+        }
+
+    state = StepState.load(state_file)
+    if not _is_workflow_complete(state):
+        return {
+            "status": "error",
+            "message": (
+                f"Refusing to archive an in-flight workflow "
+                f"(phase='{state.current_step_phase}', "
+                f"workflow_status='{state.workflow_status}'). Finish it "
+                "(mark_workflow_complete) or abandon it before archiving."
+            ),
+        }
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    archive_file = state_file.with_name(f"step_state.completed-{timestamp}.json")
+    # Guard against a same-second second archive clobbering the first.
+    if archive_file.exists():
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        archive_file = state_file.with_name(
+            f"step_state.completed-{timestamp}.json"
+        )
+    state_file.rename(archive_file)
+
+    return {
+        "status": "archived",
+        "archive_file": str(archive_file),
+        "message": (
+            "Workflow archived. Branch is now clean: the edit gate fail-opens "
+            "and no workflow context is injected. Start a new /map-* workflow "
+            "or edit freely."
+        ),
+    }
+
+
 SKIPPABLE_STEPS = {"2.25", "2.26"}
 
 
@@ -4656,6 +4750,7 @@ def main():
             "record_subtask_result",
             "backfill_subtask_ids",
             "finalize_plan",
+            "archive",
         ],
         help="Command to execute",
     )
@@ -5159,6 +5254,10 @@ def main():
 
         elif args.command == "mark_workflow_complete":
             result = mark_workflow_complete(branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "archive":
+            result = archive_completed_workflow(branch)
             print(json.dumps(result, indent=2))
 
         elif args.command == "mark_subtask_complete":
