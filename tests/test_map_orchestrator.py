@@ -2399,6 +2399,55 @@ class TestValidateStepDisposition:
         assert payload["valid"] is False
         assert not payload.get("deferred")
 
+    def test_cli_archive_in_flight_exits_one(self, tmp_path):
+        # An in-flight run cannot be archived → status=error → exit 1 so a
+        # `set -e` / exit-code caller detects the refusal.
+        project = tmp_path / "project"
+        project.mkdir()
+        script = self._make_project(project)
+        state_dir = project / ".map" / "test-branch"
+        state_dir.mkdir(parents=True)
+        (state_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "workflow_status": "IN_PROGRESS",
+                    "current_step_id": "2.3",
+                    "current_step_phase": "ACTOR",
+                }
+            )
+        )
+        proc = subprocess.run(
+            [sys.executable, str(script), "archive", "--branch", "test-branch"],
+            cwd=str(project), capture_output=True, text=True, timeout=30,
+        )
+        assert proc.returncode == 1, proc.stdout
+        assert json.loads(proc.stdout)["status"] == "error"
+        assert (state_dir / "step_state.json").exists()  # in-flight never moved
+
+    def test_cli_archive_completed_exits_zero(self, tmp_path):
+        # A completed run archives cleanly → exit 0, active file gone.
+        project = tmp_path / "project"
+        project.mkdir()
+        script = self._make_project(project)
+        state_dir = project / ".map" / "test-branch"
+        state_dir.mkdir(parents=True)
+        (state_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "workflow_status": "WORKFLOW_COMPLETE",
+                    "current_step_id": "COMPLETE",
+                    "current_step_phase": "COMPLETE",
+                }
+            )
+        )
+        proc = subprocess.run(
+            [sys.executable, str(script), "archive", "--branch", "test-branch"],
+            cwd=str(project), capture_output=True, text=True, timeout=30,
+        )
+        assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+        assert json.loads(proc.stdout)["status"] == "archived"
+        assert not (state_dir / "step_state.json").exists()
+
 
 class TestMonitorDispositionSingleSource:
     """Drift guard: the SSOT dict, the prompt, and the CLI must agree."""
@@ -2900,6 +2949,112 @@ class TestValidateStepInterSubtaskBoundary:
         state.save(state_file)
         result = map_orchestrator.validate_step("2.4", branch_dir, recommendation="proceed")
         assert result["next_step"] == "COMPLETE"
+
+    def test_final_subtask_sets_workflow_status_complete_atomically(
+        self, branch_dir, tmp_path
+    ):
+        """Regression: validate_step's sequential terminal must set
+        workflow_status=WORKFLOW_COMPLETE + completed_at atomically with
+        phase=COMPLETE — not leave the run at IN_PROGRESS. A stale IN_PROGRESS
+        silently disabled every WORKFLOW_COMPLETE-gated hook (scrub-internal-ids,
+        teardown/archival) on the most common completion path.
+        """
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        result = map_orchestrator.validate_step(
+            "2.4", branch_dir, recommendation="proceed"
+        )
+        assert result["next_step"] == "COMPLETE"
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.current_step_phase == "COMPLETE"
+        assert reloaded.current_step_id == "COMPLETE"
+        assert reloaded.workflow_status == "WORKFLOW_COMPLETE"
+        assert reloaded.completed_at is not None
+
+
+class TestArchiveCompletedWorkflow:
+    """archive_completed_workflow retires a finished run so the branch
+    fail-opens; it is idempotent and refuses to touch an in-flight run.
+    initialize_workflow auto-archives a prior COMPLETED run on branch reuse.
+    """
+
+    def test_noop_when_no_state_file(self, branch_dir, tmp_path):
+        del tmp_path
+        result = map_orchestrator.archive_completed_workflow(branch_dir)
+        assert result["status"] == "noop"
+
+    def test_refuses_in_flight_workflow(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.current_step_id = "2.3"
+        state.current_step_phase = "ACTOR"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        result = map_orchestrator.archive_completed_workflow(branch_dir)
+        assert result["status"] == "error"
+        assert state_file.exists()  # in-flight run is never moved
+
+    def test_archives_completed_workflow(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "WORKFLOW_COMPLETE"
+        state.current_step_id = "COMPLETE"
+        state.current_step_phase = "COMPLETE"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        result = map_orchestrator.archive_completed_workflow(branch_dir)
+        assert result["status"] == "archived"
+        assert not state_file.exists()  # active file gone -> gate fail-opens
+        archive = Path(result["archive_file"])
+        assert archive.exists()
+        assert archive.name.startswith("step_state.completed-")
+
+    def test_idempotent_second_call_is_noop(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "WORKFLOW_COMPLETE"
+        state.current_step_id = "COMPLETE"
+        state.current_step_phase = "COMPLETE"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        first = map_orchestrator.archive_completed_workflow(branch_dir)
+        assert first["status"] == "archived"
+        second = map_orchestrator.archive_completed_workflow(branch_dir)
+        assert second["status"] == "noop"  # nothing active left to archive
+
+    def test_initialize_auto_archives_prior_completed(self, branch_dir, tmp_path):
+        prior = map_orchestrator.StepState()
+        prior.workflow_status = "WORKFLOW_COMPLETE"
+        prior.current_step_id = "COMPLETE"
+        prior.current_step_phase = "COMPLETE"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        prior.save(state_file)
+        result = map_orchestrator.initialize_workflow("new task", branch_dir)
+        assert result["status"] == "initialized"
+        assert "archived_prior" in result
+        fresh = map_orchestrator.StepState.load(state_file)
+        assert fresh.workflow_status != "WORKFLOW_COMPLETE"  # not the prior run
+        assert Path(result["archived_prior"]).exists()  # prior preserved
+
+    def test_initialize_does_not_archive_in_flight(self, branch_dir, tmp_path):
+        prior = map_orchestrator.StepState()
+        prior.workflow_status = "IN_PROGRESS"
+        prior.current_step_id = "2.3"
+        prior.current_step_phase = "ACTOR"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        prior.save(state_file)
+        result = map_orchestrator.initialize_workflow("new task", branch_dir)
+        assert "archived_prior" not in result
+        archives = list(
+            (tmp_path / ".map" / branch_dir).glob("step_state.completed-*.json")
+        )
+        assert archives == []
 
 
 class TestValidateStepResearchEnforcement:

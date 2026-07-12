@@ -88,9 +88,25 @@ SIGNIFICANT_PATTERNS = [
 
 # Step IDs that indicate the workflow has reached a terminal/completed state.
 # When current_step_id or current_step_phase matches, format_reminder returns
-# None so the hook injects nothing — stale COMPLETE state on a branch must not
-# surface as an active requirement in a new session.
+# None (no active-phase reminder, and never the misleading "REQUIRED: Complete
+# phase COMPLETE" banner issue #317 removed). For editing tools, main() then
+# surfaces the short, low-pressure _TERMINAL_NOTICE instead of silence, so the
+# agent recognizes completion and takes the clean exit (archive / review)
+# rather than thrashing on a finished workflow.
 _TERMINAL_STEP_IDS: frozenset[str] = frozenset({"COMPLETE"})
+
+# Surfaced (once per turn, via the standard dedup) on an editing tool when the
+# branch's workflow is terminal but the state file still lingers. Names the
+# clean next steps and states plainly that completion is not an error — the
+# opposite of the misleading active-pressure banner issue #317 removed. Must
+# not contain "REQUIRED" or "Complete phase COMPLETE" (the #317 markers).
+_TERMINAL_NOTICE = (
+    "[MAP] This branch's MAP workflow is COMPLETE — editing is allowed and this "
+    "is not an error to fix. For NEW work, retire the branch with "
+    "`python3 .map/scripts/map_orchestrator.py archive` (the gate then "
+    "fail-opens); to reopen the finished run for review fixes use `/map-review`. "
+    "Do NOT edit .map/ state or the MAP runner/hooks to force it."
+)
 
 # Verification-class invocations: legitimate during ACTOR / TEST_WRITER for
 # the agent to self-check before MONITOR. They count as "significant" so the
@@ -571,6 +587,24 @@ def _truncate_at_word(text: str, limit: int) -> str:
     return cut + "..."
 
 
+def _state_is_terminal(state: dict) -> bool:
+    """Return True iff step_state reflects a terminal/completed workflow.
+
+    Honors the canonical ``workflow_status == "WORKFLOW_COMPLETE"`` flag in
+    addition to the COMPLETE step_id/phase labels — the same terminal signal
+    ``workflow-gate.py`` treats as permissive. Without the status check, a run
+    whose completion set ``workflow_status`` but left a stale non-terminal phase
+    would still be handed the active "REQUIRED: <phase>" reminder.
+    """
+    if not isinstance(state, dict):
+        return False
+    if state_string(state, "workflow_status").upper() == "WORKFLOW_COMPLETE":
+        return True
+    step_id = state_string(state, "current_step_id")
+    step_phase = state_string(state, "current_step_phase")
+    return step_id in _TERMINAL_STEP_IDS or step_phase in _TERMINAL_STEP_IDS
+
+
 def format_reminder(
     state: dict, branch: str, *, suppress_required: bool = False
 ) -> str | None:
@@ -589,7 +623,7 @@ def format_reminder(
     # Suppress injection when the workflow is in a terminal/completed state.
     # A stale COMPLETE step_state.json on a branch (e.g. from a previous run)
     # must not surface misleading "REQUIRED: Complete phase COMPLETE" context.
-    if step_id in _TERMINAL_STEP_IDS or step_phase in _TERMINAL_STEP_IDS:
+    if _state_is_terminal(state):
         return None
 
     subtask_id = state_string(state, "current_subtask_id", "-") or "-"
@@ -978,6 +1012,17 @@ def main() -> None:
     ):
         suppress_required = True
     reminder = format_reminder(state, branch, suppress_required=suppress_required)
+    # Terminal/lingering workflow: format_reminder stays silent (no active
+    # reminder, no misleading banner). For an editing tool, surface the clean
+    # completion notice instead of nothing so the agent takes the archive /
+    # review exit rather than trying to "fix" a finished workflow. Bash stays
+    # silent — a verification run needs no completion nag.
+    if (
+        reminder is None
+        and tool_name in ("Edit", "Write", "MultiEdit")
+        and _state_is_terminal(state)
+    ):
+        reminder = _TERMINAL_NOTICE
     if reminder:
         context_parts = [reminder]
         if conflict_context:

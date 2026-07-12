@@ -1270,18 +1270,23 @@ def test_vc5_promote_idempotency_rule_documented_in_shipped_skill():
 
 
 # ---------------------------------------------------------------------------
-# Regression tests for issue #317:
-# workflow-context-injector must inject NOTHING when step_state.json
-# reflects a terminal/completed MAP workflow state (current_step_id or
-# current_step_phase == "COMPLETE").  Previously the hook emitted a
-# misleading "REQUIRED: Complete phase COMPLETE" banner.
+# Regression tests for issue #317 (refined by the end-of-MAP-flow work):
+# on a terminal/completed MAP workflow state (current_step_id or
+# current_step_phase == "COMPLETE") the injector must NEVER surface the
+# misleading "REQUIRED: Complete phase COMPLETE" active-pressure banner.
+# For an EDITING tool it instead surfaces the low-pressure completion notice
+# (archive / review guidance) so the agent takes the clean exit rather than
+# thrashing on a finished workflow; Bash stays silent (no completion nag on a
+# verification run).
 # ---------------------------------------------------------------------------
 
 
 class TestTerminalStateSuppress:
-    """Regression: terminal COMPLETE state must produce {} output, not an
-    active-looking reminder.  Covers both the subprocess (integration) and
-    the format_reminder pure-function (unit) paths.
+    """Regression: terminal COMPLETE state must never surface the misleading
+    active-pressure banner. An editing tool surfaces the low-pressure
+    completion notice; Bash and the format_reminder pure function stay silent.
+    Covers both the subprocess (integration) and the format_reminder (unit)
+    paths.
     """
 
     def _seed_terminal_state(
@@ -1318,11 +1323,13 @@ class TestTerminalStateSuppress:
         )
         return state_file
 
-    def test_edit_on_completed_branch_injects_nothing(
+    def test_edit_on_completed_branch_emits_completion_notice(
         self, tmp_path: Path
     ) -> None:
-        """Exact scenario from issue #317: stale COMPLETE step_state + Edit
-        tool must produce {} and never surface 'REQUIRED: Complete phase COMPLETE'.
+        """Refined issue #317: a stale COMPLETE step_state + Edit must never
+        surface the misleading 'REQUIRED: Complete phase COMPLETE' banner, but
+        DOES surface the low-pressure completion notice (archive / review
+        guidance) so the agent takes the clean exit instead of thrashing.
         """
         self._seed_terminal_state(tmp_path, branch="default")
         code, out, err = _run_hook(
@@ -1331,11 +1338,12 @@ class TestTerminalStateSuppress:
         )
         assert code == 0
         assert err == ""
-        assert out == "{}", (
-            f"Terminal COMPLETE state must produce empty output; got: {out!r}"
-        )
+        assert "REQUIRED" not in out
+        assert "Complete phase COMPLETE" not in out
+        assert "map_orchestrator.py archive" in out
+        assert "/map-review" in out
 
-    def test_write_on_completed_branch_injects_nothing(
+    def test_write_on_completed_branch_emits_completion_notice(
         self, tmp_path: Path
     ) -> None:
         self._seed_terminal_state(tmp_path, branch="default")
@@ -1345,7 +1353,8 @@ class TestTerminalStateSuppress:
         )
         assert code == 0
         assert err == ""
-        assert out == "{}"
+        assert "REQUIRED" not in out
+        assert "map_orchestrator.py archive" in out
 
     def test_significant_bash_on_completed_branch_injects_nothing(
         self, tmp_path: Path
@@ -1359,8 +1368,8 @@ class TestTerminalStateSuppress:
         assert err == ""
         assert out == "{}"
 
-    def test_only_step_id_complete_suppresses(self, tmp_path: Path) -> None:
-        """step_id=COMPLETE with non-terminal phase is still terminal."""
+    def test_only_step_id_complete_emits_notice(self, tmp_path: Path) -> None:
+        """step_id=COMPLETE with non-terminal phase is still terminal → notice."""
         self._seed_terminal_state(
             tmp_path, branch="default", step_id="COMPLETE", step_phase="CLOSEOUT"
         )
@@ -1370,10 +1379,11 @@ class TestTerminalStateSuppress:
         )
         assert code == 0
         assert err == ""
-        assert out == "{}"
+        assert "REQUIRED" not in out
+        assert "map_orchestrator.py archive" in out
 
-    def test_only_step_phase_complete_suppresses(self, tmp_path: Path) -> None:
-        """step_phase=COMPLETE with non-matching step_id is still terminal."""
+    def test_only_step_phase_complete_emits_notice(self, tmp_path: Path) -> None:
+        """step_phase=COMPLETE with non-matching step_id is still terminal → notice."""
         self._seed_terminal_state(
             tmp_path, branch="default", step_id="CLOSEOUT", step_phase="COMPLETE"
         )
@@ -1383,7 +1393,44 @@ class TestTerminalStateSuppress:
         )
         assert code == 0
         assert err == ""
-        assert out == "{}"
+        assert "REQUIRED" not in out
+        assert "map_orchestrator.py archive" in out
+
+    def test_workflow_status_complete_with_stale_phase_emits_notice(
+        self, tmp_path: Path
+    ) -> None:
+        """A run whose ONLY terminal signal is workflow_status=WORKFLOW_COMPLETE
+        (stale non-terminal step_id/phase) must still be treated as terminal:
+        editing tools get the completion notice, never the active 'REQUIRED'
+        reminder. Mirrors workflow-gate.py's workflow_status permissiveness.
+        """
+        state_dir = tmp_path / ".map" / "default"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "current_step_id": "2.2",
+                    "current_step_phase": "RESEARCH",
+                    "current_subtask_id": "ST-005",
+                    "subtask_index": 4,
+                    "subtask_sequence": [
+                        "ST-001", "ST-002", "ST-003", "ST-004", "ST-005",
+                    ],
+                    "plan_approved": True,
+                    "execution_mode": "batch",
+                    "workflow_status": "WORKFLOW_COMPLETE",
+                }
+            ),
+            encoding="utf-8",
+        )
+        code, out, err = _run_hook(
+            tmp_path,
+            {"tool_name": "Edit", "tool_input": {"file_path": "src/foo.py"}},
+        )
+        assert code == 0
+        assert err == ""
+        assert "REQUIRED" not in out
+        assert "map_orchestrator.py archive" in out
 
     def test_no_misleading_required_complete_phase_text(
         self, tmp_path: Path
