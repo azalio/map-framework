@@ -1396,6 +1396,42 @@ class TestTerminalStateSuppress:
         assert "REQUIRED" not in out
         assert "map_orchestrator.py archive" in out
 
+    def test_workflow_status_complete_with_stale_phase_emits_notice(
+        self, tmp_path: Path
+    ) -> None:
+        """A run whose ONLY terminal signal is workflow_status=WORKFLOW_COMPLETE
+        (stale non-terminal step_id/phase) must still be treated as terminal:
+        editing tools get the completion notice, never the active 'REQUIRED'
+        reminder. Mirrors workflow-gate.py's workflow_status permissiveness.
+        """
+        state_dir = tmp_path / ".map" / "default"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "current_step_id": "2.2",
+                    "current_step_phase": "RESEARCH",
+                    "current_subtask_id": "ST-005",
+                    "subtask_index": 4,
+                    "subtask_sequence": [
+                        "ST-001", "ST-002", "ST-003", "ST-004", "ST-005",
+                    ],
+                    "plan_approved": True,
+                    "execution_mode": "batch",
+                    "workflow_status": "WORKFLOW_COMPLETE",
+                }
+            ),
+            encoding="utf-8",
+        )
+        code, out, err = _run_hook(
+            tmp_path,
+            {"tool_name": "Edit", "tool_input": {"file_path": "src/foo.py"}},
+        )
+        assert code == 0
+        assert err == ""
+        assert "REQUIRED" not in out
+        assert "map_orchestrator.py archive" in out
+
     def test_no_misleading_required_complete_phase_text(
         self, tmp_path: Path
     ) -> None:

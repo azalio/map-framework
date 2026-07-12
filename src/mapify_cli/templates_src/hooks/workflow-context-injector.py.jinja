@@ -588,9 +588,18 @@ def _truncate_at_word(text: str, limit: int) -> str:
 
 
 def _state_is_terminal(state: dict) -> bool:
-    """Return True iff step_state reflects a terminal/completed workflow."""
+    """Return True iff step_state reflects a terminal/completed workflow.
+
+    Honors the canonical ``workflow_status == "WORKFLOW_COMPLETE"`` flag in
+    addition to the COMPLETE step_id/phase labels — the same terminal signal
+    ``workflow-gate.py`` treats as permissive. Without the status check, a run
+    whose completion set ``workflow_status`` but left a stale non-terminal phase
+    would still be handed the active "REQUIRED: <phase>" reminder.
+    """
     if not isinstance(state, dict):
         return False
+    if state_string(state, "workflow_status").upper() == "WORKFLOW_COMPLETE":
+        return True
     step_id = state_string(state, "current_step_id")
     step_phase = state_string(state, "current_step_phase")
     return step_id in _TERMINAL_STEP_IDS or step_phase in _TERMINAL_STEP_IDS
@@ -614,7 +623,7 @@ def format_reminder(
     # Suppress injection when the workflow is in a terminal/completed state.
     # A stale COMPLETE step_state.json on a branch (e.g. from a previous run)
     # must not surface misleading "REQUIRED: Complete phase COMPLETE" context.
-    if step_id in _TERMINAL_STEP_IDS or step_phase in _TERMINAL_STEP_IDS:
+    if _state_is_terminal(state):
         return None
 
     subtask_id = state_string(state, "current_subtask_id", "-") or "-"

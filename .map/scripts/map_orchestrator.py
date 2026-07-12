@@ -5259,6 +5259,10 @@ def main():
         elif args.command == "archive":
             result = archive_completed_workflow(branch)
             print(json.dumps(result, indent=2))
+            # Exit nonzero on a refusal (in-flight run) so `set -e` / exit-code
+            # callers detect it. A "noop" (nothing to archive) is not a failure.
+            if result.get("status") == "error":
+                sys.exit(1)
 
         elif args.command == "mark_subtask_complete":
             if not args.task_or_step:

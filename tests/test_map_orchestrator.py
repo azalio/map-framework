@@ -2399,6 +2399,55 @@ class TestValidateStepDisposition:
         assert payload["valid"] is False
         assert not payload.get("deferred")
 
+    def test_cli_archive_in_flight_exits_one(self, tmp_path):
+        # An in-flight run cannot be archived → status=error → exit 1 so a
+        # `set -e` / exit-code caller detects the refusal.
+        project = tmp_path / "project"
+        project.mkdir()
+        script = self._make_project(project)
+        state_dir = project / ".map" / "test-branch"
+        state_dir.mkdir(parents=True)
+        (state_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "workflow_status": "IN_PROGRESS",
+                    "current_step_id": "2.3",
+                    "current_step_phase": "ACTOR",
+                }
+            )
+        )
+        proc = subprocess.run(
+            [sys.executable, str(script), "archive", "--branch", "test-branch"],
+            cwd=str(project), capture_output=True, text=True, timeout=30,
+        )
+        assert proc.returncode == 1, proc.stdout
+        assert json.loads(proc.stdout)["status"] == "error"
+        assert (state_dir / "step_state.json").exists()  # in-flight never moved
+
+    def test_cli_archive_completed_exits_zero(self, tmp_path):
+        # A completed run archives cleanly → exit 0, active file gone.
+        project = tmp_path / "project"
+        project.mkdir()
+        script = self._make_project(project)
+        state_dir = project / ".map" / "test-branch"
+        state_dir.mkdir(parents=True)
+        (state_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "workflow_status": "WORKFLOW_COMPLETE",
+                    "current_step_id": "COMPLETE",
+                    "current_step_phase": "COMPLETE",
+                }
+            )
+        )
+        proc = subprocess.run(
+            [sys.executable, str(script), "archive", "--branch", "test-branch"],
+            cwd=str(project), capture_output=True, text=True, timeout=30,
+        )
+        assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+        assert json.loads(proc.stdout)["status"] == "archived"
+        assert not (state_dir / "step_state.json").exists()
+
 
 class TestMonitorDispositionSingleSource:
     """Drift guard: the SSOT dict, the prompt, and the CLI must agree."""
