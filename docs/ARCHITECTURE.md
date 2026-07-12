@@ -8,7 +8,7 @@ Deep technical documentation for MAP (Modular Agentic Planner) implementation.
 
 MAP is a Python 3.11+ CLI (`mapify`) plus provider-specific prompt/skill scaffolding that turns interactive coding agents (Claude Code and Codex CLI) into a repeatable engineering workflow: `SPEC -> PLAN -> TEST -> CODE -> REVIEW -> LEARN`. It emphasizes explicit artifacts, small reviewable contracts, deterministic prompt/runtime guardrails, and post-run learning handoffs persisted alongside the project.
 
-The current package is `mapify-cli` `3.10.0`. It ships a Typer CLI, provider delivery helpers, shared workflow-state and verification utilities, bundled Claude/Codex templates, hook scripts, cross-session memory helpers, skill-evaluation utilities, and tests that validate template contracts, artifact schemas, prompt tone, provider surfaces, workflow gates, memory hooks, skill-eval behavior, and token-budget behavior.
+The current package is `mapify-cli` `3.21.0`. It ships a Typer CLI, provider delivery helpers, shared workflow-state and verification utilities, bundled Claude/Codex templates, hook scripts, cross-session memory helpers, skill-evaluation utilities, worktree/wave execution helpers, and tests that validate template contracts, artifact schemas, prompt tone, provider surfaces, workflow gates, memory hooks, skill-eval behavior, token-budget behavior, and parallel execution safety.
 
 The remainder of this file contains the deeper implementation dive (workflow-specific agent sequences, artifact specs, MCP integration, template maintenance, and context engineering).
 
@@ -19,7 +19,7 @@ The remainder of this file contains the deeper implementation dive (workflow-spe
 - `mapify` CLI initialization (`mapify init`) and configuration
 - Provider scaffolding generated into a target repo (`.claude/` for Claude Code, `.codex/` for Codex CLI, plus `.map/` scripts/artifacts)
 - Run artifacts (plans, contracts, verification summaries, review dossiers, learning handoffs) written under `.map/<branch>/`
-- Context-budget, compression, minimality, clean-retry, run-health, review-bundle, and prior-stage-consumption contracts surfaced through MAP settings, hooks, templates, and `.map/scripts/`
+- Context-budget, compression, minimality, worktree isolation, concurrent-wave execution, clean-retry, run-health, review-bundle, and prior-stage-consumption contracts surfaced through MAP settings, hooks, templates, and `.map/scripts/`
 - Host-path and cross-process safety primitives, including canonical `MAP_*`/`~/.map/` reference docs and `flock_with_state` lock sidecars for serialized host-level workflows
 - Plan/spec citation validation that requires existing `file:line` evidence before decomposition proceeds
 - Per-subtask token accounting: the `map-token-meter` hook (SubagentStop/Stop) attributes transcript `usage` to the active subtask/phase/agent in `.map/<branch>/token_log.jsonl`, rolled up (with cost, cache-hit ratio, and advisory research ROI) into `token_accounting.json`; logic is self-contained in `.map/scripts/map_step_runner.py` so it runs without the `mapify_cli` package present
@@ -383,7 +383,9 @@ MAP dispatches reviewers (Monitor/Predictor/Evaluator) and the advisory complexi
 - **Template Surface Breadth**: The project now owns many hooks, agents, provider templates, and schema checks; release discipline depends on keeping template-sync and SkillIR tests in the default validation path.
 - **Memory Digest Quality**: Cross-session memory depends on `claude -p` digest quality and hook availability. Failed finalization is retried, but stale scratches can accumulate until `/map-memory-now` or the next session start succeeds.
 - **Skill Eval Cost/Overfit Risk**: Skill-eval run and optimize modes can spend provider quota; optimizer selection depends on representative held-out eval sets and should not be treated as a substitute for manual review of changed skill descriptions.
-- **Lock Consumer Coverage**: `flock_with_state` and host-path docs are committed, but only future workflow surfaces are expected to consume the lock protocol broadly; keep tests and references synchronized before adding states.
+- **Lock Consumer Coverage**: `flock_with_state` and host-path docs are committed, but only selected workflow surfaces consume the lock protocol today; keep tests and references synchronized before adding states.
+- **Parallel Execution Blast Radius**: `/map-efficient` now defaults to `worktree.isolation: auto` and `execution.concurrent_dispatch: true`; keep worktree, wave-merge, and kill-switch tests in the release gate because default-on concurrency increases template/runtime coupling.
+- **Workflow-Gate Scope**: `workflow-gate.py` intentionally allows out-of-repo paths and orthogonal-file relief across blocking phases; Bash write bypasses remain a known deferred limitation rather than a complete mutation boundary.
 - **Appendix Drift**: This file still carries a long historical deep-dive appendix after the Freshness section; the top architecture contract should remain canonical when appendix details lag newer templates.
 
 ## ADR Links
@@ -392,9 +394,9 @@ Information not available in current evidence.
 
 ## Freshness
 
-Last refreshed: 2026-06-05
+Last refreshed: 2026-07-12
 
-Refresh reason: Daily architecture refresh after committed cross-session memory hooks, host-conditional skill installation, and `mapify skill-eval` run/optimize/view work changed the top-level MAP runtime contract.
+Refresh reason: Daily architecture refresh after committed `3.21.0` runtime changes made the documented package version and execution defaults stale. The refresh records default-on worktree isolation/concurrent dispatch, Codex `/map-review`, context statusline, flaky-test deferral, and workflow-gate orthogonal relief without rewriting the historical appendix.
 
 Evidence source files:
 - `README.md`
@@ -409,25 +411,52 @@ Evidence source files:
 - `src/mapify_cli/templates/references/host-paths.md`
 - `src/mapify_cli/memory/`
 - `src/mapify_cli/skills_eval/`
+- `src/mapify_cli/templates/map/scripts/map_step_runner.py`
+- `src/mapify_cli/templates_src/map/scripts/map_step_runner.py.jinja`
+- `.claude/hooks/workflow-gate.py`
+- `.codex/hooks/workflow-gate.py`
+- `src/mapify_cli/templates/hooks/safety-guardrails.py`
+- `src/mapify_cli/templates/hooks/workflow-gate.py`
+- `src/mapify_cli/templates_src/hooks/safety-guardrails.py.jinja`
+- `src/mapify_cli/templates_src/hooks/workflow-gate.py.jinja`
+- `src/mapify_cli/templates/skills/map-review/SKILL.md`
+- `src/mapify_cli/templates_src/skills/map-review/SKILL.md.jinja`
+- `src/mapify_cli/templates/skills/map-efficient/SKILL.md`
+- `src/mapify_cli/templates_src/skills/map-efficient/SKILL.md.jinja`
 - `.claude/hooks/map-memory-capture.py`
 - `.claude/hooks/map-memory-finalize.py`
 - `.claude/hooks/map-memory-recall.py`
 - `.map/scripts/validate_spec_citations.py`
 - `src/mapify_cli/templates/map/scripts/validate_spec_citations.py`
 - `.claude/skills/map-plan/SKILL.md`
+- `.claude/skills/map-review/SKILL.md`
+- `.claude/skills/map-efficient/SKILL.md`
 - `.claude/skills/map-memory-now/SKILL.md`
 - `.claude/skills/map-skill-eval/SKILL.md`
+- `CHANGELOG.md`
 - `Makefile`
+- `tests/test_map_step_runner.py`
+- `tests/test_map_orchestrator.py`
+- `tests/test_workflow_gate.py`
+- `tests/hooks/test_safety_guardrails.py`
+- `tests/test_prompt_layering.py`
+- `tests/test_agent_dispatch_audit.py`
 - `tests/`
 
-Current delta captured: MAP now documents and tests cross-session memory capture
-and recall through generated hooks plus `/map-memory-now`; host-conditional
-installation prunes skills whose commands are unavailable; `map-skill-eval` is a
-measurement-only skill backed by `mapify skill-eval run`; `mapify skill-eval
-optimize` uses train/test splits, overfit rejection, proposer iterations,
-optional template patching, and HTML reports; and skill-eval fixtures/tests now
-cover run logs, optimizer schemas, patch safety, viewer rendering, and the
-no-Anthropic invariant across optimizer modules.
+Current delta captured: MAP's top architecture contract now matches the current
+`3.21.0` package: `mapify init` still installs provider-specific Claude/Codex
+surfaces plus shared `.map/scripts/`, but `/map-efficient` defaults to
+worktree isolation `auto` and concurrent Actor dispatch for parallel-ready git
+repos. `MAP_EFFICIENT_SEQUENTIAL_ONLY=1` remains the first global kill-switch,
+while per-repo config can opt out through `worktree.isolation: off` or
+`execution.concurrent_dispatch: false`. Parallel waves are accepted through the
+runner-owned atomic worktree merge coordinator; flaky-test triage is now a
+first-class `deferred_nondeterministic` Monitor disposition; Claude sessions
+can show the non-destructive MAP context statusline; `$map-review` is available
+for the Codex provider; and `workflow-gate.py` now treats out-of-repo writes as
+orthogonal while preserving the documented Bash-write bypass gap. Earlier
+cross-session memory, skill-eval, SOFA, prompt-layering, and appendix details
+remain part of the documented surface unless a later refresh removes them.
 
 ## Table of Contents
 
