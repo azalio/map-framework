@@ -8,7 +8,7 @@ Deep technical documentation for MAP (Modular Agentic Planner) implementation.
 
 MAP is a Python 3.11+ CLI (`mapify`) plus provider-specific prompt/skill scaffolding that turns interactive coding agents (Claude Code and Codex CLI) into a repeatable engineering workflow: `SPEC -> PLAN -> TEST -> CODE -> REVIEW -> LEARN`. It emphasizes explicit artifacts, small reviewable contracts, deterministic prompt/runtime guardrails, and post-run learning handoffs persisted alongside the project.
 
-The current package is `mapify-cli` `3.21.0`. It ships a Typer CLI, provider delivery helpers, shared workflow-state and verification utilities, bundled Claude/Codex templates, hook scripts, cross-session memory helpers, skill-evaluation utilities, install manifest/lock auditing, and tests that validate template contracts, artifact schemas, prompt tone, provider surfaces, workflow gates, memory hooks, skill-eval behavior, token-budget behavior, and install integrity.
+The current package is `mapify-cli` `3.22.0`. It ships a Typer CLI, provider delivery helpers, shared workflow-state and verification utilities, bundled Claude/Codex templates, hook scripts, cross-session memory helpers, skill-evaluation utilities, install manifest/lock auditing, durable approval holds, clean end-of-flow teardown, and tests that validate template contracts, artifact schemas, prompt tone, provider surfaces, workflow gates, memory hooks, skill-eval behavior, token-budget behavior, governance-deny fixtures, and install integrity.
 
 The remainder of this file contains the deeper implementation dive (workflow-specific agent sequences, artifact specs, MCP integration, template maintenance, and context engineering).
 
@@ -24,6 +24,8 @@ The remainder of this file contains the deeper implementation dive (workflow-spe
 - Plan/spec citation validation that requires existing `file:line` evidence before decomposition proceeds
 - Per-subtask token accounting: the `map-token-meter` hook (SubagentStop/Stop) attributes transcript `usage` to the active subtask/phase/agent in `.map/<branch>/token_log.jsonl`, rolled up (with cost, cache-hit ratio, and advisory research ROI) into `token_accounting.json`; logic is self-contained in `.map/scripts/map_step_runner.py` so it runs without the `mapify_cli` package present
 - Internal-ID scrub: at run completion the `scrub-internal-ids.py` Stop hook removes MAP-internal workflow IDs (`ST-`/`AC-`/`VC-`/`INV-`/`HC-`) that leaked into run-changed code **comments** and `vc<n>` test names (strings, docstrings, and data files are left intact and only reported, to avoid corrupting legitimate values) and commits the cleanup; the deterministic engine in `.map/scripts/scrub_internal_ids.py` is hard-scoped to the run's git diff and runs once per completed run (Claude provider only — Codex has no `Stop` event)
+- Durable approval holds for human-gated risky workflow actions, including redacted branch-scoped JSON and Markdown artifacts plus explicit resume-blocking state
+- End-of-flow completion and teardown: sequential runs atomically mark `WORKFLOW_COMPLETE`, completed branches can be archived, and branch reuse auto-archives prior completed state before the next workflow starts
 - Skill/template audit surfaces such as `SkillIR`, prompt-tone checks, mutation-boundary checks, and dependency/task validation helpers
 - Cross-session memory capture and recall: generated hooks write scratch WAL records, finalize them into branch/session digests, and expose `/map-memory-now` for explicit finalization sweeps
 - Skill trigger evaluation and optimization: `mapify skill-eval run/optimize/view` plus `/map-skill-eval` evaluate trigger accuracy/cost, produce resumable eval artifacts, render HTML reports, and optionally patch optimized skill descriptions through the template source
@@ -79,6 +81,7 @@ The remainder of this file contains the deeper implementation dive (workflow-spe
 - `.map/<branch>/`: Branch-scoped run artifacts (plans/contracts, check outputs, review notes, learning handoffs, session-memory digests)
 - `.map/eval-runs/<skill>/`: durable skill-evaluation run logs and optimization JSON/HTML reports
 - `.map/mapify.lock.json`: Install manifest/lock — aggregate audit of all MAP-managed files, written by `mapify init` and read by `mapify check-installed`
+- `.map/<branch>/approval_holds.json` and `.map/<branch>/approval_hold_<id>.md`: Durable human-gate artifacts for pending/decided approval holds
 
 Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json` so the runtime contract is explicit: `task` skills behave like manual slash workflows or opt-in interactive task surfaces, `reference` skills provide inline guidance, and `hybrid` skills combine reference material with declared runtime effects. Today the MAP slash surfaces are `task` skills, including `/map-understand`, whose checklist is transient in the conversation and has no runtime effects; `map-state` is `hybrid` because it documents planning state and ships hooks/scripts that interact with `.map/<branch>/` artifacts, and `map-so-search` is `hybrid` because it ships a script with declared network/credential runtime effects (the opt-in SOFA search; see [Stack Overflow for Agents (SOFA) Integration](#stack-overflow-for-agents-sofa-integration)).
 
@@ -89,9 +92,11 @@ Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json`
 - **Run Workflow**: User triggers MAP commands (e.g., `/map-plan`, `/map-efficient`, `/map-check`, `/map-review`, `/map-learn`, `/map-understand`) through the provider UI, or `$map-*` skills for Codex. Each command orchestrates a specific agent sequence or teaching loop defined in generated skill/template files.
 - **Apply Minimality Doctrine**: `.map/config.yaml` controls `minimality` (`off`, `lite`, `full`, `ultra`). The global default is `lite` (Phase 3 flip, #183) for ALL projects — keyless configs that previously loaded as `off` now resolve to `lite` at both the `MapConfig` and runner `_load_minimality_level` layers; set `minimality: off` to opt out (bare `off` is YAML-coerced to a boolean and normalized back to the `off` level so opt-out is not silently lost). Runtime prompt builders inject the doctrine into Actor context, Evaluator scores `simplicity` while keeping `completeness` highest-weight, Monitor distinguishes real scope/risk drift from harmless implementation size, and the orchestrator forwards only BLOCKER-class retry feedback back to Actor. Decomposer blueprints classify active subtasks with `requiredness`/`pruneable`; only `full`/`ultra` may carry a non-empty `deferred_yagni` parking lot, and plan approval must expose those omissions plus restore hints before execution. If the user restores an omission, `restore_deferred_yagni` rewrites `blueprint.json` and the task plan before approval continues. `run_health_report.json` records the historical minimality level for each workflow, and `mapify minimality-report` compares complete `off` and opt-in cohorts, reports sample gaps and cohort branch names, lists next telemetry actions, and emits a candidate-only manual review gate before maintainers consider the Phase 3 global default flip.
 - **Persist Artifacts**: Each workflow stage records durable artifacts under `.map/<branch>/`, including specs, blueprints, test contracts, verification summaries, review bundles, learning handoffs, token-budget reports, run-health reports, and retry quarantine state. Research/discovery uses a single namespace: plan-scope discovery is `.map/<branch>/research/plan__discovery.md`, and subtask-scope artifacts are `.map/<branch>/research/<subtask_id>__<kind>.md`; legacy `findings_<branch>.md` files are compatibility fallbacks, not the primary source.
+- **Pause for Human Approval**: Framework components can call `create_approval_hold(kind, reason, request_summary, source, safe_continuation)` from the step runner when a risky action needs an explicit decision. Holds are idempotent by kind+summary, store only redacted summaries, block resume while pending, and transition through `decide_approval_hold` into terminal states (`approved`, `denied`, `expired`, `cancelled`).
+- **Close or Reuse Completed Runs**: Sequential completion now sets `current_step_phase=COMPLETE`, `workflow_status=WORKFLOW_COMPLETE`, and `completed_at` atomically. `map_orchestrator.py archive` retires a completed branch state by renaming `step_state.json`, and `initialize_workflow` auto-archives a prior completed run when a new workflow starts on the same branch.
 - **Capture/Recall Memory**: Generated memory hooks capture session scratch records under `.map/<branch>/sessions/scratch/`, finalize them into `.map/<branch>/sessions/<session-id>.md`, and recall branch/session digests at the next session start. `/map-memory-now` can finalize dirty scratches immediately.
 - **Evaluate Skills**: `/map-skill-eval` and `mapify skill-eval` run trigger/cost eval sets through isolated `claude -p` workers, append resumable JSONL rows, aggregate pass/fail and usage, optimize frontmatter descriptions against held-out eval cases, and render stored optimization reports.
-- **Audit/Validate**: Maintainers use tests and helper modules such as `python -m mapify_cli.skill_ir ...`, `mapify check`, `mapify doctor`, template-sync tests, artifact-schema tests, and workflow-gate tests to keep shipped provider surfaces aligned with the documented runtime contract.
+- **Audit/Validate**: Maintainers use tests and helper modules such as `python -m mapify_cli.skill_ir ...`, `mapify check`, `mapify doctor`, template-sync tests, artifact-schema tests, workflow-gate tests, and adversarial governance violation fixtures to keep shipped provider surfaces aligned with the documented runtime contract.
 
 ## Source of Truth
 
@@ -104,6 +109,8 @@ Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json`
 - **Host-path and lock contract**: `src/mapify_cli/_locking.py` owns the `flock_with_state` implementation; `src/mapify_cli/templates/references/host-paths.md` is the shipped user-facing reference for `MAP_*`, `~/.map/`, and lock state-marker semantics.
 - **Spec citation gate**: `.map/scripts/validate_spec_citations.py` and its template twin validate `file:line` references before `/map-plan` decomposes work.
 - **Install manifest**: `.map/mapify.lock.json` is the audit lock written by `mapify init` via `src/mapify_cli/install_manifest.py`; `mapify check-installed` reads it to detect missing/drifted/orphaned MAP-managed files. Security invariants: no absolute paths, no secrets, machine-local `settings.local.json` excluded from the committed manifest.
+- **Approval holds and completion state**: `src/mapify_cli/templates/map/scripts/map_step_runner.py` owns approval-hold JSON/report artifacts, while `src/mapify_cli/templates/map/scripts/map_orchestrator.py` owns completed-state archive and branch-reuse cleanup.
+- **Governance regression evidence**: `tests/test_governance_attack_fixtures.py` is the deny/allow fixture suite for governance surfaces such as workflow state, mutation boundaries, false-progress gates, wave lifecycle, safety guardrails, workflow-gate, and run-health schema.
 - **Documentation**: `README.md`, `docs/USAGE.md`, `docs/INSTALL.md`, and this document define expected behavior and invariants.
 
 ## Worktree Isolation (per-subtask sandboxing)
@@ -389,6 +396,8 @@ MAP dispatches reviewers (Monitor/Predictor/Evaluator) and the advisory complexi
 - **Memory Digest Quality**: Cross-session memory depends on `claude -p` digest quality and hook availability. Failed finalization is retried, but stale scratches can accumulate until `/map-memory-now` or the next session start succeeds.
 - **Skill Eval Cost/Overfit Risk**: Skill-eval run and optimize modes can spend provider quota; optimizer selection depends on representative held-out eval sets and should not be treated as a substitute for manual review of changed skill descriptions.
 - **Lock Consumer Coverage**: `flock_with_state` and host-path docs are committed, but only future workflow surfaces are expected to consume the lock protocol broadly; keep tests and references synchronized before adding states.
+- **Human-Gate Artifact Hygiene**: Approval holds deliberately store redacted summaries, but they are still durable branch artifacts; new hold kinds should preserve the no-secrets invariant and report format before becoming resume blockers.
+- **Completion-State Drift**: End-of-flow teardown now has archive and auto-archive paths, but completion correctness still depends on generated orchestrator/gate templates staying synchronized across Claude and Codex providers.
 - **Appendix Drift**: This file still carries a long historical deep-dive appendix after the Freshness section; the top architecture contract should remain canonical when appendix details lag newer templates.
 
 ## ADR Links
@@ -397,9 +406,12 @@ Information not available in current evidence.
 
 ## Freshness
 
-Last refreshed: 2026-07-11
+Last refreshed: 2026-07-13
 
-Refresh reason: Incremental refresh after install manifest/lock (#313) added `src/mapify_cli/install_manifest.py`, `mapify check-installed` command, and `.map/mapify.lock.json` to the system contract.
+Refresh reason: Incremental refresh for `mapify-cli` 3.22.0 after current `main`
+added durable approval holds (#344), adversarial governance violation fixtures
+(#350), clean end-of-MAP-flow completion/archive behavior (#355), and the
+3.22.0 release bump.
 
 Evidence source files:
 - `README.md`
@@ -411,6 +423,11 @@ Evidence source files:
 - `src/mapify_cli/install_manifest.py`
 - `src/mapify_cli/delivery/providers.py`
 - `src/mapify_cli/workflow_state.py`
+- `src/mapify_cli/templates/map/scripts/map_step_runner.py`
+- `src/mapify_cli/templates/map/scripts/map_orchestrator.py`
+- `src/mapify_cli/templates/hooks/workflow-gate.py`
+- `src/mapify_cli/templates/hooks/workflow-context-injector.py`
+- `CHANGELOG.md`
 - `.claude/references/host-paths.md`
 - `src/mapify_cli/templates/references/host-paths.md`
 - `src/mapify_cli/memory/`
@@ -424,9 +441,25 @@ Evidence source files:
 - `.claude/skills/map-memory-now/SKILL.md`
 - `.claude/skills/map-skill-eval/SKILL.md`
 - `Makefile`
+- `tests/test_governance_attack_fixtures.py`
+- `tests/test_map_orchestrator.py`
+- `tests/test_workflow_context_injector.py`
+- `tests/test_workflow_gate.py`
 - `tests/`
 
-Current delta captured: install manifest/lock (#313) — `mapify init` now scans
+Current delta captured:
+
+- `mapify-cli` version is now 3.22.0.
+- Approval holds are durable branch artifacts with sequential IDs, idempotent
+  creation, terminal decision states, resume-blocking pending state, redacted
+  summaries, and a manifest `approval_hold` stage.
+- End-of-flow completion now atomically marks sequential runs complete, gives the
+  gate/injector clearer completed-branch behavior, and provides idempotent
+  archive plus auto-archive-on-branch-reuse semantics.
+- Governance attack fixtures add deny/allow symmetry coverage across seven
+  enforcement surfaces, making governance regressions explicit test targets.
+
+Earlier delta (2026-07-11): install manifest/lock (#313) — `mapify init` scans
 all installed provider directories for MAP-MANAGED metadata at the end of
 initialization and writes `.map/mapify.lock.json` recording content hash,
 template hash, management mode (`fenced`/`full`/`hooks-merge`), and timestamp for
