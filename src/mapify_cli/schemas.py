@@ -821,6 +821,7 @@ ARTIFACT_MANIFEST_SCHEMA = {
                 "token_budget": ARTIFACT_STAGE_SCHEMA,
                 "run_health": ARTIFACT_STAGE_SCHEMA,
                 "learn_handoff": ARTIFACT_STAGE_SCHEMA,
+                "implementer_readiness": ARTIFACT_STAGE_SCHEMA,
             },
             "required": [
                 "workflow_fit",
@@ -836,6 +837,70 @@ ARTIFACT_MANIFEST_SCHEMA = {
         },
     },
     "required": ["schema_version", "branch", "updated_at", "stages"],
+    "additionalProperties": False,
+}
+
+
+IMPLEMENTER_READINESS_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://mapframework.dev/schemas/implementer-readiness.json",
+    "title": "MAP Implementer Readiness Review",
+    "description": (
+        "Pre-implementation readiness artifact stored in "
+        ".map/<branch>/implementation-readiness.json"
+    ),
+    "type": "object",
+    "properties": {
+        "schema_version": {"type": "string"},
+        "branch": {"type": "string"},
+        "generated_at": {"type": "string", "format": "date-time"},
+        "verdict": {
+            "type": "string",
+            "enum": [
+                "ready",
+                "needs_clarification",
+                "needs_spec_revision",
+                "accepted_with_risk",
+            ],
+        },
+        "blocking_questions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string"},
+                    "spec_reference": {"type": "string"},
+                    "category": {
+                        "type": "string",
+                        "enum": [
+                            "api_contract",
+                            "nfr",
+                            "edge_case",
+                            "ownership",
+                            "rationale",
+                        ],
+                    },
+                },
+                "required": ["question", "category"],
+                "additionalProperties": False,
+            },
+        },
+        "non_blocking_risks": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "acceptance_rationale": {"type": "string"},
+        "summary": {"type": "string"},
+    },
+    "required": [
+        "schema_version",
+        "branch",
+        "generated_at",
+        "verdict",
+        "blocking_questions",
+        "non_blocking_risks",
+        "summary",
+    ],
     "additionalProperties": False,
 }
 

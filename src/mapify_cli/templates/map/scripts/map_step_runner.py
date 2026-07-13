@@ -248,6 +248,7 @@ ARTIFACT_STAGE_NAMES = (
     "token_budget",
     "run_health",
     "learn_handoff",
+    "implementer_readiness",
 )
 RUN_HEALTH_TERMINAL_STATUSES = {
     "pending",
@@ -2713,6 +2714,194 @@ def record_workflow_fit(
         "needs_map": needs_map,
         "manifest_path": manifest_result["path"],
     }
+
+
+IMPLEMENTER_READINESS_VERDICTS = frozenset(
+    {"ready", "needs_clarification", "needs_spec_revision", "accepted_with_risk"}
+)
+IMPLEMENTER_READINESS_QUESTION_CATEGORIES = frozenset(
+    {"api_contract", "nfr", "edge_case", "ownership", "rationale"}
+)
+
+
+def write_implementer_readiness_review(
+    verdict: str,
+    blocking_questions_json: str = "[]",
+    non_blocking_risks_json: str = "[]",
+    acceptance_rationale: str = "",
+    summary: str = "",
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Write implementer-readiness review artifact and update artifact manifest.
+
+    Writes:
+      .map/<branch>/implementation-readiness.json — machine-readable verdict
+      .map/<branch>/implementation-readiness.md   — human-readable summary
+
+    Verdict values:
+      ready               — implementation can proceed as-is
+      needs_clarification — blocking questions must be answered before coding
+      needs_spec_revision — spec artifact must be amended before coding
+      accepted_with_risk  — human explicitly accepts known gaps (requires acceptance_rationale)
+    """
+    branch_name = branch or get_branch_name()
+    verdict = (verdict or "").strip().lower()
+
+    if verdict not in IMPLEMENTER_READINESS_VERDICTS:
+        return {
+            "status": "error",
+            "message": (
+                f"Invalid verdict: {verdict!r}. "
+                f"Must be one of: {sorted(IMPLEMENTER_READINESS_VERDICTS)}"
+            ),
+        }
+
+    if verdict == "accepted_with_risk" and not acceptance_rationale.strip():
+        return {
+            "status": "error",
+            "message": (
+                "acceptance_rationale is required when verdict is 'accepted_with_risk'. "
+                "The human owner must explicitly document why the known gaps are acceptable."
+            ),
+        }
+
+    try:
+        blocking_questions: list[dict[str, str]] = json.loads(blocking_questions_json or "[]")
+    except json.JSONDecodeError as exc:
+        return {"status": "error", "message": f"Invalid blocking_questions JSON: {exc}"}
+
+    try:
+        non_blocking_risks: list[str] = json.loads(non_blocking_risks_json or "[]")
+    except json.JSONDecodeError as exc:
+        return {"status": "error", "message": f"Invalid non_blocking_risks JSON: {exc}"}
+
+    # Validate question structure
+    for i, q in enumerate(blocking_questions):
+        if not isinstance(q, dict):
+            return {"status": "error", "message": f"blocking_questions[{i}] must be an object"}
+        if "question" not in q:
+            return {
+                "status": "error",
+                "message": f"blocking_questions[{i}] missing required field 'question'",
+            }
+        cat = q.get("category", "")
+        if cat and cat not in IMPLEMENTER_READINESS_QUESTION_CATEGORIES:
+            return {
+                "status": "error",
+                "message": (
+                    f"blocking_questions[{i}].category={cat!r} is not valid. "
+                    f"Must be one of: {sorted(IMPLEMENTER_READINESS_QUESTION_CATEGORIES)}"
+                ),
+            }
+
+    branch_dir = get_branch_dir(branch_name)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+
+    payload: dict[str, object] = {
+        "schema_version": "1.0",
+        "branch": branch_name,
+        "generated_at": _utc_timestamp(),
+        "verdict": verdict,
+        "blocking_questions": blocking_questions,
+        "non_blocking_risks": non_blocking_risks,
+        "summary": summary or "No summary provided.",
+    }
+    if acceptance_rationale.strip():
+        payload["acceptance_rationale"] = acceptance_rationale.strip()
+
+    json_path = branch_dir / "implementation-readiness.json"
+    _write_json_file(json_path, payload)
+
+    # Human-readable Markdown report
+    verdict_label = {
+        "ready": "✅ READY",
+        "needs_clarification": "❓ NEEDS CLARIFICATION",
+        "needs_spec_revision": "📝 NEEDS SPEC REVISION",
+        "accepted_with_risk": "⚠️ ACCEPTED WITH RISK",
+    }.get(verdict, verdict.upper())
+
+    md_lines = [
+        "# Implementer Readiness Review",
+        "",
+        f"**Verdict:** {verdict_label}",
+        f"**Branch:** `{branch_name}`",
+        f"**Generated:** {payload['generated_at']}",
+        "",
+        "## Summary",
+        "",
+        payload["summary"],
+        "",
+    ]
+
+    if blocking_questions:
+        md_lines += ["## Blocking Questions", ""]
+        for i, q in enumerate(blocking_questions, 1):
+            cat = q.get("category", "unspecified")
+            ref = q.get("spec_reference", "")
+            ref_text = f" *(spec ref: `{ref}`)*" if ref else ""
+            md_lines.append(f"{i}. **[{cat}]** {q['question']}{ref_text}")
+        md_lines.append("")
+
+    if non_blocking_risks:
+        md_lines += ["## Non-Blocking Risks", ""]
+        for risk in non_blocking_risks:
+            md_lines.append(f"- {risk}")
+        md_lines.append("")
+
+    if acceptance_rationale.strip():
+        md_lines += [
+            "## Acceptance Rationale",
+            "",
+            f"> {acceptance_rationale.strip()}",
+            "",
+        ]
+
+    md_path = branch_dir / "implementation-readiness.md"
+    md_path.write_text("\n".join(md_lines), encoding="utf-8")
+
+    manifest = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        manifest,
+        "implementer_readiness",
+        "ready",
+        artifacts=[
+            _artifact_ref(json_path, "implementer-readiness-review"),
+            _artifact_ref(md_path, "implementer-readiness-report"),
+        ],
+        metadata={
+            "verdict": verdict,
+            "blocking_questions_count": len(blocking_questions),
+            "non_blocking_risks_count": len(non_blocking_risks),
+            "has_acceptance_rationale": bool(acceptance_rationale.strip()),
+        },
+    )
+    manifest_result = save_artifact_manifest(manifest, branch_name)
+
+    result: dict[str, object] = {
+        "status": "success",
+        "verdict": verdict,
+        "json_path": str(json_path),
+        "md_path": str(md_path),
+        "manifest_path": manifest_result["path"],
+        "blocking_questions_count": len(blocking_questions),
+        "non_blocking_risks_count": len(non_blocking_risks),
+    }
+    if verdict in {"needs_clarification", "needs_spec_revision"}:
+        result["proceed"] = False
+        result["message"] = (
+            f"Implementation is BLOCKED: verdict={verdict!r}. "
+            "Resolve blocking_questions before proceeding to /map-efficient."
+        )
+    elif verdict == "accepted_with_risk":
+        result["proceed"] = True
+        result["message"] = (
+            "Implementation may proceed but operator has accepted known risks. "
+            "Review acceptance_rationale before continuing."
+        )
+    else:
+        result["proceed"] = True
+        result["message"] = "Spec is ready for implementation."
+    return result
 
 
 def record_plan_artifacts(branch: Optional[str] = None) -> dict[str, object]:
@@ -19797,6 +19986,40 @@ if __name__ == "__main__":
         _a = _p.parse_args(sys.argv[2:])
         _r = get_pending_holds(_a.branch)
         print(json.dumps(_r, indent=2))
+
+    elif func_name == "write_implementer_readiness_review" and len(sys.argv) >= 3:
+        # CLI: write_implementer_readiness_review <verdict>
+        #        [--blocking-questions '<JSON>']
+        #        [--non-blocking-risks '<JSON>']
+        #        [--acceptance-rationale "..."]
+        #        [--summary "..."]
+        #        [--branch <branch>]
+        #
+        # verdict must be one of: ready needs_clarification needs_spec_revision accepted_with_risk
+        #
+        # blocking-questions JSON format:
+        #   '[{"question":"...","category":"api_contract","spec_reference":"file.md:42"}]'
+        # non-blocking-risks JSON format:
+        #   '["Risk A","Risk B"]'
+        def _irr_flag(name: str, default: str = "") -> str:
+            flag = f"--{name}"
+            if flag in sys.argv:
+                idx = sys.argv.index(flag)
+                if idx + 1 < len(sys.argv):
+                    return sys.argv[idx + 1]
+            return default
+
+        result = write_implementer_readiness_review(
+            sys.argv[2],
+            blocking_questions_json=_irr_flag("blocking-questions", "[]"),
+            non_blocking_risks_json=_irr_flag("non-blocking-risks", "[]"),
+            acceptance_rationale=_irr_flag("acceptance-rationale", ""),
+            summary=_irr_flag("summary", ""),
+            branch=_irr_flag("branch") or None,
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+        if result.get("status") == "error":
+            sys.exit(1)
 
     else:
         # Helpful redirect: when the user passes a command that belongs to

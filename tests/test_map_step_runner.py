@@ -14691,3 +14691,146 @@ class TestAbortWaveGroupRollbackMismatch:
             f"group entry must be PRESERVED in sidecar when rollback fails; "
             f"group_key={group_key!r}, wave_groups={list(wg_after.keys())}"
         )
+
+
+# ---------------------------------------------------------------------------
+# write_implementer_readiness_review
+# ---------------------------------------------------------------------------
+
+
+def test_write_implementer_readiness_review_ready_creates_artifacts_and_manifest(
+    branch_workspace,
+):
+    result = map_step_runner.write_implementer_readiness_review(
+        verdict="ready",
+        summary="All acceptance criteria are fully specified and unambiguous.",
+    )
+
+    assert result["status"] == "success"
+    assert result["verdict"] == "ready"
+    assert result["proceed"] is True
+    assert result["blocking_questions_count"] == 0
+    assert result["non_blocking_risks_count"] == 0
+
+    json_path = branch_workspace / "implementation-readiness.json"
+    assert json_path.exists()
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["verdict"] == "ready"
+    assert payload["schema_version"] == "1.0"
+    assert payload["blocking_questions"] == []
+    assert payload["non_blocking_risks"] == []
+
+    md_path = branch_workspace / "implementation-readiness.md"
+    assert md_path.exists()
+    content = md_path.read_text(encoding="utf-8")
+    assert "READY" in content
+    assert "All acceptance criteria" in content
+
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    stage = manifest["stages"]["implementer_readiness"]
+    assert stage["status"] == "ready"
+    assert stage["metadata"]["verdict"] == "ready"
+    assert stage["metadata"]["blocking_questions_count"] == 0
+
+
+def test_write_implementer_readiness_review_needs_clarification_with_blocking_questions(
+    branch_workspace,
+):
+    questions_json = json.dumps([
+        {
+            "question": "What timeout value applies to the retry loop?",
+            "spec_reference": "AC-3",
+            "category": "nfr",
+        }
+    ])
+
+    result = map_step_runner.write_implementer_readiness_review(
+        verdict="needs_clarification",
+        blocking_questions_json=questions_json,
+        summary="One NFR timeout is unspecified.",
+    )
+
+    assert result["status"] == "success"
+    assert result["verdict"] == "needs_clarification"
+    assert result["proceed"] is False
+    assert "BLOCKED" in result["message"]
+    assert result["blocking_questions_count"] == 1
+
+    payload = json.loads(
+        (branch_workspace / "implementation-readiness.json").read_text(encoding="utf-8")
+    )
+    assert len(payload["blocking_questions"]) == 1
+    assert payload["blocking_questions"][0]["category"] == "nfr"
+
+    content = (branch_workspace / "implementation-readiness.md").read_text(encoding="utf-8")
+    assert "Blocking Questions" in content
+    assert "timeout value" in content
+
+
+def test_write_implementer_readiness_review_accepted_with_risk_requires_rationale(
+    branch_workspace,
+):
+    result = map_step_runner.write_implementer_readiness_review(
+        verdict="accepted_with_risk",
+        acceptance_rationale="Short release window; team accepts the API ambiguity.",
+        non_blocking_risks_json=json.dumps(["Retry backoff not specified."]),
+        summary="Known gap accepted by team lead.",
+    )
+
+    assert result["status"] == "success"
+    assert result["verdict"] == "accepted_with_risk"
+    assert result["proceed"] is True
+    assert "accepted" in result["message"].lower()
+
+    payload = json.loads(
+        (branch_workspace / "implementation-readiness.json").read_text(encoding="utf-8")
+    )
+    assert payload["acceptance_rationale"] == "Short release window; team accepts the API ambiguity."
+    assert payload["non_blocking_risks"] == ["Retry backoff not specified."]
+
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    assert manifest["stages"]["implementer_readiness"]["metadata"]["has_acceptance_rationale"] is True
+
+
+def test_write_implementer_readiness_review_invalid_verdict_returns_error(
+    branch_workspace,
+):
+    result = map_step_runner.write_implementer_readiness_review(
+        verdict="maybe",
+        summary="Unknown verdict.",
+    )
+
+    assert result["status"] == "error"
+    assert "maybe" in result["message"]
+    assert not (branch_workspace / "implementation-readiness.json").exists()
+
+
+def test_write_implementer_readiness_review_accepted_with_risk_missing_rationale_returns_error(
+    branch_workspace,
+):
+    result = map_step_runner.write_implementer_readiness_review(
+        verdict="accepted_with_risk",
+        summary="Missing rationale.",
+    )
+
+    assert result["status"] == "error"
+    assert "acceptance_rationale" in result["message"]
+    assert not (branch_workspace / "implementation-readiness.json").exists()
+
+
+def test_write_implementer_readiness_review_needs_spec_revision_is_blocked(
+    branch_workspace,
+):
+    result = map_step_runner.write_implementer_readiness_review(
+        verdict="needs_spec_revision",
+        summary="The spec is missing the error-code table.",
+    )
+
+    assert result["status"] == "success"
+    assert result["proceed"] is False
+    assert "BLOCKED" in result["message"]
+
+    payload = json.loads(
+        (branch_workspace / "implementation-readiness.json").read_text(encoding="utf-8")
+    )
+    assert payload["verdict"] == "needs_spec_revision"
