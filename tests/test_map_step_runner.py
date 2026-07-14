@@ -14834,3 +14834,73 @@ def test_write_implementer_readiness_review_needs_spec_revision_is_blocked(
         (branch_workspace / "implementation-readiness.json").read_text(encoding="utf-8")
     )
     assert payload["verdict"] == "needs_spec_revision"
+
+
+def test_write_implementer_readiness_review_rejects_non_array_question_payload(
+    branch_workspace,
+):
+    result = map_step_runner.write_implementer_readiness_review(
+        verdict="needs_clarification",
+        blocking_questions_json='{"question": "What API should be exposed?"}',
+        summary="Question payload is not an array.",
+    )
+
+    assert result["status"] == "error"
+    assert "blocking_questions must be a JSON array" in result["message"]
+    assert not (branch_workspace / "implementation-readiness.json").exists()
+
+
+def test_write_implementer_readiness_review_rejects_non_array_risk_payload(
+    branch_workspace,
+):
+    result = map_step_runner.write_implementer_readiness_review(
+        verdict="accepted_with_risk",
+        acceptance_rationale="Owner accepts the documented ambiguity.",
+        non_blocking_risks_json='"risk as scalar"',
+        summary="Risk payload is not an array.",
+    )
+
+    assert result["status"] == "error"
+    assert "non_blocking_risks must be a JSON array" in result["message"]
+    assert not (branch_workspace / "implementation-readiness.json").exists()
+
+
+def test_write_implementer_readiness_review_rejects_missing_question_category(
+    branch_workspace,
+):
+    questions_json = json.dumps([
+        {"question": "Which API contract should tests encode?"}
+    ])
+
+    result = map_step_runner.write_implementer_readiness_review(
+        verdict="needs_clarification",
+        blocking_questions_json=questions_json,
+        summary="Question is missing category.",
+    )
+
+    assert result["status"] == "error"
+    assert "missing required field 'category'" in result["message"]
+    assert not (branch_workspace / "implementation-readiness.json").exists()
+
+
+def test_write_implementer_readiness_review_rejects_question_extra_keys(
+    branch_workspace,
+):
+    questions_json = json.dumps([
+        {
+            "question": "Which component owns retries?",
+            "category": "ownership",
+            "owner": "service-a",
+        }
+    ])
+
+    result = map_step_runner.write_implementer_readiness_review(
+        verdict="needs_clarification",
+        blocking_questions_json=questions_json,
+        summary="Question has schema-extra field.",
+    )
+
+    assert result["status"] == "error"
+    assert "unsupported fields" in result["message"]
+    assert "owner" in result["message"]
+    assert not (branch_workspace / "implementation-readiness.json").exists()

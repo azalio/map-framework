@@ -2766,26 +2766,51 @@ def write_implementer_readiness_review(
         }
 
     try:
-        blocking_questions: list[dict[str, str]] = json.loads(blocking_questions_json or "[]")
+        parsed_blocking_questions = json.loads(blocking_questions_json or "[]")
     except json.JSONDecodeError as exc:
         return {"status": "error", "message": f"Invalid blocking_questions JSON: {exc}"}
+    if not isinstance(parsed_blocking_questions, list):
+        return {"status": "error", "message": "blocking_questions must be a JSON array"}
 
     try:
-        non_blocking_risks: list[str] = json.loads(non_blocking_risks_json or "[]")
+        parsed_non_blocking_risks = json.loads(non_blocking_risks_json or "[]")
     except json.JSONDecodeError as exc:
         return {"status": "error", "message": f"Invalid non_blocking_risks JSON: {exc}"}
+    if not isinstance(parsed_non_blocking_risks, list):
+        return {"status": "error", "message": "non_blocking_risks must be a JSON array"}
 
     # Validate question structure
-    for i, q in enumerate(blocking_questions):
+    blocking_questions: list[dict[str, str]] = []
+    allowed_question_keys = {"question", "category", "spec_reference"}
+    for i, q in enumerate(parsed_blocking_questions):
         if not isinstance(q, dict):
             return {"status": "error", "message": f"blocking_questions[{i}] must be an object"}
+        extra_keys = set(q) - allowed_question_keys
+        if extra_keys:
+            return {
+                "status": "error",
+                "message": (
+                    f"blocking_questions[{i}] has unsupported fields: {sorted(extra_keys)}"
+                ),
+            }
         if "question" not in q:
             return {
                 "status": "error",
                 "message": f"blocking_questions[{i}] missing required field 'question'",
             }
-        cat = q.get("category", "")
-        if cat and cat not in IMPLEMENTER_READINESS_QUESTION_CATEGORIES:
+        if "category" not in q:
+            return {
+                "status": "error",
+                "message": f"blocking_questions[{i}] missing required field 'category'",
+            }
+        question = q["question"]
+        if not isinstance(question, str) or not question.strip():
+            return {
+                "status": "error",
+                "message": f"blocking_questions[{i}].question must be a non-empty string",
+            }
+        cat = q["category"]
+        if not isinstance(cat, str) or cat not in IMPLEMENTER_READINESS_QUESTION_CATEGORIES:
             return {
                 "status": "error",
                 "message": (
@@ -2793,6 +2818,25 @@ def write_implementer_readiness_review(
                     f"Must be one of: {sorted(IMPLEMENTER_READINESS_QUESTION_CATEGORIES)}"
                 ),
             }
+        normalized_question = {"question": question, "category": cat}
+        if "spec_reference" in q:
+            spec_reference = q["spec_reference"]
+            if not isinstance(spec_reference, str):
+                return {
+                    "status": "error",
+                    "message": f"blocking_questions[{i}].spec_reference must be a string",
+                }
+            normalized_question["spec_reference"] = spec_reference
+        blocking_questions.append(normalized_question)
+
+    non_blocking_risks: list[str] = []
+    for i, risk in enumerate(parsed_non_blocking_risks):
+        if not isinstance(risk, str):
+            return {
+                "status": "error",
+                "message": f"non_blocking_risks[{i}] must be a string",
+            }
+        non_blocking_risks.append(risk)
 
     branch_dir = get_branch_dir(branch_name)
     branch_dir.mkdir(parents=True, exist_ok=True)
