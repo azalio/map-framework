@@ -348,6 +348,7 @@ surface, and rate-limit handling.)
 - **Verification & Review Gates**: Commands like `/map-check` and `/map-review` validate work against plan/spec artifacts, not only “looks OK” prompting.
 - **Evidence-backed Planning**: `/map-plan` now runs the spec citation validator so every referenced existing source path is backed by a concrete `file:line` anchor before decomposition.
 - **Already-implemented Gate**: After discovery, `/map-plan` reconciles the request against behaviors that already exist in the codebase (reported with `file:line` proof). A fully-implemented request off-ramps without a plan; partially-implemented behaviors are recorded in the spec's "Out of Scope > Already Implemented" subsection so decomposition skips them and plans only the remaining gap.
+- **Implementer-Readiness Review** (`/map-plan`, issue #348): a pre-code gate that checks whether the spec is implementable before decomposition hands off to `/map-efficient`. `write_implementer_readiness_review()` in `map_step_runner.py` writes `.map/<branch>/implementation-readiness.json` and `.map/<branch>/implementation-readiness.md` after validating the verdict payload against `IMPLEMENTER_READINESS_SCHEMA`. Supported verdicts: `ready` (proceed as-is), `needs_clarification` (blocking questions must be answered first; `proceed: false`), `needs_spec_revision` (spec artifact must be amended; `proceed: false`), `accepted_with_risk` (human explicitly accepts known gaps; requires non-empty `acceptance_rationale`). Blocking questions are normalized before write: each item must contain `question` and `category`, only `{question, category, spec_reference}` keys allowed, category validated against `IMPLEMENTER_READINESS_QUESTION_CATEGORIES`. Non-array `blocking_questions`/`non_blocking_risks` JSON payloads return a structured `status: error` before iteration rather than crashing. The `implementer_readiness` manifest stage is updated after every write. CLI: `map_step_runner.py write_implementer_readiness_review <branch> <verdict> [--blocking-questions '…'] [--non-blocking-risks '…'] [--acceptance-rationale "…"] [--summary "…"]`.
 - **Multi-node Cycle Detection Spike (ST-007, issue #249)**: The decomposition-completeness work evaluated adding tri-color DFS multi-node cycle detection to `validate_blueprint_contract`. An empirical spike (feeding an a→b→c→a cycle through the real validator) found that multi-node cycles are already rejected by two existing mechanisms: (1) the forward-dependency-ordering rule (`forward_dep_violations`) requires every dependency to be declared earlier in `subtasks[]`, which no cycle can satisfy for all its edges; (2) `_topo_sort_subtasks` returns `(None, "dependency cycle detected; skipped reorder")`. Dedicated tri-color DFS was deliberately NOT added — a regression test (`test_multinode_cycle_already_rejected`) guards both mechanisms.
 - **Live/runtime-state Gate**: The runtime analogue of the already-implemented gate, gated on the `depends_on_runtime_state` workflow-fit signal (default off; armed via `record_workflow_fit --depends-on-runtime-state 1`). When a plan's correctness rests on current production/runtime facts — applied migration head, an enum/column/row present in the live DB, current row counts/backfill volume, a live feature-flag value, runtime capacity — `/map-plan` runs **Step 0.6: Verify Live/Runtime State**. Each assumption is verified read-only through an approved source (replica/dashboard/metadata query; cite the derived fact, never persist prod rows/PII/secrets into `.map/<branch>/` artifacts) or recorded as an `Unverified Runtime Assumption` in spec Open Questions / Risks with the exact check to run, dependent subtasks marked `provisional`. The skill is a planning-time gate, not a runtime tool — it suggests checks and defers execution to the operator or an authorized sub-agent. Note Step 0.5's `file:line` proof shows code exists in the repo, not that the migration/flag is applied in prod.
 - **Host-level Serialization**: `_locking.py` provides a process-safe `flock` wrapper with JSON state sidecars under `~/.map/locks/`, giving future hooks and memory-flush paths a shared non-escaping lock protocol.
@@ -406,12 +407,12 @@ Information not available in current evidence.
 
 ## Freshness
 
-Last refreshed: 2026-07-13
+Last refreshed: 2026-07-14
 
-Refresh reason: Incremental refresh for `mapify-cli` 3.22.0 after current `main`
-added durable approval holds (#344), adversarial governance violation fixtures
-(#350), clean end-of-MAP-flow completion/archive behavior (#355), and the
-3.22.0 release bump.
+Refresh reason: Incremental refresh after `main` added implementer-readiness
+review artifact (#348) — a pre-code spec-implementability gate with four
+verdicts, strict input validation, and the new `implementer_readiness` manifest
+stage.
 
 Evidence source files:
 - `README.md`
@@ -449,15 +450,19 @@ Evidence source files:
 
 Current delta captured:
 
-- `mapify-cli` version is now 3.22.0.
-- Approval holds are durable branch artifacts with sequential IDs, idempotent
-  creation, terminal decision states, resume-blocking pending state, redacted
-  summaries, and a manifest `approval_hold` stage.
-- End-of-flow completion now atomically marks sequential runs complete, gives the
-  gate/injector clearer completed-branch behavior, and provides idempotent
-  archive plus auto-archive-on-branch-reuse semantics.
-- Governance attack fixtures add deny/allow symmetry coverage across seven
-  enforcement surfaces, making governance regressions explicit test targets.
+- Implementer-readiness review gate (#348): `write_implementer_readiness_review()`
+  writes `.map/<branch>/implementation-readiness.{json,md}` with one of four
+  verdicts (`ready`, `needs_clarification`, `needs_spec_revision`,
+  `accepted_with_risk`). `accepted_with_risk` requires non-empty
+  `acceptance_rationale`; `needs_clarification`/`needs_spec_revision` set
+  `proceed: false`. Blocking questions are normalized and validated against
+  `IMPLEMENTER_READINESS_SCHEMA` before write; non-array payloads return
+  `status: error` before any iteration. New `implementer_readiness` manifest
+  stage. 12 tests added; 3714 total tests pass.
+
+Earlier delta (2026-07-13): `mapify-cli` 3.22.0 — durable approval holds (#344),
+adversarial governance violation fixtures (#350), clean end-of-MAP-flow
+completion/archive behavior (#355), and the 3.22.0 release bump.
 
 Earlier delta (2026-07-11): install manifest/lock (#313) — `mapify init` scans
 all installed provider directories for MAP-MANAGED metadata at the end of
@@ -677,6 +682,7 @@ For branch-scoped workflows, MAP also keeps `.map/<branch>/artifact_manifest.jso
 - `workflow_fit`
 - `spec`
 - `plan`
+- `implementer_readiness`
 - `test_contract`
 - `implementation`
 - `review`
