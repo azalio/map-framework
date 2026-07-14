@@ -1,0 +1,20 @@
+{
+  "fixture": "map_task_false_success",
+  "skill": "map-task",
+  "invocation": "/map-task ST-001",
+  "branch": "main",
+  "subtask_id": "ST-001",
+  "allowed_files": ["src/kvparse.py"],
+  "trap_files": [],
+  "test_cmd": "python -m pytest tests/test_kvparse_basic.py -q",
+  "expected_outcome": "complete",
+  "expected": {
+    "plan_status": "complete",
+    "tests_pass": true,
+    "scope_fidelity": "only src/kvparse.py modified"
+  },
+  "hidden_test_src": "hidden/test_kvparse_full.py",
+  "hidden_test_dest": "tests/test_kvparse_full.py",
+  "hidden_test_cmd": "python -m pytest tests/test_kvparse_full.py -q",
+  "notes": "FALSE-SUCCESS fixture for trajectory outcome eval (issue #351): the basic test gate passes on a naive implementation, but the contract requires edge-case handling (empty string, whitespace trimming, duplicate-key rejection) the basic gate never checks. Demonstrates that final formal success alone misses a trajectory problem — the agent can pass the visible gate while leaving the real contract unmet. The hidden suite exposes the gap deterministically; the judge dimensions (pitfalls / reporting_trust) catch a run that claims completion despite un-validated edge cases."
+}

@@ -2422,6 +2422,222 @@ def skill_eval_view(
         _open_best_effort(html)
 
 
+# ---------------------------------------------------------------------------
+# skill-eval trajectory (issue #351: AgentLens-style outcome eval)
+# ---------------------------------------------------------------------------
+
+
+@skill_eval_app.command("trajectory")
+def skill_eval_trajectory(
+    skill: str = typer.Argument(
+        ..., help="Skill under evaluation, e.g. map-task"
+    ),
+    fixture: Optional[Path] = typer.Option(
+        None,
+        "--fixture",
+        help="Path to a whole-skill fixture directory (manifest.json + repo/).",
+    ),
+    runs: int = typer.Option(
+        3,
+        "--runs",
+        min=1,
+        help="Repeated runs per fixture (default 3) for variance / flaky detection.",
+    ),
+    variant: str = typer.Option(
+        "good",
+        "--variant",
+        help="Seed variant: 'good' (baseline) or 'bad' (degrade seeded copy).",
+    ),
+    degrade: str = typer.Option(
+        "body", "--degrade", help="What the 'bad' variant degrades: body|actor|monitor."
+    ),
+    timeout: float = typer.Option(
+        3600.0, "--timeout", help="Per-run claude -p timeout (seconds)."
+    ),
+    judge_timeout: float = typer.Option(
+        360.0, "--judge-timeout", help="Per-run batched judge claude -p timeout."
+    ),
+    no_judge: bool = typer.Option(
+        False,
+        "--no-judge",
+        help="Skip the LLM judge (deterministic components only). Cheapest.",
+    ),
+    anchor: Optional[str] = typer.Option(
+        None,
+        "--anchor",
+        help="Compare against a prior run: path to a .jsonl, or 'latest'.",
+    ),
+    out: Optional[Path] = typer.Option(
+        None, "--out", help="Output .jsonl path (default .map/eval-runs/trajectory/...)."
+    ),
+    resume: bool = typer.Option(
+        False, "--resume", help="Resume the latest run, skipping present run_ids."
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Validate fixture + print planned runs; spend nothing, no dispatcher.",
+    ),
+    open_html: bool = typer.Option(
+        False, "--open", help="Open the side-by-side report in the default browser."
+    ),
+) -> None:
+    """Run a trajectory-level outcome eval over a full skill run (issue #351).
+
+    Seeds an isolated project, executes the whole skill body, scores six
+    component metrics (formal/end_result/tool_use deterministic +
+    instruction_compliance/pitfalls/reporting_trust from one batched judge
+    call), aggregates repeated runs (median/variance/hard-pass/flaky), and
+    optionally renders a candidate-vs-anchor side-by-side regression report.
+
+    Exit codes:
+      0 - Success (or dry-run completed)
+      1 - Runtime error (claude not found, or unexpected failure)
+      2 - Validation error (missing --fixture or malformed fixture)
+    """
+    from datetime import timezone
+
+    import mapify_cli.skills_eval.trajectory.judge as _judge
+    import mapify_cli.skills_eval.trajectory.runner as _trunner
+    from mapify_cli.skills_eval.trajectory.dispatcher import (
+        ClaudeTrajectoryDispatcher,
+    )
+    from mapify_cli.skills_eval.trajectory.report import (
+        build_report,
+        render_comparison_to_path,
+    )
+    from mapify_cli.skills_eval.trajectory.repeated import aggregate_repeated
+
+    # SC-2: --fixture is required.
+    if fixture is None:
+        console.print("[bold red]Error:[/bold red] provide --fixture PATH")
+        raise typer.Exit(2)
+    if not fixture.is_dir():
+        console.print(f"[bold red]Error:[/bold red] fixture dir not found: {fixture}")
+        raise typer.Exit(2)
+
+    # Validate the manifest BEFORE dry-run and before any dispatcher.
+    try:
+        manifest = _trunner.load_fixture_manifest(fixture)
+    except ValueError as exc:
+        console.print(f"[bold red]Error:[/bold red] {exc}")
+        raise typer.Exit(2)
+
+    root = Path.cwd()
+    run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    if out is not None:
+        out_path = out
+    elif resume:
+        latest = _trunner.latest_run_path(root, skill)
+        out_path = latest if latest is not None else _trunner.default_run_path(
+            root, skill, run_ts
+        )
+    else:
+        out_path = _trunner.default_run_path(root, skill, run_ts)
+
+    # Dry-run: zero quota, NO dispatcher, NO claude required.
+    if dry_run:
+        planned = 1 * runs
+        console.print(
+            f"[bold]Dry-run:[/bold] fixture=[bold]{manifest['fixture']}[/bold] "
+            f"skill=[bold]{skill}[/bold] variant=[cyan]{variant}[/cyan] "
+            f"runs=[cyan]{planned}[/cyan] judge=[cyan]{'off' if no_judge else 'on'}[/cyan] "
+            f"— spends 0 quota"
+        )
+        raise typer.Exit(0)
+
+    # HC-6: require claude BEFORE any invocation (real run or judge).
+    if shutil.which("claude") is None:
+        console.print(
+            "[bold red]Error:[/bold red] requires-cmd: claude — "
+            "install the claude CLI and ensure it is on PATH"
+        )
+        raise typer.Exit(1)
+
+    dispatcher: object = ClaudeTrajectoryDispatcher()
+    judge_runner = None if no_judge else _judge.ClaudeJudgeRunner()
+
+    _trunner.run_matrix(
+        fixture_dirs=[fixture],
+        repo_root=root,
+        dispatcher=dispatcher,  # type: ignore[arg-type]
+        runs=runs,
+        out_path=out_path,
+        ts=run_ts,
+        judge_runner=judge_runner,
+        judge_timeout=judge_timeout,
+        run_timeout=timeout,
+        variant=variant,
+        degrade=degrade,
+        resume=resume,
+    )
+
+    records = _trunner.read_records(out_path)
+    agg = aggregate_repeated(records)
+    fa = agg.fixture(str(manifest["fixture"]))
+    median_str = (
+        f"{fa.composite_median:.3f}" if fa else "n/a"
+    )
+    hp_str = (
+        f"{fa.hard_pass_count}/{fa.n}" if fa else "n/a"
+    )
+    flaky_str = (
+        f" flaky=[cyan]{'; '.join(fa.flaky_reasons)}[/cyan]"
+        if fa and fa.flaky
+        else ""
+    )
+    console.print(
+        f"\n[bold]Trajectory eval complete:[/bold] skill=[bold]{skill}[/bold] "
+        f"fixture=[bold]{manifest['fixture']}[/bold] "
+        f"composite_median=[cyan]{median_str}[/cyan] "
+        f"hard_pass=[cyan]{hp_str}[/cyan]{flaky_str}"
+    )
+    console.print(f"  records: [cyan]{out_path}[/cyan]")
+
+    # Side-by-side regression report against an anchor run.
+    if anchor is not None:
+        anchor_path = _resolve_anchor(anchor, root, skill)
+        if anchor_path is None or not anchor_path.is_file():
+            console.print(
+                f"[bold red]Error:[/bold red] anchor run not found: {anchor}"
+            )
+            raise typer.Exit(1)
+        anchor_records = _trunner.read_records(anchor_path)
+        report = build_report(
+            records,
+            anchor_records,
+            candidate_path=str(out_path),
+            anchor_path=str(anchor_path),
+        )
+        html_path = out_path.with_suffix(".html")
+        render_comparison_to_path(report, html_path)
+        reg = report.n_regressions
+        console.print(
+            f"  side-by-side: [cyan]{html_path}[/cyan] "
+            f"({reg} regression(s) vs anchor)"
+        )
+        if open_html:
+            _open_best_effort(html_path)
+
+    if dry_run is False and no_judge:
+        console.print("  [dim]judge skipped (--no-judge)[/dim]")
+
+
+def _resolve_anchor(anchor: str, root: Path, skill: str) -> Optional[Path]:
+    """Resolve ``--anchor`` to a .jsonl path ('latest' or an explicit path)."""
+    if anchor == "latest":
+        latest_dir = root / ".map" / "eval-runs" / "trajectory" / skill
+        candidates = sorted(latest_dir.glob("*.jsonl")) if latest_dir.is_dir() else []
+        # Exclude the candidate currently being written by picking the
+        # previous-to-last when two exist; callers pass 'latest' meaning the
+        # most recent PRIOR run.
+        return candidates[-2] if len(candidates) >= 2 else (
+            candidates[-1] if candidates else None
+        )
+    return Path(anchor)
+
+
 def main():
     app()
 

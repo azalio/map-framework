@@ -1601,3 +1601,205 @@ REVIEW_BUNDLE_SCHEMA = {
     ],
     "additionalProperties": False,
 }
+
+
+# ============================================================================
+# Trajectory-level outcome eval (AgentLens-style, issue #351)
+# ============================================================================
+# Two schemas:
+# - TRAJECTORY_BUNDLE_SCHEMA  : normalized snapshot of ONE completed run's
+#   trajectory evidence (git diff + MAP artifacts + verification + response).
+# - TRAJECTORY_EVAL_SCHEMA    : one scored eval row (components + composite),
+#   one object per JSONL line written by the trajectory runner.
+# Both follow the plain-dict JSON Schema pattern used by every *_SCHEMA above.
+
+_EVIDENCE_LINE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "severity": {"type": "string", "enum": ["info", "warning", "critical"]},
+        "ref": {"type": "string"},
+        "detail": {"type": "string"},
+    },
+    "required": ["severity", "ref", "detail"],
+    "additionalProperties": False,
+}
+
+_COMPONENT_SCORE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "name": {
+            "type": "string",
+            "enum": [
+                "formal",
+                "end_result",
+                "tool_use",
+                "instruction_compliance",
+                "pitfalls",
+                "reporting_trust",
+            ],
+        },
+        "kind": {"type": "string", "enum": ["deterministic", "judge"]},
+        "score": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "evidence": {
+            "type": "array",
+            "items": _EVIDENCE_LINE_SCHEMA,
+        },
+    },
+    "required": ["name", "kind", "score", "evidence"],
+    "additionalProperties": False,
+}
+
+TRAJECTORY_BUNDLE_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://mapframework.dev/schemas/trajectory-bundle.json",
+    "title": "MAP Trajectory Bundle",
+    "description": (
+        "Normalized snapshot of one completed MAP run's trajectory evidence, "
+        "captured by the trajectory outcome evaluator. Bundles git diff, MAP "
+        ".map/<branch>/ artifacts, verification output, and final response so a "
+        "later reviewer or side-by-side comparator can inspect the run without "
+        "the throwaway cwd. See issue #351."
+    ),
+    "type": "object",
+    "properties": {
+        "schema_version": {"type": "string"},
+        "fixture": {"type": "string"},
+        "scenario": {"type": "string"},
+        "branch": {"type": "string"},
+        "collected_at": {"type": "string"},
+        "final_response": {"type": "string"},
+        "git": {
+            "type": "object",
+            "properties": {
+                "modified_all": {"type": "array", "items": {"type": "string"}},
+                "source_changes": {"type": "array", "items": {"type": "string"}},
+                "out_of_scope": {"type": "array", "items": {"type": "string"}},
+                "trap_touched": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": [
+                "modified_all",
+                "source_changes",
+                "out_of_scope",
+                "trap_touched",
+            ],
+            "additionalProperties": False,
+        },
+        "verification": {
+            "type": "object",
+            "properties": {
+                "task_pass": {"type": "boolean"},
+                "test_returncode": {"type": "integer"},
+                "test_tail": {"type": "string"},
+            },
+            "required": ["task_pass", "test_returncode", "test_tail"],
+            "additionalProperties": False,
+        },
+        "map_artifacts": {
+            "type": "object",
+            "description": (
+                "Best-effort loaded slices of .map/<branch>/ artifacts the "
+                "evaluator consumes (never creates). Missing files yield {}."
+            ),
+            "additionalProperties": True,
+        },
+        "resiliency_signals": {
+            "type": "object",
+            "description": (
+                "Distilled retry/quarantine/guard signals used by the tool_use "
+                "metric. Derived from run_health_report where available."
+            ),
+            "additionalProperties": True,
+        },
+        "run_meta": {
+            "type": "object",
+            "properties": {
+                "ok": {"type": "boolean"},
+                "returncode": {"type": ["integer", "null"]},
+                "duration_s": {"type": ["number", "null"]},
+                "error": {"type": ["string", "null"]},
+            },
+            "additionalProperties": True,
+        },
+    },
+    "required": [
+        "schema_version",
+        "fixture",
+        "scenario",
+        "branch",
+        "collected_at",
+        "final_response",
+        "git",
+        "verification",
+        "map_artifacts",
+        "run_meta",
+    ],
+    "additionalProperties": False,
+}
+
+TRAJECTORY_EVAL_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://mapframework.dev/schemas/trajectory-eval.json",
+    "title": "MAP Trajectory Eval Record",
+    "description": (
+        "One scored trajectory outcome-eval row. Appended as a single JSON "
+        "object per line to .map/eval-runs/trajectory/<skill>/<ts>.jsonl by "
+        "the trajectory runner. Composite is a normalized 0..1 quality index "
+        "across component metrics; hard_pass marks formal+end_result success "
+        "plus a passing composite. See issue #351."
+    ),
+    "type": "object",
+    "properties": {
+        "schema_version": {"type": "string"},
+        "run_id": {"type": "string"},
+        "fixture": {"type": "string"},
+        "run": {"type": "integer", "minimum": 0},
+        "ts": {"type": "string"},
+        "components": {
+            "type": "array",
+            "items": _COMPONENT_SCORE_SCHEMA,
+            "minItems": 1,
+        },
+        "composite": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "hard_pass": {"type": "boolean"},
+        "expected_outcome": {
+            "type": "string",
+            "enum": ["complete", "blocked"],
+        },
+        "judge_meta": {
+            "type": "object",
+            "properties": {
+                "model": {"type": ["string", "null"]},
+                "prompt_version": {"type": "string"},
+                "ordering": {"type": "string"},
+                "skipped": {"type": "boolean"},
+                "caveats": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["prompt_version", "ordering", "skipped"],
+            "additionalProperties": False,
+        },
+        "bundle_summary": {
+            "type": "object",
+            "description": (
+                "Compact projection of the trajectory bundle (git scope + "
+                "verification result). The full bundle is persisted alongside "
+                "the JSONL; this lets a reader scan a run without loading it."
+            ),
+            "additionalProperties": True,
+        },
+        "error": {"type": ["string", "null"]},
+    },
+    "required": [
+        "schema_version",
+        "run_id",
+        "fixture",
+        "run",
+        "ts",
+        "components",
+        "composite",
+        "hard_pass",
+        "expected_outcome",
+        "judge_meta",
+        "error",
+    ],
+    "additionalProperties": False,
+}
