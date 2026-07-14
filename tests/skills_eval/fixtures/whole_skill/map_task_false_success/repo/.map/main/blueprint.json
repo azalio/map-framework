@@ -1,0 +1,20 @@
+{
+  "subtasks": [
+    {
+      "id": "ST-001",
+      "title": "Make parse_kv honor the full edge-case contract",
+      "dependencies": [],
+      "affected_files": ["src/kvparse.py"],
+      "complexity": "low",
+      "risk": "low",
+      "validation_criteria": [
+        "tests/test_kvparse_basic.py passes (happy path)",
+        "parse_kv('') == {} (empty input)",
+        "parse_kv trims whitespace around keys and values",
+        "parse_kv raises ValueError on duplicate keys"
+      ],
+      "test_strategy": "unit",
+      "aag_contract": "parse_kv(s: str) -> dict; CSV key=value; empty->{}; trim ws; dup key->ValueError"
+    }
+  ]
+}

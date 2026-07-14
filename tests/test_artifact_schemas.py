@@ -108,6 +108,8 @@ def test_validate_artifact_manifest_schema():
         },
     }
 
+    artifact["stages"]["implementer_readiness"] = stage
+
     is_valid, errors = MODULE.validate_artifact(
         artifact, MODULE.ARTIFACT_MANIFEST_SCHEMA
     )
@@ -656,3 +658,80 @@ def test_validate_review_bundle_schema_with_manifest_status_error():
     }
     is_valid, errors = MODULE.validate_artifact(minimal, MODULE.REVIEW_BUNDLE_SCHEMA)
     assert is_valid, f"Errors: {errors}"
+
+
+def _minimal_implementer_readiness() -> dict:
+    return {
+        "schema_version": "1.0",
+        "branch": "test-branch",
+        "generated_at": "2026-07-13T10:00:00Z",
+        "verdict": "ready",
+        "blocking_questions": [],
+        "non_blocking_risks": [],
+        "summary": "All acceptance criteria are fully specified.",
+    }
+
+
+def test_validate_implementer_readiness_schema_ready():
+    artifact = _minimal_implementer_readiness()
+
+    is_valid, errors = MODULE.validate_artifact(
+        artifact, MODULE.IMPLEMENTER_READINESS_SCHEMA
+    )
+    assert is_valid, f"Errors: {errors}"
+
+
+def test_validate_implementer_readiness_schema_needs_clarification_with_blocking_questions():
+    artifact = _minimal_implementer_readiness()
+    artifact["verdict"] = "needs_clarification"
+    artifact["blocking_questions"] = [
+        {
+            "question": "What timeout value should be used for the retry loop?",
+            "spec_reference": "AC-3",
+            "category": "nfr",
+        }
+    ]
+
+    is_valid, errors = MODULE.validate_artifact(
+        artifact, MODULE.IMPLEMENTER_READINESS_SCHEMA
+    )
+    assert is_valid, f"Errors: {errors}"
+
+
+def test_validate_implementer_readiness_schema_accepted_with_risk():
+    artifact = _minimal_implementer_readiness()
+    artifact["verdict"] = "accepted_with_risk"
+    artifact["acceptance_rationale"] = "Risk is acceptable given the short release window."
+
+    is_valid, errors = MODULE.validate_artifact(
+        artifact, MODULE.IMPLEMENTER_READINESS_SCHEMA
+    )
+    assert is_valid, f"Errors: {errors}"
+
+
+def test_validate_implementer_readiness_schema_missing_required_fields():
+    artifact = {"schema_version": "1.0", "branch": "test-branch"}
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.IMPLEMENTER_READINESS_SCHEMA)[0]
+
+    assert not is_valid
+
+
+def test_validate_implementer_readiness_schema_rejects_unknown_verdict():
+    artifact = _minimal_implementer_readiness()
+    artifact["verdict"] = "maybe"
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.IMPLEMENTER_READINESS_SCHEMA)[0]
+
+    assert not is_valid
+
+
+def test_validate_implementer_readiness_schema_rejects_additional_properties():
+    artifact = _minimal_implementer_readiness()
+    artifact["unexpected_field"] = "should_fail"
+
+    is_valid = MODULE.validate_artifact(
+        artifact, MODULE.IMPLEMENTER_READINESS_SCHEMA
+    )[0]
+
+    assert not is_valid

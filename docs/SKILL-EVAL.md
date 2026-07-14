@@ -14,6 +14,9 @@ prompts** (trigger accuracy) and what it **costs** (tokens / wall-clock). It has
 
 A third command, **`view`**, re-renders a stored optimize result as an HTML report.
 
+A fourth command, **`trajectory`**, scores the OUTCOME of a full run (not just
+the trigger) — it is documented separately in [TRAJECTORY-EVAL.md](TRAJECTORY-EVAL.md).
+
 The lever it tunes is the **`description:` field** of a skill — the text Claude Code reads to
 decide whether a prompt should activate that skill. Better description = fewer false triggers
 (skill fires when it shouldn't) and fewer misses (skill stays silent when it should fire). It does
