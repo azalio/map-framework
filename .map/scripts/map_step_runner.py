@@ -249,6 +249,7 @@ ARTIFACT_STAGE_NAMES = (
     "run_health",
     "learn_handoff",
     "implementer_readiness",
+    "context_usefulness",
 )
 RUN_HEALTH_TERMINAL_STATUSES = {
     "pending",
@@ -9653,6 +9654,155 @@ def run_cross_ai_review(
     )
     result["config"] = config_echo
     return result
+
+
+# ---------------------------------------------------------------------------
+# Context-usefulness feedback loop (#343)
+# ---------------------------------------------------------------------------
+
+_CONTEXT_USEFULNESS_WAL_NAME = "context_usefulness.jsonl"
+_CONTEXT_USEFULNESS_ARTIFACT_NAME = "context_usefulness.json"
+_VALID_USEFULNESS_KINDS = frozenset(
+    {"memory_digest", "learned_rule", "research_artifact", "learning_handoff", "review_bundle", "other"}
+)
+_VALID_OUTCOME_LABELS = frozenset({"helpful", "used", "ignored", "stale", "over_budget", "unknown"})
+
+
+def record_context_usefulness_item(
+    kind: str,
+    source: str,
+    outcome_label: str,
+    signals: Optional[dict[str, object]] = None,
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Append one context-item usefulness record to the branch WAL.
+
+    Called during or after a workflow run to record that a particular
+    recalled/injected context item (memory digest, learned rule, research
+    artifact, etc.) had a measurable outcome. The WAL is later finalized by
+    ``write_context_usefulness`` at run closeout.
+
+    ``outcome_label`` must be one of: helpful, used, ignored, stale,
+    over_budget, unknown.
+    """
+    kind = (kind or "").strip()
+    source = (source or "").strip()
+    outcome_label = (outcome_label or "unknown").strip()
+
+    if kind not in _VALID_USEFULNESS_KINDS:
+        return {"status": "error", "message": f"Invalid kind: {kind!r}. Must be one of {sorted(_VALID_USEFULNESS_KINDS)}"}
+    if not source:
+        return {"status": "error", "message": "source must not be empty"}
+    if outcome_label not in _VALID_OUTCOME_LABELS:
+        return {"status": "error", "message": f"Invalid outcome_label: {outcome_label!r}. Must be one of {sorted(_VALID_OUTCOME_LABELS)}"}
+
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+
+    record: dict[str, object] = {
+        "ts": _utc_timestamp(),
+        "kind": kind,
+        "source": source,
+        "outcome_label": outcome_label,
+        "signals": signals or {},
+    }
+    wal_path = branch_dir / _CONTEXT_USEFULNESS_WAL_NAME
+    try:
+        with open(wal_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+        return {"status": "success", "wal_path": str(wal_path), "kind": kind, "source": source, "outcome_label": outcome_label}
+    except Exception as exc:
+        return {"status": "error", "wal_path": str(wal_path), "reason": str(exc)}
+
+
+def write_context_usefulness(
+    workflow: str = "map-workflow",
+    terminal_status: str = "",
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Finalize the context-usefulness WAL into a durable JSON artifact.
+
+    Reads all records appended by ``record_context_usefulness_item`` during the
+    run, builds aggregate summary counts, writes
+    ``.map/<branch>/context_usefulness.json``, and registers the
+    ``context_usefulness`` manifest stage.
+
+    Safe to call even when the WAL is absent or empty — produces an artifact
+    with zero items and a zero summary (not an error) so callers never have to
+    guard.
+    """
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+
+    workflow_name = (workflow or "map-workflow").strip()
+    status = (terminal_status or "").strip()
+
+    wal_path = branch_dir / _CONTEXT_USEFULNESS_WAL_NAME
+    items: list[dict[str, object]] = []
+    if wal_path.exists():
+        try:
+            for raw in wal_path.read_text(encoding="utf-8").splitlines():
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    rec = json.loads(raw)
+                    if isinstance(rec, dict):
+                        items.append(rec)
+                except json.JSONDecodeError:
+                    pass
+        except OSError:
+            pass
+
+    summary: dict[str, int] = {label: 0 for label in sorted(_VALID_OUTCOME_LABELS)}
+    summary["total"] = len(items)
+    for item in items:
+        label = str(item.get("outcome_label") or "unknown")
+        if label in summary:
+            summary[label] += 1
+        else:
+            summary["unknown"] += 1
+
+    payload: dict[str, object] = {
+        "schema_version": "1.0",
+        "generated_at": _utc_timestamp(),
+        "branch": branch_name,
+        "workflow": workflow_name,
+        "terminal_status": status,
+        "items": items,
+        "summary": summary,
+    }
+
+    artifact_path = branch_dir / _CONTEXT_USEFULNESS_ARTIFACT_NAME
+    try:
+        _write_json_file(artifact_path, payload)
+    except Exception as exc:
+        return {"status": "error", "path": str(artifact_path), "reason": str(exc)}
+
+    manifest = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        manifest,
+        "context_usefulness",
+        "ready",
+        artifacts=[_artifact_ref(artifact_path, "context-usefulness-report")],
+        metadata={
+            "workflow": workflow_name,
+            "terminal_status": status,
+            "total_items": summary["total"],
+            "helpful": summary.get("helpful", 0),
+            "ignored": summary.get("ignored", 0),
+        },
+    )
+    manifest_result = save_artifact_manifest(manifest, branch_name)
+    return {
+        "status": "success",
+        "path": str(artifact_path),
+        "manifest_path": manifest_result["path"],
+        "total_items": summary["total"],
+        "summary": summary,
+    }
 
 
 def write_learning_handoff(

@@ -8,6 +8,11 @@ keyword/ticket overlap with *prompt*, caps the assembled payload at
 ``MAP_MEMORY_RECALL_CAP`` characters (default 4000), logs dropped digests to
 ``recall-drop.log``, and returns a sanitized additionalContext string.
 
+Usefulness boost (#343): if ``.map/<branch>/context_usefulness.json`` exists
+from a prior run, digest slugs labeled "helpful" or "used" receive a +5 score
+boost; slugs labeled "stale" or "ignored" receive a -3 penalty.  Missing data
+preserves existing keyword/ticket/recency behavior unchanged.
+
 Pure module: no subprocess, no LLM — file I/O + string matching only.
 The hook shim (ST-006) handles stdout JSON wrapping.
 """
@@ -44,6 +49,10 @@ _DATE_PREFIX_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
 
 # Type alias for ranked digest entries: (score, date, frontmatter, body, path)
 _DigestEntry: TypeAlias = tuple[int, str, dict[str, object], str, Path]
+
+# Usefulness score adjustments applied on top of keyword/ticket scores (#343).
+_USEFULNESS_BOOST = {"helpful": 5, "used": 5}
+_USEFULNESS_PENALTY = {"stale": -3, "ignored": -3}
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +249,54 @@ def _append_drop_log(
 
 
 # ---------------------------------------------------------------------------
+# Usefulness-score helpers (#343)
+# ---------------------------------------------------------------------------
+
+
+def _load_usefulness_scores(project_dir: Path, branch: str) -> dict[str, int]:
+    """Load prior-run usefulness scores from context_usefulness.json.
+
+    Returns a dict mapping digest slug → score delta (positive or negative).
+    An absent or malformed artifact returns an empty dict, preserving existing
+    ranking behaviour.
+    """
+    artifact = project_dir / ".map" / branch / "context_usefulness.json"
+    if not artifact.exists():
+        return {}
+    try:
+        raw = artifact.read_text(encoding="utf-8", errors="replace")
+        data: object = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.debug("recall: cannot load usefulness scores from %s: %s", artifact, exc)
+        return {}
+
+    if not isinstance(data, dict):
+        return {}
+
+    items_val = data.get("items")
+    if not isinstance(items_val, list):
+        return {}
+
+    scores: dict[str, int] = {}
+    for item in items_val:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("kind")
+        if kind != "memory_digest":
+            continue
+        source = item.get("source")
+        if not isinstance(source, str) or not source.strip():
+            continue
+        slug = source.strip()
+        label = str(item.get("outcome_label") or "unknown")
+        delta = _USEFULNESS_BOOST.get(label) or _USEFULNESS_PENALTY.get(label) or 0
+        if delta:
+            scores[slug] = scores.get(slug, 0) + delta
+
+    return scores
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -298,6 +355,9 @@ def build_recall(prompt: str, branch: str, project_dir: Path | str) -> str:
     prompt_tokens = re.findall(r"[a-z0-9_-]+", prompt.lower())
     ticket_ids = _TICKET_RE.findall(prompt)
 
+    # ---- Load prior usefulness scores (boost/penalty per slug) ---------------
+    usefulness_scores = _load_usefulness_scores(project_dir, branch)
+
     # ---- Parse + score each digest -------------------------------------------
     entries: list[_DigestEntry] = []
 
@@ -307,6 +367,10 @@ def build_recall(prompt: str, branch: str, project_dir: Path | str) -> str:
             continue
         fm, body = parsed
         score = _score_digest(prompt_tokens, ticket_ids, fm, body)
+        # Apply usefulness adjustment when the digest slug matches a prior record.
+        slug = str(fm.get("slug") or path.stem)
+        if usefulness_scores and slug in usefulness_scores:
+            score = max(0, score + usefulness_scores[slug])
         date_str = _digest_date(fm, path)
         entries.append((score, date_str, fm, body, path))
 
@@ -349,11 +413,11 @@ def build_recall(prompt: str, branch: str, project_dir: Path | str) -> str:
 
         # Drop whole — SC-1: never mid-digest truncation.
         session_id = fm.get("session_id") or path.stem
-        slug = fm.get("slug") or ""
+        slug = str(fm.get("slug") or "")
         _append_drop_log(
             drop_log_path,
             session_id=str(session_id),
-            slug=str(slug),
+            slug=slug,
             dropped_chars=len(block),
         )
 
