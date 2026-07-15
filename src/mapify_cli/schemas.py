@@ -1803,3 +1803,75 @@ TRAJECTORY_EVAL_SCHEMA = {
     ],
     "additionalProperties": False,
 }
+
+CONTEXT_USEFULNESS_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://mapframework.dev/schemas/context-usefulness.json",
+    "title": "MAP Context Usefulness Report",
+    "description": (
+        "Records which recalled/injected context items were useful in a completed "
+        "workflow run, enabling future recall ranking to be boosted or demoted based "
+        "on prior usefulness evidence."
+    ),
+    "type": "object",
+    "properties": {
+        "schema_version": {"type": "string"},
+        "generated_at": {"type": "string"},
+        "branch": {"type": "string"},
+        "workflow": {"type": "string"},
+        "terminal_status": {"type": "string"},
+        "items": {
+            "type": "array",
+            "description": "Injected/recalled context items and their observed outcome labels.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": [
+                            "memory_digest",
+                            "learned_rule",
+                            "research_artifact",
+                            "learning_handoff",
+                            "review_bundle",
+                            "other",
+                        ],
+                        "description": "Category of context item.",
+                    },
+                    "source": {
+                        "type": "string",
+                        "description": "Path, slug, or identifier of the context item.",
+                    },
+                    "outcome_label": {
+                        "type": "string",
+                        "enum": ["helpful", "used", "ignored", "stale", "over_budget", "unknown"],
+                        "description": "Observed usefulness outcome for this item.",
+                    },
+                    "signals": {
+                        "type": "object",
+                        "description": "Deterministic signals that informed the outcome label.",
+                        "additionalProperties": True,
+                    },
+                },
+                "required": ["kind", "source", "outcome_label"],
+                "additionalProperties": True,
+            },
+        },
+        "summary": {
+            "type": "object",
+            "description": "Aggregate counts of each outcome label.",
+            "properties": {
+                "total": {"type": "integer"},
+                "helpful": {"type": "integer"},
+                "used": {"type": "integer"},
+                "ignored": {"type": "integer"},
+                "stale": {"type": "integer"},
+                "over_budget": {"type": "integer"},
+                "unknown": {"type": "integer"},
+            },
+            "additionalProperties": True,
+        },
+    },
+    "required": ["schema_version", "branch", "workflow", "items", "summary"],
+    "additionalProperties": True,
+}
