@@ -3057,6 +3057,119 @@ class TestArchiveCompletedWorkflow:
         assert archives == []
 
 
+class TestAbandonWorkflow:
+    """abandon_workflow provides an escape hatch for stuck/in-flight workflows.
+
+    Unlike archive_completed_workflow (which refuses non-terminal states),
+    abandon_workflow can retire any workflow including INITIALIZED ones with
+    an empty subtask_sequence — the common stuck case from issue #360.
+    """
+
+    def test_noop_when_no_state_file(self, branch_dir, tmp_path):
+        del tmp_path
+        result = map_orchestrator.abandon_workflow(branch_dir)
+        assert result["status"] == "noop"
+
+    def test_abandons_in_flight_workflow(self, branch_dir, tmp_path):
+        """abandon_workflow can retire an in-flight (ACTOR-phase) workflow —
+        unlike archive_completed_workflow which refuses non-terminal states.
+        """
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.current_step_id = "2.3"
+        state.current_step_phase = "ACTOR"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        result = map_orchestrator.abandon_workflow(branch_dir)
+        assert result["status"] == "abandoned"
+        assert not state_file.exists()  # active file gone -> gate fail-opens
+        abandon_file = Path(result["abandon_file"])
+        assert abandon_file.exists()
+        assert abandon_file.name.startswith("step_state.abandoned-")
+        assert result["phase_at_abandon"] == "ACTOR"
+
+    def test_abandons_initialized_workflow_with_empty_subtask_sequence(
+        self, branch_dir, tmp_path
+    ):
+        """Core #360 repro: a freshly-initialized workflow with an empty
+        subtask_sequence (stuck INITIALIZED state) can now be retired via
+        abandon_workflow.  archive_completed_workflow would have refused.
+        """
+        state = map_orchestrator.StepState()
+        state.workflow_status = "INITIALIZED"
+        state.current_step_phase = "DECOMPOSE"
+        state.subtask_sequence = []
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        result = map_orchestrator.abandon_workflow(branch_dir)
+        assert result["status"] == "abandoned"
+        assert not state_file.exists()
+        assert Path(result["abandon_file"]).name.startswith("step_state.abandoned-")
+
+    def test_delegates_to_archive_when_already_complete(self, branch_dir, tmp_path):
+        """abandon_workflow on a WORKFLOW_COMPLETE run delegates to
+        archive_completed_workflow so terminal runs get the .completed- suffix.
+        """
+        state = map_orchestrator.StepState()
+        state.workflow_status = "WORKFLOW_COMPLETE"
+        state.current_step_id = "COMPLETE"
+        state.current_step_phase = "COMPLETE"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        result = map_orchestrator.abandon_workflow(branch_dir)
+        assert result["status"] == "archived"  # delegated to archive path
+        assert not state_file.exists()
+        archive_file = Path(result["archive_file"])
+        assert archive_file.name.startswith("step_state.completed-")
+
+    def test_idempotent_second_call_is_noop(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.current_step_id = "2.3"
+        state.current_step_phase = "ACTOR"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        first = map_orchestrator.abandon_workflow(branch_dir)
+        assert first["status"] == "abandoned"
+        second = map_orchestrator.abandon_workflow(branch_dir)
+        assert second["status"] == "noop"
+
+    def test_cli_abandon_in_flight_exits_zero(self, tmp_path):
+        """CLI: `abandon` on an in-flight run exits 0 (not 1 like archive on error)."""
+        project = tmp_path / "project"
+        project.mkdir()
+        script = self._make_project(project)
+        state_dir = project / ".map" / "test-branch"
+        state_dir.mkdir(parents=True)
+        (state_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "workflow_status": "IN_PROGRESS",
+                    "current_step_id": "2.3",
+                    "current_step_phase": "ACTOR",
+                }
+            )
+        )
+        proc = subprocess.run(
+            [sys.executable, str(script), "abandon", "--branch", "test-branch"],
+            cwd=str(project), capture_output=True, text=True, timeout=30,
+        )
+        assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+        payload = json.loads(proc.stdout)
+        assert payload["status"] == "abandoned"
+        assert not (state_dir / "step_state.json").exists()
+
+    @staticmethod
+    def _make_project(root: Path) -> Path:
+        import shutil
+
+        scripts_dir = root / ".map" / "scripts"
+        scripts_dir.mkdir(parents=True)
+        for py_file in ORCHESTRATOR_PATH.glob("*.py"):
+            shutil.copy(py_file, scripts_dir / py_file.name)
+        return scripts_dir / "map_orchestrator.py"
+
+
 class TestValidateStepResearchEnforcement:
     """RESEARCH (2.2) is documented MANDATORY; validate_step 2.2 must reject
     when no research artifact exists for the current subtask."""
