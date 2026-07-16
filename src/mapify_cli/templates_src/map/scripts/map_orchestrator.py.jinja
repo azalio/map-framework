@@ -4009,6 +4009,56 @@ def archive_completed_workflow(branch: str) -> dict:
     }
 
 
+def abandon_workflow(branch: str) -> dict:
+    """Forcibly retire any workflow, including stuck/in-flight ones.
+
+    Unlike ``archive_completed_workflow`` (which refuses non-terminal states),
+    ``abandon_workflow`` provides an escape hatch for workflows that cannot
+    complete normally — e.g. a blueprint stuck in INITIALIZED with an empty
+    subtask_sequence, or an in-flight run that can't be finished.
+
+    Behaviour:
+      - No active state file → ``status="noop"`` (idempotent).
+      - Workflow is already terminal → delegates to ``archive_completed_workflow``
+        (gets the ``.completed-`` suffix, same as a normal archive).
+      - Workflow is in-flight → renames ``step_state.json`` to
+        ``step_state.abandoned-<utc-timestamp>.json``.
+
+    After either path the gate fail-opens and no workflow context is injected.
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    if not state_file.exists():
+        return {
+            "status": "noop",
+            "message": (
+                f"No active step_state.json at {state_file}; nothing to abandon."
+            ),
+        }
+
+    state = StepState.load(state_file)
+    if _is_workflow_complete(state):
+        # Already terminal — use the normal archive path for a clean suffix.
+        return archive_completed_workflow(branch)
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    abandon_file = state_file.with_name(f"step_state.abandoned-{timestamp}.json")
+    if abandon_file.exists():
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        abandon_file = state_file.with_name(f"step_state.abandoned-{timestamp}.json")
+    state_file.rename(abandon_file)
+
+    return {
+        "status": "abandoned",
+        "abandon_file": str(abandon_file),
+        "phase_at_abandon": state.current_step_phase,
+        "message": (
+            "Workflow abandoned. Branch is now clean: the edit gate fail-opens "
+            "and no workflow context is injected. Start a new /map-* workflow "
+            "or edit freely. The abandoned state is preserved for audit."
+        ),
+    }
+
+
 SKIPPABLE_STEPS = {"2.25", "2.26"}
 
 
@@ -4751,6 +4801,7 @@ def main():
             "backfill_subtask_ids",
             "finalize_plan",
             "archive",
+            "abandon",
         ],
         help="Command to execute",
     )
@@ -5263,6 +5314,10 @@ def main():
             # callers detect it. A "noop" (nothing to archive) is not a failure.
             if result.get("status") == "error":
                 sys.exit(1)
+
+        elif args.command == "abandon":
+            result = abandon_workflow(branch)
+            print(json.dumps(result, indent=2))
 
         elif args.command == "mark_subtask_complete":
             if not args.task_or_step:
