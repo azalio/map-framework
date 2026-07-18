@@ -181,6 +181,13 @@ preset_app = typer.Typer(
 
 app.add_typer(preset_app, name="preset")
 
+prompt_profile_app = typer.Typer(
+    name="prompt-profile",
+    help="Manage MAP prompt profiles — versioned, eval-gated prompt lifecycle.",
+)
+
+app.add_typer(prompt_profile_app, name="prompt-profile")
+
 
 def version_callback(value: bool):
     """Callback to show version and exit."""
@@ -2212,6 +2219,113 @@ def preset_set_priority(
     state["priority"] = priority
     _write_preset_state(preset_dir, state)
     console.print(f"[green]Preset '{preset_id}'[/green] priority set to {priority}.")
+
+
+# Prompt profile commands
+
+_PROFILE_MANIFEST_KEYS = ("id", "title", "version")
+
+
+def _prompt_profiles_dir(project_dir: Path) -> Path:
+    return project_dir / ".map" / "prompt-profiles"
+
+
+def _read_profile_manifest(profile_path: Path) -> dict[str, Any] | None:
+    manifest_path = profile_path / "manifest.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _read_active_profile(profiles_root: Path) -> str | None:
+    """Return the active profile id from active.json, or None."""
+    active_path = profiles_root / "active.json"
+    if not active_path.is_file():
+        return None
+    try:
+        data = json.loads(active_path.read_text(encoding="utf-8"))
+        return data.get("active") or None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+@prompt_profile_app.command("list")
+def prompt_profile_list(
+    project_path: Path = typer.Option(
+        Path("."),
+        "--project-path",
+        "-p",
+        help="Root of the target project (where .map/ lives).",
+        resolve_path=True,
+    ),
+    output_json: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
+) -> None:
+    """List installed MAP prompt profiles in a project's .map/prompt-profiles/ directory."""
+    from rich.table import Table
+
+    profiles_root = _prompt_profiles_dir(project_path)
+    active_id = _read_active_profile(profiles_root)
+
+    profiles: list[dict[str, Any]] = []
+
+    if profiles_root.is_dir():
+        for entry in sorted(profiles_root.iterdir()):
+            if not entry.is_dir():
+                continue
+            manifest = _read_profile_manifest(entry)
+            if manifest is None:
+                continue
+            missing = [k for k in _PROFILE_MANIFEST_KEYS if k not in manifest]
+            if missing:
+                continue
+            profiles.append({
+                "id": manifest["id"],
+                "title": manifest["title"],
+                "version": manifest["version"],
+                "description": manifest.get("description", ""),
+                "targets": manifest.get("targets", []),
+                "active": manifest["id"] == active_id,
+            })
+
+    if output_json:
+        console.print_json(json.dumps({"profiles": profiles, "active": active_id}))
+        return
+
+    if not profiles:
+        console.print("No prompt profiles found in .map/prompt-profiles/.")
+        console.print(
+            "Create a profile at .map/prompt-profiles/<id>/manifest.json "
+            "with required keys: id, title, version."
+        )
+        return
+
+    table = Table(title="Prompt Profiles", box=None, show_header=True, header_style="bold")
+    table.add_column("ID", style="cyan")
+    table.add_column("Title")
+    table.add_column("Version")
+    table.add_column("Status")
+    table.add_column("Description")
+
+    for profile in profiles:
+        status = "active" if profile["active"] else "installed"
+        table.add_row(
+            profile["id"],
+            profile["title"],
+            profile["version"],
+            status,
+            profile["description"] or "",
+        )
+
+    console.print(table)
+
+    if active_id and not any(p["id"] == active_id for p in profiles):
+        console.print(
+            f"[yellow]Warning:[/yellow] active profile '{active_id}' not found in "
+            f".map/prompt-profiles/. The active.json pointer may be stale."
+        )
 
 
 # Research localization eval commands
