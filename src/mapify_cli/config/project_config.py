@@ -234,6 +234,31 @@ class MapConfig:
     # Dotted YAML key: `tdd.enforce`  (aliased in load_map_config).
     tdd_enforce: bool = False
 
+    # Scale-adaptive intelligence (#287) — automatic scope→workflow-depth mapping.
+    # When scale_auto is True (default), the MAP workflow entry point may classify
+    # the requested change into one of four brackets and recommend the appropriate
+    # workflow depth. When False, auto-detection is skipped and the user must
+    # choose the workflow explicitly.
+    #
+    # Classification brackets:
+    #   TRIVIAL  — < trivial thresholds → map-fast (skip Predictor, Reflector)
+    #   SMALL    — < small thresholds   → map-plan-light (spec only, no research)
+    #   MEDIUM   — < medium thresholds  → map-efficient (full MAP loop)
+    #   LARGE    — >= medium thresholds → map-efficient + map-tdd + adversarial review
+    #
+    # Dotted YAML aliases (see load_map_config):
+    #   scale.auto
+    #   scale.thresholds.trivial.max_files / scale.thresholds.trivial.max_lines
+    #   scale.thresholds.small.max_files  / scale.thresholds.small.max_lines
+    #   scale.thresholds.medium.max_files / scale.thresholds.medium.max_lines
+    scale_auto: bool = True
+    scale_trivial_max_files: int = 3
+    scale_trivial_max_lines: int = 50
+    scale_small_max_files: int = 10
+    scale_small_max_lines: int = 200
+    scale_medium_max_files: int = 30
+    scale_medium_max_lines: int = 1000
+
 
 def clamp_max_actors(n: object) -> int:
     """Clamp max_actors to the valid range [1, 8], or return the default 4.
@@ -341,6 +366,13 @@ def load_map_config(project_path: Path) -> MapConfig:
             ("execution.concurrent_dispatch", "concurrent_dispatch"),
             ("execution.max_wave_retries", "max_wave_retries"),
             ("tdd.enforce", "tdd_enforce"),
+            ("scale.auto", "scale_auto"),
+            ("scale.thresholds.trivial.max_files", "scale_trivial_max_files"),
+            ("scale.thresholds.trivial.max_lines", "scale_trivial_max_lines"),
+            ("scale.thresholds.small.max_files", "scale_small_max_files"),
+            ("scale.thresholds.small.max_lines", "scale_small_max_lines"),
+            ("scale.thresholds.medium.max_files", "scale_medium_max_files"),
+            ("scale.thresholds.medium.max_lines", "scale_medium_max_lines"),
         ):
             if dotted in data and field_name not in data:
                 data[field_name] = data.pop(dotted)
@@ -689,6 +721,21 @@ minimality: lite
 # treated as a TDD_VIOLATION by Monitor; spec-compliance and code-quality reviewer
 # subagents run after each subtask. Default OFF — existing workflows are unaffected.
 # tdd.enforce: false
+
+# Scale-adaptive intelligence (#287). When scale.auto is true (default), MAP may
+# classify an incoming change request and recommend the appropriate workflow depth:
+#   TRIVIAL  (< trivial thresholds) → map-fast
+#   SMALL    (< small thresholds)   → map-plan-light (spec only, no research)
+#   MEDIUM   (< medium thresholds)  → map-efficient (full MAP loop)
+#   LARGE    (>= medium thresholds) → map-efficient + map-tdd + adversarial review
+# Set scale.auto: false to disable auto-detection and always choose manually.
+# scale.auto: true
+# scale.thresholds.trivial.max_files: 3
+# scale.thresholds.trivial.max_lines: 50
+# scale.thresholds.small.max_files: 10
+# scale.thresholds.small.max_lines: 200
+# scale.thresholds.medium.max_files: 30
+# scale.thresholds.medium.max_lines: 1000
 """
 
 
