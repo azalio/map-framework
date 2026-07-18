@@ -98,26 +98,18 @@ shell_command:
 - Outcome `map-fast`: recommend `$map-fast` and STOP.
 - Outcome `map-plan`: continue below.
 
-**Scale Advisory (standard mode only, when no `--light`/`--deep` flag was given):** After recording a `map-plan` outcome, run:
+**Scale Advisory (standard mode only, when no `--light`/`--deep` flag was given):** After recording a `map-plan` outcome, estimate the task scope and run:
 
 ```
 shell_command:
-  cmd: |
-    python3 -c "
-import sys; sys.path.insert(0, 'src')
-from pathlib import Path
-from mapify_cli.config.project_config import load_map_config
-cfg = load_map_config(Path('.'))
-print('scale_auto:', cfg.scale_auto)
-print('small:', cfg.scale_small_max_files, cfg.scale_small_max_lines)
-print('medium:', cfg.scale_medium_max_files, cfg.scale_medium_max_lines)
-"
+  cmd: python3 .map/scripts/classify_scope.py --files ESTIMATED_FILES --lines ESTIMATED_LINES
 ```
 
-If `scale_auto: true`, use your estimate of the task scope to surface an advisory (do not block):
-- Estimated ≤ small thresholds → advise re-invoking as `$map-plan --light`.
-- Estimated > medium thresholds → advise re-invoking as `$map-plan --deep`.
-- Otherwise (medium range) → no advisory; standard mode is appropriate.
+If `auto_enabled: true` in the JSON result, surface an advisory based on `bracket` (do not block):
+- `small` → advise re-invoking as `$map-plan --light`.
+- `large` → advise re-invoking as `$map-plan --deep`.
+- `trivial` → advise `$map-fast` instead.
+- `medium` → no advisory; standard mode is appropriate.
 
 ---
 
