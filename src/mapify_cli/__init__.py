@@ -23,7 +23,7 @@ Or install globally:
     mapify check
 """
 
-__version__ = "3.22.0"
+__version__ = "3.23.0"
 
 import json
 import os
