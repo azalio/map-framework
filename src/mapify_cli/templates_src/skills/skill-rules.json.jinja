@@ -404,6 +404,29 @@
           "memory.*now"
         ]
       }
+    },
+    "map-architecture": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "medium",
+      "description": "Opt-in proactive architecture-deepening report: rank codebase hotspots by design friction, generate a candidate report, and pick one to deepen before any implementation.",
+      "promptTriggers": {
+        "keywords": [
+          "map-architecture",
+          "architecture report",
+          "architecture deepening",
+          "hotspot analysis",
+          "codebase health",
+          "design friction",
+          "shallow module"
+        ],
+        "intentPatterns": [
+          "map-architecture",
+          "(architecture|codebase).*(report|health|friction|deepening)",
+          "(find|identify|rank).*(hotspot|shallow|friction)"
+        ]
+      }
     }
   }
 }
