@@ -25,6 +25,7 @@ Or install globally:
 
 __version__ = "3.22.0"
 
+import json
 import os
 import subprocess
 import sys
@@ -172,6 +173,13 @@ governance_app = typer.Typer(
 )
 
 app.add_typer(governance_app, name="governance")
+
+preset_app = typer.Typer(
+    name="preset",
+    help="Manage MAP workflow customization presets.",
+)
+
+app.add_typer(preset_app, name="preset")
 
 
 def version_callback(value: bool):
@@ -1760,6 +1768,143 @@ def uninstall(
 
     if not result.removed and not result.skipped and not result.missing:
         console.print("[dim]Nothing to do.[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# Preset management commands (#291)
+# ---------------------------------------------------------------------------
+
+_PRESET_MANIFEST_KEYS = ("id", "title", "version")
+
+
+def _presets_dir(project_dir: Path) -> Path:
+    return project_dir / ".map" / "presets"
+
+
+def _read_preset_manifest(preset_path: Path) -> dict[str, Any] | None:
+    manifest_path = preset_path / "manifest.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+@preset_app.command("list")
+def preset_list(
+    project_path: Optional[Path] = typer.Argument(
+        None,
+        help="Project root directory (defaults to current directory).",
+    ),
+    output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """List installed MAP presets in a project's .map/presets/ directory."""
+    target = project_path or Path.cwd()
+    presets_root = _presets_dir(target)
+
+    if not presets_root.is_dir():
+        if output_json:
+            typer.echo(json.dumps({"presets": []}))
+        else:
+            console.print("[dim]No presets installed. Use 'mapify preset add --from <path>' to install one.[/dim]")
+        return
+
+    presets: list[dict[str, Any]] = []
+    for entry in sorted(presets_root.iterdir()):
+        if not entry.is_dir():
+            continue
+        manifest = _read_preset_manifest(entry)
+        if manifest is None:
+            presets.append({"id": entry.name, "title": entry.name, "version": "?", "description": "(no manifest)"})
+        else:
+            presets.append({
+                "id": manifest.get("id", entry.name),
+                "title": manifest.get("title", entry.name),
+                "version": manifest.get("version", "?"),
+                "description": manifest.get("description", ""),
+            })
+
+    if output_json:
+        typer.echo(json.dumps({"presets": presets}))
+        return
+
+    if not presets:
+        console.print("[dim]No presets installed. Use 'mapify preset add --from <path>' to install one.[/dim]")
+        return
+
+    table = Table(title="Installed MAP Presets", show_header=True, header_style="bold cyan")
+    table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("Title")
+    table.add_column("Version", style="dim")
+    table.add_column("Description", style="dim")
+    for p in presets:
+        table.add_row(p["id"], p["title"], p["version"], p.get("description", ""))
+    console.print(table)
+
+
+@preset_app.command("add")
+def preset_add(
+    from_path: Path = typer.Option(
+        ...,
+        "--from",
+        help="Path to a preset directory containing manifest.json.",
+        show_default=False,
+    ),
+    project_path: Optional[Path] = typer.Argument(
+        None,
+        help="Project root directory (defaults to current directory).",
+    ),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite if already installed."),
+) -> None:
+    """Install a MAP preset from a local directory into .map/presets/.
+
+    The source directory must contain a manifest.json with at least: id, title, version.
+    """
+    if not from_path.is_dir():
+        console.print(f"[red]Error:[/red] '{from_path}' is not a directory.")
+        raise typer.Exit(1)
+
+    manifest = _read_preset_manifest(from_path)
+    if manifest is None:
+        console.print(
+            f"[red]Error:[/red] No valid manifest.json found in '{from_path}'.\n"
+            "A preset directory must contain manifest.json with 'id', 'title', and 'version' keys."
+        )
+        raise typer.Exit(1)
+
+    missing = [k for k in _PRESET_MANIFEST_KEYS if k not in manifest]
+    if missing:
+        console.print(
+            f"[red]Error:[/red] manifest.json is missing required keys: {', '.join(missing)}"
+        )
+        raise typer.Exit(1)
+
+    preset_id: str = manifest["id"]
+    if not preset_id or "/" in preset_id or "\\" in preset_id or ".." in preset_id:
+        console.print(
+            f"[red]Error:[/red] Invalid preset id '{preset_id}' — must be a plain name (no path separators)."
+        )
+        raise typer.Exit(1)
+
+    target = project_path or Path.cwd()
+    dest = _presets_dir(target) / preset_id
+
+    if dest.exists() and not force:
+        console.print(
+            f"[yellow]Preset '{preset_id}' is already installed.[/yellow] "
+            "Use --force to overwrite."
+        )
+        raise typer.Exit(1)
+
+    if dest.exists():
+        shutil.rmtree(dest)
+
+    shutil.copytree(str(from_path), str(dest))
+    console.print(
+        f"[green]Preset '{preset_id}'[/green] ({manifest.get('title', preset_id)} "
+        f"v{manifest.get('version', '?')}) installed to {dest}."
+    )
 
 
 # Research localization eval commands
