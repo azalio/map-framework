@@ -48,6 +48,19 @@ parallel_tool_policy: discovery_only
 
 ## Workflow Steps
 
+### Pre-flight: Mode Detection
+
+Read `$ARGUMENTS` for mode flags **before any other action**. Strip detected flags from `$ARGUMENTS` before using the remainder as the task description.
+
+| Flag | Mode | Effect |
+|------|------|--------|
+| `--light` | LIGHT | Spec-only, no research. **Skip** Step 0, Step 0.5 (Always-Implemented Gate), and Step 2b (Devil's Advocate Review). Limit decomposition to 2–5 minimal subtasks. Fastest plan mode — use when scope is small and well-understood. |
+| `--deep` | DEEP | Full research + architecture review. Add extended research sweep **before** Step 0 and an architecture review step **after** Step 4. Use when scope is large or risk is high. |
+| `--force-full` | DEEP alias | Identical to `--deep`. Overrides any scale auto-advisory toward maximum planning depth. |
+| `--force-fast` | FAST exit | Recommend `/map-fast` and STOP. Use when the task is clearly trivial and MAP planning overhead is not warranted. |
+
+If **no flag** is present (standard mode), run all steps as written. The Scale Advisory in the Workflow-Fit Gate may suggest a mode when scope is clear from the task description.
+
 ### Pre-flight: Resume Detection
 
 ```bash
@@ -107,7 +120,35 @@ Outcomes:
 - `map-wayfind`: too foggy to specify — you cannot write sharp acceptance criteria because several core decisions are still unresolved and entangled (not merely "needs a little research"). Recommend `/map-wayfind chart "<loose idea>"` to resolve the decision frontier first, then return with `/map-plan --wayfind <slug>`. STOP. (This is the inverse of the Wayfinding Handoff pre-flight: that consumes a finished map; this sends you to create one.)
 - `map-plan`: continue.
 
-### Step 0: Quick Discovery (Optional but Recommended)
+**Scale Advisory (standard mode only, when no `--light`/`--deep` flag was given):** After recording a `map-plan` outcome, query the project's scale-adaptive config:
+
+```bash
+python3 -c "
+import sys; sys.path.insert(0, 'src')
+from pathlib import Path
+from mapify_cli.config.project_config import load_map_config
+cfg = load_map_config(Path('.'))
+print('scale_auto:', cfg.scale_auto)
+print('trivial:', cfg.scale_trivial_max_files, cfg.scale_trivial_max_lines)
+print('small:', cfg.scale_small_max_files, cfg.scale_small_max_lines)
+print('medium:', cfg.scale_medium_max_files, cfg.scale_medium_max_lines)
+"
+```
+
+If `scale_auto: true`, use your estimate of the task's scope to surface an advisory (do not block on this):
+
+- Estimated ≤ trivial thresholds → advise `/map-fast` instead (already covered by the `map-fast` outcome above).
+- Estimated ≤ small thresholds → advise re-invoking as `/map-plan --light` for a lighter-weight plan.
+- Estimated > medium thresholds → advise re-invoking as `/map-plan --deep` for full research + architecture review.
+- Otherwise (medium range) → no advisory; standard mode is appropriate.
+
+The advisory is informational — the user's flags or your judgment prevail. If the user accepts, add the flag and restart; otherwise continue in standard mode.
+
+### Step 0: Quick Discovery (Optional but Recommended; SKIP in LIGHT mode)
+
+> **LIGHT mode:** Skip this step entirely — proceed directly to Step 1. The spec is written from the stated requirements without a prior research phase.
+>
+> **DEEP mode:** Before this step, run an extended research sweep (SOFA search if available, full codebase exploration, dependency and hotspot analysis). Dispatch a research-agent with a wider scope than the standard Step 0 prompt below; cover recent-change hotspots, dependency graph, existing test coverage gaps, and architectural friction points. Save findings to `.map/$BRANCH/research/plan__deep_discovery.md` in addition to the standard `plan__discovery.md`. Then continue with Step 0 as written.
 
 Use `.map/<branch>/research/plan__discovery.md` as the canonical plan-scope discovery artifact. If it exists, read it and skip discovery — but ONLY if it contains an `Already Implemented` section (the format this skill now requires). If the canonical file is absent but legacy `.map/<branch>/findings_<branch>.md` exists, read that fallback and migrate it to the canonical path with `save_research "$BRANCH" plan discovery` only if it has the required section. A discovery file written before this format existed lacks that section; in that case re-run discovery with the prompt below so the Step 0.5 gate has the evidence it requires. Otherwise (no discovery file at all) run discovery to find relevant files, existing patterns, risks, and confirmed new files.
 
@@ -138,7 +179,9 @@ if [ ! -f ".map/$BRANCH/research/plan__discovery.md" ]; then
 fi
 ```
 
-### Step 0.5: Already-Implemented Gate (MANDATORY when discovery ran)
+### Step 0.5: Already-Implemented Gate (MANDATORY when discovery ran; SKIP in LIGHT mode)
+
+> **LIGHT mode:** Skip this step — no discovery was run, so there is no evidence base for the gate. Rely on the user's statement that the feature is new; if you discover overlap during spec writing, surface it there.
 
 Before interviewing or writing the spec, reconcile the request against the discovery `Already Implemented` section. Do not plan work the codebase already does. This gate runs whenever Step 0 produced findings; if discovery was intentionally skipped (greenfield or fully-provided spec), state that the gate was skipped and why. If the findings file lacks an `Already Implemented` section (it predates this format), do NOT run the gate on incomplete evidence — re-run Step 0 discovery first.
 
@@ -199,7 +242,9 @@ python3 .map/scripts/validate_spec_citations.py --branch "$BRANCH"
 - Exit 1 + `"failures": [...]` with `status` in `{stale-citation, error}` → fix the spec (correct the line number, update the symbol name, or remove the citation) and re-run. Do NOT proceed to decomposition with red failures.
 - Exit 2 → invocation error (missing branch / spec file); fix invocation, do not skip.
 
-### Step 2b: Devil's Advocate Review (SPEC_REVIEW)
+### Step 2b: Devil's Advocate Review (SPEC_REVIEW; SKIP in LIGHT mode)
+
+> **LIGHT mode:** Skip this step. The spec is written from well-understood requirements; a lightweight self-review of the open-questions list and acceptance criteria suffices before decomposition.
 
 Run Monitor as a spec reviewer before decomposition.
 
@@ -236,6 +281,35 @@ mkdir -p ".map/${BRANCH}"
 
 Add an architecture graph to the spec or plan when the implementation has multiple components, state boundaries, or dependencies. See [plan-reference.md](plan-reference.md#architecture-graph) for examples.
 
+### Step 4.5: Architecture Review (DEEP mode only)
+
+> **DEEP mode:** Before decomposition, dispatch Monitor as an architecture reviewer over the spec + deep discovery findings. Focus on component boundaries, dependency flow, state ownership, testability, and whether the proposed approach is consistent with the existing architecture documented in `docs/ARCHITECTURE.md`.
+
+```text
+Task(
+  subagent_type="monitor",
+  description="Architecture review before decomposition (DEEP mode)",
+  prompt="""
+<documents>
+  <document source="spec"><document_content>{spec_content}</document_content></document>
+  <document source="deep-discovery"><document_content>{deep_discovery_content}</document_content></document>
+</documents>
+<task>
+Review the proposed architecture for: component boundary clarity, dependency direction violations, state ownership ambiguity, untestable seams, and conflicts with the existing system described in docs/ARCHITECTURE.md.
+Evidence first: cite the spec or discovery before each finding.
+CRITICAL findings must identify the exact spec section and the specific risk.
+</task>
+<expected_output>
+Return JSON: {"valid": bool, "findings": [{"severity": "critical|high|medium", "section": "...", "finding": "...", "recommendation": "..."}], "summary": "..."}.
+</expected_output>
+"""
+)
+```
+
+Fix any CRITICAL or HIGH findings before proceeding to Step 5. Add unresolved architecture risks to the spec's Open Questions.
+
+> **Standard / LIGHT mode:** Skip this step.
+
 ### Step 5: Call Task Decomposer
 
 ```text
@@ -258,6 +332,7 @@ Top-level coverage_map must map each acceptance criterion, invariant, and cross-
 Top-level hard_constraints are non-negotiable: every hard_constraints id must appear in coverage_map and bracketed validation_criteria.
 Top-level soft_constraints are negotiable only with coverage or tradeoff_rationale.
 Do NOT create subtasks for behavior listed under the spec's "Out of Scope > Already Implemented" subsection; that work already exists in the codebase. Plan only the remaining gap.
+LIGHT mode: target 2–5 minimal, bite-sized subtasks. Prefer merging related concerns into one subtask rather than splitting them. Do not over-decompose well-understood small tasks.
 </constraints>
 <expected_output>Return only blueprint JSON.</expected_output>
 """
@@ -363,8 +438,11 @@ PLAN COMPLETE
 Spec: .map/<branch>/spec_<branch>.md
 Blueprint: .map/<branch>/blueprint.json
 Task plan: .map/<branch>/task_plan_<branch>.md
+Mode: [standard | light | deep]
 Next: /map-efficient or /map-task for a selected subtask
 ```
+
+Include the active mode (`light` / `deep` / `standard`) so the operator knows which steps ran.
 
 ### Step 8.5: Execution Handoff Note
 
@@ -385,6 +463,9 @@ Detailed rationale moved to [plan-reference.md](plan-reference.md#design-rationa
 - `/map-check`: verify completion.
 - `/map-review`: review the diff.
 - `/map-learn`: preserve reusable learnings.
+- `/map-plan --light`: spec-only mode, no research, 2–5 minimal subtasks (small, well-understood tasks).
+- `/map-plan --deep`: full research + architecture review mode (large or risky tasks). Also `--force-full`.
+- `/map-plan --force-fast`: skip planning; recommend `/map-fast` and stop.
 
 ## State Machine Integration
 
@@ -404,10 +485,13 @@ See [plan-reference.md](plan-reference.md#troubleshooting) for stale artifacts, 
 
 ## Success Criteria
 
+- Mode flags detected and stripped from `$ARGUMENTS` before use.
 - Workflow-fit decision recorded.
-- Already-implemented gate ran (or was explicitly skipped with a reason): whole-feature duplicates off-ramped, partial duplicates moved to spec "Out of Scope > Already Implemented".
+- Already-implemented gate ran (or was explicitly skipped with a reason): whole-feature duplicates off-ramped, partial duplicates moved to spec "Out of Scope > Already Implemented". (LIGHT mode: gate explicitly skipped — noted in checkpoint.)
 - Live/runtime-state gate ran when `depends_on_runtime_state=true`: each runtime assumption was verified read-only, or recorded as an `Unverified Runtime Assumption` (Open Questions / Risks) with the exact check to run and dependent subtasks marked `provisional`.
 - Spec exists or is intentionally reused.
 - Blueprint exists and `validate_blueprint_contract` passed.
 - Human-readable task plan includes scope metadata and coverage.
-- The command stops with a clear execution handoff.
+- DEEP mode: architecture review (Step 4.5) ran and any CRITICAL findings were resolved before decomposition.
+- LIGHT mode: decomposition produced 2–5 minimal subtasks.
+- The command stops with a clear execution handoff that names the active mode.
