@@ -186,6 +186,14 @@ class TestClaiming:
         assert result["hitl_pending"] is True
         assert "human" in result["message"].lower()
 
+    def test_resolve_clears_claim(self) -> None:
+        _create()
+        tid = wr.add_ticket("checkout", "T", "research", "Q?")["ticket_id"]
+        _resolve("checkout", tid, "sess-1")
+        ticket = wr._load_state("checkout")["tickets"][tid]
+        assert ticket["claimed_by"] is None
+        assert ticket["claimed_at"] is None
+
 
 # ---------------------------------------------------------------------------
 # 3. Frontier
@@ -342,6 +350,72 @@ class TestHandoff:
         result = wr.list_handoffs()
         assert result["count"] == 1
         assert result["handoffs"][0]["slug"] == "checkout"
+
+    def test_mutation_after_handoff_rejected(self) -> None:
+        _create()
+        tid = wr.add_ticket("checkout", "Pick DB", "research", "Which DB?")["ticket_id"]
+        _resolve("checkout", tid, "sess-1")
+        assert wr.emit_wayfind_handoff("checkout", branch="test-branch")["status"] == "success"
+        # any ticket/fog mutation after handoff must be rejected (frozen handoff)
+        blocked = wr.add_ticket("checkout", "Late idea", "task", "too late?")
+        assert blocked["status"] == "error"
+        assert blocked["code"] == "handed_off"
+        assert wr.add_fog("checkout", "late fog")["code"] == "handed_off"
+
+    def test_emit_stale_revision_rejected(self) -> None:
+        _create()
+        tid = wr.add_ticket("checkout", "Pick DB", "research", "Which DB?")["ticket_id"]
+        _resolve("checkout", tid, "sess-1")
+        stale = wr.emit_wayfind_handoff("checkout", branch="test-branch", expected_revision=0)
+        assert stale["status"] == "error"
+        assert stale["code"] == "stale_revision"
+
+
+# ---------------------------------------------------------------------------
+# 6b. Evidence-path containment
+# ---------------------------------------------------------------------------
+
+
+class TestEvidencePathContainment:
+    def _claimed_ticket(self) -> str:
+        _create()
+        tid = wr.add_ticket("checkout", "T", "task", "Q?")["ticket_id"]
+        wr.claim_ticket("checkout", tid, "sess-1")
+        return tid
+
+    def test_absolute_resolution_path_rejected(self, repo: Path) -> None:
+        tid = self._claimed_ticket()
+        outside = repo / "outside.md"
+        outside.write_text("secret", encoding="utf-8")
+        result = wr.resolve_ticket("checkout", tid, "sess-1", "g", str(outside))
+        assert result["status"] == "error"
+        assert result["code"] == "missing_resolution"
+
+    def test_parent_escape_resolution_rejected(self) -> None:
+        tid = self._claimed_ticket()
+        escape = Path(".map/wayfind") / "escape.md"
+        escape.write_text("x", encoding="utf-8")  # real file OUTSIDE the map dir
+        result = wr.resolve_ticket("checkout", tid, "sess-1", "g", "../escape.md")
+        assert result["status"] == "error"
+        assert result["code"] == "missing_resolution"
+
+    def test_directory_resolution_rejected(self) -> None:
+        tid = self._claimed_ticket()
+        adir = Path(".map/wayfind/checkout/resolutions/adir")
+        adir.mkdir(parents=True, exist_ok=True)
+        result = wr.resolve_ticket("checkout", tid, "sess-1", "g", "resolutions/adir")
+        assert result["status"] == "error"
+        assert result["code"] == "missing_resolution"
+
+    def test_absolute_human_input_path_rejected(self, repo: Path) -> None:
+        _create()
+        tid = wr.add_ticket("checkout", "G", "grilling", "Q?")["ticket_id"]
+        wr.claim_ticket("checkout", tid, "sess-1")
+        outside = repo / "human.md"
+        outside.write_text("hi", encoding="utf-8")
+        result = wr.record_human_input("checkout", tid, "sess-1", str(outside))
+        assert result["status"] == "error"
+        assert result["code"] == "missing_input"
 
 
 # ---------------------------------------------------------------------------

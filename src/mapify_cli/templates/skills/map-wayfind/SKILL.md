@@ -60,7 +60,7 @@ Start a new map. Six steps, mirroring the way a good architect opens a foggy pro
    ```
 
    In a second pass, wire dependencies with `wire_blocking` (rejects cycles and unknown ids).
-5. **Kick off research.** For `research` tickets, you MAY dispatch research-agent subagents in parallel; each writes its findings to `resolutions/<ticket>.md`, then you `resolve_ticket` it. Research resolves are exempt from the one-per-session limit.
+5. **Kick off research.** For each `research` ticket, `claim_ticket` it FIRST — `resolve_ticket` requires the ticket to be claimed by your session, so an unclaimed dispatch-then-resolve returns `not_owner`. Serialize these claim mutations, then you MAY dispatch research-agent subagents in parallel to gather findings; each writes to `resolutions/<ticket>.md`, after which you `resolve_ticket` it (research resolves are exempt from the one-per-session limit).
 6. **Stop.** Show `wayfind_status <slug>` and tell the user to run `/map-wayfind work <slug>` to resolve the frontier.
 
 ## Mode: work \<slug\> [ticket]

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import uuid
@@ -94,6 +95,25 @@ def _state_path(slug: str) -> Path:
     return _map_dir(slug) / "state.json"
 
 
+def _resolve_evidence_path(slug: str, rel: str) -> Optional[Path]:
+    """Resolve an evidence file (resolution / human-input) path under the map dir.
+
+    Returns the resolved Path only when *rel* names a regular file contained in
+    the map directory. Absolute paths, ``..`` escapes, directories, and missing
+    files all return None — so a caller cannot use the provenance gate to read
+    (or claim provenance over) a file outside its own map.
+    """
+    if not rel:
+        return None
+    base = _map_dir(slug).resolve()
+    candidate = (base / rel).resolve()
+    if candidate != base and base not in candidate.parents:
+        return None  # absolute path or ../ escape left the map dir
+    if not candidate.is_file():
+        return None  # missing, or a directory
+    return candidate
+
+
 # ---------------------------------------------------------------------------
 # State load / save + derived views
 # ---------------------------------------------------------------------------
@@ -117,7 +137,10 @@ def _save_state(state: dict[str, Any]) -> None:
     map_dir = _map_dir(slug)
     map_dir.mkdir(parents=True, exist_ok=True)
     path = _state_path(slug)
-    tmp = path.with_name(path.name + ".tmp")
+    # Per-process-unique temp name so two writers never share (and corrupt) one
+    # scratch file. NB: this makes the write atomic, not the read-modify-write —
+    # see _revision_guard for the (best-effort, single-operator) staleness check.
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     tmp.write_text(
         json.dumps(state, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
     )
@@ -128,7 +151,15 @@ def _save_state(state: dict[str, Any]) -> None:
 def _revision_guard(
     state: dict[str, Any], expected_revision: Optional[int]
 ) -> Optional[dict[str, Any]]:
-    """Optimistic-concurrency check: reject a mutation against a stale revision."""
+    """Best-effort stale-write detection: reject a mutation whose caller read an
+    older revision than the map now holds.
+
+    This is a friction/audit aid for a single-operator, sequential tool — NOT a
+    true compare-and-swap. It closes the common "I read, then something else
+    advanced the map, then I wrote" window, but does not lock: two processes that
+    both read the same revision before either writes can still lose an update.
+    Concurrent multi-process writers to one map are out of scope by design (a map
+    is charted and worked by one operator at a time)."""
     if expected_revision is None:
         return None
     current = int(state.get("revision", 0))
@@ -140,6 +171,25 @@ def _revision_guard(
             revision=current,
         )
     return None
+
+
+def _mutation_guard(
+    state: dict[str, Any], expected_revision: Optional[int]
+) -> Optional[dict[str, Any]]:
+    """Pre-mutation gate for ticket/fog operations.
+
+    Rejects any mutation once the map is handed off (its handoff artifact is
+    frozen, so a further edit would leave a discoverable handoff that omits the
+    new state), then applies the optimistic staleness check. Not used by
+    emit_wayfind_handoff, which may idempotently re-emit a handed-off map."""
+    if state.get("status") == "handed_off":
+        return _err(
+            f"map {state.get('slug')!r} is already handed off; its handoff artifact "
+            "is frozen. Start a follow-up map (or a new session) rather than mutating "
+            "a handed-off map.",
+            code="handed_off",
+        )
+    return _revision_guard(state, expected_revision)
 
 
 # ---------------------------------------------------------------------------
@@ -658,7 +708,7 @@ def add_ticket(
     state = _load_state(slug)
     if state is None:
         return _err(f"no map with slug {slug!r}.", code="not_found")
-    guard = _revision_guard(state, expected_revision)
+    guard = _mutation_guard(state, expected_revision)
     if guard is not None:
         return guard
     if ticket_type not in WAYFIND_TICKET_TYPES:
@@ -697,7 +747,7 @@ def wire_blocking(
     state = _load_state(slug)
     if state is None:
         return _err(f"no map with slug {slug!r}.", code="not_found")
-    guard = _revision_guard(state, expected_revision)
+    guard = _mutation_guard(state, expected_revision)
     if guard is not None:
         return guard
     if ticket_id not in state.get("tickets", {}):
@@ -732,7 +782,7 @@ def claim_ticket(
     state = _load_state(slug)
     if state is None:
         return _err(f"no map with slug {slug!r}.", code="not_found")
-    guard = _revision_guard(state, expected_revision)
+    guard = _mutation_guard(state, expected_revision)
     if guard is not None:
         return guard
     if not session:
@@ -796,7 +846,7 @@ def release_ticket(
     state = _load_state(slug)
     if state is None:
         return _err(f"no map with slug {slug!r}.", code="not_found")
-    guard = _revision_guard(state, expected_revision)
+    guard = _mutation_guard(state, expected_revision)
     if guard is not None:
         return guard
     ticket = state.get("tickets", {}).get(ticket_id)
@@ -829,7 +879,7 @@ def record_human_input(
     state = _load_state(slug)
     if state is None:
         return _err(f"no map with slug {slug!r}.", code="not_found")
-    guard = _revision_guard(state, expected_revision)
+    guard = _mutation_guard(state, expected_revision)
     if guard is not None:
         return guard
     ticket = state.get("tickets", {}).get(ticket_id)
@@ -842,14 +892,15 @@ def record_human_input(
             code="not_owner",
         )
     # Paths are relative to the map dir (.map/wayfind/<slug>/) so the value stored
-    # in state.json doubles as a correct link target from the co-located views.
-    input_path = _map_dir(slug) / path
-    if not input_path.exists() or not input_path.read_text(
+    # in state.json doubles as a correct link target from the co-located views;
+    # containment is enforced so absolute/../ paths cannot claim provenance.
+    input_path = _resolve_evidence_path(slug, path)
+    if input_path is None or not input_path.read_text(
         encoding="utf-8", errors="replace"
     ).strip():
         return _err(
-            f"human input file {path!r} (under the map dir) does not exist or is empty. "
-            "Save the human's verbatim answer there first.",
+            f"human input file {path!r} must be a non-empty regular file INSIDE the map "
+            "dir (.map/wayfind/<slug>/). Save the human's verbatim answer there first.",
             code="missing_input",
         )
     ticket["human_input_path"] = path
@@ -869,7 +920,7 @@ def resolve_ticket(
     state = _load_state(slug)
     if state is None:
         return _err(f"no map with slug {slug!r}.", code="not_found")
-    guard = _revision_guard(state, expected_revision)
+    guard = _mutation_guard(state, expected_revision)
     if guard is not None:
         return guard
     ticket = state.get("tickets", {}).get(ticket_id)
@@ -889,14 +940,15 @@ def resolve_ticket(
     if not _oneline(gist):
         return _err("gist must be a non-empty one-line summary of the decision.")
     # resolution_path is relative to the map dir (.map/wayfind/<slug>/) so the stored
-    # value is a correct link target from the co-located map.md / handoff.md views.
-    resolution_file = _map_dir(slug) / resolution_path
-    if not resolution_file.exists() or not resolution_file.read_text(
+    # value is a correct link target from the co-located map.md / handoff.md views;
+    # containment is enforced so absolute/../ paths cannot stand in as a resolution.
+    resolution_file = _resolve_evidence_path(slug, resolution_path)
+    if resolution_file is None or not resolution_file.read_text(
         encoding="utf-8", errors="replace"
     ).strip():
         return _err(
-            f"resolution file {resolution_path!r} (under the map dir) does not exist or "
-            "is empty. Write the prose resolution first.",
+            f"resolution file {resolution_path!r} must be a non-empty regular file INSIDE "
+            "the map dir (.map/wayfind/<slug>/). Write the prose resolution first.",
             code="missing_resolution",
         )
 
@@ -920,6 +972,10 @@ def resolve_ticket(
     ticket["status"] = "resolved"
     ticket["resolved_at"] = _now()
     ticket["resolution"] = {"gist": _oneline(gist), "path": resolution_path}
+    # Clear the active claim on close (consistent with rule_out_of_scope); the
+    # resolver of record is captured in the resolution/git history, not claimed_by.
+    ticket["claimed_by"] = None
+    ticket["claimed_at"] = None
     if ticket_id in ledger.get("claimed", []):
         ledger["claimed"].remove(ticket_id)
     if is_non_research:
@@ -965,7 +1021,7 @@ def add_fog(
     state = _load_state(slug)
     if state is None:
         return _err(f"no map with slug {slug!r}.", code="not_found")
-    guard = _revision_guard(state, expected_revision)
+    guard = _mutation_guard(state, expected_revision)
     if guard is not None:
         return guard
     if not _oneline(text):
@@ -992,7 +1048,7 @@ def graduate_fog(
     state = _load_state(slug)
     if state is None:
         return _err(f"no map with slug {slug!r}.", code="not_found")
-    guard = _revision_guard(state, expected_revision)
+    guard = _mutation_guard(state, expected_revision)
     if guard is not None:
         return guard
     fog_entry = next((f for f in state.get("fog", []) if f.get("id") == fog_id), None)
@@ -1041,7 +1097,7 @@ def rule_out_of_scope(
     state = _load_state(slug)
     if state is None:
         return _err(f"no map with slug {slug!r}.", code="not_found")
-    guard = _revision_guard(state, expected_revision)
+    guard = _mutation_guard(state, expected_revision)
     if guard is not None:
         return guard
     if not _oneline(reason):
@@ -1114,11 +1170,17 @@ def emit_wayfind_handoff(
     early: bool = False,
     confirmed_by_user: bool = False,
     branch: Optional[str] = None,
+    expected_revision: Optional[int] = None,
 ) -> dict[str, Any]:
     """Write the handoff artifact consumed by /map-plan and mark the map handed off."""
     state = _load_state(slug)
     if state is None:
         return _err(f"no map with slug {slug!r}.", code="not_found")
+    # Pure staleness check (not _mutation_guard): a handed-off map may be
+    # idempotently re-emitted, so we do not reject on status == "handed_off".
+    guard = _revision_guard(state, expected_revision)
+    if guard is not None:
+        return guard
 
     try:
         remaining_risks = json.loads(remaining_risks_json or "[]")
@@ -1185,7 +1247,7 @@ def emit_wayfind_handoff(
     }
     json_path = map_dir / "handoff.json"
     md_path = map_dir / "handoff.md"
-    tmp_json = json_path.with_name(json_path.name + ".tmp")
+    tmp_json = json_path.with_name(f".{json_path.name}.{os.getpid()}.tmp")
     tmp_json.write_text(
         json.dumps(handoff_payload, indent=2, ensure_ascii=True) + "\n",
         encoding="utf-8",
@@ -1415,6 +1477,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--early", action="store_true")
     p.add_argument("--confirmed-by-user", action="store_true")
     p.add_argument("--branch", default=None)
+    _add_revision_arg(p)
 
     return parser
 
@@ -1496,6 +1559,7 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
             args.early,
             args.confirmed_by_user,
             args.branch,
+            args.expected_revision,
         )
     return _err(f"unknown command: {command!r}")
 
