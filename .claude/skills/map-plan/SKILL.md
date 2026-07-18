@@ -120,27 +120,18 @@ Outcomes:
 - `map-wayfind`: too foggy to specify — you cannot write sharp acceptance criteria because several core decisions are still unresolved and entangled (not merely "needs a little research"). Recommend `/map-wayfind chart "<loose idea>"` to resolve the decision frontier first, then return with `/map-plan --wayfind <slug>`. STOP. (This is the inverse of the Wayfinding Handoff pre-flight: that consumes a finished map; this sends you to create one.)
 - `map-plan`: continue.
 
-**Scale Advisory (standard mode only, when no `--light`/`--deep` flag was given):** After recording a `map-plan` outcome, query the project's scale-adaptive config:
+**Scale Advisory (standard mode only, when no `--light`/`--deep` flag was given):** After recording a `map-plan` outcome, estimate the task's scope (files to change, lines to add/modify) and run:
 
 ```bash
-python3 -c "
-import sys; sys.path.insert(0, 'src')
-from pathlib import Path
-from mapify_cli.config.project_config import load_map_config
-cfg = load_map_config(Path('.'))
-print('scale_auto:', cfg.scale_auto)
-print('trivial:', cfg.scale_trivial_max_files, cfg.scale_trivial_max_lines)
-print('small:', cfg.scale_small_max_files, cfg.scale_small_max_lines)
-print('medium:', cfg.scale_medium_max_files, cfg.scale_medium_max_lines)
-"
+python3 .map/scripts/classify_scope.py --files ESTIMATED_FILES --lines ESTIMATED_LINES
 ```
 
-If `scale_auto: true`, use your estimate of the task's scope to surface an advisory (do not block on this):
+If `auto_enabled: true` in the JSON result, surface an advisory based on `bracket` (do not block):
 
-- Estimated ≤ trivial thresholds → advise `/map-fast` instead (already covered by the `map-fast` outcome above).
-- Estimated ≤ small thresholds → advise re-invoking as `/map-plan --light` for a lighter-weight plan.
-- Estimated > medium thresholds → advise re-invoking as `/map-plan --deep` for full research + architecture review.
-- Otherwise (medium range) → no advisory; standard mode is appropriate.
+- `trivial` → advise `/map-fast` instead (already covered by the `map-fast` outcome above).
+- `small` → advise re-invoking as `/map-plan --light` for a lighter-weight plan.
+- `large` → advise re-invoking as `/map-plan --deep` for full research + architecture review.
+- `medium` → no advisory; standard mode is appropriate.
 
 The advisory is informational — the user's flags or your judgment prevail. If the user accepts, add the flag and restart; otherwise continue in standard mode.
 
