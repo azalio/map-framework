@@ -2562,12 +2562,8 @@ cat .map/workflow_logs/feat_auth_20251023_143022.json | jq '.subtasks[].agents.e
 
 All remaining open issues are enhancements (no bugs as of 2026-07-18). Prioritized by concreteness:
 
-### #291 — SpecKit-style preset composition (layered template resolution)
-**Slice 1 COMPLETE (PR #370, 2026-07-18)**: `mapify preset` sub-group with `list` and `add --from <path>` commands; `.map/presets/<id>/manifest.json` format (required keys: `id`, `title`, `version`); path-traversal guards; `--json` flag; `--force` overwrite; 29 tests in `tests/test_preset_commands.py`.
-
-**Slice 2 COMPLETE (PR #371, 2026-07-18)**: `mapify preset remove <id>` (with `--yes` bypass), `mapify preset enable/disable <id>` (persisted to `.map/presets/<id>/.state.json`), `mapify preset resolve <template>` (3-tier: project overrides → enabled presets → core templates; `--json`). 45 tests total in `tests/test_preset_commands.py`.
-
-**Next slice (Slice 3)**: The composition engine — when a preset's `templates/<name>` exists, apply the preset's strategy (`prepend`/`append`/`wrap`/`replace`) at render time. Add `mapify preset set-priority <id> <n>` to control ordering. Key constraint: must not bypass the `make check-render` single-source invariant — presets should compose at render time, not by editing generated trees. The composition should be a separate render pass (`mapify preset render <template>`) that layers preset content on top of the Jinja-rendered core output.
+### #291 — SpecKit-style preset composition (layered template resolution) — CLOSED
+**COMPLETE (PRs #370/#371/#372, 2026-07-18)**: Full `mapify preset` sub-command group. Commands: `list`, `add --from <path>`, `remove`, `enable`, `disable`, `resolve <template>`, `render <template>`, `set-priority <id> <n>`. `.map/presets/<id>/` directory structure with `manifest.json` (id/title/version/strategies) and `.state.json` sidecar for enabled/priority state. Four composition strategies in `mapify preset render`: replace/prepend/append/wrap (wrap uses `{CORE_TEMPLATE}` placeholder). 3-tier resolution: project overrides → enabled presets (priority-ordered) → core templates. 57 tests in `tests/test_preset_commands.py`. Extension hooks and remote catalog remain as optional future work.
 
 ### #363 — Architecture deepening report (`/map-architecture` skill)
 New opt-in skill that ranks codebase areas by recent git hotspot + design friction, generates a candidate report (HTML or Markdown+Mermaid under `.map/<branch>/architecture-report/`), and holds off implementation until the user picks a candidate. First slice: create `src/mapify_cli/templates_src/skills/map-architecture/SKILL.md.jinja` + register in skill-rules.json. No Python code in slice 1 — just the workflow instructions.
