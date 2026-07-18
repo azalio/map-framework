@@ -330,3 +330,184 @@ class TestPc8PresetAddConflict:
         runner.invoke(app, ["preset", "add", "--from", str(src2), str(project)])
         data = json.loads((_installed_preset(project, "lean") / "manifest.json").read_text())
         assert data["version"] == "1.0.0"
+
+
+# ---------------------------------------------------------------------------
+# PC9 — preset remove
+# ---------------------------------------------------------------------------
+
+
+class TestPc9PresetRemove:
+    def _install(self, project: Path, name: str) -> None:
+        dest = project / ".map" / "presets" / name
+        dest.mkdir(parents=True)
+        (dest / "manifest.json").write_text(
+            json.dumps({"id": name, "title": name.title(), "version": "1.0.0"}), encoding="utf-8"
+        )
+
+    def test_remove_existing_preset(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        self._install(project, "lean")
+        result = runner.invoke(app, ["preset", "remove", "lean", str(project), "--yes"])
+        assert result.exit_code == 0
+        assert not (project / ".map" / "presets" / "lean").exists()
+
+    def test_remove_success_message(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        self._install(project, "lean")
+        result = runner.invoke(app, ["preset", "remove", "lean", str(project), "--yes"])
+        assert "lean" in result.output
+        assert "removed" in result.output.lower()
+
+    def test_remove_nonexistent_exits_nonzero(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        result = runner.invoke(app, ["preset", "remove", "nothere", str(project), "--yes"])
+        assert result.exit_code != 0
+
+    def test_remove_aborted_without_yes(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        self._install(project, "lean")
+        runner.invoke(app, ["preset", "remove", "lean", str(project)], input="n\n")
+        assert (project / ".map" / "presets" / "lean").exists()
+
+    def test_remove_does_not_affect_other_presets(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        for name in ("lean", "enterprise"):
+            self._install(project, name)
+        runner.invoke(app, ["preset", "remove", "lean", str(project), "--yes"])
+        assert (project / ".map" / "presets" / "enterprise").is_dir()
+
+
+# ---------------------------------------------------------------------------
+# PC10 — preset enable / disable
+# ---------------------------------------------------------------------------
+
+
+class TestPc10PresetEnableDisable:
+    def _install(self, project: Path, name: str) -> Path:
+        dest = project / ".map" / "presets" / name
+        dest.mkdir(parents=True)
+        (dest / "manifest.json").write_text(
+            json.dumps({"id": name, "title": name.title(), "version": "1.0.0"}), encoding="utf-8"
+        )
+        return dest
+
+    def test_disable_preset_writes_state(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        dest = self._install(project, "lean")
+        result = runner.invoke(app, ["preset", "disable", "lean", str(project)])
+        assert result.exit_code == 0
+        state = json.loads((dest / ".state.json").read_text())
+        assert state["enabled"] is False
+
+    def test_enable_preset_writes_state(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        dest = self._install(project, "lean")
+        runner.invoke(app, ["preset", "disable", "lean", str(project)])
+        result = runner.invoke(app, ["preset", "enable", "lean", str(project)])
+        assert result.exit_code == 0
+        state = json.loads((dest / ".state.json").read_text())
+        assert state["enabled"] is True
+
+    def test_disable_nonexistent_exits_nonzero(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        result = runner.invoke(app, ["preset", "disable", "missing", str(project)])
+        assert result.exit_code != 0
+
+    def test_enable_nonexistent_exits_nonzero(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        result = runner.invoke(app, ["preset", "enable", "missing", str(project)])
+        assert result.exit_code != 0
+
+    def test_preset_enabled_by_default_no_state_file(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        dest = self._install(project, "lean")
+        assert not (dest / ".state.json").exists()
+        result = runner.invoke(app, ["preset", "list", str(project), "--json"])
+        data = json.loads(result.output)
+        assert len(data["presets"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# PC11 — preset resolve
+# ---------------------------------------------------------------------------
+
+
+class TestPc11PresetResolve:
+    def _install_preset_with_template(self, project: Path, name: str, template: str, content: str = "# content") -> None:
+        dest = project / ".map" / "presets" / name
+        (dest / "templates").mkdir(parents=True, exist_ok=True)
+        (dest / "manifest.json").write_text(
+            json.dumps({"id": name, "title": name.title(), "version": "1.0.0",
+                        "strategies": {template: "append"}}), encoding="utf-8"
+        )
+        (dest / "templates" / template).write_text(content, encoding="utf-8")
+
+    def test_resolve_no_layers_exits_zero(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        result = runner.invoke(app, ["preset", "resolve", "nonexistent.md", str(project)])
+        assert result.exit_code == 0
+        assert "No layers" in result.output
+
+    def test_resolve_preset_layer_found(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        self._install_preset_with_template(project, "lean", "map-efficient.md")
+        result = runner.invoke(app, ["preset", "resolve", "map-efficient.md", str(project)])
+        assert result.exit_code == 0
+        assert "lean" in result.output
+        assert "preset" in result.output
+
+    def test_resolve_project_override_shown_first(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / ".map" / "overrides").mkdir(parents=True)
+        (project / ".map" / "overrides" / "map-efficient.md").write_text("# override", encoding="utf-8")
+        self._install_preset_with_template(project, "lean", "map-efficient.md")
+        result = runner.invoke(app, ["preset", "resolve", "map-efficient.md", str(project)])
+        lines = [line for line in result.output.splitlines() if line.strip().startswith(("1.", "2."))]
+        assert any("project-override" in line for line in lines)
+
+    def test_resolve_json_output(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        self._install_preset_with_template(project, "lean", "map-efficient.md")
+        result = runner.invoke(app, ["preset", "resolve", "map-efficient.md", str(project), "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "template" in data
+        assert "layers" in data
+        assert data["template"] == "map-efficient.md"
+        assert any(layer["tier"] == "preset" for layer in data["layers"])
+
+    def test_resolve_disabled_preset_still_shows(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        self._install_preset_with_template(project, "lean", "map-efficient.md")
+        runner.invoke(app, ["preset", "disable", "lean", str(project)])
+        result = runner.invoke(app, ["preset", "resolve", "map-efficient.md", str(project), "--json"])
+        data = json.loads(result.output)
+        lean_layer = next((layer for layer in data["layers"] if layer.get("preset_id") == "lean"), None)
+        assert lean_layer is not None
+        assert lean_layer["enabled"] is False
+
+    def test_resolve_strategy_shown(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        self._install_preset_with_template(project, "lean", "map-efficient.md")
+        result = runner.invoke(app, ["preset", "resolve", "map-efficient.md", str(project), "--json"])
+        data = json.loads(result.output)
+        lean_layer = next((layer for layer in data["layers"] if layer.get("preset_id") == "lean"), None)
+        assert lean_layer is not None
+        assert lean_layer.get("strategy") == "append"
