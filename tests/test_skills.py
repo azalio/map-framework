@@ -2125,6 +2125,24 @@ class TestPlanDiscoveryResearchNamespace:
         content = path.read_text(encoding="utf-8")
         assert "cat > .map/${BRANCH}/findings_${BRANCH}.md" not in content
 
+    def test_claude_map_plan_documents_wayfind_offramp(self) -> None:
+        """Claude /map-plan must expose the map-wayfind Workflow-Fit off-ramp (#362).
+
+        map-wayfind is Claude-only, so the Codex surface intentionally omits it.
+        """
+        root = Path(__file__).parent.parent
+        for rel in (
+            ".claude/skills/map-plan/SKILL.md",
+            "src/mapify_cli/templates/skills/map-plan/SKILL.md",
+        ):
+            content = (root / rel).read_text(encoding="utf-8")
+            assert "map-wayfind" in content, f"{rel} must document the map-wayfind route"
+            assert "record_workflow_fit" in content
+            # the too-foggy off-ramp must recommend charting a map, not just mention it
+            assert "/map-wayfind chart" in content, (
+                f"{rel} must recommend `/map-wayfind chart` when too foggy to specify"
+            )
+
     @pytest.fixture(
         params=[
             Path(".claude/agents/actor.md"),

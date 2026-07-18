@@ -18,6 +18,8 @@ When a MAP run enters a merge/rebase conflict, the PreToolUse workflow-context h
 
 For a large or foggy effort where `/map-plan` would force premature decomposition, `/map-wayfind` resolves the open design decisions **before** planning. It is a Claude-only, manually-invoked skill; if the scope is already clear enough to specify, skip it and run `/map-plan` directly.
 
+You reach it two ways: invoke it yourself, or let `/map-plan` send you. `/map-plan`'s Workflow-Fit Gate now has a `map-wayfind` outcome — when it finds the task too foggy to specify (several core decisions unresolved and entangled, not just "needs a little research"), it recommends `/map-wayfind chart "…"` and stops instead of writing a spec dominated by Open Questions. That closes the loop: `/map-plan` → (too foggy) → `/map-wayfind` → handoff → `/map-plan --wayfind <slug>`.
+
 The unit of work is a **decision ticket** on a durable, repo-level map at `.map/wayfind/<slug>/` (the map outlives branches and can span sessions). Tickets are typed:
 
 - `research` — find out an answer that already exists (a subagent may help). Exempt from the one-per-session limit.
