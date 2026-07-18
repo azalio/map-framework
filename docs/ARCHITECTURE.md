@@ -395,7 +395,7 @@ LLM cannot fabricate input — the same layered-defense posture MAP uses elsewhe
 - **Token Budget Decisions**: `.map/<branch>/token_budget.json` records active prompt-path budget decisions from Actor context and review prompt builders only; it does not log dormant REGISTRY/FOCUS experiments. Each entry names the prompt path, configured budget, estimated tokens before/after enforcement, clipped sections, and source artifacts.
 - **Constraint Typing**: `blueprint.json` separates non-negotiable `hard_constraints` from negotiable `soft_constraints`; hard constraints must be covered through `coverage_map` and bracketed validation criteria, while soft constraints need either coverage or explicit tradeoff rationale.
 - **Provider Differences**: Workflow intent is shared, but orchestration mechanics differ between Claude Code (`.claude/`) and Codex CLI (`.codex/`).
-- **Scale-Adaptive Intelligence** (`src/mapify_cli/scope_classifier.py`, issue #287): deterministic, no-LLM classification of an estimated change into one of four scale brackets that routes to the appropriate MAP workflow depth. `classify_scope(estimated_files, estimated_lines, *, config)` returns a frozen `ScopeClassification` carrying `bracket` (a `ScopeBracket` enum), `recommended_workflow`, `estimated_files`, `estimated_lines`, and `auto_enabled`. Four brackets with default inclusive-upper-bound thresholds: TRIVIAL (≤3 files AND ≤50 lines → `map-fast`), SMALL (≤10/200 → `map-plan-light`), MEDIUM (≤30/1000 → `map-efficient`), LARGE (otherwise → `map-efficient+map-tdd`). Thresholds and the `scale.auto` toggle are read from `MapConfig` (7 new `scale_*` fields) and surfaced in `.map/config.yaml` via dotted-key aliases (`scale.auto`, `scale.thresholds.{trivial,small,medium}.{max_files,max_lines}`). `generate_default_config()` documents the full `scale` section (commented-out defaults). Remaining slices (#287): Jinja skill-template integration for `--light`/`--deep` flags, `--force-full`/`--force-fast` overrides, and entry-point calls that surface the recommendation at workflow start.
+- **Scale-Adaptive Intelligence** (`src/mapify_cli/scope_classifier.py`, issue #287, **COMPLETE** PRs #366/#368/#369): deterministic, no-LLM classification of an estimated change into one of four scale brackets that routes to the appropriate MAP workflow depth. `classify_scope(estimated_files, estimated_lines, *, config)` returns a frozen `ScopeClassification` (bracket, recommended_workflow, estimated_files, estimated_lines, auto_enabled). Brackets: TRIVIAL (≤3f/50l → `map-fast`), SMALL (≤10/200 → `map-plan-light`), MEDIUM (≤30/1000 → `map-efficient`), LARGE (otherwise → `map-efficient+map-tdd`). Thresholds and `scale.auto` read from `MapConfig` (7 `scale_*` fields) via dotted-key aliases in `.map/config.yaml`. `map-plan` skill (both Claude and Codex variants) integrates a **Scale Advisory** block that calls `python3 .map/scripts/classify_scope.py --files N --lines N` after workflow-fit gate; result is JSON with bracket/recommended_workflow/auto_enabled. The `classify_scope.py` script ships via `mapify init` to `.map/scripts/`, is stdlib-only (no mapify_cli import), reads `.map/config.yaml` directly, and validates `--files`/`--lines` ≥ 0. The `map-plan` skill also ships `--light` (2-5 minimal subtasks, no discovery/spec-review/architecture-review), `--deep` (extended discovery, architecture review via monitor agent in Step 4.5), `--force-full` (alias for --deep), and `--force-fast` (recommend map-fast and stop) modes; both Claude (Task syntax) and Codex (spawn_agent syntax) variants updated.
 
 ### Prompt Layering & Prefix Caching (#231)
 
@@ -2555,6 +2555,24 @@ python scripts/analyze-metrics.py
 # Check specific workflow
 cat .map/workflow_logs/feat_auth_20251023_143022.json | jq '.subtasks[].agents.evaluator.overall_score'
 ```
+
+---
+
+## Open Issues (for next session)
+
+All remaining open issues are enhancements (no bugs as of 2026-07-18). Prioritized by concreteness:
+
+### #291 — SpecKit-style preset composition (layered template resolution)
+Adds `.map/presets/` directory, 4-tier resolution (project → preset → extension → core), composition strategies (prepend/append/wrap/replace), `mapify preset add/remove/enable/disable/list/resolve` commands, and extension hook lifecycle. First slice: directory structure, YAML manifest format, and `mapify preset list`. Key constraint: must not bypass the `make check-render` single-source invariant — presets should compose at render time, not by editing generated trees.
+
+### #363 — Architecture deepening report (`/map-architecture` skill)
+New opt-in skill that ranks codebase areas by recent git hotspot + design friction, generates a candidate report (HTML or Markdown+Mermaid under `.map/<branch>/architecture-report/`), and holds off implementation until the user picks a candidate. First slice: create `src/mapify_cli/templates_src/skills/map-architecture/SKILL.md.jinja` + register in skill-rules.json. No Python code in slice 1 — just the workflow instructions.
+
+### #353 — Eval-gated prompt profile canary and rollback
+Local-first prompt lifecycle: versioned profiles under `.map/prompt-profiles/`, `active.json` pointer, `mapify prompt-profile list/diff/activate/rollback` commands. Integrates with skill-eval (trigger changes) and trajectory eval (#351, for body changes). First slice: manifest format + `mapify prompt-profile list`. Key constraint: do not edit generated trees as the durable authoring source.
+
+### #339 — GRACE semantic code-contract anchor eval
+Eval harness comparing inline code contracts vs prompt-injected vs no-anchor variants for bug-fix workflows. Variants: baseline, inline (LEX/MIN), prompt-injected (INJ), stale (LIE). First slice: fixture structure + report schema (JSON). No external model calls required for slice 1.
 
 ---
 
