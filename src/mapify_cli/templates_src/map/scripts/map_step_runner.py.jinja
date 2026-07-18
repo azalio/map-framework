@@ -302,6 +302,9 @@ WORKFLOW_FIT_ROUTES = {
     "map-efficient",
     "map-tdd",
     "map-plan",
+    # Too foggy to specify: core decisions are still unresolved, so /map-plan
+    # off-ramps to decision-frontier wayfinding before any decomposition.
+    "map-wayfind",
 }
 DIFF_SIZE_LEVELS = {"tiny", "small", "medium", "large"}
 SUBTASK_CONCERN_TYPES = {

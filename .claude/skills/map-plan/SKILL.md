@@ -93,7 +93,7 @@ Signals:
 Persist the decision (use the keyword form so the new signal is unambiguous):
 
 ```bash
-python3 .map/scripts/map_step_runner.py record_workflow_fit "<direct-edit|map-fast|map-plan>" \
+python3 .map/scripts/map_step_runner.py record_workflow_fit "<direct-edit|map-fast|map-wayfind|map-plan>" \
   --diff-size "<tiny|small|medium|large>" \
   --has-new-invariants <0|1> --needs-independent-review <0|1> \
   --has-clear-acceptance-criteria <0|1> --test-first-required <0|1> \
@@ -104,6 +104,7 @@ python3 .map/scripts/map_step_runner.py record_workflow_fit "<direct-edit|map-fa
 Outcomes:
 - `direct-edit`: explain MAP is not needed and STOP.
 - `map-fast`: recommend `/map-fast` and STOP.
+- `map-wayfind`: too foggy to specify — you cannot write sharp acceptance criteria because several core decisions are still unresolved and entangled (not merely "needs a little research"). Recommend `/map-wayfind chart "<loose idea>"` to resolve the decision frontier first, then return with `/map-plan --wayfind <slug>`. STOP. (This is the inverse of the Wayfinding Handoff pre-flight: that consumes a finished map; this sends you to create one.)
 - `map-plan`: continue.
 
 ### Step 0: Quick Discovery (Optional but Recommended)

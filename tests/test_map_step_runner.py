@@ -1300,6 +1300,25 @@ def test_record_workflow_fit_direct_edit_marks_needs_map_false(branch_workspace)
     assert stage["metadata"]["needs_map"] is False
 
 
+def test_record_workflow_fit_accepts_map_wayfind_route(branch_workspace):
+    """/map-plan can off-ramp a too-foggy task to decision-frontier wayfinding."""
+    result = map_step_runner.record_workflow_fit(
+        "map-wayfind",
+        "large",
+        "true",
+        "true",
+        "false",
+        "false",
+        "Core decisions unresolved and entangled; resolve the frontier first",
+    )
+
+    assert result["status"] == "success"
+    decision = json.loads((branch_workspace / "workflow-fit.json").read_text())
+    assert decision["recommended_workflow"] == "map-wayfind"
+    # map-wayfind is not direct-edit, so the branch still tracks the decision.
+    assert decision["needs_map"] is True
+
+
 def test_record_workflow_fit_persists_depends_on_runtime_state_signal(
     branch_workspace,
 ):
