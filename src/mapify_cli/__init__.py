@@ -2068,6 +2068,152 @@ def preset_resolve(
         console.print(f"  {i}. tier={tier}{preset_str}{strategy_str}{enabled_str} → {layer['path']}")
 
 
+# ---------------------------------------------------------------------------
+# Preset composition helpers (Slice 3)
+# ---------------------------------------------------------------------------
+
+_COMPOSITION_STRATEGIES = frozenset({"replace", "prepend", "append", "wrap"})
+_WRAP_PLACEHOLDER = "{CORE_TEMPLATE}"
+
+
+def _preset_priority(preset_dir: Path) -> int:
+    state = _read_preset_state(preset_dir)
+    return int(state.get("priority", 50))
+
+
+def _compose_template(core_content: str, layer_content: str, strategy: str) -> str:
+    """Apply a composition strategy to produce the final template content."""
+    if strategy == "replace":
+        return layer_content
+    if strategy == "prepend":
+        return layer_content + "\n" + core_content
+    if strategy == "append":
+        return core_content + "\n" + layer_content
+    if strategy == "wrap":
+        if _WRAP_PLACEHOLDER in layer_content:
+            return layer_content.replace(_WRAP_PLACEHOLDER, core_content)
+        return layer_content + "\n" + core_content
+    return core_content
+
+
+def _build_resolution_order(presets_root: Path, template_name: str) -> list[dict[str, Any]]:
+    """Return enabled preset layers for a template, sorted by priority descending."""
+    layers: list[dict[str, Any]] = []
+    if not presets_root.is_dir():
+        return layers
+    for entry in presets_root.iterdir():
+        if not entry.is_dir() or not _is_preset_enabled(entry):
+            continue
+        template_path = entry / "templates" / template_name
+        if not template_path.is_file():
+            continue
+        manifest = _read_preset_manifest(entry)
+        strategy = (manifest or {}).get("strategies", {}).get(template_name, "append")
+        layers.append({
+            "preset_id": entry.name,
+            "path": template_path,
+            "strategy": strategy,
+            "priority": _preset_priority(entry),
+        })
+    layers.sort(key=lambda x: x["priority"], reverse=True)
+    return layers
+
+
+@preset_app.command("render")
+def preset_render(
+    template_name: str = typer.Argument(..., help="Template name to render (e.g. 'map-efficient.md')."),
+    project_path: Optional[Path] = typer.Argument(
+        None,
+        help="Project root directory (defaults to current directory).",
+    ),
+    output_json: bool = typer.Option(False, "--json", help="Output rendered content as JSON."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print composed content without writing to disk."),
+) -> None:
+    """Compose a template by layering enabled presets over the core template.
+
+    Strategies (applied highest-priority first):
+      replace — preset content replaces the core entirely
+      prepend — preset content is inserted above the core
+      append  — preset content is inserted below the core
+      wrap    — preset content wraps the core via {CORE_TEMPLATE} placeholder
+    """
+    target = project_path or Path.cwd()
+    presets_root = _presets_dir(target)
+
+    # Start from project override if present, else core template
+    project_override = target / ".map" / "overrides" / template_name
+    if project_override.is_file():
+        composed = project_override.read_text(encoding="utf-8")
+        source = f"project-override:{project_override}"
+    else:
+        try:
+            core_path = get_templates_dir() / template_name
+            if core_path.is_file():
+                composed = core_path.read_text(encoding="utf-8")
+                source = f"core:{core_path}"
+            else:
+                composed = ""
+                source = "core:(not found)"
+        except Exception:
+            composed = ""
+            source = "core:(error)"
+
+    layers = _build_resolution_order(presets_root, template_name)
+    applied: list[str] = []
+    for layer in layers:
+        layer_content = Path(layer["path"]).read_text(encoding="utf-8")
+        strategy: str = layer["strategy"]
+        if strategy not in _COMPOSITION_STRATEGIES:
+            strategy = "append"
+        composed = _compose_template(composed, layer_content, strategy)
+        applied.append(f"{layer['preset_id']}({strategy})")
+
+    if output_json:
+        typer.echo(json.dumps({
+            "template": template_name,
+            "source": source,
+            "applied_layers": applied,
+            "content": composed,
+        }))
+        return
+
+    if dry_run or True:
+        console.print(f"[bold]Composed:[/bold] [cyan]{template_name}[/cyan]")
+        if applied:
+            console.print(f"[dim]Layers applied:[/dim] {' → '.join(applied)}")
+        else:
+            console.print("[dim]No preset layers matched; showing core/override content.[/dim]")
+        console.print()
+        console.print(composed)
+
+
+@preset_app.command("set-priority")
+def preset_set_priority(
+    preset_id: str = typer.Argument(..., help="ID of the preset to reprioritize."),
+    priority: int = typer.Argument(..., help="Priority value (higher = applied first). Default: 50."),
+    project_path: Optional[Path] = typer.Argument(
+        None,
+        help="Project root directory (defaults to current directory).",
+    ),
+) -> None:
+    """Set the composition priority of an installed preset.
+
+    Higher priority presets are applied first in the composition stack.
+    When two presets target the same template, the one with higher priority
+    has its strategy applied first, then lower-priority presets layer on top.
+    """
+    target = project_path or Path.cwd()
+    preset_dir = _resolve_installed_preset(_presets_dir(target), preset_id)
+    if preset_dir is None:
+        console.print(f"[red]Error:[/red] Preset '{preset_id}' is not installed.")
+        raise typer.Exit(1)
+
+    state = _read_preset_state(preset_dir)
+    state["priority"] = priority
+    _write_preset_state(preset_dir, state)
+    console.print(f"[green]Preset '{preset_id}'[/green] priority set to {priority}.")
+
+
 # Research localization eval commands
 
 
