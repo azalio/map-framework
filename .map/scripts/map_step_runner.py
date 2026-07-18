@@ -250,6 +250,7 @@ ARTIFACT_STAGE_NAMES = (
     "learn_handoff",
     "implementer_readiness",
     "context_usefulness",
+    "wayfind_handoff",
 )
 RUN_HEALTH_TERMINAL_STATUSES = {
     "pending",

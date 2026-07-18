@@ -32,6 +32,7 @@ You drive the whole loop with two core commands plus three gates:
 - **Start with `/map-plan`** for anything non-trivial — it clarifies behavior and splits the work into contract-sized subtasks.
 - **Already scoped?** Go straight to `/map-efficient`.
 - **Tiny edit?** `/map-plan` off-ramps you to a direct edit or `/map-fast` instead of forcing full planning.
+- **Too foggy to plan?** `/map-wayfind` resolves the open design decisions one at a time on a durable map, then hands the settled decisions to `/map-plan`.
 
 > Codex CLI users invoke the same skills with `$`: `$map-plan`, `$map-efficient`, `$map-check`. See the [Usage Guide](docs/USAGE.md#codex-cli-provider).
 
@@ -133,6 +134,7 @@ The DevOpsConf 2026 case study applies this process to a production Kubernetes P
 | Command | Use For |
 |---------|---------|
 | `/map-plan` | **Start here** for non-trivial work; clarify behavior and decompose tasks |
+| `/map-wayfind` | Too foggy to plan? Resolve open design decisions on a durable map *before* `/map-plan` |
 | `/map-efficient` | **Implement** an approved plan or already-scoped task |
 | `/map-fast` | Small, low-risk changes where full planning would be overhead |
 | `/map-check` | Quality gates, verification, and artifact checks |

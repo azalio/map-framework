@@ -822,6 +822,13 @@ ARTIFACT_MANIFEST_SCHEMA = {
                 "run_health": ARTIFACT_STAGE_SCHEMA,
                 "learn_handoff": ARTIFACT_STAGE_SCHEMA,
                 "implementer_readiness": ARTIFACT_STAGE_SCHEMA,
+                # Stages previously missing from this schema though present in
+                # ARTIFACT_STAGE_NAMES (documentary only — the manifest schema has
+                # no runtime validator; kept in sync to match the stage authority).
+                "approval_hold": ARTIFACT_STAGE_SCHEMA,
+                "worktree": ARTIFACT_STAGE_SCHEMA,
+                "context_usefulness": ARTIFACT_STAGE_SCHEMA,
+                "wayfind_handoff": ARTIFACT_STAGE_SCHEMA,
             },
             "required": [
                 "workflow_fit",

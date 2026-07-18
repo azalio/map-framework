@@ -82,6 +82,7 @@ The remainder of this file contains the deeper implementation dive (workflow-spe
 - `.map/eval-runs/<skill>/`: durable skill-evaluation run logs and optimization JSON/HTML reports
 - `.map/mapify.lock.json`: Install manifest/lock — aggregate audit of all MAP-managed files, written by `mapify init` and read by `mapify check-installed`
 - `.map/<branch>/approval_holds.json` and `.map/<branch>/approval_hold_<id>.md`: Durable human-gate artifacts for pending/decided approval holds
+- `.map/wayfind/<slug>/`: **Repo-level** (not branch-scoped) decision maps for `/map-wayfind`. Holds the canonical `state.json`, regenerated `map.md` and `tickets/*.md` views (DO-NOT-EDIT banner), author-written `resolutions/*.md` (+ `*.human.md` verbatim human answers), and the final `handoff.md`/`handoff.json`. Maps outlive branches and are committed by default.
 
 Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json` so the runtime contract is explicit: `task` skills behave like manual slash workflows or opt-in interactive task surfaces, `reference` skills provide inline guidance, and `hybrid` skills combine reference material with declared runtime effects. Today the MAP slash surfaces are `task` skills, including `/map-understand`, whose checklist is transient in the conversation and has no runtime effects; `map-state` is `hybrid` because it documents planning state and ships hooks/scripts that interact with `.map/<branch>/` artifacts, and `map-so-search` is `hybrid` because it ships a script with declared network/credential runtime effects (the opt-in SOFA search; see [Stack Overflow for Agents (SOFA) Integration](#stack-overflow-for-agents-sofa-integration)).
 
@@ -324,6 +325,43 @@ Actor/research phase or pauses for input. The entire SOFA test suite is mocked
 
 (Out of scope for this integration: writing/contributing to SOFA, a SOFA MCP
 surface, and rate-limit handling.)
+
+## Decision-Frontier Wayfinding (`/map-wayfind`)
+
+A manually-invoked, Claude-only skill for large or foggy efforts where `/map-plan`
+would force premature decomposition. It resolves the open design decisions on a
+durable, repo-level map **before** planning; if scope is already crisp it off-ramps
+straight to `/map-plan`.
+
+- **`wayfind_runner.py`** (`.map/scripts/`): a self-contained, **stdlib-only** runner
+  (sibling of `map_step_runner.py`, mirroring the `sofa_client.py` pattern) that owns
+  EVERY mutation to `.map/wayfind/<slug>/state.json` and regenerates the `map.md` /
+  `tickets/*.md` views after each write. The LLM writes only prose (resolutions,
+  verbatim human answers); it never hand-edits the JSON or the views. Each subcommand
+  prints a typed JSON result; the CLI exits non-zero on an error status.
+- **Determinism boundary**: every invariant lives above persistence in the runner —
+  DFS cycle-freedom for `blocked_by` wiring, claim-before-work, one-non-research-resolve
+  per session (a session ledger in `state.json`), the human-in-the-loop gate (a
+  `prototype`/`grilling` ticket cannot resolve until `record_human_input` registers a
+  non-empty verbatim answer file), and the terminal handoff condition (fog empty AND no
+  active claims AND every ticket in `{resolved, out_of_scope}`). A naive
+  `len(frontier)==0` would wrongly fire on a map with claimed or blocked tickets.
+- **Fog of war**: concerns that cannot yet be stated as one sharp question are held as
+  fog rather than pre-sliced into fake tickets, and `graduate_fog` promotes one atomically
+  when it sharpens. Out-of-scope rulings are recorded separately and never graduate into
+  the plan.
+- **Handoff → `/map-plan`**: `emit_wayfind_handoff` writes `handoff.md`/`handoff.json`
+  and registers a `wayfind_handoff` artifact-manifest stage on the current branch (its
+  only cross-module coupling — a lazy import of `map_step_runner` for the manifest
+  helpers, best-effort so a manifest failure never loses the handoff). `/map-plan
+  --wayfind <slug>` (or a single-candidate `list_handoffs` offer, never a silent match)
+  pre-seeds the spec's Decisions Made / Out of Scope / Open Questions. The map is
+  repo-level because it outlives the feature branch that later consumes it.
+
+The runner is optimistic-concurrency aware (`--expected-revision` guards against
+concurrent sessions clobbering the map). Honesty note: the human-in-the-loop and
+session-limit checks add friction and an audit trail, not a mechanical guarantee that an
+LLM cannot fabricate input — the same layered-defense posture MAP uses elsewhere.
 
 ## Cross-cutting Concepts
 

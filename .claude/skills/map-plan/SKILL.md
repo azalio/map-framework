@@ -67,6 +67,17 @@ Per-artifact resume rules (only when `verdict` is `resume`):
 - Existing `task_plan`: skip decomposition and plan creation.
 - Existing `step_state.json`: plan is complete; print checkpoint and STOP.
 
+### Pre-flight: Wayfinding Handoff (optional)
+
+If a `/map-wayfind` map already resolved the key decisions, seed this plan from its handoff instead of re-deciding them.
+
+**Precedence over resume:** a handoff seeds a *fresh* plan, so this step only applies when the Resume Detection verdict is `no_plan` (or `goal_mismatch` after you archive the prior artifacts). On a `resume` verdict the branch already has a `spec`/`task_plan` — that existing artifact wins and the handoff is NOT re-consumed (re-seeding would silently overwrite in-progress work). To plan from a handoff, run `/map-plan --wayfind <slug>` on a branch with no in-progress plan (or archive/rename the existing `.map/<branch>/` artifacts first, with operator confirmation).
+
+- If `$ARGUMENTS` contains `--wayfind <slug>`, read `.map/wayfind/<slug>/handoff.json` (repo-level, not branch-scoped).
+- Otherwise run `python3 .map/scripts/wayfind_runner.py list_handoffs`. If exactly one completed handoff exists, OFFER it to the user ("found a completed wayfinding map `<slug>` — seed the plan from it?") and use it only on an explicit yes. Never match a handoff to the request by guessing; with zero or multiple handoffs and no explicit `--wayfind`, skip this step.
+
+When a handoff is used, pre-seed the spec: `decisions[]` → **Decisions Made** (settled — the interview must NOT re-ask them; carry them as a do-not-re-ask list), `out_of_scope[]` → **Out of Scope**, `remaining_risks[]` → **Open Questions**. Then continue below for anything the handoff did not settle. Do not modify the wayfinding map.
+
 ### Pre-flight: Workflow-Fit Gate
 
 Decide whether MAP planning is warranted before discovery or interview.
