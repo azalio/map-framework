@@ -511,3 +511,175 @@ class TestPc11PresetResolve:
         lean_layer = next((layer for layer in data["layers"] if layer.get("preset_id") == "lean"), None)
         assert lean_layer is not None
         assert lean_layer.get("strategy") == "append"
+
+
+# ---------------------------------------------------------------------------
+# PC12 — preset render: composition engine
+# ---------------------------------------------------------------------------
+
+
+class TestPc12PresetRender:
+    def _install_preset_with_template(self, project: Path, name: str, template: str,
+                                      content: str, strategy: str = "append", priority: int = 50) -> None:
+        dest = project / ".map" / "presets" / name
+        (dest / "templates").mkdir(parents=True, exist_ok=True)
+        (dest / "manifest.json").write_text(
+            json.dumps({"id": name, "title": name.title(), "version": "1.0.0",
+                        "strategies": {template: strategy}}), encoding="utf-8"
+        )
+        (dest / "templates" / template).write_text(content, encoding="utf-8")
+        if priority != 50:
+            (dest / ".state.json").write_text(
+                json.dumps({"enabled": True, "priority": priority}), encoding="utf-8"
+            )
+
+    def _install_core_override(self, project: Path, template: str, content: str) -> None:
+        (project / ".map" / "overrides").mkdir(parents=True, exist_ok=True)
+        (project / ".map" / "overrides" / template).write_text(content, encoding="utf-8")
+
+    def test_render_no_presets_exits_zero(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        result = runner.invoke(app, ["preset", "render", "map-efficient.md", str(project)])
+        assert result.exit_code == 0
+
+    def test_render_append_strategy(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        self._install_core_override(project, "map-efficient.md", "CORE")
+        self._install_preset_with_template(project, "lean", "map-efficient.md", "PRESET", strategy="append")
+        result = runner.invoke(app, ["preset", "render", "map-efficient.md", str(project), "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        content = data["content"]
+        assert content.index("CORE") < content.index("PRESET")
+
+    def test_render_prepend_strategy(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        self._install_core_override(project, "map-efficient.md", "CORE")
+        self._install_preset_with_template(project, "lean", "map-efficient.md", "PRESET", strategy="prepend")
+        result = runner.invoke(app, ["preset", "render", "map-efficient.md", str(project), "--json"])
+        data = json.loads(result.output)
+        content = data["content"]
+        assert content.index("PRESET") < content.index("CORE")
+
+    def test_render_replace_strategy(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        self._install_core_override(project, "map-efficient.md", "CORE")
+        self._install_preset_with_template(project, "lean", "map-efficient.md", "REPLACED", strategy="replace")
+        result = runner.invoke(app, ["preset", "render", "map-efficient.md", str(project), "--json"])
+        data = json.loads(result.output)
+        assert data["content"].strip() == "REPLACED"
+        assert "CORE" not in data["content"]
+
+    def test_render_wrap_strategy_with_placeholder(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        self._install_core_override(project, "map-efficient.md", "CORE")
+        wrap_content = "BEFORE\n{CORE_TEMPLATE}\nAFTER"
+        self._install_preset_with_template(project, "lean", "map-efficient.md", wrap_content, strategy="wrap")
+        result = runner.invoke(app, ["preset", "render", "map-efficient.md", str(project), "--json"])
+        data = json.loads(result.output)
+        content = data["content"]
+        assert "BEFORE" in content
+        assert "CORE" in content
+        assert "AFTER" in content
+        assert content.index("BEFORE") < content.index("CORE") < content.index("AFTER")
+
+    def test_render_json_has_required_fields(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        result = runner.invoke(app, ["preset", "render", "any.md", str(project), "--json"])
+        data = json.loads(result.output)
+        for key in ("template", "source", "applied_layers", "content"):
+            assert key in data, f"missing key: {key}"
+
+    def test_render_applied_layers_listed(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        self._install_core_override(project, "map-efficient.md", "CORE")
+        self._install_preset_with_template(project, "lean", "map-efficient.md", "L", strategy="append")
+        result = runner.invoke(app, ["preset", "render", "map-efficient.md", str(project), "--json"])
+        data = json.loads(result.output)
+        assert len(data["applied_layers"]) == 1
+        assert "lean" in data["applied_layers"][0]
+
+    def test_render_disabled_preset_skipped(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        self._install_core_override(project, "map-efficient.md", "CORE")
+        self._install_preset_with_template(project, "lean", "map-efficient.md", "PRESET", strategy="append")
+        runner.invoke(app, ["preset", "disable", "lean", str(project)])
+        result = runner.invoke(app, ["preset", "render", "map-efficient.md", str(project), "--json"])
+        data = json.loads(result.output)
+        assert data["applied_layers"] == []
+        assert "PRESET" not in data["content"]
+
+    def test_render_project_override_used_as_base(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        self._install_core_override(project, "map-efficient.md", "OVERRIDE_BASE")
+        result = runner.invoke(app, ["preset", "render", "map-efficient.md", str(project), "--json"])
+        data = json.loads(result.output)
+        assert "OVERRIDE_BASE" in data["content"]
+        assert "project-override" in data["source"]
+
+
+# ---------------------------------------------------------------------------
+# PC13 — preset set-priority
+# ---------------------------------------------------------------------------
+
+
+class TestPc13PresetSetPriority:
+    def _install(self, project: Path, name: str) -> Path:
+        dest = project / ".map" / "presets" / name
+        dest.mkdir(parents=True)
+        (dest / "manifest.json").write_text(
+            json.dumps({"id": name, "title": name.title(), "version": "1.0.0"}), encoding="utf-8"
+        )
+        return dest
+
+    def test_set_priority_writes_state(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        dest = self._install(project, "lean")
+        result = runner.invoke(app, ["preset", "set-priority", "lean", "100", str(project)])
+        assert result.exit_code == 0
+        state = json.loads((dest / ".state.json").read_text())
+        assert state["priority"] == 100
+
+    def test_set_priority_nonexistent_exits_nonzero(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        result = runner.invoke(app, ["preset", "set-priority", "missing", "100", str(project)])
+        assert result.exit_code != 0
+
+    def test_priority_affects_composition_order(self, tmp_path: Path):
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / ".map" / "overrides").mkdir(parents=True)
+        (project / ".map" / "overrides" / "t.md").write_text("CORE", encoding="utf-8")
+
+        for name, content, prio in [("alpha", "ALPHA", 10), ("beta", "BETA", 90)]:
+            dest = project / ".map" / "presets" / name
+            (dest / "templates").mkdir(parents=True)
+            (dest / "manifest.json").write_text(
+                json.dumps({"id": name, "title": name, "version": "1.0",
+                            "strategies": {"t.md": "append"}}), encoding="utf-8"
+            )
+            (dest / "templates" / "t.md").write_text(content, encoding="utf-8")
+            (dest / ".state.json").write_text(
+                json.dumps({"enabled": True, "priority": prio}), encoding="utf-8"
+            )
+
+        result = runner.invoke(app, ["preset", "render", "t.md", str(project), "--json"])
+        data = json.loads(result.output)
+        content = data["content"]
+        # beta (priority 90) applied first → appended first after core
+        # alpha (priority 10) applied second → appended after that
+        beta_pos = content.index("BETA")
+        alpha_pos = content.index("ALPHA")
+        core_pos = content.index("CORE")
+        assert core_pos < beta_pos < alpha_pos
