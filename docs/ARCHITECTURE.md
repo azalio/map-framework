@@ -2563,7 +2563,9 @@ cat .map/workflow_logs/feat_auth_20251023_143022.json | jq '.subtasks[].agents.e
 All remaining open issues are enhancements (no bugs as of 2026-07-18). Prioritized by concreteness:
 
 ### #291 — SpecKit-style preset composition (layered template resolution)
-Adds `.map/presets/` directory, 4-tier resolution (project → preset → extension → core), composition strategies (prepend/append/wrap/replace), `mapify preset add/remove/enable/disable/list/resolve` commands, and extension hook lifecycle. First slice: directory structure, YAML manifest format, and `mapify preset list`. Key constraint: must not bypass the `make check-render` single-source invariant — presets should compose at render time, not by editing generated trees.
+**Slice 1 COMPLETE (PR #370, 2026-07-18)**: `mapify preset` sub-group with `list` and `add --from <path>` commands; `.map/presets/<id>/manifest.json` format (required keys: `id`, `title`, `version`); path-traversal guards; `--json` flag; `--force` overwrite; 29 tests in `tests/test_preset_commands.py`.
+
+**Next slice (Slice 2)**: `mapify preset remove <id>`, `mapify preset enable/disable <id>` (via `.enabled` flag in manifest or sidecar), and `mapify preset resolve <template>` (show which layer wins for a template). No composition engine yet — that's Slice 3. Key constraint: must not bypass the `make check-render` single-source invariant — presets should compose at render time, not by editing generated trees.
 
 ### #363 — Architecture deepening report (`/map-architecture` skill)
 New opt-in skill that ranks codebase areas by recent git hotspot + design friction, generates a candidate report (HTML or Markdown+Mermaid under `.map/<branch>/architecture-report/`), and holds off implementation until the user picks a candidate. First slice: create `src/mapify_cli/templates_src/skills/map-architecture/SKILL.md.jinja` + register in skill-rules.json. No Python code in slice 1 — just the workflow instructions.

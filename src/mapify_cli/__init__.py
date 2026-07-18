@@ -1907,6 +1907,167 @@ def preset_add(
     )
 
 
+def _preset_state_path(preset_dir: Path) -> Path:
+    return preset_dir / ".state.json"
+
+
+def _read_preset_state(preset_dir: Path) -> dict[str, Any]:
+    path = _preset_state_path(preset_dir)
+    if not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _write_preset_state(preset_dir: Path, state: dict[str, Any]) -> None:
+    _preset_state_path(preset_dir).write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def _is_preset_enabled(preset_dir: Path) -> bool:
+    return _read_preset_state(preset_dir).get("enabled", True)
+
+
+def _resolve_installed_preset(presets_root: Path, preset_id: str) -> Path | None:
+    candidate = presets_root / preset_id
+    return candidate if candidate.is_dir() else None
+
+
+@preset_app.command("remove")
+def preset_remove(
+    preset_id: str = typer.Argument(..., help="ID of the preset to remove."),
+    project_path: Optional[Path] = typer.Argument(
+        None,
+        help="Project root directory (defaults to current directory).",
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt."),
+) -> None:
+    """Remove an installed MAP preset from .map/presets/."""
+    target = project_path or Path.cwd()
+    preset_dir = _resolve_installed_preset(_presets_dir(target), preset_id)
+    if preset_dir is None:
+        console.print(f"[red]Error:[/red] Preset '{preset_id}' is not installed.")
+        raise typer.Exit(1)
+
+    if not yes:
+        confirm = typer.confirm(f"Remove preset '{preset_id}'?", default=False)
+        if not confirm:
+            console.print("[dim]Aborted.[/dim]")
+            raise typer.Exit(0)
+
+    shutil.rmtree(preset_dir)
+    console.print(f"[green]Preset '{preset_id}' removed.[/green]")
+
+
+@preset_app.command("enable")
+def preset_enable(
+    preset_id: str = typer.Argument(..., help="ID of the preset to enable."),
+    project_path: Optional[Path] = typer.Argument(
+        None,
+        help="Project root directory (defaults to current directory).",
+    ),
+) -> None:
+    """Enable a disabled MAP preset."""
+    target = project_path or Path.cwd()
+    preset_dir = _resolve_installed_preset(_presets_dir(target), preset_id)
+    if preset_dir is None:
+        console.print(f"[red]Error:[/red] Preset '{preset_id}' is not installed.")
+        raise typer.Exit(1)
+
+    state = _read_preset_state(preset_dir)
+    state["enabled"] = True
+    _write_preset_state(preset_dir, state)
+    console.print(f"[green]Preset '{preset_id}' enabled.[/green]")
+
+
+@preset_app.command("disable")
+def preset_disable(
+    preset_id: str = typer.Argument(..., help="ID of the preset to disable."),
+    project_path: Optional[Path] = typer.Argument(
+        None,
+        help="Project root directory (defaults to current directory).",
+    ),
+) -> None:
+    """Disable a MAP preset without uninstalling it."""
+    target = project_path or Path.cwd()
+    preset_dir = _resolve_installed_preset(_presets_dir(target), preset_id)
+    if preset_dir is None:
+        console.print(f"[red]Error:[/red] Preset '{preset_id}' is not installed.")
+        raise typer.Exit(1)
+
+    state = _read_preset_state(preset_dir)
+    state["enabled"] = False
+    _write_preset_state(preset_dir, state)
+    console.print(f"[yellow]Preset '{preset_id}' disabled.[/yellow]")
+
+
+@preset_app.command("resolve")
+def preset_resolve(
+    template_name: str = typer.Argument(..., help="Template name to resolve (e.g. 'map-efficient.md')."),
+    project_path: Optional[Path] = typer.Argument(
+        None,
+        help="Project root directory (defaults to current directory).",
+    ),
+    output_json: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Show which preset layers contribute to a template in resolution order.
+
+    Resolution order (highest priority first): project overrides → enabled presets → core templates.
+    """
+    target = project_path or Path.cwd()
+    presets_root = _presets_dir(target)
+
+    layers: list[dict[str, Any]] = []
+
+    # Tier 1: project overrides
+    project_override = target / ".map" / "overrides" / template_name
+    if project_override.is_file():
+        layers.append({"tier": "project-override", "path": str(project_override), "enabled": True})
+
+    # Tier 2: installed presets (sorted alphabetically for determinism)
+    if presets_root.is_dir():
+        for entry in sorted(presets_root.iterdir()):
+            if not entry.is_dir():
+                continue
+            enabled = _is_preset_enabled(entry)
+            template_path = entry / "templates" / template_name
+            if template_path.is_file():
+                manifest = _read_preset_manifest(entry)
+                strategy = (manifest or {}).get("strategies", {}).get(template_name, "append")
+                layers.append({
+                    "tier": "preset",
+                    "preset_id": entry.name,
+                    "path": str(template_path),
+                    "strategy": strategy,
+                    "enabled": enabled,
+                })
+
+    # Tier 3: core template (shipped by mapify)
+    try:
+        core_path = get_templates_dir() / template_name
+        if core_path.is_file():
+            layers.append({"tier": "core", "path": str(core_path), "enabled": True})
+    except Exception:
+        pass
+
+    if output_json:
+        typer.echo(json.dumps({"template": template_name, "layers": layers}))
+        return
+
+    if not layers:
+        console.print(f"[dim]No layers found for template '{template_name}'.[/dim]")
+        return
+
+    console.print(f"[bold]Resolution layers for:[/bold] [cyan]{template_name}[/cyan]")
+    for i, layer in enumerate(layers, 1):
+        tier = layer["tier"]
+        enabled_str = "" if layer.get("enabled", True) else " [dim](disabled)[/dim]"
+        strategy_str = f" strategy=[cyan]{layer['strategy']}[/cyan]" if "strategy" in layer else ""
+        preset_str = f" preset=[cyan]{layer['preset_id']}[/cyan]" if "preset_id" in layer else ""
+        console.print(f"  {i}. tier={tier}{preset_str}{strategy_str}{enabled_str} → {layer['path']}")
+
+
 # Research localization eval commands
 
 
