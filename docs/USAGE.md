@@ -14,6 +14,33 @@ After discovery, `/map-plan` also runs an already-implemented gate: discovery re
 
 When a MAP run enters a merge/rebase conflict, the PreToolUse workflow-context hook adds a conflict-resolution discipline block to `additionalContext`. It fires before `git merge` / `git rebase` and whenever git reports unmerged paths via `git diff --name-only --diff-filter=U`. The protocol is deliberately manual and intent-preserving: list conflicted files, resolve one file or small batch at a time, preserve both sides' intended behavior, check for conflict markers, run the project's test gate after each batch, stage only resolved files, and continue the merge/rebase only after no unmerged files remain. Final verification is: branch current with `origin/main`, no conflict markers, and tests green. The hook never mutates the worktree and never auto-runs tests.
 
+## Decision-frontier wayfinding (`/map-wayfind`)
+
+For a large or foggy effort where `/map-plan` would force premature decomposition, `/map-wayfind` resolves the open design decisions **before** planning. It is a Claude-only, manually-invoked skill; if the scope is already clear enough to specify, skip it and run `/map-plan` directly.
+
+The unit of work is a **decision ticket** on a durable, repo-level map at `.map/wayfind/<slug>/` (the map outlives branches and can span sessions). Tickets are typed:
+
+- `research` — find out an answer that already exists (a subagent may help). Exempt from the one-per-session limit.
+- `prototype` — build a cheap throwaway probe, then get the human's read. Human-in-the-loop.
+- `grilling` — interrogate the human: ask the sharp question, capture their verbatim answer. Human-in-the-loop.
+- `task` — a self-contained decision or chore you settle yourself.
+
+Rules that shape the flow: a ticket exists only when you can state its question sharply **now** — vaguer concerns stay in a **"fog of war"** and graduate later; you **claim before work**; you resolve at most **one non-research ticket per session**; and human-in-the-loop tickets cannot be resolved until a verbatim human answer is recorded. Exclusions are ruled **out of scope** and never graduate into the plan.
+
+Three explicit modes (no auto-detection):
+
+```text
+/map-wayfind chart "rebuild checkout"   # start a map: name the destination, interview, add tickets + fog
+/map-wayfind work checkout              # claim one frontier ticket, resolve it, maintain the map, stop
+/map-wayfind handoff checkout           # when exhausted, emit the handoff for /map-plan
+```
+
+All state lives in `.map/wayfind/<slug>/state.json` and is mutated only through `python3 .map/scripts/wayfind_runner.py <command>`; you write prose only (resolutions, verbatim human answers). The `map.md` and `tickets/*.md` views are regenerated on every mutation and carry a DO-NOT-EDIT banner. Every command prints a JSON result; a non-success `status` means stop and read the message.
+
+`/map-wayfind handoff <slug>` requires the map to be **exhausted** — fog empty, no active claims, and every ticket resolved or out-of-scope (`--early --confirmed-by-user` overrides, folding open items into remaining risks). It writes `handoff.md`/`handoff.json` and registers a `wayfind_handoff` artifact-manifest stage. Feed it into planning with `/map-plan --wayfind <slug>` on a feature branch: the handoff's decisions seed the spec's **Decisions Made** (settled — the interview does not re-ask them), out-of-scope items seed **Out of Scope**, and remaining risks seed **Open Questions**. Without an explicit `--wayfind`, `/map-plan` runs `list_handoffs` and offers a single completed handoff but never consumes one silently.
+
+**Sharing / privacy.** Maps are committed by default (decisions are durable, reviewable history). `grilling` transcripts and prose resolutions may contain sensitive content — `chart` warns about this. To keep one map local, add `.map/wayfind/<slug>/.gitignore` with a single `*`.
+
 ## Canonical Flows
 
 ### Standard flow

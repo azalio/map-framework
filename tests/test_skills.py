@@ -66,6 +66,7 @@ WORKFLOW_EFFORT_PROFILES = {
     "map-learn": "medium/adaptive",
     "map-explain": "medium/adaptive",
     "map-understand": "medium/adaptive",
+    "map-wayfind": "medium/adaptive",
     "map-plan": "high/adaptive",
     "map-review": "high/adaptive",
     "map-release": "high/adaptive",

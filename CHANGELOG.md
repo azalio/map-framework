@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`/map-wayfind` — decision-frontier wayfinding before planning (closes #362).** A new opt-in skill for large or foggy efforts where `/map-plan` would force premature decomposition. It builds a durable, repo-level decision map under `.map/wayfind/<slug>/` and resolves open decisions one at a time behind a claim-before-work frontier, with a "fog of war" for questions that cannot yet be stated sharply. Three explicit modes: `chart` (start a map), `work` (resolve one ticket), `handoff` (finish). Tickets are typed `research | prototype | grilling | task`; `prototype`/`grilling` are human-in-the-loop and cannot be resolved until a verbatim human answer is recorded via `record_human_input`. All state mutations go through the new stdlib-only `wayfind_runner.py` (canonical `state.json` + regenerated `map.md`/`tickets/*.md` views); invariants — DFS cycle-freedom, one-non-research-resolve-per-session, the human-in-the-loop gate, and the terminal handoff condition (fog empty AND no active claims AND every ticket resolved/out-of-scope) — are enforced in the runner. `emit_wayfind_handoff` writes a `handoff.md`/`handoff.json` pair and registers a new `wayfind_handoff` artifact-manifest stage; `/map-plan --wayfind <slug>` (or a single-candidate offer via `list_handoffs`) pre-seeds the spec's Decisions Made / Out of Scope / Open Questions. Maps are committed by default so decisions are durable; `chart` warns about the commit-by-default privacy note and the per-slug opt-out. (Also syncs the artifact-manifest JSON schema to the stage-name authority, adding the previously-missing `approval_hold`/`worktree`/`context_usefulness` stages.)
+
 ## [3.22.0] - 2026-07-13
 
 ### Fixed

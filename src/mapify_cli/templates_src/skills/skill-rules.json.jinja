@@ -228,6 +228,28 @@
         ]
       }
     },
+    "map-wayfind": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "medium",
+      "description": "Decision-frontier wayfinding: resolve open design decisions on a durable map before /map-plan.",
+      "promptTriggers": {
+        "keywords": [
+          "map-wayfind",
+          "wayfind",
+          "decision frontier",
+          "resolve decisions first",
+          "too foggy to plan",
+          "chart the decisions"
+        ],
+        "intentPatterns": [
+          "map-wayfind",
+          "(chart|map|resolve).*(decision|frontier)",
+          "too (foggy|vague|big) to (plan|decompose)"
+        ]
+      }
+    },
     "map-release": {
       "type": "manual",
       "skillClass": "task",
