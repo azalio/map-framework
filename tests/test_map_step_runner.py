@@ -6209,6 +6209,35 @@ class TestRecordSubtaskBaseline:
         assert "old_a.py" not in report["actual"]
         assert "b.py" in report["actual"]
 
+    def test_baseline_records_individual_files_in_untracked_dirs(
+        self, branch_workspace, monkeypatch
+    ):
+        """Regression #376: record_subtask_baseline must list individual files
+        inside untracked directories (``-uall``), not the collapsed directory
+        name (``docs/``). Without -uall the baseline holds ``docs/`` and the
+        validate_mutation_boundary subtraction removes that single entry,
+        leaving any new file added inside ``docs/`` invisible to the check.
+        """
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+
+        # Create an untracked directory with two files — never git-added.
+        (repo / "docs").mkdir()
+        (repo / "docs" / "a.md").write_text("doc a")
+        (repo / "docs" / "b.md").write_text("doc b")
+
+        snap = map_step_runner.record_subtask_baseline("test-branch", "ST-001")
+        assert snap["status"] == "success"
+
+        baseline_path = map_step_runner._subtask_baseline_path(
+            "test-branch", "ST-001", repo
+        )
+        recorded = json.loads(baseline_path.read_text())["files"]
+        assert "docs/a.md" in recorded, f"Individual file must be in baseline: {recorded}"
+        assert "docs/b.md" in recorded, f"Individual file must be in baseline: {recorded}"
+        assert "docs/" not in recorded, f"Collapsed dir must not appear: {recorded}"
+
 
 class TestRecordScopeBaseline:
     """record_scope_baseline snapshots current git status into
@@ -6275,6 +6304,36 @@ class TestRecordScopeBaseline:
         assert "diagnostic_hint" in report
         hint = report["diagnostic_hint"]
         assert "record_scope_baseline" in hint or "record_subtask_baseline" in hint, hint
+
+    def test_scope_baseline_records_individual_files_in_untracked_dirs(
+        self, branch_workspace, tmp_path, monkeypatch
+    ):
+        """Regression #376: record_scope_baseline must list individual files
+        inside untracked directories (``-uall``), not collapsed directory names.
+        A baseline containing ``docs/`` instead of ``docs/a.md`` would suppress
+        the whole directory from validate_mutation_boundary, hiding new files.
+        """
+        del tmp_path
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+
+        # Pre-existing untracked directory with files.
+        (repo / "notes").mkdir()
+        (repo / "notes" / "design.md").write_text("design")
+        (repo / "notes" / "todo.md").write_text("todo")
+
+        baseline = map_step_runner.record_scope_baseline("test-branch")
+        assert baseline["status"] == "success"
+        assert "notes/design.md" in baseline["files"], (
+            f"Individual file must be in scope baseline: {baseline['files']}"
+        )
+        assert "notes/todo.md" in baseline["files"], (
+            f"Individual file must be in scope baseline: {baseline['files']}"
+        )
+        assert "notes/" not in baseline["files"], (
+            f"Collapsed dir must not appear in scope baseline: {baseline['files']}"
+        )
 
 
 class TestDetectAlreadyDone:
@@ -6690,6 +6749,98 @@ class TestValidateMutationBoundary:
         report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
         assert report["status"] == "clean", report
         assert report["actual"] == [], report  # nothing changed -> false-progress can fire
+
+    def test_new_file_in_preexisting_untracked_dir_is_visible(
+        self, branch_workspace, monkeypatch
+    ):
+        """Regression #376: a new file created inside a directory that was
+        ALREADY untracked before the subtask started must appear in `actual`
+        and satisfy `expected`.
+
+        Without ``-uall``, ``git status --porcelain`` collapses the whole
+        directory to ``?? docs/``; the baseline subtraction then removes that
+        entry entirely and the new file is invisible in the report.
+        """
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
+
+        # Pre-existing file inside an untracked directory (never committed).
+        docs = repo / "docs"
+        docs.mkdir()
+        (docs / "brd-resource-quotas.md").write_text("pre-existing doc\n")
+
+        # Subtask baseline captured while docs/brd-resource-quotas.md already exists.
+        snap = map_step_runner.record_subtask_baseline("test-branch", "ST-001")
+        assert snap["status"] == "success"
+
+        # During ST-001 the Actor creates a new file inside the same directory.
+        decisions = docs / "decisions"
+        decisions.mkdir()
+        new_file = decisions / "hc8-contention.md"
+        new_file.write_text("decision record\n")
+
+        # Blueprint declares the new file in affected_files.
+        self._write_blueprint(
+            branch_workspace, "ST-001",
+            ["docs/decisions/hc8-contention.md"],
+        )
+
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+
+        # The new file must appear in `actual` — it was invisible before the fix.
+        assert "docs/decisions/hc8-contention.md" in report["actual"], (
+            f"New file inside pre-existing untracked dir must be in actual. report={report}"
+        )
+        # The pre-existing file must NOT appear (it was in the baseline).
+        assert "docs/brd-resource-quotas.md" not in report["actual"], report
+        # The new file satisfies the declared affected_files → status should be clean.
+        assert report["status"] == "clean", report
+        assert report["unexpected"] == [], report
+
+    def test_baseline_subtraction_file_granular_not_dir_collapsed(
+        self, branch_workspace, monkeypatch
+    ):
+        """Regression #376 (complementary): the subtask baseline must record
+        individual file paths, not collapsed directory names, so adding a new
+        file to a pre-existing untracked dir is treated as a genuine addition
+        (not silently absorbed by a directory-level baseline entry).
+        """
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
+
+        # Two pre-existing files in an untracked directory.
+        data_dir = repo / "data"
+        data_dir.mkdir()
+        (data_dir / "old1.csv").write_text("a,b\n")
+        (data_dir / "old2.csv").write_text("c,d\n")
+
+        snap = map_step_runner.record_subtask_baseline("test-branch", "ST-001")
+        assert snap["status"] == "success"
+        # With -uall, individual files are recorded — not the collapsed "data/".
+        baseline_files = snap.get("count", 0)
+        baseline_path = map_step_runner._subtask_baseline_path(
+            "test-branch", "ST-001", repo
+        )
+        recorded = json.loads(baseline_path.read_text())["files"]
+        assert "data/old1.csv" in recorded, f"Expected individual file in baseline: {recorded}"
+        assert "data/old2.csv" in recorded, f"Expected individual file in baseline: {recorded}"
+        assert "data/" not in recorded, f"Collapsed dir entry must not appear: {recorded}"
+        del baseline_files
+
+        # Actor adds a new in-scope file.
+        (data_dir / "new_output.csv").write_text("x,y\n")
+        self._write_blueprint(branch_workspace, "ST-001", ["data/new_output.csv"])
+
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        # new_output.csv is in scope and NOT in the baseline → visible and clean.
+        assert "data/new_output.csv" in report["actual"], report
+        assert "data/old1.csv" not in report["actual"], report
+        assert "data/old2.csv" not in report["actual"], report
+        assert report["status"] == "clean", report
 
 
 class TestDetectCrossSubtaskRegressionRisk:

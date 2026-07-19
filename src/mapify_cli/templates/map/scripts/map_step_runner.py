@@ -11797,9 +11797,11 @@ def refresh_blueprint_affected_files(
         except (OSError, subprocess.TimeoutExpired):
             pass
     # Layer 2: uncommitted (worktree + index) via porcelain.
+    # -uall ensures files inside untracked directories are listed individually
+    # rather than collapsed to the directory name (e.g. "docs/" -> "docs/a.md").
     try:
         status_proc = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain", "-uall"],
             cwd=project_dir,
             capture_output=True,
             text=True,
@@ -12606,8 +12608,8 @@ def _subtask_baseline_path(branch: str, subtask_id: str, project_dir: Path) -> P
 
 
 def record_subtask_baseline(branch: str, subtask_id: str) -> dict:
-    """Snapshot the current `git status --porcelain` set + HEAD SHA as a
-    per-subtask baseline that validate_mutation_boundary will subtract
+    """Snapshot the current ``git status --porcelain -uall`` set + HEAD SHA as
+    a per-subtask baseline that validate_mutation_boundary will subtract
     from `actual` for THIS subtask only — independent from the
     branch-wide scope-baseline.
 
@@ -12622,11 +12624,15 @@ def record_subtask_baseline(branch: str, subtask_id: str) -> dict:
     full per-subtask diff (committed + uncommitted) instead of seeing
     porcelain-only and recording an empty current set after a clean
     per-subtask commit.
+
+    Uses ``-uall`` so files inside untracked directories are listed at file
+    granularity — a collapsed ``docs/`` entry in the baseline would otherwise
+    mask new files added inside that directory during the subtask (#376).
     """
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
     try:
         proc = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain", "-uall"],
             cwd=project_dir,
             capture_output=True,
             text=True,
@@ -13021,12 +13027,18 @@ def record_scope_baseline(branch: str) -> dict:
     runs. Use when the branch carries pre-existing artifacts from prior
     waves that would otherwise flood every subtask with `warning`.
 
+    Uses ``-uall`` so files inside untracked directories are recorded at file
+    granularity. This ensures the per-file subtraction in
+    validate_mutation_boundary correctly suppresses pre-existing files while
+    still surfacing new files added inside a pre-existing untracked directory
+    (#376).
+
     Returns dict with: status, path, files (count + list).
     """
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
     try:
         status_proc = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain", "-uall"],
             cwd=project_dir,
             capture_output=True,
             text=True,
@@ -13217,8 +13229,14 @@ def validate_mutation_boundary(
             )
         else:
             diff_result = None
+        # -uall lists files inside untracked directories individually rather
+        # than collapsing them to the directory name (e.g. "?? docs/" becomes
+        # "?? docs/a.md", "?? docs/b.md"). Without -uall a new file created
+        # inside a pre-existing untracked directory is invisible to both the
+        # actual_set and the baseline subtraction, producing a false-negative
+        # scope check (#376).
         status_result = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain", "-uall"],
             cwd=project_dir,
             capture_output=True,
             text=True,
@@ -13231,15 +13249,15 @@ def validate_mutation_boundary(
             "subtask_id": subtask_id,
         }
 
-    # `git status --porcelain` non-zero ⇒ not a git repo (or git is broken);
-    # without it we can't observe uncommitted work, and treating `actual_set`
-    # as empty would mis-report `clean`. Always a hard error.
+    # `git status --porcelain -uall` non-zero ⇒ not a git repo (or git is
+    # broken); without it we can't observe uncommitted work, and treating
+    # `actual_set` as empty would mis-report `clean`. Always a hard error.
     if status_result.returncode != 0:
         return {
             "status": "error",
             "subtask_id": subtask_id,
             "message": (
-                f"`git status --porcelain` failed (exit {status_result.returncode}): "
+                f"`git status --porcelain -uall` failed (exit {status_result.returncode}): "
                 f"{status_result.stderr.strip() or 'no stderr'}"
             ),
         }
@@ -13485,8 +13503,10 @@ def _current_subtask_changed_files(
             )
         else:
             diff_result = None
+        # -uall: see validate_mutation_boundary for the same flag; without it
+        # new files inside a pre-existing untracked directory are invisible (#376).
         status_result = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain", "-uall"],
             cwd=project_dir,
             capture_output=True,
             text=True,
