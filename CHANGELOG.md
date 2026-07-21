@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`git status -uall` in all scope-check functions (closes #376).** `validate_mutation_boundary`, `record_subtask_baseline`, `record_scope_baseline`, `refresh_blueprint_affected_files`, and `_current_subtask_changed_files` all used `git status --porcelain` without `-uall`. Without that flag git collapses an untracked directory to a single `?? docs/` entry; a new file created inside a pre-existing untracked directory was therefore invisible to the scope check — absent from both `expected`-satisfied and `unexpected`, producing a silent false negative. All five call sites now use `--porcelain -uall` so files are always recorded at file granularity.
+
 ## [3.23.0] - 2026-07-18
 
 ### Added
