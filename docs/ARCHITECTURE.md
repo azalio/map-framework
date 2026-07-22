@@ -446,12 +446,12 @@ Information not available in current evidence.
 
 ## Freshness
 
-Last refreshed: 2026-07-14
+Last refreshed: 2026-07-22
 
-Refresh reason: Incremental refresh after `main` added implementer-readiness
-review artifact (#348) — a pre-code spec-implementability gate with four
-verdicts, strict input validation, and the new `implementer_readiness` manifest
-stage.
+Refresh reason: Incremental refresh after `main` fixed harness-marker tolerance
+in strict JSON gates (#380) — `detect_truncated_agent_output` now strips
+documented Claude Code output-scan marker lines before JSON parsing and reports
+them in a new `harness_markers_stripped` audit field.
 
 Evidence source files:
 - `README.md`
@@ -489,7 +489,17 @@ Evidence source files:
 
 Current delta captured:
 
-- Implementer-readiness review gate (#348): `write_implementer_readiness_review()`
+- Harness-marker tolerance in strict JSON gates (#380): `detect_truncated_agent_output`
+  in `.map/scripts/map_step_runner.py` now strips known Claude Code harness marker lines
+  (lines starting with `[harness: subagent output matched instruction-shaped pattern(s):`)
+  before JSON parsing. Previously, a valid Monitor/Predictor/Evaluator/Actor payload was
+  spuriously rejected as "trailing or leading text around JSON object" when Claude Code
+  v2.1.210+ prepended the output-scan marker. The new `_strip_harness_markers` helper
+  removes only the exact documented marker form; arbitrary prose is still rejected. A new
+  `harness_markers_stripped: list[str]` field in every return dict makes the event
+  observable. 6 new regression tests added; 3802 total tests pass.
+
+Earlier delta (2026-07-14): Implementer-readiness review gate (#348): `write_implementer_readiness_review()`
   writes `.map/<branch>/implementation-readiness.{json,md}` with one of four
   verdicts (`ready`, `needs_clarification`, `needs_spec_revision`,
   `accepted_with_risk`). `accepted_with_risk` requires non-empty
