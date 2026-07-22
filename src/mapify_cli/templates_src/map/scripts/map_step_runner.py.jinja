@@ -11046,6 +11046,27 @@ def save_research(
 _MONITOR_REQUIRED_KEYS = ("valid", "summary", "issues")
 _ACTOR_REQUIRED_KEYS = tuple(AGENT_OUTPUT_SCHEMAS["actor"]["required_keys"])
 
+# Leading marker prepended by Claude Code v2.1.210+ when a subagent report
+# matches instruction-shaped patterns. The scan is advisory; the payload is
+# the original agent output and should be parsed normally once the marker
+# is stripped. See: https://code.claude.com/docs/en/sub-agents
+_HARNESS_MARKER_PREFIX = "[harness: subagent output matched instruction-shaped pattern(s):"
+
+
+def _strip_harness_markers(text: str) -> tuple[str, list[str]]:
+    """Strip known provider harness marker lines from the start of ``text``.
+
+    Returns ``(cleaned_text, [stripped_marker_line, ...])``.
+    Only lines whose stripped form starts with ``_HARNESS_MARKER_PREFIX``
+    are removed; any other leading/trailing text is left intact so the
+    downstream parser still classifies it as unexpected prose.
+    """
+    stripped_markers: list[str] = []
+    lines = text.split("\n")
+    while lines and lines[0].strip().startswith(_HARNESS_MARKER_PREFIX):
+        stripped_markers.append(lines.pop(0))
+    return "\n".join(lines), stripped_markers
+
 
 def detect_truncated_agent_output(
     text: str,
@@ -11074,6 +11095,9 @@ def detect_truncated_agent_output(
                                       # "response ends mid-sentence"
             "parsed": dict | None,    # the parsed object, or None on parse failure
             "agent_kind": str,        # echoed for downstream logging
+            "harness_markers_stripped": [str, ...],
+                                      # provider marker lines removed before
+                                      # parsing (empty when no markers present)
         }
 
     ``expected_keys`` defaults per ``agent_kind``: monitor expects
@@ -11090,6 +11114,22 @@ def detect_truncated_agent_output(
             "reasons": ["empty response"],
             "parsed": None,
             "agent_kind": agent_kind,
+            "harness_markers_stripped": [],
+        }
+
+    # Strip known Claude harness marker lines before JSON parsing (#380).
+    # Claude Code v2.1.210+ may prepend a marker line to a subagent report
+    # when the output matches instruction-shaped patterns; these lines are
+    # not model prose and must not trigger the "leading text" rejection.
+    stripped, harness_markers = _strip_harness_markers(stripped)
+    stripped = stripped.strip()
+    if not stripped:
+        return {
+            "truncated": True,
+            "reasons": ["empty response"],
+            "parsed": None,
+            "agent_kind": agent_kind,
+            "harness_markers_stripped": harness_markers,
         }
 
     parsed: Optional[dict[str, object]] = None
@@ -11129,6 +11169,7 @@ def detect_truncated_agent_output(
             "reasons": reasons,
             "parsed": None,
             "agent_kind": agent_kind,
+            "harness_markers_stripped": harness_markers,
         }
 
     # Validate required keys.
@@ -11156,6 +11197,7 @@ def detect_truncated_agent_output(
         "reasons": reasons,
         "parsed": parsed,
         "agent_kind": agent_kind,
+        "harness_markers_stripped": harness_markers,
     }
 
 

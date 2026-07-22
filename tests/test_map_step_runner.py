@@ -5018,6 +5018,106 @@ class TestDetectTruncatedAgentOutput:
         assert report["truncated"] is False, report
         assert report["reasons"] == []
 
+    # --- Harness marker tolerance (issue #380) ---
+
+    def test_harness_marker_before_valid_monitor_json_not_truncated(self):
+        """Claude Code v2.1.210+ may prepend a harness marker line to a
+        subagent report; that marker must not cause the truncation gate to
+        reject a valid Monitor JSON payload."""
+        marker = (
+            "[harness: subagent output matched instruction-shaped pattern(s): "
+            "contains instructions]"
+        )
+        payload = json.dumps({
+            "valid": True,
+            "summary": "all checks passed",
+            "issues": [],
+        })
+        text = marker + "\n" + payload
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="monitor"
+        )
+        assert report["truncated"] is False, report
+        assert report["reasons"] == []
+        assert report["harness_markers_stripped"] == [marker]
+
+    def test_harness_marker_before_valid_actor_json_not_truncated(self):
+        """Harness marker tolerance applies to non-monitor agents."""
+        marker = (
+            "[harness: subagent output matched instruction-shaped pattern(s): "
+            "multi-step instructions]"
+        )
+        payload = json.dumps({
+            "files_changed": ["src/foo.py"],
+            "tests_run": ["pytest: 5 passed"],
+            "validation_notes": "ok",
+            "blocker": None,
+        })
+        text = marker + "\n" + payload
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="actor"
+        )
+        assert report["truncated"] is False, report
+        assert report["harness_markers_stripped"] == [marker]
+
+    def test_arbitrary_prose_before_json_still_truncated(self):
+        """Non-marker leading prose is not stripped and still triggers
+        'trailing or leading text around JSON object'."""
+        payload = json.dumps({"valid": True, "summary": "ok", "issues": []})
+        text = "Here is my analysis:\n" + payload
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="monitor"
+        )
+        assert report["truncated"] is True
+        assert any(
+            "trailing or leading text" in r for r in report["reasons"]
+        )
+        assert report["harness_markers_stripped"] == []
+
+    def test_multiple_harness_markers_all_stripped(self):
+        """When multiple consecutive harness marker lines appear, all are
+        stripped and the payload is still accepted."""
+        marker1 = (
+            "[harness: subagent output matched instruction-shaped pattern(s): "
+            "pattern A]"
+        )
+        marker2 = (
+            "[harness: subagent output matched instruction-shaped pattern(s): "
+            "pattern B]"
+        )
+        payload = json.dumps({"valid": False, "summary": "issue found", "issues": ["x"]})
+        text = marker1 + "\n" + marker2 + "\n" + payload
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="monitor"
+        )
+        assert report["truncated"] is False, report
+        assert report["harness_markers_stripped"] == [marker1, marker2]
+
+    def test_no_markers_harness_markers_stripped_is_empty(self):
+        """Clean JSON with no harness markers has an empty
+        ``harness_markers_stripped`` list."""
+        payload = json.dumps({"valid": True, "summary": "ok", "issues": []})
+        report = map_step_runner.detect_truncated_agent_output(
+            payload, agent_kind="monitor"
+        )
+        assert report["truncated"] is False
+        assert report["harness_markers_stripped"] == []
+
+    def test_harness_marker_with_trailing_prose_still_truncated(self):
+        """A harness marker followed by arbitrary prose (not the JSON payload)
+        is still classified as malformed — only the marker itself is exempt."""
+        marker = (
+            "[harness: subagent output matched instruction-shaped pattern(s): x]"
+        )
+        payload = json.dumps({"valid": True, "summary": "ok", "issues": []})
+        text = marker + "\nHere is some prose before the JSON.\n" + payload
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="monitor"
+        )
+        # prose between marker and JSON must still be flagged
+        assert report["truncated"] is True
+        assert report["harness_markers_stripped"] == [marker]
+
 
 class TestBlueprintContractAffectedFilesDrift:
     """Decomposer drift catch: when every declared affected_files path is
