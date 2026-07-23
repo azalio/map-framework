@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-labelledby="loopTitle loopDesc">
+  <title id="loopTitle">Without MAP vs with MAP</title>
+  <desc id="loopDesc">Two process rows. Without MAP: idea, prompt, code, hope. With MAP: SPEC, PLAN, TEST, CODE, REVIEW, LEARN. The MAP row ends in a green closed loop.</desc>
+
+  <rect width="1200" height="300" rx="24" fill="#0E1116"/>
+
+  <!-- WITHOUT -->
+  <g transform="translate(64 54)">
+    <text x="0" y="0" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="18" fill="#6E7681" letter-spacing="1.5">WITHOUT MAP</text>
+    <g font-family="-apple-system,BlinkMacSystemFont,Segoe UI,PingFang SC,sans-serif" font-size="24" font-weight="700" fill="#8B949E">
+      <rect x="0" y="14" width="118" height="46" rx="9" fill="#161B22" stroke="#30363D"/>
+      <text x="59" y="43" text-anchor="middle">idea</text>
+      <path d="M122 37 l16 0 m-6 -7 l6 7 l-6 7" stroke="#3A4451" stroke-width="2" fill="none"/>
+      <rect x="144" y="14" width="148" height="46" rx="9" fill="#161B22" stroke="#30363D"/>
+      <text x="218" y="43" text-anchor="middle">prompt</text>
+      <path d="M296 37 l16 0 m-6 -7 l6 7 l-6 7" stroke="#3A4451" stroke-width="2" fill="none"/>
+      <rect x="318" y="14" width="118" height="46" rx="9" fill="#161B22" stroke="#30363D"/>
+      <text x="377" y="43" text-anchor="middle">code</text>
+      <path d="M440 37 l16 0 m-6 -7 l6 7 l-6 7" stroke="#3A4451" stroke-width="2" fill="none"/>
+      <rect x="462" y="14" width="118" height="46" rx="9" fill="#1A0F0F" stroke="#F85149" stroke-width="1.5"/>
+      <text x="521" y="43" text-anchor="middle" fill="#F85149">hope</text>
+    </g>
+  </g>
+
+  <!-- WITH -->
+  <g transform="translate(64 150)">
+    <text x="0" y="0" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="18" fill="#F0B429" letter-spacing="1.5">WITH MAP</text>
+    <g font-family="-apple-system,BlinkMacSystemFont,Segoe UI,PingFang SC,sans-serif" font-size="23" font-weight="700">
+      <rect x="0" y="14" width="104" height="46" rx="9" fill="#161B22" stroke="#30363D"/>
+      <text x="52" y="43" text-anchor="middle" fill="#E6EDF3">SPEC</text>
+      <path d="M108 37 l14 0 m-5 -7 l5 7 l-5 7" stroke="#3A4451" stroke-width="2" fill="none"/>
+
+      <rect x="126" y="14" width="110" height="46" rx="9" fill="#1C1503" stroke="#F0B429" stroke-width="1.8"/>
+      <text x="181" y="43" text-anchor="middle" fill="#F0B429">PLAN</text>
+      <path d="M240 37 l14 0 m-5 -7 l5 7 l-5 7" stroke="#3A4451" stroke-width="2" fill="none"/>
+
+      <rect x="258" y="14" width="104" height="46" rx="9" fill="#161B22" stroke="#30363D"/>
+      <text x="310" y="43" text-anchor="middle" fill="#E6EDF3">TEST</text>
+      <path d="M366 37 l14 0 m-5 -7 l5 7 l-5 7" stroke="#3A4451" stroke-width="2" fill="none"/>
+
+      <rect x="384" y="14" width="104" height="46" rx="9" fill="#161B22" stroke="#30363D"/>
+      <text x="436" y="43" text-anchor="middle" fill="#E6EDF3">CODE</text>
+      <path d="M492 37 l14 0 m-5 -7 l5 7 l-5 7" stroke="#3A4451" stroke-width="2" fill="none"/>
+
+      <rect x="510" y="14" width="124" height="46" rx="9" fill="#161B22" stroke="#30363D"/>
+      <text x="572" y="43" text-anchor="middle" fill="#E6EDF3">REVIEW</text>
+      <path d="M638 37 l14 0 m-5 -7 l5 7 l-5 7" stroke="#3A4451" stroke-width="2" fill="none"/>
+
+      <rect x="656" y="14" width="104" height="46" rx="9" fill="#0D1F14" stroke="#3FB950"/>
+      <text x="708" y="43" text-anchor="middle" fill="#3FB950">LEARN</text>
+    </g>
+
+    <!-- closed loop arc -->
+    <path d="M708 62 q0 36 -328 36 q-300 0 -300 -8" stroke="#3FB950" stroke-width="2" fill="none" stroke-dasharray="5 6" opacity="0.5"/>
+    <text x="380" y="118" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="15" fill="#3FB950" opacity="0.85">memory feeds the next run</text>
+  </g>
+
+  <!-- right caption -->
+  <g transform="translate(870 70)" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,PingFang SC,sans-serif">
+    <rect x="0" y="0" width="266" height="160" rx="14" fill="#161B22" stroke="#30363D"/>
+    <circle cx="28" cy="34" r="6" fill="#F0B429"/>
+    <text x="46" y="40" font-size="18" font-weight="700" fill="#E6EDF3">plan moves judgment earlier</text>
+    <text x="24" y="74" font-size="15.5" fill="#8B949E">Write the behavior down.</text>
+    <text x="24" y="96" font-size="15.5" fill="#8B949E">Split into small contracts.</text>
+    <text x="24" y="118" font-size="15.5" fill="#8B949E">Verify, review, remember.</text>
+    <text x="24" y="142" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="14" fill="#3FB950">fast wrong answers → slow right ones</text>
+  </g>
+</svg>

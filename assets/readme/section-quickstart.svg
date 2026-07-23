@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="140" viewBox="0 0 1200 140" role="img" aria-labelledby="sec1 sec1d">
+  <title id="sec1">Quick Start</title>
+  <desc id="sec1d">Section banner: three steps to a first run — install, init, run the loop.</desc>
+  <rect width="1200" height="140" rx="20" fill="#0E1116"/>
+  <rect x="0" y="0" width="7" height="140" fill="#F0B429"/>
+  <g font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="17" fill="#6E7681" letter-spacing="2">
+    <text x="64" y="56">01 — GET RUNNING IN UNDER A MINUTE</text>
+  </g>
+  <text x="62" y="104" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,PingFang SC,sans-serif" font-size="52" font-weight="800" fill="#E6EDF3" letter-spacing="-1">Quick Start</text>
+  <text x="1138" y="104" text-anchor="end" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="20" fill="#8B949E">install · init · /map-plan</text>
+</svg>
