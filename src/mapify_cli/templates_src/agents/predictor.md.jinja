@@ -2,6 +2,10 @@
 name: predictor
 description: Predicts consequences and dependency impact of changes (MAP)
 model: sonnet  # Impact analysis requires complex reasoning - upgraded from haiku
+disallowedTools:
+  - Edit
+  - Write
+  - Agent
 version: 3.3.1
 last_updated: 2026-05-27
 ---

@@ -5,6 +5,9 @@ model: sonnet  # Balanced: quality validation requires good reasoning
 # 2026-04-28: high effort — Monitor's adversarial-review quality scales
 # with effort more than with raw model strength.
 effort: high
+disallowedTools:
+  - Edit
+  - Agent
 version: 2.10.1
 last_updated: 2026-05-27
 ---
