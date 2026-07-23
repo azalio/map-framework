@@ -210,3 +210,129 @@ name: test
 """
         match = re.match(r"^---\n(.*?)\n---", malformed, re.DOTALL)
         assert match is None
+
+
+class TestAgentCapabilityHardening:
+    """Regression guard for issue #378: disallowedTools frontmatter on non-writer agents.
+
+    Agents that never legitimately edit code must declare disallowedTools at the
+    harness level, not rely on prompt-text alone. This test pins those contracts
+    so they cannot be silently removed.
+    """
+
+    _REPO_ROOT = Path(__file__).parent.parent
+    _AGENTS_DIR = _REPO_ROOT / ".claude" / "agents"
+
+    def _load_frontmatter(self, agent_name: str) -> dict:
+        path = self._AGENTS_DIR / f"{agent_name}.md"
+        assert path.exists(), f"Agent file not found: {path}"
+        content = path.read_text(encoding="utf-8")
+        match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
+        assert match, f"No frontmatter in {path}"
+        return yaml.safe_load(match.group(1))
+
+    def test_monitor_has_edit_in_disallowed_tools(self):
+        fm = self._load_frontmatter("monitor")
+        disallowed = fm.get("disallowedTools", [])
+        assert "Edit" in disallowed, (
+            "monitor must deny Edit — it is a READ-ONLY reviewer"
+        )
+
+    def test_monitor_has_agent_in_disallowed_tools(self):
+        fm = self._load_frontmatter("monitor")
+        disallowed = fm.get("disallowedTools", [])
+        assert "Agent" in disallowed, (
+            "monitor must deny Agent — it must not spawn sub-agents"
+        )
+
+    def test_monitor_write_not_denied(self):
+        """monitor IS allowed to Write — it writes .map/ evidence artifacts."""
+        fm = self._load_frontmatter("monitor")
+        disallowed = fm.get("disallowedTools", [])
+        assert "Write" not in disallowed, (
+            "monitor needs Write for .map/ evidence artifacts — do not deny it"
+        )
+
+    def test_research_agent_has_edit_in_disallowed_tools(self):
+        fm = self._load_frontmatter("research-agent")
+        disallowed = fm.get("disallowedTools", [])
+        assert "Edit" in disallowed, (
+            "research-agent must deny Edit — it is a read-only context scanner"
+        )
+
+    def test_research_agent_has_agent_in_disallowed_tools(self):
+        fm = self._load_frontmatter("research-agent")
+        disallowed = fm.get("disallowedTools", [])
+        assert "Agent" in disallowed, (
+            "research-agent must deny Agent — it must not spawn sub-agents"
+        )
+
+    def test_research_agent_write_not_denied(self):
+        """research-agent IS allowed to Write — MAP-planning integration appends to research artifact."""
+        fm = self._load_frontmatter("research-agent")
+        disallowed = fm.get("disallowedTools", [])
+        assert "Write" not in disallowed, (
+            "research-agent needs Write for MAP-planning research artifact append"
+        )
+
+    def test_predictor_has_edit_in_disallowed_tools(self):
+        fm = self._load_frontmatter("predictor")
+        disallowed = fm.get("disallowedTools", [])
+        assert "Edit" in disallowed, (
+            "predictor must deny Edit — it is an analysis-only agent"
+        )
+
+    def test_predictor_has_write_in_disallowed_tools(self):
+        fm = self._load_frontmatter("predictor")
+        disallowed = fm.get("disallowedTools", [])
+        assert "Write" in disallowed, (
+            "predictor must deny Write — it is an analysis-only agent"
+        )
+
+    def test_predictor_has_agent_in_disallowed_tools(self):
+        fm = self._load_frontmatter("predictor")
+        disallowed = fm.get("disallowedTools", [])
+        assert "Agent" in disallowed, (
+            "predictor must deny Agent — it must not spawn sub-agents"
+        )
+
+    def test_evaluator_has_edit_in_disallowed_tools(self):
+        fm = self._load_frontmatter("evaluator")
+        disallowed = fm.get("disallowedTools", [])
+        assert "Edit" in disallowed, (
+            "evaluator must deny Edit — it is a scoring-only agent"
+        )
+
+    def test_evaluator_has_write_in_disallowed_tools(self):
+        fm = self._load_frontmatter("evaluator")
+        disallowed = fm.get("disallowedTools", [])
+        assert "Write" in disallowed, (
+            "evaluator must deny Write — it is a scoring-only agent"
+        )
+
+    def test_evaluator_has_agent_in_disallowed_tools(self):
+        fm = self._load_frontmatter("evaluator")
+        disallowed = fm.get("disallowedTools", [])
+        assert "Agent" in disallowed, (
+            "evaluator must deny Agent — it must not spawn sub-agents"
+        )
+
+    def test_task_decomposer_has_permission_mode_plan(self):
+        fm = self._load_frontmatter("task-decomposer")
+        assert fm.get("permissionMode") == "plan", (
+            "task-decomposer must keep permissionMode: plan"
+        )
+
+    def test_actor_has_no_disallowed_tools(self):
+        """actor is a legitimate writer and must NOT be capability-restricted."""
+        fm = self._load_frontmatter("actor")
+        assert "disallowedTools" not in fm, (
+            "actor is a legitimate writer — do not add disallowedTools"
+        )
+
+    def test_final_verifier_has_no_disallowed_tools(self):
+        """final-verifier is a legitimate writer and must NOT be capability-restricted."""
+        fm = self._load_frontmatter("final-verifier")
+        assert "disallowedTools" not in fm, (
+            "final-verifier is a legitimate writer — do not add disallowedTools"
+        )

@@ -1357,6 +1357,8 @@ If you forked the skill-backed `/map-efficient` workflow, you must manually inte
 - Specific, actionable feedback
 - Checks against project coding standards
 
+**Capability Constraints (frontmatter):** `disallowedTools: [Edit, Agent]`. Monitor is a read-only reviewer — it may not edit files or spawn sub-agents. Write is permitted for `.map/` evidence artifacts (e.g., review bundles). Task-decomposer separately enforces `permissionMode: plan`.
+
 ### 4. Predictor
 
 **Responsibility:** Analyze change impact across codebase.
@@ -1390,6 +1392,8 @@ If you forked the skill-backed `/map-efficient` workflow, you must manually inte
 
 **Model Used:** Sonnet (impact analysis requires complex reasoning)
 
+**Capability Constraints (frontmatter):** `disallowedTools: [Edit, Write, Agent]`. Predictor is analysis-only — it reads and reports, never edits or spawns sub-agents.
+
 ### 5. Evaluator
 
 **Responsibility:** Score solution quality on multiple dimensions.
@@ -1420,6 +1424,8 @@ If you forked the skill-backed `/map-efficient` workflow, you must manually inte
 **Approval Threshold:** >7.0 overall score
 
 **Model Used:** Sonnet (evaluation requires nuanced judgment)
+
+**Capability Constraints (frontmatter):** `disallowedTools: [Edit, Write, Agent]`. Evaluator is scoring-only — it reads and scores, never edits or spawns sub-agents.
 
 ### 6. Reflector
 
@@ -1519,7 +1525,9 @@ If you forked the skill-backed `/map-efficient` workflow, you must manually inte
 - Returns confidence score for search completeness
 - Enables Actor to Read() only necessary files
 
-**Model Used:** Sonnet (requires understanding code semantics)
+**Model Used:** Haiku (read-mostly; latency + parallelism > reasoning depth)
+
+**Capability Constraints (frontmatter):** `disallowedTools: [Edit, Agent]`. ResearchAgent is read-only — it may not edit files or spawn sub-agents. Write is permitted for the MAP-planning research artifact append mode (`Research_Findings_v1_0` block).
 
 **Usage Context:** Called by Actor when implementing features that integrate with existing code
 

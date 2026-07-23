@@ -5,6 +5,9 @@ description: Heavy codebase reading with compressed output. Use PROACTIVELY befo
 # benefits more from latency and parallelism than from reasoning depth.
 # Frees Opus/Sonnet budget for the load-bearing decision agents.
 model: haiku
+disallowedTools:
+  - Edit
+  - Agent
 version: 1.1.0
 last_updated: 2026-04-28
 ---
