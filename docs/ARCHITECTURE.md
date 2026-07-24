@@ -395,6 +395,8 @@ LLM cannot fabricate input — the same layered-defense posture MAP uses elsewhe
 - **Token Budget Decisions**: `.map/<branch>/token_budget.json` records active prompt-path budget decisions from Actor context and review prompt builders only; it does not log dormant REGISTRY/FOCUS experiments. Each entry names the prompt path, configured budget, estimated tokens before/after enforcement, clipped sections, and source artifacts.
 - **Constraint Typing**: `blueprint.json` separates non-negotiable `hard_constraints` from negotiable `soft_constraints`; hard constraints must be covered through `coverage_map` and bracketed validation criteria, while soft constraints need either coverage or explicit tradeoff rationale.
 - **Provider Differences**: Workflow intent is shared, but orchestration mechanics differ between Claude Code (`.claude/`) and Codex CLI (`.codex/`).
+- **Harness Output-Scan Marker Normalization** (issue #380): `detect_truncated_agent_output` in `map_step_runner.py` may receive agent output that Claude Code v2.1.210+ has prepended with a harness output-scan marker — a line of the form `[harness: subagent output matched instruction-shaped pattern(s): …]`. These marker lines are stripped by `_strip_harness_markers()` before JSON parsing so the strict truncation gate never false-rejects structurally valid JSON payloads solely because of harness instrumentation. The return dict includes a `harness_markers_stripped` field (list of stripped lines, empty when none present) so callers can audit whether normalization ran. Stripping is bounded to lines whose stripped form begins with the exact `_HARNESS_MARKER_PREFIX` constant; arbitrary prose or real JSON corruption is not silently swallowed.
+- **Agent Capability Constraints** (issue #378): Monitor, Predictor, Evaluator, and ResearchAgent role files carry explicit `disallowedTools` frontmatter that prevents these read/review roles from invoking write-capable tools (`Edit`, `Write`, `Agent` where not appropriate). This is a defence-in-depth measure: even if a role-confusing prompt injection or a hallucinated tool call were attempted, the agent runtime enforces the restriction at the tool-call layer rather than relying solely on prompt-level instruction following.
 - **Scale-Adaptive Intelligence** (`src/mapify_cli/scope_classifier.py`, issue #287, **COMPLETE** PRs #366/#368/#369): deterministic, no-LLM classification of an estimated change into one of four scale brackets that routes to the appropriate MAP workflow depth. `classify_scope(estimated_files, estimated_lines, *, config)` returns a frozen `ScopeClassification` (bracket, recommended_workflow, estimated_files, estimated_lines, auto_enabled). Brackets: TRIVIAL (≤3f/50l → `map-fast`), SMALL (≤10/200 → `map-plan-light`), MEDIUM (≤30/1000 → `map-efficient`), LARGE (otherwise → `map-efficient+map-tdd`). Thresholds and `scale.auto` read from `MapConfig` (7 `scale_*` fields) via dotted-key aliases in `.map/config.yaml`. `map-plan` skill (both Claude and Codex variants) integrates a **Scale Advisory** block that calls `python3 .map/scripts/classify_scope.py --files N --lines N` after workflow-fit gate; result is JSON with bracket/recommended_workflow/auto_enabled. The `classify_scope.py` script ships via `mapify init` to `.map/scripts/`, is stdlib-only (no mapify_cli import), reads `.map/config.yaml` directly, and validates `--files`/`--lines` ≥ 0. The `map-plan` skill also ships `--light` (2-5 minimal subtasks, no discovery/spec-review/architecture-review), `--deep` (extended discovery, architecture review via monitor agent in Step 4.5), `--force-full` (alias for --deep), and `--force-fast` (recommend map-fast and stop) modes; both Claude (Task syntax) and Codex (spawn_agent syntax) variants updated.
 
 ### Prompt Layering & Prefix Caching (#231)
@@ -447,12 +449,21 @@ Information not available in current evidence.
 
 ## Freshness
 
-Last refreshed: 2026-07-14
+Last refreshed: 2026-07-24
 
-Refresh reason: Incremental refresh after `main` added implementer-readiness
-review artifact (#348) — a pre-code spec-implementability gate with four
-verdicts, strict input validation, and the new `implementer_readiness` manifest
-stage.
+Refresh reason: Incremental refresh after `main` added two cross-cutting
+runtime behaviors since 2026-07-14:
+
+- **#378 — Agent Capability Constraints**: `disallowedTools` frontmatter added
+  to Monitor, Predictor, Evaluator, and ResearchAgent role files so write-capable
+  tools are enforced-off at the runtime layer for read/review roles.
+- **#380 — Harness Output-Scan Marker Normalization**: `detect_truncated_agent_output`
+  now calls `_strip_harness_markers()` before JSON parsing, tolerating the
+  `[harness: subagent output matched instruction-shaped pattern(s): …]` lines
+  that Claude Code v2.1.210+ prepends when subagent output looks instruction-shaped.
+  Returns `harness_markers_stripped` list in all paths.
+
+Previous refresh (2026-07-14): implementer-readiness review artifact (#348).
 
 Evidence source files:
 - `README.md`
