@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Comprehensive test suite for validate-dependencies.py
 
@@ -9,20 +8,20 @@ Tests both DependencyValidator and ASCIIGraphRenderer classes:
 """
 
 import json
-import pytest
 from io import StringIO
 from unittest import mock
 
+import pytest
+
 # Import from mapify_cli.tools.validate_dependencies
 from mapify_cli.tools.validate_dependencies import (
-    DependencyValidator,
-    ASCIIGraphRenderer,
-    IssueSeverity,
     ANSIColors,
+    ASCIIGraphRenderer,
+    DependencyValidator,
+    IssueSeverity,
     load_input,
     main,
 )
-
 
 # ============================================================================
 # Test Fixtures - Sample Task Graphs
@@ -632,9 +631,8 @@ class TestCLIIntegration:
 
         with mock.patch(
             "sys.argv", ["validate-dependencies.py", "--visualize", str(test_file)]
-        ):
-            with pytest.raises(SystemExit):
-                main()
+        ), pytest.raises(SystemExit):
+            main()
 
         captured = capsys.readouterr()
         assert "Task Dependency Graph" in captured.out
@@ -649,9 +647,8 @@ class TestCLIIntegration:
         with mock.patch(
             "sys.argv",
             ["validate-dependencies.py", "--visualize", "--no-color", str(test_file)],
-        ):
-            with pytest.raises(SystemExit):
-                main()
+        ), pytest.raises(SystemExit):
+            main()
 
         captured = capsys.readouterr()
         # No ANSI escape sequences
@@ -665,9 +662,8 @@ class TestCLIIntegration:
 
         with mock.patch(
             "sys.argv", ["validate-dependencies.py", "-f", "text", str(test_file)]
-        ):
-            with pytest.raises(SystemExit):
-                main()
+        ), pytest.raises(SystemExit):
+            main()
 
         captured = capsys.readouterr()
         assert "Validation Report" in captured.out
@@ -681,9 +677,8 @@ class TestCLIIntegration:
 
         with mock.patch(
             "sys.argv", ["validate-dependencies.py", "-f", "json", str(test_file)]
-        ):
-            with pytest.raises(SystemExit):
-                main()
+        ), pytest.raises(SystemExit):
+            main()
 
         captured = capsys.readouterr()
         # Should be valid JSON

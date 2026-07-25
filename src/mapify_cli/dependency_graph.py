@@ -20,9 +20,9 @@ Example:
     ['ST-001', 'ST-002', 'ST-003']
 """
 
-from dataclasses import dataclass, field
-from typing import Any, List, Dict, Set, Optional, Tuple
 from collections import deque
+from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -41,8 +41,8 @@ class LintFinding:
     severity: str
     code: str
     message: str
-    subtask_id: Optional[str] = None
-    edge: Optional[Tuple[str, str]] = None
+    subtask_id: str | None = None
+    edge: tuple[str, str] | None = None
 
 
 @dataclass
@@ -58,8 +58,8 @@ class SubtaskNode:
     """
 
     id: str
-    dependencies: List[str] = field(default_factory=list)
-    outputs: Optional[List[str]] = None
+    dependencies: list[str] = field(default_factory=list)
+    outputs: list[str] | None = None
     status: str = "pending"
 
 
@@ -86,7 +86,7 @@ class DependencyGraph:
 
     def __init__(self):
         """Initialize empty dependency graph."""
-        self.nodes: Dict[str, SubtaskNode] = {}
+        self.nodes: dict[str, SubtaskNode] = {}
 
     def add_node(self, node: SubtaskNode) -> None:
         """
@@ -109,7 +109,7 @@ class DependencyGraph:
         """
         self.nodes[node.id] = node
 
-    def get_dependents(self, subtask_id: str) -> List[str]:
+    def get_dependents(self, subtask_id: str) -> list[str]:
         """
         Get immediate dependents of a subtask (one hop only).
 
@@ -147,7 +147,7 @@ class DependencyGraph:
 
         return dependents
 
-    def invalidate_cascade(self, subtask_id: str) -> List[str]:
+    def invalidate_cascade(self, subtask_id: str) -> list[str]:
         """
         Find all subtasks that must be invalidated when given subtask changes.
 
@@ -197,7 +197,7 @@ class DependencyGraph:
             return [subtask_id]
 
         # BFS to find all transitive dependents
-        invalidated: Set[str] = {subtask_id}
+        invalidated: set[str] = {subtask_id}
         queue = deque([subtask_id])
 
         while queue:
@@ -218,7 +218,7 @@ class DependencyGraph:
         # Return as list (order arbitrary, not topological)
         return list(invalidated)
 
-    def get_root_nodes(self) -> List[str]:
+    def get_root_nodes(self) -> list[str]:
         """
         Get all root nodes (subtasks with no dependencies).
 
@@ -266,7 +266,7 @@ class DependencyGraph:
         GRAY = 1  # Visiting (on current path)
         BLACK = 2  # Visited (fully explored)
 
-        colors: Dict[str, int] = {node_id: WHITE for node_id in self.nodes}
+        colors: dict[str, int] = {node_id: WHITE for node_id in self.nodes}
 
         def dfs(node_id: str) -> bool:
             """DFS helper. Returns True if cycle detected."""
@@ -285,22 +285,20 @@ class DependencyGraph:
                         return True
 
                     # Explore if unvisited
-                    if colors[dep_id] == WHITE:
-                        if dfs(dep_id):
-                            return True
+                    if colors[dep_id] == WHITE and dfs(dep_id):
+                        return True
 
             colors[node_id] = BLACK
             return False
 
         # Try DFS from each unvisited node
         for node_id in self.nodes:
-            if colors[node_id] == WHITE:
-                if dfs(node_id):
-                    return True
+            if colors[node_id] == WHITE and dfs(node_id):
+                return True
 
         return False
 
-    def topological_sort(self) -> Optional[List[str]]:
+    def topological_sort(self) -> list[str] | None:
         """
         Return topological ordering of subtasks (dependencies first).
 
@@ -321,8 +319,8 @@ class DependencyGraph:
         if self.has_cycle():
             return None
 
-        visited: Set[str] = set()
-        result: List[str] = []
+        visited: set[str] = set()
+        result: list[str] = []
 
         def dfs(node_id: str) -> None:
             """DFS helper for topological sort."""
@@ -347,7 +345,7 @@ class DependencyGraph:
 
         return result
 
-    def compute_waves(self) -> Optional[List[List[str]]]:
+    def compute_waves(self) -> list[list[str]] | None:
         """
         Compute execution waves from the dependency DAG using Kahn's algorithm.
 
@@ -373,21 +371,21 @@ class DependencyGraph:
             return []
 
         # Compute in-degree for each node (only count edges to nodes in graph)
-        in_degree: Dict[str, int] = {nid: 0 for nid in self.nodes}
+        in_degree: dict[str, int] = {nid: 0 for nid in self.nodes}
         for nid, node in self.nodes.items():
             for dep_id in node.dependencies:
                 if dep_id in self.nodes:
                     in_degree[nid] += 1
 
         # Collect initial zero-in-degree nodes as wave 0
-        waves: List[List[str]] = []
+        waves: list[list[str]] = []
         current_wave = sorted([nid for nid, deg in in_degree.items() if deg == 0])
 
         processed = 0
         while current_wave:
             waves.append(current_wave)
             processed += len(current_wave)
-            next_wave_set: Set[str] = set()
+            next_wave_set: set[str] = set()
 
             for nid in current_wave:
                 # Decrement in-degree for all dependents
@@ -405,8 +403,8 @@ class DependencyGraph:
         return waves
 
     def split_wave_by_file_conflicts(
-        self, wave: List[str], affected_files_map: Dict[str, Set[str]]
-    ) -> List[List[str]]:
+        self, wave: list[str], affected_files_map: dict[str, set[str]]
+    ) -> list[list[str]]:
         """
         Split a single wave into sub-waves where no two subtasks share files.
 
@@ -431,8 +429,8 @@ class DependencyGraph:
         if len(wave) <= 1:
             return [wave] if wave else []
 
-        sub_waves: List[List[str]] = []
-        sub_wave_files: List[Set[str]] = []
+        sub_waves: list[list[str]] = []
+        sub_wave_files: list[set[str]] = []
 
         for subtask_id in wave:
             files = affected_files_map.get(subtask_id, set())
@@ -492,8 +490,8 @@ _SOFT_PHRASES = (
 
 
 def soft_phrase_findings(
-    justifications: Dict[Tuple[str, str], str],
-) -> List[LintFinding]:
+    justifications: dict[tuple[str, str], str],
+) -> list[LintFinding]:
     """
     Flag edge justifications containing soft/vague ordering phrases.
 
@@ -503,7 +501,7 @@ def soft_phrase_findings(
     Returns:
         LintFinding list with severity 'info' or 'warning' for flagged edges.
     """
-    results: List[LintFinding] = []
+    results: list[LintFinding] = []
     for edge, text in justifications.items():
         lower = text.lower()
         for phrase in _SOFT_PHRASES:
@@ -523,9 +521,9 @@ def soft_phrase_findings(
     return results
 
 
-def _transitive_deps(graph: "DependencyGraph", node_id: str) -> Set[str]:
+def _transitive_deps(graph: "DependencyGraph", node_id: str) -> set[str]:
     """Return set of all nodes reachable from node_id via dependency edges (BFS)."""
-    visited: Set[str] = set()
+    visited: set[str] = set()
     queue = list(graph.nodes.get(node_id, SubtaskNode(id=node_id)).dependencies)
     while queue:
         dep = queue.pop()
@@ -539,11 +537,11 @@ def _transitive_deps(graph: "DependencyGraph", node_id: str) -> Set[str]:
 def lint_dependency_graph(
     graph: "DependencyGraph",
     *,
-    affected_files_map: Dict[str, Set[str]] | None = None,
-    node_io: Dict[str, Dict[str, Any]] | None = None,
+    affected_files_map: dict[str, set[str]] | None = None,
+    node_io: dict[str, dict[str, Any]] | None = None,
     enforcement: str = "warn",
     auto_prune: bool = False,
-) -> List[LintFinding]:
+) -> list[LintFinding]:
     """
     Lint a DependencyGraph and return structured findings.
 
@@ -576,14 +574,14 @@ def lint_dependency_graph(
     # auto_prune is accepted but intentionally performs no mutation in this slice.
     del auto_prune
 
-    findings: List[LintFinding] = []
+    findings: list[LintFinding] = []
 
     # --- Layer A: hard errors, always on ---
 
     # Pass 1: self-loops and duplicate edges (per-node, no graph-wide traversal needed)
-    self_loop_nodes: Set[str] = set()
+    self_loop_nodes: set[str] = set()
     for node_id, node in graph.nodes.items():
-        seen: Set[str] = set()
+        seen: set[str] = set()
         for dep in node.dependencies:
             if dep == node_id:
                 # Report self-loop once per node even if listed multiple times
@@ -667,14 +665,14 @@ def lint_dependency_graph(
     # Conservative: if data is absent for either node, do NOT flag (avoid false positives).
     for node_id, node in graph.nodes.items():
         b_io = io.get(node_id, {})
-        b_inputs: Set[str] = b_io.get("inputs", set()) or set()
-        b_files: Set[str] = afm.get(node_id, set()) or set()
+        b_inputs: set[str] = b_io.get("inputs", set()) or set()
+        b_files: set[str] = afm.get(node_id, set()) or set()
         for dep_id in node.dependencies:
             if dep_id == node_id or dep_id not in graph.nodes:
                 continue  # skip self-loops and unknown deps (Layer A already handles these)
             a_io = io.get(dep_id, {})
-            a_outputs: Set[str] = a_io.get("outputs", set()) or set()
-            a_files: Set[str] = afm.get(dep_id, set()) or set()
+            a_outputs: set[str] = a_io.get("outputs", set()) or set()
+            a_files: set[str] = afm.get(dep_id, set()) or set()
             # Conservative: if any side lacks io AND files data, skip
             if not (a_outputs or b_inputs) and not (a_files or b_files):
                 continue  # both sides are empty — no data at all, skip
@@ -764,7 +762,7 @@ def lint_dependency_graph(
                     break  # one finding per edge
 
     # soft_phrase: scan dep_justifications in node_io if present
-    justifications: Dict[Tuple[str, str], str] = {}
+    justifications: dict[tuple[str, str], str] = {}
     for node_id, node_data in io.items():
         dep_justs = node_data.get("dep_justifications", {})
         if dep_justs:

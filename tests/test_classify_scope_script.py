@@ -19,6 +19,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -32,7 +33,7 @@ def _run(files: int, lines: int, project_dir: Path | None = None) -> dict:
     cmd = [sys.executable, str(_SCRIPT), "--files", str(files), "--lines", str(lines)]
     if project_dir is not None:
         cmd += ["--project-dir", str(project_dir)]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     assert proc.returncode == 0, f"script failed:\n{proc.stderr}"
     return json.loads(proc.stdout)
 
@@ -200,6 +201,7 @@ class TestSc6InvalidInput:
         proc = subprocess.run(
             [sys.executable, str(_SCRIPT), "--files", "-1", "--lines", "10"],
             capture_output=True, text=True,
+            check=False,
         )
         assert proc.returncode != 0
 
@@ -207,6 +209,7 @@ class TestSc6InvalidInput:
         proc = subprocess.run(
             [sys.executable, str(_SCRIPT), "--files", "1", "--lines", "-1"],
             capture_output=True, text=True,
+            check=False,
         )
         assert proc.returncode != 0
 
@@ -214,6 +217,7 @@ class TestSc6InvalidInput:
         proc = subprocess.run(
             [sys.executable, str(_SCRIPT), "--lines", "10"],
             capture_output=True, text=True,
+            check=False,
         )
         assert proc.returncode != 0
 
@@ -221,6 +225,7 @@ class TestSc6InvalidInput:
         proc = subprocess.run(
             [sys.executable, str(_SCRIPT), "--files", "5"],
             capture_output=True, text=True,
+            check=False,
         )
         assert proc.returncode != 0
 
@@ -231,7 +236,7 @@ class TestSc6InvalidInput:
 
 
 class TestSc7RenderedScriptExists:
-    _EXPECTED_PATHS = [
+    _EXPECTED_PATHS: ClassVar[list] = [
         _REPO_ROOT / ".map" / "scripts" / "classify_scope.py",
         _REPO_ROOT / "src" / "mapify_cli" / "templates" / "map" / "scripts" / "classify_scope.py",
     ]
@@ -244,6 +249,7 @@ class TestSc7RenderedScriptExists:
         proc = subprocess.run(
             [sys.executable, str(_SCRIPT), "--help"],
             capture_output=True, text=True,
+            check=False,
         )
         assert proc.returncode == 0
         assert "--files" in proc.stdout or "--files" in proc.stderr

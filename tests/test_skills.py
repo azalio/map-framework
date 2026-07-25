@@ -20,6 +20,7 @@ Validates that shipped skills keep a clean, Claude-compatible metadata surface:
 import json
 import re
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 import yaml
@@ -921,15 +922,14 @@ class TestSkillStructure:
             if not scripts_dir.exists():
                 continue
             for script in scripts_dir.iterdir():
-                if script.is_file() and script.suffix in (".sh", ".py"):
-                    # Check file has executable permission or is a python script
-                    if script.suffix == ".sh":
-                        import os
+                # Check file has executable permission or is a python script
+                if script.is_file() and script.suffix in (".sh", ".py") and script.suffix == ".sh":
+                    import os
 
-                        assert os.access(script, os.X_OK), (
-                            f"Script '{script}' is not executable. "
-                            f"Run: chmod +x {script}"
-                        )
+                    assert os.access(script, os.X_OK), (
+                        f"Script '{script}' is not executable. "
+                        f"Run: chmod +x {script}"
+                    )
 
 
 class TestLightweightWorkflowSkillContracts:
@@ -1048,7 +1048,7 @@ class TestPromptToneCalibration:
 class TestXMLPromptEnvelopeContracts:
     """Regression tests for long-context MAP subagent prompt structure."""
 
-    XML_ENVELOPE_SKILLS = ["map-plan", "map-efficient", "map-debug", "map-review"]
+    XML_ENVELOPE_SKILLS: ClassVar[list] = ["map-plan", "map-efficient", "map-debug", "map-review"]
 
     def _map_review_prompt_source(self, project_root, skills_root):
         if str(skills_root).startswith(".claude"):

@@ -1,9 +1,8 @@
 """Agent content generators for MAP Framework fallback mode."""
 
-from typing import List
 
 
-def create_task_decomposer_content(mcp_servers: List[str]) -> str:
+def create_task_decomposer_content(mcp_servers: list[str]) -> str:
     """Create task-decomposer agent content"""
     mcp_section = ""
     if "sequential-thinking" in mcp_servers:
@@ -40,7 +39,7 @@ Return a valid JSON document with subtasks, dependencies, and acceptance criteri
 """
 
 
-def create_actor_content(mcp_servers: List[str]) -> str:
+def create_actor_content(mcp_servers: list[str]) -> str:
     """Create actor agent content"""
     del mcp_servers  # no MCP guidance injected for this agent in fallback mode
     mcp_section = ""
@@ -109,7 +108,7 @@ Provide implementation with approach, code changes, trade-offs, and testing cons
 """
 
 
-def create_monitor_content(mcp_servers: List[str]) -> str:
+def create_monitor_content(mcp_servers: list[str]) -> str:
     """Create monitor agent content"""
     del mcp_servers  # no MCP guidance injected for this agent in fallback mode
     return """---
@@ -166,7 +165,7 @@ Return strictly valid JSON with validation results and specific issues.
 """
 
 
-def create_predictor_content(mcp_servers: List[str]) -> str:
+def create_predictor_content(mcp_servers: list[str]) -> str:
     """Create predictor agent content"""
     del mcp_servers  # no MCP guidance injected for this agent in fallback mode
     mcp_section = ""
@@ -195,7 +194,7 @@ Return JSON with predicted state, affected components, breaking changes, and ris
 """
 
 
-def create_evaluator_content(mcp_servers: List[str]) -> str:
+def create_evaluator_content(mcp_servers: list[str]) -> str:
     """Create evaluator agent content"""
     del mcp_servers  # no MCP guidance injected for this agent in fallback mode
     return """---
@@ -224,7 +223,7 @@ Return JSON with scores, strengths, weaknesses, and recommendation (proceed|impr
 """
 
 
-def create_reflector_content(mcp_servers: List[str]) -> str:
+def create_reflector_content(mcp_servers: list[str]) -> str:
     """Create reflector agent content"""
     del mcp_servers  # no MCP guidance injected for this agent in fallback mode
     return """---
@@ -257,7 +256,7 @@ Return JSON with:
 """
 
 
-def create_documentation_reviewer_content(mcp_servers: List[str]) -> str:
+def create_documentation_reviewer_content(mcp_servers: list[str]) -> str:
     """Create documentation-reviewer agent content"""
     del mcp_servers  # no MCP guidance injected for this agent in fallback mode
     mcp_section = ""

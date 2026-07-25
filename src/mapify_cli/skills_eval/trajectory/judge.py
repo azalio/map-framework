@@ -28,10 +28,10 @@ from pathlib import Path
 from typing import Any
 
 from mapify_cli.skills_eval.trajectory.eval_schema import (
+    JUDGE_COMPONENTS,
     ComponentScore,
     EvidenceLine,
     JudgeMeta,
-    JUDGE_COMPONENTS,
     TrajectoryBundle,
 )
 
@@ -140,7 +140,7 @@ class MockJudgeRunner(JudgeRunner):
     def model_tag(self) -> str | None:
         return self._model_tag
 
-    def run(self, prompt: str, timeout: float) -> tuple[str, str | None]:  # noqa: ARG002
+    def run(self, prompt: str, timeout: float) -> tuple[str, str | None]:
         del prompt, timeout  # mock ignores both
         return (self._payload, self._error)
 
@@ -161,7 +161,7 @@ class ClaudeJudgeRunner(JudgeRunner):
         return self._model
 
     def run(self, prompt: str, timeout: float) -> tuple[str, str | None]:
-        from mapify_cli.skills_eval.dispatcher import (  # noqa: PLC0415
+        from mapify_cli.skills_eval.dispatcher import (
             _eval_subprocess_env,
             _parse_envelope,
         )
@@ -179,6 +179,7 @@ class ClaudeJudgeRunner(JudgeRunner):
                     timeout=timeout,
                     cwd=jtmp,
                     env=_eval_subprocess_env(jtmp),
+                    check=False,
                 )
             except subprocess.TimeoutExpired:
                 return ("", f"timeout after {timeout}s")

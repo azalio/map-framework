@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 SUPPORTED_FRONTMATTER_FIELDS = frozenset(
     {
         "agent",
@@ -41,10 +40,10 @@ SUPPORTED_FRONTMATTER_FIELDS = frozenset(
 )
 
 FORBIDDEN_INSTRUCTION_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bignore\s+(?:all\s+)?(?:previous|above|prior)\s+instructions\b", re.I),
-    re.compile(r"\bdisregard\s+(?:all\s+)?(?:previous|above|prior)\s+instructions\b", re.I),
-    re.compile(r"\boverride\s+(?:all\s+)?(?:safety|security)\s+(?:rules|policies)\b", re.I),
-    re.compile(r"\breveal\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|message)\b", re.I),
+    re.compile(r"\bignore\s+(?:all\s+)?(?:previous|above|prior)\s+instructions\b", re.IGNORECASE),
+    re.compile(r"\bdisregard\s+(?:all\s+)?(?:previous|above|prior)\s+instructions\b", re.IGNORECASE),
+    re.compile(r"\boverride\s+(?:all\s+)?(?:safety|security)\s+(?:rules|policies)\b", re.IGNORECASE),
+    re.compile(r"\breveal\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|message)\b", re.IGNORECASE),
 )
 
 MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[[^\]\n]+\]\(([^)\n]+)\)")

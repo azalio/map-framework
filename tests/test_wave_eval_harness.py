@@ -31,25 +31,22 @@ SCRIPTS_PATH = (
 
 sys.path.insert(0, str(SCRIPTS_PATH))
 
-import map_step_runner  # noqa: E402  # type: ignore[import-not-found]
+import map_step_runner  # type: ignore[import-not-found]
+
+# ---------------------------------------------------------------------------
+# DependencyGraph import (same package as fixtures use)
+# ---------------------------------------------------------------------------
+from mapify_cli.dependency_graph import DependencyGraph
 
 # ---------------------------------------------------------------------------
 # Fixtures import
 # ---------------------------------------------------------------------------
-
-from tests.fixtures.wave_blueprints import (  # noqa: E402
+from tests.fixtures.wave_blueprints import (
     BlueprintFixture,
     conflict_split,
     linear_chain,
     two_wave_parallel,
 )
-
-# ---------------------------------------------------------------------------
-# DependencyGraph import (same package as fixtures use)
-# ---------------------------------------------------------------------------
-
-from mapify_cli.dependency_graph import DependencyGraph  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # wave / color-group shape assertions

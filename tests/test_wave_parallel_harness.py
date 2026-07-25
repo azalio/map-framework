@@ -30,8 +30,7 @@ SCRIPTS_PATH = (
 )
 sys.path.insert(0, str(SCRIPTS_PATH))
 
-import map_step_runner as m  # noqa: E402  # type: ignore[import-not-found]
-
+import map_step_runner as m  # type: ignore[import-not-found]
 
 # ---------------------------------------------------------------------------
 # Shared helpers (mirrors test_worktree_isolation.py conventions)
@@ -39,7 +38,7 @@ import map_step_runner as m  # noqa: E402  # type: ignore[import-not-found]
 
 
 def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=False)
 
 
 def _make_repo(tmp_path: Path, branch: str = "feat/x") -> Path:

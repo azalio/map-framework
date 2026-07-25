@@ -27,7 +27,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from mapify_cli.delivery.managed_file_copier import (
@@ -47,7 +46,6 @@ from mapify_cli.install_manifest import (
     reconcile_config,
     write_manifest,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

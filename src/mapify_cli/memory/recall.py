@@ -23,7 +23,7 @@ import json
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypeAlias
 
@@ -234,7 +234,7 @@ def _append_drop_log(
 ) -> None:
     """Append one JSONL drop record to recall-drop.log."""
     record = {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": datetime.now(UTC).isoformat(),
         "session_id": session_id,
         "slug": slug,
         "dropped_chars": dropped_chars,

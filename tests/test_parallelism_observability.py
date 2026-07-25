@@ -31,7 +31,7 @@ import pytest
 # ---------------------------------------------------------------------------
 sys.dont_write_bytecode = True
 
-from mapify_cli.parallelism_observability import (  # noqa: E402
+from mapify_cli.parallelism_observability import (
     ALL_DISPATCH_OUTCOMES,
     ALL_REASON_CODES,
     DISPATCH_OUTCOME_CONCURRENT_OBSERVED,
@@ -434,8 +434,7 @@ class TestMaxInFlightReplay:
             ev_type = ev.get("event", "")
             if ev_type == "started":
                 in_flight += 1
-                if in_flight > max_in_flight:
-                    max_in_flight = in_flight
+                max_in_flight = max(max_in_flight, in_flight)
             elif ev_type == "finished":
                 in_flight = max(0, in_flight - 1)
         return max_in_flight

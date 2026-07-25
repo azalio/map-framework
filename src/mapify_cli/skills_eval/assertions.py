@@ -29,7 +29,6 @@ from dataclasses import dataclass
 
 from mapify_cli.skills_eval.eval_schema import DispatchResult
 
-
 # ---------------------------------------------------------------------------
 # AssertionResult
 # ---------------------------------------------------------------------------

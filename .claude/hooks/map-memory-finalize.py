@@ -40,7 +40,7 @@ def main() -> None:
     try:
         incoming = resolve_session_id(input_data, PROJECT_DIR)
         finalize_dirty(incoming, PROJECT_DIR, timeout)
-    except Exception:   # noqa: BLE001 — hooks must never block
+    except Exception:   # noqa: BLE001, S110 — hooks must never block
         pass
     _silent()
 

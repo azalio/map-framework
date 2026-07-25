@@ -8,10 +8,10 @@ no I/O, no subprocess, no clock access (INV-2/INV-3).
 from __future__ import annotations
 
 from mapify_cli.grace_eval.schema import (
-    VARIANT_NAMES,
     CODE_LOCAL_VARIANTS,
-    PROMPT_INJECTED_VARIANTS,
     NO_ANCHOR_VARIANTS,
+    PROMPT_INJECTED_VARIANTS,
+    VARIANT_NAMES,
     GraceFixture,
     GraceReport,
     SweepFinding,
@@ -26,10 +26,10 @@ from mapify_cli.grace_eval.sweep import (
 )
 
 __all__ = [
-    "VARIANT_NAMES",
     "CODE_LOCAL_VARIANTS",
-    "PROMPT_INJECTED_VARIANTS",
     "NO_ANCHOR_VARIANTS",
+    "PROMPT_INJECTED_VARIANTS",
+    "VARIANT_NAMES",
     "GraceFixture",
     "GraceReport",
     "SweepFinding",

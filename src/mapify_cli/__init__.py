@@ -27,16 +27,17 @@ __version__ = "3.23.0"
 
 import json
 import os
-import subprocess
-import sys
 import shutil
 import ssl
-from datetime import datetime
+import subprocess
+import sys
+from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Mapping
+from typing import Any
 
-import typer
 import httpx
+import typer
 
 try:
     import truststore  # pyright: ignore[reportMissingImports]
@@ -46,48 +47,89 @@ except ImportError:
     truststore = None  # type: ignore[assignment]  # optional dependency
     HAS_TRUSTSTORE = False
 
-from rich.panel import Panel
-from rich.live import Live
 from rich.align import Align
+from rich.live import Live
+from rich.panel import Panel
 from rich.table import Table
 
-# Local submodule re-exports (v3.5.0 platform refactor)
-from mapify_cli.cli_ui import console
 from mapify_cli.cli_ui import (
-    StepTracker,
-    BannerGroup,
-    get_key as get_key,
-    select_with_arrows as select_with_arrows,
-    select_multiple_with_arrows as select_multiple_with_arrows,
-    show_banner,
     BANNER as BANNER,
+)
+from mapify_cli.cli_ui import (
     TAGLINE as TAGLINE,
+)
+
+# Local submodule re-exports (v3.5.0 platform refactor)
+from mapify_cli.cli_ui import (
+    BannerGroup,
+    StepTracker,
+    console,
+    show_banner,
+)
+from mapify_cli.cli_ui import (
+    get_key as get_key,
+)
+from mapify_cli.cli_ui import (
+    select_multiple_with_arrows as select_multiple_with_arrows,
+)
+from mapify_cli.cli_ui import (
+    select_with_arrows as select_with_arrows,
+)
+from mapify_cli.config import (
+    build_standard_mcp_servers,
+    configure_global_permissions,
+    create_mcp_config,
+    create_or_merge_project_mcp_json,
+    create_or_merge_project_settings_local,
+    read_project_mcp_json,
+)
+from mapify_cli.config import (
+    merge_mcp_json as merge_mcp_json,
+)
+from mapify_cli.config import (
+    write_project_mcp_json as write_project_mcp_json,
+)
+from mapify_cli.delivery import (
+    create_actor_content as create_actor_content,
+)
+from mapify_cli.delivery import (
+    create_agent_files as create_agent_files,
+)
+from mapify_cli.delivery import (
+    create_command_files as create_command_files,
+)
+from mapify_cli.delivery import (
+    create_commands_dir as create_commands_dir,
+)
+from mapify_cli.delivery import (
+    create_config_files as create_config_files,
+)
+from mapify_cli.delivery import (
+    create_documentation_reviewer_content as create_documentation_reviewer_content,
+)
+from mapify_cli.delivery import (
+    create_evaluator_content as create_evaluator_content,
+)
+from mapify_cli.delivery import (
+    create_hook_files as create_hook_files,
+)
+from mapify_cli.delivery import (
+    create_monitor_content as create_monitor_content,
+)
+from mapify_cli.delivery import (
+    create_predictor_content as create_predictor_content,
+)
+from mapify_cli.delivery import (
+    create_reference_files as create_reference_files,
+)
+from mapify_cli.delivery import (
+    create_reflector_content as create_reflector_content,
+)
+from mapify_cli.delivery import (
+    create_skill_files as create_skill_files,
 )
 from mapify_cli.delivery import (
     create_task_decomposer_content as create_task_decomposer_content,
-    create_actor_content as create_actor_content,
-    create_monitor_content as create_monitor_content,
-    create_predictor_content as create_predictor_content,
-    create_evaluator_content as create_evaluator_content,
-    create_reflector_content as create_reflector_content,
-    create_documentation_reviewer_content as create_documentation_reviewer_content,
-    create_agent_files as create_agent_files,
-    create_reference_files as create_reference_files,
-    create_command_files as create_command_files,
-    create_skill_files as create_skill_files,
-    create_hook_files as create_hook_files,
-    create_config_files as create_config_files,
-    create_commands_dir as create_commands_dir,
-)
-from mapify_cli.config import (
-    configure_global_permissions,
-    create_or_merge_project_settings_local,
-    create_mcp_config,
-    build_standard_mcp_servers,
-    read_project_mcp_json,
-    write_project_mcp_json as write_project_mcp_json,
-    merge_mcp_json as merge_mcp_json,
-    create_or_merge_project_mcp_json,
 )
 
 
@@ -101,7 +143,7 @@ def create_ssl_context():
             context.check_hostname = True
             context.verify_mode = ssl.CERT_REQUIRED
             return context
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
 
     # Fallback to standard SSL context
@@ -199,7 +241,7 @@ def version_callback(value: bool):
 @app.callback()
 def callback(
     ctx: typer.Context,
-    version: Optional[bool] = typer.Option(
+    version: bool | None = typer.Option(
         None,
         "--version",
         callback=version_callback,
@@ -237,7 +279,7 @@ def check_mcp_server(server: str) -> bool:
     return server in build_standard_mcp_servers()
 
 
-def is_debug_enabled(debug_flag: Optional[bool] = None) -> bool:
+def is_debug_enabled(debug_flag: bool | None = None) -> bool:
     """
     Check if debug mode is enabled via CLI flag or environment variable.
 
@@ -297,7 +339,7 @@ def count_command_templates() -> int:
 
 
 def count_project_markdown_files(
-    directory: Path, exclude_files: Optional[set[str]] = None
+    directory: Path, exclude_files: set[str] | None = None
 ) -> int:
     """Count markdown files in a project directory."""
     if not directory.exists():
@@ -338,7 +380,7 @@ def _detect_provider(project_path: Path) -> str:
     return "claude"
 
 
-def get_project_health(project_path: Path) -> Dict[str, Any]:
+def get_project_health(project_path: Path) -> dict[str, Any]:
     """Collect project health diagnostics for check/doctor commands."""
     agent_exclude = {"README.md", "CHANGELOG.md", "MCP-PATTERNS.md"}
     current_branch = sanitize_identifier(get_current_branch_name())
@@ -453,13 +495,13 @@ def get_current_branch_name() -> str:
         return "main"
 
 
-def get_branch_workspace_dir(project_path: Path, branch: Optional[str] = None) -> Path:
+def get_branch_workspace_dir(project_path: Path, branch: str | None = None) -> Path:
     """Return the branch-scoped MAP workspace directory."""
     branch_name = sanitize_identifier(branch or get_current_branch_name())
     return project_path / ".map" / branch_name
 
 
-def get_branch_artifact_templates() -> Dict[str, str]:
+def get_branch_artifact_templates() -> dict[str, str]:
     """Return artifact templates aligned to MAP branch workspaces."""
     return {
         "code-review-001.md": "# Code Review 001\n\n## Scope\n\n## Findings\n\n### High\n\n### Medium\n\n### Low\n\n## Verdict\n- [ ] Ready\n- [ ] Needs revision\n",
@@ -469,7 +511,7 @@ def get_branch_artifact_templates() -> Dict[str, str]:
 
 
 def initialize_branch_workspace(
-    project_path: Path, branch: Optional[str] = None
+    project_path: Path, branch: str | None = None
 ) -> Path:
     """Create branch-scoped planning artifacts inside `.map/<branch>/`."""
     branch_name = sanitize_identifier(branch or get_current_branch_name())
@@ -485,8 +527,8 @@ def initialize_branch_workspace(
 
 
 def get_branch_workspace_status(
-    project_path: Path, branch: Optional[str] = None
-) -> Dict[str, Any]:
+    project_path: Path, branch: str | None = None
+) -> dict[str, Any]:
     """Collect status information for branch-scoped planning artifacts."""
     branch_name = sanitize_identifier(branch or get_current_branch_name())
     workspace_dir = get_branch_workspace_dir(project_path, branch_name)
@@ -588,6 +630,7 @@ def init_git_repo(project_path: Path, quiet: bool = False) -> bool:
             ["git", "commit", "-m", "Initial commit from MAP Framework"],
             capture_output=True,
             text=True,
+            check=False,
         )
 
         if result.returncode != 0:
@@ -630,7 +673,7 @@ def init_git_repo(project_path: Path, quiet: bool = False) -> bool:
         os.chdir(original_cwd)
 
 
-def is_git_repo(path: Optional[Path] = None) -> bool:
+def is_git_repo(path: Path | None = None) -> bool:
     """Check if the specified path is inside a git repository"""
     if path is None:
         path = Path.cwd()
@@ -647,7 +690,7 @@ def is_git_repo(path: Optional[Path] = None) -> bool:
         return False
 
 
-def is_command(cmd_list: List[str]) -> bool:
+def is_command(cmd_list: list[str]) -> bool:
     """Check if a command exists on the system."""
     if not cmd_list:
         return False
@@ -658,7 +701,7 @@ def is_command(cmd_list: List[str]) -> bool:
         return False
 
 
-def get_latest_release(owner: str, repo: str) -> Optional[Dict[str, Any]]:
+def get_latest_release(owner: str, repo: str) -> dict[str, Any] | None:
     """Get the latest release from GitHub."""
     try:
         url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
@@ -666,14 +709,14 @@ def get_latest_release(owner: str, repo: str) -> Optional[Dict[str, Any]]:
             response = client.get(url)
             if response.status_code == 200:
                 return response.json()
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
     return None
 
 
 @app.command()
 def init(
-    project_name: Optional[str] = typer.Argument(
+    project_name: str | None = typer.Argument(
         None, help="Name for your new project directory (use '.' for current directory)"
     ),
     mcp: str = typer.Option(
@@ -697,7 +740,7 @@ def init(
         "--provider",
         help="Delivery provider: claude (default) or codex",
     ),
-    compression: Optional[str] = typer.Option(
+    compression: str | None = typer.Option(
         None,
         "--compression",
         help=(
@@ -708,7 +751,7 @@ def init(
             "overwrite user choices. See docs/USAGE.md."
         ),
     ),
-    compression_threshold: Optional[int] = typer.Option(
+    compression_threshold: int | None = typer.Option(
         None,
         "--compression-threshold",
         help=(
@@ -727,7 +770,7 @@ def init(
             "See docs/USAGE.md."
         ),
     ),
-    autonomy: Optional[bool] = typer.Option(
+    autonomy: bool | None = typer.Option(
         None,
         "--autonomy/--no-autonomy",
         help=(
@@ -769,7 +812,7 @@ def init(
 
         workflow_logger = MapWorkflowLogger(Path.cwd(), enabled=True)
         log_file = workflow_logger.start_session(
-            task_id=f"mapify_init_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            task_id=f"mapify_init_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
         )
         console.print(f"[dim]Debug logging enabled: {log_file}[/dim]")
         workflow_logger.log_event(
@@ -954,7 +997,7 @@ def init(
             tracker.complete(
                 "map-config", str(config_path.relative_to(project_path))
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
             tracker.error("map-config", f"skipped: {e}")
     else:
         # Claude provider: use ClaudeProvider abstraction
@@ -1006,7 +1049,7 @@ def init(
 
                 merge_sofa_gitignore(project_path)
             tracker.complete("map-config", str(config_path.relative_to(project_path)))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
             tracker.error("map-config", f"skipped: {e}")
 
         if selected_mcp_servers:
@@ -1052,7 +1095,7 @@ def init(
             "manifest",
             f"{len(manifest.entries)} entries → {manifest_path.relative_to(project_path)}",
         )
-    except Exception as _manifest_exc:
+    except Exception as _manifest_exc:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
         tracker.error("manifest", f"skipped: {_manifest_exc}")
 
     tracker.add("finalize", "Finalize")
@@ -1133,7 +1176,7 @@ def check(debug: bool = typer.Option(False, "--debug", help="Enable debug loggin
 
         workflow_logger = MapWorkflowLogger(Path.cwd(), enabled=True)
         log_file = workflow_logger.start_session(
-            task_id=f"mapify_check_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            task_id=f"mapify_check_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
         )
         console.print(f"[dim]Debug logging enabled: {log_file}[/dim]")
         workflow_logger.log_event(
@@ -1221,7 +1264,7 @@ def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug loggi
 
         workflow_logger = MapWorkflowLogger(Path.cwd(), enabled=True)
         log_file = workflow_logger.start_session(
-            task_id=f"mapify_doctor_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            task_id=f"mapify_doctor_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
         )
         console.print(f"[dim]Debug logging enabled: {log_file}[/dim]")
         workflow_logger.log_event(
@@ -1517,7 +1560,7 @@ def _mapify_install_kind() -> str:
     return "source"
 
 
-def _self_upgrade_command(kind: str) -> Optional[List[str]]:
+def _self_upgrade_command(kind: str) -> list[str] | None:
     """Return the argv that upgrades mapify-cli for ``kind``, or None if unknown."""
     if kind == "uv-tool":
         uv = shutil.which("uv")
@@ -1527,7 +1570,7 @@ def _self_upgrade_command(kind: str) -> Optional[List[str]]:
     return None
 
 
-def _run_self_upgrade(cmd: List[str]) -> int:
+def _run_self_upgrade(cmd: list[str]) -> int:
     """Run the self-upgrade command, streaming its output. Returns the exit code.
 
     Returns ``127`` when the executable is not found. Isolated into its own
@@ -1552,7 +1595,7 @@ def upgrade():
 
     console.print("[cyan]Checking for the latest release...[/cyan]")
     latest_release = get_latest_release("azalio", "map-framework")
-    latest_version: Optional[str] = None
+    latest_version: str | None = None
 
     if latest_release and latest_release.get("tag_name"):
         latest_version = str(latest_release["tag_name"]).lstrip("v")
@@ -1625,7 +1668,7 @@ def upgrade():
 
 @app.command("check-installed")
 def check_installed(
-    project_path: Optional[Path] = typer.Argument(
+    project_path: Path | None = typer.Argument(
         None,
         help="Project root directory (defaults to current directory).",
     ),
@@ -1699,7 +1742,7 @@ def check_installed(
 
 @app.command()
 def uninstall(
-    project_path: Optional[Path] = typer.Argument(
+    project_path: Path | None = typer.Argument(
         None,
         help="Project root directory (defaults to current directory).",
     ),
@@ -1800,7 +1843,7 @@ def _read_preset_manifest(preset_path: Path) -> dict[str, Any] | None:
 
 @preset_app.command("list")
 def preset_list(
-    project_path: Optional[Path] = typer.Argument(
+    project_path: Path | None = typer.Argument(
         None,
         help="Project root directory (defaults to current directory).",
     ),
@@ -1858,7 +1901,7 @@ def preset_add(
         help="Path to a preset directory containing manifest.json.",
         show_default=False,
     ),
-    project_path: Optional[Path] = typer.Argument(
+    project_path: Path | None = typer.Argument(
         None,
         help="Project root directory (defaults to current directory).",
     ),
@@ -1944,7 +1987,7 @@ def _resolve_installed_preset(presets_root: Path, preset_id: str) -> Path | None
 @preset_app.command("remove")
 def preset_remove(
     preset_id: str = typer.Argument(..., help="ID of the preset to remove."),
-    project_path: Optional[Path] = typer.Argument(
+    project_path: Path | None = typer.Argument(
         None,
         help="Project root directory (defaults to current directory).",
     ),
@@ -1970,7 +2013,7 @@ def preset_remove(
 @preset_app.command("enable")
 def preset_enable(
     preset_id: str = typer.Argument(..., help="ID of the preset to enable."),
-    project_path: Optional[Path] = typer.Argument(
+    project_path: Path | None = typer.Argument(
         None,
         help="Project root directory (defaults to current directory).",
     ),
@@ -1991,7 +2034,7 @@ def preset_enable(
 @preset_app.command("disable")
 def preset_disable(
     preset_id: str = typer.Argument(..., help="ID of the preset to disable."),
-    project_path: Optional[Path] = typer.Argument(
+    project_path: Path | None = typer.Argument(
         None,
         help="Project root directory (defaults to current directory).",
     ),
@@ -2012,7 +2055,7 @@ def preset_disable(
 @preset_app.command("resolve")
 def preset_resolve(
     template_name: str = typer.Argument(..., help="Template name to resolve (e.g. 'map-efficient.md')."),
-    project_path: Optional[Path] = typer.Argument(
+    project_path: Path | None = typer.Argument(
         None,
         help="Project root directory (defaults to current directory).",
     ),
@@ -2055,7 +2098,7 @@ def preset_resolve(
         core_path = get_templates_dir() / template_name
         if core_path.is_file():
             layers.append({"tier": "core", "path": str(core_path), "enabled": True})
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
 
     if output_json:
@@ -2129,7 +2172,7 @@ def _build_resolution_order(presets_root: Path, template_name: str) -> list[dict
 @preset_app.command("render")
 def preset_render(
     template_name: str = typer.Argument(..., help="Template name to render (e.g. 'map-efficient.md')."),
-    project_path: Optional[Path] = typer.Argument(
+    project_path: Path | None = typer.Argument(
         None,
         help="Project root directory (defaults to current directory).",
     ),
@@ -2161,7 +2204,7 @@ def preset_render(
             else:
                 composed = ""
                 source = "core:(not found)"
-        except Exception:
+        except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
             composed = ""
             source = "core:(error)"
 
@@ -2184,7 +2227,7 @@ def preset_render(
         }))
         return
 
-    if dry_run or True:
+    if True:
         console.print(f"[bold]Composed:[/bold] [cyan]{template_name}[/cyan]")
         if applied:
             console.print(f"[dim]Layers applied:[/dim] {' → '.join(applied)}")
@@ -2198,7 +2241,7 @@ def preset_render(
 def preset_set_priority(
     preset_id: str = typer.Argument(..., help="ID of the preset to reprioritize."),
     priority: int = typer.Argument(..., help="Priority value (higher = applied first). Default: 50."),
-    project_path: Optional[Path] = typer.Argument(
+    project_path: Path | None = typer.Argument(
         None,
         help="Project root directory (defaults to current directory).",
     ),
@@ -2341,7 +2384,7 @@ def research_eval_score(
         ...,
         help="JSON list, or object with expected_locations, of target file ranges",
     ),
-    repo_root: Optional[Path] = typer.Option(
+    repo_root: Path | None = typer.Option(
         None,
         "--repo-root",
         help="Fixture repository root for path and line-range validation",
@@ -2459,7 +2502,7 @@ def research_eval_compare(
         "--treatment-name",
         help="Display name for the treatment arm",
     ),
-    repo_root: Optional[Path] = typer.Option(
+    repo_root: Path | None = typer.Option(
         None,
         "--repo-root",
         help="Fixture repository root for path existence (stale detection) and line validation",
@@ -2495,7 +2538,7 @@ def research_eval_compare(
         "--no-warn-regression",
         help="Suppress quality-regression warnings (treatment vs baseline delta)",
     ),
-    out: Optional[Path] = typer.Option(
+    out: Path | None = typer.Option(
         None,
         "--out",
         help="Write JSON report to this file (default: stdout only)",
@@ -2562,7 +2605,7 @@ def research_eval_compare(
 @skill_eval_app.command("run")
 def skill_eval_run(
     skill: str = typer.Argument(..., help="Skill under test, e.g. map-debug"),
-    eval_set: Optional[Path] = typer.Option(
+    eval_set: Path | None = typer.Option(
         None, "--eval-set", help="Path to eval-set JSON"
     ),
     dry_run: bool = typer.Option(
@@ -2574,7 +2617,7 @@ def skill_eval_run(
     max_concurrency: int = typer.Option(
         1, "--max-concurrency", min=1, help="Bounded parallel dispatch (default 1)"
     ),
-    model: Optional[str] = typer.Option(
+    model: str | None = typer.Option(
         None,
         "--model",
         help="Model alias for claude -p (e.g. haiku, sonnet, opus). "
@@ -2594,11 +2637,11 @@ def skill_eval_run(
       2 - Validation error (missing --eval-set or malformed eval-set file)
     """
     # Intent: lazy import to keep top-level import time low and avoid import cycles.
-    import mapify_cli.skills_eval.runner as _runner
+
     import mapify_cli.skills_eval.aggregator as _aggregator
+    import mapify_cli.skills_eval.runner as _runner
     from mapify_cli.skills_eval.dispatcher import ClaudeSubprocessDispatcher
     from mapify_cli.skills_eval.eval_schema import EvalResultRecord
-    from datetime import timezone
 
     # SC-2: --eval-set is required.
     if eval_set is None:
@@ -2637,11 +2680,11 @@ def skill_eval_run(
     if resume:
         latest = _runner.latest_run_path(root, skill)
         out_path = latest if latest is not None else _runner.default_run_path(
-            root, skill, datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            root, skill, datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         )
     else:
         out_path = _runner.default_run_path(
-            root, skill, datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            root, skill, datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         )
 
     # Run the evaluation matrix.
@@ -2657,7 +2700,7 @@ def skill_eval_run(
     )
 
     # Read all records from the output file, aggregate, and print summary.
-    records: List[EvalResultRecord] = []
+    records: list[EvalResultRecord] = []
     if out_path.exists():
         for raw_line in out_path.read_text(encoding="utf-8").splitlines():
             raw_line = raw_line.strip()
@@ -2693,7 +2736,7 @@ def skill_eval_run(
 
 @validate_app.command("graph")
 def validate_graph(
-    input_file: Optional[Path] = typer.Argument(
+    input_file: Path | None = typer.Argument(
         None, help="JSON file to validate (or use stdin)"
     ),
     visualize: bool = typer.Option(
@@ -2717,9 +2760,9 @@ def validate_graph(
       2 - Malformed input (invalid JSON or missing required fields)
     """
     from mapify_cli.tools.validate_dependencies import (
-        load_input,
-        DependencyValidator,
         ASCIIGraphRenderer,
+        DependencyValidator,
+        load_input,
         print_report,
     )
 
@@ -2771,7 +2814,7 @@ def _open_best_effort(path: Path) -> None:
 
     try:
         webbrowser.open(path.as_uri())
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         pass  # SC-2: never errors the run
 
 
@@ -2806,7 +2849,7 @@ _OPTIMIZE_MIN_ENTRIES: int = 5
 @skill_eval_app.command("optimize")
 def skill_eval_optimize(
     skill: str = typer.Argument(..., help="Skill under optimisation, e.g. map-plan"),
-    eval_set: Optional[Path] = typer.Option(
+    eval_set: Path | None = typer.Option(
         None, "--eval-set", help="Path to eval-set JSON"
     ),
     iterations: int = typer.Option(
@@ -2832,7 +2875,6 @@ def skill_eval_optimize(
     import json  # lazy — keep top-level import time low
 
     import mapify_cli.skills_eval.runner as _runner
-    from datetime import timezone
 
     # 1. --eval-set is required.
     if eval_set is None:
@@ -2890,7 +2932,7 @@ def skill_eval_optimize(
     root = Path.cwd()
     out_dir = root / ".map" / "eval-runs" / skill
     out_dir.mkdir(parents=True, exist_ok=True)
-    run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
     current_description = _read_skill_description(root, skill)
 
@@ -2948,7 +2990,7 @@ def skill_eval_optimize(
 @skill_eval_app.command("view")
 def skill_eval_view(
     skill: str = typer.Argument(..., help="Skill whose optimization result to view"),
-    result_path: Optional[Path] = typer.Option(
+    result_path: Path | None = typer.Option(
         None, "--result", help="Path to a specific *-optimize.json file"
     ),
     open_html: bool = typer.Option(
@@ -2998,7 +3040,7 @@ def skill_eval_trajectory(
     skill: str = typer.Argument(
         ..., help="Skill under evaluation, e.g. map-task"
     ),
-    fixture: Optional[Path] = typer.Option(
+    fixture: Path | None = typer.Option(
         None,
         "--fixture",
         help="Path to a whole-skill fixture directory (manifest.json + repo/).",
@@ -3028,12 +3070,12 @@ def skill_eval_trajectory(
         "--no-judge",
         help="Skip the LLM judge (deterministic components only). Cheapest.",
     ),
-    anchor: Optional[str] = typer.Option(
+    anchor: str | None = typer.Option(
         None,
         "--anchor",
         help="Compare against a prior run: path to a .jsonl, or 'latest'.",
     ),
-    out: Optional[Path] = typer.Option(
+    out: Path | None = typer.Option(
         None, "--out", help="Output .jsonl path (default .map/eval-runs/trajectory/...)."
     ),
     resume: bool = typer.Option(
@@ -3061,18 +3103,17 @@ def skill_eval_trajectory(
       1 - Runtime error (claude not found, or unexpected failure)
       2 - Validation error (missing --fixture or malformed fixture)
     """
-    from datetime import timezone
 
     import mapify_cli.skills_eval.trajectory.judge as _judge
     import mapify_cli.skills_eval.trajectory.runner as _trunner
     from mapify_cli.skills_eval.trajectory.dispatcher import (
         ClaudeTrajectoryDispatcher,
     )
+    from mapify_cli.skills_eval.trajectory.repeated import aggregate_repeated
     from mapify_cli.skills_eval.trajectory.report import (
         build_report,
         render_comparison_to_path,
     )
-    from mapify_cli.skills_eval.trajectory.repeated import aggregate_repeated
 
     # SC-2: --fixture is required.
     if fixture is None:
@@ -3090,7 +3131,7 @@ def skill_eval_trajectory(
         raise typer.Exit(2)
 
     root = Path.cwd()
-    run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
     if out is not None:
         out_path = out
@@ -3190,7 +3231,7 @@ def skill_eval_trajectory(
         console.print("  [dim]judge skipped (--no-judge)[/dim]")
 
 
-def _resolve_anchor(anchor: str, root: Path, skill: str) -> Optional[Path]:
+def _resolve_anchor(anchor: str, root: Path, skill: str) -> Path | None:
     """Resolve ``--anchor`` to a .jsonl path ('latest' or an explicit path)."""
     if anchor == "latest":
         latest_dir = root / ".map" / "eval-runs" / "trajectory" / skill
@@ -3234,7 +3275,7 @@ def code_map_query(
         max=20,
         help="Maximum number of locations to return (default 5).",
     ),
-    out: Optional[Path] = typer.Option(
+    out: Path | None = typer.Option(
         None,
         "--out",
         help="Write ResearchEvidence JSON to this file (default: stdout only).",
@@ -3272,11 +3313,11 @@ def code_map_query(
 
 @domain_skill_app.command("init")
 def domain_skill_init(
-    project_path: Optional[str] = typer.Argument(
+    project_path: str | None = typer.Argument(
         None,
         help="Project directory to bootstrap the domain skill in (default: current directory)",
     ),
-    name: Optional[str] = typer.Option(
+    name: str | None = typer.Option(
         None,
         "--name",
         help="Skill name in kebab-case (default: <project-name>-domain)",
@@ -3339,7 +3380,7 @@ def domain_skill_init(
 
 @governance_app.command("report")
 def governance_report(
-    project_path: Optional[str] = typer.Argument(
+    project_path: str | None = typer.Argument(
         None,
         help="Project directory to audit (default: current directory)",
     ),
@@ -3348,7 +3389,7 @@ def governance_report(
         "--json",
         help="Output the report as JSON instead of Markdown",
     ),
-    out: Optional[str] = typer.Option(
+    out: str | None = typer.Option(
         None,
         "--out",
         help="Write the report to a file instead of stdout",

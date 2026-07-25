@@ -15,17 +15,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from mapify_cli.delivery.template_renderer import (
     assert_no_stray_delimiters,
     diff_rendered_trees,
     get_environment,
-    render_tree,
     render_repo_trees,
+    render_tree,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -156,6 +154,7 @@ class TestLazyImport:
             ],
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode == 0, (
             f"Lazy-import assertion failed:\n"
@@ -179,6 +178,7 @@ class TestLazyImport:
             ],
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode == 0, (
             f"Post-get_environment assertion failed:\n"
@@ -364,6 +364,7 @@ class TestBrokenTemplateAbort:
         self, tmp_path: Path
     ) -> None:
         """A broken template must raise; pre-seeded live hooks must be unchanged."""
+        import jinja2
         import pytest
 
         templates_src = tmp_path / "templates_src"
@@ -386,7 +387,7 @@ class TestBrokenTemplateAbort:
             "[% if %]",  # invalid Jinja2 syntax
         )
 
-        with pytest.raises(Exception):
+        with pytest.raises(jinja2.TemplateSyntaxError):
             render_tree(
                 "claude",
                 templates_src_root=templates_src,
@@ -438,6 +439,7 @@ class TestBrokenTemplateAbort:
         self, tmp_path: Path
     ) -> None:
         """A new hook template must NOT be created if any template raises."""
+        import jinja2
         import pytest
 
         templates_src = tmp_path / "templates_src"
@@ -453,7 +455,7 @@ class TestBrokenTemplateAbort:
             "# new hook\n",
         )
 
-        with pytest.raises(Exception):
+        with pytest.raises(jinja2.TemplateSyntaxError):
             render_tree(
                 "claude",
                 templates_src_root=templates_src,
@@ -508,7 +510,7 @@ _AGENTS_SKILLS_ROOT = _REPO_ROOT / ".agents" / "skills"
 _TEMPLATES_CODEX = _TEMPLATES_DEST / "codex"
 _TEMPLATES_SRC_CODEX = _TEMPLATES_SRC / "codex"
 
-import pytest as _pytest  # noqa: E402 (needed for skipif marker below)
+import pytest as _pytest
 
 _skip_no_templates_src = _pytest.mark.skipif(
     not _templates_src_available(),

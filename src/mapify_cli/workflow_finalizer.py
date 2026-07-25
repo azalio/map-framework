@@ -7,7 +7,6 @@ to won't_do status when a workflow is abandoned before completion.
 Part of ST-006: Create finalize_workflow() function for won't_do transition.
 """
 
-from typing import Optional
 
 from mapify_cli.workflow_state import WorkflowState
 
@@ -39,7 +38,7 @@ def finalize_workflow(
     """
     # Find the currently active subtask (in_progress)
     # Use None instead of empty string to match schema expectations
-    active_subtask_id: Optional[str] = None
+    active_subtask_id: str | None = None
     for subtask in state.subtasks:
         if subtask.status == "in_progress":
             active_subtask_id = subtask.id

@@ -4,20 +4,18 @@ Extracted from __init__.py to reduce module size.
 Contains interactive selection widgets, progress tracking, and banner display.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Any
 
-import typer
 import readchar
-
-from rich.console import Console
-from rich.panel import Panel
-from rich.text import Text
-from rich.live import Live
+import typer
 from rich.align import Align
+from rich.console import Console
+from rich.live import Live
+from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 from rich.tree import Tree
 from typer.core import TyperGroup
-
 
 # ASCII Art Banner
 BANNER = """
@@ -37,7 +35,7 @@ class StepTracker:
 
     def __init__(self, title: str):
         self.title = title
-        self.steps: List[Dict[str, Any]] = (
+        self.steps: list[dict[str, Any]] = (
             []
         )  # list of dicts: {key, label, status, detail}
         self._refresh_cb = None
@@ -82,7 +80,7 @@ class StepTracker:
         if self._refresh_cb:
             try:
                 self._refresh_cb()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
                 pass
 
     def render(self):
@@ -162,7 +160,7 @@ def get_key():
 def select_with_arrows(
     options: dict,
     prompt_text: str = "Select an option",
-    default_key: Optional[str] = None,
+    default_key: str | None = None,
 ) -> str:
     """Interactive selection using arrow keys"""
     option_keys = list(options.keys())
@@ -227,7 +225,7 @@ def select_with_arrows(
 
 def select_multiple_with_arrows(
     options: dict, prompt_text: str = "Select options"
-) -> List[str]:
+) -> list[str]:
     """Interactive multiple selection using arrow keys and space"""
     option_keys = list(options.keys())
     selected_index = 0

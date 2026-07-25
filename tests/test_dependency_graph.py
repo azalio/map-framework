@@ -8,6 +8,7 @@ Validates the three validation criteria from ST-004:
 """
 
 import pytest
+
 from mapify_cli.dependency_graph import (
     DependencyGraph,
     LintFinding,

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Smoke test: jinja2 runtime dependency is installed and meets the version floor."""
 
 import jinja2

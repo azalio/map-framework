@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """diagnostics.py
 
 Small helper for recording structured diagnostics from test/lint commands.
@@ -18,13 +17,13 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def get_branch_name() -> str:
@@ -44,7 +43,7 @@ def get_branch_name() -> str:
             if ".." in sanitized or sanitized.startswith("."):
                 return "default"
             return sanitized or "default"
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
     return "default"
 
@@ -63,7 +62,7 @@ def default_runs_dir(branch: str) -> Path:
 
 def make_run_dir(branch: str, base_time: str | None = None) -> Path:
     """Create a unique timestamped run dossier directory."""
-    stamp = base_time or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    stamp = base_time or datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     runs_dir = default_runs_dir(branch)
     runs_dir.mkdir(parents=True, exist_ok=True)
 

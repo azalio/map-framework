@@ -13,10 +13,9 @@ Circuit breaker config source: .claude/ralph-loop-config.json
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional
 
 
 class InvalidTransitionError(Exception):
@@ -39,7 +38,7 @@ class RalphLoopPhase(Enum):
 
 
 # Valid state transitions (state machine)
-VALID_TRANSITIONS: Dict[RalphLoopPhase, List[RalphLoopPhase]] = {
+VALID_TRANSITIONS: dict[RalphLoopPhase, list[RalphLoopPhase]] = {
     RalphLoopPhase.INIT: [RalphLoopPhase.DECOMPOSITION],
     RalphLoopPhase.DECOMPOSITION: [
         RalphLoopPhase.EXECUTION,
@@ -90,11 +89,11 @@ class RalphLoopState:
     total_tool_calls: int = 0
 
     # Timestamps
-    started_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    started_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     # Failure tracking
-    failure_summaries: List[str] = field(default_factory=list)
+    failure_summaries: list[str] = field(default_factory=list)
 
     # Schema version for migrations
     schema_version: int = 1
@@ -116,12 +115,12 @@ class RalphLoopState:
                 f"Valid transitions: {[p.value for p in valid_targets]}"
             )
         self.phase = to_phase
-        self.updated_at = datetime.now().isoformat()
+        self.updated_at = datetime.now(UTC).isoformat()
 
     def reset_limits(self) -> None:
         """Reset iteration counters for recovery from HARD_STOP."""
         self.total_tool_calls = 0
-        self.updated_at = datetime.now().isoformat()
+        self.updated_at = datetime.now(UTC).isoformat()
 
     def to_dict(self) -> dict:
         """
@@ -156,8 +155,8 @@ class RalphLoopState:
             phase=RalphLoopPhase(data.get("phase", "init")),
             plan_iteration=data.get("plan_iteration", 1),
             total_tool_calls=data.get("total_tool_calls", 0),
-            started_at=data.get("started_at", datetime.now().isoformat()),
-            updated_at=data.get("updated_at", datetime.now().isoformat()),
+            started_at=data.get("started_at", datetime.now(UTC).isoformat()),
+            updated_at=data.get("updated_at", datetime.now(UTC).isoformat()),
             failure_summaries=data.get("failure_summaries", []),
         )
 
@@ -246,7 +245,7 @@ class CircuitBreakerConfig:
 
 def check_circuit_breaker(
     state: RalphLoopState, config: CircuitBreakerConfig
-) -> Optional[str]:
+) -> str | None:
     """
     Check if circuit breaker should trigger.
 
@@ -264,7 +263,7 @@ def check_circuit_breaker(
     # Check wall time limit
     try:
         started = datetime.fromisoformat(state.started_at)
-        elapsed_minutes = (datetime.now() - started).total_seconds() / 60
+        elapsed_minutes = (datetime.now(UTC) - started).total_seconds() / 60
         if elapsed_minutes >= config.max_wall_time_minutes:
             return f"Max wall time ({config.max_wall_time_minutes}min) exceeded"
     except ValueError:
@@ -316,7 +315,7 @@ class IterationMetrics:
     timestamp: str
 
 
-def is_thrashing(metrics: List[IterationMetrics], window: int = 3) -> bool:
+def is_thrashing(metrics: list[IterationMetrics], window: int = 3) -> bool:
     """
     Detect thrashing: oscillating between states without progress.
     Returns True if last N iterations show no net improvement.
@@ -343,7 +342,7 @@ def is_thrashing(metrics: List[IterationMetrics], window: int = 3) -> bool:
     return net_progress <= 0 or confidence_variance > 0.3
 
 
-def get_improvement_rate(metrics: List[IterationMetrics]) -> float:
+def get_improvement_rate(metrics: list[IterationMetrics]) -> float:
     """
     Calculate issues resolved per iteration.
 
@@ -363,10 +362,10 @@ def get_improvement_rate(metrics: List[IterationMetrics]) -> float:
 class RootCauseAnalysis:
     """Structured analysis of verification failure."""
 
-    unmet_requirements: List[str]
-    error_files: List[str]
+    unmet_requirements: list[str]
+    error_files: list[str]
     fix_type: str  # "code_fix" | "plan_change" | "both"
-    invalidated_subtasks: List[str]  # "completed" subtasks that may need redo
+    invalidated_subtasks: list[str]  # "completed" subtasks that may need redo
     suggested_action: str
 
 
@@ -377,10 +376,10 @@ class FinalVerificationResult:
     passed: bool
     verification_method: str  # "tests" | "mcp_tool" | "manual" | "combined"
     timestamp: str
-    issues: List[str] = field(default_factory=list)
+    issues: list[str] = field(default_factory=list)
     confidence: float = 1.0
     iteration: int = 1
-    root_cause: Optional[RootCauseAnalysis] = None  # REQUIRED if passed=False
+    root_cause: RootCauseAnalysis | None = None  # REQUIRED if passed=False
 
     @classmethod
     def from_json_file(cls, path: Path) -> "FinalVerificationResult":
@@ -398,7 +397,7 @@ class FinalVerificationResult:
         return cls(
             passed=passed,
             verification_method=data["verification_method"],
-            timestamp=data.get("timestamp", datetime.now().isoformat()),
+            timestamp=data.get("timestamp", datetime.now(UTC).isoformat()),
             issues=data.get("issues", []),
             confidence=data.get("confidence", 1.0),
             iteration=data.get("iteration", 1),

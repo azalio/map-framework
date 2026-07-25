@@ -235,6 +235,7 @@ def test_load_eval_set_valid_and_invalid(tmp_path: Path) -> None:
 def test_vc1_subcommand_registered() -> None:
     """VC1: skill-eval subcommand is registered in the app and appears in help."""
     from typer.testing import CliRunner
+
     from mapify_cli import app
 
     runner = CliRunner()
@@ -246,7 +247,9 @@ def test_vc1_subcommand_registered() -> None:
 def test_vc2_dry_run_counts_no_dispatch(tmp_path: Path) -> None:
     """VC2: --dry-run prints planned count and does NOT call the dispatcher."""
     import json
+
     from typer.testing import CliRunner
+
     from mapify_cli import app
 
     eval_file = tmp_path / "eval.json"
@@ -288,8 +291,10 @@ def test_vc2_dry_run_counts_no_dispatch(tmp_path: Path) -> None:
 def test_vc3_missing_claude_exits_nonzero(tmp_path: Path) -> None:
     """VC3/HC-6: when claude is not on PATH, exit nonzero with 'requires-cmd: claude'."""
     import json
-    import mapify_cli
+
     from typer.testing import CliRunner
+
+    import mapify_cli
     from mapify_cli import app
 
     eval_file = tmp_path / "eval.json"
@@ -321,7 +326,9 @@ def test_vc3_missing_claude_exits_nonzero(tmp_path: Path) -> None:
 def test_dry_run_malformed_eval_set_exits_2(tmp_path: Path) -> None:
     """SC-2: malformed eval-set (empty entries) under --dry-run exits 2, no dispatch."""
     import json
+
     from typer.testing import CliRunner
+
     from mapify_cli import app
 
     eval_file = tmp_path / "empty_entries.json"
@@ -374,9 +381,9 @@ def test_vc2_mock_dispatcher_sets_triggered_skill_no_subprocess() -> None:
     assert result.triggered_skill == "map-x"
 
     # AST-walk MockDispatcher.dispatch to confirm no subprocess or .run calls (INV-2).
+    import ast as _ast
     import inspect
     import textwrap
-    import ast as _ast
     source = textwrap.dedent(inspect.getsource(MockDispatcher.dispatch))
     tree = _ast.parse(source)
     for node in _ast.walk(tree):
@@ -645,17 +652,19 @@ def test_vc2_no_anthropic_import_in_skills_eval() -> None:
         # os.environ[...] or os.getenv(...) referencing the key.
         for node in _ast.walk(tree):
             # os.environ["ANTHROPIC_API_KEY"] or os.environ.get("ANTHROPIC_API_KEY")
-            if isinstance(node, _ast.Subscript):
-                # Check if this is os.environ[<key>]
-                if isinstance(node.value, _ast.Attribute):
-                    if node.value.attr == "environ":
-                        slice_val = node.slice
-                        # Python 3.9+: slice is the node directly
-                        key_node = slice_val
-                        if isinstance(key_node, _ast.Constant) and isinstance(key_node.value, str):
-                            assert "ANTHROPIC_API_KEY" not in key_node.value, (
-                                f"Found ANTHROPIC_API_KEY env read in {py_file}"
-                            )
+            # Check if this is os.environ[<key>]
+            if (
+                isinstance(node, _ast.Subscript)
+                and isinstance(node.value, _ast.Attribute)
+                and node.value.attr == "environ"
+            ):
+                slice_val = node.slice
+                # Python 3.9+: slice is the node directly
+                key_node = slice_val
+                if isinstance(key_node, _ast.Constant) and isinstance(key_node.value, str):
+                    assert "ANTHROPIC_API_KEY" not in key_node.value, (
+                        f"Found ANTHROPIC_API_KEY env read in {py_file}"
+                    )
             if isinstance(node, _ast.Call):
                 # os.getenv("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
                 func = node.func

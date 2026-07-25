@@ -78,7 +78,7 @@ def patch_skill_description(skill_md_path: Path, new_description: str) -> None:
     body_end = body_start  # exclusive end index
     for i in range(body_start, len(fm_lines)):
         line = fm_lines[i]
-        if line == "" or line.startswith(" ") or line.startswith("\t"):
+        if line == "" or line.startswith((" ", "\t")):
             body_end = i + 1
         else:
             break
@@ -183,7 +183,7 @@ def apply_optimized_description(
     # Intent: import inline to keep module importable without jinja2 at module load time.
     # Pass templates_src_root explicitly so that when repo_root is a temp dir
     # the renderer reads from the temp copy, not the installed package source.
-    from mapify_cli.delivery.template_renderer import render_repo_trees  # noqa: PLC0415
+    from mapify_cli.delivery.template_renderer import render_repo_trees
 
     render_templates_src = repo_root / "src" / "mapify_cli" / "templates_src"
     render_repo_trees("claude", repo_root=repo_root, templates_src_root=render_templates_src)

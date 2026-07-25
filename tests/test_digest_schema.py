@@ -21,7 +21,6 @@ from mapify_cli.memory.digest_schema import (
     sanitize_value,
 )
 
-
 # ---------------------------------------------------------------------------
 # VC1: field-name constants
 # ---------------------------------------------------------------------------
@@ -323,7 +322,7 @@ class TestVC4SanitizeValue:
     def test_vc4_all_c0_chars_stripped(self) -> None:
         """Every character in U+0000-U+001F and U+007F must be removed (excluding space/tab which become space)."""
         # Build a string with all C0 except \n, \r, \t (those become spaces, not stripped)
-        c0_chars = "".join(chr(i) for i in range(0x00, 0x20) if i not in (0x09, 0x0A, 0x0D))
+        c0_chars = "".join(chr(i) for i in range(0x20) if i not in (0x09, 0x0A, 0x0D))
         c0_chars += "\x7f"
         result = sanitize_value(c0_chars)
         for char in result:

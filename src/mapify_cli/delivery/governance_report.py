@@ -14,7 +14,6 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Governance categories
@@ -245,7 +244,7 @@ class GovernanceReport:
     project_path: Path
     assets: list[GovernanceAsset] = field(default_factory=list)
     gaps: list[str] = field(default_factory=list)
-    skill_rules_version: Optional[str] = None
+    skill_rules_version: str | None = None
 
     # ------------------------------------------------------------------ #
     # Derived views                                                        #
@@ -382,7 +381,7 @@ class GovernanceReport:
 # ---------------------------------------------------------------------------
 
 
-def _read_skill_rules(claude_dir: Path) -> tuple[Optional[str], dict[str, dict[str, object]]]:
+def _read_skill_rules(claude_dir: Path) -> tuple[str | None, dict[str, dict[str, object]]]:
     """Read skill-rules.json and return (version, skills_dict)."""
     rules_path = claude_dir / "skills" / "skill-rules.json"
     if not rules_path.exists():
@@ -523,7 +522,7 @@ def _scan_learned_rules(claude_dir: Path) -> list[GovernanceAsset]:
     return assets
 
 
-def _first_heading(path: Path) -> Optional[str]:
+def _first_heading(path: Path) -> str | None:
     try:
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             m = re.match(r"^#+\s+(.+)", line.strip())

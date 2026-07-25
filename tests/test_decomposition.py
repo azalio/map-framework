@@ -30,7 +30,7 @@ SCRIPTS_PATH = (
 
 sys.path.insert(0, str(SCRIPTS_PATH))
 
-import map_step_runner  # noqa: E402  # type: ignore[import-not-found]
+import map_step_runner  # type: ignore[import-not-found]
 
 # ---------------------------------------------------------------------------
 # Requirements Index sentinel constants (mirrors test_map_step_runner.py)
@@ -472,6 +472,7 @@ class TestValidateArtifact:
 
     def test_load_and_validate(self, tmp_path):
         import json
+
         from mapify_cli.schemas import BLUEPRINT_SCHEMA, load_and_validate
 
         bp = {
@@ -1016,7 +1017,7 @@ class TestMapConfigTypeCoercion:
 
     def test_wrong_type_falls_back_to_defaults(self, tmp_path):
         """Wrong types in YAML should not crash; defaults should be used."""
-        from mapify_cli.config.project_config import load_map_config, MapConfig
+        from mapify_cli.config.project_config import MapConfig, load_map_config
 
         map_dir = tmp_path / ".map"
         map_dir.mkdir()

@@ -5,7 +5,7 @@ Detects user intent to finish/stop the current workflow based on Russian phrases
 """
 
 import re
-from typing import Optional, Pattern
+from re import Pattern
 
 # Russian finish-intent phrases (case-insensitive)
 FINISH_PHRASES = [
@@ -18,7 +18,7 @@ FINISH_PHRASES = [
 ]
 
 # Lazily compiled regex pattern (compiled on first use)
-_finish_pattern_cache: Optional[Pattern[str]] = None
+_finish_pattern_cache: Pattern[str] | None = None
 
 
 def _get_finish_pattern() -> Pattern[str]:
@@ -40,7 +40,7 @@ def _get_finish_pattern() -> Pattern[str]:
     return _finish_pattern_cache
 
 
-def detect_finish_intent(text: Optional[str]) -> bool:
+def detect_finish_intent(text: str | None) -> bool:
     """
     Detect if text contains Russian finish-intent phrases.
 

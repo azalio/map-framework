@@ -19,8 +19,7 @@ SCRIPTS_PATH = (
 
 sys.path.insert(0, str(SCRIPTS_PATH))
 
-import wayfind_runner as wr  # noqa: E402  # type: ignore[import-not-found]
-
+import wayfind_runner as wr  # type: ignore[import-not-found]
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -540,6 +539,7 @@ class TestCli:
             cwd=str(cwd),
             capture_output=True,
             text=True,
+            check=False,
         )
 
     def test_create_and_status_via_cli(self, repo: Path) -> None:

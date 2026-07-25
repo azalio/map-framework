@@ -4,6 +4,7 @@ All tests are fixture-based (no live model calls, no external services).
 Fixture data uses small in-memory Python source strings written to tmp_path.
 """
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -379,7 +380,7 @@ def test_vc9_code_symbol_fields() -> None:
 
 def test_vc9_code_symbol_is_frozen() -> None:
     sym = CodeSymbol(name="f", kind="function", path="a.py", start_line=1, end_line=5)
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         sym.name = "g"  # type: ignore[misc]
 
 

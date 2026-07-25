@@ -10,7 +10,6 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional, Tuple
 
 # Get the repository root directory (where this test file lives is tests/)
 REPO_ROOT = Path(__file__).parent.parent
@@ -30,7 +29,7 @@ class TestIterationLogger:
 
     HOOK_PATH = REPO_ROOT / ".claude/hooks/ralph-iteration-logger.py"
 
-    def run_hook(self, input_data: dict, tmp_path: Path) -> Tuple[int, str, str]:
+    def run_hook(self, input_data: dict, tmp_path: Path) -> tuple[int, str, str]:
         """Run hook with given input."""
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
@@ -41,6 +40,7 @@ class TestIterationLogger:
             capture_output=True,
             text=True,
             env=env,
+            check=False,
         )
         return result.returncode, result.stdout, result.stderr
 
@@ -131,9 +131,7 @@ class TestIterationLogger:
         log_file = branch_dir / "iteration_log.jsonl"
 
         with open(log_file, "w", encoding="utf-8") as f:
-            for i in range(5):
-                f.write(
-                    json.dumps(
+            f.writelines(json.dumps(
                         {
                             "ts": "2026-01-01T00:00:00",
                             "iteration": i + 1,
@@ -142,8 +140,7 @@ class TestIterationLogger:
                             "effectiveness": 0.8,
                         }
                     )
-                    + "\n"
-                )
+                    + "\n" for i in range(5))
 
         # Run hook to trigger derive_summary
         code, _, _ = self.run_hook(
@@ -168,9 +165,7 @@ class TestIterationLogger:
 
         # Write enough entries to trigger thrashing (>= THRASHING_WINDOW for one file)
         with open(log_file, "w", encoding="utf-8") as f:
-            for i in range(5):
-                f.write(
-                    json.dumps(
+            f.writelines(json.dumps(
                         {
                             "ts": "2026-01-01T00:00:00",
                             "iteration": i + 1,
@@ -179,8 +174,7 @@ class TestIterationLogger:
                             "effectiveness": 0.5,
                         }
                     )
-                    + "\n"
-                )
+                    + "\n" for i in range(5))
 
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
@@ -192,6 +186,7 @@ class TestIterationLogger:
             capture_output=True,
             text=True,
             env=env,
+            check=False,
         )
         assert result.returncode == 0
 
@@ -212,9 +207,7 @@ class TestIterationLogger:
 
         # Write 110 lines — deque keeps last 100
         with open(log_file, "w", encoding="utf-8") as f:
-            for i in range(110):
-                f.write(
-                    json.dumps(
+            f.writelines(json.dumps(
                         {
                             "ts": "2026-01-01T00:00:00",
                             "iteration": i + 1,
@@ -223,8 +216,7 @@ class TestIterationLogger:
                             "effectiveness": 1.0,
                         }
                     )
-                    + "\n"
-                )
+                    + "\n" for i in range(110))
 
         code, _, _ = self.run_hook(
             {"tool_name": "Edit", "tool_response": {"success": True}},
@@ -290,7 +282,7 @@ class TestContextPruner:
 
     HOOK_PATH = REPO_ROOT / ".claude/hooks/ralph-context-pruner.py"
 
-    def run_hook(self, tmp_path: Path, input_data: Optional[dict] = None) -> Tuple[int, str, str]:
+    def run_hook(self, tmp_path: Path, input_data: dict | None = None) -> tuple[int, str, str]:
         """Run hook with given input."""
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
@@ -301,6 +293,7 @@ class TestContextPruner:
             capture_output=True,
             text=True,
             env=env,
+            check=False,
         )
         return result.returncode, result.stdout, result.stderr
 
@@ -318,8 +311,7 @@ class TestContextPruner:
 
         # Write 150 lines (over MAX_LINES=100)
         with open(log_file, "w") as f:
-            for i in range(150):
-                f.write(json.dumps({"iteration": i}) + "\n")
+            f.writelines(json.dumps({"iteration": i}) + "\n" for i in range(150))
 
         code, _, _ = self.run_hook(tmp_path)
 

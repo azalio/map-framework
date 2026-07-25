@@ -21,7 +21,6 @@ from mapify_cli.memory.digest_schema import DIGEST_FRONTMATTER_FIELDS, REDACTION
 from mapify_cli.memory.finalize import _build_frontmatter
 from mapify_cli.memory.recall import build_recall
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -23,8 +23,8 @@ from mapify_cli.config.project_config import (
     load_map_config,
 )
 from mapify_cli.scope_classifier import (
-    ScopeBracket,
     _BRACKET_WORKFLOW,
+    ScopeBracket,
     classify_scope,
 )
 

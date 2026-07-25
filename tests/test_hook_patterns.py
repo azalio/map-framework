@@ -152,6 +152,7 @@ def test_deny_still_fires_with_flag(hook_path: Path, flag_set: bool) -> None:
         text=True,
         env=env,
         timeout=15,
+        check=False,
     )
     blob = (result.stdout or "") + (result.stderr or "")
     assert '"permissionDecision": "deny"' in blob, (

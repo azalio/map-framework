@@ -248,6 +248,7 @@ def test_vc3_concurrent_finalized_inside_lock(tmp_path: Path) -> None:
     _write_scratch(scratch_dir, _SID)
 
     import contextlib
+
     from mapify_cli._locking import LockState, StateWriter
 
     @contextlib.contextmanager  # type: ignore[misc]

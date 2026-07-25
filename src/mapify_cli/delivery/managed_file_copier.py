@@ -27,10 +27,9 @@ import re
 import shutil
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
-
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -46,7 +45,7 @@ class CopyResult:
     success: bool = True
     drifted: bool = False
     backed_up: bool = False
-    backup_path: Optional[Path] = None
+    backup_path: Path | None = None
     reason: str = ""
     first_install: bool = False
     migrated: bool = False
@@ -98,7 +97,7 @@ def _build_metadata(version: str, template_hash: str) -> dict[str, Any]:
         "generated_by": "mapify-cli",
         "mapify_version": version,
         "template_hash": template_hash,
-        "installed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "installed_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
 
 
@@ -159,7 +158,7 @@ def inject_metadata(content: str, ext: str, version: str, template_hash: str) ->
     return content
 
 
-def extract_metadata(content: str, ext: str) -> tuple[Optional[dict[str, Any]], str]:
+def extract_metadata(content: str, ext: str) -> tuple[dict[str, Any] | None, str]:
     """Extract metadata from file content and return (metadata, clean_content).
 
     Returns (None, original_content) if no metadata found.
@@ -362,7 +361,7 @@ def _atomic_write(dest: Path, content: str) -> None:
 # ---------------------------------------------------------------------------
 
 # Per-format fence token pairs.  None means "no fence" (JSON: fully managed).
-_FENCE_TOKENS: dict[str, Optional[tuple[str, str]]] = {
+_FENCE_TOKENS: dict[str, tuple[str, str] | None] = {
     ".md": ("<!-- map:start -->", "<!-- map:end -->"),
     ".py": ("# map:start", "# map:end"),
     ".sh": ("# map:start", "# map:end"),
@@ -377,7 +376,7 @@ _FENCE_TOKENS: dict[str, Optional[tuple[str, str]]] = {
 class FenceSplitResult:
     """Outcome of _split_fence."""
 
-    __slots__ = ("state", "before", "managed", "after", "warning")
+    __slots__ = ("after", "before", "managed", "state", "warning")
 
     def __init__(
         self,
@@ -777,7 +776,7 @@ def copy_managed_file(
         # (hash drift), mirroring the fenced-merge drift-backup behavior.
         if stored_hash and current_hash != stored_hash:
             result.drifted = True
-            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+            ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
             backup_path = dest.with_suffix(f"{dest.suffix}.{ts}.bak")
             try:
                 shutil.copy2(dest, backup_path)
@@ -827,7 +826,7 @@ def copy_managed_file(
 
     if template_changed or user_modified_managed:
         result.drifted = True
-        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
         backup_path = dest.with_suffix(f"{dest.suffix}.{ts}.bak")
         try:
             shutil.copy2(dest, backup_path)
@@ -878,7 +877,7 @@ def _copy_json_managed(
 
     # Create backup if drifted
     if drift_result.drifted:
-        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
         backup_path = dest.with_suffix(f"{dest.suffix}.{ts}.bak")
         try:
             shutil.copy2(dest, backup_path)
@@ -917,7 +916,7 @@ def _copy_overwrite_managed(
     drift_result = detect_drift(src, dest)
 
     if drift_result.drifted:
-        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
         backup_path = dest.with_suffix(f"{dest.suffix}.{ts}.bak")
         try:
             shutil.copy2(dest, backup_path)
@@ -1061,7 +1060,7 @@ def _overwrite_user_file(
     result = CopyResult(src=src, dest=dest)
     result.drifted = True
 
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
     backup_path = dest.with_suffix(f"{dest.suffix}.{ts}.bak")
     try:
         shutil.copy2(dest, backup_path)

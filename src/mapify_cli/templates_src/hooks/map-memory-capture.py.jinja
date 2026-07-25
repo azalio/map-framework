@@ -30,7 +30,7 @@ def main() -> None:
         return
     try:
         append_turn(input_data, PROJECT_DIR)
-    except Exception:   # noqa: BLE001 — hooks must never block
+    except Exception:   # noqa: BLE001, S110 — hooks must never block
         pass
     _silent()
 

@@ -118,6 +118,7 @@ class TestAllFixturesLoadable:
             cwd=repo,
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode != 0, "non_git_dir must not be a git repository"
 
@@ -130,6 +131,7 @@ class TestAllFixturesLoadable:
             cwd=repo,
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode == 0, "shallow_clone must be a valid git repo"
         # shallow marker file must exist
@@ -147,6 +149,7 @@ class TestAllFixturesLoadable:
             cwd=repo,
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode == 0, f"git submodule status failed: {result.stderr}"
 
@@ -158,6 +161,7 @@ class TestAllFixturesLoadable:
             cwd=repo,
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode == 0
         assert result.stdout.strip(), (
@@ -185,12 +189,11 @@ class TestFixturesNoPlaceholders:
         # Check for bare ellipsis used as a body placeholder (not in docstrings)
         tree = ast.parse(source)
         for node in ast.walk(tree):
-            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
-                if node.value.value is ...:
-                    raise AssertionError(
-                        f"Bare ellipsis placeholder found at line {node.lineno} "
-                        f"in {_FIXTURE_SRC}"
-                    )
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and node.value.value is ...:
+                raise AssertionError(
+                    f"Bare ellipsis placeholder found at line {node.lineno} "
+                    f"in {_FIXTURE_SRC}"
+                )
 
     def test_fixtures_blueprint_affected_files_nonempty(self) -> None:
         """Blueprint fixtures' affected_files are non-empty for each subtask."""

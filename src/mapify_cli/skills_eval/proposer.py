@@ -70,10 +70,10 @@ def _build_prompt(
         "skill to be triggered for the failing prompts above while remaining",
         "precise and not overly broad.",
         "",
-        f"HARD LIMIT: the new description MUST be at most {max_chars} characters "
+        (f"HARD LIMIT: the new description MUST be at most {max_chars} characters "
         f"(aim for ~{max(0, max_chars - 20)} to be safe). It is shown in a UI that "
         "truncates anything longer, so a longer description is unusable no matter "
-        "how well it triggers. Count characters and stay within the limit.",
+        "how well it triggers. Count characters and stay within the limit."),
         "",
         "Respond with ONLY the new description text, no preamble, no explanation.",
     ]
@@ -118,6 +118,7 @@ def propose_description(
             timeout=_DEFAULT_TIMEOUT,
             cwd=str(os.getcwd()),
             env={**os.environ, "MAP_INVOKED_BY": _MAP_INVOKED_BY_VALUE},
+            check=False,
         )
     except subprocess.TimeoutExpired:
         return None

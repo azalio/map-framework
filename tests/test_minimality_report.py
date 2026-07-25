@@ -57,19 +57,19 @@ def test_minimality_report_marks_candidate_with_clean_baseline_and_opt_in(tmp_pa
         "missing_historical_minimality": [],
     }
     assert summary["next_actions"] == [
-        "Sample the candidate opt-in runs for clarity/underscope regressions "
-        "before flipping the global default."
+        ("Sample the candidate opt-in runs for clarity/underscope regressions "
+        "before flipping the global default.")
     ]
     assert summary["manual_review_gate"] == {
         "required": True,
         "candidate_branches": ["lite-run"],
         "checklist": [
-            "Compare each opt-in run against the original user request for dropped "
-            "explicit or implied requirements.",
-            "Inspect simplifications for terse or cryptic code that hurts "
-            "maintainability.",
-            "Confirm Actor retries addressed only BLOCKER feedback, not NON-BLOCKING "
-            "scope expansion.",
+            ("Compare each opt-in run against the original user request for dropped "
+            "explicit or implied requirements."),
+            ("Inspect simplifications for terse or cryptic code that hurts "
+            "maintainability."),
+            ("Confirm Actor retries addressed only BLOCKER feedback, not NON-BLOCKING "
+            "scope expansion."),
             "Verify map:simplification markers name a real ceiling and safe upgrade path.",
         ],
     }

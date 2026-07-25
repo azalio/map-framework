@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Regression tests for #245: PyYAML must be a hard runtime dependency.
 
 `mapify` is a config-driven CLI: ``project_config.load_map_config`` parses

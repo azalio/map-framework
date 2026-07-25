@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Strip MAP-internal workflow IDs from code the framework wrote.
 
 During a MAP run the planning artifacts use internal identifiers — subtask
@@ -51,7 +50,6 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
 
 # --- ID token patterns -------------------------------------------------------
 # Dashed family (ST-/AC-/INV-/HC-/VC-) plus the documented dash-less ``VC1``.
@@ -94,16 +92,16 @@ _EXT_SYNTAX: dict[str, dict] = {
 _NAME_SYNTAX: dict[str, dict] = {"Dockerfile": _HASH, "Makefile": _HASH}
 
 
-def syntax_for_ext(ext: str) -> Optional[dict]:
+def syntax_for_ext(ext: str) -> dict | None:
     return _EXT_SYNTAX.get(ext.lower())
 
 
-def _syntax_for_path(path: Path) -> Optional[dict]:
+def _syntax_for_path(path: Path) -> dict | None:
     return _EXT_SYNTAX.get(path.suffix.lower()) or _NAME_SYNTAX.get(path.name)
 
 
 # --- pure text helpers (unit-tested without git) -----------------------------
-def _line_regions(line: str, syntax: Optional[dict]) -> list[tuple[int, int, str]]:
+def _line_regions(line: str, syntax: dict | None) -> list[tuple[int, int, str]]:
     """Split a line into (start, end, kind) regions; kind in code/string/comment.
 
     Comment leaders are taken from ``syntax`` so that, e.g., a markdown ``#``
@@ -198,7 +196,7 @@ def _comment_leader(comment_text: str) -> tuple[str, str]:
     return "", comment_text
 
 
-def scrub_line(line: str, syntax: Optional[dict]) -> tuple[Optional[str], list[str], list[str]]:
+def scrub_line(line: str, syntax: dict | None) -> tuple[str | None, list[str], list[str]]:
     """Strip ID tokens that sit INSIDE a comment on one line.
 
     Returns ``(new_line | None, removed_tokens, residual_tokens)``. ``None``
@@ -248,7 +246,7 @@ def scrub_line(line: str, syntax: Optional[dict]) -> tuple[Optional[str], list[s
     return new_line, removed, residual
 
 
-def renamed_test_identifier(name: str) -> Optional[str]:
+def renamed_test_identifier(name: str) -> str | None:
     """Drop the ``vc<n>`` segment from a test identifier; None if unchanged.
 
     ``test_vc1_register`` -> ``test_register``; ``TestVC1Foo`` -> ``TestFoo``.
@@ -266,12 +264,12 @@ def renamed_test_identifier(name: str) -> Optional[str]:
     return new
 
 
-def _is_test_def(line: str) -> Optional[tuple[str, str]]:
+def _is_test_def(line: str) -> tuple[str, str] | None:
     """Return (kind, identifier) if the line defines a test, else None."""
     m = _PY_DEF.match(line)
     if m:
         ident = m.group(3)
-        if ident.startswith("test") or ident.startswith("Test"):
+        if ident.startswith(("test", "Test")):
             return ("py", ident)
     m = _GO_DEF.match(line)
     if m:
@@ -282,7 +280,7 @@ def _is_test_def(line: str) -> Optional[tuple[str, str]]:
 
 
 def scrub_text(
-    text: str, scope: Optional[set[int]], syntax: Optional[dict]
+    text: str, scope: set[int] | None, syntax: dict | None
 ) -> tuple[str, dict]:
     """Scrub ``text`` (a whole file). ``scope`` = 1-based line numbers to act on
     (``None`` = every line, used for run-created untracked files). ``syntax`` =
@@ -358,6 +356,7 @@ def _git(project_dir: Path, *args: str, timeout: int = 15) -> subprocess.Complet
         capture_output=True,
         text=True,
         timeout=timeout,
+        check=False,
     )
 
 
@@ -371,7 +370,7 @@ def _default_branch(project_dir: Path) -> str:
     return "main"
 
 
-def resolve_run_base(project_dir: Path, explicit: Optional[str]) -> Optional[str]:
+def resolve_run_base(project_dir: Path, explicit: str | None) -> str | None:
     """Resolve the commit the run forked from (scope floor for the scrub).
 
     Order: explicit ``--base`` -> merge-base(HEAD, default branch) -> None.
@@ -404,7 +403,7 @@ def _changed_files(project_dir: Path, base: str) -> list[str]:
     return sorted(files)
 
 
-def _added_line_numbers(project_dir: Path, base: str, rel: str) -> Optional[set[int]]:
+def _added_line_numbers(project_dir: Path, base: str, rel: str) -> set[int] | None:
     """New-side line numbers added/modified vs base for ``rel``.
 
     ``None`` means "whole file" (a run-created untracked file with no base side).
@@ -425,7 +424,7 @@ def _added_line_numbers(project_dir: Path, base: str, rel: str) -> Optional[set[
             if m:
                 new_ln = int(m.group(1))
             continue
-        if line.startswith("+++") or line.startswith("---"):
+        if line.startswith(("+++", "---")):
             continue
         if line.startswith("+"):
             added.add(new_ln)
@@ -436,7 +435,7 @@ def _added_line_numbers(project_dir: Path, base: str, rel: str) -> Optional[set[
     return added
 
 
-def _affected_files(project_dir: Path, branch: Optional[str]) -> Optional[set[str]]:
+def _affected_files(project_dir: Path, branch: str | None) -> set[str] | None:
     """Blueprint affected_files (narrows scope); None if unavailable."""
     if not branch:
         return None
@@ -459,7 +458,7 @@ def _affected_files(project_dir: Path, branch: Optional[str]) -> Optional[set[st
 
 
 # --- driver ------------------------------------------------------------------
-def run(project_dir: Path, *, mode: str, base: Optional[str], branch: Optional[str]) -> dict:
+def run(project_dir: Path, *, mode: str, base: str | None, branch: str | None) -> dict:
     resolved_base = resolve_run_base(project_dir, base)
     if resolved_base is None:
         return {"status": "no_base", "base": None, "files_modified": [],
@@ -516,7 +515,7 @@ def run(project_dir: Path, *, mode: str, base: Optional[str], branch: Optional[s
     }
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Strip MAP-internal workflow IDs from run-changed code.")
     parser.add_argument("mode", choices=("scan", "clean"))
     parser.add_argument("--base", default=None, help="Run base ref (default: merge-base with the default branch).")

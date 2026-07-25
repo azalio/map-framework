@@ -62,7 +62,7 @@ class TestAgentFrontmatter:
         """
         try:
             content = file_path.read_text(encoding="utf-8")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
             return None, f"Failed to read file: {e}"
 
         # Match frontmatter: ^---\n(content)\n---
@@ -147,7 +147,7 @@ class TestAgentFrontmatter:
                 if not isinstance(name_value, str) or not name_value.strip():
                     errors.append(
                         f"{file_path_str}: 'name' field must be a non-empty string, "
-                        f"got {repr(name_value)}"
+                        f"got {name_value!r}"
                     )
                     continue
 

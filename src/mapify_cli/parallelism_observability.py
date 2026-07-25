@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Canonical reason-code constants
@@ -95,7 +94,7 @@ ALL_DISPATCH_OUTCOMES: frozenset[str] = frozenset(
 # Defined once here (TypedDict per the contract-first learned rule).
 # Slice 5 imports this type to populate and write the report.
 
-from typing import TypedDict  # noqa: E402 — grouped after constants for readability
+from typing import TypedDict
 
 
 class ColorGroupDecision(TypedDict):
@@ -113,7 +112,7 @@ class ColorGroupDecision(TypedDict):
     worktree_status: str
     """Worktree probe outcome: 'ok' | 'skipped' | reason_code."""
 
-    reason_code: Optional[str]
+    reason_code: str | None
     """Populated when actual_mode != planned_mode; one of ALL_REASON_CODES."""
 
     dispatch_count: int

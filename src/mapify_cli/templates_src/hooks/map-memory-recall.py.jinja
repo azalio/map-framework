@@ -24,8 +24,8 @@ def main() -> None:
     # src/ first (dogfood), falls back to installed mapify_cli; no-op if absent.
     sys.path.insert(0, str(PROJECT_DIR / "src"))
     try:
-        from mapify_cli.memory.recall import build_recall
         from mapify_cli.memory.capture import _resolve_branch
+        from mapify_cli.memory.recall import build_recall
     except ImportError:
         _silent()
         return

@@ -3,26 +3,27 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from mapify_cli.config.project_config import VALID_MINIMALITY, load_map_config
 
 OPT_IN_MINIMALITY_LEVELS = frozenset({"lite", "full", "ultra"})
 MANUAL_REVIEW_CHECKLIST = (
-    "Compare each opt-in run against the original user request for dropped "
-    "explicit or implied requirements.",
+    ("Compare each opt-in run against the original user request for dropped "
+    "explicit or implied requirements."),
     "Inspect simplifications for terse or cryptic code that hurts maintainability.",
-    "Confirm Actor retries addressed only BLOCKER feedback, not NON-BLOCKING "
-    "scope expansion.",
+    ("Confirm Actor retries addressed only BLOCKER feedback, not NON-BLOCKING "
+    "scope expansion."),
     "Verify map:simplification markers name a real ceiling and safe upgrade path.",
 )
 
 
 def _utc_timestamp() -> str:
     return (
-        datetime.now(timezone.utc)
+        datetime.now(UTC)
         .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z")

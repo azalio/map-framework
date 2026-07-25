@@ -3,15 +3,14 @@
 import json
 import tempfile
 from pathlib import Path
-
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from mapify_cli.repo_insight import (
-    detect_language,
-    generate_suggested_checks,
-    generate_key_dirs,
-    create_repo_insight,
     compute_differential_insight,
+    create_repo_insight,
+    detect_language,
+    generate_key_dirs,
+    generate_suggested_checks,
 )
 
 

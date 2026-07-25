@@ -41,6 +41,7 @@ def _run_hook(stdin_text: str, project_dir: Path) -> subprocess.CompletedProcess
         text=True,
         cwd=str(project_dir),
         env=env,
+        check=False,
     )
 
 
@@ -59,12 +60,12 @@ def test_missing_transcript_path_is_silent(tmp_path):
 
 def _init_git_branch(root: Path, branch: str) -> None:
     subprocess.run(["git", "init"], cwd=root, capture_output=True, check=False)
-    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "t"], cwd=root, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True, check=False)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=root, capture_output=True, check=False)
     (root / ".seed").write_text("x\n")
-    subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True)
-    subprocess.run(["git", "checkout", "-b", branch], cwd=root, capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=root, capture_output=True, check=False)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True, check=False)
+    subprocess.run(["git", "checkout", "-b", branch], cwd=root, capture_output=True, check=False)
 
 
 def _setup_project(tmp_path: Path, branch: str) -> Path:
@@ -275,6 +276,7 @@ def _run_report_command(tmp_path: Path, branch: str, *flags: str) -> str:
         text=True,
         cwd=str(tmp_path),
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        check=False,
     )
     return r.stdout
 
@@ -343,6 +345,7 @@ def test_token_report_snapshot_and_history(tmp_path):
         capture_output=True, text=True,
         cwd=str(tmp_path),
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        check=False,
     )
     assert json.loads(r1.stdout)["status"] == "success"
 
@@ -351,6 +354,7 @@ def test_token_report_snapshot_and_history(tmp_path):
         capture_output=True, text=True,
         cwd=str(tmp_path),
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        check=False,
     )
     assert json.loads(r2.stdout)["status"] == "success"
 
@@ -390,6 +394,7 @@ def test_token_report_estimate_with_history(tmp_path):
         capture_output=True, text=True,
         cwd=str(tmp_path),
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        check=False,
     )
     out = _run_report_command(tmp_path, branch, "--estimate")
     assert "Cost estimate" in out

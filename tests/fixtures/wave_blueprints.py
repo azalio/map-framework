@@ -25,7 +25,6 @@ import pytest
 
 from mapify_cli.dependency_graph import DependencyGraph, SubtaskNode
 
-
 # ---------------------------------------------------------------------------
 # Typed blueprint shape
 # ---------------------------------------------------------------------------

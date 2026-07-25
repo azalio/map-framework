@@ -76,7 +76,7 @@ class MockTrajectoryDispatcher(TrajectoryDispatcher):
         )
 
     def run(
-        self, invocation: str, cwd: Path, timeout: float  # noqa: ARG002
+        self, invocation: str, cwd: Path, timeout: float
     ) -> RunOutcome:
         del invocation, cwd, timeout  # mock ignores all
         return self._outcome
@@ -97,7 +97,7 @@ class ClaudeTrajectoryDispatcher(TrajectoryDispatcher):
         self._orchestrator_model = orchestrator_model
 
     def run(self, invocation: str, cwd: Path, timeout: float) -> RunOutcome:
-        from mapify_cli.skills_eval.dispatcher import (  # noqa: PLC0415
+        from mapify_cli.skills_eval.dispatcher import (
             _eval_subprocess_env,
             _parse_envelope,
         )
@@ -122,6 +122,7 @@ class ClaudeTrajectoryDispatcher(TrajectoryDispatcher):
                 timeout=timeout,
                 cwd=cwd,
                 env=_eval_subprocess_env(cwd),
+                check=False,
             )
         except subprocess.TimeoutExpired:
             return RunOutcome(

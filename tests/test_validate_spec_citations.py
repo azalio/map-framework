@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VALIDATOR_PATH = REPO_ROOT / ".map" / "scripts" / "validate_spec_citations.py"
 

@@ -37,7 +37,6 @@ import re
 import sys
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Optional
 
 EDITING_TOOLS = {"Edit", "Write", "MultiEdit"}
 PROJECT_DIR = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
@@ -191,13 +190,7 @@ def is_exempt_path(file_path: str) -> bool:
     # rules written by ``/map-learn``. The exemption is restricted to ``*.md`` files to
     # prevent the directory from quietly broadening into a general bypass for arbitrary
     # file types (executables, configs, secrets-bearing JSON, etc.).
-    if (
-        len(parts) >= 4
-        and parts[:3] == (".claude", "rules", "learned")
-        and parts[-1].endswith(".md")
-    ):
-        return True
-    return False
+    return bool(len(parts) >= 4 and parts[:3] == (".claude", "rules", "learned") and parts[-1].endswith(".md"))
 
 
 def sanitize_branch_name(branch: str) -> str:
@@ -221,10 +214,11 @@ def get_branch_name() -> str:
             text=True,
             cwd=PROJECT_DIR,
             timeout=1,
+            check=False,
         )
         if result.returncode == 0:
             return sanitize_branch_name(result.stdout.strip())
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
     return "default"
 
@@ -243,7 +237,7 @@ def _current_phase_is_research(branch: str) -> bool:
     return isinstance(phase, str) and phase.upper() == "RESEARCH"
 
 
-def _load_blueprint_subtasks(branch: str) -> Optional[list]:
+def _load_blueprint_subtasks(branch: str) -> list | None:
     """Read blueprint.json subtasks for *branch* (stdlib-only, fail-soft).
 
     Mirrors map_step_runner.load_blueprint's nested-payload handling: a
@@ -271,7 +265,7 @@ def _load_blueprint_subtasks(branch: str) -> Optional[list]:
     return subtasks if isinstance(subtasks, list) else None
 
 
-def _to_repo_relative(file_path: str) -> Optional[str]:
+def _to_repo_relative(file_path: str) -> str | None:
     """Normalize *file_path* to a repo-relative string, or None.
 
     Returns None when the path is empty, unresolvable, or resolves outside
@@ -292,7 +286,7 @@ def _to_repo_relative(file_path: str) -> Optional[str]:
         return None
 
 
-def _current_subtask_affected_files(branch: str) -> Optional[set[str]]:
+def _current_subtask_affected_files(branch: str) -> set[str] | None:
     """Return the CURRENT subtask's declared affected_files (normalized).
 
     Resolves ``current_subtask_id`` from step_state.json, looks the subtask
@@ -356,7 +350,7 @@ def is_orthogonal_to_current_subtask(branch: str, file_path: str) -> bool:
     return rel not in affected
 
 
-def is_editing_phase(branch: str) -> tuple[bool, Optional[str]]:
+def is_editing_phase(branch: str) -> tuple[bool, str | None]:
     """Check step_state.json: is current phase one where Edit is allowed?
 
     Returns (allowed, error_message).
@@ -455,7 +449,7 @@ def is_editing_phase(branch: str) -> tuple[bool, Optional[str]]:
     )
 
 
-def check_constraints(branch: str, target_paths: list[str]) -> Optional[str]:
+def check_constraints(branch: str, target_paths: list[str]) -> str | None:
     """Check constraints from step_state.json. Returns error or None."""
     state_file = PROJECT_DIR / ".map" / branch / "step_state.json"
     if not state_file.exists():
@@ -592,7 +586,7 @@ def main() -> None:
 
         allow()
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
         # Fail-open on any error
         if os.environ.get("DEBUG_WORKFLOW_GATE"):
             print(f"[workflow-gate] ERROR: {e}", file=sys.stderr)

@@ -41,6 +41,7 @@ def _run_hook(hook: Path, project_dir: Path, stdin_obj: dict) -> subprocess.Comp
         capture_output=True,
         env=env,
         timeout=30,
+        check=False,
     )
 
 

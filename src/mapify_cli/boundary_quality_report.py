@@ -35,7 +35,6 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------

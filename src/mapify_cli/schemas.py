@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 def validate_artifact(
@@ -73,7 +73,7 @@ def load_and_validate(
     schema: dict[str, Any],
     *,
     raise_on_error: bool = False,
-) -> tuple[Optional[dict[str, Any]], list[str]]:
+) -> tuple[dict[str, Any] | None, list[str]]:
     """Load a JSON file and validate it against a schema.
 
     Args:

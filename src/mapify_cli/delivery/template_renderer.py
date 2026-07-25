@@ -41,9 +41,10 @@ import os
 import stat
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import jinja2
@@ -131,7 +132,7 @@ def get_environment() -> jinja2.Environment:
     Returns:
         Configured jinja2.Environment instance.
     """
-    import jinja2  # noqa: PLC0415  (lazy import by design – VC4)
+    import jinja2
 
     return jinja2.Environment(
         block_start_string="[%",
@@ -170,7 +171,7 @@ def _path_is_hook(dest_path: Path) -> bool:
             for i in range(len(parts) - 1):
                 if parts[i] == parent_name and parts[i + 1] == child_name:
                     return True
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
     return False
 
@@ -235,7 +236,7 @@ def _atomic_write_file(src: Path, dest: Path) -> None:
     except Exception:
         try:
             tmp_path.unlink(missing_ok=True)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
             pass  # best-effort cleanup
         raise
 

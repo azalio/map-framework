@@ -61,10 +61,11 @@ def _get_branch() -> str:
             text=True,
             cwd=PROJECT_DIR,
             timeout=2,
+            check=False,
         )
         if result.returncode == 0:
             return _sanitize_branch(result.stdout.strip())
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
     return "default"
 

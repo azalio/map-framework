@@ -36,7 +36,7 @@ SCRIPTS_PATH = (
 )
 sys.path.insert(0, str(SCRIPTS_PATH))
 
-import map_step_runner as m  # noqa: E402  # type: ignore[import-not-found]
+import map_step_runner as m  # type: ignore[import-not-found]
 
 _DOCS_MARKER = "\n\n<documents>"
 _STABLE_TAGS = ("<task>", "<workflow_policy>", "<instructions>", "</expected_output>")

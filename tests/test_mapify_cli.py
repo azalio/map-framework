@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Test suite for mapify CLI tool."""
 
 import json
@@ -112,9 +111,8 @@ class TestTemplates:
         """Test error when templates not found anywhere."""
         del mock_files  # side_effect fires on call; mock object itself not needed
         # Mock Path methods to simulate templates not existing
-        with mock.patch("pathlib.Path.exists", return_value=False):
-            with pytest.raises(RuntimeError, match="Templates directory not found"):
-                get_templates_dir()
+        with mock.patch("pathlib.Path.exists", return_value=False), pytest.raises(RuntimeError, match="Templates directory not found"):
+            get_templates_dir()
 
 
 class TestGitOperations:
@@ -2141,6 +2139,7 @@ class TestCodexProvider:
             capture_output=True,
             text=True,
             cwd=str(codex_project),
+            check=False,
         )
         assert (
             proc.returncode == 0

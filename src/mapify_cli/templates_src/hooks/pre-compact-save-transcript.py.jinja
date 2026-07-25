@@ -15,9 +15,8 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-
 
 PROJECT_DIR = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
 MAP_DIR = PROJECT_DIR / ".map"
@@ -42,10 +41,11 @@ def get_branch_name() -> str:
             text=True,
             cwd=PROJECT_DIR,
             timeout=2,
+            check=False,
         )
         if result.returncode == 0:
             return sanitize_branch_name(result.stdout.strip())
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
     return "default"
 
@@ -123,7 +123,7 @@ def parse_transcript(transcript_path: Path) -> str:
                             f"<details><summary>Tool result</summary>\n\n"
                             f"```\n{text}\n```\n</details>\n"
                         )
-    except (IOError, OSError) as e:
+    except OSError as e:
         lines.append(f"Error reading transcript: {e}\n")
 
     return "\n".join(lines)
@@ -156,7 +156,7 @@ def maybe_offload_tool_outputs(transcript_path: str, branch_dir: Path) -> None:
                 f"to {branch_dir / 'compacted'}",
                 file=sys.stderr,
             )
-    except Exception:  # never break compaction
+    except Exception:  # never break compaction  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
 
 
@@ -176,7 +176,7 @@ def main() -> None:
         sys.exit(0)
 
     branch = get_branch_name()
-    timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%d-%H-%M-%S")
 
     branch_dir = MAP_DIR / branch
     branch_dir.mkdir(parents=True, exist_ok=True)
@@ -185,7 +185,7 @@ def main() -> None:
     header = (
         f"# Conversation snapshot before compact\n\n"
         f"- **Branch:** {branch}\n"
-        f"- **Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"- **Date:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')}\n"
         f"- **Session:** {session_id}\n\n"
         f"---\n\n"
     )
@@ -195,7 +195,7 @@ def main() -> None:
     try:
         outfile.write_text(header + body, encoding="utf-8")
         print(f"[pre-compact-save] Saved transcript to {outfile}", file=sys.stderr)
-    except (IOError, OSError) as e:
+    except OSError as e:
         print(f"[pre-compact-save] Failed to save: {e}", file=sys.stderr)
         print("{}")
         sys.exit(0)
@@ -204,7 +204,7 @@ def main() -> None:
     pointer = branch_dir / "last-transcript.txt"
     try:
         pointer.write_text(str(outfile.relative_to(PROJECT_DIR)), encoding="utf-8")
-    except (IOError, OSError):
+    except OSError:
         pass
 
     # Cooldown marker for context-meter.py - prevents the meter from injecting
@@ -215,10 +215,10 @@ def main() -> None:
     marker = branch_dir / "last-compact.marker"
     try:
         marker.write_text(
-            datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            datetime.now(UTC).isoformat(timespec="seconds"),
             encoding="utf-8",
         )
-    except (IOError, OSError):
+    except OSError:
         pass
 
     # Offload full-resolution tool-result bodies so dropped outputs stay

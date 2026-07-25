@@ -140,7 +140,7 @@ def _compute_diff(prior: str, current: str) -> list[_DiffLine]:
 
     result: list[_DiffLine] = []
     for raw in diff:
-        if raw.startswith("+++") or raw.startswith("---"):
+        if raw.startswith(("+++", "---")):
             # skip file-header lines produced by unified_diff
             continue
         if raw.startswith("@@"):
@@ -211,7 +211,7 @@ def render_html(result: OptimizeResult) -> str:
     Uses jinja2.Environment(autoescape=True) so candidate_description values
     (untrusted claude -p output) are HTML-escaped automatically.
     """
-    import jinja2  # noqa: PLC0415
+    import jinja2
 
     rows = _build_rows(result)
     env = jinja2.Environment(autoescape=True)  # SECURITY: autoescape mandatory

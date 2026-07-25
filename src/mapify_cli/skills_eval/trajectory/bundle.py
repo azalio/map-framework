@@ -71,9 +71,7 @@ def _is_source_change(path: str) -> bool:
     if "__pycache__" in path or path.endswith(".pyc") or ".pytest_cache" in path:
         return False
     base = Path(path).name
-    if any(base.startswith(prefix) for prefix in ARTIFACT_GLOBS):
-        return False
-    return True
+    return not any(base.startswith(prefix) for prefix in ARTIFACT_GLOBS)
 
 
 def classify_scope(

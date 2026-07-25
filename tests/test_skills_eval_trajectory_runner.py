@@ -22,7 +22,6 @@ from mapify_cli.skills_eval.trajectory.dispatcher import (
 from mapify_cli.skills_eval.trajectory.eval_schema import TrajectoryBundle
 from mapify_cli.skills_eval.trajectory.judge import MockJudgeRunner
 
-
 # ---------------------------------------------------------------------------
 # score_one
 # ---------------------------------------------------------------------------

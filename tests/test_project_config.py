@@ -172,6 +172,7 @@ class TestVc3DormantKeysUnused:
             ["grep", "-rl", "max_actors", str(src_root)],
             capture_output=True,
             text=True,
+            check=False,
         )
         files_with_max_actors = [
             line for line in result.stdout.splitlines() if line.strip()
@@ -357,6 +358,7 @@ class TestVc6DormantFieldsUnused5b0:
             ["grep", "-rl", "concurrent_dispatch", str(src_root)],
             capture_output=True,
             text=True,
+            check=False,
         )
         files_with_field = [line for line in result.stdout.splitlines() if line.strip()]
         _ACTIVE_STEMS = ("runner", "orchestrator", "step_runner", "wave_coordinator")
@@ -377,6 +379,7 @@ class TestVc6DormantFieldsUnused5b0:
             ["grep", "-rl", "max_wave_retries", str(src_root)],
             capture_output=True,
             text=True,
+            check=False,
         )
         files_with_field = [line for line in result.stdout.splitlines() if line.strip()]
         _ACTIVE_STEMS = ("runner", "orchestrator", "step_runner", "wave_coordinator")

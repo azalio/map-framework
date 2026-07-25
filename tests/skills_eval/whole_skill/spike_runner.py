@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Whole-skill outcome-eval SPIKE runner for `map-task`.
 
 Validates the hybrid-metric idea (see docs/whole-skill-optimization-notes.md):
@@ -39,7 +38,7 @@ from pathlib import Path
 # --- import dispatcher helpers (env isolation + envelope parse) -------------
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "src"))
-from mapify_cli.skills_eval.dispatcher import (  # noqa: E402
+from mapify_cli.skills_eval.dispatcher import (
     _apply_temp_flip,
     _eval_subprocess_env,
     _parse_envelope,
@@ -149,7 +148,7 @@ def _degrade_actor(actor_md: Path) -> None:
             skipping = True
             continue
         if skipping:
-            if s.startswith("### ") or s.startswith("# ") or s == "---":
+            if s.startswith(("### ", "# ")) or s == "---":
                 skipping = False
                 out.append(line)
             continue
@@ -312,6 +311,7 @@ def run_skill(tmp: Path, invocation: str, timeout: float, orchestrator_model: st
             timeout=timeout,
             cwd=tmp,
             env=_eval_subprocess_env(tmp),
+            check=False,
         )
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"timeout after {timeout}s", "duration_s": time.monotonic() - t0}
@@ -355,9 +355,7 @@ def deterministic_gates(tmp: Path, allowed: list[str], trap: list[str], test_cmd
         if "__pycache__" in p or p.endswith(".pyc") or ".pytest_cache" in p:
             return False
         base = Path(p).name
-        if any(base.startswith(g) for g in ARTIFACT_GLOBS):
-            return False
-        return True
+        return not any(base.startswith(g) for g in ARTIFACT_GLOBS)
 
     source_changes = [p for p in modified if is_source_change(p)]
     out_of_scope = [p for p in source_changes if p not in allowed]
@@ -467,6 +465,7 @@ def judge_quality(
             timeout=timeout,
             cwd=jtmp,
             env=_eval_subprocess_env(jtmp),
+            check=False,
         )
         raw = _parse_envelope(proc.stdout)[0]
         obj = _extract_json(raw)

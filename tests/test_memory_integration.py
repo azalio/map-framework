@@ -19,7 +19,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).parents[1]
 HOOKS_DIR = REPO_ROOT / ".claude" / "hooks"
 

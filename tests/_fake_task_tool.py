@@ -91,8 +91,7 @@ class FakeTaskTool:
         with self._lock:
             self._record("started", subtask_id)
             self._in_flight += 1
-            if self._in_flight > self._max_in_flight:
-                self._max_in_flight = self._in_flight
+            self._max_in_flight = max(self._max_in_flight, self._in_flight)
 
         # Barrier wait OUTSIDE the lock — must not hold the lock here,
         # otherwise other tasks cannot acquire it to record 'started'.

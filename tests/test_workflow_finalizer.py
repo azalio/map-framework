@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Unit tests for src/mapify_cli/workflow_finalizer.py.
 Tests all validation criteria from ST-006.
@@ -8,8 +7,7 @@ import tempfile
 from pathlib import Path
 
 from mapify_cli.workflow_finalizer import finalize_workflow
-from mapify_cli.workflow_state import WorkflowState, WorkflowPhase
-
+from mapify_cli.workflow_state import WorkflowPhase, WorkflowState
 
 # =============================================================================
 # Validation Criteria Tests (ST-006)
@@ -395,7 +393,7 @@ class TestEdgeCases:
             state.add_subtask(f"ST-{i:03d}", f"Subtask {i}")
 
         # Mark some as complete, some in progress
-        for i in range(0, 20):
+        for i in range(20):
             state.mark_subtask_complete(f"ST-{i:03d}")
         for i in range(20, 25):
             state.mark_subtask_in_progress(f"ST-{i:03d}")

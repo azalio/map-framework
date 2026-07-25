@@ -25,10 +25,10 @@ SCRIPTS_PATH = REPO_ROOT / "src" / "mapify_cli" / "templates" / "map" / "scripts
 
 sys.path.insert(0, str(SCRIPTS_PATH))
 
-import map_step_runner  # noqa: E402  # type: ignore[import-not-found]
+import map_step_runner  # type: ignore[import-not-found]
 
-from mapify_cli.memory.finalize import _build_frontmatter  # noqa: E402
-from mapify_cli.memory.recall import _load_usefulness_scores, build_recall  # noqa: E402
+from mapify_cli.memory.finalize import _build_frontmatter
+from mapify_cli.memory.recall import _load_usefulness_scores, build_recall
 
 # ---------------------------------------------------------------------------
 # Helpers

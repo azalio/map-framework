@@ -135,22 +135,20 @@ def test_vc2_session_headers_and_401_single_retry_backoff():
             return read_ok
         raise AssertionError(f"Unexpected call #{call_count}")
 
-    with patch("urllib.request.urlopen", side_effect=urlopen_side_effect):
-        with patch("time.sleep") as mock_sleep:
-            # Step 1: create session
-            sess_result = sofa.create_session("http://fake", "key123",
-                                              client_name="test", model_name="m")
-            assert sess_result["ok"], f"create_session failed: {sess_result}"
-            assert sess_result["session_id"] == "sess-abc"
+    with patch("urllib.request.urlopen", side_effect=urlopen_side_effect), patch("time.sleep") as mock_sleep:
+        sess_result = sofa.create_session("http://fake", "key123",
+                                          client_name="test", model_name="m")
+        assert sess_result["ok"], f"create_session failed: {sess_result}"
+        assert sess_result["session_id"] == "sess-abc"
 
-            # Step 2: search_posts — triggers 401 retry
-            result, new_sid = sofa.search_posts(
-                "http://fake", "key123", "sess-abc",
-                search="test", per_page=5,
-                client_name="test", model_name="m",
-            )
-            assert result["ok"], f"search_posts failed after retry: {result}"
-            assert new_sid == "sess-new"
+        # Step 2: search_posts — triggers 401 retry
+        result, new_sid = sofa.search_posts(
+            "http://fake", "key123", "sess-abc",
+            search="test", per_page=5,
+            client_name="test", model_name="m",
+        )
+        assert result["ok"], f"search_posts failed after retry: {result}"
+        assert new_sid == "sess-new"
 
     # sleep was called with >= 1 exactly once (the 401 backoff)
     sleep_calls = [c for c in mock_sleep.call_args_list]
@@ -186,10 +184,9 @@ def test_vc2_second_401_returns_typed_error_no_loop():
             raise _make_http_error(401, {"error": "invalid_session"})
         raise AssertionError(f"Unexpected call #{call_count} — loop detected")
 
-    with patch("urllib.request.urlopen", side_effect=urlopen_side_effect):
-        with patch("time.sleep"):
-            sofa.create_session("http://fake", "key123")
-            result, _ = sofa.search_posts("http://fake", "key123", "sess-1", search="x")
+    with patch("urllib.request.urlopen", side_effect=urlopen_side_effect), patch("time.sleep"):
+        sofa.create_session("http://fake", "key123")
+        result, _ = sofa.search_posts("http://fake", "key123", "sess-1", search="x")
 
     assert not result["ok"]
     assert result["kind"] == "auth_failed"
@@ -256,57 +253,55 @@ def test_vc2_full_onboarding_to_session_flow_mocked():
         idx += 1
         return r
 
-    with patch("urllib.request.urlopen", side_effect=urlopen_side_effect):
-        with patch("time.sleep"):
-            # 1. GET /api/onboarding
-            r1 = sofa.onboarding_start("http://fake")
-            assert r1["ok"]
+    with patch("urllib.request.urlopen", side_effect=urlopen_side_effect), patch("time.sleep"):
+        r1 = sofa.onboarding_start("http://fake")
+        assert r1["ok"]
 
-            # 2. POST /api/onboarding/flows
-            r2 = sofa.onboarding_create_flow(
-                "http://fake",
-                client_name="map-framework", client_version="0.1",
-                model_name="claude-sonnet-4-6", model_provider="anthropic",
-                model_version="4.6", model_selection_mode="auto",
-            )
-            assert r2["ok"]
-            assert r2["claim_code"] == "ABCD-1234"
-            assert r2["flow_id"] == "flow-xyz"
+        # 2. POST /api/onboarding/flows
+        r2 = sofa.onboarding_create_flow(
+            "http://fake",
+            client_name="map-framework", client_version="0.1",
+            model_name="claude-sonnet-4-6", model_provider="anthropic",
+            model_version="4.6", model_selection_mode="auto",
+        )
+        assert r2["ok"]
+        assert r2["claim_code"] == "ABCD-1234"
+        assert r2["flow_id"] == "flow-xyz"
 
-            # 4. Poll status
-            r3 = sofa.onboarding_poll_status(
-                "http://fake", "flow-xyz", "poll-tok", poll_after_seconds=0, max_polls=5
-            )
-            assert r3["ok"]
-            assert r3["auth_code"] == "auth-abc"
+        # 4. Poll status
+        r3 = sofa.onboarding_poll_status(
+            "http://fake", "flow-xyz", "poll-tok", poll_after_seconds=0, max_polls=5
+        )
+        assert r3["ok"]
+        assert r3["auth_code"] == "auth-abc"
 
-            # 6. Register (human provides name/description — never invented)
-            r4 = sofa.onboarding_register(
-                "http://fake",
-                auth_code="auth-abc",
-                agent_name="MyTestAgent",
-                description="A test MAP agent",
-            )
-            assert r4["ok"]
-            assert r4["agent_id"] == "agent-uuid-001"
-            assert r4["api_key"] == "sofa_key_XXXXXXXX"
+        # 6. Register (human provides name/description — never invented)
+        r4 = sofa.onboarding_register(
+            "http://fake",
+            auth_code="auth-abc",
+            agent_name="MyTestAgent",
+            description="A test MAP agent",
+        )
+        assert r4["ok"]
+        assert r4["agent_id"] == "agent-uuid-001"
+        assert r4["api_key"] == "sofa_key_XXXXXXXX"
 
-            # 7. Create session
-            r5 = sofa.create_session("http://fake", "sofa_key_XXXXXXXX",
-                                     client_name="map-framework", model_name="claude-sonnet-4-6")
-            assert r5["ok"]
-            assert r5["session_id"] == "sess-live"
+        # 7. Create session
+        r5 = sofa.create_session("http://fake", "sofa_key_XXXXXXXX",
+                                 client_name="map-framework", model_name="claude-sonnet-4-6")
+        assert r5["ok"]
+        assert r5["session_id"] == "sess-live"
 
-            # Search
-            r6, _ = sofa.search_posts(
-                "http://fake", "sofa_key_XXXXXXXX", "sess-live",
-                search="python", per_page=5,
-            )
-            assert r6["ok"]
-            assert len(r6["items"]) == 1
-            item = r6["items"][0]
-            assert item["trust_summary"]["status"] == "not_enough_evidence"
-            assert item["trust_summary"]["score"] is None   # null != 0
+        # Search
+        r6, _ = sofa.search_posts(
+            "http://fake", "sofa_key_XXXXXXXX", "sess-live",
+            search="python", per_page=5,
+        )
+        assert r6["ok"]
+        assert len(r6["items"]) == 1
+        item = r6["items"][0]
+        assert item["trust_summary"]["status"] == "not_enough_evidence"
+        assert item["trust_summary"]["score"] is None   # null != 0
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +407,7 @@ def test_vc4_no_silent_overwrite_and_no_secrets_in_repo():
     result = subprocess.run(
         ["grep", "-rnI", r"Bearer [A-Za-z0-9_\-]{20,}", *grep_targets],
         capture_output=True, text=True,
+        check=False,
     )
     assert result.returncode != 0 or not result.stdout.strip(), \
         f"Possible secret literal found in source trees:\n{result.stdout}"

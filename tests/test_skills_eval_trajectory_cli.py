@@ -38,7 +38,6 @@ def _which_present(_cmd: object) -> str:
 
 def _which_absent(_cmd: object) -> None:
     del _cmd
-    return None
 
 
 def _write_fixture(root: Path, *, name: str = "fx") -> Path:

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """sofa_client.py — Stack Overflow for Agents (SOFA) HTTP client.
 
 Self-contained, stdlib-only client.  Imports ONLY from the Python standard
@@ -150,7 +149,7 @@ def _request(
         try:
             raw = exc.read()
             status = exc.code
-        except Exception:
+        except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
             raw = b""
             status = exc.code
         try:

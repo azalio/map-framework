@@ -102,7 +102,7 @@ def _load_config_overrides() -> dict:
         with open(config_path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
         return {}
 
 
@@ -181,7 +181,7 @@ def _autonomy_enabled() -> bool:
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
         return False
     return (
         isinstance(data, dict)
@@ -220,8 +220,8 @@ def check_autonomy_git_block(command: str) -> tuple[bool, str]:
     if git_block.search(command):
         return (
             False,
-            "Autonomy mode blocks git commit/push — run it yourself "
-            "(human owns commit/push).",
+            ("Autonomy mode blocks git commit/push — run it yourself "
+            "(human owns commit/push)."),
         )
     return True, ""
 

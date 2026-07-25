@@ -80,15 +80,14 @@ def test_vc1_no_anthropic_api_key(module_path: Path) -> None:
 
     for node in ast.walk(tree):
         # os.environ["ANTHROPIC_API_KEY"]
-        if isinstance(node, ast.Subscript):
-            if isinstance(node.value, ast.Attribute) and node.value.attr == "environ":
-                key_node = node.slice
-                if isinstance(key_node, ast.Constant) and isinstance(
-                    key_node.value, str
-                ):
-                    assert "ANTHROPIC_API_KEY" not in key_node.value, (
-                        f"Found ANTHROPIC_API_KEY env subscript in {module_path.name}"
-                    )
+        if isinstance(node, ast.Subscript) and (isinstance(node.value, ast.Attribute) and node.value.attr == "environ"):
+            key_node = node.slice
+            if isinstance(key_node, ast.Constant) and isinstance(
+                key_node.value, str
+            ):
+                assert "ANTHROPIC_API_KEY" not in key_node.value, (
+                    f"Found ANTHROPIC_API_KEY env subscript in {module_path.name}"
+                )
 
         # os.getenv("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
         if isinstance(node, ast.Call):

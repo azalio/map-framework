@@ -26,6 +26,11 @@ from pathlib import Path
 
 import pytest
 
+from mapify_cli.skills_eval.description_optimizer import (
+    _set_frontmatter_description,
+    optimize,
+    split_train_test,
+)
 from mapify_cli.skills_eval.dispatcher import VariantDispatcher
 from mapify_cli.skills_eval.eval_schema import (
     DispatchResult,
@@ -33,13 +38,7 @@ from mapify_cli.skills_eval.eval_schema import (
     EvalSetEntry,
     OptimizeResult,
 )
-from mapify_cli.skills_eval.description_optimizer import (
-    _set_frontmatter_description,
-    optimize,
-    split_train_test,
-)
 from mapify_cli.token_budget import TokenUsage
-
 
 # ---------------------------------------------------------------------------
 # Helpers: source tree fixture
@@ -121,7 +120,6 @@ def _make_none_proposer():
     """Return a proposer that always returns None (proposal_failed)."""
     def proposer(current_desc: str, failing: list[EvalResultRecord]) -> None:
         del current_desc, failing  # unused
-        return None
     return proposer
 
 

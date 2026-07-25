@@ -27,9 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeAlias
 
-from mapify_cli.skills_eval.eval_schema import EvalResultRecord
-from mapify_cli.skills_eval.eval_schema import EvalSetEntry
 from mapify_cli.skills_eval.dispatcher import VariantDispatcher
+from mapify_cli.skills_eval.eval_schema import EvalResultRecord, EvalSetEntry
 from mapify_cli.skills_eval.runner import (
     _append_record,
     _read_present_cell_ids,

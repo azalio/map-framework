@@ -16,7 +16,6 @@ from pathlib import Path
 
 import pytest
 
-
 _MAP_UTILS_PATH = (
     Path(__file__).resolve().parents[1]
     / "src"

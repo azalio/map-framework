@@ -42,7 +42,6 @@ def _which_present(_cmd: object) -> str:
 def _which_absent(_cmd: object) -> None:
     """shutil.which stub: pretend the requested command is NOT on PATH."""
     del _cmd
-    return None
 
 
 def _raise_no_browser(_url: object) -> None:
@@ -132,7 +131,10 @@ def test_vc1_dry_run_prints_budget_and_exits_0(tmp_path: Path) -> None:
 
 def test_vc1_dry_run_with_5_entries_budget_numbers(tmp_path: Path) -> None:
     """VC1: with 5 entries and iterations=3, budget numbers must be consistent."""
-    from mapify_cli.skills_eval.description_optimizer import _DEFAULT_SEED, split_train_test
+    from mapify_cli.skills_eval.description_optimizer import (
+        _DEFAULT_SEED,
+        split_train_test,
+    )
     from mapify_cli.skills_eval.runner import load_eval_set
 
     eval_set = _make_eval_set(tmp_path, n=5)

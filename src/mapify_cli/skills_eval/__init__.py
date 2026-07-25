@@ -6,6 +6,11 @@ runner, aggregator) and the concrete dispatcher implementations.
 
 from __future__ import annotations
 
+from mapify_cli.skills_eval.aggregator import (
+    AggregateSummary,
+    aggregate,
+    bounded_run,
+)
 from mapify_cli.skills_eval.assertions import (
     AssertionResult,
     run_assertion,
@@ -28,11 +33,6 @@ from mapify_cli.skills_eval.runner import (
     latest_run_path,
     load_eval_set,
     run_eval,
-)
-from mapify_cli.skills_eval.aggregator import (
-    AggregateSummary,
-    aggregate,
-    bounded_run,
 )
 
 __all__ = [

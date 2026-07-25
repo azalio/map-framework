@@ -8,27 +8,25 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
 
+from mapify_cli.delivery.agent_generator import (
+    create_actor_content,
+    create_documentation_reviewer_content,
+    create_evaluator_content,
+    create_monitor_content,
+    create_predictor_content,
+    create_reflector_content,
+    create_task_decomposer_content,
+)
 from mapify_cli.delivery.managed_file_copier import (
     DriftReport,
     copy_managed_file,
-)
-from mapify_cli.delivery.agent_generator import (
-    create_task_decomposer_content,
-    create_actor_content,
-    create_monitor_content,
-    create_predictor_content,
-    create_evaluator_content,
-    create_reflector_content,
-    create_documentation_reviewer_content,
 )
 from mapify_cli.schemas import (
     SKILL_REQUIREMENTS_KEYS,
     SKILL_REQUIREMENTS_SCHEMA,
     validate_artifact,
 )
-
 
 _IGNORED_TEMPLATE_NAMES = {"__pycache__", ".DS_Store"}
 _IGNORED_TEMPLATE_SUFFIXES = {".pyc", ".pyo"}
@@ -198,7 +196,7 @@ def get_templates_dir() -> Path:
         # Python 3.11+ with importlib.resources.files
         if hasattr(importlib.resources, "files"):
             return Path(str(importlib.resources.files("mapify_cli") / "templates"))
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
 
     # Fallback to module directory
@@ -218,7 +216,7 @@ def get_templates_dir() -> Path:
 
 def create_agent_files(
     project_path: Path,
-    mcp_servers: List[str],
+    mcp_servers: list[str],
     drift_report: DriftReport | None = None,
 ) -> int:
     """Create MAP agent files in .claude/agents/."""
@@ -325,7 +323,7 @@ def _load_template_skill_catalog(skills_template_dir: Path) -> dict[str, dict[st
         skills = data.get("skills", {})
         if isinstance(skills, dict):
             return skills  # type: ignore[return-value]
-    except Exception:  # noqa: BLE001  # FileNotFoundError, JSONDecodeError, etc.
+    except Exception:  # noqa: BLE001, S110# FileNotFoundError, JSONDecodeError, etc.
         pass
     return {}
 

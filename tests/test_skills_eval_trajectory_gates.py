@@ -14,7 +14,6 @@ from mapify_cli.skills_eval.trajectory import bundle as bundle_mod
 from mapify_cli.skills_eval.trajectory import gates
 from mapify_cli.skills_eval.trajectory.eval_schema import TrajectoryBundle
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

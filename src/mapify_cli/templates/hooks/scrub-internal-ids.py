@@ -61,10 +61,11 @@ def _get_branch() -> str:
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True, text=True, cwd=PROJECT_DIR, timeout=2,
+            check=False,
         )
         if result.returncode == 0:
             return _sanitize_branch(result.stdout.strip())
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
     return "default"
 
@@ -82,9 +83,7 @@ def _scrub_enabled(branch_dir: Path) -> bool:
     except OSError:
         return True
     m = re.search(r"^\s*scrub[._]internal_ids\s*:\s*(\S+)", text, re.MULTILINE)
-    if m and m.group(1).strip().lower() in ("false", "no", "off", "0"):
-        return False
-    return True
+    return not (m and m.group(1).strip().lower() in ("false", "no", "off", "0"))
 
 
 def main() -> None:
@@ -125,6 +124,7 @@ def main() -> None:
         proc = subprocess.run(
             [sys.executable, str(ENGINE), "clean", "--branch", branch],
             capture_output=True, text=True, cwd=PROJECT_DIR, env=env, timeout=120,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         _silent()
@@ -139,10 +139,11 @@ def main() -> None:
     if modified:
         try:
             subprocess.run(["git", "add", "--", *modified], cwd=PROJECT_DIR,
-                           env=env, capture_output=True, text=True, timeout=15)
+                           env=env, capture_output=True, text=True, timeout=15, check=False)
             subprocess.run(
                 ["git", "commit", "-m", "chore(map): strip internal workflow IDs"],
                 cwd=PROJECT_DIR, env=env, capture_output=True, text=True, timeout=30,
+                check=False,
             )
         except (OSError, subprocess.SubprocessError):
             pass  # leave the cleaned working tree in place; never block

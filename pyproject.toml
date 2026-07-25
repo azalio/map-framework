@@ -120,6 +120,24 @@ exclude = [
 [tool.ruff]
 extend-exclude = ["tests/skills_eval/fixtures/whole_skill"]
 
+[tool.ruff.lint]
+ignore = [
+    # This codebase deliberately raises ValueError (not TypeError) from
+    # isinstance-based input/data validators (dataclass __post_init__, JSON
+    # schema validation) -- a tested, documented contract (20+
+    # `pytest.raises(ValueError)` assertions and `Raises: ValueError`
+    # docstrings across grace_eval, skills_eval, repo_insight,
+    # validate_dependencies, verification_recorder). TRY004 conflicts with
+    # this established convention rather than catching a real defect.
+    "TRY004",
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# typer's CLI parameter declarations require typer.Option(...)/typer.Argument(...)
+# as argument defaults -- that's the framework's own idiomatic API, not the
+# mutable-default-argument antipattern B008 exists to catch.
+extend-immutable-calls = ["typer.Argument", "typer.Option"]
+
 [tool.black]
 target-version = ["py311"]
 

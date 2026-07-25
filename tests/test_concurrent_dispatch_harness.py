@@ -40,14 +40,14 @@ import pytest
 # ---------------------------------------------------------------------------
 sys.dont_write_bytecode = True
 
-from mapify_cli.parallelism_observability import (  # noqa: E402
+from mapify_cli.parallelism_observability import (
     DISPATCH_OUTCOME_CONCURRENT_OBSERVED,
     DISPATCH_OUTCOME_PHANTOM_PARALLEL,
     DISPATCH_OUTCOME_SAME_TURN_BUT_HOST_SEQUENTIAL,
     DISPATCH_OUTCOME_SEQUENTIAL_OBSERVED,
     classify_dispatch,
 )
-from tests._fake_task_tool import FakeTaskTool  # noqa: E402
+from tests._fake_task_tool import FakeTaskTool
 
 # Load map_step_runner from the generated templates tree for ST-006 integration
 # tests. Bytecode suppression (above) prevents __pycache__ pollution.
@@ -56,7 +56,7 @@ _SCRIPTS_PATH = (
     / "src" / "mapify_cli" / "templates" / "map" / "scripts"
 )
 sys.path.insert(0, str(_SCRIPTS_PATH))
-import map_step_runner as _msr  # type: ignore[import-not-found]  # noqa: E402
+import map_step_runner as _msr  # type: ignore[import-not-found]
 
 # ---------------------------------------------------------------------------
 # Helpers — local runners (TEST-LOCAL; no production dispatcher)
@@ -110,8 +110,7 @@ def _compute_max_in_flight(events: list[dict[str, Any]]) -> int:
         ev_type = ev.get("event", "")
         if ev_type == "started":
             in_flight += 1
-            if in_flight > max_in_flight:
-                max_in_flight = in_flight
+            max_in_flight = max(max_in_flight, in_flight)
         elif ev_type == "finished":
             in_flight = max(0, in_flight - 1)
     return max_in_flight
@@ -377,7 +376,7 @@ class TestVC4NoLLMNoWallClock:
         the check operates on the live module object, not on its source text,
         so it cannot match its own assertion string.
         """
-        import tests.test_concurrent_dispatch_harness as this_module
+        import tests.test_concurrent_dispatch_harness as this_module  # noqa: PLW0406 -- deliberate self-import to introspect the live module namespace (see docstring)
 
         module_names = set(dir(this_module))
 
@@ -539,7 +538,9 @@ class TestRunConcurrentWaveDispatchTelemetry:
         (In a real wave the skill calls record_dispatch_actual once; the runner
         CLI does not call it per sub-batch.)
         """
-        from mapify_cli.parallelism_observability import classify_dispatch as _real_classify
+        from mapify_cli.parallelism_observability import (
+            classify_dispatch as _real_classify,
+        )
 
         call_count: list[int] = [0]
 

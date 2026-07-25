@@ -29,12 +29,12 @@ SRC_PATH = REPO_ROOT / "src"
 sys.path.insert(0, str(SRC_PATH))
 sys.path.insert(0, str(SCRIPTS_PATH))
 
-import map_orchestrator  # noqa: E402  # type: ignore[import-not-found]
-import map_step_runner  # noqa: E402  # type: ignore[import-not-found]
+import map_orchestrator  # type: ignore[import-not-found]
+import map_step_runner  # type: ignore[import-not-found]
 
 # DependencyGraph may not be importable if mapify_cli deps are missing (e.g. Python <3.11)
 try:
-    from mapify_cli.dependency_graph import DependencyGraph  # noqa: F401
+    from mapify_cli.dependency_graph import DependencyGraph
 
     del DependencyGraph
     _HAS_DEPENDENCY_GRAPH = True

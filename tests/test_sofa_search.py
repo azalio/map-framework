@@ -373,16 +373,15 @@ class TestVC4EnabledNoCredsNoninteractiveNoop:
         fake_client = _make_fake_client(has_key=False)
 
         import logging
-        with caplog.at_level(logging.INFO, logger="sofa_search"):
-            with unittest.mock.patch.object(
+        with caplog.at_level(logging.INFO, logger="sofa_search"), unittest.mock.patch.object(
                 sofa_search, "_load_sofa_client", return_value=fake_client
             ):
-                result = sofa_search.dispatch(
-                    "test query",
-                    project_dir=tmp_path,
-                    interactive=False,
-                    auth_intent=False,
-                )
+            result = sofa_search.dispatch(
+                "test query",
+                project_dir=tmp_path,
+                interactive=False,
+                auth_intent=False,
+            )
 
         assert result.get("noop") is True
         assert result.get("ok") is True
@@ -459,16 +458,15 @@ class TestVC4InteractiveAuthTriggersOnboarding:
         # prompts: browser-login Enter, agent_name, description, persona-skip.
         with unittest.mock.patch(
             "builtins.input", side_effect=["", "MyAgent", "a test agent", ""]
+        ), unittest.mock.patch.object(
+            sofa_search, "_load_sofa_client", return_value=fake_client
         ):
-            with unittest.mock.patch.object(
-                sofa_search, "_load_sofa_client", return_value=fake_client
-            ):
-                result = sofa_search.dispatch(
-                    "auth",
-                    project_dir=tmp_path,
-                    interactive=True,
-                    auth_intent=True,
-                )
+            result = sofa_search.dispatch(
+                "auth",
+                project_dir=tmp_path,
+                interactive=True,
+                auth_intent=True,
+            )
 
         # Routing reached onboarding, and the full flow completed.
         assert onboarding_calls, "dispatch must route interactive+auth_intent+no-creds to onboarding"
@@ -666,15 +664,14 @@ class TestVC4SearchToBlockEndToEndMocked:
         )
         fake_client = _make_fake_client(has_key=True, search_items=[post])
 
-        with unittest.mock.patch("urllib.request.urlopen") as mock_urlopen:
-            with unittest.mock.patch.object(
+        with unittest.mock.patch("urllib.request.urlopen") as mock_urlopen, unittest.mock.patch.object(
                 sofa_search, "_load_sofa_client", return_value=fake_client
             ):
-                result = sofa_search.dispatch(
-                    "rate limiting",
-                    project_dir=tmp_path,
-                    interactive=False,
-                )
+            result = sofa_search.dispatch(
+                "rate limiting",
+                project_dir=tmp_path,
+                interactive=False,
+            )
 
         # urlopen must never be called from the formatter/dispatch path
         assert mock_urlopen.call_count == 0, (
@@ -700,11 +697,10 @@ class TestVC4SearchToBlockEndToEndMocked:
         map_dir.mkdir()
         (map_dir / "config.yaml").write_text("sofa.enabled: false\n")
 
-        with unittest.mock.patch("urllib.request.urlopen") as mock_urlopen:
-            with unittest.mock.patch.object(
+        with unittest.mock.patch("urllib.request.urlopen") as mock_urlopen, unittest.mock.patch.object(
                 sofa_search, "_load_sofa_client"
             ) as mock_load:
-                result = sofa_search.dispatch("anything", project_dir=tmp_path)
+            result = sofa_search.dispatch("anything", project_dir=tmp_path)
 
         assert mock_urlopen.call_count == 0
         mock_load.assert_not_called()
@@ -807,11 +803,10 @@ class TestVC6ZeroNetwork:
         map_dir.mkdir()
         (map_dir / "config.yaml").write_text("sofa.enabled: false\n")
 
-        with unittest.mock.patch("urllib.request.urlopen") as mock_urlopen:
-            with unittest.mock.patch.object(
+        with unittest.mock.patch("urllib.request.urlopen") as mock_urlopen, unittest.mock.patch.object(
                 sofa_search, "_load_sofa_client"
             ) as mock_load:
-                result = sofa_search.dispatch("any query", project_dir=tmp_path)
+            result = sofa_search.dispatch("any query", project_dir=tmp_path)
 
         assert mock_urlopen.call_count == 0, (
             f"urlopen called {mock_urlopen.call_count} time(s) on the disabled path"

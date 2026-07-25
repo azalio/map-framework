@@ -27,7 +27,7 @@ import os
 import re
 import subprocess
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -281,7 +281,7 @@ def _append_cost_log(
     output_tokens = int(usage.get("output_tokens", 0) or 0)
 
     record = {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": datetime.now(UTC).isoformat(),
         "session_id": session_id,
         "input_tokens": tu.input_tokens,
         "cache_read_input_tokens": tu.cache_read_input_tokens,
@@ -390,6 +390,7 @@ def _finalize_one(
                     text=True,
                     timeout=timeout,
                     env=env,
+                    check=False,
                 )
                 duration_s = time.monotonic() - t_start
             except subprocess.TimeoutExpired:
@@ -434,7 +435,7 @@ def _finalize_one(
             # the body's first line, then the sid.  (Using the body's first line
             # unconditionally produced slugs like "summary" from a "## Summary"
             # heading, inflating collisions.)
-            date_iso = datetime.now(timezone.utc).date().isoformat()
+            date_iso = datetime.now(UTC).date().isoformat()
             if title.strip():
                 title_line = title.strip()
             elif body.strip():

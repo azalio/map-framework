@@ -26,7 +26,6 @@ import os
 import subprocess
 import textwrap
 from pathlib import Path
-from typing import Optional
 
 import pytest
 
@@ -46,6 +45,7 @@ def _claude_available() -> bool:
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -60,6 +60,7 @@ def _mapify_available() -> bool:
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -74,6 +75,7 @@ def _claude_auth_available() -> bool:
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         if result.returncode == 0:
             return True
@@ -151,7 +153,7 @@ def _run_claude(prompt: str, cwd: str, timeout: int = 3600, max_turns: int = 50)
         Claude's text output
     """
     max_attempts = 3
-    last_error: Optional[RuntimeError] = None
+    last_error: RuntimeError | None = None
     for attempt in range(1, max_attempts + 1):
         try:
             result = subprocess.run(
@@ -173,6 +175,7 @@ def _run_claude(prompt: str, cwd: str, timeout: int = 3600, max_turns: int = 50)
                 cwd=cwd,
                 timeout=timeout,
                 env={**os.environ, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"},
+                check=False,
             )
         except subprocess.TimeoutExpired as exc:
             partial = exc.stdout or b""
@@ -394,6 +397,7 @@ def _initialize_map_execution_state_for_e2e(test_project: Path) -> None:
         capture_output=True,
         text=True,
         timeout=30,
+        check=False,
     )
     assert result.returncode == 0, (
         f"resume_from_plan failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
@@ -409,6 +413,7 @@ def _initialize_map_execution_state_for_e2e(test_project: Path) -> None:
             capture_output=True,
             text=True,
             timeout=30,
+            check=False,
         )
         assert wave_result.returncode == 0, (
             f"set_waves failed:\nstdout: {wave_result.stdout}\nstderr: {wave_result.stderr}"
@@ -484,6 +489,7 @@ def _run_mapify_init(project_dir: str) -> None:
         text=True,
         cwd=project_dir,
         timeout=60,
+        check=False,
     )
     if result.returncode != 0:
         raise RuntimeError(f"mapify init failed:\n{result.stdout}\n{result.stderr}")
@@ -615,6 +621,7 @@ def _get_branch_name(project_dir: Path) -> str:
         cwd=str(project_dir),
         capture_output=True,
         text=True,
+        check=False,
     )
     branch = result.stdout.strip()
     # Sanitize: match map_utils.py get_branch_name() behavior
@@ -846,6 +853,7 @@ class TestMapEfficientE2E:
             capture_output=True,
             text=True,
             timeout=60,
+            check=False,
         )
         assert (
             result.returncode == 0
@@ -862,16 +870,17 @@ class TestMapEfficientE2E:
             [
                 "python3",
                 "-c",
-                "from app import multiply; "
+                ("from app import multiply; "
                 "assert multiply(2, 2) == 4, f'2*2={multiply(2,2)}'; "
                 "assert multiply(0, 5) == 0, f'0*5={multiply(0,5)}'; "
                 "assert multiply(-3, 7) == -21, f'-3*7={multiply(-3,7)}'; "
-                "print('multiply: all checks passed')",
+                "print('multiply: all checks passed')"),
             ],
             cwd=str(test_project),
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         assert result.returncode == 0, (
             f"multiply() produced wrong results:\n"

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Pytest tests for .claude/hooks/safety-guardrails.py PreToolUse hook.
 
@@ -27,6 +26,7 @@ def run_hook_file(tool_name: str, file_path: str) -> tuple[int, str, str]:
         input=json.dumps(input_data),
         capture_output=True,
         text=True,
+        check=False,
     )
     return result.returncode, result.stdout, result.stderr
 
@@ -39,6 +39,7 @@ def run_hook_bash(command: str) -> tuple[int, str, str]:
         input=json.dumps(input_data),
         capture_output=True,
         text=True,
+        check=False,
     )
     return result.returncode, result.stdout, result.stderr
 
@@ -59,6 +60,7 @@ def run_hook_bash_in(command: str, project_dir: Path) -> tuple[int, str, str]:
         capture_output=True,
         text=True,
         env=env,
+        check=False,
     )
     return result.returncode, result.stdout, result.stderr
 
@@ -486,13 +488,15 @@ class TestErrorHandling:
             input="not valid json",
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode == 0
         assert _parse_stdout(result.stdout) == {}
 
     def test_empty_input(self):
         result = subprocess.run(
-            [sys.executable, str(HOOK_PATH)], input="", capture_output=True, text=True
+            [sys.executable, str(HOOK_PATH)], input="", capture_output=True, text=True,
+            check=False,
         )
         assert result.returncode == 0
         assert _parse_stdout(result.stdout) == {}

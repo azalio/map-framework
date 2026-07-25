@@ -21,9 +21,9 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # Configuration
 MAX_LINES = 100
@@ -66,10 +66,11 @@ def get_branch_name() -> str:
             text=True,
             cwd=PROJECT_DIR,
             timeout=2,
+            check=False,
         )
         if result.returncode == 0:
             return sanitize_branch_name(result.stdout.strip())
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         # Intentionally ignore all errors (e.g., missing git, not a repo) and fall back to default
         pass
     return "default"
@@ -93,17 +94,17 @@ def is_branch_dir(d: Path) -> bool:
     return has_ralph_files
 
 
-def get_all_branch_dirs() -> List[Path]:
+def get_all_branch_dirs() -> list[Path]:
     """Get all branch directories in .map/ for pruning."""
     try:
         if not MAP_DIR.exists():
             return []
         return [d for d in MAP_DIR.iterdir() if d.is_dir() and is_branch_dir(d)]
-    except IOError:
+    except OSError:
         return []
 
 
-def prune_file(file_path: Path, archive_dir: Path) -> Optional[str]:
+def prune_file(file_path: Path, archive_dir: Path) -> str | None:
     """
     Prune a single log file.
     - Archive if older than MAX_AGE_HOURS
@@ -116,13 +117,13 @@ def prune_file(file_path: Path, archive_dir: Path) -> Optional[str]:
             return None
 
         stat = file_path.stat()
-        age_hours = (datetime.now().timestamp() - stat.st_mtime) / 3600
+        age_hours = (datetime.now(UTC).timestamp() - stat.st_mtime) / 3600
         file_name = file_path.name
 
         # Archive old files
         if age_hours > MAX_AGE_HOURS:
             archive_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+            timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
             archive_name = f"{file_name}.{timestamp}"
             shutil.move(str(file_path), str(archive_dir / archive_name))
             return f"{file_name} (archived)"
@@ -136,11 +137,11 @@ def prune_file(file_path: Path, archive_dir: Path) -> Optional[str]:
             return f"{file_name} (truncated {len(lines)} -> {MAX_LINES})"
 
         return None
-    except (IOError, OSError):
+    except OSError:
         return None
 
 
-def load_workflow_state(branch: str) -> Optional[Dict[str, Any]]:
+def load_workflow_state(branch: str) -> dict[str, Any] | None:
     """Load workflow state from .map/<branch>/step_state.json."""
     state_file = MAP_DIR / branch / "step_state.json"
     if not state_file.exists():
@@ -148,18 +149,18 @@ def load_workflow_state(branch: str) -> Optional[Dict[str, Any]]:
     try:
         with open(state_file) as f:
             return json.load(f)
-    except (json.JSONDecodeError, IOError):
+    except (OSError, json.JSONDecodeError):
         return None
 
 
-def save_restore_point(branch: str, state: Dict[str, Any]) -> bool:
+def save_restore_point(branch: str, state: dict[str, Any]) -> bool:
     """Save workflow state to restore_point.json for post-compaction recovery."""
     branch_dir = MAP_DIR / branch
     branch_dir.mkdir(parents=True, exist_ok=True)
     restore_file = branch_dir / "restore_point.json"
 
     restore_data = {
-        "saved_at": datetime.now().isoformat(),
+        "saved_at": datetime.now(UTC).isoformat(),
         "reason": "pre_compaction",
         "workflow_state": state,
     }
@@ -168,11 +169,11 @@ def save_restore_point(branch: str, state: Dict[str, Any]) -> bool:
         with open(restore_file, "w") as f:
             json.dump(restore_data, f, indent=2)
         return True
-    except IOError:
+    except OSError:
         return False
 
 
-def format_recovery_message(state: Dict[str, Any], branch: str) -> str:
+def format_recovery_message(state: dict[str, Any], branch: str) -> str:
     """Format ~300 char recovery message for post-compaction context."""
     workflow = state.get("workflow", "unknown")
 
@@ -221,7 +222,7 @@ def main() -> None:
         # Malformed or non-JSON stdin is ignored: this hook doesn't rely on input contents
         pass
 
-    output: Dict[str, Any] = {}
+    output: dict[str, Any] = {}
 
     # Skip if no .map directory
     if not MAP_DIR.exists():
@@ -233,17 +234,16 @@ def main() -> None:
 
     # ANTI-AMNESIA: Save restore point and inject recovery message
     state = load_workflow_state(branch)
-    if state:
-        # Save restore point
-        if save_restore_point(branch, state):
-            print(
-                f"[ralph-pruner] Saved restore_point for branch: {branch}",
-                file=sys.stderr,
-            )
+    # Save restore point
+    if state and save_restore_point(branch, state):
+        print(
+            f"[ralph-pruner] Saved restore_point for branch: {branch}",
+            file=sys.stderr,
+        )
 
-        # Note: PreCompact has no decision control per docs — additionalContext
-        # is not supported. Recovery context is injected via SessionStart(compact)
-        # hook (post-compact-context.py) which reads restore_point.json.
+    # Note: PreCompact has no decision control per docs — additionalContext
+    # is not supported. Recovery context is injected via SessionStart(compact)
+    # hook (post-compact-context.py) which reads restore_point.json.
 
     # Prune log files in ALL branch directories
     actions = []

@@ -49,10 +49,11 @@ def get_branch_name() -> str:
             text=True,
             cwd=PROJECT_DIR,
             timeout=2,
+            check=False,
         )
         if result.returncode == 0:
             return sanitize_branch_name(result.stdout.strip())
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
     return "default"
 
@@ -218,7 +219,7 @@ def offloaded_outputs_pointer(branch: str, branch_dir: Path) -> str | None:
             return None
         build_manifest(branch_dir / "compacted")
         return recovery_pointer_text(branch, branch_dir)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
         return None
 
 
@@ -248,7 +249,7 @@ def main() -> None:
                     f"(before compaction) was saved to {transcript_path}. "
                     f"Read that file if you need details from before compaction."
                 )
-        except (IOError, OSError):
+        except OSError:
             pass
 
     # Point at any tool outputs offloaded before compaction (#232) so the agent
@@ -273,7 +274,7 @@ def main() -> None:
                     f"workflow={workflow}, phase={phase}. "
                     f"Full state: .map/{branch}/step_state.json"
                 )
-        except (json.JSONDecodeError, IOError, OSError):
+        except (json.JSONDecodeError, OSError):
             pass
 
     if not parts:

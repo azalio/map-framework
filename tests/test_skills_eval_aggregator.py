@@ -24,7 +24,6 @@ from mapify_cli.skills_eval.eval_schema import (
 )
 from mapify_cli.token_budget import TokenUsage
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """sofa_search.py — MAP Framework SOFA prior-art search orchestrator + formatter.
 
 Self-contained, stdlib-only (+ lazy sofa_client).  No mapify_cli import.
@@ -16,8 +15,9 @@ import os
 import re
 import sys
 import urllib.parse
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +77,7 @@ def _host_allowed(host: str) -> bool:
     h = host.lower()
     if h in ALLOWLIST_HOSTS:
         return True
-    if h.endswith(".stackoverflow.com") or h.endswith(".stackexchange.com"):
-        return True
-    return False
+    return bool(h.endswith((".stackoverflow.com", ".stackexchange.com")))
 
 
 def apply_link_allowlist(text: str) -> str:

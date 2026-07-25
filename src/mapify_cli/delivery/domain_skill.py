@@ -14,8 +14,6 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Optional
-
 
 # File globs that may contain secrets — never read their content.
 _SECRET_FILENAMES = re.compile(
@@ -68,7 +66,7 @@ def _extract_project_name(project_path: Path) -> str:
     return project_path.resolve().name
 
 
-def _extract_readme_summary(project_path: Path) -> Optional[str]:
+def _extract_readme_summary(project_path: Path) -> str | None:
     """Return the first meaningful non-heading line from README.md, if any."""
     for readme_name in ("README.md", "readme.md", "Readme.md"):
         readme = project_path / readme_name
@@ -141,7 +139,7 @@ def _make_skill_name(raw_name: str) -> str:
     return name or "project-domain"
 
 
-def _resolve_skill_name(user_name: Optional[str], project_path: Path) -> str:
+def _resolve_skill_name(user_name: str | None, project_path: Path) -> str:
     """Determine the final skill name from user override or project detection."""
     if user_name:
         return _make_skill_name(user_name)
@@ -152,7 +150,7 @@ def _resolve_skill_name(user_name: Optional[str], project_path: Path) -> str:
 def _build_skill_md(
     skill_name: str,
     project_name: str,
-    summary: Optional[str],
+    summary: str | None,
     key_dirs: list[str],
     safe_commands: list[str],
 ) -> str:
@@ -225,7 +223,7 @@ def _build_skill_md(
 def create_domain_skill(
     project_path: Path,
     *,
-    skill_name: Optional[str] = None,
+    skill_name: str | None = None,
     overwrite: bool = False,
 ) -> tuple[Path, bool]:
     """

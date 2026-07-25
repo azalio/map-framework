@@ -41,8 +41,8 @@ SCRIPTS_PATH = ORCHESTRATOR_PATH  # same dir; alias for clarity
 
 sys.path.insert(0, str(ORCHESTRATOR_PATH))
 
-import map_orchestrator  # noqa: E402  # pyright: ignore[reportMissingImports]
-import map_step_runner  # noqa: E402  # pyright: ignore[reportMissingImports]
+import map_orchestrator  # pyright: ignore[reportMissingImports]
+import map_step_runner  # pyright: ignore[reportMissingImports]
 
 WORKFLOW_GATE_HOOK = REPO_ROOT / ".claude" / "hooks" / "workflow-gate.py"
 SAFETY_HOOK = REPO_ROOT / ".claude" / "hooks" / "safety-guardrails.py"
@@ -73,6 +73,7 @@ def _run_workflow_gate(input_data: dict, cwd: Path) -> tuple[int, str, str]:
         capture_output=True,
         text=True,
         cwd=str(cwd),
+        check=False,
     )
     return result.returncode, result.stdout, result.stderr
 
@@ -86,6 +87,7 @@ def _run_safety_hook(input_data: dict, env: dict | None = None) -> tuple[int, st
         capture_output=True,
         text=True,
         env={**os.environ, **(env or {})},
+        check=False,
     )
     return result.returncode, result.stdout, result.stderr
 
@@ -99,7 +101,7 @@ def _init_git(tmp_path: Path, branch: str = "main") -> None:
     ]:
         subprocess.run(cmd, cwd=tmp_path, capture_output=True, check=True)
     (tmp_path / "seed.txt").write_text("seed\n")
-    subprocess.run(["git", "add", "seed.txt"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "add", "seed.txt"], cwd=tmp_path, capture_output=True, check=False)
     subprocess.run(
         ["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=True
     )
@@ -119,7 +121,7 @@ def _init_git_compat(tmp_path: Path) -> None:
         cwd=tmp_path, capture_output=True, check=True,
     )
     (tmp_path / "seed.txt").write_text("seed\n")
-    subprocess.run(["git", "add", "seed.txt"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "add", "seed.txt"], cwd=tmp_path, capture_output=True, check=False)
     subprocess.run(
         ["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=True
     )
@@ -224,7 +226,7 @@ class TestAttackMutationBoundaryStrictMode:
         _init_git_compat(tmp_path)
         # Actor wrote leak.py — NOT in affected_files.
         (tmp_path / "leak.py").write_text("# oops\n")
-        subprocess.run(["git", "add", "leak.py"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "add", "leak.py"], cwd=tmp_path, capture_output=True, check=False)
 
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
         monkeypatch.setenv("MAP_STRICT_SCOPE", "1")
@@ -261,7 +263,7 @@ class TestAttackMutationBoundaryStrictMode:
         _init_git_compat(tmp_path)
         # Write a.py — the declared affected file — then commit.
         (tmp_path / "a.py").write_text("x = 1\n")
-        subprocess.run(["git", "add", "a.py"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "add", "a.py"], cwd=tmp_path, capture_output=True, check=False)
         subprocess.run(
             ["git", "commit", "-m", "ST-001: add a.py"],
             cwd=tmp_path, capture_output=True, check=True
@@ -457,7 +459,7 @@ class TestAttackWorkflowGateDuringDecompose:
             cwd=tmp_path, capture_output=True, check=True,
         )
         (tmp_path / "README.md").write_text("x\n")
-        subprocess.run(["git", "add", "README.md"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "add", "README.md"], cwd=tmp_path, capture_output=True, check=False)
         subprocess.run(
             ["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=True
         )
@@ -470,6 +472,7 @@ class TestAttackWorkflowGateDuringDecompose:
             subprocess.run(
                 ["git", "checkout", "-b", branch],
                 cwd=tmp_path, capture_output=True,
+                check=False,
             )
 
     def test_edit_denied_during_decompose(self, tmp_path: Path) -> None:

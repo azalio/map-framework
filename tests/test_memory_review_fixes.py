@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -27,7 +27,6 @@ from mapify_cli.memory.capture import append_turn
 from mapify_cli.memory.digest_schema import REDACTION_TOKEN, redact_text
 from mapify_cli.memory.finalize import finalize_dirty
 from mapify_cli.memory.recall import build_recall
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -101,7 +100,7 @@ def _proc(
 
 
 def _today() -> str:
-    return datetime.now(timezone.utc).date().isoformat()
+    return datetime.now(UTC).date().isoformat()
 
 
 def _edit_line(path: str) -> str:
@@ -211,7 +210,7 @@ def test_fenced_claude_output_parses_decisions_and_findings(tmp_path: Path) -> N
         ),
     ):
         finalize_dirty(None, tmp_path)
-    md = list(_sessions_dir(tmp_path).glob("*.md"))[0]
+    md = next(iter(_sessions_dir(tmp_path).glob("*.md")))
     content = md.read_text(encoding="utf-8")
     assert "chose-WAL" in content
     assert "fence-handled" in content
@@ -238,7 +237,7 @@ def test_mixed_case_session_id_not_redacted_in_frontmatter(tmp_path: Path) -> No
     _write_scratch(scratch, sid)
     with patch("mapify_cli.memory.finalize.subprocess.run", return_value=_proc()):
         finalize_dirty(None, tmp_path)
-    content = list(_sessions_dir(tmp_path).glob("*.md"))[0].read_text(encoding="utf-8")
+    content = next(iter(_sessions_dir(tmp_path).glob("*.md"))).read_text(encoding="utf-8")
     assert f'session_id: "{sid}"' in content
     assert REDACTION_TOKEN not in content.splitlines()[1]  # the session_id line
 

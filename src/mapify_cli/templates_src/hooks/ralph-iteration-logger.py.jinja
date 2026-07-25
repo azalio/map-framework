@@ -14,9 +14,8 @@ import os
 import re
 import sys
 from collections import Counter
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 # Paths - BRANCH-SCOPED
 PROJECT_DIR = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
@@ -90,10 +89,11 @@ def get_branch_name() -> str:
             text=True,
             cwd=PROJECT_DIR,
             timeout=1,
+            check=False,
         )
         if result.returncode == 0:
             return sanitize_branch_name(result.stdout.strip())
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         # If git is unavailable or not a repo, fall back to default branch name
         pass
     return "default"
@@ -115,7 +115,7 @@ def get_alerts_file() -> Path:
     return branch_dir / "thrashing_alerts.jsonl"
 
 
-def get_exit_code(tool_response: dict) -> Optional[int]:
+def get_exit_code(tool_response: dict) -> int | None:
     """Extract exit code with tolerance for different key names."""
     # Try multiple possible key names
     for key in ("exit_code", "exitCode", "status", "returnCode", "return_code"):
@@ -128,7 +128,7 @@ def get_exit_code(tool_response: dict) -> Optional[int]:
     return None
 
 
-def calculate_effectiveness(tool_name: str, tool_response: Optional[dict]) -> float:
+def calculate_effectiveness(tool_name: str, tool_response: dict | None) -> float:
     """
     Calculate effectiveness score based on STRUCTURED indicators, not string search.
 
@@ -158,7 +158,7 @@ def calculate_effectiveness(tool_name: str, tool_response: Optional[dict]) -> fl
     return 1.0
 
 
-def detect_thrashing(log_file: Path) -> Optional[dict]:
+def detect_thrashing(log_file: Path) -> dict | None:
     """
     Detect thrashing patterns:
     1. Same file edited repeatedly
@@ -206,7 +206,7 @@ def detect_thrashing(log_file: Path) -> Optional[dict]:
             }
 
         return None
-    except (json.JSONDecodeError, IOError):
+    except (OSError, json.JSONDecodeError):
         return None
 
 
@@ -255,12 +255,12 @@ def main() -> None:
             iteration_count = len([line for line in lines if line]) + 1
         else:
             iteration_count = 1
-    except IOError:
+    except OSError:
         iteration_count = 1
 
     # Log iteration (atomic write)
     entry = {
-        "ts": datetime.now().isoformat(),
+        "ts": datetime.now(UTC).isoformat(),
         "iteration": iteration_count,
         "tool": tool_name,
         "file": file_path,
@@ -271,7 +271,7 @@ def main() -> None:
     try:
         with open(log_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=True) + "\n")
-    except IOError:
+    except OSError:
         # Best-effort logging: failures must not block tool execution
         pass
 
@@ -279,7 +279,7 @@ def main() -> None:
     thrashing = detect_thrashing(log_file)
     if thrashing:
         alert = {
-            "ts": datetime.now().isoformat(),
+            "ts": datetime.now(UTC).isoformat(),
             "alert_type": thrashing["type"],
             **thrashing,
             "message": "Thrashing detected: consider different approach",
@@ -288,7 +288,7 @@ def main() -> None:
         try:
             with open(alerts_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(alert, ensure_ascii=True) + "\n")
-        except IOError:
+        except OSError:
             # Best-effort alerting: failures must not block tool execution
             pass
 
@@ -309,7 +309,7 @@ def main() -> None:
     # Derive iteration summary (best-effort, never blocks)
     try:
         derive_summary(log_file)
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
 
     print("{}")
@@ -379,7 +379,7 @@ def derive_summary(log_file: Path) -> None:
         e.get("effectiveness", 0.0) for e in entries if (e.get("file") or "").strip()
     ]
     summary: dict[str, object] = {
-        "generated_at": datetime.now().isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "entry_count": len(entries),
         "total_entries_seen": total_lines,
         "dropped_count": dropped_count,

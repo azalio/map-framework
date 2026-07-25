@@ -27,7 +27,10 @@ import tempfile
 from pathlib import Path
 
 from mapify_cli.skills_eval.aggregator import aggregate
-from mapify_cli.skills_eval.dispatcher import ClaudeSubprocessDispatcher, VariantDispatcher
+from mapify_cli.skills_eval.dispatcher import (
+    ClaudeSubprocessDispatcher,
+    VariantDispatcher,
+)
 from mapify_cli.skills_eval.eval_schema import (
     EvalResultRecord,
     EvalSetEntry,

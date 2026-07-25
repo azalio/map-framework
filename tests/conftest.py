@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 sys.dont_write_bytecode = True
 os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 

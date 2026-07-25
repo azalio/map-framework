@@ -54,7 +54,7 @@ def _jinja_path(tmp_root: Path, skill: str = _SKILL) -> Path:
 
 def _read_frontmatter_description(skill_md: Path) -> str:
     """Parse the YAML frontmatter via skill_ir.parse_frontmatter and return description."""
-    from mapify_cli.skill_ir import parse_frontmatter  # noqa: PLC0415
+    from mapify_cli.skill_ir import parse_frontmatter
 
     text = skill_md.read_text(encoding="utf-8")
     # Extract text between the two ---
@@ -346,7 +346,9 @@ def test_vc2_rendered_trees_byte_identical_after_apply(tmp_path: Path) -> None:
     compares a fresh render (from the patched temp source) against the already-
     rendered temp output — they must be byte-identical.
     """
-    from mapify_cli.delivery.template_renderer import diff_rendered_trees  # noqa: PLC0415
+    from mapify_cli.delivery.template_renderer import (
+        diff_rendered_trees,
+    )
 
     repo_root = _seed_templates_src(tmp_path)
     templates_src_root = repo_root / "src" / "mapify_cli" / "templates_src"
@@ -386,7 +388,7 @@ def test_vc1_skill_rules_json_description_unchanged(tmp_path: Path) -> None:
     repo_root = _seed_templates_src(tmp_path)
 
     # Find the skill-rules.json.jinja and render initial state
-    from mapify_cli.delivery.template_renderer import render_repo_trees  # noqa: PLC0415
+    from mapify_cli.delivery.template_renderer import render_repo_trees
 
     render_repo_trees("claude", repo_root=repo_root)
 
@@ -395,7 +397,7 @@ def test_vc1_skill_rules_json_description_unchanged(tmp_path: Path) -> None:
     if not skill_rules.exists():
         pytest.skip("skill-rules.json not present in rendered output")
 
-    import json as _json  # noqa: PLC0415
+    import json as _json
 
     before = _json.loads(skill_rules.read_text(encoding="utf-8"))
     # skills is a dict keyed by skill name, each value is a dict with 'description' etc.

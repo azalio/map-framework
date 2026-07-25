@@ -21,7 +21,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -145,10 +145,11 @@ def get_branch_name() -> str:
             text=True,
             cwd=Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())),
             timeout=1,
+            check=False,
         )
         if result.returncode == 0:
             return sanitize_branch_name(result.stdout.strip())
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
     return "default"
 
@@ -247,9 +248,7 @@ def _should_squelch_duplicate(branch: str, reminder: str) -> bool:
         current_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
         if current_hash != last_hash:
             return False
-        if (time.time() - last_emit_ts) >= DEDUP_WINDOW_SECONDS:
-            return False
-        return True
+        return not time.time() - last_emit_ts >= DEDUP_WINDOW_SECONDS
     except (OSError, json.JSONDecodeError):
         return False
 
@@ -295,7 +294,7 @@ def record_hook_injection_status(
             "reason": reason,
             "tool_name": tool_name,
             "additional_context_chars": additional_context_chars,
-            "updated_at": datetime.now(timezone.utc).isoformat().replace(
+            "updated_at": datetime.now(UTC).isoformat().replace(
                 "+00:00", "Z"
             ),
         }
@@ -304,7 +303,7 @@ def record_hook_injection_status(
             json.dumps(state, indent=2, ensure_ascii=True), encoding="utf-8"
         )
         tmp_file.replace(path)
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
 
 
@@ -391,7 +390,7 @@ def get_unmerged_files(project_dir: Path) -> list[str]:
             timeout=2,
             check=False,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
         return []
     if result.returncode != 0 or not result.stdout:
         return []
@@ -426,17 +425,7 @@ def build_git_conflict_context(command: str, project_dir: Path) -> str:
             "[MAP-CONFLICT] Merge/rebase preflight: if conflicts appear, use this discipline."
         )
 
-    block = "\n".join(
-        [
-            heading,
-            "- Never blanket-accept ours/theirs for non-trivial files.",
-            "- List conflicts: git diff --name-only --diff-filter=U.",
-            "- Resolve one file or small batch at a time, preserving BOTH sides' intent.",
-            "- After each batch: check markers, run the test gate, then stage only resolved files.",
-            "- Continue merge/rebase only when no unmerged files remain.",
-            "- Final check: branch current with origin/main, no conflict markers, tests green.",
-        ]
-    )
+    block = f"{heading}\n- Never blanket-accept ours/theirs for non-trivial files.\n- List conflicts: git diff --name-only --diff-filter=U.\n- Resolve one file or small batch at a time, preserving BOTH sides' intent.\n- After each batch: check markers, run the test gate, then stage only resolved files.\n- Continue merge/rebase only when no unmerged files remain.\n- Final check: branch current with origin/main, no conflict markers, tests green."
     if len(block) > CONFLICT_CONTEXT_LIMIT:
         return _truncate_at_word(block, CONFLICT_CONTEXT_LIMIT)
     return block
@@ -707,8 +696,8 @@ def format_reminder(
     # state, "state +Xs" jumps. Repros for "[MAP] still says ACTOR after I
     # validate_step'd to MONITOR" can be diffed by comparing the printed
     # state-age across consecutive reminders.
-    from datetime import datetime as _dt, timezone as _tz
-    now_utc = _dt.now(_tz.utc)
+    from datetime import datetime as _dt
+    now_utc = _dt.now(UTC)
     state_age_str = "?"
     try:
         state_file_age_src = (
@@ -716,7 +705,7 @@ def format_reminder(
             / ".map" / branch / "step_state.json"
         )
         if state_file_age_src.exists():
-            mtime = _dt.fromtimestamp(state_file_age_src.stat().st_mtime, _tz.utc)
+            mtime = _dt.fromtimestamp(state_file_age_src.stat().st_mtime, UTC)
             state_age_str = f"+{(now_utc - mtime).total_seconds():.1f}s"
     except OSError:
         pass

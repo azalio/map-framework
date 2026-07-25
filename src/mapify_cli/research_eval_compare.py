@@ -42,13 +42,12 @@ from pathlib import Path
 from typing import Any
 
 from mapify_cli.research_eval import (
-    ResearchLocation,
     ResearchLocalizationScore,
+    ResearchLocation,
     load_expected_locations,
     parse_research_locations,
     score_research_output,
 )
-
 
 # ---------------------------------------------------------------------------
 # Data structures

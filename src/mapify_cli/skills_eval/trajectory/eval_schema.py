@@ -101,7 +101,7 @@ class EvidenceLine:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "EvidenceLine":
+    def from_dict(cls, d: dict[str, Any]) -> EvidenceLine:
         return cls(
             severity=str(d["severity"]),
             ref=str(d["ref"]),
@@ -160,7 +160,7 @@ class ComponentScore:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "ComponentScore":
+    def from_dict(cls, d: dict[str, Any]) -> ComponentScore:
         return cls(
             name=str(d["name"]),
             kind=str(d["kind"]),
@@ -213,7 +213,7 @@ class TrajectoryBundle:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "TrajectoryBundle":
+    def from_dict(cls, d: dict[str, Any]) -> TrajectoryBundle:
         return cls(
             schema_version=str(d.get("schema_version", _BUNDLE_SCHEMA_VERSION)),
             fixture=str(d["fixture"]),
@@ -260,7 +260,7 @@ class JudgeMeta:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "JudgeMeta":
+    def from_dict(cls, d: dict[str, Any]) -> JudgeMeta:
         return cls(
             model=d.get("model"),
             prompt_version=str(d["prompt_version"]),
@@ -323,7 +323,7 @@ class TrajectoryEvalRecord:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "TrajectoryEvalRecord":
+    def from_dict(cls, d: dict[str, Any]) -> TrajectoryEvalRecord:
         return cls(
             schema_version=str(d.get("schema_version", _EVAL_SCHEMA_VERSION)),
             run_id=str(d["run_id"]),

@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pytest
 
+import mapify_cli._locking as _locking_mod
 from mapify_cli._locking import (
     LockSecurityError,
     LockState,
@@ -33,7 +34,6 @@ from mapify_cli._locking import (
     _state_tmp_path,
     flock_with_state,
 )
-import mapify_cli._locking as _locking_mod
 
 # ---------------------------------------------------------------------------
 # PYTHONPATH for subprocess helper scripts
@@ -169,9 +169,8 @@ def test_timeout_raises_and_writes_marker(
         )
         _wait_for_sentinel(sentinel)
 
-        with pytest.raises(LockTimeoutError):
-            with flock_with_state("timeout_lock", timeout_s=0.3):
-                pass  # should not reach here
+        with pytest.raises(LockTimeoutError), flock_with_state("timeout_lock", timeout_s=0.3):
+            pass  # should not reach here
 
     finally:
         if proc is not None:
@@ -194,10 +193,9 @@ def test_exception_writes_error_marker_and_reraises(
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    with pytest.raises(RuntimeError, match="boom"):
-        with flock_with_state("errlock") as writer:
-            writer.set(LockState.CREATED)
-            raise RuntimeError("boom")
+    with pytest.raises(RuntimeError, match="boom"), flock_with_state("errlock") as writer:
+        writer.set(LockState.CREATED)
+        raise RuntimeError("boom")
 
     sidecar = tmp_path / ".map" / "locks" / "errlock.state.json"
     data = json.loads(sidecar.read_text())
@@ -219,9 +217,8 @@ def test_symlink_on_lock_path_raises(
     lock_path = lock_root / "symlinklock.lock"
     os.symlink("/tmp/innocuous", str(lock_path))
 
-    with pytest.raises(LockSecurityError):
-        with flock_with_state("symlinklock"):
-            pass
+    with pytest.raises(LockSecurityError), flock_with_state("symlinklock"):
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -239,9 +236,8 @@ def test_symlink_on_sidecar_path_raises(
     sidecar = lock_root / "sidecarsym.state.json"
     os.symlink("/tmp/nowhere", str(sidecar))
 
-    with pytest.raises(LockSecurityError):
-        with flock_with_state("sidecarsym"):
-            pass
+    with pytest.raises(LockSecurityError), flock_with_state("sidecarsym"):
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +277,7 @@ def test_two_process_contention(
                 "0.3",
             ],
             env=_subprocess_env(str(tmp_path)),
+            check=False,
         )
         assert result.returncode == 42, (
             f"Expected contender to exit 42 (LockTimeoutError), got {result.returncode}"
@@ -294,6 +291,7 @@ def test_two_process_contention(
     result2 = subprocess.run(
         [sys.executable, str(contender_script), str(tmp_path), "contlock", "5.0"],
         env=_subprocess_env(str(tmp_path)),
+        check=False,
     )
     assert result2.returncode == 0, "Contender should succeed after holder releases"
 

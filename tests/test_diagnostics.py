@@ -17,7 +17,7 @@ SCRIPTS_PATH = (
 
 sys.path.insert(0, str(SCRIPTS_PATH))
 
-import diagnostics  # noqa: E402  # pyright: ignore[reportMissingImports]
+import diagnostics  # pyright: ignore[reportMissingImports]
 
 
 @pytest.fixture

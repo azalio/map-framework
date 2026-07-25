@@ -35,9 +35,10 @@ def get_branch_name() -> str:
             capture_output=True,
             text=True,
             timeout=1,
+            check=False,
         )
         if result.returncode == 0:
             return sanitize_branch_name(result.stdout.strip())
         return "default"
-    except Exception:
+    except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
         return "default"

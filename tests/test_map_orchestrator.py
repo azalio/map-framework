@@ -31,7 +31,7 @@ ORCHESTRATOR_PATH = (
 # Add the scripts directory to sys.path so we can import map_orchestrator
 sys.path.insert(0, str(ORCHESTRATOR_PATH))
 
-import map_orchestrator  # noqa: E402  # pyright: ignore[reportMissingImports]
+import map_orchestrator  # pyright: ignore[reportMissingImports]
 
 
 @pytest.fixture
@@ -613,17 +613,7 @@ class TestPlanResumeContract:
         """resume_from_plan should parse the table format emitted by /map-plan."""
         plan_dir = Path(f".map/{branch_dir}")
         (plan_dir / f"task_plan_{branch_dir}.md").write_text(
-            "\n".join(
-                [
-                    "# Task Plan",
-                    "",
-                    "| ID | Title | concern | diff | risk | one-step | deps |",
-                    "|----|-------|---------|------|------|----------|------|",
-                    "| ST-001 | Migration 108 | data | small | medium | yes | - |",
-                    "| ST-002 | Pure DecayDecision | runtime | medium | high | yes | ST-001 |",
-                    "",
-                ]
-            ),
+            "# Task Plan\n\n| ID | Title | concern | diff | risk | one-step | deps |\n|----|-------|---------|------|------|----------|------|\n| ST-001 | Migration 108 | data | small | medium | yes | - |\n| ST-002 | Pure DecayDecision | runtime | medium | high | yes | ST-001 |\n",
             encoding="utf-8",
         )
 
@@ -789,6 +779,7 @@ class TestRestoreDeferredYagni:
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
 
         assert "restore_deferred_yagni" in result.stdout
@@ -2031,14 +2022,7 @@ class TestMonitorFailed:
 
     def test_feedback_file_forwards_only_blocker_items(self, branch_dir, tmp_path):
         self._make_monitor_state(tmp_path, branch_dir)
-        feedback = "\n".join(
-            [
-                "BLOCKER: build failed in src/app.py",
-                "NON-BLOCKING: docs could mention another example",
-                "nice-to-have: style could be more elegant",
-                "Missing required test for handled timeout path",
-            ]
-        )
+        feedback = "BLOCKER: build failed in src/app.py\nNON-BLOCKING: docs could mention another example\nnice-to-have: style could be more elegant\nMissing required test for handled timeout path"
 
         result = map_orchestrator.monitor_failed(branch_dir, feedback)
 
@@ -2513,6 +2497,7 @@ class TestValidateStepDisposition:
             ],
             input=_monitor_defer_envelope(check_id="pytest::test_flaky"),
             cwd=str(project), capture_output=True, text=True, timeout=30,
+            check=False,
         )
         assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
         payload = json.loads(proc.stdout)
@@ -2536,6 +2521,7 @@ class TestValidateStepDisposition:
             ],
             input=_monitor_defer_envelope(check_id="pytest::test_flaky"),
             cwd=str(project), capture_output=True, text=True, timeout=30,
+            check=False,
         )
         assert proc.returncode == 1, proc.stdout
         payload = json.loads(proc.stdout)
@@ -2562,6 +2548,7 @@ class TestValidateStepDisposition:
         proc = subprocess.run(
             [sys.executable, str(script), "archive", "--branch", "test-branch"],
             cwd=str(project), capture_output=True, text=True, timeout=30,
+            check=False,
         )
         assert proc.returncode == 1, proc.stdout
         assert json.loads(proc.stdout)["status"] == "error"
@@ -2586,6 +2573,7 @@ class TestValidateStepDisposition:
         proc = subprocess.run(
             [sys.executable, str(script), "archive", "--branch", "test-branch"],
             cwd=str(project), capture_output=True, text=True, timeout=30,
+            check=False,
         )
         assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
         assert json.loads(proc.stdout)["status"] == "archived"
@@ -2691,13 +2679,7 @@ class TestWaveMonitorFailed:
 
     def test_wave_feedback_forwards_only_blocker_items(self, branch_dir, tmp_path):
         self._make_wave_state(tmp_path, branch_dir)
-        feedback = "\n".join(
-            [
-                "CRITICAL: security regression in auth flow",
-                "NON-BLOCKING: documentation could be longer",
-                "cosmetic: volume is high",
-            ]
-        )
+        feedback = "CRITICAL: security regression in auth flow\nNON-BLOCKING: documentation could be longer\ncosmetic: volume is high"
 
         result = map_orchestrator.wave_monitor_failed("ST-001", branch_dir, feedback)
 
@@ -3296,6 +3278,7 @@ class TestAbandonWorkflow:
         proc = subprocess.run(
             [sys.executable, str(script), "abandon", "--branch", "test-branch"],
             cwd=str(project), capture_output=True, text=True, timeout=30,
+            check=False,
         )
         assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
         payload = json.loads(proc.stdout)
@@ -3381,15 +3364,16 @@ class TestRecordSubtaskResultAutoCommitSha:
         state.save(state_file)
         # Init a git repo with one commit so HEAD resolves.
         import subprocess as _sp
-        _sp.run(["git", "init"], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "init"], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True, check=False)
         (tmp_path / "seed.txt").write_text("seed")
-        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=False)
         sha_proc = _sp.run(
             ["git", "log", "-1", "--format=%H"], cwd=tmp_path,
             capture_output=True, text=True,
+            check=False,
         )
         expected_sha = sha_proc.stdout.strip()
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
@@ -3424,21 +3408,21 @@ class TestRecordSubtaskResultGitignoredArtifact:
 
     def _init_git_repo(self, tmp_path):
         import subprocess as _sp
-        _sp.run(["git", "init"], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "init"], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True, check=False)
         (tmp_path / ".gitignore").write_text(".map/\n")
         (tmp_path / "seed.txt").write_text("seed")
         (tmp_path / "tracked.py").write_text("x = 1\n")
-        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=False)
         # Second (non-root) commit so HEAD has a parent and `git diff-tree`
         # yields a NON-empty diff_paths. Without this, a root commit produces an
         # empty diff and files_not_in_diff is never computed — the gitignore
         # test would then pass vacuously without exercising the filter.
         (tmp_path / "seed.txt").write_text("seed v2")
-        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "commit", "-m", "second"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "commit", "-m", "second"], cwd=tmp_path, capture_output=True, check=False)
 
     def test_gitignored_artifact_not_flagged(self, branch_dir, tmp_path, monkeypatch):
         state = map_orchestrator.StepState()
@@ -3583,14 +3567,14 @@ class TestValidateStepAutoMutationBoundary:
         }))
         # Init real git repo so validate_mutation_boundary's git calls work.
         import subprocess as _sp
-        _sp.run(["git", "init"], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "init"], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True, check=False)
         (tmp_path / "seed.txt").write_text("seed")
-        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=False)
         (tmp_path / "leak.py").write_text("nope")  # untracked: scope leak
-        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True, check=False)
 
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
         monkeypatch.setenv("MAP_STRICT_SCOPE", "1")
@@ -3619,12 +3603,12 @@ class TestValidateStepAutoMutationBoundary:
             "subtasks": [{"id": "ST-001", "title": "x", "affected_files": ["a.py"]}],
         }))
         import subprocess as _sp
-        _sp.run(["git", "init"], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "init"], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True, check=False)
         (tmp_path / "seed.txt").write_text("seed")
-        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=False)
         (tmp_path / "leak.py").write_text("nope")  # untracked: out-of-scope leak
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
         monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
@@ -3663,12 +3647,12 @@ class TestValidateStepAutoMutationBoundary:
             "subtasks": [{"id": "ST-001", "title": "x", "affected_files": ["a.py"]}],
         }))
         import subprocess as _sp
-        _sp.run(["git", "init"], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "init"], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True, check=False)
         (tmp_path / "seed.txt").write_text("seed")
-        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=False)
         # NOTHING changed for ST-001 — a.py never created, no edits at all.
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
         monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
@@ -3706,18 +3690,19 @@ class TestValidateStepAutoMutationBoundary:
             "subtasks": [{"id": "ST-001", "title": "x", "affected_files": ["a.py"]}],
         }))
         import subprocess as _sp
-        _sp.run(["git", "init"], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "init"], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True, check=False)
         (tmp_path / "seed.txt").write_text("seed")
-        _sp.run(["git", "add", "seed.txt"], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "add", "seed.txt"], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=False)
         # ST-001's work IS implemented and committed (the documented order).
         (tmp_path / "a.py").write_text("x = 1\n")
-        _sp.run(["git", "add", "a.py"], cwd=tmp_path, capture_output=True)
-        _sp.run(["git", "commit", "-m", "ST-001"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "add", "a.py"], cwd=tmp_path, capture_output=True, check=False)
+        _sp.run(["git", "commit", "-m", "ST-001"], cwd=tmp_path, capture_output=True, check=False)
         sha = _sp.run(
-            ["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True, text=True
+            ["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True, text=True,
+            check=False,
         ).stdout.strip()
         # Mimic record_subtask_result --commit-sha <SHA>.
         state.record_subtask_result("ST-001", ["a.py"], "valid", commit_sha=sha)
@@ -3981,12 +3966,14 @@ class TestValidateStepRecommendationCLIRegistration:
         result = subprocess.run(
             [sys.executable, str(script), "validate_step", "--help"],
             capture_output=True, text=True, timeout=10,
+            check=False,
         )
         # The script doesn't have per-command help, but the parent parser
         # must list --recommendation among its options.
         result_root = subprocess.run(
             [sys.executable, str(script), "--help"],
             capture_output=True, text=True, timeout=10,
+            check=False,
         )
         assert "--recommendation" in result_root.stdout, (
             f"--recommendation missing from CLI options. stdout: {result_root.stdout!r}"
@@ -4711,6 +4698,7 @@ class TestCwdIndependence:
             cwd=str(project_b),
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode == 0, (
             f"orchestrator failed: stdout={result.stdout!r} "
@@ -4767,6 +4755,7 @@ class TestCwdIndependence:
             cwd=str(project_b),
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode == 0, (
             f"orchestrator failed: stdout={result.stdout!r} "
@@ -4834,6 +4823,7 @@ class TestCwdIndependence:
             cwd=str(project_b),
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode == 0, (
             f"orchestrator failed: stdout={result.stdout!r} "
@@ -4895,6 +4885,7 @@ class TestCwdIndependence:
             capture_output=True,
             text=True,
             env={**os.environ, "CLAUDE_PROJECT_DIR": str(project_b)},
+            check=False,
         )
         assert result.returncode == 0, (
             f"orchestrator failed: stdout={result.stdout!r} "
@@ -4975,6 +4966,7 @@ class TestCwdIndependence:
             capture_output=True,
             text=True,
             env=env_no_cpd,
+            check=False,
         )
         assert result.returncode == 0, (
             f"orchestrator failed: stdout={result.stdout!r} "
@@ -5076,6 +5068,7 @@ class TestValidateStep24RequiredRecommendation:
             [sys.executable, str(script), "validate_step", "2.4",
              "--branch", branch_dir],
             capture_output=True, text=True, cwd=str(tmp_path),
+            check=False,
         )
         assert result.returncode != 0, (
             f"Expected non-zero exit when --recommendation omitted; "
@@ -5549,6 +5542,7 @@ def test_vc3_strategy_cli_handler(
         capture_output=True,
         text=True,
         timeout=30,
+        check=False,
     )
     assert proc.returncode == 0, (
         f"CLI exited {proc.returncode}\nstdout={proc.stdout!r}\nstderr={proc.stderr!r}"
@@ -5845,7 +5839,7 @@ def test_vc2_default_config_neutral_dispatch(
 
     _orig_msr2 = _sys.modules.pop("map_step_runner", None)
     try:
-        import map_step_runner as _msr  # noqa: E402  # pyright: ignore[reportMissingImports]
+        import map_step_runner as _msr  # pyright: ignore[reportMissingImports]
 
         wt_result = _msr.create_subtask_worktree("ST-001")
     finally:

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """E2E test for validating CLI command correctness in agent templates.
 
 This test ensures that agent templates use correct mapify CLI commands,

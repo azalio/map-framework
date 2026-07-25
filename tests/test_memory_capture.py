@@ -24,18 +24,18 @@ from typing import Any
 
 import pytest
 
-from mapify_cli.memory.digest_schema import (
-    EVENT_ENDED,
-    EVENT_TURN,
-    SCRATCH_ENDED_FIELDS,
-    SCRATCH_TURN_FIELDS,
-)
 from mapify_cli.memory.capture import (
     append_end_marker,
     append_turn,
     on_session_end,
     resolve_session_id,
     write_current_session,
+)
+from mapify_cli.memory.digest_schema import (
+    EVENT_ENDED,
+    EVENT_TURN,
+    SCRATCH_ENDED_FIELDS,
+    SCRATCH_TURN_FIELDS,
 )
 
 # ---------------------------------------------------------------------------
@@ -90,7 +90,7 @@ class TestVC1WellFormedJSONL:
         append_turn({"session_id": "s1"}, tmp_path)
 
         scratch = _scratch_dir(tmp_path)
-        record = _read_jsonl(list(scratch.glob("*.jsonl"))[0])[0]
+        record = _read_jsonl(next(iter(scratch.glob("*.jsonl"))))[0]
         for field in SCRATCH_TURN_FIELDS:
             assert field in record, f"Missing field: {field}"
 
@@ -100,7 +100,7 @@ class TestVC1WellFormedJSONL:
         append_turn({"session_id": "s1"}, tmp_path)
 
         scratch = _scratch_dir(tmp_path)
-        record = _read_jsonl(list(scratch.glob("*.jsonl"))[0])[0]
+        record = _read_jsonl(next(iter(scratch.glob("*.jsonl"))))[0]
         assert record["event"] == EVENT_TURN
 
     def test_vc1_turn_counter_increments(self, tmp_path: Path) -> None:
@@ -111,7 +111,7 @@ class TestVC1WellFormedJSONL:
         append_turn(stdin, tmp_path)
 
         scratch = _scratch_dir(tmp_path)
-        records = _read_jsonl(list(scratch.glob("*.jsonl"))[0])
+        records = _read_jsonl(next(iter(scratch.glob("*.jsonl"))))
         assert len(records) == 2
         assert records[0]["turn"] == 1
         assert records[1]["turn"] == 2
@@ -254,7 +254,7 @@ class TestVC3SecurityRedaction:
         append_turn(stdin, tmp_path)
 
         scratch = _scratch_dir(tmp_path)
-        record = _read_jsonl(list(scratch.glob("*.jsonl"))[0])[0]
+        record = _read_jsonl(next(iter(scratch.glob("*.jsonl"))))[0]
         assert record["files_touched"] == ["<redacted-secret-path>"]
 
     def test_vc3_pem_file_is_redacted(self, tmp_path: Path) -> None:
@@ -268,7 +268,7 @@ class TestVC3SecurityRedaction:
         append_turn(stdin, tmp_path)
 
         scratch = _scratch_dir(tmp_path)
-        record = _read_jsonl(list(scratch.glob("*.jsonl"))[0])[0]
+        record = _read_jsonl(next(iter(scratch.glob("*.jsonl"))))[0]
         assert record["files_touched"] == ["<redacted-secret-path>"]
 
     def test_vc3_normal_path_not_redacted(self, tmp_path: Path) -> None:
@@ -282,7 +282,7 @@ class TestVC3SecurityRedaction:
         append_turn(stdin, tmp_path)
 
         scratch = _scratch_dir(tmp_path)
-        record = _read_jsonl(list(scratch.glob("*.jsonl"))[0])[0]
+        record = _read_jsonl(next(iter(scratch.glob("*.jsonl"))))[0]
         assert record["files_touched"] == ["src/app.py"]
 
     def test_vc3_control_char_in_value_is_stripped(self, tmp_path: Path) -> None:
@@ -313,7 +313,7 @@ class TestVC3SecurityRedaction:
         append_turn(stdin, tmp_path)
 
         scratch = _scratch_dir(tmp_path)
-        record = _read_jsonl(list(scratch.glob("*.jsonl"))[0])[0]
+        record = _read_jsonl(next(iter(scratch.glob("*.jsonl"))))[0]
         assert record["files_touched"] == ["<redacted-secret-path>"]
 
 

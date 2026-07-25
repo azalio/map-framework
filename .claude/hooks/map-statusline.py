@@ -150,7 +150,7 @@ def _build_line(data: dict) -> str:
         pct_str = "--%"
     else:
         try:
-            pct_str = f"{int(round(float(pct)))}%"
+            pct_str = f"{round(float(pct))}%"
         except (TypeError, ValueError):
             pct_str = "--%"
 

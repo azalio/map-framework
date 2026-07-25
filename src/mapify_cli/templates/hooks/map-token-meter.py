@@ -60,10 +60,11 @@ def _get_branch() -> str:
             text=True,
             cwd=PROJECT_DIR,
             timeout=2,
+            check=False,
         )
         if result.returncode == 0:
             return _sanitize_branch(result.stdout.strip())
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
     return "default"
 
@@ -120,8 +121,9 @@ def main() -> None:
             capture_output=True,
             text=True,
             timeout=5,
+            check=False,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         # Advisory only — never surface a metering failure to the turn.
         pass
     _silent()

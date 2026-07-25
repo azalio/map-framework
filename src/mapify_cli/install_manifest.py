@@ -22,9 +22,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 from mapify_cli.delivery.managed_file_copier import compute_hash, extract_metadata
 
@@ -180,7 +179,7 @@ def _infer_management_mode(dest: Path, content: str, ext: str) -> str:
 def _build_entry_from_file(
     project_path: Path,
     abs_path: Path,
-) -> Optional[ManifestEntry]:
+) -> ManifestEntry | None:
     """Build a ManifestEntry from an installed managed file.
 
     Returns None when the file has no MAP-MANAGED metadata (unmanaged).
@@ -257,7 +256,7 @@ def _scan_dir(project_path: Path, rel_dir: str) -> list[ManifestEntry]:
     return entries
 
 
-def _scan_file(project_path: Path, rel_file: str) -> Optional[ManifestEntry]:
+def _scan_file(project_path: Path, rel_file: str) -> ManifestEntry | None:
     """Scan a single known file path."""
     return _build_entry_from_file(project_path, project_path / rel_file)
 
@@ -278,7 +277,10 @@ def _scan_mcp_config_entries(
     No absolute paths are stored.
     """
     try:
-        from mapify_cli.config.mcp import build_standard_mcp_servers, read_project_mcp_json
+        from mapify_cli.config.mcp import (
+            build_standard_mcp_servers,
+            read_project_mcp_json,
+        )
     except ImportError:
         return []
 
@@ -303,7 +305,7 @@ def _scan_mcp_config_entries(
 
 def _scan_statusline_config_entry(
     project_path: Path, version: str, timestamp: str
-) -> Optional[ConfigEntry]:
+) -> ConfigEntry | None:
     """Detect if MAP's statusline is present in settings.local.json.
 
     MAP-owned statusline entries always invoke map-statusline.py; that
@@ -502,7 +504,7 @@ def build_manifest(
     # Stable sort: alphabetical by dest path
     entries.sort(key=lambda e: e.dest)
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # Config-entry ownership (only for providers that do config merges)
     config_entries: list[ConfigEntry] = []
@@ -538,7 +540,7 @@ def write_manifest(project_path: Path, manifest: InstallManifest) -> Path:
     return dest
 
 
-def read_manifest(project_path: Path) -> Optional[InstallManifest]:
+def read_manifest(project_path: Path) -> InstallManifest | None:
     """Read and parse .map/mapify.lock.json.
 
     Returns None when the manifest does not exist or cannot be parsed.

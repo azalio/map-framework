@@ -15,13 +15,14 @@ Covers:
 from __future__ import annotations
 
 import json
+
 import pytest
 
 from mapify_cli.grace_eval.schema import (
-    VARIANT_NAMES,
     CODE_LOCAL_VARIANTS,
-    PROMPT_INJECTED_VARIANTS,
     NO_ANCHOR_VARIANTS,
+    PROMPT_INJECTED_VARIANTS,
+    VARIANT_NAMES,
     GraceFixture,
     GraceReport,
     SweepFinding,
@@ -30,7 +31,6 @@ from mapify_cli.grace_eval.schema import (
     aggregate_runs,
     make_run_id,
 )
-
 
 # ---------------------------------------------------------------------------
 # GE1 — variant enumeration

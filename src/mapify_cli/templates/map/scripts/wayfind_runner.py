@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """wayfind_runner.py — deterministic operations for /map-wayfind decision maps.
 
 Self-contained, stdlib-only runner.  Owns EVERY mutation to
@@ -30,9 +29,9 @@ import os
 import re
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Vocabulary / constants
@@ -70,7 +69,7 @@ def _err(message: str, **fields: Any) -> dict[str, Any]:
 
 def _now() -> str:
     """Return an RFC3339 UTC timestamp (matches map_step_runner._utc_timestamp)."""
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _oneline(text: str) -> str:
@@ -95,7 +94,7 @@ def _state_path(slug: str) -> Path:
     return _map_dir(slug) / "state.json"
 
 
-def _resolve_evidence_path(slug: str, rel: str) -> Optional[Path]:
+def _resolve_evidence_path(slug: str, rel: str) -> Path | None:
     """Resolve an evidence file (resolution / human-input) path under the map dir.
 
     Returns the resolved Path only when *rel* names a regular file contained in
@@ -119,7 +118,7 @@ def _resolve_evidence_path(slug: str, rel: str) -> Optional[Path]:
 # ---------------------------------------------------------------------------
 
 
-def _load_state(slug: str) -> Optional[dict[str, Any]]:
+def _load_state(slug: str) -> dict[str, Any] | None:
     path = _state_path(slug)
     if not path.exists():
         return None
@@ -149,8 +148,8 @@ def _save_state(state: dict[str, Any]) -> None:
 
 
 def _revision_guard(
-    state: dict[str, Any], expected_revision: Optional[int]
-) -> Optional[dict[str, Any]]:
+    state: dict[str, Any], expected_revision: int | None
+) -> dict[str, Any] | None:
     """Best-effort stale-write detection: reject a mutation whose caller read an
     older revision than the map now holds.
 
@@ -174,8 +173,8 @@ def _revision_guard(
 
 
 def _mutation_guard(
-    state: dict[str, Any], expected_revision: Optional[int]
-) -> Optional[dict[str, Any]]:
+    state: dict[str, Any], expected_revision: int | None
+) -> dict[str, Any] | None:
     """Pre-mutation gate for ticket/fog operations.
 
     Rejects any mutation once the map is handed off (its handoff artifact is
@@ -251,7 +250,7 @@ def _detect_cycle(graph: dict[str, list[str]]) -> bool:
 
 
 def _blocking_graph(
-    state: dict[str, Any], override: Optional[tuple[str, list[str]]] = None
+    state: dict[str, Any], override: tuple[str, list[str]] | None = None
 ) -> dict[str, list[str]]:
     """Build a {ticket_id: blocked_by[]} graph, optionally overriding one node."""
     graph = {
@@ -290,9 +289,7 @@ def _is_terminal(state: dict[str, Any]) -> bool:
         return False
     if _open_fog(state):
         return False
-    if _active_claims(state):
-        return False
-    return True
+    return not _active_claims(state)
 
 
 def _recompute_status(state: dict[str, Any]) -> None:
@@ -338,7 +335,7 @@ def _mint_ticket(
     ticket_type: str,
     question: str,
     blocked_by: list[str],
-    from_fog: Optional[str],
+    from_fog: str | None,
 ) -> str:
     ticket_id = _next_ticket_id(state)
     state.setdefault("tickets", {})[ticket_id] = {
@@ -581,7 +578,7 @@ def create_wayfind_map(
     )
 
 
-def wayfind_status(slug: Optional[str] = None) -> dict[str, Any]:
+def wayfind_status(slug: str | None = None) -> dict[str, Any]:
     """Without slug: list all maps. With slug: counts + handoff eligibility."""
     if slug is None:
         root = _wayfind_root()
@@ -677,7 +674,7 @@ def show_ticket(slug: str, ticket_id: str) -> dict[str, Any]:
 
 def _parse_blocked_by(
     state: dict[str, Any], blocked_by_json: str
-) -> tuple[Optional[list[str]], Optional[dict[str, Any]]]:
+) -> tuple[list[str] | None, dict[str, Any] | None]:
     """Parse + validate a blocked_by list. Returns (list, None) or (None, error)."""
     try:
         parsed = json.loads(blocked_by_json or "[]")
@@ -702,7 +699,7 @@ def add_ticket(
     question: str,
     blocked_by_json: str = "[]",
     from_fog: str = "",
-    expected_revision: Optional[int] = None,
+    expected_revision: int | None = None,
 ) -> dict[str, Any]:
     """Add a decision ticket with a single sharp question."""
     state = _load_state(slug)
@@ -727,9 +724,8 @@ def add_ticket(
     if error is not None:
         return error
     assert blocked_by is not None
-    if from_fog:
-        if not any(f.get("id") == from_fog for f in state.get("fog", [])):
-            return _err(f"unknown fog id: {from_fog!r}.")
+    if from_fog and not any(f.get("id") == from_fog for f in state.get("fog", [])):
+        return _err(f"unknown fog id: {from_fog!r}.")
 
     ticket_id = _mint_ticket(state, title, ticket_type, question, blocked_by, from_fog)
     _recompute_status(state)
@@ -741,7 +737,7 @@ def wire_blocking(
     slug: str,
     ticket_id: str,
     blocked_by_json: str,
-    expected_revision: Optional[int] = None,
+    expected_revision: int | None = None,
 ) -> dict[str, Any]:
     """Replace a ticket's blocked_by set; rejects unknown ids and cycles."""
     state = _load_state(slug)
@@ -776,7 +772,7 @@ def claim_ticket(
     slug: str,
     ticket_id: str,
     session: str,
-    expected_revision: Optional[int] = None,
+    expected_revision: int | None = None,
 ) -> dict[str, Any]:
     """Claim a frontier ticket before working it (claim-before-work invariant)."""
     state = _load_state(slug)
@@ -840,7 +836,7 @@ def release_ticket(
     slug: str,
     ticket_id: str,
     session: str,
-    expected_revision: Optional[int] = None,
+    expected_revision: int | None = None,
 ) -> dict[str, Any]:
     """Release a ticket claimed by this session (crash / interruption recovery)."""
     state = _load_state(slug)
@@ -873,7 +869,7 @@ def record_human_input(
     ticket_id: str,
     session: str,
     path: str,
-    expected_revision: Optional[int] = None,
+    expected_revision: int | None = None,
 ) -> dict[str, Any]:
     """Register a verbatim human response file — required before a HITL resolve."""
     state = _load_state(slug)
@@ -914,7 +910,7 @@ def resolve_ticket(
     session: str,
     gist: str,
     resolution_path: str,
-    expected_revision: Optional[int] = None,
+    expected_revision: int | None = None,
 ) -> dict[str, Any]:
     """Close a claimed ticket with a one-line gist + a prose resolution file."""
     state = _load_state(slug)
@@ -1015,7 +1011,7 @@ def wayfind_frontier(slug: str) -> dict[str, Any]:
 
 
 def add_fog(
-    slug: str, text: str, expected_revision: Optional[int] = None
+    slug: str, text: str, expected_revision: int | None = None
 ) -> dict[str, Any]:
     """Record a still-too-vague concern that cannot yet be a sharp ticket."""
     state = _load_state(slug)
@@ -1042,7 +1038,7 @@ def graduate_fog(
     ticket_type: str,
     question: str,
     blocked_by_json: str = "[]",
-    expected_revision: Optional[int] = None,
+    expected_revision: int | None = None,
 ) -> dict[str, Any]:
     """Atomically graduate a fog entry into a sharp ticket."""
     state = _load_state(slug)
@@ -1087,7 +1083,7 @@ def rule_out_of_scope(
     ticket_id: str = "",
     fog_id: str = "",
     gist: str = "",
-    expected_revision: Optional[int] = None,
+    expected_revision: int | None = None,
 ) -> dict[str, Any]:
     """Permanently rule a ticket (or fog entry) out of scope.
 
@@ -1169,8 +1165,8 @@ def emit_wayfind_handoff(
     remaining_risks_json: str = "[]",
     early: bool = False,
     confirmed_by_user: bool = False,
-    branch: Optional[str] = None,
-    expected_revision: Optional[int] = None,
+    branch: str | None = None,
+    expected_revision: int | None = None,
 ) -> dict[str, Any]:
     """Write the handoff artifact consumed by /map-plan and mark the map handed off."""
     state = _load_state(slug)
@@ -1334,7 +1330,7 @@ def _register_handoff_manifest(
     json_path: Path,
     md_path: Path,
     decisions: list[dict[str, Any]],
-    branch: Optional[str],
+    branch: str | None,
 ) -> dict[str, Any]:
     """Register the wayfind_handoff manifest stage on the current branch.
 
@@ -1342,7 +1338,7 @@ def _register_handoff_manifest(
     failure is reported but never loses the already-written handoff artifact.
     """
     try:
-        import map_step_runner  # noqa: PLC0415 — lazy sibling in .map/scripts/  # pyright: ignore[reportMissingImports]
+        import map_step_runner  # pyright: ignore[reportMissingImports]
 
         manifest = map_step_runner.load_artifact_manifest(branch)
         map_step_runner._set_manifest_stage(
@@ -1564,7 +1560,7 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
     return _err(f"unknown command: {command!r}")
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     return _print(_dispatch(args))

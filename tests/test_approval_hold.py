@@ -19,8 +19,7 @@ SCRIPTS_PATH = (
 
 sys.path.insert(0, str(SCRIPTS_PATH))
 
-import map_step_runner  # noqa: E402  # type: ignore[import-not-found]
-
+import map_step_runner  # type: ignore[import-not-found]
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -469,6 +468,7 @@ def _run_cli(*args: str) -> tuple[int, dict[str, Any]]:
         [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), *args],
         capture_output=True,
         text=True,
+        check=False,
     )
     try:
         parsed = json.loads(proc.stdout)

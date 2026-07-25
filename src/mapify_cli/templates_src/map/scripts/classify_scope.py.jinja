@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """classify_scope.py — Scale-adaptive scope classifier for MAP workflows (#287).
 
 Reads scale thresholds from .map/config.yaml (dotted-key notation) and
@@ -29,7 +28,6 @@ import json
 import re
 import sys
 from pathlib import Path
-
 
 _BRACKET_WORKFLOW: dict[str, str] = {
     "trivial": "map-fast",

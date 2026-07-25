@@ -36,7 +36,7 @@ import re
 import time
 from collections.abc import Generator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
@@ -145,7 +145,7 @@ def _write_state_atomic(
             f"Invalid lock name {name!r}. Must match ^[a-zA-Z0-9_-]{{1,64}}$"
         )
 
-    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now_iso = datetime.now(UTC).isoformat(timespec="seconds")
     payload: dict[str, object] = {
         "state": str(state),
         "pid": pid,
@@ -273,7 +273,7 @@ def flock_with_state(
                     # Write timeout marker before raising.
                     try:
                         _write_state_atomic(lock_root, name, LockState.TIMEOUT, pid)
-                    except Exception:  # noqa: BLE001 — best-effort
+                    except Exception:  # noqa: BLE001, S110 — best-effort
                         pass
                     raise LockTimeoutError(
                         f"Could not acquire lock {name!r} within {timeout_s}s"
@@ -290,7 +290,7 @@ def flock_with_state(
             # HC-4: write error marker then re-raise original unchanged.
             try:
                 _write_state_atomic(lock_root, name, LockState.ERROR, pid)
-            except Exception:  # noqa: BLE001 — best-effort, don't mask original
+            except Exception:  # noqa: BLE001, S110 — best-effort, don't mask original
                 pass
             raise  # bare raise preserves original exc info
 

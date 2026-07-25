@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from mapify_cli.grace_eval.schema import SweepFinding, VARIANT_NAMES
+from mapify_cli.grace_eval.schema import VARIANT_NAMES, SweepFinding
 
 # Lines we recognise as contract anchor comments.
 _ANCHOR_RE = re.compile(

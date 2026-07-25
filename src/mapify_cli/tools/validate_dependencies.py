@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Dependency Validation Script for TaskDecomposer Output
 
@@ -21,12 +20,12 @@ Exit Codes:
     2: Invalid input (malformed JSON, missing fields)
 """
 
-import sys
-import json
 import argparse
-from typing import Any, Dict, List, Optional, Set
+import json
+import sys
 from collections import defaultdict, deque
 from enum import Enum
+from typing import Any
 
 
 class IssueSeverity(Enum):
@@ -55,7 +54,7 @@ class ValidationIssue:
         self,
         issue_type: str,
         severity: IssueSeverity,
-        affected_tasks: List[int],
+        affected_tasks: list[int],
         message: str,
     ):
         self.issue_type = issue_type
@@ -93,12 +92,12 @@ class DependencyValidator:
             raise ValueError("Missing required field 'subtasks'")
 
         self.subtasks = tasks_data["subtasks"]
-        self.issues: List[ValidationIssue] = []
+        self.issues: list[ValidationIssue] = []
 
         # Build task ID mapping and adjacency list
-        self.task_ids: Set[int] = set()
-        self.adjacency: Dict[int, List[int]] = defaultdict(list)
-        self.reverse_adjacency: Dict[int, List[int]] = defaultdict(list)
+        self.task_ids: set[int] = set()
+        self.adjacency: dict[int, list[int]] = defaultdict(list)
+        self.reverse_adjacency: dict[int, list[int]] = defaultdict(list)
 
         self._build_graph()
 
@@ -181,9 +180,9 @@ class DependencyValidator:
         Returns:
             True if no cycles found
         """
-        visited: Set[int] = set()
-        recursion_stack: Set[int] = set()
-        path_stack: List[int] = []
+        visited: set[int] = set()
+        recursion_stack: set[int] = set()
+        path_stack: list[int] = []
 
         def dfs(node: int) -> bool:
             """
@@ -222,9 +221,8 @@ class DependencyValidator:
         # Check all nodes (graph may be disconnected)
         found_cycles = False
         for task_id in self.task_ids:
-            if task_id not in visited:
-                if dfs(task_id):
-                    found_cycles = True
+            if task_id not in visited and dfs(task_id):
+                found_cycles = True
 
         return not found_cycles
 
@@ -328,7 +326,7 @@ class ASCIIGraphRenderer:
         self.issues = validator.issues
 
         # Build issue lookup for color coding
-        self.task_issues: Dict[int, List[ValidationIssue]] = defaultdict(list)
+        self.task_issues: dict[int, list[ValidationIssue]] = defaultdict(list)
         for issue in self.issues:
             for task_id in issue.affected_tasks:
                 self.task_issues[task_id].append(issue)
@@ -358,7 +356,7 @@ class ASCIIGraphRenderer:
 
         return ANSIColors.RED if has_critical else ANSIColors.YELLOW
 
-    def _get_root_nodes(self) -> List[int]:
+    def _get_root_nodes(self) -> list[int]:
         """
         Find root nodes (tasks with no dependencies).
 
@@ -372,7 +370,7 @@ class ASCIIGraphRenderer:
                 roots.append(task_id)
         return roots
 
-    def _topological_sort(self) -> List[int]:
+    def _topological_sort(self) -> list[int]:
         """
         Perform topological sort using Kahn's algorithm.
 
@@ -384,7 +382,7 @@ class ASCIIGraphRenderer:
         # in_degree[A] = number of dependencies task A has (outgoing edges from A in dependency graph)
         # Note: In graph theory terms, these are outgoing edges, but we call it "in-degree"
         # because it counts incoming dependencies that must be satisfied before A can execute
-        in_degree: Dict[int, int] = {
+        in_degree: dict[int, int] = {
             task_id: len(self.adjacency.get(task_id, [])) for task_id in self.task_ids
         }
 
@@ -414,11 +412,11 @@ class ASCIIGraphRenderer:
         task_id: int,
         prefix: str,
         is_last: bool,
-        visited: Set[int],
+        visited: set[int],
         max_depth: int,
         current_depth: int = 0,
         use_colors: bool = True,
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Recursively render a task node and its dependents.
 
@@ -553,7 +551,7 @@ class ASCIIGraphRenderer:
         lines.append(f"{C.BOLD}Dependency Tree:{C.RESET}")
         lines.append(f"{C.GRAY}{'─' * 60}{C.RESET}")
 
-        visited: Set[int] = set()
+        visited: set[int] = set()
 
         for i, root_id in enumerate(roots):
             is_last_root = i == len(roots) - 1
@@ -649,7 +647,7 @@ class ASCIIGraphRenderer:
         return "".join(result)
 
 
-def load_input(file_path: Optional[str] = None) -> dict:
+def load_input(file_path: str | None = None) -> dict:
     """
     Load JSON input from file or stdin.
 
@@ -672,7 +670,7 @@ def load_input(file_path: Optional[str] = None) -> dict:
         raise ValueError(f"Invalid JSON input: {e}")
     except FileNotFoundError:
         raise ValueError(f"File not found: {file_path}")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
         raise ValueError(f"Error reading input: {e}")
 
 
@@ -792,7 +790,7 @@ Exit Codes:
         print(json.dumps(error_report, indent=2), file=sys.stderr)
         sys.exit(2)
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
         # Unexpected error
         error_report = {"valid": False, "error": str(e), "error_type": "unexpected"}
         print(json.dumps(error_report, indent=2), file=sys.stderr)

@@ -30,7 +30,7 @@ def main() -> None:
         return
     try:
         on_session_end(input_data, PROJECT_DIR)
-    except Exception:   # noqa: BLE001 — hooks must never block
+    except Exception:   # noqa: BLE001, S110 — hooks must never block
         pass
     _silent()
 

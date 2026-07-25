@@ -237,7 +237,7 @@ def _score_tool_use(bundle: TrajectoryBundle) -> ComponentScore:
 
 
 def _as_int(value: Any) -> int | None:
-    if isinstance(value, bool):  # noqa: FBT001 - guard before int (bool is int)
+    if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
         return int(value)

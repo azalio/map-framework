@@ -20,7 +20,6 @@ import pytest
 from mapify_cli.skills_eval.eval_schema import EvalResultRecord
 from mapify_cli.skills_eval.proposer import _DEFAULT_MAX_CHARS, propose_description
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

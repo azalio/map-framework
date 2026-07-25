@@ -38,7 +38,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -109,7 +109,7 @@ class OffloadSummary:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _sanitize_summary(text: str, limit: int = 200) -> str:
@@ -245,9 +245,7 @@ def should_offload(tool_name: str, body_len: int) -> bool:
         return False
     if body_len >= LARGE_ANY_CHARS:
         return True
-    if body_len >= DISCOVERY_MIN_CHARS and tool_name in BROAD_DISCOVERY_TOOLS:
-        return True
-    return False
+    return bool(body_len >= DISCOVERY_MIN_CHARS and tool_name in BROAD_DISCOVERY_TOOLS)
 
 
 # ---------------------------------------------------------------------------
@@ -404,13 +402,13 @@ def build_manifest(compacted: Path) -> Path | None:
     lines = [
         "# Offloaded tool outputs",
         "",
-        "Large tool-result bodies saved before context compaction so you can "
+        ("Large tool-result bodies saved before context compaction so you can "
         "recover them **without re-running broad discovery** (re-grep, re-read, "
-        "re-test). Read the sidecar file directly.",
+        "re-test). Read the sidecar file directly."),
         "",
-        "> Authority: these are point-in-time snapshots from when the tool ran. "
+        ("> Authority: these are point-in-time snapshots from when the tool ran. "
         "For any question about *current* truth, live source, tests, and "
-        "schemas win.",
+        "schemas win."),
         "",
         "| tool | input | bytes | saved | sidecar |",
         "| --- | --- | --- | --- | --- |",

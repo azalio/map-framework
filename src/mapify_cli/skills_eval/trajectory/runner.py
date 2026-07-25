@@ -174,7 +174,7 @@ def run_one(
 
     tmp: Path | None = None
     try:
-        from mapify_cli.skills_eval.trajectory import seeding  # noqa: PLC0415
+        from mapify_cli.skills_eval.trajectory import seeding
 
         tmp = seeding.seed_temp(
             fixture_dir,
@@ -209,7 +209,7 @@ def run_one(
         if outcome.error:
             record.error = outcome.error
         return (record, bundle, None)
-    except Exception as exc:  # noqa: BLE001 - VC4: record, do not raise
+    except Exception as exc:
         logger.exception("run_one: fatal error for %s run=%d", fixture_name, run)
         return (None, None, repr(exc))
     finally:
@@ -289,7 +289,7 @@ def _fatal_row(
     error: str,
 ) -> TrajectoryEvalRecord:
     """Synthetic failure row for a fatal cell error (VC4)."""
-    from mapify_cli.skills_eval.trajectory.eval_schema import (  # noqa: PLC0415
+    from mapify_cli.skills_eval.trajectory.eval_schema import (
         ComponentScore,
         EvidenceLine,
         JudgeMeta,

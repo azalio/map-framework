@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).parents[2]
 HOOKS_DIR = REPO_ROOT / ".claude" / "hooks"
 SHIPPED_SCRIPTS = REPO_ROOT / "src" / "mapify_cli" / "templates" / "map" / "scripts"

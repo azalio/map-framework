@@ -213,7 +213,7 @@ def build_report(
 
 
 def _validate_records(records: list, label: str) -> None:  # type: ignore[type-arg]
-    from mapify_cli.skills_eval.trajectory.eval_schema import (  # noqa: PLC0415
+    from mapify_cli.skills_eval.trajectory.eval_schema import (
         TrajectoryEvalRecord,
     )
 
@@ -292,7 +292,7 @@ _HTML_TEMPLATE = """<!doctype html>
 
 def render_comparison_html(report: ComparisonReport) -> str:
     """Render a ``ComparisonReport`` to an HTML string (autoescaped)."""
-    import jinja2  # type: ignore[import-untyped]  # noqa: PLC0415
+    import jinja2  # type: ignore[import-untyped]
 
     env = jinja2.Environment(autoescape=True, undefined=jinja2.StrictUndefined)
     template = env.from_string(_HTML_TEMPLATE)

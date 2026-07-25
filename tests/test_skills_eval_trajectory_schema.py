@@ -12,14 +12,14 @@ from __future__ import annotations
 
 import pytest
 
-from mapify_cli.schemas import validate_artifact
 from mapify_cli.schemas import (
     TRAJECTORY_BUNDLE_SCHEMA,
     TRAJECTORY_EVAL_SCHEMA,
+    validate_artifact,
 )
 from mapify_cli.skills_eval.trajectory.eval_schema import (
-    HARD_PASS_COMPOSITE_THRESHOLD,
     COMPONENT_NAMES,
+    HARD_PASS_COMPOSITE_THRESHOLD,
     ComponentScore,
     EvidenceLine,
     JudgeMeta,
@@ -29,7 +29,6 @@ from mapify_cli.skills_eval.trajectory.eval_schema import (
     is_hard_pass,
     make_run_id,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

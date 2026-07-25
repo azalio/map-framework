@@ -14,9 +14,8 @@ from __future__ import annotations
 
 import pytest
 
-from mapify_cli.grace_eval.sweep import sweep_source, sweep_variant_sources
 from mapify_cli.grace_eval.schema import VARIANT_NAMES
-
+from mapify_cli.grace_eval.sweep import sweep_source, sweep_variant_sources
 
 # ---------------------------------------------------------------------------
 # GS1 — anchor extraction (indirect: checks findings are produced for anchors)

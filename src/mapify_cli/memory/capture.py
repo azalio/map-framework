@@ -17,7 +17,7 @@ import functools
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -299,8 +299,7 @@ def _files_from_transcript(
     except OSError:
         return [], start
 
-    if start < 0:
-        start = 0
+    start = max(start, 0)
 
     raw_paths: list[str] = []
     total = start
@@ -391,7 +390,7 @@ def _derive_prompt_ref(project_dir: Path) -> str | None:
 
 def _ts() -> str:
     """Return a timezone-aware UTC ISO timestamp."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -462,7 +461,7 @@ def append_turn(stdin_data: dict[str, Any], project_dir: Path | str) -> None:
         if effective_sid != "unknown":
             write_current_session(effective_sid, project_dir)
 
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         # Best-effort: never block the hook.
         pass
 
@@ -502,7 +501,7 @@ def append_end_marker(stdin_data: dict[str, Any], project_dir: Path | str) -> No
         if effective_sid != "unknown":
             write_current_session(effective_sid, project_dir)
 
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         # Best-effort: never block the hook.
         pass
 

@@ -89,7 +89,7 @@ def degrade_actor(actor_md: Path) -> None:
             skipping = True
             continue
         if skipping:
-            if s.startswith("### ") or s.startswith("# ") or s == "---":
+            if s.startswith(("### ", "# ")) or s == "---":
                 skipping = False
                 out.append(line)
             continue
@@ -184,7 +184,7 @@ def seed_temp(
 
     Caller owns cleanup (``shutil.rmtree(tmp, ignore_errors=True)``).
     """
-    import tempfile  # noqa: PLC0415
+    import tempfile
 
     tmp = Path(tempfile.mkdtemp(prefix="trajeval-"))
     # 1. .claude

@@ -124,9 +124,7 @@ def detect_durability(prompt: str) -> bool:
     """
     if KIND_RE.search(prompt):
         return True
-    if SIGNIFICANT_DURATION_RE.search(prompt):
-        return True
-    return False
+    return bool(SIGNIFICANT_DURATION_RE.search(prompt))
 
 
 def build_message(clar: bool, dura: bool) -> str:
@@ -154,7 +152,7 @@ def main() -> int:
         sys.exit(0)
     try:
         payload = json.load(sys.stdin)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
         # Malformed input: never block the user. Best-effort exit.
         return 0
 

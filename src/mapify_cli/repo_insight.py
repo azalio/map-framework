@@ -4,10 +4,9 @@ Analyzes project structure to provide language detection, suggested checks,
 and key directories for workflow initialization.
 """
 
-from pathlib import Path
-from typing import List
 import json
 import subprocess
+from pathlib import Path
 
 
 def detect_language(project_root: Path) -> str:
@@ -43,7 +42,7 @@ def detect_language(project_root: Path) -> str:
     return "unknown"
 
 
-def generate_suggested_checks(language: str, project_root: Path) -> List[str]:
+def generate_suggested_checks(language: str, project_root: Path) -> list[str]:
     """Generate language-specific check commands.
 
     Filters out commands that require missing files (e.g., Makefile).
@@ -82,7 +81,7 @@ def generate_suggested_checks(language: str, project_root: Path) -> List[str]:
     return commands
 
 
-def generate_key_dirs(project_root: Path) -> List[str]:
+def generate_key_dirs(project_root: Path) -> list[str]:
     """Identify key project directories.
 
     Scans for standard directory names and returns up to 5 existing ones.
@@ -230,6 +229,7 @@ def compute_differential_insight(project_root: Path, since_sha: str | None) -> d
             text=True,
             cwd=project_root,
             timeout=2,
+            check=False,
         )
         if result.returncode != 0:
             return {
@@ -246,6 +246,7 @@ def compute_differential_insight(project_root: Path, since_sha: str | None) -> d
             text=True,
             cwd=project_root,
             timeout=2,
+            check=False,
         )
         deleted = (
             [f for f in result_del.stdout.strip().split("\n") if f]
@@ -260,6 +261,7 @@ def compute_differential_insight(project_root: Path, since_sha: str | None) -> d
             text=True,
             cwd=project_root,
             timeout=2,
+            check=False,
         )
         current_sha = (
             head_result.stdout.strip() if head_result.returncode == 0 else "unknown"

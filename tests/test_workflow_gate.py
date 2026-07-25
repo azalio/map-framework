@@ -11,7 +11,6 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from typing import Tuple
 
 import pytest
 
@@ -44,7 +43,7 @@ class TestWorkflowGate:
 
     def run_hook(
         self, input_data: dict, tmp_path: Path, branch: str = "master"
-    ) -> Tuple[int, str, str]:
+    ) -> tuple[int, str, str]:
         """Run workflow-gate.py hook with given input."""
         git_dir = tmp_path / ".git"
         if not git_dir.exists():
@@ -91,6 +90,7 @@ class TestWorkflowGate:
                     ["git", "rev-parse", "--verify", branch],
                     cwd=tmp_path,
                     capture_output=True,
+                    check=False,
                 ).returncode
                 == 0
             )
@@ -115,12 +115,13 @@ class TestWorkflowGate:
             capture_output=True,
             text=True,
             cwd=tmp_path,
+            check=False,
         )
         return result.returncode, result.stdout, result.stderr
 
     def run_hook_with_project_dir(
         self, input_data: dict, project_dir: Path, extra_env: dict | None = None
-    ) -> Tuple[int, str, str]:
+    ) -> tuple[int, str, str]:
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(project_dir)
         # Don't let an inherited MAP_MONITOR_HOTFIX leak into tests that
@@ -135,6 +136,7 @@ class TestWorkflowGate:
             text=True,
             cwd=REPO_ROOT,
             env=env,
+            check=False,
         )
         return result.returncode, result.stdout, result.stderr
 
@@ -269,6 +271,7 @@ class TestWorkflowGate:
             capture_output=True,
             text=True,
             cwd=tmp_path,
+            check=False,
         )
         assert result.returncode == 0
         self._assert_allowed(result.stdout)

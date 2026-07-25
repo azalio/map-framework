@@ -18,7 +18,6 @@ import sys
 import textwrap
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -33,6 +32,7 @@ def _run_python(code: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         cwd=str(_REPO_ROOT),
+        check=False,
     )
 
 

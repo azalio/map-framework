@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Pytest tests for .claude/hooks/detect-clarification-triggers.py
 UserPromptSubmit hook.
@@ -38,6 +37,7 @@ def run_hook(prompt: str) -> tuple[int, str, str]:
         capture_output=True,
         text=True,
         timeout=5,
+        check=False,
     )
     return result.returncode, result.stdout, result.stderr
 
@@ -169,6 +169,7 @@ def test_malformed_json_exits_zero_silently():
         capture_output=True,
         text=True,
         timeout=5,
+        check=False,
     )
     assert result.returncode == 0
     assert result.stdout.strip() == ""
@@ -188,6 +189,7 @@ def test_missing_prompt_field_exits_zero_silently():
         capture_output=True,
         text=True,
         timeout=5,
+        check=False,
     )
     assert result.returncode == 0
     assert result.stdout.strip() == ""
@@ -203,6 +205,7 @@ def test_prompt_under_alternate_field_names():
             capture_output=True,
             text=True,
             timeout=5,
+            check=False,
         )
         assert result.returncode == 0, f"failed for field {field}"
         ctx = get_context(result.stdout)

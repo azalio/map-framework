@@ -9,16 +9,17 @@ Test coverage:
 """
 
 import json
-import pytest
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
-import tempfile
+
+import pytest
 
 from mapify_cli.verification_recorder import (
-    record_verification_result,
+    _atomic_write_json,
     _compute_overall_status,
     _validate_verification_results_schema,
-    _atomic_write_json,
+    record_verification_result,
 )
 
 
@@ -548,9 +549,8 @@ def test_atomic_write_cleans_up_on_error(temp_project_root):
         mock_mkstemp.return_value = (temp_fd, temp_path)
 
         # Force an error during write (os.fdopen is used now, not open)
-        with patch("os.fdopen", side_effect=OSError("Write failed")):
-            with pytest.raises(OSError, match="Write failed"):
-                _atomic_write_json(target_path, data)  # pyright: ignore[reportArgumentType]  # intentional partial dict for atomic-write test
+        with patch("os.fdopen", side_effect=OSError("Write failed")), pytest.raises(OSError, match="Write failed"):
+            _atomic_write_json(target_path, data)  # pyright: ignore[reportArgumentType]  # intentional partial dict for atomic-write test
 
         # Verify temp file was cleaned up
         assert not Path(temp_path).exists()

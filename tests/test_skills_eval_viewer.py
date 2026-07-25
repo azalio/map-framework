@@ -278,9 +278,8 @@ class TestVC3Purity:
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     names.append(alias.name)
-            elif isinstance(node, ast.ImportFrom):
-                if node.module:
-                    names.append(node.module)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                names.append(node.module)
         return names
 
     def test_vc3_no_subprocess_import(self) -> None:

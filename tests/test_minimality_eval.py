@@ -6,18 +6,17 @@ All tests are fixture-based (no live model calls, no external services).
 import json
 
 from mapify_cli.minimality_eval import (
+    _DOCTRINE_TAG_CLOSE,
+    _DOCTRINE_TAG_OPEN,
     DEFAULT_CORPUS,
     FULL_ARMS,
     EvalArm,
     MiniEvalTask,
-    _DOCTRINE_TAG_CLOSE,
-    _DOCTRINE_TAG_OPEN,
     _loc,
     build_doctrine_block,
     default_run_path,
     run_minimality_eval,
 )
-
 
 # ---------------------------------------------------------------------------
 # VC1 — build_doctrine_block returns empty string for off arm

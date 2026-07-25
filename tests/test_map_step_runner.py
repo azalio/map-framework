@@ -24,7 +24,9 @@ SCRIPTS_PATH = (
 
 sys.path.insert(0, str(SCRIPTS_PATH))
 
-import map_step_runner  # noqa: E402  # type: ignore[import-not-found]
+from datetime import UTC
+
+import map_step_runner  # type: ignore[import-not-found]
 
 
 def _stub_compute_insight(payload: dict[str, object]):
@@ -2150,6 +2152,7 @@ def test_validate_prior_stage_consumption_cli_exits_nonzero_on_missing(tmp_path)
         cwd=tmp_path,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 1
@@ -4341,7 +4344,7 @@ class TestBuildContextBlockIntegration:
 
         # Simulate ST-001 completed with results via StepState
         sys.path.insert(0, str(SCRIPTS_PATH))
-        import map_orchestrator  # noqa: E402  # type: ignore[import-not-found]
+        import map_orchestrator  # type: ignore[import-not-found]
 
         state = map_orchestrator.StepState()
         state.current_subtask_id = "ST-002"
@@ -4389,10 +4392,10 @@ class TestSubtaskTokenUsage:
         self, branch_workspace, tmp_path, monkeypatch
     ):
         import time
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
         self._seed_state(branch_workspace)
         # Force state mtime to a known anchor.
-        anchor = datetime.now(timezone.utc).replace(microsecond=0)
+        anchor = datetime.now(UTC).replace(microsecond=0)
         os.utime(
             branch_workspace / "step_state.json",
             (anchor.timestamp(), anchor.timestamp()),
@@ -4484,6 +4487,7 @@ class TestSubtaskTokenUsage:
         result = subprocess.run(
             [sys.executable, str(runner), "subtask_token_usage", "test-branch", "--all"],
             capture_output=True, text=True, cwd=str(tmp_path), env=env,
+            check=False,
         )
         assert result.returncode == 0, result.stderr
         report = json.loads(result.stdout)
@@ -4858,6 +4862,7 @@ class TestDetectTruncatedAgentOutput:
             input=stdin_text,
             capture_output=True,
             text=True,
+            check=False,
         )
         assert proc.returncode == 0, proc.stderr
         return json.loads(proc.stdout)
@@ -5568,11 +5573,11 @@ class TestRefreshBlueprintAffectedFiles:
 
     def _init_git(self, root: Path) -> None:
         subprocess.run(["git", "init"], cwd=root, capture_output=True, check=False)
-        subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "t"], cwd=root, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True, check=False)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=root, capture_output=True, check=False)
         (root / "seed.txt").write_text("seed")
-        subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=root, capture_output=True, check=False)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True, check=False)
 
     def test_merges_affected_files_with_actual_diff_by_default(
         self, branch_workspace, monkeypatch
@@ -5588,7 +5593,7 @@ class TestRefreshBlueprintAffectedFiles:
         # Actor actually changed these:
         (repo / "real_a.py").write_text("x = 1")
         (repo / "real_b.py").write_text("y = 2")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         report = map_step_runner.refresh_blueprint_affected_files(
             "test-branch", "ST-001"
@@ -5624,7 +5629,7 @@ class TestRefreshBlueprintAffectedFiles:
         (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
         (repo / "real_a.py").write_text("x = 1")
         (repo / "real_b.py").write_text("y = 2")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         report = map_step_runner.refresh_blueprint_affected_files(
             "test-branch", "ST-001", replace=True
@@ -5645,7 +5650,7 @@ class TestRefreshBlueprintAffectedFiles:
         }]}
         (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
         (repo / "real.py").write_text("x")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         report = map_step_runner.refresh_blueprint_affected_files(
             "test-branch", "ST-001", dry_run=True
@@ -5689,10 +5694,11 @@ class TestRefreshBlueprintAffectedFiles:
         # Subtask edits + commits two files.
         (repo / "committed_a.py").write_text("x = 1")
         (repo / "committed_b.py").write_text("y = 2")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         subprocess.run(
             ["git", "commit", "-m", "ST-001 work"],
             cwd=repo, capture_output=True,
+            check=False,
         )
         # Blueprint has an existing approved file; refresh should preserve it
         # while adding the real two files even though porcelain is now empty.
@@ -5725,7 +5731,7 @@ class TestRefreshBlueprintAffectedFiles:
         self._init_git(repo)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         (repo / "pre_baseline.py").write_text("x = 1")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         snap = map_step_runner.record_subtask_baseline(
             "test-branch", "ST-001"
         )
@@ -5736,7 +5742,7 @@ class TestRefreshBlueprintAffectedFiles:
         }]}
         (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
         (repo / "post_baseline.py").write_text("y = 2")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         report = map_step_runner.refresh_blueprint_affected_files(
             "test-branch", "ST-001"
         )
@@ -6270,14 +6276,16 @@ class TestRecordSubtaskBaseline:
     def _init_git(self, root: Path) -> None:
         subprocess.run(["git", "init"], cwd=root, capture_output=True, check=False)
         subprocess.run(
-            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True
+            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True,
+            check=False,
         )
         subprocess.run(
-            ["git", "config", "user.name", "t"], cwd=root, capture_output=True
+            ["git", "config", "user.name", "t"], cwd=root, capture_output=True,
+            check=False,
         )
         (root / "seed.txt").write_text("seed")
-        subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=root, capture_output=True, check=False)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True, check=False)
 
     def test_subtask_baseline_filters_prior_wave_diff(
         self, branch_workspace, monkeypatch
@@ -6286,7 +6294,7 @@ class TestRecordSubtaskBaseline:
         self._init_git(repo)
         # Prior wave: ST-001 created old_a.py (still uncommitted).
         (repo / "old_a.py").write_text("from prior wave")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         # ST-002 starts: snapshot its baseline (= everything dirty now).
         snap = map_step_runner.record_subtask_baseline("test-branch", "ST-002")
@@ -6300,7 +6308,7 @@ class TestRecordSubtaskBaseline:
         bp = {"subtasks": [{"id": "ST-002", "title": "x", "affected_files": ["b.py"]}]}
         (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
         (repo / "b.py").write_text("x = 1")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         report = map_step_runner.validate_mutation_boundary(
             "test-branch", "ST-002"
         )
@@ -6348,14 +6356,16 @@ class TestRecordScopeBaseline:
     def _init_git(self, root: Path) -> None:
         subprocess.run(["git", "init"], cwd=root, capture_output=True, check=False)
         subprocess.run(
-            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True
+            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True,
+            check=False,
         )
         subprocess.run(
-            ["git", "config", "user.name", "t"], cwd=root, capture_output=True
+            ["git", "config", "user.name", "t"], cwd=root, capture_output=True,
+            check=False,
         )
         (root / "seed.txt").write_text("seed")
-        subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=root, capture_output=True, check=False)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True, check=False)
 
     def test_baseline_excludes_pre_existing_from_warning(
         self, branch_workspace, tmp_path, monkeypatch
@@ -6373,7 +6383,7 @@ class TestRecordScopeBaseline:
         bp = {"subtasks": [{"id": "ST-001", "title": "x", "affected_files": ["a.py"]}]}
         (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
         (repo / "a.py").write_text("x = 1")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
         # old_artifact.md was in the baseline → filtered → status="clean".
         assert report["status"] == "clean", report
@@ -6396,7 +6406,7 @@ class TestRecordScopeBaseline:
         (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
         # Create an unexpected file (not in affected_files, not in baseline).
         (repo / "drifted.py").write_text("unexpected")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
         assert report["status"] == "warning", report
         assert "drifted.py" in report["unexpected"]
@@ -6443,19 +6453,22 @@ class TestDetectAlreadyDone:
     def _init_git(self, root: Path, commit_files: list[str]) -> None:
         subprocess.run(["git", "init"], cwd=root, capture_output=True, check=False)
         subprocess.run(
-            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True
+            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True,
+            check=False,
         )
         subprocess.run(
-            ["git", "config", "user.name", "t"], cwd=root, capture_output=True
+            ["git", "config", "user.name", "t"], cwd=root, capture_output=True,
+            check=False,
         )
         (root / "seed.txt").write_text("seed")
-        subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=root, capture_output=True, check=False)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True, check=False)
         for f in commit_files:
             (root / f).write_text(f"content of {f}")
-            subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
+            subprocess.run(["git", "add", "."], cwd=root, capture_output=True, check=False)
             subprocess.run(
-                ["git", "commit", "-m", f"add {f}"], cwd=root, capture_output=True
+                ["git", "commit", "-m", f"add {f}"], cwd=root, capture_output=True,
+                check=False,
             )
 
     def test_likely_done_when_all_affected_have_commits(
@@ -6572,10 +6585,12 @@ class TestValidateMutationBoundary:
     def _init_git(self, root: Path) -> None:
         subprocess.run(["git", "init"], cwd=root, capture_output=True, check=False)
         subprocess.run(
-            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True
+            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True,
+            check=False,
         )
         subprocess.run(
-            ["git", "config", "user.name", "t"], cwd=root, capture_output=True
+            ["git", "config", "user.name", "t"], cwd=root, capture_output=True,
+            check=False,
         )
 
     def _write_blueprint(self, branch_dir: Path, subtask_id: str, files: list[str]) -> None:
@@ -6592,7 +6607,7 @@ class TestValidateMutationBoundary:
         self._init_git(repo)
         self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
         (repo / "a.py").write_text("x = 1\n")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
         assert report["status"] == "clean", report
@@ -6606,7 +6621,7 @@ class TestValidateMutationBoundary:
         self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
         (repo / "a.py").write_text("x = 1\n")
         (repo / "b.py").write_text("y = 2\n")  # NOT in affected_files
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
         report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
@@ -6628,7 +6643,7 @@ class TestValidateMutationBoundary:
         self._init_git(repo)
         self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
         (repo / "a.py").write_text("x = 1\n")
-        subprocess.run(["git", "add", "a.py"], cwd=repo, capture_output=True)  # in-scope, staged
+        subprocess.run(["git", "add", "a.py"], cwd=repo, capture_output=True, check=False)  # in-scope, staged
         (repo / "constants.py").write_text("RATE = 15\n")  # out-of-scope, NEVER added (untracked '??')
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
@@ -6642,7 +6657,7 @@ class TestValidateMutationBoundary:
         self._init_git(repo)
         self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
         (repo / "b.py").write_text("y = 2\n")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         monkeypatch.setenv("MAP_STRICT_SCOPE", "1")
         report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
@@ -6684,6 +6699,7 @@ class TestValidateMutationBoundary:
         result = subprocess.run(
             [sys.executable, str(runner), "validate_mutation_boundary", "no-such-branch", "ST-001"],
             capture_output=True, text=True, cwd=str(tmp_path), env=env,
+            check=False,
         )
         assert result.returncode != 0, (
             f"CLI must exit non-zero on status='error'; stdout={result.stdout!r}"
@@ -6705,7 +6721,7 @@ class TestValidateMutationBoundary:
         (repo / "pipeline").mkdir()
         (repo / "pipeline" / "foo.py").write_text("x = 1\n")  # in affected_files
         (repo / "pipeline" / "test_foo.py").write_text("def test_x(): pass\n")  # co-authored test
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
         report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
@@ -6730,7 +6746,7 @@ class TestValidateMutationBoundary:
         (repo / "tests").mkdir()
         (repo / "tests" / "test_foo.py").write_text("def test_x(): pass\n")
         (repo / "tests" / "conftest.py").write_text("import pytest\n")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
         report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
@@ -6755,7 +6771,7 @@ class TestValidateMutationBoundary:
         (repo / "a.py").write_text("x = 1\n")  # in scope
         (repo / "b.py").write_text("y = 2\n")  # out-of-scope SOURCE — real leak
         (repo / "test_b.py").write_text("def test_y(): pass\n")  # out-of-scope TEST — allowed
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
         report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
@@ -6774,7 +6790,7 @@ class TestValidateMutationBoundary:
         self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
         (repo / "a.py").write_text("x = 1\n")
         (repo / "a_test.py").write_text("def test_x(): pass\n")  # co-authored test
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         monkeypatch.setenv("MAP_STRICT_SCOPE", "1")
         report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
@@ -6799,13 +6815,14 @@ class TestValidateMutationBoundary:
         # Parent commit (prior history), then ST-001's actual work as its own
         # commit — exactly the per-subtask-commit lifecycle.
         (repo / "seed.txt").write_text("seed\n")
-        subprocess.run(["git", "add", "seed.txt"], cwd=repo, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "seed.txt"], cwd=repo, capture_output=True, check=False)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True, check=False)
         (repo / "a.py").write_text("x = 1\n")
-        subprocess.run(["git", "add", "a.py"], cwd=repo, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "ST-001"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "a.py"], cwd=repo, capture_output=True, check=False)
+        subprocess.run(["git", "commit", "-m", "ST-001"], cwd=repo, capture_output=True, check=False)
         sha = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True,
+            check=False,
         ).stdout.strip()
         # Mimic record_subtask_result --commit-sha <SHA>: it advances
         # last_subtask_commit_sha AND records the per-subtask commit_sha.
@@ -6840,8 +6857,8 @@ class TestValidateMutationBoundary:
         self._init_git(repo)
         self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
         (repo / "seed.txt").write_text("seed\n")
-        subprocess.run(["git", "add", "seed.txt"], cwd=repo, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "seed.txt"], cwd=repo, capture_output=True, check=False)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True, check=False)
         # No commit recorded for ST-001, no work done — base_ref falls back to
         # HEAD (the prior commit), diff is empty.
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
@@ -6969,6 +6986,7 @@ class TestDetectCrossSubtaskRegressionRisk:
         head = subprocess.run(
             ["git", "rev-parse", "--verify", "HEAD"],
             cwd=root, capture_output=True, text=True,
+            check=False,
         )
         assert head.returncode == 0, "test setup: initial commit produced no resolvable HEAD"
 
@@ -7015,7 +7033,7 @@ class TestDetectCrossSubtaskRegressionRisk:
         # directories collapse to `src/`).
         (repo / "src").mkdir()
         (repo / "src" / "pipeline.py").write_text("x = 1\n")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         report = map_step_runner.detect_cross_subtask_regression_risk(
             "test-branch", "ST-002"
@@ -7057,7 +7075,7 @@ class TestDetectCrossSubtaskRegressionRisk:
         )
         (repo / "tests").mkdir()
         (repo / "tests" / "test_pipeline.py").write_text("def test_x(): pass\n")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         report = map_step_runner.detect_cross_subtask_regression_risk(
             "test-branch", "ST-002"
@@ -7093,7 +7111,7 @@ class TestDetectCrossSubtaskRegressionRisk:
         )
         (repo / "src").mkdir()
         (repo / "src" / "pipeline.py").write_text("x = 1\n")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         report = map_step_runner.detect_cross_subtask_regression_risk(
             "test-branch", "ST-002"
@@ -7139,6 +7157,7 @@ class TestDetectCrossSubtaskRegressionRisk:
             [sys.executable, str(runner),
              "detect_cross_subtask_regression_risk", "test-branch", "ST-001"],
             capture_output=True, text=True, cwd=str(repo), env=env,
+            check=False,
         )
         assert result.returncode == 0, result.stderr
         report = json.loads(result.stdout)
@@ -7174,6 +7193,7 @@ class TestGetSubtaskCli:
             [sys.executable, str(self._runner()), "get_subtask", "ST-001",
              "--branch", "test-branch"],
             capture_output=True, text=True, cwd=str(tmp_path), env=env,
+            check=False,
         )
         assert result.returncode == 0, result.stderr
         payload = json.loads(result.stdout)
@@ -7190,6 +7210,7 @@ class TestGetSubtaskCli:
             [sys.executable, str(self._runner()), "get_subtask", "ST-002",
              "--branch", "test-branch"],
             capture_output=True, text=True, cwd=str(tmp_path), env=env,
+            check=False,
         )
         assert result.returncode == 0, result.stderr
         payload = json.loads(result.stdout)
@@ -7203,6 +7224,7 @@ class TestGetSubtaskCli:
             [sys.executable, str(self._runner()), "get_subtask", "ST-999",
              "--branch", "test-branch"],
             capture_output=True, text=True, cwd=str(tmp_path), env=env,
+            check=False,
         )
         assert result.returncode == 1
         assert "ST-999" in result.stderr
@@ -7225,6 +7247,7 @@ class TestLoadResearchCliErrorChannel:
         result = subprocess.run(
             [sys.executable, str(runner), "load_research", "test-branch", "../escape"],
             capture_output=True, text=True, cwd=str(tmp_path), env=env,
+            check=False,
         )
         assert result.returncode == 1
         assert result.stdout == "", f"stdout must be empty; got {result.stdout!r}"
@@ -7514,6 +7537,7 @@ class TestSaveLoadResearch:
             text=True,
             cwd=str(tmp_path),
             env=env,
+            check=False,
         )
         assert save_result.returncode == 0, save_result.stderr
         load_result = subprocess.run(
@@ -7522,6 +7546,7 @@ class TestSaveLoadResearch:
             text=True,
             cwd=str(tmp_path),
             env=env,
+            check=False,
         )
         assert load_result.returncode == 0, load_result.stderr
         assert load_result.stdout == content
@@ -7603,12 +7628,14 @@ class TestSaveLoadResearch:
         save = subprocess.run(
             [sys.executable, str(runner), "save_research", "test-branch", "ST-009"],
             input=loose, capture_output=True, text=True, cwd=str(tmp_path), env=env,
+            check=False,
         )
         assert save.returncode == 0, save.stderr
 
         result = subprocess.run(
             [sys.executable, str(runner), "validate_research", "test-branch", "ST-009"],
             capture_output=True, text=True, cwd=str(tmp_path), env=env,
+            check=False,
         )
         assert result.returncode == 1, result.stdout
         report = json.loads(result.stdout)
@@ -7721,7 +7748,8 @@ class TestSanitizeForJsonProperty:
     """Property-based coverage for ``_sanitize_for_json`` via Hypothesis."""
 
     def test_strips_every_control_byte_for_arbitrary_strings(self):
-        from hypothesis import given, strategies as st
+        from hypothesis import given
+        from hypothesis import strategies as st
 
         @given(st.text())
         def _prop(raw: str) -> None:
@@ -8661,6 +8689,7 @@ def test_cli_shuffle_sections_default_ok():
         [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), "shuffle-sections", "default"],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0
     payload = json.loads(result.stdout)
@@ -8674,6 +8703,7 @@ def test_cli_shuffle_sections_invalid_mode_errors():
         [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), "shuffle-sections", "bad-mode"],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 1
     payload = json.loads(result.stdout)
@@ -8692,6 +8722,7 @@ def test_cli_shuffle_sections_non_int_seed_errors():
         ],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 1
     payload = json.loads(result.stdout)
@@ -8710,6 +8741,7 @@ def test_cli_default_shuffle_seed_ok():
         ],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0
     payload = json.loads(result.stdout)
@@ -8734,6 +8766,7 @@ def test_cli_default_shuffle_seed_detached_when_no_sha():
             ],
             capture_output=True,
             text=True,
+            check=False,
         )
         return json.loads(r.stdout)
 
@@ -8921,6 +8954,7 @@ def test_cli_compare_review_runs_ok_argv():
         [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), "compare-review-runs", runs_json],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0
     payload = json.loads(result.stdout)
@@ -8933,6 +8967,7 @@ def test_cli_compare_review_runs_invalid_json_errors():
         [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), "compare-review-runs", "not-json"],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 1
     payload = json.loads(result.stdout)
@@ -9132,6 +9167,7 @@ def test_cli_record_review_ordering_ok():
         [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), "record-review-ordering", "default"],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0
     payload = json.loads(result.stdout)
@@ -9144,6 +9180,7 @@ def test_cli_record_review_ordering_invalid_mode_errors():
         [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), "record-review-ordering", "xyz"],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 1
     payload = json.loads(result.stdout)
@@ -9671,12 +9708,14 @@ class TestTokenAccounting:
             [sys.executable, str(runner), "record_token_event", "test-branch",
              "--transcript", str(transcript)],
             capture_output=True, text=True, cwd=str(repo), env=env,
+            check=False,
         )
         assert record.returncode == 0, record.stderr
         assert json.loads(record.stdout)["recorded"] == 2
         report = subprocess.run(
             [sys.executable, str(runner), "token_report", "test-branch"],
             capture_output=True, text=True, cwd=str(repo), env=env,
+            check=False,
         )
         assert report.returncode == 0, report.stderr
         assert "cache hit ratio" in report.stdout
@@ -10146,6 +10185,7 @@ class TestDetectSymbolBlastRadius:
         head = subprocess.run(
             ["git", "rev-parse", "--verify", "HEAD"],
             cwd=root, capture_output=True, text=True,
+            check=False,
         )
         assert head.returncode == 0, "test setup: initial commit produced no resolvable HEAD"
 
@@ -10193,6 +10233,7 @@ class TestDetectSymbolBlastRadius:
         last_sha = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=repo, capture_output=True, text=True,
+            check=False,
         ).stdout.strip()
         self._write_state(branch_workspace, last_sha=last_sha)
 
@@ -10225,13 +10266,15 @@ class TestDetectSymbolBlastRadius:
         )
         subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
         base = subprocess.run(
-            ["git", "commit", "-m", "base"], cwd=repo, capture_output=True, text=True
+            ["git", "commit", "-m", "base"], cwd=repo, capture_output=True, text=True,
+            check=False,
         )
         assert base.returncode == 0
 
         last_sha = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=repo, capture_output=True, text=True,
+            check=False,
         ).stdout.strip()
         self._write_state(branch_workspace, last_sha=last_sha)
 
@@ -10309,6 +10352,7 @@ class TestDetectSymbolBlastRadius:
         last_sha = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=repo, capture_output=True, text=True,
+            check=False,
         ).stdout.strip()
         self._write_state(branch_workspace, last_sha=last_sha)
 
@@ -10344,6 +10388,7 @@ class TestDetectSymbolBlastRadius:
         result = subprocess.run(
             [sys.executable, str(runner), "detect_symbol_blast_radius", "test-branch", "ST-001"],
             capture_output=True, text=True, cwd=str(repo), env=env,
+            check=False,
         )
         assert result.returncode == 0, result.stderr
         parsed = json.loads(result.stdout)
@@ -10372,6 +10417,7 @@ class TestDetectActorFilesChangedMismatch:
         head = subprocess.run(
             ["git", "rev-parse", "--verify", "HEAD"],
             cwd=root, capture_output=True, text=True,
+            check=False,
         )
         assert head.returncode == 0, "test setup: initial commit produced no resolvable HEAD"
 
@@ -10390,7 +10436,7 @@ class TestDetectActorFilesChangedMismatch:
 
         # Only write a.py (b.py is declared but never written).
         (repo / "a.py").write_text("x = 1\n")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
 
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         report = map_step_runner.detect_actor_files_changed_mismatch(
@@ -10409,7 +10455,7 @@ class TestDetectActorFilesChangedMismatch:
         self._write_state(branch_workspace)
 
         (repo / "a.py").write_text("x = 1\n")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
 
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         report = map_step_runner.detect_actor_files_changed_mismatch(
@@ -10429,7 +10475,7 @@ class TestDetectActorFilesChangedMismatch:
 
         (repo / "a.py").write_text("x = 1\n")
         (repo / "b.py").write_text("y = 2\n")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
 
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         report = map_step_runner.detect_actor_files_changed_mismatch(
@@ -10478,6 +10524,7 @@ class TestDetectActorFilesChangedMismatch:
                 "--declared", "a.py,b.py",
             ],
             capture_output=True, text=True, cwd=str(repo), env=env,
+            check=False,
         )
         assert result.returncode == 0, result.stderr
         parsed = json.loads(result.stdout)
@@ -10559,7 +10606,7 @@ class TestDetectActorFilesChangedMismatch:
         self._write_state(branch_workspace)
 
         (repo / "a.py").write_text("x = 1\n")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
         (branch_workspace / "verification-summary.md").write_text("done\n")
 
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
@@ -10581,7 +10628,7 @@ class TestDetectActorFilesChangedMismatch:
         self._write_state(branch_workspace)
 
         (repo / "a.py").write_text("x = 1\n")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
 
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         report = map_step_runner.detect_actor_files_changed_mismatch(
@@ -11637,6 +11684,7 @@ def _run_repro_cli(args: list[str], cwd: Path) -> "subprocess.CompletedProcess[s
         cwd=cwd,
         capture_output=True,
         text=True,
+        check=False,
     )
 
 
@@ -12492,6 +12540,7 @@ def test_cli_run_cross_ai_review_disabled_exit_zero(tmp_path):
         cwd=tmp_path,
         capture_output=True,
         text=True,
+        check=False,
     )
     assert completed.returncode == 0, completed.stderr
     payload = json.loads(completed.stdout)
@@ -12777,6 +12826,7 @@ def test_probe_roundtrip_and_clean_target(tmp_path: Path) -> None:
     git_common_dir_proc = _subprocess.run(
         ["git", "rev-parse", "--git-common-dir"],
         cwd=str(repo), capture_output=True, text=True,
+        check=False,
     )
     assert git_common_dir_proc.returncode == 0
     git_common_dir = Path(git_common_dir_proc.stdout.strip()).resolve()
@@ -12792,6 +12842,7 @@ def test_probe_roundtrip_and_clean_target(tmp_path: Path) -> None:
     wl_proc = _subprocess.run(
         ["git", "worktree", "list", "--porcelain"],
         cwd=str(repo), capture_output=True, text=True,
+        check=False,
     )
     probe_entries = [
         ln for ln in wl_proc.stdout.splitlines()
@@ -12806,7 +12857,7 @@ def test_probe_roundtrip_and_clean_target(tmp_path: Path) -> None:
         _os.chdir(repo)
         # Make the repo dirty
         (repo / "dirty.txt").write_text("uncommitted", encoding="utf-8")
-        _subprocess.run(["git", "add", "dirty.txt"], cwd=str(repo), capture_output=True)
+        _subprocess.run(["git", "add", "dirty.txt"], cwd=str(repo), capture_output=True, check=False)
         # clear probe cache (isolation mode the same, not probe cache, but be safe)
         map_step_runner._WORKTREE_PROBE_CACHE.clear()
         dirty_result = map_step_runner._require_clean_merge_target(repo)
@@ -13040,6 +13091,7 @@ def test_orphan_cleanup_idempotent(
         git_common_dir_proc = _sp.run(
             ["git", "rev-parse", "--git-common-dir"],
             capture_output=True, text=True,
+            check=False,
         )
         assert git_common_dir_proc.returncode == 0
         git_common_dir = Path(git_common_dir_proc.stdout.strip()).resolve()
@@ -14564,8 +14616,10 @@ class TestRecordDispatchActualPerSubtaskSha:
             f"got base_shas={base_shas!r}"
         )
         from mapify_cli.parallelism_observability import (
-            classify_dispatch as _classify,
             DISPATCH_OUTCOME_ISOLATION_VIOLATION,
+        )
+        from mapify_cli.parallelism_observability import (
+            classify_dispatch as _classify,
         )
         outcome = _classify(
             same_turn_task_count=2,

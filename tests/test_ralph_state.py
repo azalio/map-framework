@@ -5,12 +5,13 @@ Run with: pytest tests/test_ralph_state.py -v
 """
 
 import json
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from mapify_cli.ralph_state import (
+    VALID_TRANSITIONS,
     CircuitBreakerConfig,
     FinalVerificationResult,
     InvalidTransitionError,
@@ -18,7 +19,6 @@ from mapify_cli.ralph_state import (
     RalphLoopPhase,
     RalphLoopState,
     RootCauseAnalysis,
-    VALID_TRANSITIONS,
     check_circuit_breaker,
     get_improvement_rate,
     is_thrashing,
@@ -252,7 +252,7 @@ class TestCheckCircuitBreaker:
     def test_exceeds_wall_time_returns_reason(self) -> None:
         """Should return reason when wall time exceeded."""
         # Set started_at to 2 hours ago
-        old_time = (datetime.now() - timedelta(hours=2)).isoformat()
+        old_time = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
         state = RalphLoopState(started_at=old_time, total_tool_calls=10)
         config = CircuitBreakerConfig(max_wall_time_minutes=60)
         result = check_circuit_breaker(state, config)

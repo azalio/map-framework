@@ -19,11 +19,10 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-
 from mapify_cli.skills_eval.description_optimizer import (
     _DEFAULT_SEED,
-    split_train_test,
     optimize,
+    split_train_test,
 )
 from mapify_cli.skills_eval.dispatcher import VariantDispatcher
 from mapify_cli.skills_eval.eval_schema import (
@@ -283,7 +282,7 @@ def test_vc3_distinct_jsonl_paths_and_resume_false(
 
     # VC3: all out_paths are distinct
     paths = [c["out_path"] for c in run_eval_calls]
-    assert len(set(str(p) for p in paths)) == n_iters * 2, (
+    assert len({str(p) for p in paths}) == n_iters * 2, (
         f"Duplicate out_paths detected: {paths}"
     )
 

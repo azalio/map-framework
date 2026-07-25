@@ -10,9 +10,9 @@ and CONTEXT-ENGINEERING-IMPROVEMENTS.md
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any
 
 
 @dataclass
@@ -21,14 +21,14 @@ class AgentInvocation:
 
     agent_name: str
     timestamp: str
-    prompt_preview: Optional[str]  # Truncated prompt for readability (can be None)
-    response_preview: Optional[str]  # Truncated response (can be None)
-    duration_ms: Optional[float] = None
+    prompt_preview: str | None  # Truncated prompt for readability (can be None)
+    response_preview: str | None  # Truncated response (can be None)
+    duration_ms: float | None = None
     status: str = "success"  # 'success', 'error', 'timeout'
-    error_message: Optional[str] = None
-    task_id: Optional[str] = None  # For correlation with RecitationManager
-    subtask_id: Optional[int] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    error_message: str | None = None
+    task_id: str | None = None  # For correlation with RecitationManager
+    subtask_id: int | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class MapWorkflowLogger:
@@ -57,15 +57,15 @@ class MapWorkflowLogger:
         self.enabled = enabled
         self.map_dir = self.project_root / ".map"
         self.logs_dir = self.map_dir / "logs"
-        self.current_log_file: Optional[Path] = None
-        self.session_start_time: Optional[datetime] = None
-        self.task_id: Optional[str] = None
+        self.current_log_file: Path | None = None
+        self.session_start_time: datetime | None = None
+        self.task_id: str | None = None
 
         # Create .map/logs directory if logging is enabled
         if self.enabled:
             self.logs_dir.mkdir(parents=True, exist_ok=True)
 
-    def start_session(self, task_id: Optional[str] = None) -> Optional[Path]:
+    def start_session(self, task_id: str | None = None) -> Path | None:
         """
         Start a new logging session with a timestamped log file.
 
@@ -78,7 +78,7 @@ class MapWorkflowLogger:
         if not self.enabled:
             return None
 
-        self.session_start_time = datetime.now()
+        self.session_start_time = datetime.now(UTC)
         self.task_id = task_id
 
         # Create log file with timestamp
@@ -106,7 +106,7 @@ class MapWorkflowLogger:
         if not self.enabled or not self.current_log_file:
             return
 
-        session_end_time = datetime.now()
+        session_end_time = datetime.now(UTC)
         duration_seconds = (
             (session_end_time - self.session_start_time).total_seconds()
             if self.session_start_time
@@ -132,11 +132,11 @@ class MapWorkflowLogger:
         agent_name: str,
         prompt: str,
         response: str,
-        duration_ms: Optional[float] = None,
+        duration_ms: float | None = None,
         status: str = "success",
-        error_message: Optional[str] = None,
-        subtask_id: Optional[int] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        error_message: str | None = None,
+        subtask_id: int | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """
         Log an agent invocation with full details.
@@ -160,7 +160,7 @@ class MapWorkflowLogger:
 
         invocation = AgentInvocation(
             agent_name=agent_name,
-            timestamp=datetime.now().isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             prompt_preview=prompt_preview,
             response_preview=response_preview,
             duration_ms=duration_ms,
@@ -191,10 +191,10 @@ class MapWorkflowLogger:
     def log_error(
         self,
         error_message: str,
-        agent_name: Optional[str] = None,
-        subtask_id: Optional[int] = None,
-        stack_trace: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        agent_name: str | None = None,
+        subtask_id: int | None = None,
+        stack_trace: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """
         Log an error that occurred during workflow execution.
@@ -211,7 +211,7 @@ class MapWorkflowLogger:
 
         log_entry = {
             "event": "error",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "error_message": error_message,
             "agent_name": agent_name,
             "subtask_id": subtask_id,
@@ -230,7 +230,7 @@ class MapWorkflowLogger:
         self,
         operation_name: str,
         duration_ms: float,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """
         Log timing information for performance analysis.
@@ -245,7 +245,7 @@ class MapWorkflowLogger:
 
         log_entry = {
             "event": "timing",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "operation_name": operation_name,
             "duration_ms": duration_ms,
             "task_id": self.task_id,
@@ -255,7 +255,7 @@ class MapWorkflowLogger:
         self._write_log_entry(log_entry)
 
     def log_event(
-        self, event_type: str, message: str, metadata: Optional[Dict[str, Any]] = None
+        self, event_type: str, message: str, metadata: dict[str, Any] | None = None
     ) -> None:
         """
         Log a custom workflow event.
@@ -270,7 +270,7 @@ class MapWorkflowLogger:
 
         log_entry = {
             "event": event_type,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "message": message,
             "task_id": self.task_id,
             "metadata": metadata or {},
@@ -278,7 +278,7 @@ class MapWorkflowLogger:
 
         self._write_log_entry(log_entry)
 
-    def _write_log_entry(self, entry: Dict[str, Any]) -> None:
+    def _write_log_entry(self, entry: dict[str, Any]) -> None:
         """
         Write a log entry as a JSON line.
 
@@ -291,7 +291,7 @@ class MapWorkflowLogger:
         try:
             with open(self.current_log_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
             # Don't fail workflow execution if logging fails
             # Just print to stderr for debugging
             import sys
@@ -299,8 +299,8 @@ class MapWorkflowLogger:
             print(f"Warning: Failed to write log entry: {e}", file=sys.stderr)
 
     def _truncate_text(
-        self, text: Optional[str], max_length: int = 500
-    ) -> Optional[str]:
+        self, text: str | None, max_length: int = 500
+    ) -> str | None:
         """
         Truncate text to maximum length with ellipsis.
 
@@ -319,7 +319,7 @@ class MapWorkflowLogger:
 
         return text[:max_length] + "..."
 
-    def get_log_file_path(self) -> Optional[Path]:
+    def get_log_file_path(self) -> Path | None:
         """
         Get the path to the current log file.
 

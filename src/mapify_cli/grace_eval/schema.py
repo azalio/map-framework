@@ -88,7 +88,7 @@ class GraceFixture:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "GraceFixture":
+    def from_dict(cls, d: dict[str, Any]) -> GraceFixture:
         return cls(
             fixture_id=str(d["fixture_id"]),
             title=str(d["title"]),
@@ -158,7 +158,7 @@ class VariantRunRecord:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "VariantRunRecord":
+    def from_dict(cls, d: dict[str, Any]) -> VariantRunRecord:
         raw_err = d.get("error", _SENTINEL)
         error: str | None = None if (raw_err is _SENTINEL or raw_err is None) else str(raw_err)
         return cls(
@@ -236,7 +236,7 @@ class VariantAggregate:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "VariantAggregate":
+    def from_dict(cls, d: dict[str, Any]) -> VariantAggregate:
         raw_cd = d.get("vs_baseline_correctness_delta", _SENTINEL)
         cd: float | None = None if (raw_cd is _SENTINEL or raw_cd is None) else float(raw_cd)
         raw_td = d.get("vs_baseline_tokens_delta", _SENTINEL)
@@ -295,7 +295,7 @@ class SweepFinding:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "SweepFinding":
+    def from_dict(cls, d: dict[str, Any]) -> SweepFinding:
         return cls(
             severity=str(d["severity"]),
             location=str(d["location"]),
@@ -353,7 +353,7 @@ class GraceReport:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "GraceReport":
+    def from_dict(cls, d: dict[str, Any]) -> GraceReport:
         return cls(
             schema_version=str(d.get("schema_version", _SCHEMA_VERSION)),
             fixture_id=str(d["fixture_id"]),

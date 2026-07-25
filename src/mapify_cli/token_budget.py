@@ -220,7 +220,7 @@ def format_compact_instruction(used: int, threshold: int, focus: str) -> str:
     ``ralph-context-pruner`` and ``post-compact-context``, so the assistant
     can recognise where the message came from.
     """
-    pct = int(round(100 * used / threshold)) if threshold > 0 else 0
+    pct = round(100 * used / threshold) if threshold > 0 else 0
     # Fallback must match the documented default in
     # ``docs/context-compression-plan.md`` (Defaults table) so the user gets
     # the same /compact instruction whether they leave compression_focus blank

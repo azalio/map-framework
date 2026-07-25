@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -80,21 +81,21 @@ def build_doctrine_block(minimality: str) -> str:
         f"Intensity: {intensity}",
         "Production-grade means the smallest sufficient safe change, not maximal code.",
         "Decision ladder, stop at the first rung that satisfies the contract:",
-        "1. Does this need to exist at all? If no, mark it YAGNI and explain;"
-        " do not silently omit explicit requirements.",
+        ("1. Does this need to exist at all? If no, mark it YAGNI and explain;"
+        " do not silently omit explicit requirements."),
         "2. Standard library does it? Use that.",
         "3. Native platform feature covers it? Use that.",
-        "4. Already-installed project dependency solves it? Use that; do not"
-        " add a dependency for a few lines.",
+        ("4. Already-installed project dependency solves it? Use that; do not"
+        " add a dependency for a few lines."),
         "5. Can it be one clear line? Prefer one clear line.",
         "6. Otherwise write the minimum maintainable code that works.",
-        "Shell/Core rule: shell code at trust boundaries stays defensive;"
-        " core private helpers stay small.",
-        "Hard exceptions: security, accessibility, data integrity, real error"
+        ("Shell/Core rule: shell code at trust boundaries stays defensive;"
+        " core private helpers stay small."),
+        ("Hard exceptions: security, accessibility, data integrity, real error"
         " handling that prevents data loss, and explicitly requested behavior"
-        " always win over minimality.",
-        "When choosing a deliberate simplification, include `map:simplification:`"
-        " with the ceiling and upgrade path. The marker is evidence, not an exemption.",
+        " always win over minimality."),
+        ("When choosing a deliberate simplification, include `map:simplification:`"
+        " with the ceiling and upgrade path. The marker is evidence, not an exemption."),
         "If retry feedback asks for expansion, re-add code only for named BLOCKER items.",
         _DOCTRINE_TAG_CLOSE,
     ]
@@ -486,7 +487,7 @@ def default_run_path(root: Path, iso_timestamp: str) -> Path:
 def _main() -> None:
     import argparse
     import sys
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     parser = argparse.ArgumentParser(
         description="MAP minimality A/B benchmark harness",
@@ -514,7 +515,7 @@ def _main() -> None:
 
     arms = FULL_ARMS if args.full else DEFAULT_ARMS
     iso = (
-        datetime.now(timezone.utc)
+        datetime.now(UTC)
         .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z")

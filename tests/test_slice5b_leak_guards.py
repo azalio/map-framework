@@ -25,6 +25,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -53,8 +54,7 @@ _REFERENCE_PATH = (
 if str(_SCRIPTS_PATH) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_PATH))
 
-import map_orchestrator  # noqa: E402  # pyright: ignore[reportMissingImports]
-
+import map_orchestrator  # pyright: ignore[reportMissingImports]
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -222,7 +222,7 @@ class TestGuardB_MonkeypatchFail:
         AssertionError and the test fails — catching the kill-switch leak.
     """
 
-    _CONCURRENT_VERBS = [
+    _CONCURRENT_VERBS: ClassVar[list] = [
         "begin_wave_group",
         "abort_wave_group",
         "record_dispatch_actual",

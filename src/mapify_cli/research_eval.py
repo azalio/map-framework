@@ -8,13 +8,12 @@ with ``path:line[-end]`` citations, against known fixture targets.
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
-import json
 from pathlib import Path, PurePosixPath
-import re
 from typing import Any
-
 
 _CITATION_RE = re.compile(
     r"""

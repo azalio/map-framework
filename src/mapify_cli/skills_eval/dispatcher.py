@@ -660,6 +660,7 @@ class ClaudeSubprocessDispatcher(VariantDispatcher):
                 timeout=self._timeout,
                 cwd=cwd,
                 env=_eval_subprocess_env(cwd),
+                check=False,
             )
         except subprocess.TimeoutExpired:
             # The trigger (first ``Skill`` tool_use) is written to the transcript

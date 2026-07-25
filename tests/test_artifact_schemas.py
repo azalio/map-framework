@@ -3,7 +3,6 @@
 import importlib.util
 from pathlib import Path
 
-
 SCHEMAS_PATH = Path(__file__).resolve().parents[1] / "src" / "mapify_cli" / "schemas.py"
 SPEC = importlib.util.spec_from_file_location("artifact_schemas", SCHEMAS_PATH)
 assert SPEC is not None and SPEC.loader is not None

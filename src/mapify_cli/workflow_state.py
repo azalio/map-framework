@@ -10,10 +10,10 @@ combined with human-readable markdown for progress visualization.
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import Any, Optional
 
 
 class WorkflowPhase(Enum):
@@ -35,8 +35,8 @@ class Subtask:
     id: str
     description: str
     status: str = "pending"  # pending, in_progress, complete, failed
-    completed_at: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    completed_at: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -54,19 +54,19 @@ class WorkflowState:
     """
 
     task_plan: str
-    completed_subtasks: List[str] = field(default_factory=list)
+    completed_subtasks: list[str] = field(default_factory=list)
     current_phase: WorkflowPhase = WorkflowPhase.INIT
     turn_count: int = 0
-    branch_name: Optional[str] = None
-    started_at: Optional[str] = None
-    updated_at: Optional[str] = None
-    subtasks: List[Subtask] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    ended_early: Optional[Dict[str, Any]] = None
+    branch_name: str | None = None
+    started_at: str | None = None
+    updated_at: str | None = None
+    subtasks: list[Subtask] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    ended_early: dict[str, Any] | None = None
 
     def __post_init__(self):
         """Initialize timestamps if not set."""
-        now = datetime.now().isoformat()
+        now = datetime.now(UTC).isoformat()
         if self.started_at is None:
             self.started_at = now
         if self.updated_at is None:
@@ -88,7 +88,7 @@ class WorkflowState:
         checkpoint_path = map_dir / "progress.md"
 
         # Update timestamp
-        self.updated_at = datetime.now().isoformat()
+        self.updated_at = datetime.now(UTC).isoformat()
 
         # Build YAML frontmatter
         frontmatter_lines = [
@@ -280,7 +280,7 @@ class WorkflowState:
         )
 
     @classmethod
-    def _parse_yaml_frontmatter(cls, text: str) -> Dict[str, Any]:
+    def _parse_yaml_frontmatter(cls, text: str) -> dict[str, Any]:
         """
         Simple YAML frontmatter parser (handles basic key-value pairs and lists).
 
@@ -290,10 +290,10 @@ class WorkflowState:
         Returns:
             Dictionary of parsed values
         """
-        result: Dict[str, Any] = {}
-        current_key: Optional[str] = None
-        current_list: Optional[List[Any]] = None
-        current_object: Optional[Dict[str, Any]] = None
+        result: dict[str, Any] = {}
+        current_key: str | None = None
+        current_list: list[Any] | None = None
+        current_object: dict[str, Any] | None = None
         in_subtasks: bool = False
         in_ended_early: bool = False
 
@@ -448,7 +448,7 @@ class WorkflowState:
         for subtask in self.subtasks:
             if subtask.id == subtask_id:
                 subtask.status = "complete"
-                subtask.completed_at = datetime.now().isoformat()
+                subtask.completed_at = datetime.now(UTC).isoformat()
                 break
 
     def mark_subtask_in_progress(self, subtask_id: str) -> None:
@@ -486,7 +486,7 @@ class WorkflowState:
         """
         self.current_phase = phase
 
-    def get_remaining_subtasks(self) -> List[Subtask]:
+    def get_remaining_subtasks(self) -> list[Subtask]:
         """
         Get list of subtasks that are not yet complete.
 
@@ -509,7 +509,7 @@ class WorkflowState:
     def mark_ended_early(
         self,
         reason: str,
-        subtask_id: Optional[str] = None,
+        subtask_id: str | None = None,
         by_user: bool = True,
     ) -> None:
         """

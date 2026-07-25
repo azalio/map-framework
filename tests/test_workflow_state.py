@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Pytest tests for src/mapify_cli/workflow_state.py.
 Tests all validation criteria from ST-006.
@@ -6,8 +5,7 @@ Tests all validation criteria from ST-006.
 import tempfile
 from pathlib import Path
 
-from mapify_cli.workflow_state import WorkflowState, WorkflowPhase
-
+from mapify_cli.workflow_state import WorkflowPhase, WorkflowState
 
 # =============================================================================
 # Validation Criteria Tests

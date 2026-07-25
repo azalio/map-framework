@@ -12,11 +12,11 @@ INV-6: Contract-first — producer and consumer both import from this module.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from mapify_cli.token_budget import TokenUsage
-
 
 # ---------------------------------------------------------------------------
 # EvalSetEntry
@@ -134,7 +134,7 @@ class EvalResultRecord:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "EvalResultRecord":
+    def from_dict(cls, d: dict[str, Any]) -> EvalResultRecord:
         """Reconstruct an ``EvalResultRecord`` from a plain dict (JSON parse).
 
         Tolerates ``token_usage=None`` and missing keys for
@@ -209,7 +209,7 @@ class OptimizeIterationRecord:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "OptimizeIterationRecord":
+    def from_dict(cls, d: dict[str, Any]) -> OptimizeIterationRecord:
         """Reconstruct from a plain dict; tolerates absent optional keys."""
         raw_desc = d.get("candidate_description", _MISSING)
         candidate_description: str | None = (
@@ -270,7 +270,7 @@ class OptimizeResult:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "OptimizeResult":
+    def from_dict(cls, d: dict[str, Any]) -> OptimizeResult:
         """Reconstruct from a plain dict; tolerates absent ``iterations``."""
         raw_iters = d.get("iterations", [])
         iterations = [OptimizeIterationRecord.from_dict(x) for x in raw_iters]

@@ -6,23 +6,23 @@ and as importable Python modules.
 """
 
 from .validate_dependencies import (
-    DependencyValidator,
-    ASCIIGraphRenderer,
-    ValidationIssue,
-    IssueSeverity,
     ANSIColors,
+    ASCIIGraphRenderer,
+    DependencyValidator,
+    IssueSeverity,
+    ValidationIssue,
     load_input,
-    print_report,
     main,
+    print_report,
 )
 
 __all__ = [
-    "DependencyValidator",
-    "ASCIIGraphRenderer",
-    "ValidationIssue",
-    "IssueSeverity",
     "ANSIColors",
+    "ASCIIGraphRenderer",
+    "DependencyValidator",
+    "IssueSeverity",
+    "ValidationIssue",
     "load_input",
-    "print_report",
     "main",
+    "print_report",
 ]
