@@ -230,6 +230,14 @@ def _effective_compression_threshold(policy: str, threshold: int) -> int | None:
     return threshold
 
 GATE_VERDICTS = {"ready", "needs-revision", "blocked"}
+# Review skills document their verdict domain as PROCEED/REVISE/BLOCK; accept
+# those spellings (and the underscore variant) and normalize to GATE_VERDICTS.
+GATE_VERDICT_ALIASES = {
+    "proceed": "ready",
+    "revise": "needs-revision",
+    "needs_revision": "needs-revision",
+    "block": "blocked",
+}
 ARTIFACT_STAGE_NAMES = (
     "workflow_fit",
     "spec",
@@ -7088,6 +7096,13 @@ def write_pr_draft(
     return {"status": "success", "path": str(pr_file)}
 
 
+def normalize_gate_verdict(value: str) -> str | None:
+    """Normalize a gate verdict spelling; return None when unrecognized."""
+    candidate = (value or "").strip().lower()
+    candidate = GATE_VERDICT_ALIASES.get(candidate, candidate)
+    return candidate if candidate in GATE_VERDICTS else None
+
+
 def write_plan_review(
     summary: str = "",
     high: str = "",
@@ -7099,12 +7114,13 @@ def write_plan_review(
     branch: str | None = None,
 ) -> dict:
     """Write the next staged planning review artifact."""
-    recommendation = recommendation.strip().lower()
-    if recommendation not in GATE_VERDICTS:
+    normalized_recommendation = normalize_gate_verdict(recommendation)
+    if normalized_recommendation is None:
         return {
             "status": "error",
-            "message": f"Invalid recommendation: {recommendation}",
+            "message": f"Invalid recommendation: {recommendation.strip().lower()}",
         }
+    recommendation = normalized_recommendation
 
     artifact = next_numbered_artifact_path("plan-review", branch)
     review_file = Path(artifact["path"])
@@ -7145,9 +7161,13 @@ def write_stage_gate(
     branch: str | None = None,
 ) -> dict:
     """Write a machine-readable gate artifact for a workflow stage."""
-    verdict = verdict.strip().lower()
-    if verdict not in GATE_VERDICTS:
-        return {"status": "error", "message": f"Invalid verdict: {verdict}"}
+    normalized_verdict = normalize_gate_verdict(verdict)
+    if normalized_verdict is None:
+        return {
+            "status": "error",
+            "message": f"Invalid verdict: {verdict.strip().lower()}",
+        }
+    verdict = normalized_verdict
 
     normalized_stage = stage.strip().lower().replace("_", "-")
     gate_file = get_branch_dir(branch) / f"{normalized_stage}-gate.json"

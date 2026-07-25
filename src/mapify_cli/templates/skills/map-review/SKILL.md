@@ -473,12 +473,22 @@ Choose exactly one:
 - `REVISE`: actionable changes are required before review can pass.
 - `BLOCK`: external, safety, or correctness blocker prevents review completion.
 
+The runner stores gate verdicts as `ready` / `needs-revision` / `blocked` and
+normalizes `PROCEED` -> `ready`, `REVISE` -> `needs-revision`, `BLOCK` -> `blocked`,
+so either spelling is accepted by `write_stage_gate`.
+
 ## Workflow Gate Unlock (REVISE/BLOCK only)
 
-If edits are needed, write the stage gate so the owning workflow can continue:
+If edits are needed, write the stage gate so the owning workflow can continue.
+Positional arguments are `<stage> <verdict> <source_artifact> <notes>` — the
+summary is the FOURTH argument, not the third:
 
 ```bash
-python3 .map/scripts/map_step_runner.py write_stage_gate review "$FINAL_VERDICT" "$REVIEW_SUMMARY"
+python3 .map/scripts/map_step_runner.py write_stage_gate \
+  review \
+  "$FINAL_VERDICT" \
+  code-review-001.md \
+  "$REVIEW_SUMMARY"
 ```
 
 ## Handoff Artifact Update
