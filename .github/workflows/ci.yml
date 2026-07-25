@@ -85,10 +85,11 @@ jobs:
 
     - name: Run linters
       run: |
-        # Run linters if installed (Linux/macOS only)
-        which ruff > /dev/null 2>&1 && ruff check src/ tests/ || echo "Ruff not installed, skipping"
-        which mypy > /dev/null 2>&1 && mypy src/ || echo "Mypy not installed, skipping"
-        which pyright > /dev/null 2>&1 && pyright src/ || echo "Pyright not installed, skipping"
+        # ruff/mypy/pyright are always installed via the [dev] extra above.
+        # Each command must fail the step on error - do not swallow nonzero exits.
+        ruff check src/ tests/
+        mypy src/
+        pyright src/
 
     - name: Install uv
       run: pip install uv
