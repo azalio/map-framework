@@ -94,9 +94,8 @@ import re
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 # Step phase definitions with execution order
 STEP_PHASES = {
@@ -141,7 +140,7 @@ TDD_STEP_ORDER = [
 
 def _utc_timestamp() -> str:
     """Return an unambiguous RFC3339 UTC timestamp."""
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _read_text_if_exists(path: Path) -> str:
@@ -329,7 +328,7 @@ def _map_config_int(project_dir: Path, key: str, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
-def _extract_transcript_usage(entry: dict) -> Optional[int]:
+def _extract_transcript_usage(entry: dict) -> int | None:
     message = entry.get("message")
     if not isinstance(message, dict):
         return None
@@ -372,7 +371,7 @@ def _count_last_turn_tokens(transcript_path: Path) -> int:
     return 0
 
 
-def _effective_compression_threshold(policy: str, threshold: int) -> Optional[int]:
+def _effective_compression_threshold(policy: str, threshold: int) -> int | None:
     if policy == "never" or threshold <= 0:
         return None
     if policy == "aggressive":
@@ -380,12 +379,12 @@ def _effective_compression_threshold(policy: str, threshold: int) -> Optional[in
     return threshold
 
 
-def _should_nudge(used: int, threshold: Optional[int]) -> bool:
+def _should_nudge(used: int, threshold: int | None) -> bool:
     return threshold is not None and used >= threshold
 
 
 def _format_compact_instruction(used: int, threshold: int, focus: str) -> str:
-    pct = int(round(100 * used / threshold)) if threshold > 0 else 0
+    pct = round(100 * used / threshold) if threshold > 0 else 0
     focus_clean = (focus or "").strip() or (
         "MAP step state, last 2 monitor verdicts, pending subtasks; "
         "drop tool-result bodies older than 3 turns"
@@ -497,7 +496,7 @@ def _filter_blocker_retry_feedback(feedback: str) -> str:
     )
 
 
-def _latest_numbered_artifact(plan_dir: Path, prefix: str) -> Optional[Path]:
+def _latest_numbered_artifact(plan_dir: Path, prefix: str) -> Path | None:
     """Return latest numbered artifact like review-003.md."""
     matches = sorted(plan_dir.glob(f"{prefix}-*.md"))
     numbered = []
@@ -624,8 +623,8 @@ class StepState:
     """Workflow step state tracking."""
 
     workflow: str = "map-efficient"
-    started_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    current_subtask_id: Optional[str] = None
+    started_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    current_subtask_id: str | None = None
     subtask_index: int = 0
     subtask_sequence: list[str] = field(default_factory=list)
     current_step_id: str = "1.0"
@@ -655,9 +654,9 @@ class StepState:
     workflow_status: str = "INITIALIZED"
     subtask_files_changed: dict[str, list[str]] = field(default_factory=dict)
     guard_rework_counts: dict[str, int] = field(default_factory=dict)
-    constraints: Optional[dict] = None
+    constraints: dict | None = None
     subtask_results: dict[str, dict] = field(default_factory=dict)
-    last_subtask_commit_sha: Optional[str] = None
+    last_subtask_commit_sha: str | None = None
     contract_ready_subtasks: dict[str, dict] = field(default_factory=dict)
     clean_retry_count: int = 0
     contaminated_retry_count: int = 0
@@ -672,7 +671,7 @@ class StepState:
     progress_feedback_subtasks: list[str] = field(default_factory=list)
     retry_isolation_status: dict[str, str] = field(default_factory=dict)
     retry_quarantine_paths: dict[str, str] = field(default_factory=dict)
-    completed_at: Optional[str] = None
+    completed_at: str | None = None
     # Audit ledger for mark_subtask_complete: per-subtask
     # {kind: done|noop|deferred|stub|prior_pr, reason: str, recorded_at}
     # Added 2026-05-25 so post-run audits can tell intent apart instead
@@ -685,7 +684,7 @@ class StepState:
         files_changed: list[str],
         status: str,
         summary: str = "",
-        commit_sha: Optional[str] = None,
+        commit_sha: str | None = None,
     ) -> None:
         """Record result of a completed subtask for context injection.
 
@@ -750,7 +749,7 @@ class StepState:
         """Deserialize from dictionary."""
         return cls(
             workflow=data.get("workflow", "map-efficient"),
-            started_at=data.get("started_at", datetime.now().isoformat()),
+            started_at=data.get("started_at", datetime.now(UTC).isoformat()),
             current_subtask_id=data.get("current_subtask_id"),
             subtask_index=data.get("subtask_index", 0),
             subtask_sequence=data.get("subtask_sequence", []),
@@ -814,7 +813,7 @@ def _get_step_order(tdd_mode: bool = False) -> list[str]:
     return TDD_STEP_ORDER if tdd_mode else STEP_ORDER
 
 
-from map_utils import (  # noqa: E402 — shared across .map/scripts/  # pyright: ignore[reportMissingImports]
+from map_utils import (
     get_branch_name,
     sanitize_branch_name,
 )
@@ -1016,7 +1015,7 @@ def _find_next_ready_subtask_index(
     *,
     start_after_index: int,
     treat_current_as_done: bool = True,
-) -> tuple[Optional[int], list[str]]:
+) -> tuple[int | None, list[str]]:
     """Walk subtask_sequence and return the index of the next ready subtask.
 
     "Ready" means: not yet completed AND every entry in its blueprint
@@ -1050,7 +1049,7 @@ def _find_next_ready_subtask_index(
 
     skipped_for_deps: list[str] = []
     order = list(range(start_after_index + 1, n)) + list(
-        range(0, max(start_after_index + 1, 0))
+        range(max(start_after_index + 1, 0))
     )
     for idx in order:
         if idx < 0 or idx >= n:
@@ -1277,7 +1276,7 @@ def get_next_step(branch: str) -> dict:
     # by which 2.2 got skipped, emit a soft warning. Catches the silent
     # skip without breaking the documented TDD auto-skip path (which
     # legitimately bypasses 2.2 in the auto_skip_tdd_phases test).
-    research_skip_warning: Optional[str] = None
+    research_skip_warning: str | None = None
     if (
         next_step_id == "2.3"
         and "2.2" not in state.completed_steps
@@ -1328,7 +1327,7 @@ _MONITOR_REQUIRED_KEYS = ("valid", "summary", "issues")
 
 def _parse_monitor_envelope_json(
     monitor_text: str,
-) -> tuple[Optional[dict], Optional[str]]:
+) -> tuple[dict | None, str | None]:
     """Parse a Monitor JSON envelope, with fenced ```json {...}``` recovery.
 
     Returns ``(parsed_dict, None)`` on success or ``(None, error_message)`` on
@@ -1361,7 +1360,7 @@ def _parse_monitor_envelope_json(
     return parsed, None
 
 
-def _validate_monitor_envelope(monitor_text: str) -> Optional[str]:
+def _validate_monitor_envelope(monitor_text: str) -> str | None:
     """Return None when monitor_text is a complete Monitor JSON envelope.
 
     Returns an error message string when the envelope is broken — used
@@ -1385,7 +1384,7 @@ def _validate_monitor_envelope(monitor_text: str) -> Optional[str]:
 
 def _validate_monitor_disposition_binding(
     monitor_text: str, kind: str, check_id: str
-) -> Optional[str]:
+) -> str | None:
     """Verify a Monitor envelope structurally authorizes a deferral verdict.
 
     Anti-gaming gate for validate_step's disposition path: a deferral is the
@@ -1442,13 +1441,13 @@ def validate_step(
     step_id: str,
     branch: str,
     *,
-    recommendation: Optional[str] = None,
-    monitor_envelope: Optional[str] = None,
-    disposition: Optional[str] = None,
-    check_id: Optional[str] = None,
-    files_changed: Optional[list[str]] = None,
+    recommendation: str | None = None,
+    monitor_envelope: str | None = None,
+    disposition: str | None = None,
+    check_id: str | None = None,
+    files_changed: list[str] | None = None,
     summary: str = "",
-    commit_sha: Optional[str] = None,
+    commit_sha: str | None = None,
 ) -> dict:
     """
     Validate step completion and update state.
@@ -1511,6 +1510,35 @@ def validate_step(
             "valid": False,
             "message": "Plan not approved. Set approval first: python3 .map/scripts/map_orchestrator.py set_plan_approved true",
         }
+    # INIT_STATE invariant (issue #386): when a non-empty valid blueprint exists
+    # but subtask_sequence is empty, auto-populate from blueprint.json (or task
+    # plan markdown fallback) before closing the step. Return valid=false only
+    # when no subtask IDs can be derived from any artifact.
+    if step_id == "1.6" and not state.subtask_sequence:
+        plan_dir = Path(f".map/{branch}")
+        blueprint_file = plan_dir / "blueprint.json"
+        plan_file = plan_dir / f"task_plan_{branch}.md"
+        plan_content = plan_file.read_text(encoding="utf-8") if plan_file.exists() else ""
+        subtask_ids = _extract_subtask_ids_from_plan_artifacts(plan_content, blueprint_file)
+        if not subtask_ids:
+            return {
+                "valid": False,
+                "message": (
+                    "INIT_STATE (step 1.6) requires a non-empty subtask_sequence. "
+                    "No subtask IDs found in blueprint.json or task plan. "
+                    "Run: python3 .map/scripts/map_orchestrator.py resume_from_plan"
+                ),
+                "hint": "resume_from_plan",
+            }
+        # Apply topological sort to respect declared dependencies.
+        deps_map = _load_blueprint_deps(branch)
+        if deps_map:
+            sorted_ids, _cycle = _topological_sort_subtasks(subtask_ids, deps_map)
+            if sorted_ids is not None:
+                subtask_ids = sorted_ids
+        state.subtask_sequence = subtask_ids
+        state.current_subtask_id = subtask_ids[0]
+        state.subtask_index = 0
     # Monitor envelope check: when --monitor-envelope is supplied,
     # reject 2.4 close if the envelope text is truncated / not JSON /
     # missing required keys. Moves the prose-response gate from skill
@@ -1678,7 +1706,9 @@ def validate_step(
     # markdown could be silently passed downstream.
     if step_id == "2.2" and state.current_subtask_id:
         try:
-            from map_step_runner import validate_research  # pyright: ignore[reportMissingImports]
+            from map_step_runner import (
+                validate_research,  # pyright: ignore[reportMissingImports]
+            )
             research_report = validate_research(branch, state.current_subtask_id)
         except ImportError:
             research_report = {
@@ -1710,7 +1740,9 @@ def validate_step(
         # MONITOR-side validate_mutation_boundary check only flags files
         # CHANGED during this subtask, not the cumulative branch diff.
         try:
-            from map_step_runner import record_subtask_baseline  # pyright: ignore[reportMissingImports]
+            from map_step_runner import (
+                record_subtask_baseline,  # pyright: ignore[reportMissingImports]
+            )
             record_subtask_baseline(branch, state.current_subtask_id)
         except ImportError:
             pass
@@ -1719,12 +1751,14 @@ def validate_step(
     # MAP_STRICT_SCOPE=1 escalates a "violation" to a hard reject. Best-effort:
     # if blueprint or git aren't available (e.g., unit tests that exercise
     # just the orchestrator), skip silently rather than block the gate.
-    _scope_warning_meta: Optional[dict] = None
+    _scope_warning_meta: dict | None = None
     if step_id == "2.4" and state.current_subtask_id:
         blueprint_present = Path(f".map/{branch}/blueprint.json").exists()
         if blueprint_present:
             try:
-                from map_step_runner import validate_mutation_boundary  # pyright: ignore[reportMissingImports]
+                from map_step_runner import (
+                    validate_mutation_boundary,  # pyright: ignore[reportMissingImports]
+                )
                 scope_report = validate_mutation_boundary(
                     branch, state.current_subtask_id
                 )
@@ -1810,8 +1844,8 @@ def validate_step(
         state.subtask_index = 0
 
     # Advance current_step_id to next pending step
-    advanced_from_subtask: Optional[str] = None
-    advanced_to_subtask: Optional[str] = None
+    advanced_from_subtask: str | None = None
+    advanced_to_subtask: str | None = None
     blocked_remaining: list[str] = []
     skipped_for_deps: list[str] = []
     if state.pending_steps:
@@ -2053,7 +2087,7 @@ def _append_restored_subtask_to_plan(
 
 
 def restore_deferred_yagni(
-    item_id: str, branch: str, new_subtask_id: Optional[str] = None
+    item_id: str, branch: str, new_subtask_id: str | None = None
 ) -> dict:
     """Move one deferred_yagni item into active subtasks before plan approval."""
     normalized_item_id = (item_id or "").strip()
@@ -2093,7 +2127,7 @@ def restore_deferred_yagni(
         }
 
     match_index = None
-    match_item: Optional[dict] = None
+    match_item: dict | None = None
     for index, candidate in enumerate(deferred_yagni):
         if isinstance(candidate, dict) and candidate.get("id") == normalized_item_id:
             match_index = index
@@ -2226,9 +2260,8 @@ def set_tdd_mode(value: str, branch: str) -> dict:
                 tdd_steps = {"2.25", "2.26"}
                 earliest_tdd = None
                 for i, s in enumerate(step_order):
-                    if s in tdd_steps and s not in done_and_skipped and i < pos:
-                        if earliest_tdd is None or i < earliest_tdd:
-                            earliest_tdd = i
+                    if s in tdd_steps and s not in done_and_skipped and i < pos and (earliest_tdd is None or i < earliest_tdd):
+                        earliest_tdd = i
                 if earliest_tdd is not None:
                     pos = earliest_tdd
             # Rebuild from position onwards, excluding done/skipped
@@ -2244,7 +2277,7 @@ def set_tdd_mode(value: str, branch: str) -> dict:
     return {"status": "success", "tdd_mode": state.tdd_mode}
 
 
-def set_waves(branch: str, blueprint_path: Optional[str] = None) -> dict:
+def set_waves(branch: str, blueprint_path: str | None = None) -> dict:
     """Compute execution waves from blueprint DAG and store in step_state.json.
 
     Reads the blueprint JSON, builds a DependencyGraph, computes topological
@@ -2295,8 +2328,8 @@ def set_waves(branch: str, blueprint_path: Optional[str] = None) -> dict:
                 if spec and spec.loader:
                     mod = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(mod)
-                    DependencyGraph = mod.DependencyGraph  # type: ignore[misc]  # noqa: N806
-                    SubtaskNode = mod.SubtaskNode  # type: ignore[misc]  # noqa: N806
+                    DependencyGraph = mod.DependencyGraph  # type: ignore[misc]
+                    SubtaskNode = mod.SubtaskNode  # type: ignore[misc]
                     loaded = True
                     break
         if not loaded:
@@ -2367,6 +2400,14 @@ def set_waves(branch: str, blueprint_path: Optional[str] = None) -> dict:
     state.current_wave_index = 0
     state.subtask_phases = {}
     state.subtask_retry_counts = {}
+    # Populate subtask_sequence from flattened wave order when empty, ensuring
+    # sequential execution state is consistent with the computed wave plan (#386).
+    if not state.subtask_sequence:
+        flat_seq = [sid for wave in final_waves for sid in wave]
+        if flat_seq:
+            state.subtask_sequence = flat_seq
+            state.current_subtask_id = flat_seq[0]
+            state.subtask_index = 0
     state.save(state_file)
 
     return {
@@ -2567,7 +2608,7 @@ def advance_wave(branch: str) -> dict:
 
 
 def select_execution_strategy(
-    branch: str, project_dir: Optional[Path] = None
+    branch: str, project_dir: Path | None = None
 ) -> dict:
     """Determine whether to use wave_loop or legacy sequential walker.
 
@@ -2656,7 +2697,7 @@ def select_execution_strategy(
 
 
 def compute_dispatch_gate(
-    branch: str, project_dir: Optional[Path] = None
+    branch: str, project_dir: Path | None = None
 ) -> dict:
     """Compute the dispatch mode for the current wave, fail-closed on config contradiction.
 
@@ -2772,7 +2813,7 @@ def compute_dispatch_gate(
 
 def _write_feedback_file(
     branch: str, filename: str, header: str, feedback: str
-) -> Optional[str]:
+) -> str | None:
     """Write monitor feedback to a file if feedback is non-empty.
 
     Returns the file path string, or None if nothing was written.
@@ -2790,7 +2831,7 @@ def _task_plan_path(branch: str) -> str:
 
 
 def _source_artifact_refs(
-    branch: str, feedback_file: Optional[str]
+    branch: str, feedback_file: str | None
 ) -> list[dict[str, str]]:
     refs = [
         {"path": f".map/{branch}/step_state.json", "kind": "step-state"},
@@ -2806,7 +2847,7 @@ def _write_retry_quarantine(
     branch: str,
     subtask_id: str,
     retry_count: int,
-    feedback_file: Optional[str],
+    feedback_file: str | None,
     feedback: str,
 ) -> str:
     """Write compact clean-retry context that excludes raw failed reasoning."""
@@ -2872,11 +2913,11 @@ def _write_retry_quarantine(
 def _record_retry_isolation(
     branch: str,
     state: StepState,
-    subtask_id: Optional[str],
+    subtask_id: str | None,
     retry_count: int,
-    feedback_file: Optional[str],
+    feedback_file: str | None,
     feedback: str,
-) -> tuple[str, Optional[str]]:
+) -> tuple[str, str | None]:
     """Update retry isolation counters and write quarantine when required."""
     subtask_key = subtask_id or "workflow"
     if retry_count >= 2:
@@ -2895,7 +2936,7 @@ def _record_retry_isolation(
 
 def _check_retry_limit(
     current_retries: int, max_retries: int, context: dict
-) -> Optional[dict]:
+) -> dict | None:
     """Return escalation dict if retry limit exceeded, else None.
 
     Shared by monitor_failed() and wave_monitor_failed() to avoid
@@ -3138,7 +3179,7 @@ def record_subtask_result(
     files_changed: list[str],
     status: str,
     summary: str = "",
-    commit_sha: Optional[str] = None,
+    commit_sha: str | None = None,
 ) -> dict:
     """CLI wrapper around StepState.record_subtask_result.
 
@@ -3208,7 +3249,7 @@ def record_subtask_result(
             continue
         if not (project_dir / p).exists():
             missing_files.append(p)
-    import subprocess as _sp  # noqa: PLC0415 — local import keeps top clean
+    import subprocess as _sp
     # Auto-detect commit_sha from `git log -1 --format=%H` when caller
     # didn't pass one — closes the "commit_sha always null in
     # subtask_results" gap that weakened downstream provenance.
@@ -3222,6 +3263,7 @@ def record_subtask_result(
                 capture_output=True,
                 text=True,
                 timeout=5,
+                check=False,
             )
             if proc.returncode == 0:
                 candidate = proc.stdout.strip()
@@ -3261,7 +3303,7 @@ def record_subtask_result(
                 # Files in the latest commit's diff.
                 cproc = _sp.run(
                     ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", auto_commit_sha],
-                    cwd=project_dir, capture_output=True, text=True, timeout=5,
+                    cwd=project_dir, capture_output=True, text=True, timeout=5, check=False,
                 )
                 if cproc.returncode == 0:
                     diff_paths.update(
@@ -3270,7 +3312,7 @@ def record_subtask_result(
             # Uncommitted (worktree + index) via porcelain.
             sproc = _sp.run(
                 ["git", "status", "--porcelain"],
-                cwd=project_dir, capture_output=True, text=True, timeout=5,
+                cwd=project_dir, capture_output=True, text=True, timeout=5, check=False,
             )
             if sproc.returncode == 0:
                 for raw in sproc.stdout.splitlines():
@@ -3294,7 +3336,7 @@ def record_subtask_result(
             try:
                 igproc = _sp.run(
                     ["git", "check-ignore", "--", *files_not_in_diff],
-                    cwd=project_dir, capture_output=True, text=True, timeout=5,
+                    cwd=project_dir, capture_output=True, text=True, timeout=5, check=False,
                 )
                 ignored = {
                     line.strip()
@@ -3373,11 +3415,13 @@ def _load_deferred_flaky_triage(
     branch: str,
     check_id: str,
     triage_path: str = "",
-) -> tuple[Optional[dict], dict]:
+) -> tuple[dict | None, dict]:
     """Return a validated deferred_nondeterministic triage for check_id."""
     path = Path(triage_path) if triage_path else Path(f".map/{branch}/flaky_test_triage.json")
     try:
-        from map_step_runner import validate_flaky_test_triage  # pyright: ignore[reportMissingImports]
+        from map_step_runner import (
+            validate_flaky_test_triage,  # pyright: ignore[reportMissingImports]
+        )
     except ImportError:
         return None, {
             "valid": False,
@@ -3425,8 +3469,8 @@ def _load_deferred_flaky_triage(
 
 def _advance_after_terminal_current_subtask(state: StepState, branch: str) -> dict:
     """Advance from a terminal current subtask to next ready subtask or COMPLETE."""
-    advanced_from_subtask: Optional[str] = None
-    advanced_to_subtask: Optional[str] = None
+    advanced_from_subtask: str | None = None
+    advanced_to_subtask: str | None = None
     blocked_remaining: list[str] = []
     skipped_for_deps: list[str] = []
 
@@ -3501,9 +3545,9 @@ def defer_flaky_subtask(
     check_id: str,
     *,
     triage_path: str = "",
-    files_changed: Optional[list[str]] = None,
+    files_changed: list[str] | None = None,
     summary: str = "",
-    commit_sha: Optional[str] = None,
+    commit_sha: str | None = None,
 ) -> dict:
     """Record an explicit flaky-test Monitor defer and advance the workflow.
 
@@ -3730,7 +3774,7 @@ def mark_subtask_complete(
     branch: str,
     reason: str = "no-op",
     *,
-    kind: Optional[str] = None,
+    kind: str | None = None,
 ) -> dict:
     """Short-circuit a subtask as already-done without running its phases.
 
@@ -3988,11 +4032,11 @@ def archive_completed_workflow(branch: str) -> dict:
             ),
         }
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     archive_file = state_file.with_name(f"step_state.completed-{timestamp}.json")
     # Guard against a same-second second archive clobbering the first.
     if archive_file.exists():
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
         archive_file = state_file.with_name(
             f"step_state.completed-{timestamp}.json"
         )
@@ -4040,10 +4084,10 @@ def abandon_workflow(branch: str) -> dict:
         # Already terminal — use the normal archive path for a clean suffix.
         return archive_completed_workflow(branch)
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     abandon_file = state_file.with_name(f"step_state.abandoned-{timestamp}.json")
     if abandon_file.exists():
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
         abandon_file = state_file.with_name(f"step_state.abandoned-{timestamp}.json")
     state_file.rename(abandon_file)
 
@@ -4183,7 +4227,7 @@ def _load_blueprint_deps(branch: str) -> dict[str, list[str]]:
 
 def _topological_sort_subtasks(
     subtask_ids: list[str], deps_map: dict[str, list[str]]
-) -> tuple[Optional[list[str]], Optional[str]]:
+) -> tuple[list[str] | None, str | None]:
     """Stable topological sort of subtask_ids honoring deps_map.
 
     Stability: when multiple nodes are simultaneously ready (no remaining
@@ -4231,7 +4275,7 @@ def _topological_sort_subtasks(
     return sorted_ids, None
 
 
-def _normalize_subtask_ids(raw_subtask_ids: list[str]) -> tuple[list[str], Optional[str]]:
+def _normalize_subtask_ids(raw_subtask_ids: list[str]) -> tuple[list[str], str | None]:
     """Split shell-joined arguments and reject malformed subtask IDs."""
     subtask_ids: list[str] = []
     for raw_subtask_id in raw_subtask_ids:
@@ -4694,7 +4738,7 @@ def resume_single_subtask(subtask_id: str, branch: str, tdd_mode: bool = False) 
     }
 
 
-def _emit_context_budget_warning(branch: str, transcript_path: Optional[str]) -> None:
+def _emit_context_budget_warning(branch: str, transcript_path: str | None) -> None:
     """Print a /compact recommendation to stderr when the budget is crossed.
 
     Provider-agnostic: works for any caller that can supply ``transcript_path``
@@ -4745,7 +4789,7 @@ def _emit_context_budget_warning(branch: str, transcript_path: Optional[str]) ->
     # with graceful fallback — never block the warning on a missing mapify_cli.
     branch_dir = project_dir / ".map" / branch
     try:
-        from mapify_cli.tool_output_offload import (  # noqa: PLC0415
+        from mapify_cli.tool_output_offload import (
             offload_transcript_tool_outputs,
             recovery_pointer_text,
         )
@@ -4754,7 +4798,7 @@ def _emit_context_budget_warning(branch: str, transcript_path: Optional[str]) ->
         pointer = recovery_pointer_text(branch, branch_dir)
         if pointer:
             message = f"{message}\n\n{pointer}"
-    except Exception:  # noqa: BLE001 — warning must never raise
+    except Exception:  # noqa: BLE001, S110 — warning must never raise
         pass
 
     # stderr keeps stdout clean for JSON consumers (the orchestrator's
@@ -4931,11 +4975,11 @@ def main():
     #   3. Path(__file__).resolve().parents[2] — script-anchored fallback
     #      (legacy behaviour for the normal case where the caller's cwd is
     #      not a git repo, or git is unavailable)
-    import subprocess as _sp  # noqa: PLC0415 — local import keeps top clean
+    import subprocess as _sp
 
     script_anchored_root = Path(__file__).resolve().parents[2]
     caller_cwd = Path.cwd()
-    project_root: Optional[Path] = None
+    project_root: Path | None = None
 
     # 1. CLAUDE_PROJECT_DIR
     env_project_dir = os.environ.get("CLAUDE_PROJECT_DIR", "").strip()
@@ -4961,10 +5005,11 @@ def main():
                 capture_output=True,
                 text=True,
                 timeout=5,
+                check=False,
             )
             if _git.returncode == 0:
                 project_root = Path(_git.stdout.strip()).resolve()
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 — best-effort git detection
             pass
 
     # 3. Script-anchored fallback
@@ -5020,7 +5065,7 @@ def main():
             # argparse's strict-mode rejection of unknown -- flags).
             # We also accept the legacy extras placement for backward
             # compat with callers stuck on the old scrape pattern.
-            recommendation_arg: Optional[str] = args.recommendation
+            recommendation_arg: str | None = args.recommendation
             if recommendation_arg is None:
                 extras = list(args.extra_args or [])
                 if "--recommendation" in extras:
@@ -5030,7 +5075,7 @@ def main():
             # --monitor-envelope <path>: validate the envelope before
             # closing 2.4. Path "-" reads from stdin so shell pipelines
             # can stream Monitor's response without an intermediate file.
-            monitor_envelope_text: Optional[str] = None
+            monitor_envelope_text: str | None = None
             if args.monitor_envelope:
                 if args.monitor_envelope == "-":
                     monitor_envelope_text = sys.stdin.read()
@@ -5050,7 +5095,7 @@ def main():
             # --disposition routes a confirmed-flaky 2.4 close to deferral
             # (the third Monitor outcome). It reuses --check-id/--files/
             # --summary/--commit-sha (already parsed for defer_flaky_subtask).
-            validate_files_list: Optional[list[str]] = None
+            validate_files_list: list[str] | None = None
             if args.files:
                 validate_files_list = [
                     chunk.strip()
@@ -5339,7 +5384,7 @@ def main():
             # `--kind <done|noop|deferred|stub|prior_pr>` classifies the
             # short-circuit so audits can group by intent. Default falls
             # back to noop for backward compat with existing callers.
-            kind_arg: Optional[str] = args.kind
+            kind_arg: str | None = args.kind
             if kind_arg is None and "--kind" in extra:
                 kind_idx = extra.index("--kind")
                 if kind_idx + 1 < len(extra):
@@ -5409,7 +5454,7 @@ def main():
             result = finalize_plan(branch)
             print(json.dumps(result, indent=2))
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — CLI top-level error handler
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)
 
