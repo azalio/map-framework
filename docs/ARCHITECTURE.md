@@ -1221,7 +1221,7 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 2. `1.5 INIT_PLAN` - Generate task_plan.md
 3. `1.55 REVIEW_PLAN` - User approval checkpoint
 4. `1.56 CHOOSE_MODE` - Auto-skipped (always batch mode)
-5. `1.6 INIT_STATE` - Create step_state.json
+5. `1.6 INIT_STATE` - Populate `subtask_sequence` from `blueprint.json` (topological sort) and initialize `current_subtask_id`. **Invariant (fixed in #386):** `validate_step 1.6` auto-populates `subtask_sequence` when empty — it reads subtask IDs from `blueprint.json`, applies topological sort, and seeds `current_subtask_id`/`subtask_index`. Returns `valid=false` only when no IDs can be derived from any artifact. `set_waves` also populates `subtask_sequence` from the flattened wave order when empty (defense-in-depth).
 8. `2.2 RESEARCH` - persisted research artifact (mandatory; research-agent conditional)
 9. `2.25 TEST_WRITER` - TDD: write tests from spec (TDD mode only, auto-skipped otherwise)
 10. `2.26 TEST_FAIL_GATE` - TDD: verify tests fail without impl (TDD mode only)
