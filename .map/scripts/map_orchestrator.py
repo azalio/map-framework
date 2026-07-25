@@ -1510,6 +1510,35 @@ def validate_step(
             "valid": False,
             "message": "Plan not approved. Set approval first: python3 .map/scripts/map_orchestrator.py set_plan_approved true",
         }
+    # INIT_STATE invariant (issue #386): when a non-empty valid blueprint exists
+    # but subtask_sequence is empty, auto-populate from blueprint.json (or task
+    # plan markdown fallback) before closing the step. Return valid=false only
+    # when no subtask IDs can be derived from any artifact.
+    if step_id == "1.6" and not state.subtask_sequence:
+        plan_dir = Path(f".map/{branch}")
+        blueprint_file = plan_dir / "blueprint.json"
+        plan_file = plan_dir / f"task_plan_{branch}.md"
+        plan_content = plan_file.read_text(encoding="utf-8") if plan_file.exists() else ""
+        subtask_ids = _extract_subtask_ids_from_plan_artifacts(plan_content, blueprint_file)
+        if not subtask_ids:
+            return {
+                "valid": False,
+                "message": (
+                    "INIT_STATE (step 1.6) requires a non-empty subtask_sequence. "
+                    "No subtask IDs found in blueprint.json or task plan. "
+                    "Run: python3 .map/scripts/map_orchestrator.py resume_from_plan"
+                ),
+                "hint": "resume_from_plan",
+            }
+        # Apply topological sort to respect declared dependencies.
+        deps_map = _load_blueprint_deps(branch)
+        if deps_map:
+            sorted_ids, _cycle = _topological_sort_subtasks(subtask_ids, deps_map)
+            if sorted_ids is not None:
+                subtask_ids = sorted_ids
+        state.subtask_sequence = subtask_ids
+        state.current_subtask_id = subtask_ids[0]
+        state.subtask_index = 0
     # Monitor envelope check: when --monitor-envelope is supplied,
     # reject 2.4 close if the envelope text is truncated / not JSON /
     # missing required keys. Moves the prose-response gate from skill
@@ -2371,6 +2400,14 @@ def set_waves(branch: str, blueprint_path: str | None = None) -> dict:
     state.current_wave_index = 0
     state.subtask_phases = {}
     state.subtask_retry_counts = {}
+    # Populate subtask_sequence from flattened wave order when empty, ensuring
+    # sequential execution state is consistent with the computed wave plan (#386).
+    if not state.subtask_sequence:
+        flat_seq = [sid for wave in final_waves for sid in wave]
+        if flat_seq:
+            state.subtask_sequence = flat_seq
+            state.current_subtask_id = flat_seq[0]
+            state.subtask_index = 0
     state.save(state_file)
 
     return {
@@ -3266,8 +3303,7 @@ def record_subtask_result(
                 # Files in the latest commit's diff.
                 cproc = _sp.run(
                     ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", auto_commit_sha],
-                    cwd=project_dir, capture_output=True, text=True, timeout=5,
-                    check=False,
+                    cwd=project_dir, capture_output=True, text=True, timeout=5, check=False,
                 )
                 if cproc.returncode == 0:
                     diff_paths.update(
@@ -3276,8 +3312,7 @@ def record_subtask_result(
             # Uncommitted (worktree + index) via porcelain.
             sproc = _sp.run(
                 ["git", "status", "--porcelain"],
-                cwd=project_dir, capture_output=True, text=True, timeout=5,
-                check=False,
+                cwd=project_dir, capture_output=True, text=True, timeout=5, check=False,
             )
             if sproc.returncode == 0:
                 for raw in sproc.stdout.splitlines():
@@ -3301,8 +3336,7 @@ def record_subtask_result(
             try:
                 igproc = _sp.run(
                     ["git", "check-ignore", "--", *files_not_in_diff],
-                    cwd=project_dir, capture_output=True, text=True, timeout=5,
-                    check=False,
+                    cwd=project_dir, capture_output=True, text=True, timeout=5, check=False,
                 )
                 ignored = {
                     line.strip()
@@ -4975,7 +5009,7 @@ def main():
             )
             if _git.returncode == 0:
                 project_root = Path(_git.stdout.strip()).resolve()
-        except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
+        except Exception:  # noqa: BLE001, S110 — best-effort git detection
             pass
 
     # 3. Script-anchored fallback
@@ -5420,7 +5454,7 @@ def main():
             result = finalize_plan(branch)
             print(json.dumps(result, indent=2))
 
-    except Exception as e:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
+    except Exception as e:  # noqa: BLE001 — CLI top-level error handler
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)
 
