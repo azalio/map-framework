@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Stale `Write(...)`/`Glob(**)` permission rules no longer emit startup warnings.** Claude Code now matches all file-editing tools (Edit/Write/NotebookEdit) against `Edit(path)` rules only, and all file-reading tools against `Read(path)` rules only. Two shipped surfaces predated that consolidation: `settings.json.jinja`'s 6 redundant `Write(...)` deny/allow entries (already covered by existing `Edit(...)` rules) were removed, and `configure_global_permissions()`'s `Glob(**)` entry (written into the user's global `~/.claude/settings.json` on every `mapify init`) was changed to `Read(**)`, with a one-time migration that also heals any already-installed stale `Glob(**)` rule.
+
 ## [3.23.0] - 2026-07-18
 
 ### Added

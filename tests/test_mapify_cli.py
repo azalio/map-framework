@@ -15,7 +15,6 @@ from typer.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import mapify_cli
-from mapify_cli.delivery import create_map_tools
 from mapify_cli import (
     app,
     build_standard_mcp_servers,
@@ -35,6 +34,7 @@ from mapify_cli import (
     read_project_mcp_json,
     write_project_mcp_json,
 )
+from mapify_cli.delivery import create_map_tools
 
 runner = CliRunner()
 
@@ -369,8 +369,9 @@ class TestInitCommand:
         - mcp_config.json is created with the default server set (deepwiki removed)
         """
         # Use fresh CliRunner to avoid state pollution from previous tests
-        from typer.testing import CliRunner as FreshRunner
         import sys
+
+        from typer.testing import CliRunner as FreshRunner
 
         fresh_runner = FreshRunner()
 
@@ -709,6 +710,50 @@ class TestAutonomyPosture:
         assert ".claude/settings.local.json" in (
             tmp_path / ".gitignore"
         ).read_text().splitlines()
+
+
+class TestConfigureGlobalPermissions:
+    """Claude Code matches all file-reading tools against Read(path) rules only;
+    a stale Glob(**) rule is never enforced and only emits a startup warning."""
+
+    def _global_settings_path(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        return tmp_path / ".claude" / "settings.json"
+
+    def test_fresh_install_writes_read_not_glob(self, tmp_path, monkeypatch):
+        from mapify_cli.config.settings import configure_global_permissions
+
+        settings_path = self._global_settings_path(tmp_path, monkeypatch)
+        configure_global_permissions()
+
+        allow = json.loads(settings_path.read_text())["permissions"]["allow"]
+        assert "Read(**)" in allow
+        assert "Glob(**)" not in allow
+
+    def test_existing_stale_glob_rule_is_migrated(self, tmp_path, monkeypatch):
+        from mapify_cli.config.settings import configure_global_permissions
+
+        settings_path = self._global_settings_path(tmp_path, monkeypatch)
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(
+            json.dumps({"permissions": {"allow": ["Glob(**)"], "deny": []}})
+        )
+
+        configure_global_permissions()
+
+        allow = json.loads(settings_path.read_text())["permissions"]["allow"]
+        assert "Read(**)" in allow
+        assert "Glob(**)" not in allow
+
+    def test_migration_is_idempotent(self, tmp_path, monkeypatch):
+        from mapify_cli.config.settings import configure_global_permissions
+
+        settings_path = self._global_settings_path(tmp_path, monkeypatch)
+        configure_global_permissions()
+        configure_global_permissions()
+
+        allow = json.loads(settings_path.read_text())["permissions"]["allow"]
+        assert allow.count("Read(**)") == 1
 
     def test_init_default_no_autonomy_sentinel(self, tmp_path):
         os.chdir(tmp_path)
