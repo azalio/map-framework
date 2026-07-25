@@ -287,6 +287,38 @@ class TestSetWaves:
         assert waves[0] == ["ST-001"]
         assert waves[1] == ["ST-002"]
 
+    def test_set_waves_populates_subtask_sequence_when_empty(
+        self, branch_dir, sample_blueprint
+    ):
+        """set_waves populates subtask_sequence when it is empty (issue #386)."""
+        state_file = Path(f".map/{branch_dir}/step_state.json")
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.subtask_sequence == []
+
+        map_orchestrator.set_waves(branch_dir, sample_blueprint)
+
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.subtask_sequence == ["ST-001", "ST-002", "ST-003", "ST-004"]
+        assert state.current_subtask_id == "ST-001"
+        assert state.subtask_index == 0
+
+    def test_set_waves_does_not_overwrite_existing_subtask_sequence(
+        self, branch_dir, sample_blueprint
+    ):
+        """set_waves leaves subtask_sequence alone when already populated."""
+        state_file = Path(f".map/{branch_dir}/step_state.json")
+        state = map_orchestrator.StepState.load(state_file)
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        state.current_subtask_id = "ST-001"
+        state.subtask_index = 0
+        state.save(state_file)
+
+        map_orchestrator.set_waves(branch_dir, sample_blueprint)
+
+        state = map_orchestrator.StepState.load(state_file)
+        # Must not be overwritten — user already set a specific sequence
+        assert state.subtask_sequence == ["ST-001", "ST-002"]
+
     def test_set_waves_nested_blueprint_format(self, branch_dir, tmp_path):
         """Full decomposer output with subtasks nested under 'blueprint' key."""
         branch = branch_dir
@@ -368,6 +400,117 @@ class TestGetWaveStep:
         for subtask in result["subtasks"]:
             assert subtask["step_id"] == "2.25"
             assert subtask["phase"] == "TEST_WRITER"
+
+
+class TestValidateStepInitStateInvariant:
+    """Regression tests for INIT_STATE subtask_sequence invariant (issue #386).
+
+    validate_step("1.6") must not close when subtask_sequence is empty and a
+    non-empty blueprint exists; it must auto-populate the sequence instead.
+    """
+
+    def _make_blueprint(self, tmp_path: Path, branch: str) -> Path:
+        bp_dir = tmp_path / ".map" / branch
+        bp_dir.mkdir(parents=True, exist_ok=True)
+        blueprint = {
+            "subtasks": [
+                {"id": "ST-001", "dependencies": [], "affected_files": []},
+                {"id": "ST-002", "dependencies": ["ST-001"], "affected_files": []},
+                {"id": "ST-003", "dependencies": ["ST-001"], "affected_files": []},
+                {"id": "ST-004", "dependencies": ["ST-002", "ST-003"], "affected_files": []},
+            ]
+        }
+        bp_file = bp_dir / "blueprint.json"
+        bp_file.write_text(json.dumps(blueprint), encoding="utf-8")
+        return bp_file
+
+    def _advance_to_1_6(self, branch_dir: str) -> None:
+        """Advance workflow state to step 1.6 (INIT_STATE) via normal init flow."""
+        map_orchestrator.initialize_workflow("Add feature", branch_dir)
+        map_orchestrator.validate_step("1.0", branch_dir)
+        map_orchestrator.validate_step("1.5", branch_dir)
+        map_orchestrator.set_plan_approved("true", branch_dir)
+        map_orchestrator.validate_step("1.55", branch_dir)
+        # get_next_step auto-skips 1.56 (CHOOSE_MODE) and advances to 1.6
+        step = map_orchestrator.get_next_step(branch_dir)
+        assert step["step_id"] == "1.6", f"Expected step 1.6, got {step['step_id']!r}"
+
+    def test_validate_step_1_6_auto_populates_from_blueprint(self, branch_dir, tmp_path):
+        """Closing 1.6 with empty subtask_sequence auto-populates from blueprint."""
+        self._make_blueprint(tmp_path, branch_dir)
+        self._advance_to_1_6(branch_dir)
+
+        state_file = Path(f".map/{branch_dir}/step_state.json")
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.subtask_sequence == [], "precondition: sequence must be empty"
+
+        result = map_orchestrator.validate_step("1.6", branch_dir)
+
+        assert result["valid"] is True, f"Expected valid=True, got: {result}"
+        state = map_orchestrator.StepState.load(state_file)
+        assert len(state.subtask_sequence) == 4
+        assert state.current_subtask_id == "ST-001"
+        assert state.subtask_index == 0
+
+    def test_validate_step_1_6_returns_invalid_when_no_blueprint_and_empty_sequence(
+        self, branch_dir
+    ):
+        """Closing 1.6 with empty sequence and no blueprint returns valid=false."""
+        self._advance_to_1_6(branch_dir)
+
+        result = map_orchestrator.validate_step("1.6", branch_dir)
+
+        assert result["valid"] is False
+        assert "resume_from_plan" in result.get("message", "")
+
+    def test_validate_step_1_6_no_regression_when_sequence_already_set(
+        self, branch_dir, tmp_path
+    ):
+        """Closing 1.6 with a pre-populated sequence still works (no regression)."""
+        self._make_blueprint(tmp_path, branch_dir)
+        self._advance_to_1_6(branch_dir)
+
+        # Manually inject sequence (existing caller pattern)
+        state_file = Path(f".map/{branch_dir}/step_state.json")
+        state = map_orchestrator.StepState.load(state_file)
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        state.save(state_file)
+
+        result = map_orchestrator.validate_step("1.6", branch_dir)
+
+        assert result["valid"] is True
+        state = map_orchestrator.StepState.load(state_file)
+        # Pre-set sequence must not be overwritten
+        assert state.subtask_sequence == ["ST-001", "ST-002"]
+
+    def test_full_issue_386_reproduction(self, branch_dir, tmp_path):
+        """Full reproduction of issue #386: validate_step 1.6 → set_waves → get_next_step.
+
+        Without the fix, get_next_step returned RESEARCH with current_subtask=null
+        and subtask_progress='1/0'. With the fix, validate_step 1.6 auto-populates
+        the sequence so get_next_step correctly returns subtask_progress='1/4'.
+        """
+        self._make_blueprint(tmp_path, branch_dir)
+        map_orchestrator.initialize_workflow("Add feature", branch_dir)
+        map_orchestrator.validate_step("1.0", branch_dir)
+        map_orchestrator.validate_step("1.5", branch_dir)
+        map_orchestrator.set_plan_approved("true", branch_dir)
+        map_orchestrator.validate_step("1.55", branch_dir)
+
+        # Exact reproduction sequence from issue #386 — no manual sequence injection
+        map_orchestrator.validate_step("1.6", branch_dir)
+        map_orchestrator.set_waves(
+            branch_dir, str(tmp_path / ".map" / branch_dir / "blueprint.json")
+        )
+        step = map_orchestrator.get_next_step(branch_dir)
+
+        assert step["current_subtask"] == "ST-001", (
+            f"Expected current_subtask='ST-001', got {step['current_subtask']!r}. "
+            "Bug #386: subtask_sequence was empty after validate_step 1.6."
+        )
+        assert step["subtask_progress"] != "1/0", (
+            "subtask_progress='1/0' is the bug symptom — sequence was empty."
+        )
 
 
 class TestValidateWaveStep:
