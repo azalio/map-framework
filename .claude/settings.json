@@ -3,9 +3,6 @@
   "description": "MAP Framework project-level settings with security guardrails",
   "permissions": {
     "deny": [
-      "Write(./.env*)",
-      "Write(**/*credentials*)",
-      "Write(**/*secret*)",
       "Edit(./.env*)",
       "Edit(**/*credentials*)",
       "Edit(**/*secret*)",
@@ -18,9 +15,6 @@
       "Edit(.claude/agents/*)",
       "Edit(.claude/commands/*)",
       "Edit(.claude/references/*)",
-      "Write(.claude/agents/*)",
-      "Write(.claude/commands/*)",
-      "Write(.claude/references/*)",
       "Bash(mapify *)",
       "Bash(pytest *)",
       "Bash(make lint)",
