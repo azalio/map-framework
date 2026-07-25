@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.24.1] - 2026-07-25
+
 ### Fixed
 - **`map-review` closeout no longer errors on its own documented verdicts (closes #388).** `map-review`'s SKILL.md documents `PROCEED | REVISE | BLOCK`, but `write_stage_gate` only accepted `{ready, needs-revision, blocked}`, so following the skill verbatim always failed with `Invalid verdict: revise`. `write_stage_gate` and `write_plan_review` now normalize `PROCEED -> ready`, `REVISE -> needs-revision`, `BLOCK -> blocked` (via a shared `normalize_gate_verdict` helper); unknown verdicts still error. Also fixed the secondary arity mismatch: the Gate Unlock call site passed the review summary as the THIRD positional arg, silently landing it in `source_artifact` instead of `notes` — both call sites in `SKILL.md` and the Codex `review-reference.md` port now pass `<stage> <verdict> <source_artifact> <notes>`.
 
