@@ -2,10 +2,9 @@
 
 import json
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any
 
 from mapify_cli.cli_ui import console
-
 
 # ---------------------------------------------------------------------------
 # Autonomy posture (opt-in via `mapify init --autonomy`)
@@ -118,7 +117,7 @@ def configure_global_permissions() -> None:
             "Bash(chmod +x *)",
             "Read(//Users/**)",
             "Read(//private/tmp/**)",
-            "Glob(**)",
+            "Read(**)",
         ],
         "deny": [],
     }
@@ -140,11 +139,21 @@ def configure_global_permissions() -> None:
     if "permissions" not in settings:
         settings["permissions"] = default_permissions
     else:
+        allow_list = settings["permissions"].setdefault("allow", [])
+
+        # Migrate the stale "Glob(**)" rule: Claude Code now matches all
+        # file-reading tools against Read(path) rules only, so a previously
+        # installed "Glob(**)" silently stopped being enforced (startup
+        # warning only). The append-if-missing loop below never removes
+        # stale entries, so heal already-materialized global settings here.
+        if "Glob(**)" in allow_list:
+            allow_list[:] = [perm for perm in allow_list if perm != "Glob(**)"]
+
         # Add new permissions if they don't exist
-        existing_allow = set(settings["permissions"].get("allow", []))
+        existing_allow = set(allow_list)
         for perm in default_permissions["allow"]:
             if perm not in existing_allow:
-                settings["permissions"].setdefault("allow", []).append(perm)
+                allow_list.append(perm)
 
     # Write back
     with open(settings_file, "w") as f:
@@ -157,7 +166,7 @@ def configure_global_permissions() -> None:
 
 
 def create_or_merge_project_settings_local(
-    project_path: Path, *, autonomy: Optional[bool] = None
+    project_path: Path, *, autonomy: bool | None = None
 ) -> None:
     """Create/merge .claude/settings.local.json with safe project allowlist.
 
@@ -187,7 +196,7 @@ def create_or_merge_project_settings_local(
     settings_file = project_path / ".claude" / "settings.local.json"
     settings_file.parent.mkdir(parents=True, exist_ok=True)
 
-    default_permissions: Dict[str, Any] = {
+    default_permissions: dict[str, Any] = {
         "allow": [
             # SourceCraft MCP helpers (project-scoped)
             "mcp__sourcecraft__list_pull_request_comments",
@@ -266,7 +275,7 @@ def create_or_merge_project_settings_local(
         )
 
 
-def _apply_autonomy(settings: Dict[str, Any], permissions: Dict[str, Any]) -> None:
+def _apply_autonomy(settings: dict[str, Any], permissions: dict[str, Any]) -> None:
     """Add the broad allow + git deny entries and the autonomy sentinel."""
     allow = permissions.setdefault("allow", [])
     for entry in _AUTONOMY_ALLOW:
@@ -285,7 +294,7 @@ def _apply_autonomy(settings: Dict[str, Any], permissions: Dict[str, Any]) -> No
         mapify_meta["autonomy"] = True
 
 
-def _remove_autonomy(settings: Dict[str, Any], permissions: Dict[str, Any]) -> None:
+def _remove_autonomy(settings: dict[str, Any], permissions: dict[str, Any]) -> None:
     """Remove the autonomy allow/deny entries and the sentinel (teardown)."""
     if isinstance(permissions.get("allow"), list):
         permissions["allow"] = [
