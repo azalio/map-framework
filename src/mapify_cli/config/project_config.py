@@ -11,7 +11,7 @@ from mapify_cli.token_budget import VALID_POLICIES
 try:
     import yaml
 except ImportError:
-    yaml = None
+    yaml = None  # type: ignore[assignment]  # optional dependency
 
 logger = logging.getLogger(__name__)
 
@@ -529,7 +529,7 @@ def load_map_config(project_path: Path) -> MapConfig:
             e,
         )
         return MapConfig()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
         logger.warning(
             "Error reading %s: %s. Using default config.",
             config_file,
