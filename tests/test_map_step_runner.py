@@ -3159,6 +3159,34 @@ class TestWriteStageGate:
                 res["status"] == "success"
             ), f"Expected success for verdict={verdict!r}"
 
+    def test_skill_documented_verdicts_normalized(self, branch_workspace):
+        """map-review's PROCEED/REVISE/BLOCK spellings map onto GATE_VERDICTS.
+
+        Regression: issue #388 — following map-review/SKILL.md verbatim errored
+        out with "Invalid verdict: revise" at the closeout step.
+        """
+        for spelled, expected in (
+            ("PROCEED", "ready"),
+            ("REVISE", "needs-revision"),
+            ("BLOCK", "blocked"),
+        ):
+            result = map_step_runner.write_stage_gate("review", spelled)
+            assert result["status"] == "success", f"rejected verdict={spelled!r}"
+            assert result["verdict"] == expected
+            data = json.loads(
+                (branch_workspace / "review-gate.json").read_text(encoding="utf-8")
+            )
+            assert data["verdict"] == expected
+
+    def test_plan_review_recommendation_normalized(self, branch_workspace):
+        """write_plan_review accepts the same documented verdict spellings."""
+        del branch_workspace
+        result = map_step_runner.write_plan_review(recommendation="REVISE")
+
+        assert result["status"] == "success"
+        content = Path(result["path"]).read_text(encoding="utf-8")
+        assert "- needs-revision" in content
+
     def test_source_artifact_optional(self, branch_workspace):
         """Omitting source_artifact stores None in the JSON payload."""
         map_step_runner.write_stage_gate("plan", "ready")

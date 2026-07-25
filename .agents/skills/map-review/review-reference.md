@@ -300,10 +300,17 @@ python3 .map/scripts/map_step_runner.py write_learning_handoff \
 This preserves `active-issues`, `pr-draft`, and `learning-handoff` flows.
 
 If edits are needed (REVISE/BLOCK), write the stage gate so the owning
-workflow can continue:
+workflow can continue. Positional arguments are
+`<stage> <verdict> <source_artifact> <notes>` — the summary is the FOURTH
+argument, not the third. The runner normalizes `PROCEED` -> `ready`,
+`REVISE` -> `needs-revision`, `BLOCK` -> `blocked`:
 
 ```bash
-python3 .map/scripts/map_step_runner.py write_stage_gate review "$FINAL_VERDICT" "$REVIEW_SUMMARY"
+python3 .map/scripts/map_step_runner.py write_stage_gate \
+  review \
+  "$FINAL_VERDICT" \
+  code-review-001.md \
+  "$REVIEW_SUMMARY"
 ```
 
 Set `RUN_HEALTH_STATUS` from verdict:

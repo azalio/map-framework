@@ -19,6 +19,7 @@ Validates that shipped skills keep a clean, Claude-compatible metadata surface:
 
 import json
 import re
+import shlex
 from pathlib import Path
 from typing import ClassVar
 
@@ -181,6 +182,30 @@ def _has_json_contract_backing(context: str) -> bool:
         JSON_CONTRACT_REFERENCE_PATTERN.search(context)
         or EVIDENCE_FIRST_JSON_PATTERN.search(context)
     )
+
+
+def _shell_invocations(content: str, subcommand: str) -> list[list[str]]:
+    """Return the positional args of every shell call to ``subcommand``.
+
+    Joins backslash-continued lines so multi-line runner invocations are parsed
+    as one command; returns the tokens that follow ``subcommand``.
+    """
+    invocations: list[list[str]] = []
+    lines = content.splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if f" {subcommand}" not in line:
+            index += 1
+            continue
+        command = line
+        while command.rstrip().endswith("\\") and index + 1 < len(lines):
+            index += 1
+            command = command.rstrip().removesuffix("\\") + " " + lines[index].strip()
+        tokens = shlex.split(command, comments=True)
+        invocations.append(tokens[tokens.index(subcommand) + 1 :])
+        index += 1
+    return invocations
 
 
 class TestSkillStructure:
@@ -1682,6 +1707,28 @@ class TestMapReviewSkillBundleWiring:
         )
         assert "learning-handoff" in skill_md, (
             "map-review/SKILL.md is missing learning-handoff reference — learning handoff flow was removed"
+        )
+
+    def test_map_review_skill_stage_gate_calls_use_consistent_arg_positions(
+        self, skill_md
+    ):
+        """Regression #388: every write_stage_gate call passes 4 positional args.
+
+        The gate-unlock call used to pass the summary as the THIRD argument, so
+        it silently landed in ``source_artifact`` instead of ``notes``.
+        """
+        calls = _shell_invocations(skill_md, "write_stage_gate")
+        assert calls, "map-review/SKILL.md has no write_stage_gate invocation"
+        for args in calls:
+            assert len(args) == 4, (
+                "write_stage_gate must be called as "
+                f"<stage> <verdict> <source_artifact> <notes>; got {args}"
+            )
+
+    def test_map_review_skill_documents_verdict_normalization(self, skill_md):
+        """Regression #388: SKILL.md must state how PROCEED/REVISE/BLOCK map to gates."""
+        assert "needs-revision" in skill_md, (
+            "map-review/SKILL.md must document the runner's gate verdict spellings"
         )
 
     def test_map_review_skill_documents_detached_flag(self, skill_md):
