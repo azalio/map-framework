@@ -147,7 +147,7 @@ def configure_global_permissions() -> None:
         # warning only). The append-if-missing loop below never removes
         # stale entries, so heal already-materialized global settings here.
         if "Glob(**)" in allow_list:
-            allow_list.remove("Glob(**)")
+            allow_list[:] = [perm for perm in allow_list if perm != "Glob(**)"]
 
         # Add new permissions if they don't exist
         existing_allow = set(allow_list)

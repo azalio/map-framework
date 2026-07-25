@@ -745,6 +745,25 @@ class TestConfigureGlobalPermissions:
         assert "Read(**)" in allow
         assert "Glob(**)" not in allow
 
+    def test_existing_duplicate_stale_glob_rules_are_all_migrated(
+        self, tmp_path, monkeypatch
+    ):
+        from mapify_cli.config.settings import configure_global_permissions
+
+        settings_path = self._global_settings_path(tmp_path, monkeypatch)
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(
+            json.dumps(
+                {"permissions": {"allow": ["Glob(**)", "Glob(**)"], "deny": []}}
+            )
+        )
+
+        configure_global_permissions()
+
+        allow = json.loads(settings_path.read_text())["permissions"]["allow"]
+        assert allow.count("Glob(**)") == 0
+        assert allow.count("Read(**)") == 1
+
     def test_migration_is_idempotent(self, tmp_path, monkeypatch):
         from mapify_cli.config.settings import configure_global_permissions
 
