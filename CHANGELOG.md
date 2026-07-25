@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.24.0] - 2026-07-25
+
 ### Added
 - **`disallowedTools` frontmatter on non-writer agents (closes #378).** `monitor`, `research-agent`, `predictor`, and `evaluator` now have their capability boundaries enforced at the harness level instead of relying on prompt text alone: `monitor`/`research-agent` disallow `Edit`/`Agent`; `predictor`/`evaluator` disallow `Edit`/`Write`/`Agent`.
 
