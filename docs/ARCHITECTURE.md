@@ -447,12 +447,15 @@ Information not available in current evidence.
 
 ## Freshness
 
-Last refreshed: 2026-07-14
+Last refreshed: 2026-07-26
 
-Refresh reason: Incremental refresh after `main` added implementer-readiness
-review artifact (#348) — a pre-code spec-implementability gate with four
-verdicts, strict input validation, and the new `implementer_readiness` manifest
-stage.
+Refresh reason: Incremental refresh after #390 fix — `settings.json` moved
+from shipped-only to dual-dest in `template_renderer.py` so `check-render`
+now gates `.claude/settings.json` parity against the jinja source.
+
+Earlier delta (2026-07-14): Implementer-readiness review artifact (#348) — a
+pre-code spec-implementability gate with four verdicts, strict input
+validation, and the new `implementer_readiness` manifest stage.
 
 Evidence source files:
 - `README.md`
