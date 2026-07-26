@@ -62,7 +62,6 @@ _STRAY_TOKENS = ("[%", "<%", "[#")
 _CLAUDE_SHIPPED_ONLY: frozenset[str] = frozenset(
     {
         "CLAUDE.md",
-        "settings.json",
         "workflow-rules.json",
         "ralph-loop-config.json",
         "hooks/README.md",
@@ -262,8 +261,12 @@ def _build_claude_resolver(
         (``map/`` prefix remaps to ``.map/`` in the dev tree)
 
     * hooks/README.md, rules/learned/README.md, CLAUDE.md,
-      settings.json, workflow-rules.json, ralph-loop-config.json
+      workflow-rules.json, ralph-loop-config.json
       → ``src/mapify_cli/templates/<rel>`` ONLY (shipped-only — no dev dest)
+
+    * settings.json
+      → BOTH ``src/mapify_cli/templates/settings.json`` AND ``.claude/settings.json``
+        (dual-dest so ``check-render`` gates both and drift is caught; issue #390)
 
     A rendered file mapping to 0 destinations is simply not written live
     (future use; not used for CLAUDE provider currently).
