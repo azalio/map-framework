@@ -479,9 +479,10 @@ _CLAUDE_ROOT = _REPO_ROOT / ".claude"
 _MAP_ROOT = _REPO_ROOT / ".map"
 
 # Shipped-only relative paths (no .claude/ destination)
+# Note: settings.json is intentionally NOT in this list — it is dual-dest
+# (templates/ AND .claude/) so check-render gates both copies (issue #390).
 _SHIPPED_ONLY_RELS = [
     "CLAUDE.md",
-    "settings.json",
     "workflow-rules.json",
     "ralph-loop-config.json",
     "hooks/README.md",
@@ -670,6 +671,44 @@ class TestRenderRepoTreesClaude:
             assert claude_path not in written_strs, (
                 f"Shipped-only file was incorrectly written to .claude/: {claude_path}"
             )
+
+    @_skip_no_templates_src
+    def test_settings_json_written_to_both_destinations(self) -> None:
+        """settings.json is dual-dest: renders to templates/ AND .claude/ (issue #390).
+
+        This gates the parity that check-render now enforces: a change to
+        settings.json.jinja must propagate to BOTH destinations or check-render
+        reports stale files.
+        """
+        result = render_repo_trees(
+            "claude", dry_run=False, repo_root=_REPO_ROOT, templates_src_root=_TEMPLATES_SRC
+        )
+        written_strs = [str(p) for p in result]
+        templates_path = str(_TEMPLATES_DEST / "settings.json")
+        claude_path = str(_CLAUDE_ROOT / "settings.json")
+        assert templates_path in written_strs, (
+            "settings.json was NOT written to templates/ — check renderer destination map"
+        )
+        assert claude_path in written_strs, (
+            "settings.json was NOT written to .claude/ — shipped-only classification "
+            "must be removed (issue #390 regression)"
+        )
+
+    @_skip_no_templates_src
+    def test_settings_json_dev_shipped_parity(self) -> None:
+        """Parity gate: .claude/settings.json must byte-match templates/settings.json.
+
+        Catches drift between the dev copy and the shipped mirror before it
+        reaches a real user session (issue #390).
+        """
+        dev_file = _CLAUDE_ROOT / "settings.json"
+        shipped_file = _TEMPLATES_DEST / "settings.json"
+        assert dev_file.exists(), f".claude/settings.json missing: {dev_file}"
+        assert shipped_file.exists(), f"templates/settings.json missing: {shipped_file}"
+        assert dev_file.read_bytes() == shipped_file.read_bytes(), (
+            "Parity FAILED: .claude/settings.json differs from templates/settings.json. "
+            "Run 'make render-templates' to sync (issue #390)."
+        )
 
     @_skip_no_templates_src
     def test_vc1_map_scripts_remap(self) -> None:
