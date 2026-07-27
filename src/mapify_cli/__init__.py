@@ -770,6 +770,18 @@ def init(
             "See docs/USAGE.md."
         ),
     ),
+    agent_memory: str = typer.Option(
+        "off",
+        "--agent-memory",
+        help=(
+            "Role-local persistent memory for the reflector learning agent "
+            "(opt-in, off by default). Adds a `memory:` frontmatter field to "
+            ".claude/agents/reflector.md and writes "
+            "claude_agents.persistent_memory=<level> to .map/config.yaml. "
+            "Allowed: off, local (user-local, NOT committed), "
+            "project (project-scoped, committed). See docs/USAGE.md."
+        ),
+    ),
     autonomy: bool | None = typer.Option(
         None,
         "--autonomy/--no-autonomy",
@@ -853,6 +865,14 @@ def init(
     if compression_threshold is not None and compression_threshold <= 0:
         console.print(
             "[red]Error:[/red] --compression-threshold must be > 0"
+        )
+        raise typer.Exit(1)
+
+    from mapify_cli.config.project_config import VALID_AGENT_MEMORY_LEVELS
+    if agent_memory not in VALID_AGENT_MEMORY_LEVELS:
+        console.print(
+            f"[red]Error:[/red] Invalid --agent-memory '{agent_memory}'. "
+            f"Valid: {', '.join(sorted(VALID_AGENT_MEMORY_LEVELS))}"
         )
         raise typer.Exit(1)
 
@@ -975,6 +995,7 @@ def init(
         tracker.start("map-config")
         try:
             from mapify_cli.config.project_config import (
+                apply_agent_memory_overrides,
                 apply_compression_overrides,
                 apply_sofa_overrides,
                 write_default_config,
@@ -994,6 +1015,8 @@ def init(
                 from mapify_cli.delivery.file_copier import merge_sofa_gitignore
 
                 merge_sofa_gitignore(project_path)
+            if agent_memory != "off":
+                apply_agent_memory_overrides(config_path, agent_memory)
             tracker.complete(
                 "map-config", str(config_path.relative_to(project_path))
             )
@@ -1029,6 +1052,7 @@ def init(
         tracker.start("map-config")
         try:
             from mapify_cli.config.project_config import (
+                apply_agent_memory_overrides,
                 apply_compression_overrides,
                 apply_sofa_overrides,
                 write_default_config,
@@ -1048,6 +1072,16 @@ def init(
                 from mapify_cli.delivery.file_copier import merge_sofa_gitignore
 
                 merge_sofa_gitignore(project_path)
+            if agent_memory != "off":
+                apply_agent_memory_overrides(config_path, agent_memory)
+                from mapify_cli.delivery.file_copier import (
+                    apply_reflector_memory_field,
+                    merge_agent_memory_gitignore,
+                )
+
+                apply_reflector_memory_field(project_path, agent_memory)
+                if agent_memory == "local":
+                    merge_agent_memory_gitignore(project_path)
             tracker.complete("map-config", str(config_path.relative_to(project_path)))
         except Exception as e:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
             tracker.error("map-config", f"skipped: {e}")

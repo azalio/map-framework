@@ -190,7 +190,18 @@ def is_exempt_path(file_path: str) -> bool:
     # rules written by ``/map-learn``. The exemption is restricted to ``*.md`` files to
     # prevent the directory from quietly broadening into a general bypass for arbitrary
     # file types (executables, configs, secrets-bearing JSON, etc.).
-    return bool(len(parts) >= 4 and parts[:3] == (".claude", "rules", "learned") and parts[-1].endswith(".md"))
+    if len(parts) >= 4 and parts[:3] == (".claude", "rules", "learned") and parts[-1].endswith(".md"):
+        return True
+    # POLICY: ``.claude/agent-memory/`` and ``.claude/agent-memory-local/`` are the
+    # destinations for role-local persistent memory written by learning agents (e.g.
+    # reflector). Exemption is restricted to ``*.md`` files only — the same narrow
+    # scope as the ``rules/learned/`` exemption above.
+    return (
+        len(parts) >= 3
+        and parts[0] == ".claude"
+        and parts[1] in ("agent-memory", "agent-memory-local")
+        and parts[-1].endswith(".md")
+    )
 
 
 def sanitize_branch_name(branch: str) -> str:
