@@ -19,6 +19,7 @@ VALID_MINIMALITY = frozenset({"off", "lite", "full", "ultra"})
 VALID_PROMPT_LAYERING = frozenset({"docs_first", "stable_first"})
 VALID_WORKTREE_ISOLATION = frozenset({"off", "auto", "required"})
 VALID_WAVE_MODE = frozenset({"off", "auto", "on"})
+VALID_AGENT_MEMORY_LEVELS = frozenset({"off", "local", "project"})
 
 # Cross-AI peer review (#288): external AI CLI runtimes map-review can dispatch
 # to. Keep in sync with CROSS_AI_RUNTIMES in the rendered step runner
@@ -129,6 +130,17 @@ class MapConfig:
     # Enable via `mapify init --sofa` or by setting `sofa.enabled: true` in
     # .map/config.yaml. When enabled, the map-so-search skill is available.
     sofa_enabled: bool = False
+
+    # Role-local persistent memory for learning agents (#379). Enables the
+    # Claude Code `memory:` frontmatter on the reflector agent so it can retain
+    # lessons across sessions. Enum values:
+    #   "off"     — no memory field added (default; behaviour unchanged)
+    #   "local"   — user-local memory: .claude/agent-memory-local/ (not committed)
+    #   "project" — project-scoped memory: .claude/agent-memory/ (committed)
+    # Enable via `mapify init --agent-memory local|project` or set
+    # `claude_agents.persistent_memory: local|project` in .map/config.yaml.
+    # Dotted YAML key: `claude_agents.persistent_memory` (aliased in load_map_config).
+    claude_agents_persistent_memory: str = "off"
 
     # Strip MAP-internal workflow IDs (ST-/AC-/VC-/INV-/HC-) from run-changed
     # code at workflow completion (Stop hook `scrub-internal-ids.py`). On by
@@ -373,6 +385,7 @@ def load_map_config(project_path: Path) -> MapConfig:
             ("scale.thresholds.small.max_lines", "scale_small_max_lines"),
             ("scale.thresholds.medium.max_files", "scale_medium_max_files"),
             ("scale.thresholds.medium.max_lines", "scale_medium_max_lines"),
+            ("claude_agents.persistent_memory", "claude_agents_persistent_memory"),
         ):
             if dotted in data and field_name not in data:
                 data[field_name] = data.pop(dotted)
@@ -513,6 +526,16 @@ def load_map_config(project_path: Path) -> MapConfig:
             )
             cfg.execution_wave_mode = "auto"
 
+        if cfg.claude_agents_persistent_memory not in VALID_AGENT_MEMORY_LEVELS:
+            logger.warning(
+                "Invalid claude_agents_persistent_memory %r in %s (expected one of %s). "
+                "Using default 'off'.",
+                cfg.claude_agents_persistent_memory,
+                config_file,
+                ", ".join(sorted(VALID_AGENT_MEMORY_LEVELS)),
+            )
+            cfg.claude_agents_persistent_memory = "off"
+
         # Clamp max_actors to [1, 8]; non-int/bool → default 4.
         # retry_degraded_once and concurrent_dispatch are plain bools handled by
         # the generic type-check loop.
@@ -648,6 +671,15 @@ minimality: lite
 # Stack Overflow for Agents (SOFA) integration — opt-in, off by default.
 # Enable via `mapify init --sofa` or uncomment the line below.
 # sofa.enabled: false
+
+# Role-local persistent memory for learning agents (#379) — opt-in, off by default.
+# Adds the Claude Code `memory:` frontmatter to the reflector agent so it retains
+# lessons across sessions. Enable via `mapify init --agent-memory local|project`
+# or uncomment and set one of the values below.
+#   off     — no memory (default; behaviour unchanged)
+#   local   — user-local memory: .claude/agent-memory-local/ (NOT committed)
+#   project — project-scoped memory: .claude/agent-memory/ (committed, shared)
+# claude_agents.persistent_memory: off
 
 # Cross-AI peer review (#288) — opt-in, OFF by default. When enabled AND you run
 # `map-review --cross-ai <runtime>`, the review is dispatched to an INDEPENDENT
@@ -831,6 +863,39 @@ def apply_sofa_overrides(config_path: Path) -> None:
         return f"{body}{sep}{new_line}\n"
 
     text = _set("sofa.enabled", "true", text)
+    config_path.write_text(text, encoding="utf-8")
+
+
+def apply_agent_memory_overrides(config_path: Path, level: str) -> None:
+    """Write claude_agents.persistent_memory=<level> into an existing .map/config.yaml.
+
+    Called by ``mapify init`` when the user passes ``--agent-memory``. Replaces
+    the commented placeholder line so the value becomes active without duplicating
+    keys. Callers should skip this function when ``level`` is ``"off"``.
+
+    Args:
+        config_path: path to the .map/config.yaml produced by ``write_default_config``.
+        level: one of "off", "local", "project" (caller is responsible for validation).
+    """
+    if not config_path.is_file():
+        return
+
+    text = config_path.read_text(encoding="utf-8")
+
+    def _set(key: str, value: str, body: str) -> str:
+        import re
+
+        active_re = re.compile(rf"(?m)^{re.escape(key)}\s*:.*$")
+        commented_re = re.compile(rf"(?m)^#\s*{re.escape(key)}\s*:.*$")
+        new_line = f"{key}: {value}"
+        if active_re.search(body):
+            return active_re.sub(new_line, body, count=1)
+        if commented_re.search(body):
+            return commented_re.sub(new_line, body, count=1)
+        sep = "" if body.endswith("\n") else "\n"
+        return f"{body}{sep}{new_line}\n"
+
+    text = _set("claude_agents.persistent_memory", level, text)
     config_path.write_text(text, encoding="utf-8")
 
 

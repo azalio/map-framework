@@ -498,6 +498,98 @@ def merge_sofa_gitignore(project_path: Path) -> int:
     return 1
 
 
+_AGENT_MEMORY_LOCAL_GITIGNORE_MARKER = "# map:agent-memory-local"
+_AGENT_MEMORY_LOCAL_GITIGNORE_BLOCK = (
+    "# map:agent-memory-local — user-local agent memory (opt-in); never commit.\n"
+    ".claude/agent-memory-local/\n"
+)
+
+
+def merge_agent_memory_gitignore(project_path: Path) -> int:
+    """Idempotently add .claude/agent-memory-local/ to the repo-root .gitignore.
+
+    Only called when ``--agent-memory local`` is used. The project-scoped level
+    (``--agent-memory project``) writes to ``.claude/agent-memory/`` which IS
+    intended to be committed, so no gitignore entry is needed for it.
+
+    Returns 1 when the file was created or modified, 0 when already up-to-date.
+    """
+    gitignore = project_path / ".gitignore"
+
+    if not gitignore.exists():
+        gitignore.write_text(_AGENT_MEMORY_LOCAL_GITIGNORE_BLOCK)
+        return 1
+
+    existing = gitignore.read_text()
+
+    # OR-not-AND idempotency guard: skip if our marker OR the exact path is
+    # already present (prevents duplicates when user already has the line).
+    ignored_lines = {line.strip() for line in existing.splitlines()}
+    if (
+        _AGENT_MEMORY_LOCAL_GITIGNORE_MARKER in existing
+        or ".claude/agent-memory-local/" in ignored_lines
+    ):
+        return 0
+
+    separator = "" if existing.endswith("\n") else "\n"
+    gitignore.write_text(existing + separator + _AGENT_MEMORY_LOCAL_GITIGNORE_BLOCK)
+    return 1
+
+
+def apply_reflector_memory_field(project_path: Path, level: str) -> int:
+    """Add or update the ``memory:`` frontmatter field in the installed reflector.md.
+
+    Called post-install when ``--agent-memory`` is ``"local"`` or ``"project"``.
+    Idempotent: if the field already exists with the correct value it is left
+    unchanged; if it exists with a different value it is replaced.
+
+    Args:
+        project_path: root of the target project (installed ``.claude/`` lives here).
+        level: ``"local"`` or ``"project"`` (caller is responsible for validation;
+               ``"off"`` callers must not invoke this function).
+
+    Returns:
+        1 if the file was modified, 0 if already up-to-date or not found.
+    """
+    import re
+
+    reflector_path = project_path / ".claude" / "agents" / "reflector.md"
+    if not reflector_path.exists():
+        return 0
+
+    text = reflector_path.read_text(encoding="utf-8")
+
+    # Determine the correct memory field value based on level.
+    # "local"   → memory: user_local   (maps to .claude/agent-memory-local/)
+    # "project" → memory: project      (maps to .claude/agent-memory/)
+    memory_value = "user_local" if level == "local" else "project"
+    new_field_line = f"memory: {memory_value}"
+
+    # If a `memory:` line already exists in the frontmatter, replace it.
+    existing_memory_re = re.compile(r"(?m)^memory\s*:.*$")
+    if existing_memory_re.search(text):
+        updated = existing_memory_re.sub(new_field_line, text, count=1)
+        if updated == text:
+            return 0  # already up-to-date
+        reflector_path.write_text(updated, encoding="utf-8")
+        return 1
+
+    # Inject the `memory:` line into the YAML frontmatter, just before the
+    # closing `---` delimiter. This preserves the existing frontmatter structure.
+    # Match the opening `---\n ... \n---` block.
+    frontmatter_re = re.compile(r"^(---\n.*?\n)(---)", re.DOTALL)
+    m = frontmatter_re.match(text)
+    if not m:
+        # No frontmatter — prepend a minimal one.
+        updated = f"---\n{new_field_line}\n---\n{text}"
+    else:
+        # Insert before the closing `---`.
+        updated = text[: m.start(2)] + new_field_line + "\n" + text[m.start(2) :]
+
+    reflector_path.write_text(updated, encoding="utf-8")
+    return 1
+
+
 def create_commands_dir(project_path: Path) -> None:
     """Create commands directory with README pointing at skill-backed surfaces."""
     commands_dir = project_path / ".claude" / "commands"
