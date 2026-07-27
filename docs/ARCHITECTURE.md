@@ -281,6 +281,50 @@ ships no bespoke keepalive (a genuine crash-resume need would be tracked
 separately as durable checkpointing, not a network heartbeat). Design was
 llm-council-reviewed (conv `585f773b`).
 
+## Role-Local Persistent Memory for Learning Agents (#379)
+
+The reflector agent can be given a **role-local persistent memory** via the Claude
+Code `memory:` frontmatter field. This is **opt-in and off by default** — the default
+behaviour is unchanged. Enable via:
+
+```
+mapify init --agent-memory local    # user-local, NOT committed
+mapify init --agent-memory project  # project-scoped, committed
+```
+
+Or set `claude_agents.persistent_memory: local|project` in `.map/config.yaml`.
+
+### Implementation
+
+| Component | What it does |
+|-----------|-------------|
+| `VALID_AGENT_MEMORY_LEVELS` | Frozenset `{"off", "local", "project"}` in `config/project_config.py` |
+| `MapConfig.claude_agents_persistent_memory` | Config field, default `"off"` |
+| `load_map_config` | Dotted-alias `claude_agents.persistent_memory` → snake_case; validates enum; falls back to `"off"` on invalid values |
+| `apply_agent_memory_overrides(config_path, level)` | Writes the dotted key into `.map/config.yaml`; idempotent (replaces active or commented placeholder) |
+| `apply_reflector_memory_field(project_path, level)` | Post-install: injects `memory: user_local` (local) or `memory: project` (project) into the `reflector.md` YAML frontmatter; idempotent; replaces an existing `memory:` value on re-run |
+| `merge_agent_memory_gitignore(project_path)` | Idempotently adds `.claude/agent-memory-local/` to `.gitignore` when using the `local` level (OR-not-AND guard); the `project` level writes a committable path so no gitignore entry is needed |
+| `workflow-gate.py` exemptions | `*.md` files under `.claude/agent-memory/` and `.claude/agent-memory-local/` are exempt from the edit gate — same narrow scope as `.claude/rules/learned/*.md` |
+
+### Memory levels
+
+| Level | Claude Code path | Committed? |
+|-------|-----------------|-----------|
+| `off` (default) | No `memory:` field | — |
+| `local` | `.claude/agent-memory-local/` | No — gitignored by `merge_agent_memory_gitignore` |
+| `project` | `.claude/agent-memory/` | Yes — shared with the team |
+
+### Design constraints
+- Only the **reflector** agent gets `memory:` frontmatter. Monitor, Predictor, Evaluator,
+  and research-agent are read-only reviewers and must not accumulate cross-session state.
+- The template source (`reflector.md.jinja`) ships WITHOUT the `memory:` field.
+  `apply_reflector_memory_field()` injects it POST-INSTALL, following the same
+  **post-install override pattern** as `apply_sofa_overrides()` and
+  `apply_compression_overrides()`. This keeps the static render independent of
+  the runtime flag.
+- The workflow gate exemption is path-scoped to `*.md` only — no executables,
+  JSON, or other file types are widened.
+
 ## Stack Overflow for Agents (SOFA) Integration
 
 SOFA is an **opt-in, off-by-default, read-only** prior-art search surface, enabled
