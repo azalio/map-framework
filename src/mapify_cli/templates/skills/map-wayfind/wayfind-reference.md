@@ -125,7 +125,7 @@ emit_wayfind_handoff checkout --remaining-risks-json '["fraud rules not yet scop
 
 - **`not_terminal` on handoff** — an item is still open. Run `wayfind_status --slug <slug>`; the error's `open_items` names each blocker. Resolve or `rule_out_of_scope` them, or hand off `--early --confirmed-by-user`.
 - **`awaiting_human`** — a `prototype`/`grilling` ticket needs a recorded human answer first (`record_human_input`).
-- **`session_limit`** — one non-research resolve per session is the rule; mint a fresh session id and continue.
+- **`session_limit`** — a per-session non-research cap is active via `WAYFIND_MAX_NONRESEARCH_RESOLVES_PER_SESSION` (unset/0 = unlimited, the default); mint a fresh session id and continue, or raise/unset the cap.
 - **`already_claimed` / `blocked` / `not_owner`** — the ticket is taken, has unresolved blockers, or is claimed by another session. Check `map.md`'s Blocked/claimed section.
 - **`stale_revision`** — another session advanced the map; re-read it and retry with the current `--expected-revision`.
 - **`cycle`** — a `wire_blocking` call would create a dependency loop; the blocker relationship is likely backwards.
