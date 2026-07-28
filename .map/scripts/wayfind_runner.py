@@ -12,9 +12,9 @@ Design contract (mirrors the wider MAP conventions):
   * Every function returns a typed result dict: ``{"status": "success", ...}``
     or ``{"status": "error", "message": ...}``.  Nothing is raised through the
     public API; the CLI turns a non-success status into exit code 1.
-  * Invariants (cycle-freedom, one-non-research-resolve-per-session, HITL gate,
-    terminal-handoff condition) live ABOVE persistence so a future non-local
-    backend cannot bypass them.
+  * Invariants (cycle-freedom, HITL gate, terminal-handoff condition, plus the
+    opt-in one-non-research-resolve-per-session cap) live ABOVE persistence so a
+    future non-local backend cannot bypass them.
 
 The only cross-module dependency is a LAZY import of ``map_step_runner`` inside
 :func:`emit_wayfind_handoff`, used solely to register the ``wayfind_handoff``
@@ -45,6 +45,23 @@ WAYFIND_TICKET_TYPES = frozenset({"research", "prototype", "grilling", "task"})
 HITL_TYPES = frozenset({"prototype", "grilling"})
 # Ticket statuses that count as "closed" for frontier / terminal computations.
 TERMINAL_TICKET_STATUSES = frozenset({"resolved", "out_of_scope"})
+
+# Max non-research ticket resolves allowed per session. 0 (the default) means
+# unlimited — the one-per-session cap is an opt-in workflow discipline, not a
+# hard gate. Set WAYFIND_MAX_NONRESEARCH_RESOLVES_PER_SESSION=N (N>=1) to
+# re-enable a cap. The session ledger still records every resolve regardless,
+# so the audit trail is preserved either way.
+_ENV_MAX_NONRESEARCH_PER_SESSION = "WAYFIND_MAX_NONRESEARCH_RESOLVES_PER_SESSION"
+
+
+def _max_nonresearch_per_session() -> int:
+    """Resolve the per-session non-research cap; 0 = unlimited (default)."""
+    try:
+        n = int(os.environ.get(_ENV_MAX_NONRESEARCH_PER_SESSION, "0"))
+    except (TypeError, ValueError):
+        return 0
+    return max(0, n)
+
 
 _SLUG_RE = re.compile(r"^[a-z0-9-]{1,50}$")
 
@@ -958,10 +975,12 @@ def resolve_ticket(
 
     is_non_research = ticket.get("type") != "research"
     ledger = _ensure_session(state, session)
-    if is_non_research and int(ledger.get("non_research_resolved", 0)) >= 1:
+    cap = _max_nonresearch_per_session()
+    if is_non_research and cap > 0 and int(ledger.get("non_research_resolved", 0)) >= cap:
         return _err(
-            "this session has already resolved a non-research ticket. Resolve at most "
-            "ONE non-research ticket per session; start a new session to continue.",
+            f"this session has already resolved {cap} non-research ticket(s); the cap "
+            f"is set via {_ENV_MAX_NONRESEARCH_PER_SESSION}. Start a new session to "
+            "continue, or raise/unset the cap.",
             code="session_limit",
         )
 

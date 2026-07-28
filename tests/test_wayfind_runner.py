@@ -423,7 +423,11 @@ class TestEvidencePathContainment:
 
 
 class TestSessionGuardrail:
-    def test_second_non_research_resolve_blocked(self) -> None:
+    def test_second_non_research_resolve_blocked_when_cap_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The one-per-session cap is opt-in via the env var (default = unlimited).
+        monkeypatch.setenv("WAYFIND_MAX_NONRESEARCH_RESOLVES_PER_SESSION", "1")
         _create()
         a = wr.add_ticket("checkout", "A", "task", "Qa?")["ticket_id"]
         b = wr.add_ticket("checkout", "B", "task", "Qb?")["ticket_id"]
@@ -431,6 +435,24 @@ class TestSessionGuardrail:
         second = _resolve("checkout", b, "sess-1")
         assert second["status"] == "error"
         assert second["code"] == "session_limit"
+
+    def test_second_non_research_resolve_allowed_by_default(self) -> None:
+        # No cap env → unlimited: a session may resolve many non-research tickets.
+        _create()
+        a = wr.add_ticket("checkout", "A", "task", "Qa?")["ticket_id"]
+        b = wr.add_ticket("checkout", "B", "task", "Qb?")["ticket_id"]
+        assert _resolve("checkout", a, "sess-1")["status"] == "success"
+        assert _resolve("checkout", b, "sess-1")["status"] == "success"
+
+    def test_invalid_cap_env_treated_as_unlimited(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("WAYFIND_MAX_NONRESEARCH_RESOLVES_PER_SESSION", "not-an-int")
+        _create()
+        a = wr.add_ticket("checkout", "A", "task", "Qa?")["ticket_id"]
+        b = wr.add_ticket("checkout", "B", "task", "Qb?")["ticket_id"]
+        assert _resolve("checkout", a, "sess-1")["status"] == "success"
+        assert _resolve("checkout", b, "sess-1")["status"] == "success"
 
     def test_two_research_resolves_allowed(self) -> None:
         _create()

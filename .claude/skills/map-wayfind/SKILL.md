@@ -92,7 +92,7 @@ Resolve exactly ONE non-research decision, then stop. Five steps.
    ```
 
    With what you learned, keep the map honest: `add_ticket` newly-sharp decisions, `graduate_fog` a fog entry that is now sharp, or `rule_out_of_scope` a ticket/fog that is settled as excluded (exclusions never appear under Decisions).
-5. **Stop.** The runner blocks a second non-research resolve in the same session by design. Report the decision and stop; start a fresh session (or `/map-wayfind handoff <slug>`) to continue.
+5. **Stop.** Resolving one decision at a time keeps the map reviewable — report the decision and stop, then start a fresh session (or `/map-wayfind handoff <slug>`) to continue. By default the runner does NOT hard-cap this; set `WAYFIND_MAX_NONRESEARCH_RESOLVES_PER_SESSION=1` to re-enable the old one-per-session block.
 
 ## Mode: handoff \<slug\>
 
@@ -107,7 +107,7 @@ This writes `.map/wayfind/<slug>/handoff.md` (+ `handoff.json`) and registers a 
 ## Guardrails
 
 - Do not pre-slice fog: only create a ticket when you can state its question sharply NOW (rubric in the reference). Otherwise keep it as fog.
-- Resolve at most ONE non-research ticket per session; the runner enforces this.
+- Resolve at most ONE non-research ticket per session (recommended discipline; not hard-enforced by default — opt in via `WAYFIND_MAX_NONRESEARCH_RESOLVES_PER_SESSION`).
 - Out-of-scope is an exclusion, not a decision — it never graduates into the plan.
 - No implementation subtasks and no code changes here — that is `/map-plan` + execution.
 - Never write secrets into tickets, resolutions, or the map. Warn about the commit-by-default privacy note in `chart`.
@@ -126,6 +126,6 @@ More worked examples are in [wayfind-reference.md](wayfind-reference.md).
 
 - `emit_wayfind_handoff` returns `not_terminal`: fog, claimed, or unresolved tickets remain — resolve or rule them out, or hand off `--early --confirmed-by-user`.
 - `resolve_ticket` returns `awaiting_human`: it is a `prototype`/`grilling` ticket — record the human answer with `record_human_input` first.
-- `resolve_ticket` returns `session_limit`: you already resolved a non-research ticket this session — start a new session.
+- `resolve_ticket` returns `session_limit`: a per-session cap is active (`WAYFIND_MAX_NONRESEARCH_RESOLVES_PER_SESSION`, unset/0 = unlimited) — start a new session or raise/unset the cap.
 - `wire_blocking` returns `cycle`: the dependency you added would close a loop — re-check the blocker direction.
 - Full command reference and the fog-sharpness rubric are in [wayfind-reference.md](wayfind-reference.md).
