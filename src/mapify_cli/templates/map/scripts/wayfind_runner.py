@@ -1007,6 +1007,131 @@ def resolve_ticket(
     )
 
 
+def amend_resolution(
+    slug: str,
+    ticket_id: str,
+    gist: str | None = None,
+    resolution_path: str | None = None,
+    expected_revision: int | None = None,
+) -> dict[str, Any]:
+    """Correct the one-line gist and/or resolution path of an already-resolved
+    ticket, without reopening it. The gist is baked into the resolution at
+    resolve time; a later realization that the summary is wrong or misleading
+    would otherwise be uncorrectable through the deterministic interface. This
+    touches only free-text resolution metadata — it changes no structural
+    invariant: status, claims, blocking, and ledger counts all stay put.
+
+    Unlike structural mutations, this is allowed on a handed-off map (it uses the
+    pure staleness check, not _mutation_guard): spotting a wrong/misleading gist
+    in the frozen handoff is exactly when you need it. When the map is already
+    handed off, re-run emit_wayfind_handoff afterwards so the frozen artifact
+    picks up the corrected gist — the response flags this via
+    handoff_refresh_needed."""
+    state = _load_state(slug)
+    if state is None:
+        return _err(f"no map with slug {slug!r}.", code="not_found")
+    # Pure staleness check (not _mutation_guard): amending free-text metadata is
+    # the one correction that legitimately applies to a handed-off map.
+    guard = _revision_guard(state, expected_revision)
+    if guard is not None:
+        return guard
+    ticket = state.get("tickets", {}).get(ticket_id)
+    if ticket is None:
+        return _err(f"no ticket {ticket_id!r} in map {slug!r}.", code="not_found")
+    if ticket.get("status") != "resolved":
+        return _err(
+            f"ticket {ticket_id!r} is {ticket.get('status')!r}, not resolved; only a "
+            "resolved ticket's gist/resolution can be amended.",
+            code="not_resolved",
+        )
+    if gist is None and resolution_path is None:
+        return _err("nothing to amend: pass --gist and/or --resolution-path.")
+
+    resolution = dict(ticket.get("resolution") or {})
+    if gist is not None:
+        if not _oneline(gist):
+            return _err("gist must be a non-empty one-line summary of the decision.")
+        resolution["gist"] = _oneline(gist)
+    if resolution_path is not None:
+        resolution_file = _resolve_evidence_path(slug, resolution_path)
+        if resolution_file is None or not resolution_file.read_text(
+            encoding="utf-8", errors="replace"
+        ).strip():
+            return _err(
+                f"resolution file {resolution_path!r} must be a non-empty regular file "
+                "INSIDE the map dir (.map/wayfind/<slug>/).",
+                code="missing_resolution",
+            )
+        resolution["path"] = resolution_path
+    ticket["resolution"] = resolution
+
+    _recompute_status(state)
+    _save_state(state)
+    return _ok(
+        slug=slug,
+        ticket_id=ticket_id,
+        gist=resolution.get("gist"),
+        path=resolution.get("path"),
+        handoff_refresh_needed=state.get("status") == "handed_off",
+        revision=state["revision"],
+    )
+
+
+def amend_out_of_scope(
+    slug: str,
+    ticket_id: str = "",
+    fog_id: str = "",
+    reason: str | None = None,
+    gist: str | None = None,
+    expected_revision: int | None = None,
+) -> dict[str, Any]:
+    """Correct the free-text reason and/or gist of an existing out-of-scope
+    entry (keyed by the ticket_id or fog_id it was ruled out under). Same
+    rationale and post-handoff semantics as amend_resolution: an exclusion's
+    stated reason is baked at rule_out_of_scope time and surfaces in the frozen
+    handoff, so it needs an in-place correction path that touches no structural
+    invariant. Re-emit the handoff afterwards when handoff_refresh_needed."""
+    state = _load_state(slug)
+    if state is None:
+        return _err(f"no map with slug {slug!r}.", code="not_found")
+    guard = _revision_guard(state, expected_revision)
+    if guard is not None:
+        return guard
+    if bool(ticket_id) == bool(fog_id):
+        return _err("provide exactly one of --ticket-id or --fog-id.")
+    if reason is None and gist is None:
+        return _err("nothing to amend: pass --reason and/or --gist.")
+
+    key = "ticket_id" if ticket_id else "fog_id"
+    ref = ticket_id or fog_id
+    entry = next(
+        (e for e in state.get("out_of_scope", []) if e.get(key) == ref), None
+    )
+    if entry is None:
+        return _err(
+            f"no out-of-scope entry for {ref!r} in map {slug!r}.", code="not_found"
+        )
+    if reason is not None:
+        if not _oneline(reason):
+            return _err("reason must be a non-empty one-line string.")
+        entry["reason"] = _oneline(reason)
+    if gist is not None:
+        if not _oneline(gist):
+            return _err("gist must be a non-empty one-line string.")
+        entry["gist"] = _oneline(gist)
+
+    _recompute_status(state)
+    _save_state(state)
+    return _ok(
+        slug=slug,
+        ref=ref,
+        reason=entry.get("reason"),
+        gist=entry.get("gist"),
+        handoff_refresh_needed=state.get("status") == "handed_off",
+        revision=state["revision"],
+    )
+
+
 def wayfind_frontier(slug: str) -> dict[str, Any]:
     """Return open + unblocked + unclaimed tickets (creation order)."""
     state = _load_state(slug)
@@ -1461,6 +1586,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("resolution_path")
     _add_revision_arg(p)
 
+    p = sub.add_parser(
+        "amend_resolution",
+        help="correct a resolved ticket's one-line gist and/or resolution path",
+    )
+    p.add_argument("slug")
+    p.add_argument("ticket_id")
+    p.add_argument("--gist", default=None)
+    p.add_argument("--resolution-path", dest="resolution_path", default=None)
+    _add_revision_arg(p)
+
+    p = sub.add_parser(
+        "amend_out_of_scope",
+        help="correct an out-of-scope entry's reason and/or gist",
+    )
+    p.add_argument("slug")
+    p.add_argument("--ticket-id", dest="ticket_id", default="")
+    p.add_argument("--fog-id", dest="fog_id", default="")
+    p.add_argument("--reason", default=None)
+    p.add_argument("--gist", default=None)
+    _add_revision_arg(p)
+
     p = sub.add_parser("wayfind_frontier", help="list open+unblocked+unclaimed tickets")
     p.add_argument("slug")
 
@@ -1542,6 +1688,23 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
             args.session,
             args.gist,
             args.resolution_path,
+            args.expected_revision,
+        )
+    if command == "amend_resolution":
+        return amend_resolution(
+            args.slug,
+            args.ticket_id,
+            args.gist,
+            args.resolution_path,
+            args.expected_revision,
+        )
+    if command == "amend_out_of_scope":
+        return amend_out_of_scope(
+            args.slug,
+            args.ticket_id,
+            args.fog_id,
+            args.reason,
+            args.gist,
             args.expected_revision,
         )
     if command == "wayfind_frontier":

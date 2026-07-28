@@ -582,3 +582,90 @@ class TestCli:
     def test_unknown_subcommand_exits_nonzero(self, repo: Path) -> None:
         result = self._run(repo, "bogus_command")
         assert result.returncode != 0
+
+
+class TestAmendResolution:
+    def test_amend_gist_of_resolved_ticket(self) -> None:
+        _create()
+        a = wr.add_ticket("checkout", "A", "task", "Qa?")["ticket_id"]
+        assert _resolve("checkout", a, "sess-1", gist="old gist")["status"] == "success"
+        amended = wr.amend_resolution("checkout", a, gist="new corrected gist")
+        assert amended["status"] == "success"
+        assert amended["gist"] == "new corrected gist"
+        # persisted
+        ticket = wr.show_ticket("checkout", a)["ticket"]
+        assert ticket["resolution"]["gist"] == "new corrected gist"
+        assert ticket["status"] == "resolved"  # not reopened
+
+    def test_amend_open_ticket_rejected(self) -> None:
+        _create()
+        a = wr.add_ticket("checkout", "A", "task", "Qa?")["ticket_id"]
+        result = wr.amend_resolution("checkout", a, gist="x")
+        assert result["status"] == "error"
+        assert result["code"] == "not_resolved"
+
+    def test_amend_nothing_rejected(self) -> None:
+        _create()
+        a = wr.add_ticket("checkout", "A", "task", "Qa?")["ticket_id"]
+        _resolve("checkout", a, "sess-1")
+        result = wr.amend_resolution("checkout", a)
+        assert result["status"] == "error"
+
+    def test_amend_resolution_path_must_exist(self) -> None:
+        _create()
+        a = wr.add_ticket("checkout", "A", "task", "Qa?")["ticket_id"]
+        _resolve("checkout", a, "sess-1")
+        result = wr.amend_resolution(
+            "checkout", a, resolution_path="resolutions/does-not-exist.md"
+        )
+        assert result["status"] == "error"
+        assert result["code"] == "missing_resolution"
+
+    def test_amend_out_of_scope_reason(self) -> None:
+        _create(fog_json='["vague concern"]')  # creates F-1
+        ruled = wr.rule_out_of_scope("checkout", "wrong reason", fog_id="F-1")
+        assert ruled["status"] == "success"
+        amended = wr.amend_out_of_scope("checkout", fog_id="F-1", reason="right reason")
+        assert amended["status"] == "success"
+        assert amended["reason"] == "right reason"
+        oos = wr._load_state("checkout")["out_of_scope"]
+        assert oos[0]["reason"] == "right reason"
+
+    def test_amend_out_of_scope_requires_exactly_one_ref(self) -> None:
+        _create(fog_json='["vague concern"]')
+        wr.rule_out_of_scope("checkout", "reason", fog_id="F-1")
+        both = wr.amend_out_of_scope(
+            "checkout", ticket_id="T-001", fog_id="F-1", reason="x"
+        )
+        assert both["status"] == "error"
+        neither = wr.amend_out_of_scope("checkout", reason="x")
+        assert neither["status"] == "error"
+
+    def test_amend_out_of_scope_unknown_ref(self) -> None:
+        _create()
+        result = wr.amend_out_of_scope("checkout", fog_id="F-9", reason="x")
+        assert result["status"] == "error"
+        assert result["code"] == "not_found"
+
+    def test_amend_out_of_scope_nothing_rejected(self) -> None:
+        _create(fog_json='["vague concern"]')
+        wr.rule_out_of_scope("checkout", "reason", fog_id="F-1")
+        result = wr.amend_out_of_scope("checkout", fog_id="F-1")
+        assert result["status"] == "error"
+
+    def test_amend_allowed_on_handed_off_map(self) -> None:
+        # A wrong gist spotted in the frozen handoff must be correctable; other
+        # structural mutations stay blocked on a handed-off map.
+        _create()
+        a = wr.add_ticket("checkout", "A", "task", "Qa?")["ticket_id"]
+        _resolve("checkout", a, "sess-1", gist="wrong gist")
+        emitted = wr.emit_wayfind_handoff("checkout", "[]")
+        assert emitted["status"] == "success"
+        amended = wr.amend_resolution("checkout", a, gist="right gist")
+        assert amended["status"] == "success"
+        assert amended["handoff_refresh_needed"] is True
+        assert wr.show_ticket("checkout", a)["ticket"]["resolution"]["gist"] == "right gist"
+        # structural mutation still blocked while handed off
+        blocked = wr.add_ticket("checkout", "B", "task", "Qb?")
+        assert blocked["status"] == "error"
+        assert blocked["code"] == "handed_off"

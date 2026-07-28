@@ -42,6 +42,8 @@ claim_ticket <slug> <ticket_id> <session>              # HITL types return hitl_
 release_ticket <slug> <ticket_id> <session>            # crash/interrupt recovery; owner only
 record_human_input <slug> <ticket_id> <session> <path> # verbatim human answer (file must be non-empty)
 resolve_ticket <slug> <ticket_id> <session> "<gist>" <resolution_path>
+amend_resolution <slug> <ticket_id> [--gist "<corrected one-liner>"] [--resolution-path <path>]  # fix a resolved ticket's gist/path without reopening
+amend_out_of_scope <slug> (--ticket-id T-003 | --fog-id F-2) [--reason "..."] [--gist "..."]      # fix an out-of-scope entry's reason/gist
 ```
 
 Fog & scope:
