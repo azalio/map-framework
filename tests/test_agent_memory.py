@@ -297,29 +297,31 @@ class TestMergeAgentMemoryGitignore:
 # AC8: workflow-gate is_exempt_path exemptions
 # ---------------------------------------------------------------------------
 
+
+@pytest.fixture(scope="module")
+def is_exempt_path():
+    import importlib.util
+    import sys as _sys
+
+    gate_path = _PROJECT_ROOT / ".claude" / "hooks" / "workflow-gate.py"
+    assert gate_path.exists(), f"workflow-gate.py not found at {gate_path}"
+
+    prev = _sys.dont_write_bytecode
+    _sys.dont_write_bytecode = True
+    try:
+        spec = importlib.util.spec_from_file_location("workflow_gate", gate_path)
+        assert spec is not None
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    finally:
+        _sys.dont_write_bytecode = prev
+
+    return mod.is_exempt_path
+
+
 class TestWorkflowGateExemptions:
     """Load the rendered workflow-gate.py and test is_exempt_path directly."""
-
-    @pytest.fixture(scope="class")
-    def is_exempt_path(self):
-        import importlib.util
-        import sys as _sys
-
-        gate_path = _PROJECT_ROOT / ".claude" / "hooks" / "workflow-gate.py"
-        assert gate_path.exists(), f"workflow-gate.py not found at {gate_path}"
-
-        prev = _sys.dont_write_bytecode
-        _sys.dont_write_bytecode = True
-        try:
-            spec = importlib.util.spec_from_file_location("workflow_gate", gate_path)
-            assert spec is not None
-            mod = importlib.util.module_from_spec(spec)
-            assert spec.loader is not None
-            spec.loader.exec_module(mod)  # type: ignore[union-attr]
-        finally:
-            _sys.dont_write_bytecode = prev
-
-        return mod.is_exempt_path
 
     def test_agent_memory_project_md_is_exempt(self, is_exempt_path):
         p = str(_PROJECT_ROOT / ".claude" / "agent-memory" / "lessons.md")
