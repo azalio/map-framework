@@ -599,6 +599,38 @@ class TestAmendResolution:
         assert result["status"] == "error"
         assert result["code"] == "missing_resolution"
 
+    def test_amend_out_of_scope_reason(self) -> None:
+        _create(fog_json='["vague concern"]')  # creates F-1
+        ruled = wr.rule_out_of_scope("checkout", "wrong reason", fog_id="F-1")
+        assert ruled["status"] == "success"
+        amended = wr.amend_out_of_scope("checkout", fog_id="F-1", reason="right reason")
+        assert amended["status"] == "success"
+        assert amended["reason"] == "right reason"
+        oos = wr._load_state("checkout")["out_of_scope"]
+        assert oos[0]["reason"] == "right reason"
+
+    def test_amend_out_of_scope_requires_exactly_one_ref(self) -> None:
+        _create(fog_json='["vague concern"]')
+        wr.rule_out_of_scope("checkout", "reason", fog_id="F-1")
+        both = wr.amend_out_of_scope(
+            "checkout", ticket_id="T-001", fog_id="F-1", reason="x"
+        )
+        assert both["status"] == "error"
+        neither = wr.amend_out_of_scope("checkout", reason="x")
+        assert neither["status"] == "error"
+
+    def test_amend_out_of_scope_unknown_ref(self) -> None:
+        _create()
+        result = wr.amend_out_of_scope("checkout", fog_id="F-9", reason="x")
+        assert result["status"] == "error"
+        assert result["code"] == "not_found"
+
+    def test_amend_out_of_scope_nothing_rejected(self) -> None:
+        _create(fog_json='["vague concern"]')
+        wr.rule_out_of_scope("checkout", "reason", fog_id="F-1")
+        result = wr.amend_out_of_scope("checkout", fog_id="F-1")
+        assert result["status"] == "error"
+
     def test_amend_allowed_on_handed_off_map(self) -> None:
         # A wrong gist spotted in the frozen handoff must be correctable; other
         # structural mutations stay blocked on a handed-off map.
