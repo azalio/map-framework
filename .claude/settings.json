@@ -4,8 +4,16 @@
   "permissions": {
     "deny": [
       "Edit(./.env*)",
-      "Edit(**/*credentials*)",
-      "Edit(**/*secret*)",
+      "Edit(**/*credentials*.yaml)",
+      "Edit(**/*credentials*.yml)",
+      "Edit(**/*credentials*.json)",
+      "Edit(**/*credentials*.toml)",
+      "Edit(**/*credentials*.env)",
+      "Edit(**/*secret*.yaml)",
+      "Edit(**/*secret*.yml)",
+      "Edit(**/*secret*.json)",
+      "Edit(**/*secret*.toml)",
+      "Edit(**/*secret*.env)",
       "Bash(rm -rf)",
       "Bash(git push --force origin main)",
       "Bash(git push --force origin master)",
