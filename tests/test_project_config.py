@@ -630,3 +630,58 @@ class TestVc9DefaultConfigCompleteness:
             f"generate_default_config() is missing documentation for: {missing}. "
             "Each MapConfig alias must have a corresponding commented block (#340)."
         )
+
+
+# ---------------------------------------------------------------------------
+# Scale threshold range validation
+# ---------------------------------------------------------------------------
+
+
+class TestScaleThresholdRangeValidation:
+    """Scale threshold fields must be >= 1; a value <= 0 makes scope brackets
+    unreachable (e.g. estimated_files <= -1 is always False for real inputs)."""
+
+    def _write_config(self, tmp_path: Path, body: str) -> None:
+        (tmp_path / ".map").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".map" / "config.yaml").write_text(body, encoding="utf-8")
+
+    def test_negative_trivial_max_files_falls_back_to_default(
+        self, tmp_path: Path
+    ) -> None:
+        self._write_config(tmp_path, "scale.thresholds.trivial.max_files: -1\n")
+        cfg = load_map_config(tmp_path)
+        assert cfg.scale_trivial_max_files == 3, (
+            "scale_trivial_max_files: -1 must fall back to default 3; "
+            "a negative value makes the trivial bracket unreachable."
+        )
+
+    def test_zero_trivial_max_lines_falls_back_to_default(
+        self, tmp_path: Path
+    ) -> None:
+        self._write_config(tmp_path, "scale.thresholds.trivial.max_lines: 0\n")
+        cfg = load_map_config(tmp_path)
+        assert cfg.scale_trivial_max_lines == 50
+
+    def test_negative_small_max_files_falls_back_to_default(
+        self, tmp_path: Path
+    ) -> None:
+        self._write_config(tmp_path, "scale.thresholds.small.max_files: -5\n")
+        cfg = load_map_config(tmp_path)
+        assert cfg.scale_small_max_files == 10
+
+    def test_negative_medium_max_lines_falls_back_to_default(
+        self, tmp_path: Path
+    ) -> None:
+        self._write_config(tmp_path, "scale.thresholds.medium.max_lines: -100\n")
+        cfg = load_map_config(tmp_path)
+        assert cfg.scale_medium_max_lines == 1000
+
+    def test_valid_positive_values_accepted(self, tmp_path: Path) -> None:
+        self._write_config(
+            tmp_path,
+            "scale.thresholds.trivial.max_files: 5\n"
+            "scale.thresholds.small.max_files: 15\n",
+        )
+        cfg = load_map_config(tmp_path)
+        assert cfg.scale_trivial_max_files == 5
+        assert cfg.scale_small_max_files == 15

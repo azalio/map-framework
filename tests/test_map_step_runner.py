@@ -15256,3 +15256,21 @@ def test_write_implementer_readiness_review_rejects_question_extra_keys(
     assert "unsupported fields" in result["message"]
     assert "owner" in result["message"]
     assert not (branch_workspace / "implementation-readiness.json").exists()
+
+
+def test_write_implementer_readiness_review_needs_clarification_requires_blocking_questions(
+    branch_workspace,
+):
+    # needs_clarification with zero blocking_questions must be rejected — an artifact
+    # whose verdict is "needs_clarification" but has no questions blocks callers
+    # with no actionable information.
+    result = map_step_runner.write_implementer_readiness_review(
+        verdict="needs_clarification",
+        blocking_questions_json="[]",
+        summary="Something is unclear.",
+    )
+
+    assert result["status"] == "error"
+    assert "blocking_questions" in result["message"].lower()
+    assert "needs_clarification" in result["message"]
+    assert not (branch_workspace / "implementation-readiness.json").exists()

@@ -189,6 +189,14 @@ _SKILL_META: dict[str, tuple[str, str]] = {
         "context",
         "Opt-in read-only prior-art search against Stack Overflow for Agents (SOFA)",
     ),
+    "map-wayfind": (
+        "oversight",
+        "Decision-frontier wayfinding: resolve open design decisions on a durable map before /map-plan",
+    ),
+    "map-architecture": (
+        "context",
+        "Opt-in proactive architecture-deepening report: rank codebase hotspots by design friction",
+    ),
 }
 
 #: Default categories for known references (enforcement = "prompt-only")

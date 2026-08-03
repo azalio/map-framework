@@ -183,6 +183,42 @@ class TestBuildGovernanceReport:
         mp = next(a for a in report.assets if a.name == "map-plan")
         assert mp.category == "charter"
 
+    def test_map_wayfind_classified_as_oversight(self, tmp_path: Path) -> None:
+        claude = tmp_path / ".claude"
+        skills = claude / "skills"
+        skills.mkdir(parents=True)
+        _make_skill_rules(skills, {
+            "map-wayfind": {
+                "type": "manual",
+                "skillClass": "task",
+                "description": "Decision-frontier wayfinding",
+            }
+        })
+        _make_skill_dir(skills, "map-wayfind")
+        report = build_governance_report(tmp_path)
+        asset = next(a for a in report.assets if a.name == "map-wayfind")
+        assert asset.category == "oversight", (
+            "map-wayfind must be classified as 'oversight', not the generic 'harness' fallback"
+        )
+
+    def test_map_architecture_classified_as_context(self, tmp_path: Path) -> None:
+        claude = tmp_path / ".claude"
+        skills = claude / "skills"
+        skills.mkdir(parents=True)
+        _make_skill_rules(skills, {
+            "map-architecture": {
+                "type": "manual",
+                "skillClass": "task",
+                "description": "Architecture-deepening report",
+            }
+        })
+        _make_skill_dir(skills, "map-architecture")
+        report = build_governance_report(tmp_path)
+        asset = next(a for a in report.assets if a.name == "map-architecture")
+        assert asset.category == "context", (
+            "map-architecture must be classified as 'context', not the generic 'harness' fallback"
+        )
+
     def test_asset_paths_are_relative_to_project(self, map_project: Path) -> None:
         report = build_governance_report(map_project)
         for asset in report.assets:

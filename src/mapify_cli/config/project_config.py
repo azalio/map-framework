@@ -543,6 +543,28 @@ def load_map_config(project_path: Path) -> MapConfig:
         # Clamp max_wave_retries to [1, 10]; non-int/bool → default 3.
         cfg.max_wave_retries = clamp_max_wave_retries(cfg.max_wave_retries)
 
+        # Scale threshold fields must be >= 1; a value <= 0 makes one or more
+        # scope brackets unreachable (e.g. estimated_files <= -1 is always False).
+        _scale_defaults: dict[str, int] = {
+            "scale_trivial_max_files": 3,
+            "scale_trivial_max_lines": 50,
+            "scale_small_max_files": 10,
+            "scale_small_max_lines": 200,
+            "scale_medium_max_files": 30,
+            "scale_medium_max_lines": 1000,
+        }
+        for _sf, _default in _scale_defaults.items():
+            _val = getattr(cfg, _sf)
+            if _val < 1:
+                logger.warning(
+                    "%s must be >= 1 in %s (got %d). Using default %d.",
+                    _sf,
+                    config_file,
+                    _val,
+                    _default,
+                )
+                setattr(cfg, _sf, _default)
+
         return cfg
 
     except yaml.YAMLError as e:
