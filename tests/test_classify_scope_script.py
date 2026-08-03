@@ -253,3 +253,61 @@ class TestSc7RenderedScriptExists:
         )
         assert proc.returncode == 0
         assert "--files" in proc.stdout or "--files" in proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# SC8 — snake_case aliases accepted alongside dotted-key form
+# ---------------------------------------------------------------------------
+
+
+class TestSc8SnakeCaseAliases:
+    """Config keys may be written as snake_case (scale_trivial_max_files) instead of
+    the canonical dotted form (scale.thresholds.trivial.max_files); both must work."""
+
+    def test_snake_trivial_max_files_override(self, tmp_path: Path):
+        _write_config(tmp_path, "scale_trivial_max_files: 1\n")
+        assert _run(1, 10, tmp_path)["bracket"] == "trivial"
+        assert _run(2, 10, tmp_path)["bracket"] == "small"
+
+    def test_snake_trivial_max_lines_override(self, tmp_path: Path):
+        _write_config(tmp_path, "scale_trivial_max_lines: 20\n")
+        assert _run(1, 20, tmp_path)["bracket"] == "trivial"
+        assert _run(1, 21, tmp_path)["bracket"] == "small"
+
+    def test_snake_small_max_files_override(self, tmp_path: Path):
+        _write_config(tmp_path, "scale_small_max_files: 5\n")
+        assert _run(5, 10, tmp_path)["bracket"] == "small"
+        assert _run(6, 10, tmp_path)["bracket"] == "medium"
+
+    def test_snake_auto_false(self, tmp_path: Path):
+        _write_config(tmp_path, "scale_auto: false\n")
+        assert _run(1, 10, tmp_path)["auto_enabled"] is False
+
+    def test_dotted_takes_precedence_over_snake(self, tmp_path: Path):
+        # Both forms present: dotted wins (written first, snake is not applied)
+        _write_config(
+            tmp_path,
+            "scale.thresholds.trivial.max_files: 2\nscale_trivial_max_files: 10\n"
+        )
+        # With max_files=2 (from dotted), files=3 must be "small", not "trivial"
+        assert _run(3, 10, tmp_path)["bracket"] == "small"
+
+
+# ---------------------------------------------------------------------------
+# SC9 — invalid config integer value falls back to default, does not crash
+# ---------------------------------------------------------------------------
+
+
+class TestSc9InvalidConfigValue:
+    def test_non_integer_config_value_uses_default(self, tmp_path: Path):
+        _write_config(tmp_path, "scale.thresholds.trivial.max_files: many\n")
+        # Must not crash; falls back to default (3), so 3 files → trivial
+        result = _run(3, 10, tmp_path)
+        assert result["bracket"] == "trivial"
+        assert result["bracket"] in {"trivial", "small", "medium", "large"}
+
+    def test_float_config_value_uses_default(self, tmp_path: Path):
+        _write_config(tmp_path, "scale.thresholds.trivial.max_lines: 50.5\n")
+        # int("50.5") raises ValueError; must fall back to default 50
+        result = _run(3, 50, tmp_path)
+        assert result["bracket"] == "trivial"

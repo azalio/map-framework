@@ -47,10 +47,23 @@ _DEFAULTS: dict[str, str] = {
 }
 
 
+_SNAKE_ALIASES: dict[str, str] = {
+    "scale_auto": "scale.auto",
+    "scale_trivial_max_files": "scale.thresholds.trivial.max_files",
+    "scale_trivial_max_lines": "scale.thresholds.trivial.max_lines",
+    "scale_small_max_files": "scale.thresholds.small.max_files",
+    "scale_small_max_lines": "scale.thresholds.small.max_lines",
+    "scale_medium_max_files": "scale.thresholds.medium.max_files",
+    "scale_medium_max_lines": "scale.thresholds.medium.max_lines",
+}
+
+
 def _read_config(project_dir: Path) -> dict[str, str]:
     """Read .map/config.yaml scalar values without external dependencies.
 
-    Supports the same dotted-key YAML subset used by load_map_config().
+    Supports both the dotted-key form used in the config template (e.g.
+    ``scale.thresholds.trivial.max_files``) and the snake_case form that
+    ``load_map_config()`` aliases (e.g. ``scale_trivial_max_files``).
     """
     config_path = project_dir / ".map" / "config.yaml"
     if not config_path.is_file():
@@ -72,6 +85,11 @@ def _read_config(project_dir: Path) -> dict[str, str]:
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
             value = value[1:-1]
         values[key] = value
+    # Accept snake_case aliases (e.g. scale_trivial_max_files) in addition to
+    # the canonical dotted form so both config styles are honoured.
+    for snake, dotted in _SNAKE_ALIASES.items():
+        if snake in values and dotted not in values:
+            values[dotted] = values[snake]
     return values
 
 
@@ -84,7 +102,16 @@ def classify(
     raw = _read_config(project_dir or Path("."))
 
     def _int(key: str) -> int:
-        return int(raw.get(key, _DEFAULTS[key]))
+        raw_val = raw.get(key, _DEFAULTS[key])
+        try:
+            return int(raw_val)
+        except ValueError:
+            print(
+                f"warning: classify_scope: invalid integer {raw_val!r} for config "
+                f"key {key!r}; using default {_DEFAULTS[key]}",
+                file=sys.stderr,
+            )
+            return int(_DEFAULTS[key])
 
     def _bool(key: str) -> bool:
         return raw.get(key, _DEFAULTS[key]).lower() not in {"false", "0", "no"}

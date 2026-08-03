@@ -2841,6 +2841,16 @@ def write_implementer_readiness_review(
             normalized_question["spec_reference"] = spec_reference
         blocking_questions.append(normalized_question)
 
+    if verdict == "needs_clarification" and not blocking_questions:
+        return {
+            "status": "error",
+            "message": (
+                "blocking_questions must be non-empty when verdict is "
+                "'needs_clarification'. Provide at least one question (with "
+                "category) that must be answered before implementation can proceed."
+            ),
+        }
+
     non_blocking_risks: list[str] = []
     for i, risk in enumerate(parsed_non_blocking_risks):
         if not isinstance(risk, str):
