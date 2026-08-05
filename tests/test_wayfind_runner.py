@@ -492,6 +492,23 @@ class TestSessionGuardrail:
         assert result["status"] == "error"
         assert result["code"] == "missing_input"
 
+    def test_record_human_input_unreadable_file_returns_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # When _safe_read catches an OSError it returns ""; the public API must
+        # surface a structured error instead of propagating the exception.
+        _create()
+        tid = wr.add_ticket("checkout", "Grill", "grilling", "What?")["ticket_id"]
+        wr.claim_ticket("checkout", tid, "sess-1")
+        rel = f"resolutions/{tid}.human.md"
+        p = Path(".map/wayfind/checkout") / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("content", encoding="utf-8")
+        monkeypatch.setattr(wr, "_safe_read", lambda _p: "")
+        result = wr.record_human_input("checkout", tid, "sess-1", rel)
+        assert result["status"] == "error"
+        assert result["code"] == "missing_input"
+
 
 # ---------------------------------------------------------------------------
 # 8. Views / files
@@ -508,6 +525,23 @@ class TestViews:
         empty.parent.mkdir(parents=True, exist_ok=True)
         empty.write_text("", encoding="utf-8")
         result = wr.resolve_ticket("checkout", tid, "sess-1", "g", empty_rel)
+        assert result["status"] == "error"
+        assert result["code"] == "missing_resolution"
+
+    def test_unreadable_resolution_blocks_resolve(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # _safe_read swallows OSError → returns ""; resolve_ticket must treat
+        # this as a missing/unreadable file and return a structured error.
+        _create()
+        tid = wr.add_ticket("checkout", "T", "task", "Q?")["ticket_id"]
+        wr.claim_ticket("checkout", tid, "sess-1")
+        rel = f"resolutions/{tid}.md"
+        p = Path(".map/wayfind/checkout") / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("content", encoding="utf-8")
+        monkeypatch.setattr(wr, "_safe_read", lambda _p: "")
+        result = wr.resolve_ticket("checkout", tid, "sess-1", "g", rel)
         assert result["status"] == "error"
         assert result["code"] == "missing_resolution"
 
@@ -621,6 +655,23 @@ class TestAmendResolution:
         assert result["status"] == "error"
         assert result["code"] == "missing_resolution"
 
+    def test_amend_resolution_unreadable_file_returns_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # _safe_read swallows OSError → returns ""; amend_resolution must treat
+        # this as a missing/unreadable file and return a structured error.
+        _create()
+        a = wr.add_ticket("checkout", "A", "task", "Qa?")["ticket_id"]
+        _resolve("checkout", a, "sess-1")
+        rel = f"resolutions/{a}.amended.md"
+        p = Path(".map/wayfind/checkout") / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("amended resolution", encoding="utf-8")
+        monkeypatch.setattr(wr, "_safe_read", lambda _p: "")
+        result = wr.amend_resolution("checkout", a, resolution_path=rel)
+        assert result["status"] == "error"
+        assert result["code"] == "missing_resolution"
+
     def test_amend_out_of_scope_reason(self) -> None:
         _create(fog_json='["vague concern"]')  # creates F-1
         ruled = wr.rule_out_of_scope("checkout", "wrong reason", fog_id="F-1")
@@ -669,3 +720,27 @@ class TestAmendResolution:
         blocked = wr.add_ticket("checkout", "B", "task", "Qb?")
         assert blocked["status"] == "error"
         assert blocked["code"] == "handed_off"
+
+
+# ---------------------------------------------------------------------------
+# _safe_read unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestSafeRead:
+    def test_safe_read_returns_content_normally(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text("hello world", encoding="utf-8")
+        assert wr._safe_read(f) == "hello world"
+
+    def test_safe_read_returns_empty_string_on_oserror(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        f = tmp_path / "test.md"
+        f.write_text("content", encoding="utf-8")
+
+        def raise_oserror(*args: object, **kwargs: object) -> str:
+            raise OSError("permission denied")
+
+        monkeypatch.setattr(Path, "read_text", raise_oserror)
+        assert wr._safe_read(f) == ""

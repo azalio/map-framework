@@ -161,3 +161,35 @@ def test_source_files_with_secret_in_name_not_blocked(
             "Deny rules must only block secret MATERIAL files (by extension), "
             "not source code that uses 'secret' in identifiers."
         )
+
+
+# ---------------------------------------------------------------------------
+# .env files are blocked (both root-level and in subdirectories)
+# ---------------------------------------------------------------------------
+
+# Subdirectory .env files — blocked by Edit(**/.env*) but NOT by the old Edit(./.env*).
+# Root-level .env protection comes from safety-guardrails.py, not these settings.json globs.
+_BLOCKED_SUBDIRECTORY_ENV_FILES = [
+    "backend/.env",
+    "services/api/.env",
+    "services/api/.env.local",
+    "apps/web/.env.production",
+    "apps/web/.env.development",
+]
+
+
+@pytest.mark.parametrize("settings_path", SETTINGS_FILES, ids=SETTINGS_IDS)
+@pytest.mark.parametrize("env_file", _BLOCKED_SUBDIRECTORY_ENV_FILES)
+def test_subdirectory_env_files_blocked(settings_path: Path, env_file: str) -> None:
+    """Subdirectory .env* files must match a deny glob.
+
+    Regression for the bug where Edit(./.env*) only matched at the root level
+    while Edit(**/.env*) was the intent — subdirectory .env files like
+    backend/.env were not blocked by the settings.json layer.
+    """
+    globs = _edit_deny_globs(settings_path)
+    matched = any(fnmatch.fnmatch(env_file, g) for g in globs)
+    assert matched, (
+        f"{settings_path.relative_to(REPO_ROOT)}: .env file {env_file!r} "
+        "is not blocked by any Edit deny glob — use Edit(**/.env*) not Edit(./.env*)"
+    )

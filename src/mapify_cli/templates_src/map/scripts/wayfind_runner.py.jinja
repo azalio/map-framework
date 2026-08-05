@@ -130,6 +130,14 @@ def _resolve_evidence_path(slug: str, rel: str) -> Path | None:
     return candidate
 
 
+def _safe_read(path: Path) -> str:
+    """Read a file's text, returning empty string on OSError."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
 # ---------------------------------------------------------------------------
 # State load / save + derived views
 # ---------------------------------------------------------------------------
@@ -908,9 +916,7 @@ def record_human_input(
     # in state.json doubles as a correct link target from the co-located views;
     # containment is enforced so absolute/../ paths cannot claim provenance.
     input_path = _resolve_evidence_path(slug, path)
-    if input_path is None or not input_path.read_text(
-        encoding="utf-8", errors="replace"
-    ).strip():
+    if input_path is None or not _safe_read(input_path).strip():
         return _err(
             f"human input file {path!r} must be a non-empty regular file INSIDE the map "
             "dir (.map/wayfind/<slug>/). Save the human's verbatim answer there first.",
@@ -956,9 +962,7 @@ def resolve_ticket(
     # value is a correct link target from the co-located map.md / handoff.md views;
     # containment is enforced so absolute/../ paths cannot stand in as a resolution.
     resolution_file = _resolve_evidence_path(slug, resolution_path)
-    if resolution_file is None or not resolution_file.read_text(
-        encoding="utf-8", errors="replace"
-    ).strip():
+    if resolution_file is None or not _safe_read(resolution_file).strip():
         return _err(
             f"resolution file {resolution_path!r} must be a non-empty regular file INSIDE "
             "the map dir (.map/wayfind/<slug>/). Write the prose resolution first.",
@@ -1054,9 +1058,7 @@ def amend_resolution(
         resolution["gist"] = _oneline(gist)
     if resolution_path is not None:
         resolution_file = _resolve_evidence_path(slug, resolution_path)
-        if resolution_file is None or not resolution_file.read_text(
-            encoding="utf-8", errors="replace"
-        ).strip():
+        if resolution_file is None or not _safe_read(resolution_file).strip():
             return _err(
                 f"resolution file {resolution_path!r} must be a non-empty regular file "
                 "INSIDE the map dir (.map/wayfind/<slug>/).",
