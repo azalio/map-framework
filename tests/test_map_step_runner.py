@@ -6987,6 +6987,54 @@ class TestValidateMutationBoundary:
         assert "data/old2.csv" not in report["actual"], report
         assert report["status"] == "clean", report
 
+    def test_oserror_in_git_invocation_returns_error_not_exception(
+        self, branch_workspace, monkeypatch
+    ):
+        """Regression Bug 6: OSError raised inside the try block (e.g. git not
+        on PATH when _resolve_subtask_diff_base's subprocess.run fires) must be
+        caught and returned as status='error', not propagate as an exception.
+
+        Before the fix, _resolve_subtask_diff_base was called OUTSIDE the
+        try/except block, so OSError would escape to the caller.
+        """
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+
+        def _raise_oserror(*args: object, **kwargs: object) -> object:
+            del args, kwargs
+            raise OSError("git: No such file or directory")
+
+        monkeypatch.setattr(map_step_runner, "_resolve_subtask_diff_base", _raise_oserror)
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "error", report
+        assert "git" in report["message"].lower()
+
+    def test_porcelain_quoted_path_with_spaces_is_in_actual(
+        self, branch_workspace, monkeypatch
+    ):
+        """Regression Bug 8: git porcelain v1 double-quotes paths that contain
+        spaces (e.g. ``?? "file with spaces.txt"``).  The parser must strip the
+        surrounding quotes so the file appears in actual unquoted and compares
+        equal to the declared affected_files entry.
+        """
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        spaced_name = "file with spaces.txt"
+        self._write_blueprint(branch_workspace, "ST-001", [spaced_name])
+        (repo / spaced_name).write_text("content\n")
+        # Leave the file untracked so it shows up as '?? "file with spaces.txt"'
+        # in porcelain output — the bug path.
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert spaced_name in report["actual"], (
+            f"Porcelain-quoted file with spaces must appear unquoted in actual. report={report}"
+        )
+        assert report["status"] == "clean", report
+        assert report["unexpected"] == [], report
+
 
 class TestDetectCrossSubtaskRegressionRisk:
     """detect_cross_subtask_regression_risk flags when the in-flight subtask

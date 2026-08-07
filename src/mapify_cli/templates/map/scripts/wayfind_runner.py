@@ -121,10 +121,17 @@ def _resolve_evidence_path(slug: str, rel: str) -> Path | None:
     """
     if not rel:
         return None
+    # Reject absolute paths BEFORE constructing candidate. On POSIX,
+    # Path(base) / "/absolute/path" evaluates to the absolute path, discarding
+    # base — so an absolute path pointing inside the map dir would pass the
+    # containment check below and be stored verbatim in state.json, breaking
+    # all markdown link targets in map.md, handoff.md, and ticket files.
+    if Path(rel).is_absolute():
+        return None
     base = _map_dir(slug).resolve()
     candidate = (base / rel).resolve()
     if candidate != base and base not in candidate.parents:
-        return None  # absolute path or ../ escape left the map dir
+        return None  # ../ escape left the map dir
     if not candidate.is_file():
         return None  # missing, or a directory
     return candidate
@@ -749,8 +756,11 @@ def add_ticket(
     if error is not None:
         return error
     assert blocked_by is not None
-    if from_fog and not any(f.get("id") == from_fog for f in state.get("fog", [])):
-        return _err(f"unknown fog id: {from_fog!r}.")
+    if from_fog and not any(
+        f.get("id") == from_fog and f.get("status") == "open"
+        for f in state.get("fog", [])
+    ):
+        return _err(f"fog entry {from_fog!r} is unknown or not open.")
 
     ticket_id = _mint_ticket(state, title, ticket_type, question, blocked_by, from_fog)
     _recompute_status(state)

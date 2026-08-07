@@ -39,6 +39,28 @@ def _edit_deny_globs(settings_path: Path) -> list[str]:
     return globs
 
 
+def _write_deny_globs(settings_path: Path) -> list[str]:
+    """Return the glob strings from every Write(...) deny rule in settings.json."""
+    data = json.loads(settings_path.read_text())
+    deny_rules: list[str] = data.get("permissions", {}).get("deny", [])
+    globs: list[str] = []
+    for rule in deny_rules:
+        if rule.startswith("Write(") and rule.endswith(")"):
+            globs.append(rule[6:-1])
+    return globs
+
+
+def _multiedit_deny_globs(settings_path: Path) -> list[str]:
+    """Return the glob strings from every MultiEdit(...) deny rule in settings.json."""
+    data = json.loads(settings_path.read_text())
+    deny_rules: list[str] = data.get("permissions", {}).get("deny", [])
+    globs: list[str] = []
+    for rule in deny_rules:
+        if rule.startswith("MultiEdit(") and rule.endswith(")"):
+            globs.append(rule[10:-1])
+    return globs
+
+
 # ---------------------------------------------------------------------------
 # Regression: broad globs must be absent (issue #397)
 # ---------------------------------------------------------------------------
@@ -192,4 +214,120 @@ def test_subdirectory_env_files_blocked(settings_path: Path, env_file: str) -> N
     assert matched, (
         f"{settings_path.relative_to(REPO_ROOT)}: .env file {env_file!r} "
         "is not blocked by any Edit deny glob — use Edit(**/.env*) not Edit(./.env*)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Security Gap 12: Write and MultiEdit deny globs must mirror Edit globs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("settings_path", SETTINGS_FILES, ids=SETTINGS_IDS)
+def test_write_env_glob_present(settings_path: Path) -> None:
+    """Write(**/.env*) must be in the deny list (security gap 12).
+
+    Claude Code treats Edit, Write, and MultiEdit as distinct tools — a deny
+    rule for Edit(...) does not block Write(...).  Before the fix only Edit
+    rules covered .env files, leaving Write open.
+    """
+    globs = _write_deny_globs(settings_path)
+    assert "**/.env*" in globs, (
+        f"{settings_path.relative_to(REPO_ROOT)}: "
+        "Write(**/.env*) is missing from the deny list — "
+        "Claude Code treats Write as a separate tool from Edit"
+    )
+
+
+@pytest.mark.parametrize("settings_path", SETTINGS_FILES, ids=SETTINGS_IDS)
+def test_multiedit_env_glob_present(settings_path: Path) -> None:
+    """MultiEdit(**/.env*) must be in the deny list (security gap 12)."""
+    globs = _multiedit_deny_globs(settings_path)
+    assert "**/.env*" in globs, (
+        f"{settings_path.relative_to(REPO_ROOT)}: "
+        "MultiEdit(**/.env*) is missing from the deny list — "
+        "Claude Code treats MultiEdit as a separate tool from Edit"
+    )
+
+
+@pytest.mark.parametrize("settings_path", SETTINGS_FILES, ids=SETTINGS_IDS)
+@pytest.mark.parametrize("src_file", _BLOCKED_SECRET_FILES)
+def test_secret_manifest_files_blocked_by_write(
+    settings_path: Path, src_file: str
+) -> None:
+    """Secret manifest files (.yaml/.json/etc.) must also be blocked by Write deny globs."""
+    globs = _write_deny_globs(settings_path)
+    matched = any(fnmatch.fnmatch(src_file, g) for g in globs)
+    assert matched, (
+        f"{settings_path.relative_to(REPO_ROOT)}: secret file {src_file!r} "
+        "is not blocked by any Write deny glob — check extension-scoped patterns"
+    )
+
+
+@pytest.mark.parametrize("settings_path", SETTINGS_FILES, ids=SETTINGS_IDS)
+@pytest.mark.parametrize("src_file", _BLOCKED_SECRET_FILES)
+def test_secret_manifest_files_blocked_by_multiedit(
+    settings_path: Path, src_file: str
+) -> None:
+    """Secret manifest files (.yaml/.json/etc.) must also be blocked by MultiEdit deny globs."""
+    globs = _multiedit_deny_globs(settings_path)
+    matched = any(fnmatch.fnmatch(src_file, g) for g in globs)
+    assert matched, (
+        f"{settings_path.relative_to(REPO_ROOT)}: secret file {src_file!r} "
+        "is not blocked by any MultiEdit deny glob — check extension-scoped patterns"
+    )
+
+
+@pytest.mark.parametrize("settings_path", SETTINGS_FILES, ids=SETTINGS_IDS)
+@pytest.mark.parametrize("src_file", _BLOCKED_CREDENTIALS_FILES)
+def test_credentials_manifest_files_blocked_by_write(
+    settings_path: Path, src_file: str
+) -> None:
+    """Credential manifest files (.yaml/.json/etc.) must also be blocked by Write deny globs."""
+    globs = _write_deny_globs(settings_path)
+    matched = any(fnmatch.fnmatch(src_file, g) for g in globs)
+    assert matched, (
+        f"{settings_path.relative_to(REPO_ROOT)}: credentials file {src_file!r} "
+        "is not blocked by any Write deny glob — check extension-scoped patterns"
+    )
+
+
+@pytest.mark.parametrize("settings_path", SETTINGS_FILES, ids=SETTINGS_IDS)
+@pytest.mark.parametrize("src_file", _BLOCKED_CREDENTIALS_FILES)
+def test_credentials_manifest_files_blocked_by_multiedit(
+    settings_path: Path, src_file: str
+) -> None:
+    """Credential manifest files (.yaml/.json/etc.) must also be blocked by MultiEdit deny globs."""
+    globs = _multiedit_deny_globs(settings_path)
+    matched = any(fnmatch.fnmatch(src_file, g) for g in globs)
+    assert matched, (
+        f"{settings_path.relative_to(REPO_ROOT)}: credentials file {src_file!r} "
+        "is not blocked by any MultiEdit deny glob — check extension-scoped patterns"
+    )
+
+
+@pytest.mark.parametrize("settings_path", SETTINGS_FILES, ids=SETTINGS_IDS)
+@pytest.mark.parametrize("env_file", _BLOCKED_SUBDIRECTORY_ENV_FILES)
+def test_subdirectory_env_files_blocked_by_write(
+    settings_path: Path, env_file: str
+) -> None:
+    """Subdirectory .env* files must also be blocked by Write deny globs (security gap 12)."""
+    globs = _write_deny_globs(settings_path)
+    matched = any(fnmatch.fnmatch(env_file, g) for g in globs)
+    assert matched, (
+        f"{settings_path.relative_to(REPO_ROOT)}: .env file {env_file!r} "
+        "is not blocked by any Write deny glob"
+    )
+
+
+@pytest.mark.parametrize("settings_path", SETTINGS_FILES, ids=SETTINGS_IDS)
+@pytest.mark.parametrize("env_file", _BLOCKED_SUBDIRECTORY_ENV_FILES)
+def test_subdirectory_env_files_blocked_by_multiedit(
+    settings_path: Path, env_file: str
+) -> None:
+    """Subdirectory .env* files must also be blocked by MultiEdit deny globs (security gap 12)."""
+    globs = _multiedit_deny_globs(settings_path)
+    matched = any(fnmatch.fnmatch(env_file, g) for g in globs)
+    assert matched, (
+        f"{settings_path.relative_to(REPO_ROOT)}: .env file {env_file!r} "
+        "is not blocked by any MultiEdit deny glob"
     )

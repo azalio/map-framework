@@ -13117,6 +13117,10 @@ def record_scope_baseline(branch: str) -> dict:
             path = raw[3:].strip()
             if " -> " in path:
                 path = path.split(" -> ", 1)[1]
+            # git porcelain v1 double-quotes paths with spaces/special characters.
+            # Strip surrounding quotes so baseline entries match the unquoted form.
+            if path.startswith('"') and path.endswith('"'):
+                path = path[1:-1]
             if (
                 path
                 and not path.startswith(".map/")
@@ -13124,15 +13128,15 @@ def record_scope_baseline(branch: str) -> dict:
                 and not path.startswith(".agents/")
             ):
                 files.append(path)
-    path = _scope_baseline_path(branch, project_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    baseline_path = _scope_baseline_path(branch, project_dir)
+    baseline_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "branch": _sanitize_branch(branch),
         "recorded_at": _utc_timestamp(),
         "files": sorted(set(files)),
     }
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    return {"status": "success", "path": str(path), "count": len(payload["files"]), "files": payload["files"]}
+    _write_json_file(baseline_path, payload)
+    return {"status": "success", "path": str(baseline_path), "count": len(payload["files"]), "files": payload["files"]}
 
 
 def _resolve_subtask_diff_base(
@@ -13274,10 +13278,9 @@ def validate_mutation_boundary(
     # entirely and rely on porcelain (uncommitted + untracked) — the only sane
     # behaviour in a brand-new repo before its first commit.
     base_ref_explicit = bool(base_ref)
-    if not base_ref:
-        base_ref = _resolve_subtask_diff_base(branch_name, subtask_id, project_dir)
-
     try:
+        if not base_ref:
+            base_ref = _resolve_subtask_diff_base(branch_name, subtask_id, project_dir)
         if base_ref:
             diff_result = subprocess.run(
                 ["git", "diff", "--name-only", base_ref],
@@ -13349,6 +13352,11 @@ def validate_mutation_boundary(
             path = raw[3:].strip()
             if " -> " in path:
                 path = path.split(" -> ", 1)[1]
+            # git porcelain v1 double-quotes paths that contain spaces or special
+            # characters (e.g. `?? "file with spaces.txt"`). Strip the surrounding
+            # quotes so the path compares equal to the unquoted form in expected/baseline.
+            if path.startswith('"') and path.endswith('"'):
+                path = path[1:-1]
             if path:
                 actual_set.add(path)
 

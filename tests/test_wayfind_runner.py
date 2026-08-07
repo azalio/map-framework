@@ -269,6 +269,25 @@ class TestFogGraduation:
         assert wr.add_fog("checkout", "first")["fog_id"] == "F-1"
         assert wr.add_fog("checkout", "second")["fog_id"] == "F-2"
 
+    def test_add_ticket_from_graduated_fog_rejected(self) -> None:
+        """Regression Bug 4: add_ticket must reject a from_fog referencing a
+        fog entry whose status is not 'open' (e.g. 'graduated').
+
+        Before the fix the from_fog guard checked only for the fog ID's existence
+        but not its open status, so a graduated fog entry could be re-used as a
+        from_fog source, double-counting the relationship in the workflow.
+        """
+        _create(fog_json='["auth interplay unclear"]')
+        # Graduate the fog entry — status becomes 'graduated'.
+        wr.graduate_fog("checkout", "F-1", "Resolve auth", "grilling", "How does auth interact?")
+        # Now try to add another ticket from the graduated fog entry — must be rejected.
+        result = wr.add_ticket(
+            "checkout", "Follow-up ticket", "task", "What should we do?",
+            from_fog="F-1",
+        )
+        assert result["status"] == "error"
+        assert "F-1" in result.get("message", "")
+
 
 # ---------------------------------------------------------------------------
 # 5. Out of scope
@@ -415,6 +434,28 @@ class TestEvidencePathContainment:
         result = wr.record_human_input("checkout", tid, "sess-1", str(outside))
         assert result["status"] == "error"
         assert result["code"] == "missing_input"
+
+    def test_absolute_path_inside_map_dir_rejected(self, repo: Path) -> None:
+        """Regression Bug 3: an absolute path that resolves INSIDE the map dir
+        must be rejected by _resolve_evidence_path.
+
+        On POSIX, ``Path(base) / "/absolute/path"`` evaluates to the absolute
+        path, discarding base — so before the fix an absolute path pointing
+        inside the map dir passed the containment check and was stored verbatim
+        in state.json, breaking all markdown link targets in map.md, handoff.md,
+        and ticket files.
+        """
+        tid = self._claimed_ticket()
+        # Write the resolution file at the real map-dir path so it genuinely exists.
+        rel = f"resolutions/{tid}.md"
+        abs_path = (repo / ".map" / "wayfind" / "checkout" / rel).resolve()
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        abs_path.write_text("the resolution prose", encoding="utf-8")
+        # Pass the absolute path string — must be rejected even though the file IS
+        # inside the map dir; relative string is what the API expects.
+        result = wr.resolve_ticket("checkout", tid, "sess-1", "decided", str(abs_path))
+        assert result["status"] == "error"
+        assert result["code"] == "missing_resolution"
 
 
 # ---------------------------------------------------------------------------
