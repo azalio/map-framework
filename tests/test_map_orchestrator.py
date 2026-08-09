@@ -2020,18 +2020,43 @@ class TestMonitorFailed:
         assert "Missing Reset()" in content
         assert "retry 1" in content
 
-    def test_feedback_file_forwards_only_blocker_items(self, branch_dir, tmp_path):
+    def test_feedback_file_highlights_blocker_items_and_preserves_full_text(
+        self, branch_dir, tmp_path
+    ):
+        # BLOCKER lines are surfaced first; the complete original text is always
+        # included in the "Full Monitor feedback" section so no content is dropped.
         self._make_monitor_state(tmp_path, branch_dir)
         feedback = "BLOCKER: build failed in src/app.py\nNON-BLOCKING: docs could mention another example\nnice-to-have: style could be more elegant\nMissing required test for handled timeout path"
 
         result = map_orchestrator.monitor_failed(branch_dir, feedback)
 
         content = Path(result["feedback_file"]).read_text()
+        # Blocker items appear in the highlighted section
         assert "build failed" in content
         assert "Missing required test" in content
-        assert "docs could mention" not in content
-        assert "style could be more elegant" not in content
         assert "Actor may re-add or expand code only by naming" in content
+        # Full original text is preserved — non-blocking lines are NOT dropped
+        assert "docs could mention" in content
+        assert "style could be more elegant" in content
+        assert "Full Monitor feedback:" in content
+
+    def test_feedback_file_non_english_feedback_preserved(self, branch_dir, tmp_path):
+        # Russian/non-English feedback must NOT be replaced by a generic placeholder.
+        # It should be forwarded in full because no English keyword will match it.
+        self._make_monitor_state(tmp_path, branch_dir)
+        ru_feedback = (
+            "caBundle.enabled=false ломает компонент: Bundle не рендерится, но 6 ссылок на "
+            "bundle-ConfigMap остаются в трёх Deployment -> поды в ContainerCreating."
+        )
+
+        result = map_orchestrator.monitor_failed(branch_dir, ru_feedback)
+
+        content = Path(result["feedback_file"]).read_text()
+        # The Russian defect description must survive into the retry artifact
+        assert "ломает компонент" in content
+        assert "ContainerCreating" in content
+        # Must NOT be replaced by the old generic English-only placeholder
+        assert "no BLOCKER-class feedback was detected" not in content
 
     def test_feedback_file_none_when_empty(self, branch_dir, tmp_path):
         self._make_monitor_state(tmp_path, branch_dir)
@@ -2677,7 +2702,10 @@ class TestWaveMonitorFailed:
         content = Path(result["feedback_file"]).read_text()
         assert "type mismatch" in content
 
-    def test_wave_feedback_forwards_only_blocker_items(self, branch_dir, tmp_path):
+    def test_wave_feedback_highlights_blocker_items_and_preserves_full_text(
+        self, branch_dir, tmp_path
+    ):
+        # BLOCKER lines are surfaced first; full original text is always preserved.
         self._make_wave_state(tmp_path, branch_dir)
         feedback = "CRITICAL: security regression in auth flow\nNON-BLOCKING: documentation could be longer\ncosmetic: volume is high"
 
@@ -2685,8 +2713,25 @@ class TestWaveMonitorFailed:
 
         content = Path(result["feedback_file"]).read_text()
         assert "security regression" in content
-        assert "documentation could be longer" not in content
-        assert "volume is high" not in content
+        # Full original text preserved — non-blocking lines are NOT dropped
+        assert "documentation could be longer" in content
+        assert "volume is high" in content
+        assert "Full Monitor feedback:" in content
+
+    def test_wave_feedback_non_english_preserved(self, branch_dir, tmp_path):
+        # Non-English feedback must be forwarded in full, not replaced by a placeholder.
+        self._make_wave_state(tmp_path, branch_dir)
+        ru_feedback = (
+            "YAML-якоря не выживают при слиянии Helm-значений: три Deployment "
+            "ссылаются на несуществующий ConfigMap."
+        )
+
+        result = map_orchestrator.wave_monitor_failed("ST-001", branch_dir, ru_feedback)
+
+        content = Path(result["feedback_file"]).read_text()
+        assert "YAML-якоря" in content
+        assert "ConfigMap" in content
+        assert "no BLOCKER-class feedback was detected" not in content
 
     def test_feedback_file_none_when_empty(self, branch_dir, tmp_path):
         self._make_wave_state(tmp_path, branch_dir)

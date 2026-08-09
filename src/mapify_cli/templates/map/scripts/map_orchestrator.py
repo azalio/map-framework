@@ -469,7 +469,12 @@ def _is_blocker_feedback_line(line: str) -> bool:
 
 
 def _filter_blocker_retry_feedback(feedback: str) -> str:
-    """Forward only BLOCKER-class feedback into the next Actor retry."""
+    """Forward Monitor feedback into the next Actor retry.
+
+    Uses the keyword filter as a ranking hint only: lines matching BLOCKER terms
+    are surfaced first, but the complete original text is always preserved so
+    non-English or differently-phrased feedback is never silently dropped.
+    """
     if not feedback.strip():
         return ""
 
@@ -485,15 +490,25 @@ def _filter_blocker_retry_feedback(feedback: str) -> str:
                 *kept_lines,
                 "",
                 "Actor may re-add or expand code only by naming the BLOCKER item it addresses.",
+                "",
+                "Full Monitor feedback:",
+                feedback.rstrip(),
             ]
         )
 
-    return (
-        "Monitor returned valid=false, but no BLOCKER-class feedback was detected. "
-        "Re-check the contract, build/test output, security, data-loss paths, and "
-        "required behavior before expanding scope. Do not add code for style, "
-        "volume, docs-only, cosmetic, or nice-to-have feedback."
+    # No BLOCKER keywords matched (may be non-English or use non-standard phrasing).
+    # Forward the complete original text so the defect description is never lost.
+    _header = (
+        "Monitor returned valid=false. Forwarding complete feedback"
+        " (keyword classification did not match — may be non-English"
+        " or use non-standard phrasing):"
     )
+    _footer = (
+        "Re-check the contract, build/test output, security, data-loss paths,"
+        " and required behavior before expanding scope. Do not add code for style,"
+        " volume, docs-only, cosmetic, or nice-to-have feedback."
+    )
+    return f"{_header}\n\n{feedback.rstrip()}\n\n{_footer}"
 
 
 def _latest_numbered_artifact(plan_dir: Path, prefix: str) -> Path | None:
