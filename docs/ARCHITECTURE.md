@@ -447,12 +447,10 @@ Information not available in current evidence.
 
 ## Freshness
 
-Last refreshed: 2026-07-14
+Last refreshed: 2026-08-09
 
-Refresh reason: Incremental refresh after `main` added implementer-readiness
-review artifact (#348) — a pre-code spec-implementability gate with four
-verdicts, strict input validation, and the new `implementer_readiness` manifest
-stage.
+Refresh reason: Incremental refresh after `main` fixed non-English Monitor
+feedback being silently dropped (#404).
 
 Evidence source files:
 - `README.md`
@@ -490,7 +488,16 @@ Evidence source files:
 
 Current delta captured:
 
-- Implementer-readiness review gate (#348): `write_implementer_readiness_review()`
+- Non-English Monitor feedback preservation (#404): `_filter_blocker_retry_feedback` in
+  `.map/scripts/map_orchestrator.py` now uses `BLOCKER_FEEDBACK_TERMS` as a **ranking hint**
+  only, not a gate. When lines match BLOCKER keywords they are surfaced first, but the
+  complete original feedback is always appended under a `"Full Monitor feedback:"` section.
+  When no keywords match (e.g. Russian-language feedback), the full text is forwarded with a
+  "classification did not match" note. The old behavior silently replaced non-English feedback
+  with a generic placeholder, causing the Actor retry to act on no defect information.
+  4 tests updated, 4 regression tests added; 4320 total tests pass.
+
+Earlier delta (2026-07-14): Implementer-readiness review gate (#348): `write_implementer_readiness_review()`
   writes `.map/<branch>/implementation-readiness.{json,md}` with one of four
   verdicts (`ready`, `needs_clarification`, `needs_spec_revision`,
   `accepted_with_risk`). `accepted_with_risk` requires non-empty
