@@ -477,6 +477,15 @@ The runner stores gate verdicts as `ready` / `needs-revision` / `blocked` and
 normalizes `PROCEED` -> `ready`, `REVISE` -> `needs-revision`, `BLOCK` -> `blocked`,
 so either spelling is accepted by `write_stage_gate`.
 
+## Write Review Verdict Ledger (MANDATORY)
+
+```bash
+python3 .map/scripts/map_step_runner.py write_review_verdict_ledger \
+  --monitor-json "$MONITOR_JSON" --predictor-json "$PREDICTOR_JSON" \
+  --evaluator-json "$EVALUATOR_JSON" --review-mode "$REVIEW_MODE_LABEL"
+```
+Full usage, decision table, and adversarial-mode flags → review-reference.md § Verdict Ledger.
+
 ## Workflow Gate Unlock (REVISE/BLOCK only)
 
 If edits are needed, write the stage gate so the owning workflow can continue.

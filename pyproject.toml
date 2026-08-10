@@ -132,6 +132,17 @@ ignore = [
     "TRY004",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Tests and scripts use sys.path.insert before imports to locate
+# the generated scripts tree — these are intentional, load-order-
+# required patterns, not accidental out-of-order imports.
+"tests/**" = ["E402"]
+# Generated templates also contain intentional deferred imports.
+"src/mapify_cli/templates/**" = ["E402"]
+# Parallelism observability has a conditional TypedDict import after
+# a version-guard comment block; the ordering is deliberate.
+"src/mapify_cli/parallelism_observability.py" = ["E402"]
+
 [tool.ruff.lint.flake8-bugbear]
 # typer's CLI parameter declarations require typer.Option(...)/typer.Argument(...)
 # as argument defaults -- that's the framework's own idiomatic API, not the

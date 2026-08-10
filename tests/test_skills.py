@@ -108,9 +108,13 @@ HIGH_TRAFFIC_COMPACT_SKILL_REFS = {
 # the merge_subtask_worktree accept branch replacing the per-subtask commit, and
 # the discard_subtask_worktree reject branch on valid=false. The full recipe
 # (bash, guard `kind`s, Actor path instruction) lives in efficient-reference.md.
+# Budget bumped from 560 → 570 (#406): the mandatory write_review_verdict_ledger
+# step (command + reference pointer) is irreducible active control flow. Full
+# decision table and adversarial-mode flags live in review-reference.md § Verdict
+# Ledger.
 _DEFAULT_SKILL_BODY_BUDGET = 515
 HIGH_TRAFFIC_SKILL_BODY_BUDGETS = {
-    "map-review": 560,
+    "map-review": 570,
     # map-tdd carries Iron Law enforcement (rationalization table, Red Flags,
     # RED-GREEN-REFACTOR cycle), spec compliance reviewer dispatch, and code
     # quality reviewer dispatch — all irreducible active control flow (#285).

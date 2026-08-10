@@ -260,6 +260,7 @@ ARTIFACT_STAGE_NAMES = (
     "implementer_readiness",
     "context_usefulness",
     "wayfind_handoff",
+    "review_verdict_ledger",
 )
 RUN_HEALTH_TERMINAL_STATUSES = {
     "pending",
@@ -7160,6 +7161,517 @@ def write_plan_review(
         "path": str(review_file),
         "file_name": review_file.name,
         "index": review_number,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Review Verdict Ledger — computed PROCEED/REVISE/BLOCK from a closed table
+# (#406). normalize_review_verdict() is a pure function; write_review_verdict_ledger()
+# persists the artifact and updates the manifest stage.
+# ---------------------------------------------------------------------------
+
+# Canonical decision table name stamped into every ledger for traceability.
+_VERDICT_TABLE_ID = "review_verdict_table.v1"
+
+# Monitor severity → ledger severity mapping.
+_MONITOR_SEVERITY_MAP: dict[str, str] = {
+    "CRITICAL": "critical",
+    "HIGH": "important",
+    "MEDIUM": "important",
+    "LOW": "minor",
+    "NEEDS_INVESTIGATION": "needs_investigation",
+}
+
+# Predictor risk → ledger severity mapping.
+_PREDICTOR_RISK_MAP: dict[str, str] = {
+    "critical": "critical",
+    "high": "important",
+    "medium": "minor",
+    "low": "minor",
+}
+
+# Monitor issue category → ledger category mapping.
+_CATEGORY_MAP: dict[str, str] = {
+    "correctness": "correctness",
+    "security": "security",
+    "tests": "tests",
+    "performance": "performance",
+    "maintainability": "maintainability",
+    "workflow": "workflow",
+    "functionality": "correctness",
+    "test": "tests",
+    "perf": "performance",
+    "style": "maintainability",
+    "deps": "maintainability",
+    "architecture": "maintainability",
+    "api": "correctness",
+}
+
+
+def _normalize_category(raw: str) -> str:
+    """Map a raw issue category string to one of the closed ledger categories."""
+    return _CATEGORY_MAP.get((raw or "").lower().strip(), "unknown")
+
+
+def _apply_verdict_table(active_findings: list[dict[str, Any]]) -> tuple[str, str]:
+    """Apply the closed decision table to active findings and return (verdict, basis).
+
+    Decision table (review_verdict_table.v1):
+      1. Any active critical finding → BLOCK.
+      2. Any active security or correctness finding that is important+ → BLOCK.
+      3. Any active important finding (any category) → REVISE.
+      4. Any active needs_investigation finding → REVISE.
+      5. No active findings, or only minor findings → PROCEED.
+
+    Evaluator overall_score is advisory only; it is never a tie-breaker that
+    can override an active finding under this table.
+    """
+    if not active_findings:
+        return "PROCEED", "No active findings; decision table yields PROCEED."
+
+    has_critical = any(f.get("severity") == "critical" for f in active_findings)
+    if has_critical:
+        critical_claims = [
+            f.get("claim", "")
+            for f in active_findings
+            if f.get("severity") == "critical"
+        ]
+        basis = (
+            "Active critical finding(s) detected: "
+            + "; ".join(str(c) for c in critical_claims[:3])
+            + (" [and more]" if len(critical_claims) > 3 else "")
+            + ". Decision table rule 1 → BLOCK."
+        )
+        return "BLOCK", basis
+
+    # Security/correctness blocking rule (rule 2)
+    blocking_cats = {"security", "correctness"}
+    has_security_correctness_blocker = any(
+        f.get("severity") == "important" and f.get("category") in blocking_cats
+        for f in active_findings
+    )
+    if has_security_correctness_blocker:
+        cats = [
+            f"{f.get('category')} ({f.get('claim', '')[:60]})"
+            for f in active_findings
+            if f.get("severity") == "important" and f.get("category") in blocking_cats
+        ]
+        basis = (
+            "Active security/correctness important finding(s): "
+            + "; ".join(cats[:3])
+            + (" [and more]" if len(cats) > 3 else "")
+            + ". Decision table rule 2 → BLOCK."
+        )
+        return "BLOCK", basis
+
+    has_important = any(f.get("severity") == "important" for f in active_findings)
+    has_needs_investigation = any(
+        f.get("severity") == "needs_investigation" for f in active_findings
+    )
+
+    if has_important:
+        imp_claims = [
+            f.get("claim", "")
+            for f in active_findings
+            if f.get("severity") == "important"
+        ]
+        basis = (
+            "Active important finding(s): "
+            + "; ".join(str(c) for c in imp_claims[:3])
+            + (" [and more]" if len(imp_claims) > 3 else "")
+            + ". Decision table rule 3 → REVISE."
+        )
+        return "REVISE", basis
+
+    if has_needs_investigation:
+        basis = (
+            "Active needs_investigation finding(s) require operator follow-up. "
+            "Decision table rule 4 → REVISE."
+        )
+        return "REVISE", basis
+
+    return "PROCEED", "Only minor active findings remain. Decision table rule 5 → PROCEED."
+
+
+def normalize_review_verdict(
+    monitor_result: dict[str, Any] | None = None,
+    predictor_result: dict[str, Any] | None = None,
+    evaluator_result: dict[str, Any] | None = None,
+    *,
+    adversarial_findings: list[dict[str, Any]] | None = None,
+    review_mode: str = "normal",
+    previous_verdict: str | None = None,
+    branch: str | None = None,
+) -> dict[str, Any]:
+    """Compute a normalized review verdict ledger from reviewer outputs.
+
+    Pure function — does NOT write files. Returns a ledger dict ready for
+    ``write_review_verdict_ledger`` to persist.
+
+    Decision table (review_verdict_table.v1):
+      - Any active critical finding → BLOCK.
+      - Any active security/correctness important finding → BLOCK.
+      - Any active important finding → REVISE.
+      - Any active needs_investigation finding → REVISE.
+      - Only minor or no active findings → PROCEED.
+
+    Evaluator overall_score is recorded as advisory evidence but cannot
+    override an active finding under any rule of this table.
+
+    Args:
+        monitor_result:      Parsed Monitor agent output dict (may be None).
+        predictor_result:    Parsed Predictor agent output dict (may be None).
+        evaluator_result:    Parsed Evaluator agent output dict (may be None).
+        adversarial_findings: Pre-normalized finding dicts from adversarial/
+                             compare-ordering mode. When provided, they are
+                             appended to the registry alongside normal reviewer
+                             findings.
+        review_mode:         One of normal|adversarial|cross_ai|compare_orderings.
+        previous_verdict:    Prior PROCEED|REVISE|BLOCK verdict, if any.
+        branch:              Branch name (for output labeling only).
+
+    Returns:
+        A dict conforming to REVIEW_VERDICT_LEDGER_SCHEMA.
+    """
+    branch_name = branch or get_branch_name()
+    findings_registry: list[dict[str, Any]] = []
+    not_verified: list[str] = []
+    seq = 0
+
+    def _next_id() -> str:
+        nonlocal seq
+        seq += 1
+        return f"RVF-{seq:03d}"
+
+    # --- Ingest Monitor issues ---
+    monitor_data: dict[str, Any] = monitor_result or {}
+    for issue in (monitor_data.get("issues") or []):
+        if not isinstance(issue, dict):
+            continue
+        raw_sev = str(issue.get("severity") or "").upper()
+        sev = _MONITOR_SEVERITY_MAP.get(raw_sev, "needs_investigation")
+        cat = _normalize_category(str(issue.get("category") or ""))
+        was_before = issue.get("was_present_before_pr")
+
+        evidence: list[dict[str, Any]] = []
+        for ev_item in (issue.get("evidence") or []):
+            if isinstance(ev_item, dict):
+                evidence.append(ev_item)
+        reach = str(issue.get("reach_evidence") or "").strip()
+        if reach:
+            evidence.append({"source": "reach_evidence", "quote": reach})
+
+        # Pre-existing issues are tombstoned immediately (route to backlog, not block PR).
+        if was_before is True:
+            findings_registry.append({
+                "id": _next_id(),
+                "source_agent": "monitor",
+                "category": cat,
+                "severity": sev,
+                "claim": str(issue.get("description") or ""),
+                "evidence": evidence,
+                "status": "tombstoned",
+                "transition_reason": "pre_existing_backlog",
+                "transition_evidence": "was_present_before_pr=true",
+                "was_present_before_pr": True,
+            })
+        else:
+            # Severity MEDIUM/HIGH without reach_evidence → downgrade to needs_investigation.
+            if sev in ("important", "critical") and not reach:
+                findings_registry.append({
+                    "id": _next_id(),
+                    "source_agent": "monitor",
+                    "category": cat,
+                    "severity": "needs_investigation",
+                    "claim": str(issue.get("description") or ""),
+                    "evidence": evidence,
+                    "status": "downgraded",
+                    "transition_reason": "quote_absent",
+                    "transition_evidence": (
+                        "reach_evidence missing for severity "
+                        f"{raw_sev}; downgraded per Step A.3"
+                    ),
+                    "was_present_before_pr": False,
+                })
+            else:
+                findings_registry.append({
+                    "id": _next_id(),
+                    "source_agent": "monitor",
+                    "category": cat,
+                    "severity": sev,
+                    "claim": str(issue.get("description") or ""),
+                    "evidence": evidence,
+                    "status": "active",
+                    "transition_reason": None,
+                    "transition_evidence": None,
+                    "was_present_before_pr": bool(was_before) if was_before is not None else None,
+                })
+
+    # --- Ingest Predictor risk as a summary finding ---
+    predictor_data: dict[str, Any] = predictor_result or {}
+    pred_risk = str(predictor_data.get("risk_assessment") or "").lower()
+    if pred_risk in _PREDICTOR_RISK_MAP:
+        pred_sev = _PREDICTOR_RISK_MAP[pred_risk]
+        pred_evidence: list[dict[str, Any]] = []
+        for ev_item in (predictor_data.get("evidence") or []):
+            if isinstance(ev_item, dict):
+                pred_evidence.append(ev_item)
+        pred_state = predictor_data.get("predicted_state") or {}
+        breaking = (pred_state.get("breaking_changes") or []) if isinstance(pred_state, dict) else []
+        breaking_count = len(breaking) if isinstance(breaking, list) else 0
+        claim = f"Predictor risk_assessment={pred_risk}"
+        if breaking_count:
+            claim += f"; {breaking_count} breaking change(s) predicted"
+        findings_registry.append({
+            "id": _next_id(),
+            "source_agent": "predictor",
+            "category": "workflow",
+            "severity": pred_sev,
+            "claim": claim,
+            "evidence": pred_evidence,
+            "status": "active",
+            "transition_reason": None,
+            "transition_evidence": None,
+            "was_present_before_pr": None,
+        })
+
+    # --- Record Evaluator scores as advisory (no verdict influence) ---
+    evaluator_data: dict[str, Any] = evaluator_result or {}
+    evaluator_scores: dict[str, Any] | None = None
+    if evaluator_data:
+        evaluator_scores = {
+            "overall_score": evaluator_data.get("overall_score"),
+            "recommendation": evaluator_data.get("recommendation"),
+            "scores": evaluator_data.get("scores"),
+        }
+        # Flag any Evaluator "proceed" recommendation that contradicts Monitor findings.
+        ev_rec = str(evaluator_data.get("recommendation") or "").lower()
+        if ev_rec == "proceed":
+            monitor_verdict = str(monitor_data.get("verdict") or "").lower()
+            if monitor_verdict in ("needs_revision", "rejected"):
+                not_verified.append(
+                    "Evaluator recommendation=proceed while Monitor verdict="
+                    f"{monitor_verdict}. Evaluator score is advisory only; "
+                    "Monitor findings are authoritative per decision table."
+                )
+
+    # --- Ingest adversarial / compare-ordering findings (pre-normalized) ---
+    for ext_finding in (adversarial_findings or []):
+        if not isinstance(ext_finding, dict):
+            continue
+        raw_sev = str(ext_finding.get("severity") or "").lower()
+        sev = {"critical": "critical", "important": "important", "minor": "minor"}.get(
+            raw_sev, "needs_investigation"
+        )
+        findings_registry.append({
+            "id": _next_id(),
+            "source_agent": ext_finding.get("source_agent", "adversarial"),
+            "category": _normalize_category(str(ext_finding.get("category") or "")),
+            "severity": sev,
+            "claim": str(ext_finding.get("claim") or ext_finding.get("description") or ""),
+            "evidence": list(ext_finding.get("evidence") or []),
+            "status": "active",
+            "transition_reason": None,
+            "transition_evidence": None,
+            "was_present_before_pr": None,
+        })
+
+    # --- Apply decision table to active findings only ---
+    active_findings = [f for f in findings_registry if f.get("status") == "active"]
+    computed_verdict, verdict_basis = _apply_verdict_table(active_findings)
+
+    # --- Journal ---
+    matches_previous: bool | None = None
+    if previous_verdict is not None:
+        matches_previous = (previous_verdict.upper() == computed_verdict)
+
+    ledger: dict[str, Any] = {
+        "schema_version": "review_verdict_ledger.v1",
+        "generated_at": _utc_timestamp(),
+        "branch": branch_name,
+        "criteria_version": _VERDICT_TABLE_ID,
+        "input_classification": {
+            "review_mode": review_mode if review_mode in (
+                "normal", "adversarial", "cross_ai", "compare_orderings"
+            ) else "unknown",
+            "destination": "unknown",
+            "evidence_mode": "structural",
+            "executor_class": "unknown",
+        },
+        "findings_registry": findings_registry,
+        "not_verified": not_verified,
+        "evaluator_scores": evaluator_scores,
+        "verdict_table": _VERDICT_TABLE_ID,
+        "computed_verdict": computed_verdict,
+        "verdict_basis": verdict_basis,
+        "journal": {
+            "previous_verdict": previous_verdict.upper() if previous_verdict else None,
+            "current_verdict": computed_verdict,
+            "matches_previous": matches_previous,
+            "basis": verdict_basis,
+        },
+        "active_count": len(active_findings),
+        "tombstoned_count": sum(
+            1 for f in findings_registry if f.get("status") in ("tombstoned", "downgraded")
+        ),
+    }
+    return ledger
+
+
+def write_review_verdict_ledger(
+    monitor_json: str = "",
+    predictor_json: str = "",
+    evaluator_json: str = "",
+    *,
+    adversarial_json: str = "",
+    review_mode: str = "normal",
+    previous_verdict: str = "",
+    branch: str | None = None,
+) -> dict[str, Any]:
+    """Parse reviewer JSON strings, normalize findings, write ledger artifact.
+
+    Writes:
+      .map/<branch>/review-verdict-ledger.json
+      .map/<branch>/review-verdict-ledger.md
+
+    Updates artifact_manifest.json stage ``review_verdict_ledger``.
+
+    Args:
+        monitor_json:       JSON string of Monitor agent output (may be empty).
+        predictor_json:     JSON string of Predictor agent output (may be empty).
+        evaluator_json:     JSON string of Evaluator agent output (may be empty).
+        adversarial_json:   JSON array of pre-normalized adversarial findings (may be empty).
+        review_mode:        One of normal|adversarial|cross_ai|compare_orderings.
+        previous_verdict:   Prior PROCEED|REVISE|BLOCK verdict string (may be empty).
+        branch:             Branch name override.
+
+    Returns:
+        Status dict with ``status``, ``computed_verdict``, ``json_path``, ``md_path``.
+    """
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+
+    def _safe_parse(raw: str) -> dict[str, Any]:
+        if not raw or not raw.strip():
+            return {}
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+
+    def _safe_parse_list(raw: str) -> list[dict[str, Any]]:
+        if not raw or not raw.strip():
+            return []
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return [x for x in parsed if isinstance(x, dict)]
+            if isinstance(parsed, dict):
+                return [parsed]
+            return []
+        except json.JSONDecodeError:
+            return []
+
+    monitor_result = _safe_parse(monitor_json)
+    predictor_result = _safe_parse(predictor_json)
+    evaluator_result = _safe_parse(evaluator_json)
+    adversarial_findings = _safe_parse_list(adversarial_json)
+
+    ledger = normalize_review_verdict(
+        monitor_result=monitor_result,
+        predictor_result=predictor_result,
+        evaluator_result=evaluator_result,
+        adversarial_findings=adversarial_findings,
+        review_mode=review_mode,
+        previous_verdict=previous_verdict or None,
+        branch=branch_name,
+    )
+
+    # Write JSON
+    json_path = branch_dir / "review-verdict-ledger.json"
+    json_path.write_text(
+        json.dumps(ledger, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
+    )
+
+    # Write Markdown summary
+    verdict = str(ledger.get("computed_verdict", "BLOCK"))
+    active_count = int(ledger.get("active_count") or 0)
+    tombstoned_count = int(ledger.get("tombstoned_count") or 0)
+    not_verified_list = list(ledger.get("not_verified") or [])
+
+    md_lines: list[str] = [
+        "# Review Verdict Ledger\n",
+        f"**Computed verdict:** {verdict}",
+        f"**Verdict basis:** {ledger.get('verdict_basis', '')}",
+        f"**Active findings:** {active_count} | **Tombstoned/downgraded:** {tombstoned_count}",
+        "",
+        "## Findings Registry",
+        "",
+    ]
+    for f in (ledger.get("findings_registry") or []):
+        if not isinstance(f, dict):
+            continue
+        status = f.get("status", "active")
+        sev = f.get("severity", "")
+        src = f.get("source_agent", "")
+        claim = str(f.get("claim") or "")[:120]
+        icon = {"active": "✗", "tombstoned": "⌫", "downgraded": "↓"}.get(str(status), "?")
+        md_lines.append(
+            f"- {icon} [{f.get('id')}] **{sev}** ({src}): {claim}"
+        )
+        if f.get("transition_reason"):
+            md_lines.append(
+                f"  - Reason: `{f['transition_reason']}` — {f.get('transition_evidence', '')}"
+            )
+
+    if not_verified_list:
+        md_lines += ["", "## Not Verified", ""]
+        for nv in not_verified_list:
+            md_lines.append(f"- {nv}")
+
+    md_lines += [
+        "",
+        "## Journal",
+        "",
+        f"- Previous verdict: {ledger.get('journal', {}).get('previous_verdict') or 'N/A'}",
+        f"- Current verdict: {verdict}",
+        f"- Verdict table: `{_VERDICT_TABLE_ID}`",
+        "",
+    ]
+
+    md_path = branch_dir / "review-verdict-ledger.md"
+    md_path.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
+
+    # Update artifact manifest
+    manifest = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        manifest,
+        "review_verdict_ledger",
+        "ready",
+        artifacts=[
+            _artifact_ref(json_path, "review-verdict-ledger"),
+            _artifact_ref(md_path, "review-verdict-ledger-report"),
+        ],
+        metadata={
+            "computed_verdict": verdict,
+            "active_count": active_count,
+            "tombstoned_count": tombstoned_count,
+            "review_mode": review_mode,
+        },
+    )
+    manifest_result = save_artifact_manifest(manifest, branch_name)
+
+    return {
+        "status": "success",
+        "computed_verdict": verdict,
+        "json_path": str(json_path),
+        "md_path": str(md_path),
+        "manifest_path": manifest_result["path"],
+        "active_count": active_count,
+        "tombstoned_count": tombstoned_count,
+        "not_verified_count": len(not_verified_list),
     }
 
 
@@ -20313,6 +20825,34 @@ if __name__ == "__main__":
         print(json.dumps(result, indent=2, ensure_ascii=True))
         if result.get("status") == "error":
             sys.exit(1)
+
+    elif func_name == "write_review_verdict_ledger":
+        # CLI: write_review_verdict_ledger
+        #        [--monitor-json '<JSON>']
+        #        [--predictor-json '<JSON>']
+        #        [--evaluator-json '<JSON>']
+        #        [--adversarial-json '<JSON array>']
+        #        [--review-mode normal|adversarial|cross_ai|compare_orderings]
+        #        [--previous-verdict PROCEED|REVISE|BLOCK]
+        #        [--branch <branch>]
+        def _rvl_flag(name: str, default: str = "") -> str:
+            flag = f"--{name}"
+            if flag in sys.argv:
+                idx = sys.argv.index(flag)
+                if idx + 1 < len(sys.argv):
+                    return sys.argv[idx + 1]
+            return default
+
+        result = write_review_verdict_ledger(
+            monitor_json=_rvl_flag("monitor-json", ""),
+            predictor_json=_rvl_flag("predictor-json", ""),
+            evaluator_json=_rvl_flag("evaluator-json", ""),
+            adversarial_json=_rvl_flag("adversarial-json", ""),
+            review_mode=_rvl_flag("review-mode", "normal"),
+            previous_verdict=_rvl_flag("previous-verdict", ""),
+            branch=_rvl_flag("branch") or None,
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=True))
 
     else:
         # Helpful redirect: when the user passes a command that belongs to

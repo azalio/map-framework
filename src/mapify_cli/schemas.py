@@ -1882,3 +1882,148 @@ CONTEXT_USEFULNESS_SCHEMA: dict[str, Any] = {
     "required": ["schema_version", "branch", "workflow", "items", "summary"],
     "additionalProperties": True,
 }
+
+
+REVIEW_VERDICT_LEDGER_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://mapframework.dev/schemas/review-verdict-ledger.json",
+    "title": "MAP Review Verdict Ledger",
+    "description": (
+        "Durable normalized finding registry and computed verdict for a /map-review run. "
+        "Written before write_stage_gate so the reasoning surface is reproducible from "
+        "a closed decision table, not assigned ad hoc. See issue #406."
+    ),
+    "type": "object",
+    "properties": {
+        "schema_version": {"type": "string"},
+        "generated_at": {"type": "string"},
+        "branch": {"type": "string"},
+        "criteria_version": {"type": "string"},
+        "input_classification": {
+            "type": "object",
+            "properties": {
+                "review_mode": {
+                    "type": "string",
+                    "enum": ["normal", "adversarial", "cross_ai", "compare_orderings", "unknown"],
+                },
+                "destination": {
+                    "type": "string",
+                    "enum": ["pre_commit", "pr_review", "ci", "unknown"],
+                },
+                "evidence_mode": {
+                    "type": "string",
+                    "enum": ["structural", "self_executed", "independent_run", "mixed", "unknown"],
+                },
+                "executor_class": {"type": "string"},
+            },
+            "required": ["review_mode"],
+            "additionalProperties": True,
+        },
+        "findings_registry": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "source_agent": {
+                        "type": "string",
+                        "enum": [
+                            "monitor", "predictor", "evaluator",
+                            "adversarial", "ordering", "operator",
+                        ],
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": [
+                            "correctness", "security", "tests", "performance",
+                            "maintainability", "workflow", "unknown",
+                        ],
+                    },
+                    "severity": {
+                        "type": "string",
+                        "enum": ["critical", "important", "minor", "needs_investigation"],
+                    },
+                    "claim": {"type": "string"},
+                    "evidence": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "file_path": {"type": "string"},
+                                "line_range": {"type": "string"},
+                                "quote": {"type": "string"},
+                            },
+                            "additionalProperties": True,
+                        },
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["active", "tombstoned", "downgraded"],
+                    },
+                    "transition_reason": {
+                        "type": ["string", "null"],
+                        "enum": [
+                            "new_evidence", "quote_absent", "wrong_category",
+                            "different_version", "pre_existing_backlog",
+                            "human_escalation", "pressure_without_new_fact",
+                            "not_applicable", None,
+                        ],
+                    },
+                    "transition_evidence": {"type": ["string", "null"]},
+                    "was_present_before_pr": {"type": ["boolean", "null"]},
+                },
+                "required": ["id", "source_agent", "severity", "claim", "status"],
+                "additionalProperties": True,
+            },
+        },
+        "not_verified": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Concerns that could not be verified against source evidence.",
+        },
+        "evaluator_scores": {
+            "type": ["object", "null"],
+            "description": "Raw Evaluator scores — advisory signal, cannot override active findings.",
+            "additionalProperties": True,
+        },
+        "verdict_table": {"type": "string"},
+        "computed_verdict": {
+            "type": "string",
+            "enum": ["PROCEED", "REVISE", "BLOCK"],
+        },
+        "verdict_basis": {
+            "type": "string",
+            "description": "Human-readable explanation of why the decision table chose this verdict.",
+        },
+        "journal": {
+            "type": "object",
+            "properties": {
+                "previous_verdict": {
+                    "type": ["string", "null"],
+                    "enum": ["PROCEED", "REVISE", "BLOCK", None],
+                },
+                "current_verdict": {
+                    "type": "string",
+                    "enum": ["PROCEED", "REVISE", "BLOCK"],
+                },
+                "matches_previous": {"type": ["boolean", "null"]},
+                "basis": {"type": "string"},
+            },
+            "required": ["current_verdict"],
+            "additionalProperties": True,
+        },
+        "active_count": {"type": "integer", "minimum": 0},
+        "tombstoned_count": {"type": "integer", "minimum": 0},
+    },
+    "required": [
+        "schema_version",
+        "branch",
+        "generated_at",
+        "findings_registry",
+        "not_verified",
+        "computed_verdict",
+        "verdict_table",
+        "journal",
+    ],
+    "additionalProperties": True,
+}

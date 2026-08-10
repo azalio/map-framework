@@ -119,6 +119,30 @@ Ordering drift check:
 /map-review --compare-orderings
 ```
 
+## Verdict Ledger
+
+`write_review_verdict_ledger` normalizes all reviewer outputs into a closed
+decision table (`review_verdict_table.v1`) and writes:
+- `.map/<branch>/review-verdict-ledger.json` — machine-readable audit trail
+- `.map/<branch>/review-verdict-ledger.md` — human summary
+
+The `computed_verdict` field (`PROCEED`/`REVISE`/`BLOCK`) is derived from active
+findings only; pre-existing (`was_present_before_pr=true`) findings are tombstoned
+and excluded from the verdict. A `computed_verdict` that differs from your
+`FINAL_VERDICT` is a signal to re-verify.
+
+`REVIEW_MODE_LABEL` must be one of `normal`, `adversarial`, `cross_ai`, or
+`compare_orderings`. For adversarial mode also pass
+`--adversarial-json "$AGGREGATED_FINDINGS_JSON"`.
+
+```bash
+python3 .map/scripts/map_step_runner.py write_review_verdict_ledger \
+  --monitor-json   "$MONITOR_JSON" \
+  --predictor-json "$PREDICTOR_JSON" \
+  --evaluator-json "$EVALUATOR_JSON" \
+  --review-mode    "$REVIEW_MODE_LABEL"
+```
+
 ## Troubleshooting
 
 - Detached prep unavailable: continue from the in-place review bundle; do not mutate the source branch.
