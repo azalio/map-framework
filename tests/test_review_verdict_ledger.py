@@ -151,21 +151,35 @@ def test_important_finding_any_category_yields_revise():
     assert ledger["computed_verdict"] == "REVISE"
 
 
-def test_pre_existing_finding_is_tombstoned_not_active():
-    ledger = map_step_runner.normalize_review_verdict(
-        monitor_result=_monitor_with_pre_existing(),
-    )
+def test_pre_existing_minor_finding_is_tombstoned():
+    """A low-severity pre-existing finding is genuinely removed from the table."""
+    monitor = {
+        "verdict": "needs_revision",
+        "issues": [
+            {
+                "severity": "LOW",
+                "category": "maintainability",
+                "description": "Old naming inconsistency",
+                "was_present_before_pr": True,
+                "reach_evidence": "grep:oldName:44",
+            }
+        ],
+    }
+    ledger = map_step_runner.normalize_review_verdict(monitor_result=monitor)
 
-    registry = ledger["findings_registry"]
-    assert isinstance(registry, list)
-    assert any(f["status"] == "tombstoned" for f in registry)
-    # Pre-existing tombstoned findings must not block the verdict
-    active = [f for f in registry if f["status"] == "active"]
-    if not active:
-        assert ledger["computed_verdict"] == "PROCEED"
+    assert [f["status"] for f in ledger["findings_registry"]] == ["tombstoned"]
+    assert ledger["computed_verdict"] == "PROCEED"
+    assert ledger["tombstoned_count"] == 1
+    assert ledger["active_count"] == 0
 
 
-def test_pre_existing_tombstoned_verdict_recomputed_without_it():
+def test_pre_existing_critical_is_retained_not_erased():
+    """`was_present_before_pr` is self-attested and may not delete a CRITICAL.
+
+    The reviewer that raised the finding is the same actor asserting it predates
+    the PR, so the claim is not independent evidence. The finding is downgraded
+    (still counted) and the ledger demands human escalation.
+    """
     monitor = {
         "verdict": "needs_revision",
         "issues": [
@@ -180,9 +194,30 @@ def test_pre_existing_tombstoned_verdict_recomputed_without_it():
     }
     ledger = map_step_runner.normalize_review_verdict(monitor_result=monitor)
 
-    # Should be PROCEED since the only finding is tombstoned
-    assert ledger["computed_verdict"] == "PROCEED"
-    assert ledger["tombstoned_count"] >= 1
+    assert ledger["computed_verdict"] == "REVISE"
+    assert ledger["tombstoned_count"] == 0
+    assert ledger["downgraded_count"] == 1
+    assert ledger["active_count"] == 1
+
+    finding = ledger["findings_registry"][0]
+    assert finding["status"] == "downgraded"
+    assert finding["severity"] == "needs_investigation"
+    assert finding["downgraded_from"] == "critical"
+    assert finding["transition_reason"] == "pre_existing_backlog"
+
+    assert ledger["escalation_required"] is True
+    assert ledger["not_verified"], "the unverified pre-existing claim must be named"
+
+
+def test_pre_existing_important_is_retained_not_erased():
+    ledger = map_step_runner.normalize_review_verdict(
+        monitor_result=_monitor_with_pre_existing(),
+    )
+
+    assert all(
+        f["status"] != "tombstoned" for f in ledger["findings_registry"]
+    ), "an important pre-existing finding must not be tombstoned"
+    assert ledger["computed_verdict"] != "PROCEED"
 
 
 def test_medium_issue_without_reach_evidence_downgraded_to_needs_investigation():
@@ -206,7 +241,12 @@ def test_medium_issue_without_reach_evidence_downgraded_to_needs_investigation()
     assert downgraded[0]["severity"] == "needs_investigation"
 
 
-def test_needs_investigation_finding_is_downgraded_not_active():
+def test_downgraded_finding_is_still_counted_by_the_table():
+    """A downgrade lowers severity; it must not remove the finding from the gate.
+
+    Dropping it would let a missing metadata field silently delete a blocking
+    finding — the reason downgraded statuses feed the table.
+    """
     monitor = {
         "verdict": "needs_revision",
         "issues": [
@@ -215,17 +255,37 @@ def test_needs_investigation_finding_is_downgraded_not_active():
                 "category": "unknown",
                 "description": "Unclear side effect in module init",
                 "was_present_before_pr": False,
-                # No reach_evidence → downgraded; downgraded findings are NOT active
+                # No reach_evidence → downgraded, but still counted.
             }
         ],
     }
     ledger = map_step_runner.normalize_review_verdict(monitor_result=monitor)
 
-    # Downgraded findings are recorded but not active, so verdict is PROCEED
-    registry = ledger["findings_registry"]
-    assert any(f["status"] == "downgraded" for f in registry)
-    assert ledger["computed_verdict"] == "PROCEED"
-    assert ledger["active_count"] == 0
+    assert any(f["status"] == "downgraded" for f in ledger["findings_registry"])
+    assert ledger["computed_verdict"] == "REVISE"
+    assert ledger["active_count"] == 1
+    assert ledger["downgraded_count"] == 1
+
+
+def test_critical_without_reach_evidence_does_not_vanish():
+    """A CRITICAL whose reachability was never proven still holds the gate."""
+    monitor = {
+        "verdict": "rejected",
+        "issues": [
+            {
+                "severity": "CRITICAL",
+                "category": "security",
+                "description": "Hardcoded API key in request signer",
+                "was_present_before_pr": False,
+            }
+        ],
+    }
+    ledger = map_step_runner.normalize_review_verdict(monitor_result=monitor)
+
+    assert ledger["computed_verdict"] == "REVISE"
+    assert ledger["active_count"] == 1
+    assert ledger["escalation_required"] is True
+    assert ledger["findings_registry"][0]["transition_reason"] == "quote_absent"
 
 
 def test_no_issues_yields_proceed():
@@ -408,11 +468,44 @@ def test_predictor_low_risk_does_not_block():
     assert ledger["computed_verdict"] == "PROCEED"
 
 
-def test_no_inputs_yields_proceed():
+def test_no_inputs_is_an_unobserved_review_not_a_clean_one():
+    """An empty registry means the review was not seen, not that it was clean."""
     ledger = map_step_runner.normalize_review_verdict()
 
-    assert ledger["computed_verdict"] == "PROCEED"
-    assert ledger["active_count"] == 0
+    assert ledger["computed_verdict"] == "REVISE"
+    assert ledger["active_count"] == 1
+    assert ledger["escalation_required"] is True
+
+    finding = ledger["findings_registry"][0]
+    assert finding["source_agent"] == "operator"
+    assert finding["transition_reason"] == "input_integrity"
+    assert finding["status"] == "active"
+    assert ledger["not_verified"], "the unobserved review must be named in not_verified"
+
+
+def test_parse_failure_is_recorded_as_an_active_finding():
+    ledger = map_step_runner.normalize_review_verdict(
+        input_errors=["monitor: invalid JSON (Expecting value at line 1)"],
+    )
+
+    assert ledger["computed_verdict"] == "REVISE"
+    assert ledger["active_count"] == 1
+    finding = ledger["findings_registry"][0]
+    assert finding["transition_reason"] == "input_integrity"
+    assert "invalid JSON" in finding["claim"]
+
+
+def test_parse_failure_does_not_also_report_a_missing_review():
+    """One integrity problem yields one row, not two."""
+    ledger = map_step_runner.normalize_review_verdict(
+        input_errors=["monitor: invalid JSON (Expecting value at line 1)"],
+    )
+
+    integrity = [
+        f for f in ledger["findings_registry"]
+        if f["transition_reason"] == "input_integrity"
+    ]
+    assert len(integrity) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -494,13 +587,14 @@ def test_write_review_verdict_ledger_block_updates_manifest_with_block(branch_wo
     assert stage["metadata"]["computed_verdict"] == "BLOCK"
 
 
-def test_write_review_verdict_ledger_empty_inputs_yields_proceed(branch_workspace):
+def test_write_review_verdict_ledger_empty_inputs_is_not_a_pass(branch_workspace):
     del branch_workspace
 
     result = map_step_runner.write_review_verdict_ledger()
 
     assert result["status"] == "success"
-    assert result["computed_verdict"] == "PROCEED"
+    assert result["computed_verdict"] == "REVISE"
+    assert result["escalation_required"] is True
 
 
 def test_write_review_verdict_ledger_passes_previous_verdict_to_journal(branch_workspace):
@@ -517,7 +611,10 @@ def test_write_review_verdict_ledger_passes_previous_verdict_to_journal(branch_w
     assert payload["journal"]["current_verdict"] == "PROCEED"
 
 
-def test_write_review_verdict_ledger_malformed_json_does_not_crash(branch_workspace):
+def test_write_review_verdict_ledger_malformed_json_is_reported_not_swallowed(
+    branch_workspace,
+):
+    """A truncated envelope must not read as an absence of findings."""
     del branch_workspace
 
     result = map_step_runner.write_review_verdict_ledger(
@@ -527,7 +624,9 @@ def test_write_review_verdict_ledger_malformed_json_does_not_crash(branch_worksp
     )
 
     assert result["status"] == "success"
-    assert result["computed_verdict"] == "PROCEED"
+    assert result["computed_verdict"] == "REVISE"
+    assert result["input_errors"], "the parse failure must be reported"
+    assert "monitor" in result["input_errors"][0]
 
 
 def test_write_review_verdict_ledger_adversarial_mode(branch_workspace):
@@ -564,3 +663,134 @@ def test_write_review_verdict_ledger_result_contains_verdict_fields(branch_works
 
     for key in ("status", "computed_verdict", "active_count", "tombstoned_count"):
         assert key in result, f"Expected key '{key}' in result"
+
+
+def test_evaluator_low_score_alone_does_not_move_the_verdict(branch_workspace):
+    """The score is advisory in BOTH directions: it cannot create a verdict either."""
+    del branch_workspace
+
+    ledger = map_step_runner.normalize_review_verdict(
+        monitor_result=_monitor_no_issues(),
+        evaluator_result=_evaluator_low_score(),
+    )
+
+    assert ledger["computed_verdict"] == "PROCEED"
+    assert ledger["evaluator_scores"]["overall_score"] == 3
+
+
+# ---------------------------------------------------------------------------
+# File-based reviewer input
+# ---------------------------------------------------------------------------
+
+
+def test_reviewer_envelopes_are_read_from_files(branch_workspace):
+    (branch_workspace / "review-agent-monitor.json").write_text(
+        json.dumps(_monitor_with_critical()), encoding="utf-8"
+    )
+
+    result = map_step_runner.write_review_verdict_ledger(
+        monitor_file=str(branch_workspace / "review-agent-monitor.json"),
+    )
+
+    assert result["computed_verdict"] == "BLOCK"
+    assert result["input_errors"] == []
+
+
+def test_missing_reviewer_file_is_reported_not_ignored(branch_workspace):
+    result = map_step_runner.write_review_verdict_ledger(
+        monitor_file=str(branch_workspace / "does-not-exist.json"),
+    )
+
+    assert result["computed_verdict"] == "REVISE"
+    assert any("does-not-exist.json" in err for err in result["input_errors"])
+
+
+# ---------------------------------------------------------------------------
+# Journal continuity
+# ---------------------------------------------------------------------------
+
+
+def test_previous_verdict_is_recovered_from_the_ledger_on_disk(branch_workspace):
+    del branch_workspace
+
+    first = map_step_runner.write_review_verdict_ledger(
+        monitor_json=json.dumps(_monitor_with_critical()),
+    )
+    assert first["computed_verdict"] == "BLOCK"
+
+    # Second run supplies no --previous-verdict; the journal must still know.
+    map_step_runner.write_review_verdict_ledger(
+        monitor_json=json.dumps(_monitor_no_issues()),
+    )
+
+    payload = json.loads(
+        (Path(".map/test-branch") / "review-verdict-ledger.json").read_text(encoding="utf-8")
+    )
+    assert payload["journal"]["previous_verdict"] == "BLOCK"
+    assert payload["journal"]["current_verdict"] == "PROCEED"
+    assert payload["journal"]["matches_previous"] is False
+
+
+# ---------------------------------------------------------------------------
+# write_stage_gate binding
+# ---------------------------------------------------------------------------
+
+
+def test_review_gate_is_refused_when_it_contradicts_the_ledger(branch_workspace):
+    map_step_runner.write_review_verdict_ledger(
+        monitor_json=json.dumps(_monitor_with_critical()),
+    )
+
+    result = map_step_runner.write_stage_gate("review", "ready", "code-review-001.md", "ok")
+
+    assert result["status"] == "error"
+    assert result["computed_verdict"] == "blocked"
+    assert result["requested_verdict"] == "ready"
+    assert not (branch_workspace / "review-gate.json").exists(), (
+        "a refused gate must not be written"
+    )
+
+
+def test_review_gate_is_written_when_it_matches_the_ledger(branch_workspace):
+    map_step_runner.write_review_verdict_ledger(
+        monitor_json=json.dumps(_monitor_with_critical()),
+    )
+
+    result = map_step_runner.write_stage_gate("review", "blocked", "code-review-001.md", "")
+
+    assert result["status"] == "success"
+    assert result["ledger_enforcement"] == "enforced"
+    assert (branch_workspace / "review-gate.json").exists()
+
+
+def test_review_gate_binding_can_be_disabled_explicitly(branch_workspace, monkeypatch):
+    monkeypatch.setenv("MAP_REVIEW_LEDGER_ENFORCE", "0")
+    map_step_runner.write_review_verdict_ledger(
+        monitor_json=json.dumps(_monitor_with_critical()),
+    )
+
+    result = map_step_runner.write_stage_gate("review", "ready", "code-review-001.md", "")
+
+    assert result["status"] == "success"
+    assert result["ledger_enforcement"] == "disabled_by_env"
+    assert (branch_workspace / "review-gate.json").exists()
+
+
+def test_non_review_stages_are_unaffected_by_the_ledger(branch_workspace):
+    map_step_runner.write_review_verdict_ledger(
+        monitor_json=json.dumps(_monitor_with_critical()),
+    )
+
+    result = map_step_runner.write_stage_gate("verification", "ready", "verification-summary.md", "")
+
+    assert result["status"] == "success"
+    assert result["ledger_enforcement"] == "not_applicable"
+    assert (branch_workspace / "verification-gate.json").exists()
+
+
+def test_review_gate_without_a_ledger_records_the_gap(branch_workspace):
+    result = map_step_runner.write_stage_gate("review", "ready", "code-review-001.md", "")
+
+    assert result["status"] == "success"
+    assert result["ledger_enforcement"] == "no_ledger"
+    assert (branch_workspace / "review-gate.json").exists()

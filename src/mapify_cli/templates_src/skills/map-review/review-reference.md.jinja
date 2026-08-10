@@ -126,22 +126,67 @@ decision table (`review_verdict_table.v1`) and writes:
 - `.map/<branch>/review-verdict-ledger.json` — machine-readable audit trail
 - `.map/<branch>/review-verdict-ledger.md` — human summary
 
-The `computed_verdict` field (`PROCEED`/`REVISE`/`BLOCK`) is derived from active
-findings only; pre-existing (`was_present_before_pr=true`) findings are tombstoned
-and excluded from the verdict. A `computed_verdict` that differs from your
-`FINAL_VERDICT` is a signal to re-verify.
+### Capturing reviewer envelopes (Step A.2c)
+
+Write each reviewer's JSON envelope verbatim with a quoted heredoc, so nothing
+inside the payload is expanded by the shell:
+
+```bash
+cat > "$BRANCH_DIR/review-agent-monitor.json" <<'MONITOR_EOF'
+<paste the Monitor JSON envelope verbatim>
+MONITOR_EOF
+```
+
+Repeat for `review-agent-predictor.json` and `review-agent-evaluator.json`. In
+adversarial or compare-orderings mode also write the aggregated findings array to
+`review-agent-adversarial.json`.
+
+### What the table counts
+
+`computed_verdict` (`PROCEED`/`REVISE`/`BLOCK`) is derived from every finding
+whose status is `active` **or** `downgraded`. Only `tombstoned` findings are
+excluded, and a finding may be tombstoned only when its severity is `minor`.
+
+| Situation | Status | Severity | Effect on the verdict |
+|---|---|---|---|
+| Ordinary finding | `active` | as reported | counted as reported |
+| Severity ≥ MEDIUM with no `reach_evidence` | `downgraded` | `needs_investigation` | counted → at least REVISE |
+| `was_present_before_pr=true`, critical/important | `downgraded` | `needs_investigation` | counted → at least REVISE, listed in `not_verified` |
+| `was_present_before_pr=true`, minor | `tombstoned` | as reported | excluded |
+| Reviewer payload missing or malformed | `active` | `important` | counted → at least REVISE |
+
+A pre-existing claim is self-attested by the reviewer that raised the finding, so
+it is not treated as independent evidence: it lowers severity, it does not erase
+the row. When a CRITICAL is neutralised this way the ledger sets
+`escalation_required` and names the reason.
+
+### Enforcement
+
+The review stage gate is bound to the ledger. `write_stage_gate review <verdict>`
+is refused when `<verdict>` contradicts `computed_verdict`, and no gate file is
+written. This is on by default; `MAP_REVIEW_LEDGER_ENFORCE=0` is the explicit
+opt-out. Pass `$FINAL_VERDICT` straight from the ledger output rather than
+retyping a verdict.
+
+`journal.previous_verdict` is read back from the ledger already on disk when
+`--previous-verdict` is omitted, so the journal survives across runs.
+
+### Invocation
 
 `REVIEW_MODE_LABEL` must be one of `normal`, `adversarial`, `cross_ai`, or
 `compare_orderings`. For adversarial mode also pass
-`--adversarial-json "$AGGREGATED_FINDINGS_JSON"`.
+`--adversarial-file "$BRANCH_DIR/review-agent-adversarial.json"`.
 
 ```bash
 python3 .map/scripts/map_step_runner.py write_review_verdict_ledger \
-  --monitor-json   "$MONITOR_JSON" \
-  --predictor-json "$PREDICTOR_JSON" \
-  --evaluator-json "$EVALUATOR_JSON" \
+  --monitor-file   "$BRANCH_DIR/review-agent-monitor.json" \
+  --predictor-file "$BRANCH_DIR/review-agent-predictor.json" \
+  --evaluator-file "$BRANCH_DIR/review-agent-evaluator.json" \
   --review-mode    "$REVIEW_MODE_LABEL"
 ```
+
+The `--*-json` flags still accept an inline payload, but reviewer envelopes are
+large and quote-heavy; prefer the file flags written in Step A.2c.
 
 ## Troubleshooting
 

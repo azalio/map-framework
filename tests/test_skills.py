@@ -108,13 +108,17 @@ HIGH_TRAFFIC_COMPACT_SKILL_REFS = {
 # the merge_subtask_worktree accept branch replacing the per-subtask commit, and
 # the discard_subtask_worktree reject branch on valid=false. The full recipe
 # (bash, guard `kind`s, Actor path instruction) lives in efficient-reference.md.
-# Budget bumped from 560 → 570 (#406): the mandatory write_review_verdict_ledger
-# step (command + reference pointer) is irreducible active control flow. Full
-# decision table and adversarial-mode flags live in review-reference.md § Verdict
-# Ledger.
+# Budget bumped from 560 → 605 (#406): the ledger is a gate, so both of its
+# active steps have to live in the invoked body — Step A.2c writes each reviewer
+# envelope to .map/<branch>/review-agent-<role>.json (the ledger reads nothing
+# else), and the closeout runs write_review_verdict_ledger and takes
+# FINAL_VERDICT from its output instead of letting the model pick one. The
+# heredoc example, the active/downgraded/tombstoned status table, the
+# self-attestation rationale and the MAP_REVIEW_LEDGER_ENFORCE hatch were all
+# moved to review-reference.md § Verdict Ledger and are NOT counted here.
 _DEFAULT_SKILL_BODY_BUDGET = 515
 HIGH_TRAFFIC_SKILL_BODY_BUDGETS = {
-    "map-review": 570,
+    "map-review": 605,
     # map-tdd carries Iron Law enforcement (rationalization table, Red Flags,
     # RED-GREEN-REFACTOR cycle), spec compliance reviewer dispatch, and code
     # quality reviewer dispatch — all irreducible active control flow (#285).

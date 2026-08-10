@@ -346,6 +346,22 @@ Role → `--agent` kind for the truncation check:
 
 The optional complexity lens returns plain text, not JSON. Do not run the JSON truncation gate on it; if it is empty or visibly cut off, rerun only that lens prompt once.
 
+### Step A.2c: Capture reviewer envelopes (MANDATORY — the ledger reads these)
+
+Once a reviewer clears the truncation gate, write its JSON envelope verbatim to
+`.map/<branch>/review-agent-<role>.json` (`monitor`, `predictor`, `evaluator`;
+plus `adversarial` in adversarial/compare-orderings mode). The verdict ledger is
+computed from these files — a role whose file is missing is recorded as an
+unobserved review, not as a clean one.
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH_DIR=".map/$BRANCH"
+REVIEW_MODE_LABEL=normal   # adversarial | cross_ai | compare_orderings
+```
+
+Use a quoted heredoc so nothing inside the payload is expanded → review-reference.md § Verdict Ledger.
+
 ### Step A.3: Verification gate (MANDATORY before any presentation)
 
 For EVERY Monitor / Predictor finding, verify BEFORE listing it as a
@@ -467,11 +483,18 @@ Focus only on plausible measurable impact, hot paths, accidental N+1 behavior, l
 
 ## Final Verdict
 
-Choose exactly one:
+The verdict is COMPUTED from the finding registry by the closed decision table
+below — you do not choose it. Write the ledger (next section) and read
+`computed_verdict` from its output.
 
-- `PROCEED`: no blocking findings remain.
-- `REVISE`: actionable changes are required before review can pass.
-- `BLOCK`: external, safety, or correctness blocker prevents review completion.
+- `PROCEED`: no finding counted by the table remains above `minor`.
+- `REVISE`: an important or needs_investigation finding is counted.
+- `BLOCK`: a critical finding, or an important security/correctness finding, is counted.
+
+Step A.3 keeps unproven and pre-existing findings out of the published
+walkthrough. That is a reporting rule — the table still counts them, and missing
+or malformed reviewer output is itself a finding. Rationale and the full status
+table → review-reference.md § Verdict Ledger.
 
 The runner stores gate verdicts as `ready` / `needs-revision` / `blocked` and
 normalizes `PROCEED` -> `ready`, `REVISE` -> `needs-revision`, `BLOCK` -> `blocked`,
@@ -479,11 +502,23 @@ so either spelling is accepted by `write_stage_gate`.
 
 ## Write Review Verdict Ledger (MANDATORY)
 
+Run this BEFORE the stage gate: the review gate is refused when its verdict
+contradicts the computed one.
+
 ```bash
-python3 .map/scripts/map_step_runner.py write_review_verdict_ledger \
-  --monitor-json "$MONITOR_JSON" --predictor-json "$PREDICTOR_JSON" \
-  --evaluator-json "$EVALUATOR_JSON" --review-mode "$REVIEW_MODE_LABEL"
+LEDGER=$(python3 .map/scripts/map_step_runner.py write_review_verdict_ledger \
+  --monitor-file   "$BRANCH_DIR/review-agent-monitor.json" \
+  --predictor-file "$BRANCH_DIR/review-agent-predictor.json" \
+  --evaluator-file "$BRANCH_DIR/review-agent-evaluator.json" \
+  --review-mode    "$REVIEW_MODE_LABEL")
+
+FINAL_VERDICT=$(printf '%s' "$LEDGER" | python3 -c 'import json,sys; print(json.load(sys.stdin)["computed_verdict"])')
 ```
+
+Use `$FINAL_VERDICT` for the stage gate below — do not retype a verdict of your
+own. Report `not_verified` and any `escalation_reasons` from
+`.map/<branch>/review-verdict-ledger.md` in the walkthrough.
+
 Full usage, decision table, and adversarial-mode flags → review-reference.md § Verdict Ledger.
 
 ## Workflow Gate Unlock (REVISE/BLOCK only)
