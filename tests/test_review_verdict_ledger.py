@@ -788,9 +788,251 @@ def test_non_review_stages_are_unaffected_by_the_ledger(branch_workspace):
     assert (branch_workspace / "verification-gate.json").exists()
 
 
-def test_review_gate_without_a_ledger_records_the_gap(branch_workspace):
+def test_review_gate_without_a_ledger_is_refused(branch_workspace):
+    """/map-review is the only writer of a review gate and always writes the
+    ledger first, so a missing ledger means the closeout was skipped."""
+    result = map_step_runner.write_stage_gate("review", "ready", "code-review-001.md", "")
+
+    assert result["status"] == "error"
+    assert "no review-verdict-ledger.json" in result["message"]
+    assert not (branch_workspace / "review-gate.json").exists()
+
+
+def test_review_gate_without_a_ledger_can_be_forced(branch_workspace, monkeypatch):
+    monkeypatch.setenv("MAP_REVIEW_LEDGER_ENFORCE", "0")
+
     result = map_step_runner.write_stage_gate("review", "ready", "code-review-001.md", "")
 
     assert result["status"] == "success"
-    assert result["ledger_enforcement"] == "no_ledger"
     assert (branch_workspace / "review-gate.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Operator objections — the only supported way to contest a finding
+# ---------------------------------------------------------------------------
+
+
+def _seed_ledger_with_security_finding() -> None:
+    map_step_runner.write_review_verdict_ledger(
+        monitor_json=json.dumps(_monitor_with_high_important()),
+    )
+
+
+def test_removing_channel_requires_evidence(branch_workspace):
+    del branch_workspace
+    _seed_ledger_with_security_finding()
+
+    result = map_step_runner.record_review_objection("RVF-001", "quote_absent", "")
+
+    assert result["status"] == "error"
+    assert "requires evidence" in result["message"]
+
+
+def test_unknown_channel_is_rejected(branch_workspace):
+    del branch_workspace
+    _seed_ledger_with_security_finding()
+
+    result = map_step_runner.record_review_objection("RVF-001", "i_disagree", "because")
+
+    assert result["status"] == "error"
+    assert "unknown objection channel" in result["message"]
+
+
+def test_objection_against_unknown_finding_is_rejected(branch_workspace):
+    del branch_workspace
+    _seed_ledger_with_security_finding()
+
+    result = map_step_runner.record_review_objection(
+        "RVF-999", "quote_absent", "not in the diff"
+    )
+
+    assert result["status"] == "error"
+    assert "not in the current ledger" in result["message"]
+
+
+def test_objection_requires_an_existing_ledger(branch_workspace):
+    del branch_workspace
+
+    result = map_step_runner.record_review_objection("RVF-001", "no_new_fact", "")
+
+    assert result["status"] == "error"
+    assert "run write_review_verdict_ledger" in result["message"]
+
+
+def test_evidenced_objection_removes_the_finding(branch_workspace):
+    del branch_workspace
+    _seed_ledger_with_security_finding()
+
+    map_step_runner.record_review_objection(
+        "RVF-001", "quote_absent", "grep for the concatenation returns nothing in the diff"
+    )
+    result = map_step_runner.write_review_verdict_ledger(
+        monitor_json=json.dumps(_monitor_with_high_important()),
+    )
+
+    assert result["computed_verdict"] == "PROCEED"
+    assert result["tombstoned_count"] == 1
+
+
+def test_unverifiable_context_retains_the_finding_and_escalates(branch_workspace):
+    del branch_workspace
+    _seed_ledger_with_security_finding()
+
+    map_step_runner.record_review_objection(
+        "RVF-001", "unverifiable_context", "we never call that path in production"
+    )
+    result = map_step_runner.write_review_verdict_ledger(
+        monitor_json=json.dumps(_monitor_with_high_important()),
+    )
+
+    assert result["computed_verdict"] == "BLOCK", "context alone cannot clear a finding"
+    assert result["tombstoned_count"] == 0
+    assert result["escalation_required"] is True
+
+
+def test_pressure_without_a_new_fact_repeats_the_verdict(branch_workspace):
+    del branch_workspace
+    _seed_ledger_with_security_finding()
+
+    map_step_runner.record_review_objection(
+        "RVF-001", "no_new_fact", "this is obviously a false positive, trust me"
+    )
+    map_step_runner.write_review_verdict_ledger(
+        monitor_json=json.dumps(_monitor_with_high_important()),
+    )
+
+    payload = json.loads(
+        (Path(".map/test-branch") / "review-verdict-ledger.json").read_text(encoding="utf-8")
+    )
+    assert payload["computed_verdict"] == "BLOCK"
+    assert payload["journal"]["repeated_verbatim"] is True
+    assert payload["findings_registry"][0]["transition_reason"] == "pressure_without_new_fact"
+    assert payload["findings_registry"][0]["status"] != "tombstoned"
+
+
+def test_escalation_ceiling_blocks_a_clean_pass(branch_workspace):
+    """Only minor findings remain, but one was contested on unverifiable context."""
+    del branch_workspace
+    monitor = {
+        "verdict": "approved",
+        "issues": [
+            {
+                "severity": "LOW",
+                "category": "maintainability",
+                "description": "Naming nit in helper",
+                "was_present_before_pr": False,
+                "reach_evidence": "grep:helper:12",
+            }
+        ],
+    }
+    first = map_step_runner.write_review_verdict_ledger(monitor_json=json.dumps(monitor))
+    assert first["computed_verdict"] == "PROCEED"
+
+    map_step_runner.record_review_objection(
+        "RVF-001", "unverifiable_context", "the author says it is intentional"
+    )
+    result = map_step_runner.write_review_verdict_ledger(monitor_json=json.dumps(monitor))
+
+    assert result["computed_verdict"] == "REVISE"
+    assert result["escalation_required"] is True
+
+
+def test_stale_objection_does_not_land_on_a_different_finding(branch_workspace):
+    del branch_workspace
+    _seed_ledger_with_security_finding()
+    map_step_runner.record_review_objection(
+        "RVF-001", "quote_absent", "not present in the diff"
+    )
+
+    # The reviewer now reports a completely different issue under the same id.
+    other = {
+        "verdict": "rejected",
+        "issues": [
+            {
+                "severity": "CRITICAL",
+                "category": "correctness",
+                "description": "Unrelated data-loss bug",
+                "was_present_before_pr": False,
+                "reach_evidence": "test_rollback fails",
+            }
+        ],
+    }
+    result = map_step_runner.write_review_verdict_ledger(monitor_json=json.dumps(other))
+
+    assert result["computed_verdict"] == "BLOCK"
+    assert result["tombstoned_count"] == 0
+
+
+def test_second_objection_replaces_the_first(branch_workspace):
+    del branch_workspace
+    _seed_ledger_with_security_finding()
+
+    map_step_runner.record_review_objection("RVF-001", "no_new_fact", "come on")
+    map_step_runner.record_review_objection(
+        "RVF-001", "unverifiable_context", "internal-only endpoint"
+    )
+
+    stored = json.loads(
+        (Path(".map/test-branch") / "review-objections.json").read_text(encoding="utf-8")
+    )
+    assert len(stored) == 1
+    assert stored[0]["channel"] == "unverifiable_context"
+
+
+# ---------------------------------------------------------------------------
+# Input classification carries real values
+# ---------------------------------------------------------------------------
+
+
+def test_destination_and_executor_class_are_recorded(branch_workspace):
+    del branch_workspace
+
+    map_step_runner.write_review_verdict_ledger(
+        monitor_json=json.dumps(_monitor_no_issues()),
+        destination="ci",
+        executor_class="opus",
+    )
+
+    payload = json.loads(
+        (Path(".map/test-branch") / "review-verdict-ledger.json").read_text(encoding="utf-8")
+    )
+    assert payload["input_classification"]["destination"] == "ci"
+    assert payload["input_classification"]["executor_class"] == "opus"
+
+
+def test_unknown_destination_falls_back_to_unknown(branch_workspace):
+    del branch_workspace
+
+    map_step_runner.write_review_verdict_ledger(
+        monitor_json=json.dumps(_monitor_no_issues()),
+        destination="somewhere-else",
+    )
+
+    payload = json.loads(
+        (Path(".map/test-branch") / "review-verdict-ledger.json").read_text(encoding="utf-8")
+    )
+    assert payload["input_classification"]["destination"] == "unknown"
+
+
+def test_evidence_mode_is_derived_not_asserted(branch_workspace):
+    del branch_workspace
+
+    map_step_runner.write_review_verdict_ledger(
+        monitor_json=json.dumps(_monitor_no_issues()),
+    )
+    structural = json.loads(
+        (Path(".map/test-branch") / "review-verdict-ledger.json").read_text(encoding="utf-8")
+    )
+    assert structural["input_classification"]["evidence_mode"] == "structural"
+
+    map_step_runner.write_review_verdict_ledger(
+        monitor_json=json.dumps(_monitor_no_issues()),
+        adversarial_json=json.dumps(
+            [{"severity": "minor", "category": "tests", "claim": "second opinion"}]
+        ),
+        review_mode="adversarial",
+    )
+    independent = json.loads(
+        (Path(".map/test-branch") / "review-verdict-ledger.json").read_text(encoding="utf-8")
+    )
+    assert independent["input_classification"]["evidence_mode"] == "independent_run"

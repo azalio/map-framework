@@ -3159,12 +3159,18 @@ class TestWriteStageGate:
                 res["status"] == "success"
             ), f"Expected success for verdict={verdict!r}"
 
-    def test_skill_documented_verdicts_normalized(self, branch_workspace):
+    def test_skill_documented_verdicts_normalized(self, branch_workspace, monkeypatch):
         """map-review's PROCEED/REVISE/BLOCK spellings map onto GATE_VERDICTS.
 
         Regression: issue #388 — following map-review/SKILL.md verbatim errored
         out with "Invalid verdict: revise" at the closeout step.
+
+        The ledger binding (#406) is switched off here deliberately: this test is
+        about verdict SPELLING, and it writes all three verdicts for one branch,
+        which no single computed ledger could agree with. Binding has its own
+        coverage in tests/test_review_verdict_ledger.py.
         """
+        monkeypatch.setenv("MAP_REVIEW_LEDGER_ENFORCE", "0")
         for spelled, expected in (
             ("PROCEED", "ready"),
             ("REVISE", "needs-revision"),

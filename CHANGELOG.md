@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`/map-review` computes its verdict instead of choosing one (closes #406).** `write_review_verdict_ledger` normalizes Monitor/Predictor/Evaluator envelopes into a finding registry and applies a closed decision table (`review_verdict_table.v1`), writing `.map/<branch>/review-verdict-ledger.json` and a human-readable `.md`. Reviewer envelopes are captured to `.map/<branch>/review-agent-<role>.json` and read via `--monitor-file`/`--predictor-file`/`--evaluator-file`/`--adversarial-file`. The table counts every finding whose status is `active` or `downgraded`; only a `minor` finding may be tombstoned, so neither a missing `reach_evidence` field nor a reviewer's own `was_present_before_pr=true` can erase a blocking finding from the gate — both downgrade severity to `needs_investigation`, and neutralising a CRITICAL that way sets `escalation_required`. Missing, unreadable or malformed reviewer output is itself an active finding: an empty registry reads as "the review was not observed", never as a clean pass. `journal.previous_verdict` is recovered from the ledger on disk, so the journal spans runs.
+- **Objection channels for contesting a review finding (#406).** `record_review_objection --finding-id RVF-001 --channel <channel> [--evidence …]` is the only supported way to remove a finding. `quote_absent`, `wrong_category` and `different_version` are checkable against the change and tombstone the row, but REQUIRE evidence; `unverifiable_context` keeps the finding and escalates to a human, so PROCEED becomes unavailable; `no_new_fact` keeps the finding and repeats the previous verdict. Objections are stored in `.map/<branch>/review-objections.json`, bound to the claim they were raised against so a stale objection cannot drift onto another finding, and limited to one per finding so a registry cannot be worn down by repetition.
+
+### Changed
+- **The review stage gate is bound to the computed verdict (#406).** `write_stage_gate review <verdict>` is refused, and no gate file written, when `<verdict>` contradicts `computed_verdict` or when no ledger exists for the branch. Enforcement is on by default with no calibration period; `MAP_REVIEW_LEDGER_ENFORCE=0` is the explicit opt-out. Other stages are unaffected. `/map-review`'s closeout now takes `FINAL_VERDICT` from the ledger output rather than asking the model to pick one of `PROCEED|REVISE|BLOCK`.
+
 ## [3.24.1] - 2026-07-25
 
 ### Fixed

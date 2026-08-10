@@ -7190,6 +7190,42 @@ _VERDICT_INPUT_STATUSES: tuple[str, ...] = ("active", "downgraded")
 # Severities that may never be silently tombstoned, whatever the reviewer claims.
 _NON_TOMBSTONABLE_SEVERITIES: frozenset[str] = frozenset({"critical", "important"})
 
+# Closed list of objection channels an operator may use against a finding.
+#
+# The split is the whole point: a channel is either checkable against the diff
+# itself, in which case it may remove the row, or it is not, in which case the
+# row STAYS and a human decides. There is no third kind. Disagreeing with a
+# verdict is not a channel — that is `no_new_fact`, which repeats the verdict.
+_OBJECTION_CHANNELS: dict[str, str] = {
+    # Checkable against the artifact → may remove the finding (evidence required).
+    "quote_absent": "removes",
+    "wrong_category": "removes",
+    "different_version": "removes",
+    # Not checkable against the artifact → finding is retained, human decides.
+    "unverifiable_context": "escalates",
+    # No new fact at all (insistence, authority, urgency) → verdict repeats.
+    "no_new_fact": "repeats",
+}
+_REMOVING_CHANNELS = frozenset(
+    ch for ch, effect in _OBJECTION_CHANNELS.items() if effect == "removes"
+)
+
+# Where an operator's objections are stored between runs.
+_REVIEW_OBJECTIONS_FILE = "review-objections.json"
+
+# Where the reviewed change is headed. Recorded on every ledger; not a table
+# argument, because no reachable branch currently turns on it — adding one that
+# nothing can reach would be dead code in a gate.
+_REVIEW_DESTINATIONS: frozenset[str] = frozenset(
+    {"pre_commit", "pr_review", "ci", "unknown"}
+)
+
+# How much of a finding's claim is fingerprinted when an objection is recorded.
+# An objection is bound to the exact claim it was raised against: if the reviewer
+# output changes, RVF ids shift, and a stale objection must not silently land on
+# a different finding.
+_OBJECTION_CLAIM_PREFIX = 80
+
 # Monitor severity → ledger severity mapping.
 _MONITOR_SEVERITY_MAP: dict[str, str] = {
     "CRITICAL": "critical",
@@ -7319,6 +7355,9 @@ def normalize_review_verdict(
     review_mode: str = "normal",
     previous_verdict: str | None = None,
     input_errors: list[str] | None = None,
+    objections: list[dict[str, Any]] | None = None,
+    destination: str = "unknown",
+    executor_class: str = "unknown",
     branch: str | None = None,
 ) -> dict[str, Any]:
     """Compute a normalized review verdict ledger from reviewer outputs.
@@ -7349,6 +7388,15 @@ def normalize_review_verdict(
         input_errors:        Reviewer payloads that could not be parsed. Each one
                              becomes an active integrity finding, so a truncated or
                              malformed envelope can never read as a clean review.
+        objections:          Operator objections recorded by record_review_objection.
+                             A checkable channel removes its finding; an unverifiable
+                             one retains it and escalates; no_new_fact repeats the
+                             prior verdict.
+        destination:         Where the reviewed change is headed
+                             (pre_commit|pr_review|ci|unknown). Recorded, not a table
+                             argument — see the ledger docs.
+        executor_class:      Model tier that produced the reviewer output, when known.
+                             Recorded only.
         branch:              Branch name (for output labeling only).
 
     Returns:
@@ -7596,12 +7644,61 @@ def normalize_review_verdict(
             "absence of a review, not its result."
         )
 
+    # --- Apply operator objections ---
+    by_id = {f["id"]: f for f in findings_registry}
+    verdict_repeats = False
+    for objection in (objections or []):
+        finding = by_id.get(str(objection.get("finding_id") or ""))
+        channel = str(objection.get("channel") or "")
+        claim_prefix = str(objection.get("claim_prefix") or "")
+
+        # An objection is bound to the exact claim it was raised against. When the
+        # reviewer output changes, RVF ids shift; a stale objection must not land
+        # on whatever finding now holds that id.
+        if finding is None or not str(finding.get("claim") or "").startswith(claim_prefix):
+            not_verified.append(
+                f"Objection on {objection.get('finding_id')} was ignored: it was raised "
+                "against a different finding than the one now holding that id."
+            )
+            continue
+
+        if channel in _REMOVING_CHANNELS:
+            finding["status"] = "tombstoned"
+            finding["transition_reason"] = channel
+            finding["transition_evidence"] = str(objection.get("evidence") or "")
+        elif channel == "unverifiable_context":
+            # The ceiling: context that is not visible in the diff cannot clear a
+            # finding, only hand it to a human.
+            finding["transition_reason"] = "human_escalation"
+            finding["transition_evidence"] = str(objection.get("evidence") or "")
+            escalation_reasons.append(
+                f"{finding['id']} was contested on context not visible in the change: "
+                f"{str(objection.get('evidence') or '')[:120]}"
+            )
+            not_verified.append(
+                f"{finding['id']}: the contested context could not be checked against the diff."
+            )
+        elif channel == "no_new_fact":
+            finding["transition_reason"] = "pressure_without_new_fact"
+            finding["transition_evidence"] = str(objection.get("evidence") or "")
+            verdict_repeats = True
+
     # --- Apply decision table ---
     # Consumes active AND downgraded findings; only tombstoned ones are excluded.
     active_findings = [
         f for f in findings_registry if f.get("status") in _VERDICT_INPUT_STATUSES
     ]
     computed_verdict, verdict_basis = _apply_verdict_table(active_findings)
+
+    # Escalation ceiling: anything needing a human decision may not read as a
+    # clean pass. Reachable when the only findings left are minor and one of them
+    # was contested on unverifiable context.
+    if escalation_reasons and computed_verdict == "PROCEED":
+        computed_verdict = "REVISE"
+        verdict_basis = (
+            "Escalation is required, so PROCEED is not available: "
+            + escalation_reasons[0]
+        )
 
     # --- Journal ---
     matches_previous: bool | None = None
@@ -7617,9 +7714,16 @@ def normalize_review_verdict(
             "review_mode": review_mode if review_mode in (
                 "normal", "adversarial", "cross_ai", "compare_orderings"
             ) else "unknown",
-            "destination": "unknown",
-            "evidence_mode": "structural",
-            "executor_class": "unknown",
+            "destination": destination if destination in _REVIEW_DESTINATIONS else "unknown",
+            # Derived from what actually happened, not asserted: a second,
+            # independently-dispatched opinion is the only thing that lifts this
+            # above a structural read of one reviewer pass.
+            "evidence_mode": (
+                "independent_run"
+                if (adversarial_findings or []) or review_mode == "cross_ai"
+                else "structural"
+            ),
+            "executor_class": executor_class or "unknown",
         },
         "findings_registry": findings_registry,
         "not_verified": not_verified,
@@ -7633,7 +7737,12 @@ def normalize_review_verdict(
             "previous_verdict": previous_verdict.upper() if previous_verdict else None,
             "current_verdict": computed_verdict,
             "matches_previous": matches_previous,
-            "basis": verdict_basis,
+            "repeated_verbatim": verdict_repeats,
+            "basis": (
+                f"Objection carried no new fact; the previous verdict stands. {verdict_basis}"
+                if verdict_repeats
+                else verdict_basis
+            ),
         },
         # active_count = findings the table consumed (active + downgraded).
         "active_count": len(active_findings),
@@ -7648,6 +7757,122 @@ def normalize_review_verdict(
     return ledger
 
 
+def record_review_objection(
+    finding_id: str,
+    channel: str,
+    evidence: str = "",
+    branch: str | None = None,
+) -> dict[str, Any]:
+    """Record an operator objection against one finding in the current ledger.
+
+    This is the only supported way to contest a finding. Which channel is used
+    decides what may happen to the row, and the channels are a closed list:
+
+      quote_absent | wrong_category | different_version
+          Checkable against the change itself → the finding is removed on the
+          next ledger run. Evidence is REQUIRED; naming a reason is not enough.
+      unverifiable_context
+          Intent, history or agreement not visible in the change → the finding is
+          RETAINED and the ledger escalates to a human. This can never clear it.
+      no_new_fact
+          Insistence, authority, urgency, "it's obvious" → the finding is retained
+          and the previous verdict is repeated.
+
+    The objection is bound to the claim it was raised against, so it cannot drift
+    onto a different finding if the reviewer output changes.
+    """
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+
+    if channel not in _OBJECTION_CHANNELS:
+        return {
+            "status": "error",
+            "message": (
+                f"unknown objection channel {channel!r}; expected one of "
+                f"{sorted(_OBJECTION_CHANNELS)}"
+            ),
+        }
+
+    if channel in _REMOVING_CHANNELS and not evidence.strip():
+        return {
+            "status": "error",
+            "message": (
+                f"channel {channel!r} removes a finding, so it requires evidence. "
+                "Quote the code, name the correct category, or identify the other "
+                "version. To contest without a checkable fact, use "
+                "'unverifiable_context' (escalates) or 'no_new_fact' (verdict stands)."
+            ),
+        }
+
+    ledger_path = branch_dir / "review-verdict-ledger.json"
+    if not ledger_path.exists():
+        return {
+            "status": "error",
+            "message": (
+                "no review-verdict-ledger.json for this branch; run "
+                "write_review_verdict_ledger before contesting a finding."
+            ),
+        }
+
+    try:
+        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"status": "error", "message": f"review-verdict-ledger.json is unreadable: {exc}"}
+
+    finding = next(
+        (
+            f for f in (ledger.get("findings_registry") or [])
+            if isinstance(f, dict) and f.get("id") == finding_id
+        ),
+        None,
+    )
+    if finding is None:
+        return {
+            "status": "error",
+            "message": f"{finding_id!r} is not in the current ledger's findings registry",
+        }
+
+    record = {
+        "finding_id": finding_id,
+        "channel": channel,
+        "effect": _OBJECTION_CHANNELS[channel],
+        "evidence": evidence,
+        "claim_prefix": str(finding.get("claim") or "")[:_OBJECTION_CLAIM_PREFIX],
+        "recorded_at": _utc_timestamp(),
+    }
+
+    objections_path = branch_dir / _REVIEW_OBJECTIONS_FILE
+    existing = _load_review_objections(branch_dir)
+    # One objection per finding: a second one replaces the first rather than
+    # stacking, so the registry cannot be worn down by repetition.
+    existing = [o for o in existing if o.get("finding_id") != finding_id]
+    existing.append(record)
+    objections_path.write_text(
+        json.dumps(existing, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
+    )
+
+    return {
+        "status": "success",
+        "path": str(objections_path),
+        "finding_id": finding_id,
+        "channel": channel,
+        "effect": record["effect"],
+        "next_step": "re-run write_review_verdict_ledger to recompute the verdict",
+    }
+
+
+def _load_review_objections(branch_dir: Path) -> list[dict[str, Any]]:
+    """Read recorded objections for a branch; an unreadable store yields none."""
+    path = branch_dir / _REVIEW_OBJECTIONS_FILE
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return [o for o in payload if isinstance(o, dict)] if isinstance(payload, list) else []
+
+
 def write_review_verdict_ledger(
     monitor_json: str = "",
     predictor_json: str = "",
@@ -7660,6 +7885,8 @@ def write_review_verdict_ledger(
     adversarial_file: str = "",
     review_mode: str = "normal",
     previous_verdict: str = "",
+    destination: str = "unknown",
+    executor_class: str = "unknown",
     branch: str | None = None,
 ) -> dict[str, Any]:
     """Parse reviewer JSON strings, normalize findings, write ledger artifact.
@@ -7762,6 +7989,9 @@ def write_review_verdict_ledger(
         review_mode=review_mode,
         previous_verdict=previous_verdict or None,
         input_errors=input_errors,
+        objections=_load_review_objections(branch_dir),
+        destination=destination,
+        executor_class=executor_class,
         branch=branch_name,
     )
 
@@ -7824,6 +8054,11 @@ def write_review_verdict_ledger(
         f"- Previous verdict: {ledger.get('journal', {}).get('previous_verdict') or 'N/A'}",
         f"- Current verdict: {verdict}",
         f"- Matches previous: {ledger.get('journal', {}).get('matches_previous')}",
+        (
+            f"- Repeated verbatim (objection carried no new fact): "
+            f"{ledger.get('journal', {}).get('repeated_verbatim')}"
+        ),
+        f"- Basis: {ledger.get('journal', {}).get('basis', '')}",
         f"- Verdict table: `{_VERDICT_TABLE_ID}`",
         "",
     ]
@@ -7930,10 +8165,17 @@ def _check_review_ledger_binding(branch_dir: Path, verdict: str) -> dict | str:
 
     ledger_path = branch_dir / "review-verdict-ledger.json"
     if not ledger_path.exists():
-        # The ledger is mandatory in /map-review but write_stage_gate is a
-        # general-purpose writer; refusing here would brick callers that never
-        # produced one. Record the gap instead of silently claiming enforcement.
-        return "no_ledger"
+        # /map-review is the only writer of a review-stage gate, and it always
+        # writes the ledger first. A missing ledger therefore means the closeout
+        # was skipped — which is exactly the case a gate must not wave through.
+        return {
+            "status": "error",
+            "message": (
+                "no review-verdict-ledger.json for this branch; the review verdict is "
+                "computed, not assigned. Run write_review_verdict_ledger first, or set "
+                "MAP_REVIEW_LEDGER_ENFORCE=0 to write the gate without one."
+            ),
+        }
 
     try:
         ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
@@ -20990,6 +21232,25 @@ if __name__ == "__main__":
         if not _wt_r.get("clean"):
             sys.exit(1)
 
+    elif func_name == "record_review_objection":
+        # CLI: record_review_objection --finding-id RVF-001 --channel <channel>
+        #                              [--evidence <text>] [--branch B]
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py record_review_objection")
+        _p.add_argument("--finding-id", required=True, dest="finding_id",
+                        help="Registry id of the contested finding, e.g. RVF-001")
+        _p.add_argument("--channel", required=True,
+                        help=f"Objection channel: {sorted(_OBJECTION_CHANNELS)}")
+        _p.add_argument("--evidence", default="",
+                        help="Required for channels that remove a finding")
+        _p.add_argument("--branch", default=None, help="Branch name (default: current branch)")
+        _a = _p.parse_args(sys.argv[2:])
+        _obj_r = record_review_objection(_a.finding_id, _a.channel, _a.evidence, _a.branch)
+        print(json.dumps(_obj_r, indent=2))
+        if _obj_r.get("status") != "success":
+            sys.exit(1)
+
     elif func_name == "create_approval_hold":
         # CLI: create_approval_hold --kind <kind> --reason <text>
         #                           --request-summary <text> [--source <src>]
@@ -21125,6 +21386,8 @@ if __name__ == "__main__":
             predictor_file=_rvl_flag("predictor-file", ""),
             evaluator_file=_rvl_flag("evaluator-file", ""),
             adversarial_file=_rvl_flag("adversarial-file", ""),
+            destination=_rvl_flag("destination", "unknown"),
+            executor_class=_rvl_flag("executor-class", "unknown"),
             review_mode=_rvl_flag("review-mode", "normal"),
             previous_verdict=_rvl_flag("previous-verdict", ""),
             branch=_rvl_flag("branch") or None,
