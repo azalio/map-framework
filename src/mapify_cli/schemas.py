@@ -1966,11 +1966,19 @@ REVIEW_VERDICT_LEDGER_SCHEMA: dict[str, Any] = {
                             "new_evidence", "quote_absent", "wrong_category",
                             "different_version", "pre_existing_backlog",
                             "human_escalation", "pressure_without_new_fact",
-                            "not_applicable", None,
+                            "input_integrity", "not_applicable", None,
                         ],
                     },
                     "transition_evidence": {"type": ["string", "null"]},
                     "was_present_before_pr": {"type": ["boolean", "null"]},
+                    "downgraded_from": {
+                        "type": "string",
+                        "enum": ["critical", "important", "minor", "needs_investigation"],
+                        "description": (
+                            "Severity the finding carried before it was downgraded. "
+                            "Present only on downgraded rows."
+                        ),
+                    },
                 },
                 "required": ["id", "source_agent", "severity", "claim", "status"],
                 "additionalProperties": True,
@@ -2007,12 +2015,32 @@ REVIEW_VERDICT_LEDGER_SCHEMA: dict[str, Any] = {
                     "enum": ["PROCEED", "REVISE", "BLOCK"],
                 },
                 "matches_previous": {"type": ["boolean", "null"]},
+                "repeated_verbatim": {
+                    "type": "boolean",
+                    "description": (
+                        "True when an objection carried no new fact, so the prior "
+                        "verdict stands rather than being re-argued."
+                    ),
+                },
                 "basis": {"type": "string"},
             },
             "required": ["current_verdict"],
             "additionalProperties": True,
         },
+        "escalation_required": {
+            "type": "boolean",
+            "description": (
+                "True when a human must decide. PROCEED is unavailable while this is set."
+            ),
+        },
+        "escalation_reasons": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        # active_count counts what the decision table consumed: active AND
+        # downgraded rows. tombstoned_count counts only rows that left the table.
         "active_count": {"type": "integer", "minimum": 0},
+        "downgraded_count": {"type": "integer", "minimum": 0},
         "tombstoned_count": {"type": "integer", "minimum": 0},
     },
     "required": [

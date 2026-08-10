@@ -376,7 +376,9 @@ def test_compare_orderings_mode_feeds_same_ledger_path():
 
     assert ledger["input_classification"]["review_mode"] == "compare_orderings"
     registry = ledger["findings_registry"]
-    compare_entries = [f for f in registry if f["source_agent"] == "compare_orderings"]
+    # The schema's own spelling for an ordering finding is `ordering`; the mode
+    # name callers use is aliased onto it rather than widening the enum.
+    compare_entries = [f for f in registry if f["source_agent"] == "ordering"]
     assert compare_entries
     assert ledger["computed_verdict"] == "REVISE"
 
@@ -859,7 +861,13 @@ def test_objection_requires_an_existing_ledger(branch_workspace):
     assert "run write_review_verdict_ledger" in result["message"]
 
 
-def test_evidenced_objection_removes_the_finding(branch_workspace):
+def test_evidenced_objection_downgrades_an_important_finding(branch_workspace):
+    """Objection evidence is free text, so above `minor` it buys a downgrade.
+
+    The retention floor is the same at both removal sites: only a finding proven
+    `minor` leaves the table, whether the removal is argued by the reviewer's own
+    `was_present_before_pr` flag or by an operator objection.
+    """
     del branch_workspace
     _seed_ledger_with_security_finding()
 
@@ -870,8 +878,35 @@ def test_evidenced_objection_removes_the_finding(branch_workspace):
         monitor_json=json.dumps(_monitor_with_high_important()),
     )
 
+    assert result["computed_verdict"] == "REVISE"
+    assert result["tombstoned_count"] == 0
+    assert result["downgraded_count"] == 1
+    assert result["escalation_required"] is True
+
+
+def test_evidenced_objection_removes_a_minor_finding(branch_workspace):
+    del branch_workspace
+    monitor = {
+        "verdict": "approved",
+        "issues": [
+            {
+                "severity": "LOW",
+                "category": "maintainability",
+                "description": "Naming nit in helper",
+                "was_present_before_pr": False,
+                "reach_evidence": "grep:helper:12",
+            }
+        ],
+    }
+    map_step_runner.write_review_verdict_ledger(monitor_json=json.dumps(monitor))
+    map_step_runner.record_review_objection(
+        "RVF-001", "wrong_category", "the helper is generated, so this is not maintainability"
+    )
+    result = map_step_runner.write_review_verdict_ledger(monitor_json=json.dumps(monitor))
+
     assert result["computed_verdict"] == "PROCEED"
     assert result["tombstoned_count"] == 1
+    assert result["escalation_required"] is False
 
 
 def test_unverifiable_context_retains_the_finding_and_escalates(branch_workspace):
@@ -1036,3 +1071,119 @@ def test_evidence_mode_is_derived_not_asserted(branch_workspace):
         (Path(".map/test-branch") / "review-verdict-ledger.json").read_text(encoding="utf-8")
     )
     assert independent["input_classification"]["evidence_mode"] == "independent_run"
+
+
+# ---------------------------------------------------------------------------
+# The artifact must satisfy its own declared schema
+# ---------------------------------------------------------------------------
+
+
+def test_ledger_validates_against_its_declared_schema(branch_workspace):
+    """REVIEW_VERDICT_LEDGER_SCHEMA is the contract; the writer must honour it.
+
+    Without this the schema is prose: closed enums (transition_reason,
+    source_agent, previous_verdict) drift the moment a new value is emitted.
+    """
+    jsonschema = pytest.importorskip("jsonschema")
+    from mapify_cli.schemas import REVIEW_VERDICT_LEDGER_SCHEMA
+
+    del branch_workspace
+
+    # Exercise every branch that writes an unusual field in one artifact:
+    # pre-existing downgrade, missing reach_evidence, an unknown source_agent on
+    # an adversarial row, and a parse failure.
+    monitor = {
+        "verdict": "rejected",
+        "issues": [
+            {
+                "severity": "CRITICAL",
+                "category": "security",
+                "description": "Key material in the signer",
+                "was_present_before_pr": True,
+                "reach_evidence": "grep:KEY:3",
+            },
+            {
+                "severity": "HIGH",
+                "category": "correctness",
+                "description": "Off-by-one with no reachability proof",
+                "was_present_before_pr": False,
+            },
+            {
+                "severity": "LOW",
+                "category": "maintainability",
+                "description": "Naming nit",
+                "was_present_before_pr": False,
+                "reach_evidence": "grep:n:1",
+            },
+        ],
+    }
+    map_step_runner.write_review_verdict_ledger(
+        monitor_json=json.dumps(monitor),
+        predictor_json="{ not json",
+        adversarial_json=json.dumps(
+            [{"severity": "minor", "category": "tests", "claim": "x",
+              "source_agent": "compare_orderings"}]
+        ),
+        review_mode="compare_orderings",
+        previous_verdict="MAYBE",
+        destination="ci",
+    )
+    map_step_runner.record_review_objection("RVF-003", "no_new_fact", "come on")
+    map_step_runner.write_review_verdict_ledger(
+        monitor_json=json.dumps(monitor),
+        review_mode="compare_orderings",
+    )
+
+    payload = json.loads(
+        (Path(".map/test-branch") / "review-verdict-ledger.json").read_text(encoding="utf-8")
+    )
+    jsonschema.validate(payload, REVIEW_VERDICT_LEDGER_SCHEMA)
+
+
+def test_unknown_source_agent_is_mapped_into_the_enum(branch_workspace):
+    del branch_workspace
+
+    map_step_runner.write_review_verdict_ledger(
+        adversarial_json=json.dumps(
+            [{"severity": "minor", "category": "tests", "claim": "x",
+              "source_agent": "compare_orderings"}]
+        ),
+        review_mode="compare_orderings",
+    )
+
+    payload = json.loads(
+        (Path(".map/test-branch") / "review-verdict-ledger.json").read_text(encoding="utf-8")
+    )
+    assert payload["findings_registry"][0]["source_agent"] == "ordering"
+
+
+def test_genuinely_unknown_source_agent_falls_back(branch_workspace):
+    del branch_workspace
+
+    map_step_runner.write_review_verdict_ledger(
+        adversarial_json=json.dumps(
+            [{"severity": "minor", "category": "tests", "claim": "x",
+              "source_agent": "some-new-reviewer"}]
+        ),
+        review_mode="adversarial",
+    )
+
+    payload = json.loads(
+        (Path(".map/test-branch") / "review-verdict-ledger.json").read_text(encoding="utf-8")
+    )
+    assert payload["findings_registry"][0]["source_agent"] == "adversarial"
+
+
+def test_unrecognized_previous_verdict_is_not_copied_into_the_journal(branch_workspace):
+    del branch_workspace
+
+    map_step_runner.write_review_verdict_ledger(
+        monitor_json=json.dumps(_monitor_no_issues()),
+        previous_verdict="probably fine",
+    )
+
+    payload = json.loads(
+        (Path(".map/test-branch") / "review-verdict-ledger.json").read_text(encoding="utf-8")
+    )
+    assert payload["journal"]["previous_verdict"] is None
+    assert payload["journal"]["matches_previous"] is None

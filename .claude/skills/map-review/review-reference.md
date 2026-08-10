@@ -151,8 +151,8 @@ excluded, and a finding may be tombstoned only when its severity is `minor`.
 |---|---|---|---|
 | Ordinary finding | `active` | as reported | counted as reported |
 | Severity ≥ MEDIUM with no `reach_evidence` | `downgraded` | `needs_investigation` | counted → at least REVISE |
-| `was_present_before_pr=true`, critical/important | `downgraded` | `needs_investigation` | counted → at least REVISE, listed in `not_verified` |
-| `was_present_before_pr=true`, minor | `tombstoned` | as reported | excluded |
+| `was_present_before_pr=true`, above `minor` | `downgraded` | `needs_investigation` | counted → at least REVISE, listed in `not_verified` |
+| `was_present_before_pr=true`, `minor` | `tombstoned` | as reported | excluded |
 | Reviewer payload missing or malformed | `active` | `important` | counted → at least REVISE |
 
 A pre-existing claim is self-attested by the reviewer that raised the finding, so
@@ -173,11 +173,17 @@ python3 .map/scripts/map_step_runner.py record_review_objection \
 
 | Channel | Checkable against the change? | Effect |
 |---|---|---|
-| `quote_absent` | yes | tombstones the finding — evidence REQUIRED |
-| `wrong_category` | yes | tombstones the finding — evidence REQUIRED |
-| `different_version` | yes | tombstones the finding — evidence REQUIRED |
+| `quote_absent` | yes | evidence REQUIRED; removes a `minor` finding, downgrades anything above it |
+| `wrong_category` | yes | evidence REQUIRED; removes a `minor` finding, downgrades anything above it |
+| `different_version` | yes | evidence REQUIRED; removes a `minor` finding, downgrades anything above it |
 | `unverifiable_context` | no | finding STAYS, `escalation_required` set, PROCEED unavailable |
 | `no_new_fact` | n/a | finding STAYS, previous verdict repeated (`repeated_verbatim`) |
+
+The retention floor from the status table holds here without exception: **only a
+finding proven `minor` leaves the table, by any route.** The evidence attached to
+an objection is free text that nothing verifies, so against a `critical`,
+`important` or `needs_investigation` finding a checkable channel buys a downgrade
+plus `escalation_required` — a human confirms the removal — never a silent one.
 
 Insistence, authority, urgency and "it's obvious" are `no_new_fact`, not
 `unverifiable_context`. The unverifiable channel is for a concrete fact that is
@@ -211,15 +217,21 @@ otherwise.
 ### Invocation
 
 `REVIEW_MODE_LABEL` must be one of `normal`, `adversarial`, `cross_ai`, or
-`compare_orderings`. For adversarial mode also pass
-`--adversarial-file "$BRANCH_DIR/review-agent-adversarial.json"`.
+`compare_orderings`, and must name the phase that actually ran. Pass only the
+envelopes that phase produced: a file that does not exist is a read error, and
+read errors are findings. Both `adversarial` and `compare_orderings` write their
+aggregated array to `review-agent-adversarial.json`, so both pass
+`--adversarial-file`.
 
 ```bash
+LEDGER_ARGS=()
+for ROLE in monitor predictor evaluator adversarial; do
+  [ -f "$BRANCH_DIR/review-agent-$ROLE.json" ] && \
+    LEDGER_ARGS+=(--"$ROLE"-file "$BRANCH_DIR/review-agent-$ROLE.json")
+done
+
 python3 .map/scripts/map_step_runner.py write_review_verdict_ledger \
-  --monitor-file   "$BRANCH_DIR/review-agent-monitor.json" \
-  --predictor-file "$BRANCH_DIR/review-agent-predictor.json" \
-  --evaluator-file "$BRANCH_DIR/review-agent-evaluator.json" \
-  --review-mode    "$REVIEW_MODE_LABEL"
+  "${LEDGER_ARGS[@]}" --review-mode "$REVIEW_MODE_LABEL"
 ```
 
 The `--*-json` flags still accept an inline payload, but reviewer envelopes are

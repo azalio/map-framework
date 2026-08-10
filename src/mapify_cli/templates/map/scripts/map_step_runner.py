@@ -7187,8 +7187,19 @@ _VERDICT_TABLE_ID = "review_verdict_table.v1"
 # the walkthrough. That is a reporting rule. The gate still counts it.
 _VERDICT_INPUT_STATUSES: tuple[str, ...] = ("active", "downgraded")
 
-# Severities that may never be silently tombstoned, whatever the reviewer claims.
-_NON_TOMBSTONABLE_SEVERITIES: frozenset[str] = frozenset({"critical", "important"})
+# Severities that may never leave the table silently, whatever anyone claims.
+#
+# `needs_investigation` is in the floor because it means "severity not
+# established", not "low severity" — an unestablished finding is exactly the one
+# that must not be dropped. Only a finding proven `minor` can be tombstoned.
+#
+# The floor applies at BOTH removal sites: the reviewer's own
+# `was_present_before_pr` self-attestation, and an operator objection on a
+# checkable channel. Otherwise a finding could leave `_VERDICT_INPUT_STATUSES`
+# through the unguarded door and turn BLOCK into PROCEED.
+_NON_TOMBSTONABLE_SEVERITIES: frozenset[str] = frozenset(
+    {"critical", "important", "needs_investigation"}
+)
 
 # Closed list of objection channels an operator may use against a finding.
 #
@@ -7212,6 +7223,23 @@ _REMOVING_CHANNELS = frozenset(
 
 # Where an operator's objections are stored between runs.
 _REVIEW_OBJECTIONS_FILE = "review-objections.json"
+
+# Closed enums the ledger declares in REVIEW_VERDICT_LEDGER_SCHEMA. Caller-supplied
+# strings (an adversarial finding's `source_agent`, a `--previous-verdict` flag)
+# are mapped through these rather than copied through, so the artifact cannot
+# drift out of its own schema.
+_LEDGER_SOURCE_AGENTS: frozenset[str] = frozenset(
+    {"monitor", "predictor", "evaluator", "adversarial", "ordering", "operator"}
+)
+# Mode names callers naturally use, mapped onto the enum's own spelling. The
+# schema already calls compare-orderings findings `ordering`; anything genuinely
+# unknown falls back to `adversarial` rather than widening the enum by accident.
+_LEDGER_SOURCE_ALIASES: dict[str, str] = {
+    "compare_orderings": "ordering",
+    "orderings": "ordering",
+    "cross_ai": "adversarial",
+}
+_LEDGER_VERDICTS: frozenset[str] = frozenset({"PROCEED", "REVISE", "BLOCK"})
 
 # Where the reviewed change is headed. Recorded on every ledger; not a table
 # argument, because no reachable branch currently turns on it — adding one that
@@ -7577,9 +7605,11 @@ def normalize_review_verdict(
         sev = {"critical": "critical", "important": "important", "minor": "minor"}.get(
             raw_sev, "needs_investigation"
         )
+        raw_source = str(ext_finding.get("source_agent") or "adversarial")
+        raw_source = _LEDGER_SOURCE_ALIASES.get(raw_source, raw_source)
         findings_registry.append({
             "id": _next_id(),
-            "source_agent": ext_finding.get("source_agent", "adversarial"),
+            "source_agent": raw_source if raw_source in _LEDGER_SOURCE_AGENTS else "adversarial",
             "category": _normalize_category(str(ext_finding.get("category") or "")),
             "severity": sev,
             "claim": str(ext_finding.get("claim") or ext_finding.get("description") or ""),
@@ -7663,9 +7693,27 @@ def normalize_review_verdict(
             continue
 
         if channel in _REMOVING_CHANNELS:
-            finding["status"] = "tombstoned"
-            finding["transition_reason"] = channel
-            finding["transition_evidence"] = str(objection.get("evidence") or "")
+            # The retention floor applies here too. The evidence attached to an
+            # objection is free text that nothing verifies, so above `minor` it
+            # buys a downgrade and a human decision, not a silent removal.
+            if finding.get("severity") in _NON_TOMBSTONABLE_SEVERITIES:
+                original = str(finding.get("severity"))
+                finding["downgraded_from"] = finding.get("downgraded_from", original)
+                finding["severity"] = "needs_investigation"
+                finding["status"] = "downgraded"
+                finding["transition_reason"] = channel
+                finding["transition_evidence"] = str(objection.get("evidence") or "")
+                escalation_reasons.append(
+                    f"{finding['id']} ({original}) was contested via {channel}; the "
+                    "objection's evidence is unverified, so a human must confirm the removal."
+                )
+                not_verified.append(
+                    f"{finding['id']}: the objection evidence was not independently checked."
+                )
+            else:
+                finding["status"] = "tombstoned"
+                finding["transition_reason"] = channel
+                finding["transition_evidence"] = str(objection.get("evidence") or "")
         elif channel == "unverifiable_context":
             # The ceiling: context that is not visible in the diff cannot clear a
             # finding, only hand it to a human.
@@ -7701,9 +7749,11 @@ def normalize_review_verdict(
         )
 
     # --- Journal ---
-    matches_previous: bool | None = None
-    if previous_verdict is not None:
-        matches_previous = (previous_verdict.upper() == computed_verdict)
+    # An unrecognized prior verdict is recorded as "none" rather than copied into
+    # a field the schema declares as a closed enum.
+    prior = (previous_verdict or "").strip().upper()
+    prior = prior if prior in _LEDGER_VERDICTS else ""
+    matches_previous: bool | None = (prior == computed_verdict) if prior else None
 
     ledger: dict[str, Any] = {
         "schema_version": "review_verdict_ledger.v1",
@@ -7734,7 +7784,7 @@ def normalize_review_verdict(
         "computed_verdict": computed_verdict,
         "verdict_basis": verdict_basis,
         "journal": {
-            "previous_verdict": previous_verdict.upper() if previous_verdict else None,
+            "previous_verdict": prior or None,
             "current_verdict": computed_verdict,
             "matches_previous": matches_previous,
             "repeated_verbatim": verdict_repeats,
