@@ -119,6 +119,124 @@ Ordering drift check:
 /map-review --compare-orderings
 ```
 
+## Verdict Ledger
+
+`write_review_verdict_ledger` normalizes all reviewer outputs into a closed
+decision table (`review_verdict_table.v1`) and writes:
+- `.map/<branch>/review-verdict-ledger.json` — machine-readable audit trail
+- `.map/<branch>/review-verdict-ledger.md` — human summary
+
+### Capturing reviewer envelopes (Step A.2c)
+
+Write each reviewer's JSON envelope verbatim with a quoted heredoc, so nothing
+inside the payload is expanded by the shell:
+
+```bash
+cat > "$BRANCH_DIR/review-agent-monitor.json" <<'MONITOR_EOF'
+<paste the Monitor JSON envelope verbatim>
+MONITOR_EOF
+```
+
+Repeat for `review-agent-predictor.json` and `review-agent-evaluator.json`. In
+adversarial or compare-orderings mode also write the aggregated findings array to
+`review-agent-adversarial.json`.
+
+### What the table counts
+
+`computed_verdict` (`PROCEED`/`REVISE`/`BLOCK`) is derived from every finding
+whose status is `active` **or** `downgraded`. Only `tombstoned` findings are
+excluded, and a finding may be tombstoned only when its severity is `minor`.
+
+| Situation | Status | Severity | Effect on the verdict |
+|---|---|---|---|
+| Ordinary finding | `active` | as reported | counted as reported |
+| Severity ≥ MEDIUM with no `reach_evidence` | `downgraded` | `needs_investigation` | counted → at least REVISE |
+| `was_present_before_pr=true`, above `minor` | `downgraded` | `needs_investigation` | counted → at least REVISE, listed in `not_verified` |
+| `was_present_before_pr=true`, `minor` | `tombstoned` | as reported | excluded |
+| Reviewer payload missing or malformed | `active` | `important` | counted → at least REVISE |
+
+A pre-existing claim is self-attested by the reviewer that raised the finding, so
+it is not treated as independent evidence: it lowers severity, it does not erase
+the row. When a CRITICAL is neutralised this way the ledger sets
+`escalation_required` and names the reason.
+
+### Contesting a finding
+
+A finding is never removed by argument. Record an objection and re-run the
+ledger; the channel decides what may happen to the row.
+
+```bash
+python3 .map/scripts/map_step_runner.py record_review_objection \
+  --finding-id RVF-001 --channel quote_absent \
+  --evidence "grep for the concatenation returns nothing in the diff"
+```
+
+| Channel | Checkable against the change? | Effect |
+|---|---|---|
+| `quote_absent` | yes | evidence REQUIRED; removes a `minor` finding, downgrades anything above it |
+| `wrong_category` | yes | evidence REQUIRED; removes a `minor` finding, downgrades anything above it |
+| `different_version` | yes | evidence REQUIRED; removes a `minor` finding, downgrades anything above it |
+| `unverifiable_context` | no | finding STAYS, `escalation_required` set, PROCEED unavailable |
+| `no_new_fact` | n/a | finding STAYS, previous verdict repeated (`repeated_verbatim`) |
+
+The retention floor from the status table holds here without exception: **only a
+finding proven `minor` leaves the table, by any route.** The evidence attached to
+an objection is free text that nothing verifies, so against a `critical`,
+`important` or `needs_investigation` finding a checkable channel buys a downgrade
+plus `escalation_required` — a human confirms the removal — never a silent one.
+
+Insistence, authority, urgency and "it's obvious" are `no_new_fact`, not
+`unverifiable_context`. The unverifiable channel is for a concrete fact that is
+real but invisible in the diff (deployment topology, an agreement, intent) — it
+hands the decision to a human, it never clears the row.
+
+An objection is bound to the claim it was raised against. If the reviewer output
+changes and RVF ids shift, the stale objection is ignored and named in
+`not_verified` rather than landing on a different finding. A second objection on
+the same finding replaces the first, so a registry cannot be worn down by
+repetition. Objections live in `.map/<branch>/review-objections.json`.
+
+### Enforcement
+
+The review stage gate is bound to the ledger. `write_stage_gate review <verdict>`
+is refused — and no gate file written — when `<verdict>` contradicts
+`computed_verdict`, or when no ledger exists for the branch at all. This is on by
+default; `MAP_REVIEW_LEDGER_ENFORCE=0` is the explicit opt-out. Pass
+`$FINAL_VERDICT` straight from the ledger output rather than retyping a verdict.
+
+`--destination pre_commit|pr_review|ci` and `--executor-class <tier>` are
+recorded on the ledger for audit. They are deliberately NOT table arguments: no
+reachable branch turns on them today, and a rule nothing can reach is dead code
+in a gate. `evidence_mode` is derived from the run rather than asserted —
+`independent_run` when adversarial or cross-AI findings took part, `structural`
+otherwise.
+
+`journal.previous_verdict` is read back from the ledger already on disk when
+`--previous-verdict` is omitted, so the journal survives across runs.
+
+### Invocation
+
+`REVIEW_MODE_LABEL` must be one of `normal`, `adversarial`, `cross_ai`, or
+`compare_orderings`, and must name the phase that actually ran. Pass only the
+envelopes that phase produced: a file that does not exist is a read error, and
+read errors are findings. Both `adversarial` and `compare_orderings` write their
+aggregated array to `review-agent-adversarial.json`, so both pass
+`--adversarial-file`.
+
+```bash
+LEDGER_ARGS=()
+for ROLE in monitor predictor evaluator adversarial; do
+  [ -f "$BRANCH_DIR/review-agent-$ROLE.json" ] && \
+    LEDGER_ARGS+=(--"$ROLE"-file "$BRANCH_DIR/review-agent-$ROLE.json")
+done
+
+python3 .map/scripts/map_step_runner.py write_review_verdict_ledger \
+  "${LEDGER_ARGS[@]}" --review-mode "$REVIEW_MODE_LABEL"
+```
+
+The `--*-json` flags still accept an inline payload, but reviewer envelopes are
+large and quote-heavy; prefer the file flags written in Step A.2c.
+
 ## Troubleshooting
 
 - Detached prep unavailable: continue from the in-place review bundle; do not mutate the source branch.

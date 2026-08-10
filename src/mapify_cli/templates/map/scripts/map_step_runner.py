@@ -260,6 +260,7 @@ ARTIFACT_STAGE_NAMES = (
     "implementer_readiness",
     "context_usefulness",
     "wayfind_handoff",
+    "review_verdict_ledger",
 )
 RUN_HEALTH_TERMINAL_STATUSES = {
     "pending",
@@ -7163,6 +7164,994 @@ def write_plan_review(
     }
 
 
+# ---------------------------------------------------------------------------
+# Review Verdict Ledger — computed PROCEED/REVISE/BLOCK from a closed table
+# (#406). normalize_review_verdict() is a pure function; write_review_verdict_ledger()
+# persists the artifact and updates the manifest stage.
+# ---------------------------------------------------------------------------
+
+# Canonical decision table name stamped into every ledger for traceability.
+_VERDICT_TABLE_ID = "review_verdict_table.v1"
+
+# Finding statuses that the decision table CONSUMES.
+#
+# `downgraded` is deliberately included. A downgrade lowers a finding's
+# SEVERITY (critical/important -> needs_investigation) but must never remove it
+# from the verdict: dropping it would let a CRITICAL disappear from the gate
+# because a reviewer omitted one metadata field, or because the reviewer itself
+# asserted the issue predates the PR. Only `tombstoned` is excluded, and only
+# low-severity findings may be tombstoned (see the Monitor ingest below).
+#
+# This is the split between PRESENTATION policy and VERDICT policy: map-review
+# Step A.3 says a no-evidence or pre-existing finding must not be PUBLISHED in
+# the walkthrough. That is a reporting rule. The gate still counts it.
+_VERDICT_INPUT_STATUSES: tuple[str, ...] = ("active", "downgraded")
+
+# Severities that may never leave the table silently, whatever anyone claims.
+#
+# `needs_investigation` is in the floor because it means "severity not
+# established", not "low severity" — an unestablished finding is exactly the one
+# that must not be dropped. Only a finding proven `minor` can be tombstoned.
+#
+# The floor applies at BOTH removal sites: the reviewer's own
+# `was_present_before_pr` self-attestation, and an operator objection on a
+# checkable channel. Otherwise a finding could leave `_VERDICT_INPUT_STATUSES`
+# through the unguarded door and turn BLOCK into PROCEED.
+_NON_TOMBSTONABLE_SEVERITIES: frozenset[str] = frozenset(
+    {"critical", "important", "needs_investigation"}
+)
+
+# Closed list of objection channels an operator may use against a finding.
+#
+# The split is the whole point: a channel is either checkable against the diff
+# itself, in which case it may remove the row, or it is not, in which case the
+# row STAYS and a human decides. There is no third kind. Disagreeing with a
+# verdict is not a channel — that is `no_new_fact`, which repeats the verdict.
+_OBJECTION_CHANNELS: dict[str, str] = {
+    # Checkable against the artifact → may remove the finding (evidence required).
+    "quote_absent": "removes",
+    "wrong_category": "removes",
+    "different_version": "removes",
+    # Not checkable against the artifact → finding is retained, human decides.
+    "unverifiable_context": "escalates",
+    # No new fact at all (insistence, authority, urgency) → verdict repeats.
+    "no_new_fact": "repeats",
+}
+_REMOVING_CHANNELS = frozenset(
+    ch for ch, effect in _OBJECTION_CHANNELS.items() if effect == "removes"
+)
+
+# Where an operator's objections are stored between runs.
+_REVIEW_OBJECTIONS_FILE = "review-objections.json"
+
+# Closed enums the ledger declares in REVIEW_VERDICT_LEDGER_SCHEMA. Caller-supplied
+# strings (an adversarial finding's `source_agent`, a `--previous-verdict` flag)
+# are mapped through these rather than copied through, so the artifact cannot
+# drift out of its own schema.
+_LEDGER_SOURCE_AGENTS: frozenset[str] = frozenset(
+    {"monitor", "predictor", "evaluator", "adversarial", "ordering", "operator"}
+)
+# Mode names callers naturally use, mapped onto the enum's own spelling. The
+# schema already calls compare-orderings findings `ordering`; anything genuinely
+# unknown falls back to `adversarial` rather than widening the enum by accident.
+_LEDGER_SOURCE_ALIASES: dict[str, str] = {
+    "compare_orderings": "ordering",
+    "orderings": "ordering",
+    "cross_ai": "adversarial",
+}
+_LEDGER_VERDICTS: frozenset[str] = frozenset({"PROCEED", "REVISE", "BLOCK"})
+
+# Where the reviewed change is headed. Recorded on every ledger; not a table
+# argument, because no reachable branch currently turns on it — adding one that
+# nothing can reach would be dead code in a gate.
+_REVIEW_DESTINATIONS: frozenset[str] = frozenset(
+    {"pre_commit", "pr_review", "ci", "unknown"}
+)
+
+# How much of a finding's claim is fingerprinted when an objection is recorded.
+# An objection is bound to the exact claim it was raised against: if the reviewer
+# output changes, RVF ids shift, and a stale objection must not silently land on
+# a different finding.
+_OBJECTION_CLAIM_PREFIX = 80
+
+# Monitor severity → ledger severity mapping.
+_MONITOR_SEVERITY_MAP: dict[str, str] = {
+    "CRITICAL": "critical",
+    "HIGH": "important",
+    "MEDIUM": "important",
+    "LOW": "minor",
+    "NEEDS_INVESTIGATION": "needs_investigation",
+}
+
+# Predictor risk → ledger severity mapping.
+_PREDICTOR_RISK_MAP: dict[str, str] = {
+    "critical": "critical",
+    "high": "important",
+    "medium": "minor",
+    "low": "minor",
+}
+
+# Monitor issue category → ledger category mapping.
+_CATEGORY_MAP: dict[str, str] = {
+    "correctness": "correctness",
+    "security": "security",
+    "tests": "tests",
+    "performance": "performance",
+    "maintainability": "maintainability",
+    "workflow": "workflow",
+    "functionality": "correctness",
+    "test": "tests",
+    "perf": "performance",
+    "style": "maintainability",
+    "deps": "maintainability",
+    "architecture": "maintainability",
+    "api": "correctness",
+}
+
+
+def _normalize_category(raw: str) -> str:
+    """Map a raw issue category string to one of the closed ledger categories."""
+    return _CATEGORY_MAP.get((raw or "").lower().strip(), "unknown")
+
+
+def _apply_verdict_table(active_findings: list[dict[str, Any]]) -> tuple[str, str]:
+    """Apply the closed decision table to active findings and return (verdict, basis).
+
+    Decision table (review_verdict_table.v1):
+      1. Any active critical finding → BLOCK.
+      2. Any active security or correctness finding that is important+ → BLOCK.
+      3. Any active important finding (any category) → REVISE.
+      4. Any active needs_investigation finding → REVISE.
+      5. No active findings, or only minor findings → PROCEED.
+
+    Evaluator overall_score is advisory only; it is never a tie-breaker that
+    can override an active finding under this table.
+    """
+    if not active_findings:
+        return "PROCEED", "No active findings; decision table yields PROCEED."
+
+    has_critical = any(f.get("severity") == "critical" for f in active_findings)
+    if has_critical:
+        critical_claims = [
+            f.get("claim", "")
+            for f in active_findings
+            if f.get("severity") == "critical"
+        ]
+        basis = (
+            "Active critical finding(s) detected: "
+            + "; ".join(str(c) for c in critical_claims[:3])
+            + (" [and more]" if len(critical_claims) > 3 else "")
+            + ". Decision table rule 1 → BLOCK."
+        )
+        return "BLOCK", basis
+
+    # Security/correctness blocking rule (rule 2)
+    blocking_cats = {"security", "correctness"}
+    has_security_correctness_blocker = any(
+        f.get("severity") == "important" and f.get("category") in blocking_cats
+        for f in active_findings
+    )
+    if has_security_correctness_blocker:
+        cats = [
+            f"{f.get('category')} ({f.get('claim', '')[:60]})"
+            for f in active_findings
+            if f.get("severity") == "important" and f.get("category") in blocking_cats
+        ]
+        basis = (
+            "Active security/correctness important finding(s): "
+            + "; ".join(cats[:3])
+            + (" [and more]" if len(cats) > 3 else "")
+            + ". Decision table rule 2 → BLOCK."
+        )
+        return "BLOCK", basis
+
+    has_important = any(f.get("severity") == "important" for f in active_findings)
+    has_needs_investigation = any(
+        f.get("severity") == "needs_investigation" for f in active_findings
+    )
+
+    if has_important:
+        imp_claims = [
+            f.get("claim", "")
+            for f in active_findings
+            if f.get("severity") == "important"
+        ]
+        basis = (
+            "Active important finding(s): "
+            + "; ".join(str(c) for c in imp_claims[:3])
+            + (" [and more]" if len(imp_claims) > 3 else "")
+            + ". Decision table rule 3 → REVISE."
+        )
+        return "REVISE", basis
+
+    if has_needs_investigation:
+        basis = (
+            "Active needs_investigation finding(s) require operator follow-up. "
+            "Decision table rule 4 → REVISE."
+        )
+        return "REVISE", basis
+
+    return "PROCEED", "Only minor active findings remain. Decision table rule 5 → PROCEED."
+
+
+def normalize_review_verdict(
+    monitor_result: dict[str, Any] | None = None,
+    predictor_result: dict[str, Any] | None = None,
+    evaluator_result: dict[str, Any] | None = None,
+    *,
+    adversarial_findings: list[dict[str, Any]] | None = None,
+    review_mode: str = "normal",
+    previous_verdict: str | None = None,
+    input_errors: list[str] | None = None,
+    objections: list[dict[str, Any]] | None = None,
+    destination: str = "unknown",
+    executor_class: str = "unknown",
+    branch: str | None = None,
+) -> dict[str, Any]:
+    """Compute a normalized review verdict ledger from reviewer outputs.
+
+    Pure function — does NOT write files. Returns a ledger dict ready for
+    ``write_review_verdict_ledger`` to persist.
+
+    Decision table (review_verdict_table.v1):
+      - Any active critical finding → BLOCK.
+      - Any active security/correctness important finding → BLOCK.
+      - Any active important finding → REVISE.
+      - Any active needs_investigation finding → REVISE.
+      - Only minor or no active findings → PROCEED.
+
+    Evaluator overall_score is recorded as advisory evidence but cannot
+    override an active finding under any rule of this table.
+
+    Args:
+        monitor_result:      Parsed Monitor agent output dict (may be None).
+        predictor_result:    Parsed Predictor agent output dict (may be None).
+        evaluator_result:    Parsed Evaluator agent output dict (may be None).
+        adversarial_findings: Pre-normalized finding dicts from adversarial/
+                             compare-ordering mode. When provided, they are
+                             appended to the registry alongside normal reviewer
+                             findings.
+        review_mode:         One of normal|adversarial|cross_ai|compare_orderings.
+        previous_verdict:    Prior PROCEED|REVISE|BLOCK verdict, if any.
+        input_errors:        Reviewer payloads that could not be parsed. Each one
+                             becomes an active integrity finding, so a truncated or
+                             malformed envelope can never read as a clean review.
+        objections:          Operator objections recorded by record_review_objection.
+                             A checkable channel removes its finding; an unverifiable
+                             one retains it and escalates; no_new_fact repeats the
+                             prior verdict.
+        destination:         Where the reviewed change is headed
+                             (pre_commit|pr_review|ci|unknown). Recorded, not a table
+                             argument — see the ledger docs.
+        executor_class:      Model tier that produced the reviewer output, when known.
+                             Recorded only.
+        branch:              Branch name (for output labeling only).
+
+    Returns:
+        A dict conforming to REVIEW_VERDICT_LEDGER_SCHEMA.
+    """
+    branch_name = branch or get_branch_name()
+    findings_registry: list[dict[str, Any]] = []
+    not_verified: list[str] = []
+    escalation_reasons: list[str] = []
+    seq = 0
+
+    def _next_id() -> str:
+        nonlocal seq
+        seq += 1
+        return f"RVF-{seq:03d}"
+
+    # --- Ingest Monitor issues ---
+    monitor_data: dict[str, Any] = monitor_result or {}
+    for issue in (monitor_data.get("issues") or []):
+        if not isinstance(issue, dict):
+            continue
+        raw_sev = str(issue.get("severity") or "").upper()
+        sev = _MONITOR_SEVERITY_MAP.get(raw_sev, "needs_investigation")
+        cat = _normalize_category(str(issue.get("category") or ""))
+        was_before = issue.get("was_present_before_pr")
+
+        evidence: list[dict[str, Any]] = []
+        for ev_item in (issue.get("evidence") or []):
+            if isinstance(ev_item, dict):
+                evidence.append(ev_item)
+        reach = str(issue.get("reach_evidence") or "").strip()
+        if reach:
+            evidence.append({"source": "reach_evidence", "quote": reach})
+
+        # Pre-existing issues route to backlog rather than blocking the PR, but a
+        # critical/important one may NOT be erased from the verdict on the
+        # reviewer's own say-so: `was_present_before_pr=true` is a self-attested
+        # claim, not independent evidence. Such findings are downgraded (still
+        # counted, at needs_investigation) and named in `not_verified`.
+        if was_before is True:
+            if sev in _NON_TOMBSTONABLE_SEVERITIES:
+                findings_registry.append({
+                    "id": _next_id(),
+                    "source_agent": "monitor",
+                    "category": cat,
+                    "severity": "needs_investigation",
+                    "downgraded_from": sev,
+                    "claim": str(issue.get("description") or ""),
+                    "evidence": evidence,
+                    "status": "downgraded",
+                    "transition_reason": "pre_existing_backlog",
+                    "transition_evidence": (
+                        f"was_present_before_pr=true (self-attested by monitor) for severity {raw_sev}; "
+                        "retained at needs_investigation — self-attestation is not independent evidence"
+                    ),
+                    "was_present_before_pr": True,
+                })
+                not_verified.append(
+                    f"Pre-existing claim for {raw_sev} finding "
+                    f"({str(issue.get('description') or '')[:80]}) was not independently verified; "
+                    "it rests on the reviewer's own was_present_before_pr flag."
+                )
+                if sev == "critical":
+                    escalation_reasons.append(
+                        "A CRITICAL finding was excluded from BLOCK solely by a self-attested "
+                        "pre-existing claim — a human must confirm it predates this change."
+                    )
+            else:
+                findings_registry.append({
+                    "id": _next_id(),
+                    "source_agent": "monitor",
+                    "category": cat,
+                    "severity": sev,
+                    "claim": str(issue.get("description") or ""),
+                    "evidence": evidence,
+                    "status": "tombstoned",
+                    "transition_reason": "pre_existing_backlog",
+                    "transition_evidence": "was_present_before_pr=true; severity below the retention floor",
+                    "was_present_before_pr": True,
+                })
+        else:
+            # Severity MEDIUM/HIGH without reach_evidence → downgrade to needs_investigation.
+            # Downgraded, NOT dropped: a missing metadata field must not delete a
+            # blocking finding from the gate (it still yields REVISE via rule 4).
+            if sev in ("important", "critical") and not reach:
+                findings_registry.append({
+                    "id": _next_id(),
+                    "source_agent": "monitor",
+                    "category": cat,
+                    "severity": "needs_investigation",
+                    "downgraded_from": sev,
+                    "claim": str(issue.get("description") or ""),
+                    "evidence": evidence,
+                    "status": "downgraded",
+                    "transition_reason": "quote_absent",
+                    "transition_evidence": (
+                        "reach_evidence missing for severity "
+                        f"{raw_sev}; downgraded per Step A.3 but still counted by the table"
+                    ),
+                    "was_present_before_pr": False,
+                })
+                not_verified.append(
+                    f"{raw_sev} finding ({str(issue.get('description') or '')[:80]}) carries no "
+                    "reach_evidence; its reachability was not proven."
+                )
+                if sev == "critical":
+                    escalation_reasons.append(
+                        "A CRITICAL finding lacked reach_evidence and could not be verified "
+                        "as reachable — a human must decide whether it blocks."
+                    )
+            else:
+                findings_registry.append({
+                    "id": _next_id(),
+                    "source_agent": "monitor",
+                    "category": cat,
+                    "severity": sev,
+                    "claim": str(issue.get("description") or ""),
+                    "evidence": evidence,
+                    "status": "active",
+                    "transition_reason": None,
+                    "transition_evidence": None,
+                    "was_present_before_pr": bool(was_before) if was_before is not None else None,
+                })
+
+    # --- Ingest Predictor risk as a summary finding ---
+    predictor_data: dict[str, Any] = predictor_result or {}
+    pred_risk = str(predictor_data.get("risk_assessment") or "").lower()
+    if pred_risk in _PREDICTOR_RISK_MAP:
+        pred_sev = _PREDICTOR_RISK_MAP[pred_risk]
+        pred_evidence: list[dict[str, Any]] = []
+        for ev_item in (predictor_data.get("evidence") or []):
+            if isinstance(ev_item, dict):
+                pred_evidence.append(ev_item)
+        pred_state = predictor_data.get("predicted_state") or {}
+        breaking = (pred_state.get("breaking_changes") or []) if isinstance(pred_state, dict) else []
+        breaking_count = len(breaking) if isinstance(breaking, list) else 0
+        claim = f"Predictor risk_assessment={pred_risk}"
+        if breaking_count:
+            claim += f"; {breaking_count} breaking change(s) predicted"
+        findings_registry.append({
+            "id": _next_id(),
+            "source_agent": "predictor",
+            "category": "workflow",
+            "severity": pred_sev,
+            "claim": claim,
+            "evidence": pred_evidence,
+            "status": "active",
+            "transition_reason": None,
+            "transition_evidence": None,
+            "was_present_before_pr": None,
+        })
+
+    # --- Record Evaluator scores as advisory (no verdict influence) ---
+    evaluator_data: dict[str, Any] = evaluator_result or {}
+    evaluator_scores: dict[str, Any] | None = None
+    if evaluator_data:
+        evaluator_scores = {
+            "overall_score": evaluator_data.get("overall_score"),
+            "recommendation": evaluator_data.get("recommendation"),
+            "scores": evaluator_data.get("scores"),
+        }
+        # Flag any Evaluator "proceed" recommendation that contradicts Monitor findings.
+        ev_rec = str(evaluator_data.get("recommendation") or "").lower()
+        if ev_rec == "proceed":
+            monitor_verdict = str(monitor_data.get("verdict") or "").lower()
+            if monitor_verdict in ("needs_revision", "rejected"):
+                not_verified.append(
+                    "Evaluator recommendation=proceed while Monitor verdict="
+                    f"{monitor_verdict}. Evaluator score is advisory only; "
+                    "Monitor findings are authoritative per decision table."
+                )
+
+    # --- Ingest adversarial / compare-ordering findings (pre-normalized) ---
+    for ext_finding in (adversarial_findings or []):
+        if not isinstance(ext_finding, dict):
+            continue
+        raw_sev = str(ext_finding.get("severity") or "").lower()
+        sev = {"critical": "critical", "important": "important", "minor": "minor"}.get(
+            raw_sev, "needs_investigation"
+        )
+        raw_source = str(ext_finding.get("source_agent") or "adversarial")
+        raw_source = _LEDGER_SOURCE_ALIASES.get(raw_source, raw_source)
+        findings_registry.append({
+            "id": _next_id(),
+            "source_agent": raw_source if raw_source in _LEDGER_SOURCE_AGENTS else "adversarial",
+            "category": _normalize_category(str(ext_finding.get("category") or "")),
+            "severity": sev,
+            "claim": str(ext_finding.get("claim") or ext_finding.get("description") or ""),
+            "evidence": list(ext_finding.get("evidence") or []),
+            "status": "active",
+            "transition_reason": None,
+            "transition_evidence": None,
+            "was_present_before_pr": None,
+        })
+
+    # --- Input integrity (fail-closed) ---
+    # A gate that receives nothing must not read as a clean pass. An unset
+    # $MONITOR_JSON, a truncated envelope and a malformed payload all mean the
+    # review was NOT OBSERVED — which is a different statement from "the review
+    # found nothing". Each integrity problem enters the registry as an active
+    # workflow finding, so the table yields REVISE instead of PROCEED.
+    for err in (input_errors or []):
+        findings_registry.append({
+            "id": _next_id(),
+            "source_agent": "operator",
+            "category": "workflow",
+            "severity": "important",
+            "claim": f"Reviewer payload could not be parsed: {err}",
+            "evidence": [],
+            "status": "active",
+            "transition_reason": "input_integrity",
+            "transition_evidence": err,
+            "was_present_before_pr": None,
+        })
+        not_verified.append(f"Reviewer output unavailable ({err}); its findings were never seen.")
+
+    # Only when nothing arrived AND nothing failed to parse — a parse failure is
+    # already reported above, and reporting it twice inflates the registry.
+    if (
+        not input_errors
+        and not any((monitor_data, predictor_data, evaluator_data))
+        and not (adversarial_findings or [])
+    ):
+        findings_registry.append({
+            "id": _next_id(),
+            "source_agent": "operator",
+            "category": "workflow",
+            "severity": "important",
+            "claim": (
+                "No reviewer output reached the ledger. Absence of findings is not "
+                "evidence of a clean review."
+            ),
+            "evidence": [],
+            "status": "active",
+            "transition_reason": "input_integrity",
+            "transition_evidence": (
+                "monitor/predictor/evaluator/adversarial inputs were all empty — "
+                "check that the reviewer envelopes were captured and passed in"
+            ),
+            "was_present_before_pr": None,
+        })
+        not_verified.append(
+            "The entire review: no Monitor, Predictor, Evaluator or adversarial output was supplied."
+        )
+        escalation_reasons.append(
+            "The ledger ran with no reviewer input at all — the verdict describes the "
+            "absence of a review, not its result."
+        )
+
+    # --- Apply operator objections ---
+    by_id = {f["id"]: f for f in findings_registry}
+    verdict_repeats = False
+    for objection in (objections or []):
+        finding = by_id.get(str(objection.get("finding_id") or ""))
+        channel = str(objection.get("channel") or "")
+        claim_prefix = str(objection.get("claim_prefix") or "")
+
+        # An objection is bound to the exact claim it was raised against. When the
+        # reviewer output changes, RVF ids shift; a stale objection must not land
+        # on whatever finding now holds that id.
+        if finding is None or not str(finding.get("claim") or "").startswith(claim_prefix):
+            not_verified.append(
+                f"Objection on {objection.get('finding_id')} was ignored: it was raised "
+                "against a different finding than the one now holding that id."
+            )
+            continue
+
+        if channel in _REMOVING_CHANNELS:
+            # The retention floor applies here too. The evidence attached to an
+            # objection is free text that nothing verifies, so above `minor` it
+            # buys a downgrade and a human decision, not a silent removal.
+            if finding.get("severity") in _NON_TOMBSTONABLE_SEVERITIES:
+                original = str(finding.get("severity"))
+                finding["downgraded_from"] = finding.get("downgraded_from", original)
+                finding["severity"] = "needs_investigation"
+                finding["status"] = "downgraded"
+                finding["transition_reason"] = channel
+                finding["transition_evidence"] = str(objection.get("evidence") or "")
+                escalation_reasons.append(
+                    f"{finding['id']} ({original}) was contested via {channel}; the "
+                    "objection's evidence is unverified, so a human must confirm the removal."
+                )
+                not_verified.append(
+                    f"{finding['id']}: the objection evidence was not independently checked."
+                )
+            else:
+                finding["status"] = "tombstoned"
+                finding["transition_reason"] = channel
+                finding["transition_evidence"] = str(objection.get("evidence") or "")
+        elif channel == "unverifiable_context":
+            # The ceiling: context that is not visible in the diff cannot clear a
+            # finding, only hand it to a human.
+            finding["transition_reason"] = "human_escalation"
+            finding["transition_evidence"] = str(objection.get("evidence") or "")
+            escalation_reasons.append(
+                f"{finding['id']} was contested on context not visible in the change: "
+                f"{str(objection.get('evidence') or '')[:120]}"
+            )
+            not_verified.append(
+                f"{finding['id']}: the contested context could not be checked against the diff."
+            )
+        elif channel == "no_new_fact":
+            finding["transition_reason"] = "pressure_without_new_fact"
+            finding["transition_evidence"] = str(objection.get("evidence") or "")
+            verdict_repeats = True
+
+    # --- Apply decision table ---
+    # Consumes active AND downgraded findings; only tombstoned ones are excluded.
+    active_findings = [
+        f for f in findings_registry if f.get("status") in _VERDICT_INPUT_STATUSES
+    ]
+    computed_verdict, verdict_basis = _apply_verdict_table(active_findings)
+
+    # Escalation ceiling: anything needing a human decision may not read as a
+    # clean pass. Reachable when the only findings left are minor and one of them
+    # was contested on unverifiable context.
+    if escalation_reasons and computed_verdict == "PROCEED":
+        computed_verdict = "REVISE"
+        verdict_basis = (
+            "Escalation is required, so PROCEED is not available: "
+            + escalation_reasons[0]
+        )
+
+    # --- Journal ---
+    # An unrecognized prior verdict is recorded as "none" rather than copied into
+    # a field the schema declares as a closed enum.
+    prior = (previous_verdict or "").strip().upper()
+    prior = prior if prior in _LEDGER_VERDICTS else ""
+    matches_previous: bool | None = (prior == computed_verdict) if prior else None
+
+    ledger: dict[str, Any] = {
+        "schema_version": "review_verdict_ledger.v1",
+        "generated_at": _utc_timestamp(),
+        "branch": branch_name,
+        "criteria_version": _VERDICT_TABLE_ID,
+        "input_classification": {
+            "review_mode": review_mode if review_mode in (
+                "normal", "adversarial", "cross_ai", "compare_orderings"
+            ) else "unknown",
+            "destination": destination if destination in _REVIEW_DESTINATIONS else "unknown",
+            # Derived from what actually happened, not asserted: a second,
+            # independently-dispatched opinion is the only thing that lifts this
+            # above a structural read of one reviewer pass.
+            "evidence_mode": (
+                "independent_run"
+                if (adversarial_findings or []) or review_mode == "cross_ai"
+                else "structural"
+            ),
+            "executor_class": executor_class or "unknown",
+        },
+        "findings_registry": findings_registry,
+        "not_verified": not_verified,
+        "escalation_required": bool(escalation_reasons),
+        "escalation_reasons": escalation_reasons,
+        "evaluator_scores": evaluator_scores,
+        "verdict_table": _VERDICT_TABLE_ID,
+        "computed_verdict": computed_verdict,
+        "verdict_basis": verdict_basis,
+        "journal": {
+            "previous_verdict": prior or None,
+            "current_verdict": computed_verdict,
+            "matches_previous": matches_previous,
+            "repeated_verbatim": verdict_repeats,
+            "basis": (
+                f"Objection carried no new fact; the previous verdict stands. {verdict_basis}"
+                if verdict_repeats
+                else verdict_basis
+            ),
+        },
+        # active_count = findings the table consumed (active + downgraded).
+        "active_count": len(active_findings),
+        "downgraded_count": sum(
+            1 for f in findings_registry if f.get("status") == "downgraded"
+        ),
+        # Only genuinely removed findings — these did NOT reach the table.
+        "tombstoned_count": sum(
+            1 for f in findings_registry if f.get("status") == "tombstoned"
+        ),
+    }
+    return ledger
+
+
+def record_review_objection(
+    finding_id: str,
+    channel: str,
+    evidence: str = "",
+    branch: str | None = None,
+) -> dict[str, Any]:
+    """Record an operator objection against one finding in the current ledger.
+
+    This is the only supported way to contest a finding. Which channel is used
+    decides what may happen to the row, and the channels are a closed list:
+
+      quote_absent | wrong_category | different_version
+          Checkable against the change itself → the finding is removed on the
+          next ledger run. Evidence is REQUIRED; naming a reason is not enough.
+      unverifiable_context
+          Intent, history or agreement not visible in the change → the finding is
+          RETAINED and the ledger escalates to a human. This can never clear it.
+      no_new_fact
+          Insistence, authority, urgency, "it's obvious" → the finding is retained
+          and the previous verdict is repeated.
+
+    The objection is bound to the claim it was raised against, so it cannot drift
+    onto a different finding if the reviewer output changes.
+    """
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+
+    if channel not in _OBJECTION_CHANNELS:
+        return {
+            "status": "error",
+            "message": (
+                f"unknown objection channel {channel!r}; expected one of "
+                f"{sorted(_OBJECTION_CHANNELS)}"
+            ),
+        }
+
+    if channel in _REMOVING_CHANNELS and not evidence.strip():
+        return {
+            "status": "error",
+            "message": (
+                f"channel {channel!r} removes a finding, so it requires evidence. "
+                "Quote the code, name the correct category, or identify the other "
+                "version. To contest without a checkable fact, use "
+                "'unverifiable_context' (escalates) or 'no_new_fact' (verdict stands)."
+            ),
+        }
+
+    ledger_path = branch_dir / "review-verdict-ledger.json"
+    if not ledger_path.exists():
+        return {
+            "status": "error",
+            "message": (
+                "no review-verdict-ledger.json for this branch; run "
+                "write_review_verdict_ledger before contesting a finding."
+            ),
+        }
+
+    try:
+        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"status": "error", "message": f"review-verdict-ledger.json is unreadable: {exc}"}
+
+    finding = next(
+        (
+            f for f in (ledger.get("findings_registry") or [])
+            if isinstance(f, dict) and f.get("id") == finding_id
+        ),
+        None,
+    )
+    if finding is None:
+        return {
+            "status": "error",
+            "message": f"{finding_id!r} is not in the current ledger's findings registry",
+        }
+
+    record = {
+        "finding_id": finding_id,
+        "channel": channel,
+        "effect": _OBJECTION_CHANNELS[channel],
+        "evidence": evidence,
+        "claim_prefix": str(finding.get("claim") or "")[:_OBJECTION_CLAIM_PREFIX],
+        "recorded_at": _utc_timestamp(),
+    }
+
+    objections_path = branch_dir / _REVIEW_OBJECTIONS_FILE
+    existing = _load_review_objections(branch_dir)
+    # One objection per finding: a second one replaces the first rather than
+    # stacking, so the registry cannot be worn down by repetition.
+    existing = [o for o in existing if o.get("finding_id") != finding_id]
+    existing.append(record)
+    objections_path.write_text(
+        json.dumps(existing, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
+    )
+
+    return {
+        "status": "success",
+        "path": str(objections_path),
+        "finding_id": finding_id,
+        "channel": channel,
+        "effect": record["effect"],
+        "next_step": "re-run write_review_verdict_ledger to recompute the verdict",
+    }
+
+
+def _load_review_objections(branch_dir: Path) -> list[dict[str, Any]]:
+    """Read recorded objections for a branch; an unreadable store yields none."""
+    path = branch_dir / _REVIEW_OBJECTIONS_FILE
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return [o for o in payload if isinstance(o, dict)] if isinstance(payload, list) else []
+
+
+def write_review_verdict_ledger(
+    monitor_json: str = "",
+    predictor_json: str = "",
+    evaluator_json: str = "",
+    *,
+    adversarial_json: str = "",
+    monitor_file: str = "",
+    predictor_file: str = "",
+    evaluator_file: str = "",
+    adversarial_file: str = "",
+    review_mode: str = "normal",
+    previous_verdict: str = "",
+    destination: str = "unknown",
+    executor_class: str = "unknown",
+    branch: str | None = None,
+) -> dict[str, Any]:
+    """Parse reviewer JSON strings, normalize findings, write ledger artifact.
+
+    Writes:
+      .map/<branch>/review-verdict-ledger.json
+      .map/<branch>/review-verdict-ledger.md
+
+    Updates artifact_manifest.json stage ``review_verdict_ledger``.
+
+    Args:
+        monitor_json:       JSON string of Monitor agent output (may be empty).
+        predictor_json:     JSON string of Predictor agent output (may be empty).
+        evaluator_json:     JSON string of Evaluator agent output (may be empty).
+        adversarial_json:   JSON array of pre-normalized adversarial findings (may be empty).
+        monitor_file:       Path to the Monitor envelope on disk. Takes precedence over
+                            monitor_json — preferred for real reviewer output, which is
+                            too large and too quote-heavy to survive a shell variable.
+        predictor_file:     Path to the Predictor envelope on disk.
+        evaluator_file:     Path to the Evaluator envelope on disk.
+        adversarial_file:   Path to the adversarial findings array on disk.
+        review_mode:        One of normal|adversarial|cross_ai|compare_orderings.
+        previous_verdict:   Prior PROCEED|REVISE|BLOCK verdict string. When empty, it is
+                            recovered from the ledger already written for this branch.
+        branch:             Branch name override.
+
+    Returns:
+        Status dict with ``status``, ``computed_verdict``, ``json_path``, ``md_path``.
+    """
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+
+    # Parse failures are RECORDED, not swallowed: a truncated Monitor envelope
+    # must surface as an integrity finding rather than as an absence of findings.
+    input_errors: list[str] = []
+
+    def _read_source(raw: str, path: str, label: str) -> str:
+        """Return the payload for one reviewer, preferring an on-disk file."""
+        if path:
+            try:
+                return Path(path).read_text(encoding="utf-8")
+            except OSError as exc:
+                input_errors.append(f"{label}: cannot read {path} ({exc.strerror or exc})")
+                return ""
+        return raw
+
+    def _safe_parse(raw: str, label: str) -> dict[str, Any]:
+        if not raw or not raw.strip():
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            input_errors.append(f"{label}: invalid JSON ({exc.msg} at line {exc.lineno})")
+            return {}
+        if not isinstance(parsed, dict):
+            input_errors.append(f"{label}: expected a JSON object, got {type(parsed).__name__}")
+            return {}
+        return parsed
+
+    def _safe_parse_list(raw: str, label: str) -> list[dict[str, Any]]:
+        if not raw or not raw.strip():
+            return []
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            input_errors.append(f"{label}: invalid JSON ({exc.msg} at line {exc.lineno})")
+            return []
+        if isinstance(parsed, list):
+            return [x for x in parsed if isinstance(x, dict)]
+        if isinstance(parsed, dict):
+            return [parsed]
+        input_errors.append(f"{label}: expected a JSON array, got {type(parsed).__name__}")
+        return []
+
+    monitor_result = _safe_parse(_read_source(monitor_json, monitor_file, "monitor"), "monitor")
+    predictor_result = _safe_parse(_read_source(predictor_json, predictor_file, "predictor"), "predictor")
+    evaluator_result = _safe_parse(_read_source(evaluator_json, evaluator_file, "evaluator"), "evaluator")
+    adversarial_findings = _safe_parse_list(
+        _read_source(adversarial_json, adversarial_file, "adversarial"), "adversarial"
+    )
+
+    # Journal continuity: when the caller does not supply the prior verdict,
+    # recover it from the ledger already on disk. A journal whose previous
+    # verdict is re-typed by the caller each run is not a journal.
+    json_path = branch_dir / "review-verdict-ledger.json"
+    if not previous_verdict and json_path.exists():
+        try:
+            prior = json.loads(json_path.read_text(encoding="utf-8"))
+            if isinstance(prior, dict):
+                previous_verdict = str(prior.get("computed_verdict") or "")
+        except (OSError, json.JSONDecodeError):
+            previous_verdict = ""
+
+    ledger = normalize_review_verdict(
+        monitor_result=monitor_result,
+        predictor_result=predictor_result,
+        evaluator_result=evaluator_result,
+        adversarial_findings=adversarial_findings,
+        review_mode=review_mode,
+        previous_verdict=previous_verdict or None,
+        input_errors=input_errors,
+        objections=_load_review_objections(branch_dir),
+        destination=destination,
+        executor_class=executor_class,
+        branch=branch_name,
+    )
+
+    # Write JSON
+    json_path.write_text(
+        json.dumps(ledger, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
+    )
+
+    # Write Markdown summary
+    verdict = str(ledger.get("computed_verdict", "BLOCK"))
+    active_count = int(ledger.get("active_count") or 0)
+    downgraded_count = int(ledger.get("downgraded_count") or 0)
+    tombstoned_count = int(ledger.get("tombstoned_count") or 0)
+    not_verified_list = list(ledger.get("not_verified") or [])
+    escalation_reasons_list = list(ledger.get("escalation_reasons") or [])
+
+    md_lines: list[str] = [
+        "# Review Verdict Ledger\n",
+        f"**Computed verdict:** {verdict}",
+        f"**Verdict basis:** {ledger.get('verdict_basis', '')}",
+        (
+            f"**Counted by the table:** {active_count} "
+            f"(of which downgraded: {downgraded_count}) | **Tombstoned:** {tombstoned_count}"
+        ),
+        "",
+    ]
+    if escalation_reasons_list:
+        md_lines += ["> **ESCALATION — a human must decide:**", ""]
+        md_lines += [f"> - {reason}" for reason in escalation_reasons_list]
+        md_lines.append("")
+    md_lines += [
+        "## Findings Registry",
+        "",
+    ]
+    for f in (ledger.get("findings_registry") or []):
+        if not isinstance(f, dict):
+            continue
+        status = f.get("status", "active")
+        sev = f.get("severity", "")
+        src = f.get("source_agent", "")
+        claim = str(f.get("claim") or "")[:120]
+        icon = {"active": "✗", "tombstoned": "⌫", "downgraded": "↓"}.get(str(status), "?")
+        md_lines.append(
+            f"- {icon} [{f.get('id')}] **{sev}** ({src}): {claim}"
+        )
+        if f.get("transition_reason"):
+            md_lines.append(
+                f"  - Reason: `{f['transition_reason']}` — {f.get('transition_evidence', '')}"
+            )
+
+    if not_verified_list:
+        md_lines += ["", "## Not Verified", ""]
+        for nv in not_verified_list:
+            md_lines.append(f"- {nv}")
+
+    md_lines += [
+        "",
+        "## Journal",
+        "",
+        f"- Previous verdict: {ledger.get('journal', {}).get('previous_verdict') or 'N/A'}",
+        f"- Current verdict: {verdict}",
+        f"- Matches previous: {ledger.get('journal', {}).get('matches_previous')}",
+        (
+            f"- Repeated verbatim (objection carried no new fact): "
+            f"{ledger.get('journal', {}).get('repeated_verbatim')}"
+        ),
+        f"- Basis: {ledger.get('journal', {}).get('basis', '')}",
+        f"- Verdict table: `{_VERDICT_TABLE_ID}`",
+        "",
+    ]
+
+    md_path = branch_dir / "review-verdict-ledger.md"
+    md_path.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
+
+    # Update artifact manifest
+    manifest = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        manifest,
+        "review_verdict_ledger",
+        "ready",
+        artifacts=[
+            _artifact_ref(json_path, "review-verdict-ledger"),
+            _artifact_ref(md_path, "review-verdict-ledger-report"),
+        ],
+        metadata={
+            "computed_verdict": verdict,
+            "active_count": active_count,
+            "downgraded_count": downgraded_count,
+            "tombstoned_count": tombstoned_count,
+            "escalation_required": bool(escalation_reasons_list),
+            "review_mode": review_mode,
+        },
+    )
+    manifest_result = save_artifact_manifest(manifest, branch_name)
+
+    return {
+        "status": "success",
+        "computed_verdict": verdict,
+        "json_path": str(json_path),
+        "md_path": str(md_path),
+        "manifest_path": manifest_result["path"],
+        "active_count": active_count,
+        "downgraded_count": downgraded_count,
+        "tombstoned_count": tombstoned_count,
+        "not_verified_count": len(not_verified_list),
+        "escalation_required": bool(escalation_reasons_list),
+        "input_errors": input_errors,
+    }
+
+
 def write_stage_gate(
     stage: str,
     verdict: str,
@@ -7180,8 +8169,23 @@ def write_stage_gate(
     verdict = normalized_verdict
 
     normalized_stage = stage.strip().lower().replace("_", "-")
-    gate_file = get_branch_dir(branch) / f"{normalized_stage}-gate.json"
+    branch_dir = get_branch_dir(branch)
+    gate_file = branch_dir / f"{normalized_stage}-gate.json"
     gate_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Review gates are bound to the computed ledger verdict (#406, invariant I1:
+    # the verdict is COMPUTED, not assigned). Writing a review gate that
+    # contradicts the ledger is refused, and no gate file is written — otherwise
+    # the ledger is an advisory note the operator can walk past.
+    #
+    # Explicit hatch: MAP_REVIEW_LEDGER_ENFORCE=0 disables the binding. It is ON
+    # by default; there is no calibration period.
+    ledger_enforcement = "not_applicable"
+    if normalized_stage == "review":
+        ledger_enforcement = _check_review_ledger_binding(branch_dir, verdict)
+        if isinstance(ledger_enforcement, dict):
+            return ledger_enforcement
+
     payload = {
         "stage": normalized_stage,
         "verdict": verdict,
@@ -7192,7 +8196,75 @@ def write_stage_gate(
     gate_file.write_text(
         json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
     )
-    return {"status": "success", "path": str(gate_file), "verdict": verdict}
+    return {
+        "status": "success",
+        "path": str(gate_file),
+        "verdict": verdict,
+        "ledger_enforcement": ledger_enforcement,
+    }
+
+
+def _check_review_ledger_binding(branch_dir: Path, verdict: str) -> dict | str:
+    """Compare a review gate verdict against the computed ledger.
+
+    Returns an error dict when the gate must be refused, otherwise a short
+    status string describing what was enforced.
+    """
+    if os.environ.get("MAP_REVIEW_LEDGER_ENFORCE", "1").strip() == "0":
+        return "disabled_by_env"
+
+    ledger_path = branch_dir / "review-verdict-ledger.json"
+    if not ledger_path.exists():
+        # /map-review is the only writer of a review-stage gate, and it always
+        # writes the ledger first. A missing ledger therefore means the closeout
+        # was skipped — which is exactly the case a gate must not wave through.
+        return {
+            "status": "error",
+            "message": (
+                "no review-verdict-ledger.json for this branch; the review verdict is "
+                "computed, not assigned. Run write_review_verdict_ledger first, or set "
+                "MAP_REVIEW_LEDGER_ENFORCE=0 to write the gate without one."
+            ),
+        }
+
+    try:
+        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {
+            "status": "error",
+            "message": (
+                f"review-verdict-ledger.json is unreadable ({exc}); refusing to write a "
+                "review gate whose computed verdict cannot be checked. Re-run "
+                "write_review_verdict_ledger."
+            ),
+        }
+
+    computed = normalize_gate_verdict(str(ledger.get("computed_verdict") or ""))
+    if computed is None:
+        return {
+            "status": "error",
+            "message": (
+                "review-verdict-ledger.json carries no usable computed_verdict; "
+                "re-run write_review_verdict_ledger before writing the review gate."
+            ),
+        }
+
+    if computed != verdict:
+        return {
+            "status": "error",
+            "message": (
+                f"review gate verdict {verdict!r} contradicts the computed ledger verdict "
+                f"{computed!r} ({ledger.get('verdict_basis', '')}). The verdict is computed, "
+                "not assigned: fix the findings, re-run write_review_verdict_ledger, or set "
+                "MAP_REVIEW_LEDGER_ENFORCE=0 to override deliberately."
+            ),
+            "computed_verdict": computed,
+            "requested_verdict": verdict,
+        }
+
+    if ledger.get("escalation_required"):
+        return "enforced_with_escalation"
+    return "enforced"
 
 
 def ensure_active_issues_file(branch: str | None = None) -> dict:
@@ -20210,6 +21282,25 @@ if __name__ == "__main__":
         if not _wt_r.get("clean"):
             sys.exit(1)
 
+    elif func_name == "record_review_objection":
+        # CLI: record_review_objection --finding-id RVF-001 --channel <channel>
+        #                              [--evidence <text>] [--branch B]
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py record_review_objection")
+        _p.add_argument("--finding-id", required=True, dest="finding_id",
+                        help="Registry id of the contested finding, e.g. RVF-001")
+        _p.add_argument("--channel", required=True,
+                        help=f"Objection channel: {sorted(_OBJECTION_CHANNELS)}")
+        _p.add_argument("--evidence", default="",
+                        help="Required for channels that remove a finding")
+        _p.add_argument("--branch", default=None, help="Branch name (default: current branch)")
+        _a = _p.parse_args(sys.argv[2:])
+        _obj_r = record_review_objection(_a.finding_id, _a.channel, _a.evidence, _a.branch)
+        print(json.dumps(_obj_r, indent=2))
+        if _obj_r.get("status") != "success":
+            sys.exit(1)
+
     elif func_name == "create_approval_hold":
         # CLI: create_approval_hold --kind <kind> --reason <text>
         #                           --request-summary <text> [--source <src>]
@@ -20313,6 +21404,45 @@ if __name__ == "__main__":
         print(json.dumps(result, indent=2, ensure_ascii=True))
         if result.get("status") == "error":
             sys.exit(1)
+
+    elif func_name == "write_review_verdict_ledger":
+        # CLI: write_review_verdict_ledger
+        #        [--monitor-json '<JSON>']
+        #        [--predictor-json '<JSON>']
+        #        [--evaluator-json '<JSON>']
+        #        [--adversarial-json '<JSON array>']
+        #        [--monitor-file <path>] [--predictor-file <path>]
+        #        [--evaluator-file <path>] [--adversarial-file <path>]
+        #          (file flags win over the matching --*-json flag; prefer them for
+        #           real reviewer envelopes, which are too large for a shell variable)
+        #        [--review-mode normal|adversarial|cross_ai|compare_orderings]
+        #        [--previous-verdict PROCEED|REVISE|BLOCK]
+        #          (omit it: the prior verdict is read back from the existing ledger)
+        #        [--branch <branch>]
+        def _rvl_flag(name: str, default: str = "") -> str:
+            flag = f"--{name}"
+            if flag in sys.argv:
+                idx = sys.argv.index(flag)
+                if idx + 1 < len(sys.argv):
+                    return sys.argv[idx + 1]
+            return default
+
+        result = write_review_verdict_ledger(
+            monitor_json=_rvl_flag("monitor-json", ""),
+            predictor_json=_rvl_flag("predictor-json", ""),
+            evaluator_json=_rvl_flag("evaluator-json", ""),
+            adversarial_json=_rvl_flag("adversarial-json", ""),
+            monitor_file=_rvl_flag("monitor-file", ""),
+            predictor_file=_rvl_flag("predictor-file", ""),
+            evaluator_file=_rvl_flag("evaluator-file", ""),
+            adversarial_file=_rvl_flag("adversarial-file", ""),
+            destination=_rvl_flag("destination", "unknown"),
+            executor_class=_rvl_flag("executor-class", "unknown"),
+            review_mode=_rvl_flag("review-mode", "normal"),
+            previous_verdict=_rvl_flag("previous-verdict", ""),
+            branch=_rvl_flag("branch") or None,
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=True))
 
     else:
         # Helpful redirect: when the user passes a command that belongs to
