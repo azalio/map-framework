@@ -1187,3 +1187,65 @@ def test_unrecognized_previous_verdict_is_not_copied_into_the_journal(branch_wor
     )
     assert payload["journal"]["previous_verdict"] is None
     assert payload["journal"]["matches_previous"] is None
+
+
+# ---------------------------------------------------------------------------
+# Atomic write regression tests (issue #409)
+# ---------------------------------------------------------------------------
+
+
+def test_write_review_verdict_ledger_uses_atomic_write(branch_workspace):
+    """write_review_verdict_ledger must use _write_json_file (atomic .tmp -> replace).
+
+    A non-atomic write_text() call would leave the ledger in an inconsistent
+    state if the process is killed mid-write.  We verify the ledger JSON is
+    parseable immediately after a successful call (no truncation) and that
+    no residual .tmp file was left behind.
+    """
+    del branch_workspace
+
+    map_step_runner.write_review_verdict_ledger(
+        monitor_json=json.dumps(_monitor_no_issues()),
+    )
+
+    ledger_path = Path(".map/test-branch/review-verdict-ledger.json")
+    tmp_path = ledger_path.with_suffix(".tmp")
+    assert ledger_path.exists(), "ledger JSON must be written"
+    assert not tmp_path.exists(), "no residual .tmp file should remain after atomic write"
+    # Confirm the file is valid JSON (not truncated)
+    payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert "computed_verdict" in payload
+
+
+def test_record_review_objection_uses_atomic_write(branch_workspace):
+    """record_review_objection must use _write_json_file for the objections list.
+
+    Validates that a second objection (replacing the first) leaves a valid JSON
+    array with no residual .tmp file.
+    """
+    del branch_workspace
+    _seed_ledger_with_security_finding()
+
+    map_step_runner.record_review_objection(
+        "RVF-001", "quote_absent", "searched the diff, the quoted line is absent"
+    )
+
+    objections_path = Path(".map/test-branch/review-objections.json")
+    tmp_path = objections_path.with_suffix(".tmp")
+    assert objections_path.exists(), "objections file must be written"
+    assert not tmp_path.exists(), "no residual .tmp file should remain after atomic write"
+    records = json.loads(objections_path.read_text(encoding="utf-8"))
+    assert isinstance(records, list) and len(records) == 1
+    assert records[0]["channel"] == "quote_absent"
+
+
+def test_write_json_file_accepts_list_payload(branch_workspace):
+    """_write_json_file must accept a list payload (widened from dict-only)."""
+    workspace = branch_workspace
+    test_path = workspace / "test-list.json"
+    sample: list = [{"a": 1}, {"b": 2}]
+
+    map_step_runner._write_json_file(test_path, sample)  # type: ignore[attr-defined]
+
+    assert test_path.exists()
+    assert json.loads(test_path.read_text(encoding="utf-8")) == sample
