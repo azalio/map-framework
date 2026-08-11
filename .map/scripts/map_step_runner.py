@@ -564,7 +564,7 @@ def _is_non_negative_int(value: object) -> bool:
     return type(value) is int and value >= 0
 
 
-def _write_json_file(path: Path, payload: dict) -> None:
+def _write_json_file(path: Path, payload: dict | list) -> None:
     """Atomically write JSON payload to disk."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_file = path.with_suffix(".tmp")
@@ -7897,9 +7897,7 @@ def record_review_objection(
     # stacking, so the registry cannot be worn down by repetition.
     existing = [o for o in existing if o.get("finding_id") != finding_id]
     existing.append(record)
-    objections_path.write_text(
-        json.dumps(existing, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
-    )
+    _write_json_file(objections_path, existing)
 
     return {
         "status": "success",
@@ -8046,9 +8044,7 @@ def write_review_verdict_ledger(
     )
 
     # Write JSON
-    json_path.write_text(
-        json.dumps(ledger, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
-    )
+    _write_json_file(json_path, ledger)
 
     # Write Markdown summary
     verdict = str(ledger.get("computed_verdict", "BLOCK"))
