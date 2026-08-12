@@ -96,7 +96,7 @@ jobs:
     - name: Install build dependencies
       run: |
         python -m pip install --upgrade pip
-        python -m pip install build "packaging>=24.2,<26" "twine>=6.2.0"
+        python -m pip install build "packaging>=26" "twine>=6.2.0"
 
     - name: Build package
       run: |
