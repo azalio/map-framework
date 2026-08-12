@@ -11,6 +11,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`/map-review` computes its verdict instead of choosing one (closes #406).** `write_review_verdict_ledger` normalizes Monitor/Predictor/Evaluator envelopes into a finding registry and applies a closed decision table (`review_verdict_table.v1`), writing `.map/<branch>/review-verdict-ledger.json` and a human-readable `.md`. Reviewer envelopes are captured to `.map/<branch>/review-agent-<role>.json` and read via `--monitor-file`/`--predictor-file`/`--evaluator-file`/`--adversarial-file`. The table counts every finding whose status is `active` or `downgraded`. Only a finding proven `minor` may be tombstoned — by any route — so neither a missing `reach_evidence` field, nor a reviewer's own `was_present_before_pr=true`, nor an operator objection can erase a blocking finding from the gate; each downgrades severity to `needs_investigation` instead, and doing so to a CRITICAL sets `escalation_required`. `needs_investigation` sits inside that floor because it means "severity not established", not "low severity". Missing, unreadable or malformed reviewer output is itself an active finding: an empty registry reads as "the review was not observed", never as a clean pass. `journal.previous_verdict` is recovered from the ledger on disk, so the journal spans runs.
 - **Objection channels for contesting a review finding (#406).** `record_review_objection --finding-id RVF-001 --channel <channel> [--evidence …]` is the only supported way to remove a finding. `quote_absent`, `wrong_category` and `different_version` are checkable against the change and REQUIRE evidence; they remove a `minor` finding outright and downgrade anything above it with `escalation_required` set, because the objection's evidence is free text that nothing verifies. `unverifiable_context` keeps the finding and escalates to a human, so PROCEED becomes unavailable; `no_new_fact` keeps the finding and repeats the previous verdict. Objections are stored in `.map/<branch>/review-objections.json`, bound to the claim they were raised against so a stale objection cannot drift onto another finding, and limited to one per finding so a registry cannot be worn down by repetition.
 
+- **Wayfind amend commands for post-resolution wording fixes (#396).** `amend_resolution`
+  updates a resolved ticket's gist and/or resolution path in place; `amend_out_of_scope`
+  does the same for an out-of-scope entry's reason/gist. Both touch no structural
+  invariant, are allowed on a handed-off map, and flag `handoff_refresh_needed`.
+- **Wayfind one-non-research-resolve-per-session cap is now opt-in (#395).**
+- **Role-local persistent memory for learning agents (#379).**
+
+### Fixed
+- **Atomic writes for `review-verdict-ledger.json` and `review-objections.json` (#409).**
+  Both files were written with non-atomic `write_text()` and could be corrupted by a
+  mid-write kill; they now go through `_write_json_file()` (temp file + `os.replace`).
+- **Non-English Monitor feedback is no longer dropped from retry artifacts (#404).**
+  The keyword filter is a ranking hint only; the full original text is always forwarded.
+- **Six proactive bugs in `wayfind_runner`, `map_step_runner`, and settings deny globs.**
+  `_resolve_evidence_path` rejects absolute paths before path-joining (POSIX join
+  discarded the base and bypassed containment); `add_ticket` accepts only open fog
+  entries as `from_fog`; `validate_mutation_boundary` catches subprocess `OSError`
+  in `_resolve_subtask_diff_base`; `record_scope_baseline` writes atomically; git
+  porcelain quoted filenames (spaces) are un-quoted; `Write`/`MultiEdit` deny
+  patterns now mirror `Edit` for `.env*`/credentials/secret globs.
+- **`wayfind_runner` evidence reads catch `OSError`; `.env` deny glob covers
+  subdirectories (#401, closes #400).**
+- **Five bugs: scope-classifier crash on non-integer config, snake_case config
+  dead-toggle, zero scale-threshold reset, `needs_clarification` verdict without
+  blocking questions rejected, governance category drift for `map-wayfind`/`map-architecture` (#399).**
+- **Secret/credentials deny globs scoped by extension (#397).** Broad
+  `Edit(**/*secret*)`-style globs blocked normal source files like
+  `secret_service.go`; deny patterns now target only secret-material formats
+  (`.yaml`, `.yml`, `.json`, `.toml`, `.env`).
+- **Class-scoped instance-method fixture promoted to module scope (#393).**
+- **`.claude/settings.json` parity is gated via `make check-render` (#390).**
+- **CI/release `twine check` no longer rejects Metadata-Version 2.5 wheels.** The
+  `packaging>=24.2,<26` cap from #195 forced a downgrade to `packaging` 25.0, which
+  does not recognize the Metadata-Version 2.5 that current setuptools emits —
+  the `build` job failed with `InvalidDistribution: '2.5' is not a valid metadata
+  version`. CI, TestPyPI, and PyPI release jobs now install `packaging>=26`.
+
+### Documentation
+- **`wayfind_status` is documented with `--slug`, not a positional argument (#408).**
+  The map-wayfind SKILL.md told the operator to run `wayfind_status <slug>`, which the
+  CLI rejects; all other documented wayfind commands were audited against their argparse
+  definitions and match.
+- **ARCHITECTURE.md refreshed to record the #404 feedback-preservation fix.**
+
 ### Changed
 - **The review stage gate is bound to the computed verdict (#406).** `write_stage_gate review <verdict>` is refused, and no gate file written, when `<verdict>` contradicts `computed_verdict` or when no ledger exists for the branch. Enforcement is on by default with no calibration period; `MAP_REVIEW_LEDGER_ENFORCE=0` is the explicit opt-out. Other stages are unaffected. `/map-review`'s closeout now takes `FINAL_VERDICT` from the ledger output rather than asking the model to pick one of `PROCEED|REVISE|BLOCK`.
 
