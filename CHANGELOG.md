@@ -21,6 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Role-local persistent memory for learning agents (#379).**
 
 ### Fixed
+- **PyPI publish action bumped to v1.14.2 so uploads accept Metadata-Version 2.5.**
+  `pypa/gh-action-pypi-publish@v1.13.0` bundles an older twine that rejected the
+  3.25.0 wheel with `InvalidDistribution: '2.5' is not a valid metadata version`
+  even after the repo's own `twine check` step was fixed; v1.14.2 ships twine v7
+  with core-metadata 2.5 support. Applied in `release.yml` and `test-pypi.yml`.
+- **GitHub Release notes are no longer an empty stub.** The changelog-excerpt
+  extraction used a two-address awk range whose start and end patterns both match
+  the `## [X.Y.Z]` heading line, collapsing the range to that single line and
+  yielding an empty excerpt — every past GitHub Release body fell back to
+  "See CHANGELOG.md for details.". Replaced with an explicit flag state machine
+  in `release.yml`, the release-checklist issue template, and the map-release
+  skill.
 - **Atomic writes for `review-verdict-ledger.json` and `review-objections.json` (#409).**
   Both files were written with non-atomic `write_text()` and could be corrupted by a
   mid-write kill; they now go through `_write_json_file()` (temp file + `os.replace`).

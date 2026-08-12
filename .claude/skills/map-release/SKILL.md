@@ -594,7 +594,7 @@ case "$USER_RESPONSE" in
     echo "════════════════════════════════════════════════════════"
     echo "CHANGELOG EXCERPT:"
     echo "════════════════════════════════════════════════════════"
-    awk "/## \[$TAG_VERSION\]/,/## \[/" CHANGELOG.md | sed '$d'
+    awk -v ver="$TAG_VERSION" 'index($0, "## [" ver "]") == 1 {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md
 
     # Ask again after review
     # (recursive call to AskUserQuestion)

@@ -94,7 +94,7 @@ jobs:
         echo "✓ Package validation passed"
 
     - name: Publish to PyPI using OIDC
-      uses: pypa/gh-action-pypi-publish@v1.13.0
+      uses: pypa/gh-action-pypi-publish@v1.14.2
       with:
         skip-existing: true
 
@@ -102,7 +102,10 @@ jobs:
       id: changelog
       run: |
         VERSION="${{ steps.get_version.outputs.VERSION }}"
-        EXCERPT=$(awk "/^## \[${VERSION}\]/,/^## \[/" CHANGELOG.md | sed '1d;$d')
+        # NB: a two-address awk range (/start/,/end/) collapses to a single line
+        # here — the "## [X.Y.Z]" heading matches both patterns at once. Use an
+        # explicit flag; 'next' keeps the heading itself out of the range.
+        EXCERPT=$(awk -v ver="$VERSION" 'index($0, "## [" ver "]") == 1 {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md)
         if [ -z "$EXCERPT" ]; then
           echo "::warning::No changelog excerpt found for version ${VERSION}"
           EXCERPT="See CHANGELOG.md for details."
