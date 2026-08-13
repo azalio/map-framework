@@ -42,7 +42,7 @@ _SKILLS_TESTS = _defined_test_names("test_skills.py")
 _TEMPLATE_RENDER_TESTS = _defined_test_names("test_template_render.py")
 
 
-# AC-7 area -> (set of test names actually defined in the owning suite(s),
+# area -> (set of test names actually defined in the owning suite(s),
 # list of covering test names this area depends on). Every listed name must
 # be present in the defined-names set -- if a name is renamed or deleted the
 # corresponding area's check fails loudly rather than silently degrading to

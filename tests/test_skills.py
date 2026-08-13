@@ -1119,9 +1119,9 @@ class TestMapAutoChainSemantics:
     def reference_content(self, skill_dir: Path) -> str:
         return (skill_dir / "auto-reference.md").read_text(encoding="utf-8")
 
-    # --- VC1 [HC-1]: no PR/merge instruction; explicit committed-branch end state ---
+    # no PR/merge instruction; explicit committed-branch end state ---
 
-    def test_vc1_no_pr_or_merge_instruction(
+    def test_no_pr_or_merge_instruction(
         self, skill_content: str, reference_content: str
     ) -> None:
         combined = (skill_content + "\n" + reference_content).lower()
@@ -1132,29 +1132,29 @@ class TestMapAutoChainSemantics:
                 "never a PR/merge."
             )
 
-    def test_vc1_grep_self_test_detects_synthetic_violation(self) -> None:
+    def test_grep_self_test_detects_synthetic_violation(self) -> None:
         """Negative-proof: the forbidden-pattern set actually catches a
         violation, so a typo in the pattern list can't silently pass VC1."""
         synthetic_bad = "After Monitor passes, run `gh pr create --fill` to open the PR."
         lowered = synthetic_bad.lower()
         assert any(pattern in lowered for pattern in self._FORBIDDEN_PR_PATTERNS)
 
-    def test_vc1_states_committed_branch_end_state(self, skill_content: str) -> None:
+    def test_states_committed_branch_end_state(self, skill_content: str) -> None:
         assert "ends at a committed feature branch" in skill_content
         assert "never opens a pull request" in skill_content
         assert "never merges" in skill_content
         assert "never polls CI" in skill_content
 
-    # --- VC2 [INV-5]: Monitor valid=false is a hard stop, never overridden ---
+    # Monitor valid=false is a hard stop, never overridden ---
 
-    def test_vc2_monitor_hard_stop_never_overridden(self, skill_content: str) -> None:
+    def test_monitor_hard_stop_never_overridden(self, skill_content: str) -> None:
         assert "valid=false" in skill_content
         assert (
             "never overrides, suppresses, or re-runs past a Monitor rejection"
             in skill_content
         )
 
-    def test_vc2_no_monitor_bypass_instruction(
+    def test_no_monitor_bypass_instruction(
         self, skill_content: str, reference_content: str
     ) -> None:
         combined = (skill_content + "\n" + reference_content).lower()
@@ -1164,9 +1164,9 @@ class TestMapAutoChainSemantics:
                 "a phase's own Monitor rejection to stand unmodified."
             )
 
-    # --- VC3 [INV-5]: no new execution engine; existing surfaces only ---
+    # no new execution engine; existing surfaces only ---
 
-    def test_vc3_no_subprocess_execution_engine(
+    def test_no_subprocess_execution_engine(
         self, skill_content: str, reference_content: str
     ) -> None:
         combined = (skill_content + "\n" + reference_content).lower()
@@ -1178,28 +1178,28 @@ class TestMapAutoChainSemantics:
             )
         assert "never shells out to a separate Claude process" in skill_content
 
-    # --- VC4 [HC-1/HC-2]: ground truth before re-entry; fail-closed recovery ---
+    # [/]: ground truth before re-entry; fail-closed recovery ---
 
-    def test_vc4_ground_truth_inspection_before_reentry(self, skill_content: str) -> None:
+    def test_ground_truth_inspection_before_reentry(self, skill_content: str) -> None:
         assert "git status" in skill_content
         assert "git diff" in skill_content
         assert "step_state.json" in skill_content
         assert "Before spending the single permitted re-entry" in skill_content
 
-    def test_vc4_second_failure_hands_off_to_map_resume(self, skill_content: str) -> None:
+    def test_second_failure_hands_off_to_map_resume(self, skill_content: str) -> None:
         assert "STOP and hand off to `/map-resume`" in skill_content
         assert "never attempt a third call for that phase" in skill_content
 
-    def test_vc4_terminal_chain_refuses_further_appends(self, skill_content: str) -> None:
+    def test_terminal_chain_refuses_further_appends(self, skill_content: str) -> None:
         assert "refuses every further `record_auto_phase` call" in skill_content
         assert (
             "a new `route_task` call is the ONLY legitimate way to continue"
             in skill_content
         )
 
-    # --- VC5 [HC-1]: auto-reference.md exists, linked, render parity, budget ---
+    # auto-reference.md exists, linked, render parity, budget ---
 
-    def test_vc5_reference_file_exists_and_linked(
+    def test_reference_file_exists_and_linked(
         self, skill_dir: Path, skill_content: str
     ) -> None:
         assert (skill_dir / "auto-reference.md").exists(), (
@@ -1207,13 +1207,13 @@ class TestMapAutoChainSemantics:
         )
         assert "[auto-reference.md](auto-reference.md)" in skill_content
 
-    def test_vc5_skill_body_within_default_budget(self, skill_content: str) -> None:
+    def test_skill_body_within_default_budget(self, skill_content: str) -> None:
         assert len(skill_content.splitlines()) <= _DEFAULT_SKILL_BODY_BUDGET, (
             "map-auto/SKILL.md must stay within the default active-body "
             f"line budget ({_DEFAULT_SKILL_BODY_BUDGET} lines)."
         )
 
-    def test_vc5_reference_covers_required_topics(self, reference_content: str) -> None:
+    def test_reference_covers_required_topics(self, reference_content: str) -> None:
         for marker in (
             "## CLI Reference",
             "## Chain Walkthrough Example",

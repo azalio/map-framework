@@ -1928,7 +1928,7 @@ def _read_auto_route_artifact(branch_workspace: Path) -> dict[str, object]:
     return json.loads((branch_workspace / "auto-route.json").read_text(encoding="utf-8"))
 
 
-def test_vc1_route_task_writes_schema_valid_artifact_and_registers_manifest_stage(
+def test_route_task_writes_schema_valid_artifact_and_registers_manifest_stage(
     branch_workspace,
 ):
     branch = branch_workspace.name
@@ -1955,7 +1955,7 @@ def test_vc1_route_task_writes_schema_valid_artifact_and_registers_manifest_stag
     assert metadata["chain_status"] == artifact["chain_status"]
 
 
-def test_vc2_route_task_non_dry_run_sets_executed_true_and_chain_status_in_progress(
+def test_route_task_non_dry_run_sets_executed_true_and_chain_status_in_progress(
     branch_workspace,
 ):
     branch = branch_workspace.name
@@ -1977,7 +1977,7 @@ def test_route_task_dry_run_sets_executed_false_and_recommended_only(branch_work
     assert artifact["chain_status"] == "recommended_only"
 
 
-def test_vc3_route_task_sanitizes_task_summary_control_characters(branch_workspace):
+def test_route_task_sanitizes_task_summary_control_characters(branch_workspace):
     branch = branch_workspace.name
     dirty_task = "line one\r\nline two\x00\x1f\x7f\ttabbed"
 
@@ -1992,7 +1992,7 @@ def test_vc3_route_task_sanitizes_task_summary_control_characters(branch_workspa
     assert "line two" in task_summary
 
 
-def test_vc4_route_task_phases_empty_and_next_command_matches_selected_route(
+def test_route_task_phases_empty_and_next_command_matches_selected_route(
     branch_workspace,
 ):
     branch = branch_workspace.name
@@ -2022,7 +2022,7 @@ def test_route_task_preserves_route_history_on_second_write(branch_workspace):
     assert artifact["route_history"] == ["map-plan"]
 
 
-# --- route_task guards (issue #414 ST-005: dry-run write isolation,
+# route_task guards (issue #414 : dry-run write isolation,
 # in-progress re-route refusal, hard-stop hold block, goal_mismatch block) -
 
 
@@ -2039,7 +2039,7 @@ def _snapshot_tree(root: Path) -> dict[str, int]:
     }
 
 
-def test_vc1_route_task_dry_run_write_isolation(tmp_path, branch_workspace):
+def test_route_task_dry_run_write_isolation(tmp_path, branch_workspace):
     branch = branch_workspace.name
     before = _snapshot_tree(tmp_path)
 
@@ -2064,7 +2064,7 @@ def test_vc1_route_task_dry_run_write_isolation(tmp_path, branch_workspace):
     assert artifact["chain_status"] == "recommended_only"
 
 
-def test_vc2_route_task_never_calls_record_workflow_fit_or_create_approval_hold(
+def test_route_task_never_calls_record_workflow_fit_or_create_approval_hold(
     branch_workspace, monkeypatch
 ):
     branch = branch_workspace.name
@@ -2111,7 +2111,7 @@ def test_vc2_route_task_never_calls_record_workflow_fit_or_create_approval_hold(
             map_step_runner.route_task("some task", branch=branch, dry_run=dry_run)
 
 
-def test_vc3_route_task_refuses_in_progress_chain_and_leaves_artifact_untouched(
+def test_route_task_refuses_in_progress_chain_and_leaves_artifact_untouched(
     branch_workspace,
 ):
     branch = branch_workspace.name
@@ -2133,7 +2133,7 @@ def test_vc3_route_task_refuses_in_progress_chain_and_leaves_artifact_untouched(
     assert manifest_path.read_bytes() == manifest_before
 
 
-def test_vc3_route_task_reroutes_when_prior_status_allows(branch_workspace):
+def test_route_task_reroutes_when_prior_status_allows(branch_workspace):
     branch = branch_workspace.name
     artifact_path = branch_workspace / "auto-route.json"
 
@@ -2161,7 +2161,7 @@ def test_vc3_route_task_reroutes_when_prior_status_allows(branch_workspace):
         assert artifact["route_history"] == ["map-fast"]
 
 
-def test_vc4_route_task_blocks_on_goal_mismatch_and_leaves_plan_artifacts_untouched(
+def test_route_task_blocks_on_goal_mismatch_and_leaves_plan_artifacts_untouched(
     branch_workspace,
 ):
     branch = branch_workspace.name
@@ -2188,7 +2188,7 @@ def test_vc4_route_task_blocks_on_goal_mismatch_and_leaves_plan_artifacts_untouc
     assert not (branch_workspace / "blueprint.json").exists()
 
 
-def test_vc5_route_task_blocks_on_pending_hard_stop_hold(branch_workspace):
+def test_route_task_blocks_on_pending_hard_stop_hold(branch_workspace):
     branch = branch_workspace.name
     hold_result = map_step_runner.create_approval_hold(
         kind="dangerous_action",
@@ -2208,7 +2208,7 @@ def test_vc5_route_task_blocks_on_pending_hard_stop_hold(branch_workspace):
     assert artifact["chain_status"] == "blocked"
 
 
-def test_vc5_route_task_blocks_on_pending_hard_stop_hold_under_dry_run(branch_workspace):
+def test_route_task_blocks_on_pending_hard_stop_hold_under_dry_run(branch_workspace):
     branch = branch_workspace.name
     hold_result = map_step_runner.create_approval_hold(
         kind="safety_guardrail",
@@ -2226,7 +2226,7 @@ def test_vc5_route_task_blocks_on_pending_hard_stop_hold_under_dry_run(branch_wo
     assert result["blocked_by"] == [hold_id]
 
 
-# --- auto_decide_holds (issue #414 ST-006: auto-approve workflow-control
+# auto_decide_holds (issue #414 : auto-approve workflow-control
 # holds via a positive allowlist; dangerous_action/safety_guardrail can
 # never be decided by this code path) -------------------------------------
 
@@ -2235,7 +2235,7 @@ def _read_approval_holds(branch_workspace: Path) -> dict[str, Any]:
     return json.loads((branch_workspace / "approval_holds.json").read_text(encoding="utf-8"))
 
 
-def test_vc4_auto_approvable_and_hard_stop_kinds_partition_approval_hold_kinds():
+def test_auto_approvable_and_hard_stop_kinds_partition_approval_hold_kinds():
     auto_approvable = map_step_runner.AUTO_APPROVABLE_HOLD_KINDS
     hard_stop = map_step_runner.HARD_STOP_HOLD_KINDS
     assert auto_approvable.isdisjoint(hard_stop)
@@ -2252,7 +2252,7 @@ def test_auto_decide_holds_with_nothing_pending_returns_empty_lists(branch_works
     assert result["hard_stops"] == []
 
 
-def test_vc1_auto_decide_holds_approves_every_auto_approvable_kind(branch_workspace):
+def test_auto_decide_holds_approves_every_auto_approvable_kind(branch_workspace):
     branch = branch_workspace.name
     hold_ids: dict[str, str] = {}
     for kind in sorted(map_step_runner.AUTO_APPROVABLE_HOLD_KINDS):
@@ -2283,7 +2283,7 @@ def test_vc1_auto_decide_holds_approves_every_auto_approvable_kind(branch_worksp
     assert follow_up["pending_count"] == 0
 
 
-def test_vc2_auto_decide_holds_leaves_hard_stop_kinds_pending(branch_workspace):
+def test_auto_decide_holds_leaves_hard_stop_kinds_pending(branch_workspace):
     branch = branch_workspace.name
     hold_ids: dict[str, str] = {}
     for kind in sorted(map_step_runner.HARD_STOP_HOLD_KINDS):
@@ -2309,7 +2309,7 @@ def test_vc2_auto_decide_holds_leaves_hard_stop_kinds_pending(branch_workspace):
         assert hold["decision"] is None
 
 
-def test_vc3_auto_decide_holds_never_invokes_decide_approval_hold_on_hard_stop_kind(
+def test_auto_decide_holds_never_invokes_decide_approval_hold_on_hard_stop_kind(
     branch_workspace, monkeypatch
 ):
     branch = branch_workspace.name
@@ -2343,8 +2343,8 @@ def test_vc3_auto_decide_holds_never_invokes_decide_approval_hold_on_hard_stop_k
     assert len(result["hard_stops"]) == len(map_step_runner.HARD_STOP_HOLD_KINDS)
 
 
-# --- record_auto_phase (issue #414 ST-007: phases[] ledger, attempt
-# counter/HC-2 bound, chain_status transitions, single-writer invariant) ---
+# record_auto_phase (issue #414 : phases ledger, attempt
+# counter/ bound, chain_status transitions, single-writer invariant) ---
 
 
 def test_record_auto_phase_errors_when_no_route_task_has_run(branch_workspace):
@@ -2357,7 +2357,7 @@ def test_record_auto_phase_errors_when_no_route_task_has_run(branch_workspace):
     assert not (branch_workspace / "auto-route.json").exists()
 
 
-def test_vc1_record_auto_phase_appends_one_schema_valid_six_field_entry(branch_workspace):
+def test_record_auto_phase_appends_one_schema_valid_six_field_entry(branch_workspace):
     branch = branch_workspace.name
     map_step_runner.route_task("ship something", branch=branch)
 
@@ -2395,7 +2395,7 @@ def test_vc1_record_auto_phase_appends_one_schema_valid_six_field_entry(branch_w
     assert is_valid, f"Errors: {errors}"
 
 
-def test_vc2_record_auto_phase_terminal_success_status_completes_chain(branch_workspace):
+def test_record_auto_phase_terminal_success_status_completes_chain(branch_workspace):
     branch = branch_workspace.name
     map_step_runner.route_task("ship something", branch=branch)
 
@@ -2413,7 +2413,7 @@ def test_vc2_record_auto_phase_terminal_success_status_completes_chain(branch_wo
     assert stage["metadata"]["chain_status"] == "completed"
 
 
-def test_vc2_record_auto_phase_abort_class_status_aborts_chain(branch_workspace):
+def test_record_auto_phase_abort_class_status_aborts_chain(branch_workspace):
     branch = branch_workspace.name
     map_step_runner.route_task("ship something", branch=branch)
 
@@ -2430,7 +2430,7 @@ def test_vc2_record_auto_phase_abort_class_status_aborts_chain(branch_workspace)
     assert manifest["stages"]["auto_route"]["status"] == "aborted"
 
 
-def test_vc2_record_auto_phase_intermediate_status_stays_in_progress(branch_workspace):
+def test_record_auto_phase_intermediate_status_stays_in_progress(branch_workspace):
     branch = branch_workspace.name
     map_step_runner.route_task("ship something", branch=branch)
 
@@ -2445,7 +2445,7 @@ def test_vc2_record_auto_phase_intermediate_status_stays_in_progress(branch_work
     assert manifest["stages"]["auto_route"]["status"] == "in_progress"
 
 
-def test_vc3_record_auto_phase_attempt_counter_and_third_attempt_refused(branch_workspace):
+def test_record_auto_phase_attempt_counter_and_third_attempt_refused(branch_workspace):
     branch = branch_workspace.name
     map_step_runner.route_task("do the thing", branch=branch)
 
@@ -2577,7 +2577,7 @@ def test_record_auto_phase_refuses_new_phase_after_chain_blocked(branch_workspac
     )
 
 
-def test_vc4_record_auto_phase_persists_auto_approved_hold_ids_in_evidence_refs(
+def test_record_auto_phase_persists_auto_approved_hold_ids_in_evidence_refs(
     branch_workspace,
 ):
     branch = branch_workspace.name
@@ -2607,13 +2607,13 @@ def test_vc4_record_auto_phase_persists_auto_approved_hold_ids_in_evidence_refs(
     assert isinstance(phases, list) and isinstance(phases[0], dict)
     assert phases[0]["evidence_refs"] == [hold_id]
 
-    # Dual record (INV-4): the hold id also persists in the hold's own audit
+    # Dual record : the hold id also persists in the hold's own audit
     # trail, independent of the auto-route.json ledger checked above.
     holds_store = _read_approval_holds(branch_workspace)
     assert holds_store["holds"][hold_id]["decision_note"] == "auto-approved by map-auto"
 
 
-def test_vc5_route_task_leaves_phases_empty_before_any_phase_recorded(branch_workspace):
+def test_route_task_leaves_phases_empty_before_any_phase_recorded(branch_workspace):
     branch = branch_workspace.name
 
     map_step_runner.route_task("ship something", branch=branch)
@@ -2622,7 +2622,7 @@ def test_vc5_route_task_leaves_phases_empty_before_any_phase_recorded(branch_wor
     assert artifact["phases"] == []
 
 
-def test_vc5_record_auto_phase_is_the_sole_phases_mutator_in_source():
+def test_record_auto_phase_is_the_sole_phases_mutator_in_source():
     source = (SCRIPTS_PATH / "map_step_runner.py").read_text(encoding="utf-8")
     mutation_pattern = re.compile(r'artifact\["phases"\]\s*=|phases\.append\(')
 
@@ -3640,7 +3640,7 @@ def test_load_artifact_manifest_normalizes_branch_name(branch_workspace):
     assert manifest["branch"] == branch_workspace.name
 
 
-def test_vc3_set_manifest_stage_auto_route_does_not_raise(branch_workspace):
+def test_set_manifest_stage_auto_route_does_not_raise(branch_workspace):
     del branch_workspace
     manifest = map_step_runner.default_artifact_manifest("test-branch")
 
@@ -3649,7 +3649,7 @@ def test_vc3_set_manifest_stage_auto_route_does_not_raise(branch_workspace):
     assert manifest["stages"]["auto_route"]["status"] == "started"
 
 
-def test_vc3_load_artifact_manifest_backfills_missing_auto_route_stage(branch_workspace):
+def test_load_artifact_manifest_backfills_missing_auto_route_stage(branch_workspace):
     stages_without_auto_route = {
         stage: {
             "status": "not_started",
