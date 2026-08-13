@@ -261,6 +261,7 @@ ARTIFACT_STAGE_NAMES = (
     "context_usefulness",
     "wayfind_handoff",
     "review_verdict_ledger",
+    "prd_review",
 )
 RUN_HEALTH_TERMINAL_STATUSES = {
     "pending",
@@ -2968,6 +2969,266 @@ def write_implementer_readiness_review(
     else:
         result["proceed"] = True
         result["message"] = "Spec is ready for implementation."
+    return result
+
+
+PRD_REVIEW_VERDICTS = frozenset(
+    {"ready_for_plan", "needs_prd_revision", "needs_user_decision", "route_to_wayfind"}
+)
+PRD_REVIEW_FINDING_SEVERITIES = frozenset({"critical", "major", "minor", "info"})
+
+
+def write_prd_review(
+    verdict: str,
+    findings_json: str = "[]",
+    blocking_questions_json: str = "[]",
+    suggested_revisions_json: str = "[]",
+    route_recommendation: str = "",
+    summary: str = "",
+    prd_source: str = "",
+    branch: str | None = None,
+) -> dict[str, object]:
+    """Write PRD/requirements-quality review artifact and update artifact manifest.
+
+    Writes:
+      .map/<branch>/prd-review.json — machine-readable verdict
+      .map/<branch>/prd-review.md   — human-readable summary
+
+    Verdict values:
+      ready_for_plan      — input is ready for /map-plan
+      needs_prd_revision  — PRD/brief should be amended before planning
+      needs_user_decision — specific product/design choices must be answered first
+      route_to_wayfind    — input is too foggy; use /map-wayfind instead
+    """
+    branch_name = branch or get_branch_name()
+    verdict = (verdict or "").strip().lower()
+
+    if verdict not in PRD_REVIEW_VERDICTS:
+        return {
+            "status": "error",
+            "message": (
+                f"Invalid verdict: {verdict!r}. "
+                f"Must be one of: {sorted(PRD_REVIEW_VERDICTS)}"
+            ),
+        }
+
+    try:
+        parsed_findings = json.loads(findings_json or "[]")
+    except json.JSONDecodeError as exc:
+        return {"status": "error", "message": f"Invalid findings JSON: {exc}"}
+    if not isinstance(parsed_findings, list):
+        return {"status": "error", "message": "findings must be a JSON array"}
+
+    try:
+        parsed_blocking_questions = json.loads(blocking_questions_json or "[]")
+    except json.JSONDecodeError as exc:
+        return {"status": "error", "message": f"Invalid blocking_questions JSON: {exc}"}
+    if not isinstance(parsed_blocking_questions, list):
+        return {"status": "error", "message": "blocking_questions must be a JSON array"}
+
+    try:
+        parsed_suggested_revisions = json.loads(suggested_revisions_json or "[]")
+    except json.JSONDecodeError as exc:
+        return {"status": "error", "message": f"Invalid suggested_revisions JSON: {exc}"}
+    if not isinstance(parsed_suggested_revisions, list):
+        return {"status": "error", "message": "suggested_revisions must be a JSON array"}
+
+    # Validate findings structure
+    allowed_finding_keys = {"dimension", "severity", "description", "suggested_revision"}
+    findings: list[dict[str, str]] = []
+    for i, f in enumerate(parsed_findings):
+        if not isinstance(f, dict):
+            return {"status": "error", "message": f"findings[{i}] must be an object"}
+        extra_keys = set(f) - allowed_finding_keys
+        if extra_keys:
+            return {
+                "status": "error",
+                "message": f"findings[{i}] has unsupported fields: {sorted(extra_keys)}",
+            }
+        for req_field in ("dimension", "severity", "description"):
+            if req_field not in f:
+                return {
+                    "status": "error",
+                    "message": f"findings[{i}] missing required field {req_field!r}",
+                }
+        severity = f["severity"]
+        if severity not in PRD_REVIEW_FINDING_SEVERITIES:
+            return {
+                "status": "error",
+                "message": (
+                    f"findings[{i}].severity={severity!r} is not valid. "
+                    f"Must be one of: {sorted(PRD_REVIEW_FINDING_SEVERITIES)}"
+                ),
+            }
+        normalized_finding: dict[str, str] = {
+            "dimension": f["dimension"],
+            "severity": severity,
+            "description": f["description"],
+        }
+        if "suggested_revision" in f:
+            suggested = f["suggested_revision"]
+            if not isinstance(suggested, str):
+                return {
+                    "status": "error",
+                    "message": f"findings[{i}].suggested_revision must be a string",
+                }
+            normalized_finding["suggested_revision"] = suggested
+        findings.append(normalized_finding)
+
+    # Validate blocking questions structure
+    allowed_bq_keys = {"question", "category"}
+    blocking_questions: list[dict[str, str]] = []
+    for i, q in enumerate(parsed_blocking_questions):
+        if not isinstance(q, dict):
+            return {"status": "error", "message": f"blocking_questions[{i}] must be an object"}
+        extra_keys = set(q) - allowed_bq_keys
+        if extra_keys:
+            return {
+                "status": "error",
+                "message": (
+                    f"blocking_questions[{i}] has unsupported fields: {sorted(extra_keys)}"
+                ),
+            }
+        for req_field in ("question", "category"):
+            if req_field not in q:
+                return {
+                    "status": "error",
+                    "message": f"blocking_questions[{i}] missing required field {req_field!r}",
+                }
+        blocking_questions.append({"question": q["question"], "category": q["category"]})
+
+    # Validate suggested revisions
+    suggested_revisions: list[str] = []
+    for i, rev in enumerate(parsed_suggested_revisions):
+        if not isinstance(rev, str):
+            return {
+                "status": "error",
+                "message": f"suggested_revisions[{i}] must be a string",
+            }
+        suggested_revisions.append(rev)
+
+    if verdict == "needs_user_decision" and not blocking_questions:
+        return {
+            "status": "error",
+            "message": (
+                "blocking_questions must be non-empty when verdict is "
+                "'needs_user_decision'. Provide at least one question that "
+                "must be answered before planning can proceed."
+            ),
+        }
+
+    branch_dir = get_branch_dir(branch_name)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+
+    payload: dict[str, object] = {
+        "schema_version": "1.0",
+        "branch": branch_name,
+        "generated_at": _utc_timestamp(),
+        "verdict": verdict,
+        "findings": findings,
+        "blocking_questions": blocking_questions,
+        "suggested_revisions": suggested_revisions,
+        "summary": summary or "No summary provided.",
+    }
+    if prd_source.strip():
+        payload["prd_source"] = prd_source.strip()
+    if route_recommendation.strip():
+        payload["route_recommendation"] = route_recommendation.strip()
+
+    json_path = branch_dir / "prd-review.json"
+    _write_json_file(json_path, payload)
+
+    # Human-readable Markdown report
+    verdict_label = {
+        "ready_for_plan": "READY FOR PLAN",
+        "needs_prd_revision": "NEEDS PRD REVISION",
+        "needs_user_decision": "NEEDS USER DECISION",
+        "route_to_wayfind": "ROUTE TO WAYFIND",
+    }.get(verdict, verdict.upper())
+
+    md_lines = [
+        "# PRD / Requirements-Quality Review",
+        "",
+        f"**Verdict:** {verdict_label}",
+        f"**Branch:** `{branch_name}`",
+        f"**Generated:** {payload['generated_at']}",
+    ]
+    if prd_source.strip():
+        md_lines.append(f"**PRD Source:** `{prd_source.strip()}`")
+    md_lines += ["", "## Summary", "", payload["summary"], ""]  # type: ignore[arg-type]
+
+    if findings:
+        md_lines += ["## Findings", ""]
+        for finding in findings:
+            sev = finding["severity"].upper()
+            dim = finding["dimension"]
+            desc = finding["description"]
+            md_lines.append(f"- **[{sev}]** `{dim}`: {desc}")
+            if "suggested_revision" in finding:
+                md_lines.append(f"  - *Suggested:* {finding['suggested_revision']}")
+        md_lines.append("")
+
+    if blocking_questions:
+        md_lines += ["## Blocking Questions", ""]
+        for i, q in enumerate(blocking_questions, 1):
+            cat = q.get("category", "unspecified")
+            md_lines.append(f"{i}. **[{cat}]** {q['question']}")
+        md_lines.append("")
+
+    if suggested_revisions:
+        md_lines += ["## Suggested Revisions", ""]
+        for rev in suggested_revisions:
+            md_lines.append(f"- {rev}")
+        md_lines.append("")
+
+    if route_recommendation.strip():
+        md_lines += [
+            "## Route Recommendation",
+            "",
+            route_recommendation.strip(),
+            "",
+        ]
+
+    md_path = branch_dir / "prd-review.md"
+    md_path.write_text("\n".join(md_lines), encoding="utf-8")
+
+    manifest = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        manifest,
+        "prd_review",
+        "ready",
+        artifacts=[
+            _artifact_ref(json_path, "prd-review"),
+            _artifact_ref(md_path, "prd-review-report"),
+        ],
+        metadata={
+            "verdict": verdict,
+            "findings_count": len(findings),
+            "blocking_questions_count": len(blocking_questions),
+            "suggested_revisions_count": len(suggested_revisions),
+        },
+    )
+    manifest_result = save_artifact_manifest(manifest, branch_name)
+
+    verdict_messages = {
+        "ready_for_plan": "PRD is ready for /map-plan.",
+        "needs_prd_revision": "PRD must be revised before planning. See suggested_revisions.",
+        "needs_user_decision": "Blocking product decisions must be answered before planning.",
+        "route_to_wayfind": "Input is too foggy for PRD review; use /map-wayfind instead.",
+    }
+
+    result: dict[str, object] = {
+        "status": "success",
+        "verdict": verdict,
+        "proceed": verdict == "ready_for_plan",
+        "json_path": str(json_path),
+        "md_path": str(md_path),
+        "manifest_path": manifest_result["path"],
+        "findings_count": len(findings),
+        "blocking_questions_count": len(blocking_questions),
+        "suggested_revisions_count": len(suggested_revisions),
+        "message": verdict_messages.get(verdict, verdict),
+    }
     return result
 
 
@@ -21396,6 +21657,47 @@ if __name__ == "__main__":
             acceptance_rationale=_irr_flag("acceptance-rationale", ""),
             summary=_irr_flag("summary", ""),
             branch=_irr_flag("branch") or None,
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+        if result.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "write_prd_review" and len(sys.argv) >= 3:
+        # CLI: write_prd_review <verdict>
+        #        [--findings '<JSON array>']
+        #        [--blocking-questions '<JSON array>']
+        #        [--suggested-revisions '<JSON array>']
+        #        [--route-recommendation "..."]
+        #        [--summary "..."]
+        #        [--prd-source "path/or/label"]
+        #        [--branch <branch>]
+        #
+        # verdict must be one of:
+        #   ready_for_plan  needs_prd_revision  needs_user_decision  route_to_wayfind
+        #
+        # findings JSON format:
+        #   '[{"dimension":"measurable_acceptance_criteria","severity":"major","description":"..."}]'
+        # blocking-questions JSON format:
+        #   '[{"question":"...","category":"product_decision"}]'
+        # suggested-revisions JSON format:
+        #   '["Revise AC-1 to specify latency budget","Add out-of-scope section"]'
+        def _prr_flag(name: str, default: str = "") -> str:
+            flag = f"--{name}"
+            if flag in sys.argv:
+                idx = sys.argv.index(flag)
+                if idx + 1 < len(sys.argv):
+                    return sys.argv[idx + 1]
+            return default
+
+        result = write_prd_review(
+            sys.argv[2],
+            findings_json=_prr_flag("findings", "[]"),
+            blocking_questions_json=_prr_flag("blocking-questions", "[]"),
+            suggested_revisions_json=_prr_flag("suggested-revisions", "[]"),
+            route_recommendation=_prr_flag("route-recommendation", ""),
+            summary=_prr_flag("summary", ""),
+            prd_source=_prr_flag("prd-source", ""),
+            branch=_prr_flag("branch") or None,
         )
         print(json.dumps(result, indent=2, ensure_ascii=True))
         if result.get("status") == "error":

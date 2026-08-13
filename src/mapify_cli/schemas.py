@@ -2055,3 +2055,70 @@ REVIEW_VERDICT_LEDGER_SCHEMA: dict[str, Any] = {
     ],
     "additionalProperties": True,
 }
+
+PRD_REVIEW_SCHEMA: dict[str, Any] = {
+    "$id": "prd-review.json",
+    "type": "object",
+    "description": "PRD/requirements-quality review artifact written by write_prd_review.",
+    "properties": {
+        "schema_version": {"type": "string"},
+        "branch": {"type": "string"},
+        "generated_at": {"type": "string", "description": "ISO-8601 UTC timestamp"},
+        "prd_source": {"type": "string", "description": "Path or label of the reviewed PRD"},
+        "verdict": {
+            "type": "string",
+            "enum": [
+                "ready_for_plan",
+                "needs_prd_revision",
+                "needs_user_decision",
+                "route_to_wayfind",
+            ],
+        },
+        "findings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "dimension": {"type": "string"},
+                    "severity": {
+                        "type": "string",
+                        "enum": ["critical", "major", "minor", "info"],
+                    },
+                    "description": {"type": "string"},
+                    "suggested_revision": {"type": "string"},
+                },
+                "required": ["dimension", "severity", "description"],
+                "additionalProperties": False,
+            },
+        },
+        "blocking_questions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string"},
+                    "category": {"type": "string"},
+                },
+                "required": ["question", "category"],
+                "additionalProperties": False,
+            },
+        },
+        "suggested_revisions": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "route_recommendation": {"type": "string"},
+        "summary": {"type": "string"},
+    },
+    "required": [
+        "schema_version",
+        "branch",
+        "generated_at",
+        "verdict",
+        "findings",
+        "blocking_questions",
+        "suggested_revisions",
+        "summary",
+    ],
+    "additionalProperties": True,
+}
