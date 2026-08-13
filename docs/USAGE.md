@@ -43,6 +43,26 @@ All state lives in `.map/wayfind/<slug>/state.json` and is mutated only through 
 
 **Sharing / privacy.** Maps are committed by default (decisions are durable, reviewable history). `grilling` transcripts and prose resolutions may contain sensitive content — `chart` warns about this. To keep one map local, add `.map/wayfind/<slug>/.gitignore` with a single `*`.
 
+## Single-entry autopilot (`/map-auto`)
+
+`/map-auto "<task>"` is a thin router plus chain driver on top of the workflows above — it decides which one(s) to run and then drives the selected chain unattended, in the same session, to a committed feature branch. It runs autonomously the moment it is invoked; there is no shadow mode, no calibration period, and no opt-in flag.
+
+Inspect the routing recommendation without committing to it:
+
+```bash
+python3 .map/scripts/map_step_runner.py route_task "<task>" --dry-run
+```
+
+A dry run writes only `.map/<branch>/auto-route.json` and its `auto_route` manifest-stage entry — no other file on disk changes, and the chain never starts (`chain_status: "recommended_only"`).
+
+Routing follows a five-tier precedence engine, highest tier first: (1) a `step_state.json` with pending subtasks routes to `/map-resume`, an all-complete one to `/map-check`; (2) a `workflow-fit.json` recommendation of `map-fast`/`map-plan`/`map-efficient` wins as-is; (3) `check_plan_resume`'s `resume` verdict routes to `/map-efficient` when a task plan and `blueprint.json` both exist, otherwise `/map-plan`; (4) a `trivial` scope bracket (only when file/line estimates are supplied) routes to `/map-fast`; (5) the default is `/map-plan`. None of the tiers pattern-match the task text itself.
+
+Once routed, `/map-auto` drives the chain by invoking the existing slash workflows unmodified — `route_task -> [map-plan] -> [map-efficient] -> [map-check] -> [map-review]`, as selected — polling `auto_decide_holds` before and after each chained phase and recording every phase boundary with `record_auto_phase`. `auto_decide_holds` auto-approves pending `autonomy_posture`, `plan_approval`, and `template_overwrite` holds on your behalf. A pending `dangerous_action` or `safety_guardrail` hold is always a hard stop — surfaced to you, never auto-decided by any `/map-auto` code path — and the autopilot stops until a human makes the call.
+
+`record_auto_phase` mechanically enforces at most one re-entry per phase (HC-2): a phase's first record is `attempt: 1`, a re-entry is `attempt: 2`, and a third call for the same phase name is refused and force-aborts the chain (`chain_status: "aborted"`). Recovery from any stop condition — a refused re-route, an aborted chain, a hard-stop hold once it is decided, or a phase that exhausted its own retry/escalation budget — goes through `/map-resume`; a fresh `route_task` call is the only way to move a terminal chain forward.
+
+**End state:** a committed feature branch. `/map-auto` never opens a pull request, never polls CI, and never merges — it reports the committed branch and the recorded phases, then stops.
+
 ## Canonical Flows
 
 ### Standard flow

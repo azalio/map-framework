@@ -363,6 +363,71 @@ concurrent sessions clobbering the map). Honesty note: the human-in-the-loop and
 session-limit checks add friction and an audit trail, not a mechanical guarantee that an
 LLM cannot fabricate input — the same layered-defense posture MAP uses elsewhere.
 
+## Single-Entry Autopilot (`/map-auto`)
+
+A manually-invoked skill (issue #414) that routes a task through the existing MAP
+workflows via `route_task`, then drives the selected chain end-to-end to a committed
+feature branch in the same session. `/map-auto` never reimplements
+`/map-plan`/`/map-efficient`/`/map-check`/`/map-review` — it only decides which one(s) to
+run and invokes them unmodified, one after another. It runs autonomously the moment it is
+invoked; there is no shadow mode, calibration period, or opt-in flag.
+
+- **`auto-route.json` artifact** (`.map/<branch>/auto-route.json`, `AUTO_ROUTE_SCHEMA` in
+  `src/mapify_cli/schemas.py`): ten required fields — `schema_version`, `task_summary`,
+  `selected_route` (closed enum: `map-resume`, `map-check`, `map-fast`, `map-plan`,
+  `map-efficient`), `evidence` (structured `{signal, value, source}` entries),
+  `blocked_by`, `next_command`, `executed`, `chain_status` (closed enum:
+  `recommended_only`, `blocked`, `in_progress`, `completed`, `aborted`), `phases` (ledger,
+  appended only by `record_auto_phase`), and `route_history` (prior `selected_route`
+  values preserved across re-routes). `block_reason` and `abort_reason` are additive
+  string fields (`additionalProperties: true`) — `route_task` sets `block_reason` only
+  when it blocks the chain, and `record_auto_phase` sets/pops `abort_reason` to track
+  whether `chain_status` is currently `aborted`; neither is in the required-field list
+  because most runs never reach either terminal state.
+- **Single-writer split**: `route_task` creates or overwrites the whole artifact (subject
+  to its own guards below) and always initializes `phases` empty — it never appends a
+  phase entry. `record_auto_phase` is the ONLY function that appends to `phases[]`; it
+  also owns the `chain_status` transitions into `completed`/`aborted` and the
+  `abort_reason` field. Per Decision 14, `route_task` writes only `auto-route.json` and
+  its manifest stage — it never calls `record_workflow_fit` or `create_approval_hold`.
+- **`auto_route` manifest stage**: registered in `ARTIFACT_STAGE_NAMES` immediately after
+  `plan` (before `test_contract`); `route_task`, `auto_decide_holds`, and
+  `record_auto_phase` each refresh it via `_set_manifest_stage`, so chain progress is
+  observable from `artifact_manifest.json` without reading `auto-route.json` directly.
+- **Guard semantics**: `route_task` runs three guards in precedence order before its
+  normal write — (1) **in-progress refusal**: an existing `chain_status: "in_progress"`
+  refuses to re-route (`status: "refused"`, `next_command: "/map-resume"`, artifact and
+  manifest left untouched); (2) a pending hard-stop hold blocks the chain even under
+  `--dry-run` (see hold-autonomy policy below); (3) **`goal_mismatch` block**:
+  `check_plan_resume`'s verdict blocks the chain (`chain_status: "blocked"`,
+  `block_reason` set) without archiving or overwriting the pre-existing
+  spec/task_plan/blueprint artifacts. Separately, **terminal-chain no-resurrection**:
+  `record_auto_phase` refuses every call once `chain_status` is `aborted` or `blocked`,
+  regardless of phase name, returning the existing `abort_reason`/`block_reason` instead
+  of mutating anything — only a fresh `route_task` call can move a terminal chain
+  forward. `route_task` itself may re-route from any of `recommended_only`, `blocked`,
+  `completed`, or `aborted` (never from `in_progress`), preserving the superseded route
+  in `route_history[]`.
+- **Hold-autonomy policy**: `auto_decide_holds` partitions `APPROVAL_HOLD_KINDS` into two
+  disjoint, exhaustive sets — a test asserts the union covers the whole set with an empty
+  intersection, so a future sixth hold kind hard-fails instead of being silently
+  auto-approved by omission. `AUTO_APPROVABLE_HOLD_KINDS` (`autonomy_posture`,
+  `plan_approval`, `template_overwrite`) are approved automatically via the existing
+  `decide_approval_hold(hold_id, "approved", "auto-approved by map-auto")`, and each
+  approved hold id is dual-recorded — once in the hold's own audit note, once in the
+  consuming `record_auto_phase` call's `evidence_refs`. `HARD_STOP_HOLD_KINDS`
+  (`dangerous_action`, `safety_guardrail`) are never decided by any `/map-auto` code
+  path; they are only ever returned in `hard_stops[]` for a human to act on.
+- **Honesty caveat (spec Decision 4).** As of this slice, no shipped skill prose or hook
+  actually creates any approval hold — the #344 mechanism (see Durable Approval Holds
+  above) is CLI plumbing without live producers. `/map-auto`'s auto-approve path is
+  therefore exercised only by synthetic test holds in this slice, not by any real routing
+  decision that has ever created a hold; wiring a live producer (e.g. a `plan_approval`
+  hold at a `/map-plan` decision point) into an existing workflow is a tracked follow-up,
+  and the auto-approve path must not be read as an active mitigation until that lands.
+- **Out of scope (first slice, HC-1)**: the autopilot run ends at a committed feature
+  branch. `/map-auto` never creates a pull request, never merges, and never polls CI.
+
 ## Cross-cutting Concepts
 
 - **Context Budgeting & Compression**: MAP exposes compression policies and thresholds and treats budget control as a first-class workflow concern. Generated Actor `<map_context>` blocks and `/map-review` reviewer fan-out prompts are capped by deterministic estimated-token budgets before prompt injection so long plans or raw diffs cannot silently crowd out current-subtask, review-bundle, and dependency context. Active budgeted prompt paths append before/after estimates and clipped section labels to `.map/<branch>/token_budget.json` so users can diagnose missing-context reports without transcript inspection.
