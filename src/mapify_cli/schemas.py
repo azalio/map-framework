@@ -2122,3 +2122,104 @@ PRD_REVIEW_SCHEMA: dict[str, Any] = {
     ],
     "additionalProperties": True,
 }
+
+AUTO_ROUTE_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://mapframework.dev/schemas/auto-route.json",
+    "title": "MAP Auto Route Decision",
+    "description": (
+        "Autonomous routing decision and phase ledger stored in "
+        ".map/<branch>/auto-route.json (/map-auto)."
+    ),
+    "type": "object",
+    "properties": {
+        "schema_version": {"type": "string"},
+        "task_summary": {"type": "string"},
+        "selected_route": {
+            "type": "string",
+            "enum": [
+                "map-resume",
+                "map-check",
+                "map-fast",
+                "map-plan",
+                "map-efficient",
+            ],
+        },
+        "evidence": {
+            "type": "array",
+            "description": "Structured signals that justified the selected_route.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "signal": {"type": "string"},
+                    "value": {"type": "string"},
+                    "source": {"type": "string"},
+                },
+                "required": ["signal", "value", "source"],
+                "additionalProperties": False,
+            },
+        },
+        "blocked_by": {
+            "type": "array",
+            "description": "Pending hard-stop hold ids blocking the chain, if any.",
+            "items": {"type": "string"},
+        },
+        "next_command": {"type": "string"},
+        "executed": {"type": "boolean"},
+        "chain_status": {
+            "type": "string",
+            "enum": [
+                "recommended_only",
+                "blocked",
+                "in_progress",
+                "completed",
+                "aborted",
+            ],
+        },
+        "phases": {
+            "type": "array",
+            "description": "Phase ledger; appended only by record_auto_phase.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "phase": {"type": "string"},
+                    "status": {"type": "string"},
+                    "attempt": {"type": "integer", "minimum": 1},
+                    "evidence_refs": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "reason": {"type": "string"},
+                    "recorded_at": {"type": "string", "format": "date-time"},
+                },
+                "required": [
+                    "phase",
+                    "status",
+                    "attempt",
+                    "evidence_refs",
+                    "reason",
+                    "recorded_at",
+                ],
+                "additionalProperties": False,
+            },
+        },
+        "route_history": {
+            "type": "array",
+            "description": "Prior selected_route values preserved across re-routes.",
+            "items": {"type": "string"},
+        },
+    },
+    "required": [
+        "schema_version",
+        "task_summary",
+        "selected_route",
+        "evidence",
+        "blocked_by",
+        "next_command",
+        "executed",
+        "chain_status",
+        "phases",
+        "route_history",
+    ],
+    "additionalProperties": True,
+}

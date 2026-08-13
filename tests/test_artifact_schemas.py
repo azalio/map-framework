@@ -734,3 +734,84 @@ def test_validate_implementer_readiness_schema_rejects_additional_properties():
     )[0]
 
     assert not is_valid
+
+
+def _minimal_auto_route() -> dict:
+    return {
+        "schema_version": "1.0",
+        "task_summary": "Add AUTO_ROUTE_SCHEMA to schemas.py",
+        "selected_route": "map-efficient",
+        "evidence": [
+            {
+                "signal": "step_state",
+                "value": "pending",
+                "source": ".map/feat-map-auto/step_state.json",
+            }
+        ],
+        "blocked_by": [],
+        "next_command": "/map-efficient",
+        "executed": True,
+        "chain_status": "in_progress",
+        "phases": [
+            {
+                "phase": "plan",
+                "status": "completed",
+                "attempt": 1,
+                "evidence_refs": [],
+                "reason": "",
+                "recorded_at": "2026-08-13T12:00:00Z",
+            }
+        ],
+        "route_history": [],
+    }
+
+
+def test_validate_auto_route_schema_golden():
+    artifact = _minimal_auto_route()
+
+    is_valid, errors = MODULE.validate_artifact(artifact, MODULE.AUTO_ROUTE_SCHEMA)
+    assert is_valid, f"Errors: {errors}"
+
+
+def test_validate_auto_route_schema_rejects_unknown_chain_status():
+    artifact = _minimal_auto_route()
+    artifact["chain_status"] = "not-a-status"
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.AUTO_ROUTE_SCHEMA)[0]
+
+    assert not is_valid
+
+
+def test_validate_auto_route_schema_rejects_unknown_selected_route():
+    artifact = _minimal_auto_route()
+    artifact["selected_route"] = "map-tdd"
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.AUTO_ROUTE_SCHEMA)[0]
+
+    assert not is_valid
+
+
+def test_validate_auto_route_schema_evidence_missing_source_fails():
+    artifact = _minimal_auto_route()
+    artifact["evidence"] = [{"signal": "step_state", "value": "pending"}]
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.AUTO_ROUTE_SCHEMA)[0]
+
+    assert not is_valid
+
+
+def test_validate_auto_route_schema_phases_missing_attempt_fails():
+    artifact = _minimal_auto_route()
+    artifact["phases"] = [
+        {
+            "phase": "plan",
+            "status": "completed",
+            "evidence_refs": [],
+            "reason": "",
+            "recorded_at": "2026-08-13T12:00:00Z",
+        }
+    ]
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.AUTO_ROUTE_SCHEMA)[0]
+
+    assert not is_valid
