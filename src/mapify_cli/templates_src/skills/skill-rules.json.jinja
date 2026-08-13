@@ -452,6 +452,25 @@
           "before.*(map-plan|planning)"
         ]
       }
+    },
+    "map-auto": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "high",
+      "description": "Single-entry autonomous autopilot: routes a task via route_task then drives the selected MAP workflow chain end-to-end to a committed feature branch.",
+      "promptTriggers": {
+        "keywords": [
+          "map-auto",
+          "autopilot",
+          "single-entry workflow",
+          "auto route task"
+        ],
+        "intentPatterns": [
+          "map-auto",
+          "(autopilot|auto).*(task|workflow|route)"
+        ]
+      }
     }
   }
 }

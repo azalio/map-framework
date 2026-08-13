@@ -676,6 +676,37 @@ class TestSkillStructure:
         assert entry.get("enforcement") == "manual"
         assert not entry.get("runtimeEffects")
 
+    def test_map_auto_is_default_on_with_no_gating_flag(
+        self, skill_rules, skills_dir
+    ):
+        """AC-9: /map-auto is available by default -- no shadow mode, calibration
+        gate, or opt-in flag in either the skill-rules entry or the SKILL.md body."""
+        entry = skill_rules.get("skills", {}).get("map-auto")
+        assert entry is not None, "map-auto missing from skill-rules.json"
+        gating_fields = {
+            "disabled",
+            "enabled",
+            "gated",
+            "shadow_mode",
+            "shadowMode",
+            "calibration",
+            "opt_in",
+            "optIn",
+        }
+        present_gating_fields = gating_fields & set(entry.keys())
+        assert not present_gating_fields, (
+            f"map-auto skill-rules entry declares gating field(s) "
+            f"{sorted(present_gating_fields)}; AC-9 requires default-on behavior "
+            "with no shadow mode, calibration gate, or opt-in flag."
+        )
+
+        skill_file = skills_dir / "map-auto" / "SKILL.md"
+        content = skill_file.read_text(encoding="utf-8").lower()
+        assert "enable this first" not in content, (
+            f"{skill_file} contains an 'enable this first' precondition step; "
+            "AC-9 requires /map-auto to run autonomously the moment it is invoked."
+        )
+
     def test_task_skill_class_matches_manual_runtime_metadata(
         self, skills_dir, skill_folders, skill_rules
     ):
