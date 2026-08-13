@@ -14673,6 +14673,122 @@ def _select_route(
     return "map-plan", evidence
 
 
+# /map-auto routing (issue #414): route -> slash command surfaced to the
+# operator as the next step.
+_AUTO_ROUTE_NEXT_COMMAND: dict[str, str] = {
+    "map-resume": "/map-resume",
+    "map-check": "/map-check",
+    "map-fast": "/map-fast",
+    "map-plan": "/map-plan",
+    "map-efficient": "/map-efficient",
+}
+
+
+def auto_route_artifact_path(branch: str | None = None) -> Path:
+    """Return the branch-scoped /map-auto routing decision artifact path."""
+    return get_branch_dir(branch) / "auto-route.json"
+
+
+def _auto_route_evidence_for_artifact(
+    evidence: list[dict[str, object]],
+) -> list[dict[str, str]]:
+    """Coerce _select_route's evidence into AUTO_ROUTE_SCHEMA's string shape.
+
+    _select_route returns richer Python values (dict, bool, None) per signal
+    for in-process callers; AUTO_ROUTE_SCHEMA (schemas.py) declares
+    evidence[].value as a plain string for the persisted artifact. JSON-encode
+    non-string values so no signal detail is lost while staying schema-valid.
+    """
+    stringified: list[dict[str, str]] = []
+    for entry in evidence:
+        value = entry.get("value")
+        value_str = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+        stringified.append({
+            "signal": str(entry.get("signal", "")),
+            "value": value_str,
+            "source": str(entry.get("source", "")),
+        })
+    return stringified
+
+
+def route_task(
+    task: str,
+    branch: str | None = None,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    """Select a route for /map-auto and persist the decision (issue #414).
+
+    Wraps _select_route with the write side of the routing contract: writes
+    .map/<branch>/auto-route.json (all ten AUTO_ROUTE_SCHEMA fields) and
+    registers the `auto_route` manifest stage in the same call, so the route
+    selection is never observable only in stdout. `phases` is always
+    initialized empty here -- record_auto_phase (a later subcommand) is the
+    sole writer of that ledger.
+
+    `executed` and `chain_status` are always set together in one atomic
+    artifact write: non-dry-run -> executed=True, chain_status="in_progress";
+    --dry-run -> executed=False, chain_status="recommended_only". Guards that
+    refuse to re-route an in-progress chain, block on a goal mismatch, or
+    surface pending hard-stop holds are added by a later subcommand -- this
+    call always re-routes and overwrites, preserving the prior selected_route
+    in route_history.
+    """
+    branch_name = branch or get_branch_name()
+    selected_route, raw_evidence = _select_route(branch_name, task)
+    next_command = _AUTO_ROUTE_NEXT_COMMAND[selected_route]
+
+    artifact_path = auto_route_artifact_path(branch_name)
+    prior = _read_json_file(artifact_path)
+    route_history: list[str] = []
+    if isinstance(prior, dict):
+        prior_history = prior.get("route_history")
+        if isinstance(prior_history, list):
+            route_history = [item for item in prior_history if isinstance(item, str)]
+        prior_route = prior.get("selected_route")
+        if isinstance(prior_route, str) and prior_route:
+            route_history.append(prior_route)
+
+    executed = not dry_run
+    chain_status = "in_progress" if executed else "recommended_only"
+
+    artifact: dict[str, object] = {
+        "schema_version": "1.0",
+        "task_summary": _sanitize_for_json(task),
+        "selected_route": selected_route,
+        "evidence": _auto_route_evidence_for_artifact(raw_evidence),
+        "blocked_by": [],
+        "next_command": next_command,
+        "executed": executed,
+        "chain_status": chain_status,
+        "phases": [],
+        "route_history": route_history,
+    }
+    _write_json_file(artifact_path, artifact)
+
+    manifest = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        manifest,
+        "auto_route",
+        "recommended" if dry_run else "in_progress",
+        artifacts=[_artifact_ref(artifact_path, "auto-route-decision")],
+        metadata={
+            "selected_route": selected_route,
+            "chain_status": chain_status,
+        },
+    )
+    save_artifact_manifest(manifest, branch_name)
+
+    return {
+        "status": "success",
+        "branch": branch_name,
+        "path": str(artifact_path),
+        "selected_route": selected_route,
+        "chain_status": chain_status,
+        "next_command": next_command,
+        "executed": executed,
+    }
+
+
 def record_scope_baseline(branch: str) -> dict:
     """Snapshot the current uncommitted / untracked file set as a baseline
     that validate_mutation_boundary will subtract from `actual` on future
@@ -22008,6 +22124,25 @@ if __name__ == "__main__":
             branch=_rvl_flag("branch") or None,
         )
         print(json.dumps(result, indent=2, ensure_ascii=True))
+
+    elif func_name == "route_task" and len(sys.argv) >= 3:
+        # CLI: route_task <task> [--branch B] [--dry-run]
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py route_task")
+        _p.add_argument("task", help="Task description text to route")
+        _p.add_argument("--branch", default=None, help="Branch name (default: current branch)")
+        _p.add_argument(
+            "--dry-run",
+            action="store_true",
+            dest="dry_run",
+            help="Recommend a route without marking the chain in_progress",
+        )
+        _a = _p.parse_args(sys.argv[2:])
+        _r = route_task(_a.task, branch=_a.branch, dry_run=_a.dry_run)
+        print(json.dumps(_r, indent=2))
+        if _r.get("status") == "error":
+            sys.exit(1)
 
     else:
         # Helpful redirect: when the user passes a command that belongs to

@@ -1,5 +1,6 @@
 """Tests for map_step_runner human-readable artifact helpers."""
 
+import importlib.util
 import json
 import os
 import re
@@ -27,6 +28,19 @@ sys.path.insert(0, str(SCRIPTS_PATH))
 from datetime import UTC
 
 import map_step_runner  # type: ignore[import-not-found]
+
+# Load schemas.py by file location (mirrors tests/test_artifact_schemas.py) so
+# validating auto-route.json against AUTO_ROUTE_SCHEMA does not require
+# importing the mapify_cli package and its extras.
+_AUTO_ROUTE_SCHEMAS_PATH = (
+    Path(__file__).resolve().parents[1] / "src" / "mapify_cli" / "schemas.py"
+)
+_AUTO_ROUTE_SCHEMAS_SPEC = importlib.util.spec_from_file_location(
+    "map_step_runner_auto_route_schemas", _AUTO_ROUTE_SCHEMAS_PATH
+)
+assert _AUTO_ROUTE_SCHEMAS_SPEC is not None and _AUTO_ROUTE_SCHEMAS_SPEC.loader is not None
+auto_route_schemas_module = importlib.util.module_from_spec(_AUTO_ROUTE_SCHEMAS_SPEC)
+_AUTO_ROUTE_SCHEMAS_SPEC.loader.exec_module(auto_route_schemas_module)
 
 
 def _stub_compute_insight(payload: dict[str, object]):
@@ -1905,6 +1919,107 @@ def test_select_route_task_text_sanctioned_exception_drives_tier3_verdict(branch
     mismatch_verdict = next(e for e in mismatch_evidence if e["signal"] == "check_plan_resume")
     assert resume_verdict["value"] == "resume"
     assert mismatch_verdict["value"] == "goal_mismatch"
+
+
+# --- route_task (issue #414 /map-auto route persistence + manifest stage) --
+
+
+def _read_auto_route_artifact(branch_workspace: Path) -> dict[str, object]:
+    return json.loads((branch_workspace / "auto-route.json").read_text(encoding="utf-8"))
+
+
+def test_vc1_route_task_writes_schema_valid_artifact_and_registers_manifest_stage(
+    branch_workspace,
+):
+    branch = branch_workspace.name
+
+    result = map_step_runner.route_task("plain default-tier task", branch=branch)
+
+    artifact = _read_auto_route_artifact(branch_workspace)
+    is_valid, errors = auto_route_schemas_module.validate_artifact(
+        artifact, auto_route_schemas_module.AUTO_ROUTE_SCHEMA
+    )
+    assert is_valid, f"Errors: {errors}"
+
+    manifest = map_step_runner.load_artifact_manifest(branch)
+    stages = manifest["stages"]
+    assert isinstance(stages, dict)
+    auto_route_stage = stages["auto_route"]
+    assert isinstance(auto_route_stage, dict)
+    stage_artifacts = auto_route_stage["artifacts"]
+    assert isinstance(stage_artifacts, list) and stage_artifacts
+    assert stage_artifacts[0]["path"] == result["path"]
+    metadata = auto_route_stage["metadata"]
+    assert isinstance(metadata, dict)
+    assert metadata["selected_route"] == artifact["selected_route"]
+    assert metadata["chain_status"] == artifact["chain_status"]
+
+
+def test_vc2_route_task_non_dry_run_sets_executed_true_and_chain_status_in_progress(
+    branch_workspace,
+):
+    branch = branch_workspace.name
+
+    map_step_runner.route_task("ship it", branch=branch, dry_run=False)
+
+    artifact = _read_auto_route_artifact(branch_workspace)
+    assert artifact["executed"] is True
+    assert artifact["chain_status"] == "in_progress"
+
+
+def test_route_task_dry_run_sets_executed_false_and_recommended_only(branch_workspace):
+    branch = branch_workspace.name
+
+    map_step_runner.route_task("just look", branch=branch, dry_run=True)
+
+    artifact = _read_auto_route_artifact(branch_workspace)
+    assert artifact["executed"] is False
+    assert artifact["chain_status"] == "recommended_only"
+
+
+def test_vc3_route_task_sanitizes_task_summary_control_characters(branch_workspace):
+    branch = branch_workspace.name
+    dirty_task = "line one\r\nline two\x00\x1f\x7f\ttabbed"
+
+    map_step_runner.route_task(dirty_task, branch=branch)
+
+    raw_text = (branch_workspace / "auto-route.json").read_text(encoding="utf-8")
+    artifact = json.loads(raw_text)  # must not raise: no raw control bytes on disk
+    task_summary = artifact["task_summary"]
+    assert isinstance(task_summary, str)
+    assert not re.search(r"[\x00-\x1f\x7f]", task_summary)
+    assert "line one" in task_summary
+    assert "line two" in task_summary
+
+
+def test_vc4_route_task_phases_empty_and_next_command_matches_selected_route(
+    branch_workspace,
+):
+    branch = branch_workspace.name
+    _write_workflow_fit(branch_workspace, "map-fast")
+
+    result = map_step_runner.route_task("some task", branch=branch)
+
+    assert result["selected_route"] == "map-fast"
+    artifact = _read_auto_route_artifact(branch_workspace)
+    assert artifact["phases"] == []
+    assert artifact["next_command"] == "/map-fast"
+    assert result["next_command"] == "/map-fast"
+
+
+def test_route_task_preserves_route_history_on_second_write(branch_workspace):
+    branch = branch_workspace.name
+
+    first = map_step_runner.route_task("first task", branch=branch, dry_run=True)
+    assert first["selected_route"] == "map-plan"
+    assert first["chain_status"] == "recommended_only"
+
+    _write_workflow_fit(branch_workspace, "map-fast")
+    second = map_step_runner.route_task("second task", branch=branch, dry_run=True)
+
+    assert second["selected_route"] == "map-fast"
+    artifact = _read_auto_route_artifact(branch_workspace)
+    assert artifact["route_history"] == ["map-plan"]
 
 
 def test_validate_blueprint_contract_accepts_contract_sized_plan(branch_workspace):
