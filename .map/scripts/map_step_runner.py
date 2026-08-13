@@ -14699,6 +14699,21 @@ _AUTO_ROUTE_NEXT_COMMAND: dict[str, str] = {
     "map-efficient": "/map-efficient",
 }
 
+# /map-auto phase ledger (issue #414, ST-007): closed status vocabulary for
+# record_auto_phase's chain_status transitions. A phase status in
+# AUTO_PHASE_TERMINAL_SUCCESS_STATUSES completes the chain; a status in
+# AUTO_PHASE_ABORT_STATUSES aborts it; any other status leaves the chain
+# in_progress. These two sets are intentionally NOT required to partition
+# every possible status string -- callers may pass phase-specific statuses
+# (e.g. "monitor_rejected") that fall through to in_progress.
+AUTO_PHASE_TERMINAL_SUCCESS_STATUSES = frozenset({"completed"})
+AUTO_PHASE_ABORT_STATUSES = frozenset({"aborted", "failed"})
+
+# HC-2: at most ONE re-entry per phase -- attempt 1 (first record) plus
+# attempt 2 (the single permitted re-entry) are allowed; a 3rd record of the
+# same phase name is refused by record_auto_phase.
+AUTO_PHASE_MAX_ATTEMPTS = 2
+
 
 def auto_route_artifact_path(branch: str | None = None) -> Path:
     """Return the branch-scoped /map-auto routing decision artifact path."""
@@ -14880,6 +14895,181 @@ def route_task(
         "next_command": next_command,
         "executed": executed,
         "blocked_by": blocked_by,
+    }
+
+
+def record_auto_phase(
+    phase: str,
+    status: str,
+    branch: str | None = None,
+    evidence_refs: list[str] | None = None,
+    reason: str = "",
+) -> dict[str, object]:
+    """Append one entry to auto-route.json's phase ledger (issue #414, ST-007).
+
+    record_auto_phase is the ONLY function that mutates `phases[]` --
+    route_task always initializes it empty and never appends (Decision 11
+    single-writer invariant). Requires an existing auto-route.json (written
+    by route_task); returns status="error" if none is found.
+
+    `attempt` mechanizes HC-2's at-most-one-re-entry bound: it is
+    ``1 + count of prior phases[] entries with the SAME phase name``. A
+    first call for a phase records attempt=1; a re-entry records attempt=2.
+    A THIRD call for the same phase is refused outright -- no entry is
+    appended for that call. Instead the chain is force-aborted: chain_status
+    is set to "aborted" and the abort reason is persisted in the top-level
+    `abort_reason` field (mirroring route_task's `block_reason` field for
+    the "blocked" chain_status -- one field, schema-valid via the schema's
+    `additionalProperties: true`, so the operator sees WHY directly in
+    auto-route.json without needing to scan phases[] for a synthetic entry).
+
+    On every non-refused call, chain_status transitions from the recorded
+    `status` using a closed vocabulary (AUTO_PHASE_TERMINAL_SUCCESS_STATUSES
+    -> "completed", AUTO_PHASE_ABORT_STATUSES -> "aborted", otherwise
+    "in_progress") and the `abort_reason` field is set/cleared to match. The
+    `auto_route` manifest stage is refreshed on every call (refused or not)
+    so progress is observable outside the artifact, with its status
+    mirroring the resulting chain_status.
+
+    `evidence_refs` persists caller-supplied ids (e.g. hold ids
+    auto-approved by `auto_decide_holds`) in the phase entry, giving every
+    auto-approval a second durable recording site alongside the hold's own
+    audit note (INV-4).
+
+    HC-2 fail-closed guard (code review 2): once chain_status is "aborted"
+    (3rd-attempt refusal above) or "blocked" (route_task hard-stop hold),
+    the chain must stay terminal until an explicit NEW route_task call --
+    route_task's own overwrite policy is the only legitimate way out of
+    "aborted"/"blocked". A call naming a DIFFERENT phase must never act as a
+    side door that resurrects the chain by appending a fresh entry and
+    flipping chain_status back to in_progress/completed. This guard runs
+    BEFORE the attempt-counter logic (which only protects the SAME phase
+    name) and mutates nothing on the terminal-state path: no phases[]
+    append, no chain_status change, no abort_reason/block_reason pop, no
+    manifest write.
+    """
+    branch_name = branch or get_branch_name()
+    artifact_path = auto_route_artifact_path(branch_name)
+    artifact = _read_json_file(artifact_path)
+    if artifact is None:
+        return {
+            "status": "error",
+            "branch": branch_name,
+            "path": str(artifact_path),
+            "reason": (
+                f"no auto-route.json found for branch '{branch_name}'; "
+                "run route_task first"
+            ),
+        }
+
+    terminal_chain_status = artifact.get("chain_status")
+    if terminal_chain_status in {"aborted", "blocked"}:
+        return {
+            "status": "refused",
+            "branch": branch_name,
+            "path": str(artifact_path),
+            "phase": phase,
+            "chain_status": terminal_chain_status,
+            "reason": (
+                f"branch '{branch_name}' auto-route chain is already "
+                f"'{terminal_chain_status}'; record_auto_phase refuses to "
+                "mutate a terminal chain -- call route_task to re-route "
+                "explicitly."
+            ),
+            "abort_reason": artifact.get("abort_reason"),
+            "block_reason": artifact.get("block_reason"),
+        }
+
+    raw_phases = artifact.get("phases")
+    phases = [entry for entry in raw_phases if isinstance(entry, dict)] if isinstance(
+        raw_phases, list
+    ) else []
+    prior_attempts = sum(1 for entry in phases if entry.get("phase") == phase)
+    attempt = prior_attempts + 1
+
+    manifest = load_artifact_manifest(branch_name)
+
+    if attempt > AUTO_PHASE_MAX_ATTEMPTS:
+        # HC-2 refusal: do not append an entry for this call -- force-abort
+        # the chain instead, with the reason visible at the top level.
+        abort_reason = (
+            f"phase '{phase}' refused at attempt {attempt} (max "
+            f"{AUTO_PHASE_MAX_ATTEMPTS} attempts per HC-2); forcing "
+            "chain_status=aborted."
+        )
+        if reason:
+            abort_reason += f" caller reason: {reason}"
+        abort_reason = _sanitize_for_json(abort_reason)
+
+        artifact["chain_status"] = "aborted"
+        artifact["abort_reason"] = abort_reason
+        _write_json_file(artifact_path, artifact)
+
+        _set_manifest_stage(
+            manifest,
+            "auto_route",
+            "aborted",
+            artifacts=[_artifact_ref(artifact_path, "auto-route-decision")],
+            metadata={
+                "chain_status": "aborted",
+                "aborted_phase": phase,
+                "attempt": attempt,
+            },
+        )
+        save_artifact_manifest(manifest, branch_name)
+
+        return {
+            "status": "refused",
+            "branch": branch_name,
+            "path": str(artifact_path),
+            "phase": phase,
+            "attempt": attempt,
+            "chain_status": "aborted",
+            "abort_reason": abort_reason,
+        }
+
+    entry: dict[str, object] = {
+        "phase": phase,
+        "status": status,
+        "attempt": attempt,
+        "evidence_refs": list(evidence_refs or []),
+        "reason": _sanitize_for_json(reason),
+        "recorded_at": _utc_timestamp(),
+    }
+    phases.append(entry)
+    artifact["phases"] = phases
+
+    if status in AUTO_PHASE_TERMINAL_SUCCESS_STATUSES:
+        chain_status = "completed"
+    elif status in AUTO_PHASE_ABORT_STATUSES:
+        chain_status = "aborted"
+    else:
+        chain_status = "in_progress"
+    artifact["chain_status"] = chain_status
+    if chain_status == "aborted":
+        artifact["abort_reason"] = _sanitize_for_json(
+            reason or f"phase '{phase}' reported status '{status}'"
+        )
+    else:
+        artifact.pop("abort_reason", None)
+    _write_json_file(artifact_path, artifact)
+
+    _set_manifest_stage(
+        manifest,
+        "auto_route",
+        chain_status,
+        artifacts=[_artifact_ref(artifact_path, "auto-route-decision")],
+        metadata={"chain_status": chain_status, "phase": phase, "attempt": attempt},
+    )
+    save_artifact_manifest(manifest, branch_name)
+
+    return {
+        "status": "success",
+        "branch": branch_name,
+        "path": str(artifact_path),
+        "phase": phase,
+        "attempt": attempt,
+        "chain_status": chain_status,
     }
 
 
@@ -22300,6 +22490,35 @@ if __name__ == "__main__":
         )
         _a = _p.parse_args(sys.argv[2:])
         _r = route_task(_a.task, branch=_a.branch, dry_run=_a.dry_run)
+        print(json.dumps(_r, indent=2))
+        if _r.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "record_auto_phase" and len(sys.argv) >= 4:
+        # CLI: record_auto_phase <phase> <status> [--branch B]
+        #        [--evidence-refs a,b,c] [--reason "..."]
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py record_auto_phase")
+        _p.add_argument("phase", help="Phase name to record (e.g. map-plan, map-efficient)")
+        _p.add_argument(
+            "status", help="Phase status (e.g. completed, in_progress, failed, aborted)"
+        )
+        _p.add_argument("--branch", default=None, help="Branch name (default: current branch)")
+        _p.add_argument(
+            "--evidence-refs",
+            default="",
+            dest="evidence_refs",
+            help="Comma-separated evidence ids (e.g. auto-approved hold ids)",
+        )
+        _p.add_argument(
+            "--reason", default="", help="Reason recorded alongside the phase entry"
+        )
+        _a = _p.parse_args(sys.argv[2:])
+        _refs = [ref.strip() for ref in _a.evidence_refs.split(",") if ref.strip()]
+        _r = record_auto_phase(
+            _a.phase, _a.status, branch=_a.branch, evidence_refs=_refs, reason=_a.reason
+        )
         print(json.dumps(_r, indent=2))
         if _r.get("status") == "error":
             sys.exit(1)

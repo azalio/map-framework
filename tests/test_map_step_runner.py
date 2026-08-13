@@ -2343,6 +2343,302 @@ def test_vc3_auto_decide_holds_never_invokes_decide_approval_hold_on_hard_stop_k
     assert len(result["hard_stops"]) == len(map_step_runner.HARD_STOP_HOLD_KINDS)
 
 
+# --- record_auto_phase (issue #414 ST-007: phases[] ledger, attempt
+# counter/HC-2 bound, chain_status transitions, single-writer invariant) ---
+
+
+def test_record_auto_phase_errors_when_no_route_task_has_run(branch_workspace):
+    branch = branch_workspace.name
+
+    result = map_step_runner.record_auto_phase("map-plan", "in_progress", branch=branch)
+
+    assert result["status"] == "error"
+    assert "route_task" in result["reason"]
+    assert not (branch_workspace / "auto-route.json").exists()
+
+
+def test_vc1_record_auto_phase_appends_one_schema_valid_six_field_entry(branch_workspace):
+    branch = branch_workspace.name
+    map_step_runner.route_task("ship something", branch=branch)
+
+    result = map_step_runner.record_auto_phase(
+        "map-efficient",
+        "in_progress",
+        branch=branch,
+        evidence_refs=["hold-abc"],
+        reason="starting execution",
+    )
+    assert result["status"] == "success"
+    assert result["attempt"] == 1
+
+    artifact = _read_auto_route_artifact(branch_workspace)
+    phases = artifact["phases"]
+    assert isinstance(phases, list) and len(phases) == 1
+    entry = phases[0]
+    assert set(entry.keys()) == {
+        "phase",
+        "status",
+        "attempt",
+        "evidence_refs",
+        "reason",
+        "recorded_at",
+    }
+    assert entry["phase"] == "map-efficient"
+    assert entry["status"] == "in_progress"
+    assert entry["attempt"] == 1
+    assert entry["evidence_refs"] == ["hold-abc"]
+    assert entry["reason"] == "starting execution"
+
+    is_valid, errors = auto_route_schemas_module.validate_artifact(
+        artifact, auto_route_schemas_module.AUTO_ROUTE_SCHEMA
+    )
+    assert is_valid, f"Errors: {errors}"
+
+
+def test_vc2_record_auto_phase_terminal_success_status_completes_chain(branch_workspace):
+    branch = branch_workspace.name
+    map_step_runner.route_task("ship something", branch=branch)
+
+    result = map_step_runner.record_auto_phase("map-check", "completed", branch=branch)
+
+    assert result["chain_status"] == "completed"
+    artifact = _read_auto_route_artifact(branch_workspace)
+    assert artifact["chain_status"] == "completed"
+    assert "abort_reason" not in artifact
+
+    manifest = map_step_runner.load_artifact_manifest(branch)
+    stage = manifest["stages"]["auto_route"]
+    assert stage["status"] == "completed"
+    assert stage["artifacts"][0]["path"] == result["path"]
+    assert stage["metadata"]["chain_status"] == "completed"
+
+
+def test_vc2_record_auto_phase_abort_class_status_aborts_chain(branch_workspace):
+    branch = branch_workspace.name
+    map_step_runner.route_task("ship something", branch=branch)
+
+    result = map_step_runner.record_auto_phase(
+        "map-efficient", "failed", branch=branch, reason="monitor rejected twice"
+    )
+
+    assert result["chain_status"] == "aborted"
+    artifact = _read_auto_route_artifact(branch_workspace)
+    assert artifact["chain_status"] == "aborted"
+    assert "monitor rejected twice" in str(artifact["abort_reason"])
+
+    manifest = map_step_runner.load_artifact_manifest(branch)
+    assert manifest["stages"]["auto_route"]["status"] == "aborted"
+
+
+def test_vc2_record_auto_phase_intermediate_status_stays_in_progress(branch_workspace):
+    branch = branch_workspace.name
+    map_step_runner.route_task("ship something", branch=branch)
+
+    result = map_step_runner.record_auto_phase("map-plan", "started", branch=branch)
+
+    assert result["chain_status"] == "in_progress"
+    artifact = _read_auto_route_artifact(branch_workspace)
+    assert artifact["chain_status"] == "in_progress"
+    assert "abort_reason" not in artifact
+
+    manifest = map_step_runner.load_artifact_manifest(branch)
+    assert manifest["stages"]["auto_route"]["status"] == "in_progress"
+
+
+def test_vc3_record_auto_phase_attempt_counter_and_third_attempt_refused(branch_workspace):
+    branch = branch_workspace.name
+    map_step_runner.route_task("do the thing", branch=branch)
+
+    first = map_step_runner.record_auto_phase("map-plan", "in_progress", branch=branch)
+    assert first["status"] == "success"
+    assert first["attempt"] == 1
+
+    second = map_step_runner.record_auto_phase(
+        "map-plan",
+        "in_progress",
+        branch=branch,
+        reason="re-entry after inspecting ground truth",
+    )
+    assert second["status"] == "success"
+    assert second["attempt"] == 2
+
+    third = map_step_runner.record_auto_phase(
+        "map-plan", "in_progress", branch=branch, reason="second failure of map-plan"
+    )
+    assert third["status"] == "refused"
+    assert third["attempt"] == 3
+    assert third["chain_status"] == "aborted"
+    assert third["abort_reason"]
+
+    artifact = _read_auto_route_artifact(branch_workspace)
+    phases = artifact["phases"]
+    assert isinstance(phases, list) and len(phases) == 2, (
+        "the refused third attempt must not append a phases[] entry"
+    )
+    assert artifact["chain_status"] == "aborted"
+    abort_reason = str(artifact.get("abort_reason", ""))
+    assert abort_reason, "abort reason must be visible directly in the artifact"
+    assert "map-plan" in abort_reason
+
+    manifest = map_step_runner.load_artifact_manifest(branch)
+    assert manifest["stages"]["auto_route"]["status"] == "aborted"
+
+
+def test_record_auto_phase_refuses_different_phase_after_chain_aborted(branch_workspace):
+    """Code review 2 (HIGH): the HC-2 attempt guard only protects the SAME
+    phase name -- a call naming a DIFFERENT phase after chain_status became
+    "aborted" must not resurrect the chain. Reproduces the reported repro:
+    abort phase A via the 3rd-attempt refusal, then call phase B and assert
+    nothing changes (no append, chain_status stays aborted, abort_reason
+    intact, manifest stage unchanged).
+    """
+    branch = branch_workspace.name
+    map_step_runner.route_task("do the thing", branch=branch)
+
+    # Drive phase A to the 3rd-attempt refusal -> chain_status "aborted".
+    map_step_runner.record_auto_phase("phase-a", "in_progress", branch=branch)
+    map_step_runner.record_auto_phase("phase-a", "in_progress", branch=branch)
+    aborted = map_step_runner.record_auto_phase("phase-a", "in_progress", branch=branch)
+    assert aborted["chain_status"] == "aborted"
+
+    artifact_before = _read_auto_route_artifact(branch_workspace)
+    assert artifact_before["chain_status"] == "aborted"
+    abort_reason_before = artifact_before["abort_reason"]
+    manifest_before = map_step_runner.load_artifact_manifest(branch)
+    stage_before = manifest_before["stages"]["auto_route"]
+
+    result = map_step_runner.record_auto_phase(
+        "phase-b", "in_progress", branch=branch, reason="different phase, side door attempt"
+    )
+
+    assert result["status"] == "refused"
+    assert result["chain_status"] == "aborted"
+    assert result["abort_reason"] == abort_reason_before
+
+    artifact_after = _read_auto_route_artifact(branch_workspace)
+    assert artifact_after == artifact_before, "no field of the artifact may change"
+    assert artifact_after["chain_status"] == "aborted"
+    assert artifact_after["abort_reason"] == abort_reason_before
+    phases_after = artifact_after["phases"]
+    assert isinstance(phases_after, list) and len(phases_after) == 2, (
+        "phase-b must not be appended to phases[] while the chain is aborted"
+    )
+    assert all(entry["phase"] == "phase-a" for entry in phases_after)
+
+    manifest_after = map_step_runner.load_artifact_manifest(branch)
+    assert manifest_after["stages"]["auto_route"] == stage_before, (
+        "the auto_route manifest stage must not be refreshed on a refused call"
+    )
+
+
+def test_record_auto_phase_refuses_new_phase_after_chain_blocked(branch_workspace):
+    """Code review 2 (HIGH), blocked-chain variant: route_task sets
+    chain_status "blocked" when a hard-stop hold is pending at route time.
+    A subsequent record_auto_phase call for any phase must refuse without
+    mutating the artifact or manifest -- block_reason stays intact.
+    """
+    branch = branch_workspace.name
+    hold_result = map_step_runner.create_approval_hold(
+        kind="dangerous_action",
+        reason="Risky shell command flagged",
+        request_summary="rm -rf staging bucket",
+        branch=branch,
+    )
+    hold_id = hold_result["hold_id"]
+
+    route_result = map_step_runner.route_task("run the cleanup", branch=branch, dry_run=False)
+    assert route_result["chain_status"] == "blocked"
+    assert route_result["blocked_by"] == [hold_id]
+
+    artifact_before = _read_auto_route_artifact(branch_workspace)
+    assert artifact_before["chain_status"] == "blocked"
+    block_reason_before = artifact_before["block_reason"]
+    assert artifact_before["phases"] == []
+    manifest_before = map_step_runner.load_artifact_manifest(branch)
+    stage_before = manifest_before["stages"]["auto_route"]
+
+    result = map_step_runner.record_auto_phase(
+        "map-plan", "in_progress", branch=branch, reason="attempt during blocked chain"
+    )
+
+    assert result["status"] == "refused"
+    assert result["chain_status"] == "blocked"
+    assert result["block_reason"] == block_reason_before
+
+    artifact_after = _read_auto_route_artifact(branch_workspace)
+    assert artifact_after == artifact_before, "no field of the artifact may change"
+    assert artifact_after["chain_status"] == "blocked"
+    assert artifact_after["block_reason"] == block_reason_before
+    assert artifact_after["phases"] == []
+
+    manifest_after = map_step_runner.load_artifact_manifest(branch)
+    assert manifest_after["stages"]["auto_route"] == stage_before, (
+        "the auto_route manifest stage must not be refreshed on a refused call"
+    )
+
+
+def test_vc4_record_auto_phase_persists_auto_approved_hold_ids_in_evidence_refs(
+    branch_workspace,
+):
+    branch = branch_workspace.name
+    map_step_runner.route_task("ship something", branch=branch)
+    created = map_step_runner.create_approval_hold(
+        kind="plan_approval",
+        reason="plan needs sign-off",
+        request_summary="approve blueprint before executing",
+        branch=branch,
+    )
+    hold_id = created["hold_id"]
+
+    decided = map_step_runner.auto_decide_holds(branch=branch)
+    assert hold_id in {entry["id"] for entry in decided["auto_approved"]}
+
+    result = map_step_runner.record_auto_phase(
+        "map-efficient",
+        "in_progress",
+        branch=branch,
+        evidence_refs=[hold_id],
+        reason="auto-approved plan_approval hold before dispatch",
+    )
+    assert result["status"] == "success"
+
+    artifact = _read_auto_route_artifact(branch_workspace)
+    phases = artifact["phases"]
+    assert isinstance(phases, list) and isinstance(phases[0], dict)
+    assert phases[0]["evidence_refs"] == [hold_id]
+
+    # Dual record (INV-4): the hold id also persists in the hold's own audit
+    # trail, independent of the auto-route.json ledger checked above.
+    holds_store = _read_approval_holds(branch_workspace)
+    assert holds_store["holds"][hold_id]["decision_note"] == "auto-approved by map-auto"
+
+
+def test_vc5_route_task_leaves_phases_empty_before_any_phase_recorded(branch_workspace):
+    branch = branch_workspace.name
+
+    map_step_runner.route_task("ship something", branch=branch)
+
+    artifact = _read_auto_route_artifact(branch_workspace)
+    assert artifact["phases"] == []
+
+
+def test_vc5_record_auto_phase_is_the_sole_phases_mutator_in_source():
+    source = (SCRIPTS_PATH / "map_step_runner.py").read_text(encoding="utf-8")
+    mutation_pattern = re.compile(r'artifact\["phases"\]\s*=|phases\.append\(')
+
+    start = source.index("def record_auto_phase(")
+    end = source.index("\ndef ", start + 1)
+    body = source[start:end]
+
+    all_matches = mutation_pattern.findall(source)
+    body_matches = mutation_pattern.findall(body)
+    assert all_matches, "expected at least one phases[] mutation site in the runner"
+    assert all_matches == body_matches, (
+        "phases[] must be mutated only inside record_auto_phase "
+        "(Decision 11 single-writer invariant)"
+    )
+
+
 def test_validate_blueprint_contract_accepts_contract_sized_plan(branch_workspace):
     blueprint = {
         "summary": "Deliver a user-visible fix",
