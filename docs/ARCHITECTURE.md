@@ -391,9 +391,11 @@ invoked; there is no shadow mode, calibration period, or opt-in flag.
   `abort_reason` field. Per Decision 14, `route_task` writes only `auto-route.json` and
   its manifest stage — it never calls `record_workflow_fit` or `create_approval_hold`.
 - **`auto_route` manifest stage**: registered in `ARTIFACT_STAGE_NAMES` immediately after
-  `plan` (before `test_contract`); `route_task`, `auto_decide_holds`, and
-  `record_auto_phase` each refresh it via `_set_manifest_stage`, so chain progress is
-  observable from `artifact_manifest.json` without reading `auto-route.json` directly.
+  `plan` (before `test_contract`); `route_task` and `record_auto_phase` each refresh it via
+  `_set_manifest_stage`, so chain progress is observable from `artifact_manifest.json`
+  without reading `auto-route.json` directly. (`auto_decide_holds` does not touch this
+  stage — its approvals surface in the `approval_hold` stage via `decide_approval_hold`
+  and in each hold's own record.)
 - **Guard semantics**: `route_task` runs three guards in precedence order before its
   normal write — (1) **in-progress refusal**: an existing `chain_status: "in_progress"`
   refuses to re-route (`status: "refused"`, `next_command: "/map-resume"`, artifact and
