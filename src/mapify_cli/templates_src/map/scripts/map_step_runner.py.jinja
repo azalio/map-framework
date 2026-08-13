@@ -242,6 +242,7 @@ ARTIFACT_STAGE_NAMES = (
     "workflow_fit",
     "spec",
     "plan",
+    "auto_route",
     "test_contract",
     "repro_probe",
     "implementation",

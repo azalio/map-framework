@@ -2615,6 +2615,47 @@ def test_load_artifact_manifest_normalizes_branch_name(branch_workspace):
     assert manifest["branch"] == branch_workspace.name
 
 
+def test_vc3_set_manifest_stage_auto_route_does_not_raise(branch_workspace):
+    del branch_workspace
+    manifest = map_step_runner.default_artifact_manifest("test-branch")
+
+    map_step_runner._set_manifest_stage(manifest, "auto_route", "started")
+
+    assert manifest["stages"]["auto_route"]["status"] == "started"
+
+
+def test_vc3_load_artifact_manifest_backfills_missing_auto_route_stage(branch_workspace):
+    stages_without_auto_route = {
+        stage: {
+            "status": "not_started",
+            "updated_at": "",
+            "artifacts": [],
+            "metadata": {},
+        }
+        for stage in map_step_runner.ARTIFACT_STAGE_NAMES
+        if stage != "auto_route"
+    }
+    (branch_workspace / "artifact_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "branch": "test-branch",
+                "updated_at": "2026-04-12T00:00:00Z",
+                "stages": stages_without_auto_route,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    manifest = map_step_runner.load_artifact_manifest()
+
+    stage = manifest["stages"]["auto_route"]
+    assert stage["status"] == "not_started"
+    assert stage["artifacts"] == []
+    assert stage["metadata"] == {}
+
+
 def test_build_handoff_bundle_reads_artifacts(branch_workspace):
     """Build handoff bundle reads available artifacts."""
     (branch_workspace / "verification-summary.md").write_text(

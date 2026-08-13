@@ -808,6 +808,7 @@ ARTIFACT_MANIFEST_SCHEMA = {
                 "workflow_fit": ARTIFACT_STAGE_SCHEMA,
                 "spec": ARTIFACT_STAGE_SCHEMA,
                 "plan": ARTIFACT_STAGE_SCHEMA,
+                "auto_route": ARTIFACT_STAGE_SCHEMA,
                 "test_contract": ARTIFACT_STAGE_SCHEMA,
                 "repro_probe": ARTIFACT_STAGE_SCHEMA,
                 "implementation": ARTIFACT_STAGE_SCHEMA,
@@ -829,6 +830,8 @@ ARTIFACT_MANIFEST_SCHEMA = {
                 "worktree": ARTIFACT_STAGE_SCHEMA,
                 "context_usefulness": ARTIFACT_STAGE_SCHEMA,
                 "wayfind_handoff": ARTIFACT_STAGE_SCHEMA,
+                "review_verdict_ledger": ARTIFACT_STAGE_SCHEMA,
+                "prd_review": ARTIFACT_STAGE_SCHEMA,
             },
             "required": [
                 "workflow_fit",
