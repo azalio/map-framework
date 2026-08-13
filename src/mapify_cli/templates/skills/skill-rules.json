@@ -427,6 +427,31 @@
           "(find|identify|rank).*(hotspot|shallow|friction)"
         ]
       }
+    },
+    "map-prd-review": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "medium",
+      "description": "PRD/requirements-quality review before /map-plan: reviews a product brief across 11 dimensions and returns ready_for_plan, needs_prd_revision, needs_user_decision, or route_to_wayfind.",
+      "promptTriggers": {
+        "keywords": [
+          "map-prd-review",
+          "prd review",
+          "requirements review",
+          "review requirements",
+          "review prd",
+          "product brief review",
+          "requirements quality",
+          "before map-plan"
+        ],
+        "intentPatterns": [
+          "map-prd-review",
+          "(review|audit).*(prd|requirements|product brief|feature brief)",
+          "(prd|requirements).*(review|quality|ready)",
+          "before.*(map-plan|planning)"
+        ]
+      }
     }
   }
 }

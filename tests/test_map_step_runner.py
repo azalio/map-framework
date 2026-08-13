@@ -15328,3 +15328,328 @@ def test_write_implementer_readiness_review_needs_clarification_requires_blockin
     assert "blocking_questions" in result["message"].lower()
     assert "needs_clarification" in result["message"]
     assert not (branch_workspace / "implementation-readiness.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# write_prd_review tests
+# ---------------------------------------------------------------------------
+
+def test_write_prd_review_ready_for_plan_creates_artifacts_and_manifest(
+    branch_workspace,
+):
+    result = map_step_runner.write_prd_review(
+        verdict="ready_for_plan",
+        summary="The PRD is complete and all dimensions pass.",
+    )
+
+    assert result["status"] == "success"
+    assert result["verdict"] == "ready_for_plan"
+    assert result["proceed"] is True
+    assert result["findings_count"] == 0
+    assert result["blocking_questions_count"] == 0
+    assert result["suggested_revisions_count"] == 0
+
+    json_path = branch_workspace / "prd-review.json"
+    assert json_path.exists()
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["verdict"] == "ready_for_plan"
+    assert payload["schema_version"] == "1.0"
+    assert payload["findings"] == []
+    assert payload["blocking_questions"] == []
+    assert payload["suggested_revisions"] == []
+
+    md_path = branch_workspace / "prd-review.md"
+    assert md_path.exists()
+    content = md_path.read_text(encoding="utf-8")
+    assert "READY FOR PLAN" in content
+    assert "The PRD is complete" in content
+
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    stage = manifest["stages"]["prd_review"]
+    assert stage["status"] == "ready"
+    assert stage["metadata"]["verdict"] == "ready_for_plan"
+    assert stage["metadata"]["findings_count"] == 0
+    assert stage["metadata"]["blocking_questions_count"] == 0
+
+
+def test_write_prd_review_needs_prd_revision_with_findings(
+    branch_workspace,
+):
+    findings_json = json.dumps([
+        {
+            "dimension": "measurable_acceptance_criteria",
+            "severity": "major",
+            "description": "AC-2 says 'fast response' but does not specify a latency budget.",
+            "suggested_revision": "Define latency budget, e.g. p95 < 200ms under 100 RPS.",
+        },
+        {
+            "dimension": "explicit_out_of_scope",
+            "severity": "minor",
+            "description": "No out-of-scope section is present.",
+        },
+    ])
+    suggested_revisions_json = json.dumps([
+        "Add an explicit out-of-scope section.",
+        "Replace 'should be fast' with a measurable latency target.",
+    ])
+
+    result = map_step_runner.write_prd_review(
+        verdict="needs_prd_revision",
+        findings_json=findings_json,
+        suggested_revisions_json=suggested_revisions_json,
+        summary="Two fixable gaps found; PRD should be amended.",
+    )
+
+    assert result["status"] == "success"
+    assert result["verdict"] == "needs_prd_revision"
+    assert result["proceed"] is False
+    assert result["findings_count"] == 2
+    assert result["suggested_revisions_count"] == 2
+
+    payload = json.loads(
+        (branch_workspace / "prd-review.json").read_text(encoding="utf-8")
+    )
+    assert len(payload["findings"]) == 2
+    assert payload["findings"][0]["dimension"] == "measurable_acceptance_criteria"
+    assert payload["findings"][0]["suggested_revision"] == "Define latency budget, e.g. p95 < 200ms under 100 RPS."
+    assert "suggested_revision" not in payload["findings"][1]
+    assert payload["suggested_revisions"] == [
+        "Add an explicit out-of-scope section.",
+        "Replace 'should be fast' with a measurable latency target.",
+    ]
+
+    content = (branch_workspace / "prd-review.md").read_text(encoding="utf-8")
+    assert "NEEDS PRD REVISION" in content
+    assert "Findings" in content
+    assert "measurable_acceptance_criteria" in content
+    assert "latency budget" in content
+    assert "Suggested Revisions" in content
+
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    assert manifest["stages"]["prd_review"]["metadata"]["findings_count"] == 2
+    assert manifest["stages"]["prd_review"]["metadata"]["suggested_revisions_count"] == 2
+
+
+def test_write_prd_review_needs_user_decision_with_blocking_questions(
+    branch_workspace,
+):
+    questions_json = json.dumps([
+        {
+            "question": "Should the feature support unauthenticated users or require login?",
+            "category": "security_trust_boundaries",
+        }
+    ])
+
+    result = map_step_runner.write_prd_review(
+        verdict="needs_user_decision",
+        blocking_questions_json=questions_json,
+        summary="One product decision must be made by the user before planning.",
+    )
+
+    assert result["status"] == "success"
+    assert result["verdict"] == "needs_user_decision"
+    assert result["proceed"] is False
+    assert result["blocking_questions_count"] == 1
+    assert "Blocking" in result["message"] or "decision" in result["message"].lower()
+
+    payload = json.loads(
+        (branch_workspace / "prd-review.json").read_text(encoding="utf-8")
+    )
+    assert len(payload["blocking_questions"]) == 1
+    assert payload["blocking_questions"][0]["category"] == "security_trust_boundaries"
+
+    content = (branch_workspace / "prd-review.md").read_text(encoding="utf-8")
+    assert "NEEDS USER DECISION" in content
+    assert "Blocking Questions" in content
+    assert "unauthenticated users" in content
+
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    assert manifest["stages"]["prd_review"]["metadata"]["blocking_questions_count"] == 1
+
+
+def test_write_prd_review_route_to_wayfind_proceed_is_false(
+    branch_workspace,
+):
+    result = map_step_runner.write_prd_review(
+        verdict="route_to_wayfind",
+        summary="Input is too vague to review as a PRD; wayfinding needed first.",
+    )
+
+    assert result["status"] == "success"
+    assert result["verdict"] == "route_to_wayfind"
+    assert result["proceed"] is False
+    assert "wayfind" in result["message"].lower()
+
+    payload = json.loads(
+        (branch_workspace / "prd-review.json").read_text(encoding="utf-8")
+    )
+    assert payload["verdict"] == "route_to_wayfind"
+
+    content = (branch_workspace / "prd-review.md").read_text(encoding="utf-8")
+    assert "ROUTE TO WAYFIND" in content
+
+
+def test_write_prd_review_prd_source_stored_in_payload(
+    branch_workspace,
+):
+    result = map_step_runner.write_prd_review(
+        verdict="ready_for_plan",
+        summary="Complete PRD.",
+        prd_source="docs/feature-brief.md",
+    )
+
+    assert result["status"] == "success"
+    payload = json.loads(
+        (branch_workspace / "prd-review.json").read_text(encoding="utf-8")
+    )
+    assert payload["prd_source"] == "docs/feature-brief.md"
+
+    content = (branch_workspace / "prd-review.md").read_text(encoding="utf-8")
+    assert "docs/feature-brief.md" in content
+
+
+def test_write_prd_review_invalid_verdict_returns_error(
+    branch_workspace,
+):
+    result = map_step_runner.write_prd_review(
+        verdict="looks_good",
+        summary="Unknown verdict.",
+    )
+
+    assert result["status"] == "error"
+    assert "looks_good" in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+def test_write_prd_review_needs_user_decision_requires_blocking_questions(
+    branch_workspace,
+):
+    result = map_step_runner.write_prd_review(
+        verdict="needs_user_decision",
+        blocking_questions_json="[]",
+        summary="Unclear which path to take.",
+    )
+
+    assert result["status"] == "error"
+    assert "blocking_questions" in result["message"]
+    assert "needs_user_decision" in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+def test_write_prd_review_rejects_non_array_findings(
+    branch_workspace,
+):
+    result = map_step_runner.write_prd_review(
+        verdict="needs_prd_revision",
+        findings_json='{"dimension": "testability", "severity": "major", "description": "x"}',
+        summary="Non-array findings.",
+    )
+
+    assert result["status"] == "error"
+    assert "findings must be a JSON array" in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+def test_write_prd_review_rejects_finding_extra_keys(
+    branch_workspace,
+):
+    findings_json = json.dumps([
+        {
+            "dimension": "testability",
+            "severity": "major",
+            "description": "Cannot be verified mechanically.",
+            "owner": "product",
+        }
+    ])
+
+    result = map_step_runner.write_prd_review(
+        verdict="needs_prd_revision",
+        findings_json=findings_json,
+        summary="Finding has extra key.",
+    )
+
+    assert result["status"] == "error"
+    assert "unsupported fields" in result["message"]
+    assert "owner" in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+def test_write_prd_review_rejects_invalid_finding_severity(
+    branch_workspace,
+):
+    findings_json = json.dumps([
+        {
+            "dimension": "user_job_clarity",
+            "severity": "blocker",
+            "description": "Target user is not identified.",
+        }
+    ])
+
+    result = map_step_runner.write_prd_review(
+        verdict="needs_prd_revision",
+        findings_json=findings_json,
+        summary="Invalid severity.",
+    )
+
+    assert result["status"] == "error"
+    assert "blocker" in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+def test_write_prd_review_rejects_missing_finding_required_field(
+    branch_workspace,
+):
+    findings_json = json.dumps([
+        {
+            "dimension": "security_trust_boundaries",
+            "description": "No authentication model specified.",
+            # 'severity' is intentionally missing
+        }
+    ])
+
+    result = map_step_runner.write_prd_review(
+        verdict="needs_prd_revision",
+        findings_json=findings_json,
+        summary="Finding missing severity.",
+    )
+
+    assert result["status"] == "error"
+    assert "severity" in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+def test_write_prd_review_rejects_blocking_question_extra_keys(
+    branch_workspace,
+):
+    questions_json = json.dumps([
+        {
+            "question": "Which pricing model applies?",
+            "category": "business",
+            "owner": "product",
+        }
+    ])
+
+    result = map_step_runner.write_prd_review(
+        verdict="needs_user_decision",
+        blocking_questions_json=questions_json,
+        summary="Blocking question has extra key.",
+    )
+
+    assert result["status"] == "error"
+    assert "unsupported fields" in result["message"]
+    assert "owner" in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+def test_write_prd_review_rejects_non_array_blocking_questions(
+    branch_workspace,
+):
+    result = map_step_runner.write_prd_review(
+        verdict="needs_user_decision",
+        blocking_questions_json='{"question": "Who is the user?", "category": "ux"}',
+        summary="Non-array blocking_questions.",
+    )
+
+    assert result["status"] == "error"
+    assert "blocking_questions must be a JSON array" in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
