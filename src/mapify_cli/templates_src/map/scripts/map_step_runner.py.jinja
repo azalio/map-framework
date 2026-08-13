@@ -4856,18 +4856,16 @@ _DONE_PHASE_STATUSES_FOR_COMPLETION = {
 }
 
 
-def _state_subtask_coverage_complete(state: dict[str, object]) -> bool:
-    """Return True iff every subtask in subtask_sequence has a "done"-class
-    signal recorded (subtask_results entry OR subtask_phases marker).
+def _done_class_subtask_ids(state: dict[str, object]) -> set[str]:
+    """Return subtask ids with a "done"-class signal recorded in step_state.json
+    (a subtask_results entry OR a subtask_phases done-class marker).
 
-    Mirrors the orchestrator's _completed_subtask_ids_for_deps logic. Used
-    by _derive_terminal_status so a stuck cursor (ST-033 friction) no
-    longer makes write_run_health_report report ``pending`` when 51/51
-    entries actually exist.
+    Shared canonical-completion primitive: used by
+    _state_subtask_coverage_complete below (global "is the whole run done"
+    check) AND by the /map-auto tier 1 routing signal (per-subtask
+    pending/complete split) so both read the identical done-class
+    definition instead of two definitions that could silently drift apart.
     """
-    sequence_value = state.get("subtask_sequence")
-    if not isinstance(sequence_value, list) or not sequence_value:
-        return False
     results_value = state.get("subtask_results")
     results = results_value if isinstance(results_value, dict) else {}
     phases_value = state.get("subtask_phases")
@@ -4882,6 +4880,22 @@ def _state_subtask_coverage_complete(state: dict[str, object]) -> bool:
     for sid, phase in phases.items():
         if isinstance(sid, str) and isinstance(phase, str) and phase.lower() in _DONE_PHASE_STATUSES_FOR_COMPLETION:
             completed.add(sid)
+    return completed
+
+
+def _state_subtask_coverage_complete(state: dict[str, object]) -> bool:
+    """Return True iff every subtask in subtask_sequence has a "done"-class
+    signal recorded (subtask_results entry OR subtask_phases marker).
+
+    Mirrors the orchestrator's _completed_subtask_ids_for_deps logic. Used
+    by _derive_terminal_status so a stuck cursor (ST-033 friction) no
+    longer makes write_run_health_report report ``pending`` when 51/51
+    entries actually exist.
+    """
+    sequence_value = state.get("subtask_sequence")
+    if not isinstance(sequence_value, list) or not sequence_value:
+        return False
+    completed = _done_class_subtask_ids(state)
     return all(isinstance(sid, str) and sid in completed for sid in sequence_value)
 
 
@@ -14405,6 +14419,258 @@ def check_plan_resume(request: str = "", branch: str | None = None) -> dict:
         },
         "recommendation": recommendation,
     }
+
+
+# /map-auto routing (issue #414): the recommended workflow values a route
+# selector may pick automatically. Values outside this set (direct-edit,
+# map-tdd, map-wayfind) require a human decision and must fall through to a
+# lower-precedence signal instead of being auto-selected.
+_AUTO_ROUTE_TIER2_ALLOWED = frozenset({"map-fast", "map-plan", "map-efficient"})
+
+
+def _blueprint_subtask_ids(blueprint: dict | None) -> set[str]:
+    """Return the set of subtask ids declared in a loaded blueprint.json payload."""
+    if not isinstance(blueprint, dict):
+        return set()
+    subtasks = blueprint.get("subtasks")
+    if not isinstance(subtasks, list):
+        return set()
+    return {
+        subtask["id"]
+        for subtask in subtasks
+        if isinstance(subtask, dict) and isinstance(subtask.get("id"), str)
+    }
+
+
+def _tier1_completed_subtask_ids(state: dict[str, object]) -> tuple[set[str], bool]:
+    """Return (completed subtask ids, used_legacy_fallback) for tier 1 routing.
+
+    Prefers the canonical done-class signal (_done_class_subtask_ids, shared
+    with _state_subtask_coverage_complete): a subtask_results status or a
+    subtask_phases marker in the done class. Falls back to legacy
+    completed_steps KEY PRESENCE only when NEITHER canonical field exists in
+    state at all. Key presence alone is not a safe completion signal even in
+    the fallback case's absence check -- update_step_state (the classic,
+    pre-orchestrator writer) inserts a completed_steps[subtask_id] key at
+    the FIRST recorded phase, so "key exists" means "started", not "done".
+    The canonical fields are preferred specifically so a subtask with only
+    an in-progress phase recorded is never misread as complete.
+    """
+    canonical_present = "subtask_results" in state or "subtask_phases" in state
+    if canonical_present:
+        return _done_class_subtask_ids(state), False
+    completed_steps = state.get("completed_steps")
+    if isinstance(completed_steps, dict):
+        return {key for key in completed_steps if isinstance(key, str)}, True
+    return set(), True
+
+
+def _classify_scope_bracket(estimated_files: int, estimated_lines: int) -> str | None:
+    """Call classify_scope.classify() in-process for the auto-route scope tier.
+
+    classify_scope.py ships alongside this script in every generated tree but
+    is not an importable package member, so it is loaded by file location
+    (mirrors the existing lazy schemas-module import pattern in this file)
+    rather than imported at module scope or shelled out to as a subprocess.
+    """
+    try:
+        import importlib.util as _importlib_util
+
+        script_path = Path(__file__).resolve().parent / "classify_scope.py"
+        spec = _importlib_util.spec_from_file_location("classify_scope", script_path)
+        if spec is None or spec.loader is None:
+            return None
+        module = _importlib_util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except (ImportError, OSError):
+        return None
+
+    classify_fn = getattr(module, "classify", None)
+    if not callable(classify_fn):
+        return None
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    result = classify_fn(estimated_files, estimated_lines, project_dir)
+    bracket = result.get("bracket") if isinstance(result, dict) else None
+    return bracket if isinstance(bracket, str) else None
+
+
+def _select_route(
+    branch: str | None,
+    task_text: str,
+    *,
+    estimated_files: int | None = None,
+    estimated_lines: int | None = None,
+) -> tuple[str, list[dict[str, object]]]:
+    """Pure five-tier routing precedence engine for /map-auto (issue #414).
+
+    Reads exactly five existing signals -- step_state.json, workflow-fit.json,
+    check_plan_resume(), a direct blueprint.json stat, and
+    classify_scope.classify() -- and returns the route picked by the
+    highest-precedence signal that fires, plus an evidence trail of every
+    signal consulted (including signals that lost or were absent). Never
+    inspects ``task_text`` itself for keywords; the only tier that reads its
+    content is check_plan_resume() (tier 3), which is one of the five
+    allowed signals. This function only selects a route -- it writes nothing
+    and creates no CLI surface.
+
+    Tiers, in strict precedence order:
+      1. step_state.json exists: pending subtasks (blueprint ids minus the
+         canonical done-class subtask ids) -> map-resume; all complete ->
+         map-check. When blueprint.json is missing/unparseable/empty, the
+         pending set cannot be computed at all -- this fails CLOSED to
+         map-resume (never asserts completion without evidence) rather than
+         guessing.
+      2. workflow-fit.json recommended_workflow, restricted to
+         {map-fast, map-plan, map-efficient} -- any other recorded value
+         (e.g. direct-edit) is recorded in evidence and falls through.
+      3. check_plan_resume(task_text) verdict "resume" (only reachable once
+         step_state.json is confirmed absent): task_plan artifact present
+         AND a direct blueprint.json stat succeeds -> map-efficient;
+         otherwise -> map-plan. A goal_mismatch or no_plan verdict is only
+         surfaced in evidence here -- blocking on it is not this function's
+         responsibility. NOTE: this is the one SANCTIONED exception to
+         "task_text never influences the route" -- check_plan_resume is one
+         of the five allowed signals, and its goal-overlap comparison is
+         supposed to vary with task_text content. That is intentional
+         signal-reading, not the ad-hoc keyword routing this function
+         otherwise forbids (see the invariance test docstrings below).
+      4. classify_scope.classify() bracket "trivial" -> map-fast, only when
+         the caller supplied non-negative estimated_files/estimated_lines;
+         otherwise the tier is recorded as unavailable and skipped rather
+         than guessed.
+      5. Default: map-plan.
+    """
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    evidence: list[dict[str, object]] = []
+
+    # Tier 1 signal: step_state.json. Always read up front (even when a
+    # later tier would otherwise win) so a conflicting workflow-fit.json
+    # recommendation is still captured in evidence per the losing-signal
+    # requirement below.
+    step_state_path = branch_dir / "step_state.json"
+    state = _read_json_file(step_state_path)
+    step_state_route: str | None = None
+    if state is not None:
+        blueprint = load_blueprint(branch_name)
+        subtask_ids = _blueprint_subtask_ids(blueprint)
+        if not subtask_ids:
+            # Fail closed: with no subtask id universe from blueprint.json,
+            # "pending minus completed" cannot be computed at all. Asserting
+            # "complete" here would be an unevidenced guess, so route back
+            # to resuming the plan instead.
+            step_state_route = "map-resume"
+            evidence.append({
+                "signal": "step_state.json",
+                "value": "blueprint_unavailable",
+                "source": str(step_state_path),
+            })
+        else:
+            completed_ids, used_legacy_fallback = _tier1_completed_subtask_ids(state)
+            pending_ids = subtask_ids - completed_ids
+            completion_source = (
+                "legacy_completed_steps" if used_legacy_fallback else "canonical_done_class"
+            )
+            if pending_ids:
+                step_state_route = "map-resume"
+                evidence.append({
+                    "signal": "step_state.json",
+                    "value": {
+                        "status": "pending",
+                        "pending_subtask_ids": sorted(pending_ids),
+                        "completion_source": completion_source,
+                    },
+                    "source": str(step_state_path),
+                })
+            else:
+                step_state_route = "map-check"
+                evidence.append({
+                    "signal": "step_state.json",
+                    "value": {
+                        "status": "complete",
+                        "subtask_count": len(subtask_ids),
+                        "completion_source": completion_source,
+                    },
+                    "source": str(step_state_path),
+                })
+    else:
+        evidence.append({
+            "signal": "step_state.json",
+            "value": {"status": "absent"},
+            "source": str(step_state_path),
+        })
+
+    # Tier 2 signal: workflow-fit.json. Also always read up front for the
+    # same losing-signal reason as tier 1.
+    workflow_fit_path = branch_dir / "workflow-fit.json"
+    fit_payload = _read_json_file(workflow_fit_path)
+    recommended: str | None = None
+    if fit_payload is not None:
+        raw_recommended = fit_payload.get("recommended_workflow")
+        recommended = raw_recommended if isinstance(raw_recommended, str) else None
+    evidence.append({
+        "signal": "workflow-fit.json",
+        "value": recommended,
+        "source": str(workflow_fit_path),
+    })
+
+    if step_state_route is not None:
+        return step_state_route, evidence
+
+    if recommended is not None and recommended in _AUTO_ROUTE_TIER2_ALLOWED:
+        return recommended, evidence
+
+    # Tier 3 signals: check_plan_resume() verdict, plus a direct
+    # blueprint.json stat (check_plan_resume's own artifacts dict has no
+    # blueprint key). check_plan_resume is allowed to read task_text -- see
+    # the sanctioned-exception note in the docstring above.
+    resume_report = check_plan_resume(task_text, branch=branch_name)
+    verdict = resume_report.get("verdict")
+    evidence.append({
+        "signal": "check_plan_resume",
+        "value": verdict,
+        "source": "check_plan_resume()",
+    })
+    if verdict == "resume":
+        artifacts = resume_report.get("artifacts")
+        has_task_plan = bool(isinstance(artifacts, dict) and artifacts.get("task_plan"))
+        blueprint_path = branch_dir / "blueprint.json"
+        has_blueprint = blueprint_path.exists()
+        evidence.append({
+            "signal": "blueprint.json",
+            "value": has_blueprint,
+            "source": str(blueprint_path),
+        })
+        return ("map-efficient" if (has_task_plan and has_blueprint) else "map-plan"), evidence
+
+    # Tier 4 signal: classify_scope.classify() bracket. Only fires when the
+    # caller supplied a real scope estimate -- there is no sixth signal in
+    # this function's allowed set (e.g. a git diff stat) that could derive
+    # estimated_files/estimated_lines on its own, so an absent estimate is
+    # recorded and the tier is skipped rather than guessed.
+    if (
+        estimated_files is not None
+        and estimated_lines is not None
+        and estimated_files >= 0
+        and estimated_lines >= 0
+    ):
+        bracket = _classify_scope_bracket(estimated_files, estimated_lines)
+        evidence.append({
+            "signal": "classify_scope.classify",
+            "value": {"estimated": True, "bracket": bracket},
+            "source": "classify_scope.classify()",
+        })
+        if bracket == "trivial":
+            return "map-fast", evidence
+    else:
+        evidence.append({
+            "signal": "classify_scope.classify",
+            "value": {"estimated": False},
+            "source": "classify_scope.classify()",
+        })
+
+    # Tier 5: default.
+    return "map-plan", evidence
 
 
 def record_scope_baseline(branch: str) -> dict:

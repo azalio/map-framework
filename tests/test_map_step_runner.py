@@ -1614,6 +1614,299 @@ def test_check_plan_resume_cli_smoke(tmp_path):
     assert payload["branch"] == branch
 
 
+# --- _select_route (issue #414 /map-auto five-tier routing) ---------------
+
+
+def _route_signal_path(branch: str, name: str) -> str:
+    """Match the relative `.map/<branch>/<name>` path _select_route records."""
+    return str(Path(".map") / branch / name)
+
+
+def _write_blueprint(branch_workspace: Path, subtask_ids: list[str]) -> None:
+    (branch_workspace / "blueprint.json").write_text(
+        json.dumps({"subtasks": [{"id": sid} for sid in subtask_ids]}),
+        encoding="utf-8",
+    )
+
+
+def _write_step_state(branch_workspace: Path, completed_steps: dict[str, list[str]]) -> None:
+    (branch_workspace / "step_state.json").write_text(
+        json.dumps({"completed_steps": completed_steps}), encoding="utf-8"
+    )
+
+
+def _write_workflow_fit(branch_workspace: Path, recommended_workflow: str) -> None:
+    (branch_workspace / "workflow-fit.json").write_text(
+        json.dumps({"recommended_workflow": recommended_workflow}), encoding="utf-8"
+    )
+
+
+def _write_resumable_plan(branch_workspace: Path, branch: str, goal: str) -> None:
+    """Seed spec_+task_plan_ (NOT step_state.json) so check_plan_resume can fire."""
+    (branch_workspace / f"spec_{branch}.md").write_text(
+        f"# Spec: {goal}\n\n## Acceptance Criteria\n- AC-1: ...\n", encoding="utf-8"
+    )
+    (branch_workspace / f"task_plan_{branch}.md").write_text(
+        f"# Task Plan: {goal}\n\n## Overview\n- Goal: {goal}\n", encoding="utf-8"
+    )
+
+
+def test_select_route_tier1a_pending_step_state_yields_map_resume(branch_workspace):
+    branch = branch_workspace.name
+    _write_blueprint(branch_workspace, ["ST-001", "ST-002"])
+    _write_step_state(branch_workspace, {"ST-001": ["actor"]})
+
+    route, evidence = map_step_runner._select_route(branch, "implement feature")
+
+    assert route == "map-resume"
+    entry = next(e for e in evidence if e["signal"] == "step_state.json")
+    assert entry["value"] == {
+        "status": "pending",
+        "pending_subtask_ids": ["ST-002"],
+        "completion_source": "legacy_completed_steps",
+    }
+    assert entry["source"] == _route_signal_path(branch, "step_state.json")
+
+
+def test_select_route_tier1b_all_complete_step_state_yields_map_check(branch_workspace):
+    branch = branch_workspace.name
+    _write_blueprint(branch_workspace, ["ST-001"])
+    _write_step_state(branch_workspace, {"ST-001": ["actor", "monitor"]})
+
+    route, _ = map_step_runner._select_route(branch, "anything")
+
+    assert route == "map-check"
+    assert route != "map-plan"
+
+
+def test_select_route_tier2_workflow_fit_map_efficient_is_honored(branch_workspace):
+    branch = branch_workspace.name
+    _write_workflow_fit(branch_workspace, "map-efficient")
+
+    route, evidence = map_step_runner._select_route(branch, "some task")
+
+    assert route == "map-efficient"
+    entry = next(e for e in evidence if e["signal"] == "workflow-fit.json")
+    assert entry["value"] == "map-efficient"
+
+
+def test_select_route_tier2_out_of_vocabulary_falls_through_and_is_recorded(branch_workspace):
+    branch = branch_workspace.name
+    _write_workflow_fit(branch_workspace, "direct-edit")
+
+    route, evidence = map_step_runner._select_route(branch, "trivial one-off tweak")
+
+    assert route != "direct-edit"
+    assert route == "map-plan"
+    entry = next(e for e in evidence if e["signal"] == "workflow-fit.json")
+    assert entry["value"] == "direct-edit"
+
+
+def test_select_route_tier3_resume_with_blueprint_yields_map_efficient(branch_workspace):
+    branch = branch_workspace.name
+    goal = "Implement token authentication middleware for the API"
+    _write_resumable_plan(branch_workspace, branch, goal)
+    _write_blueprint(branch_workspace, [])
+
+    route, evidence = map_step_runner._select_route(
+        branch, "Implement token authentication middleware"
+    )
+
+    assert route == "map-efficient"
+    verdict_entry = next(e for e in evidence if e["signal"] == "check_plan_resume")
+    assert verdict_entry["value"] == "resume"
+    blueprint_entry = next(e for e in evidence if e["signal"] == "blueprint.json")
+    assert blueprint_entry["value"] is True
+    assert blueprint_entry["source"] == _route_signal_path(branch, "blueprint.json")
+
+
+def test_select_route_tier3b_resume_without_blueprint_yields_map_plan(branch_workspace):
+    branch = branch_workspace.name
+    goal = "Implement token authentication middleware for the API"
+    _write_resumable_plan(branch_workspace, branch, goal)
+    # Deliberately no blueprint.json.
+
+    route, evidence = map_step_runner._select_route(
+        branch, "Implement token authentication middleware"
+    )
+
+    assert route == "map-plan"
+    blueprint_entry = next(e for e in evidence if e["signal"] == "blueprint.json")
+    assert blueprint_entry["value"] is False
+
+
+def test_select_route_tier4_trivial_bracket_yields_map_fast(branch_workspace):
+    branch = branch_workspace.name
+
+    route, evidence = map_step_runner._select_route(
+        branch, "small fix", estimated_files=1, estimated_lines=10
+    )
+
+    assert route == "map-fast"
+    entry = next(e for e in evidence if e["signal"] == "classify_scope.classify")
+    assert entry["value"] == {"estimated": True, "bracket": "trivial"}
+
+
+def test_select_route_tier4_unavailable_estimate_is_recorded_and_skipped(branch_workspace):
+    branch = branch_workspace.name
+
+    route, evidence = map_step_runner._select_route(branch, "no estimate supplied")
+
+    assert route == "map-plan"
+    entry = next(e for e in evidence if e["signal"] == "classify_scope.classify")
+    assert entry["value"] == {"estimated": False}
+
+
+def test_select_route_tier5_default_bare_branch_yields_map_plan(branch_workspace):
+    branch = branch_workspace.name
+
+    route, evidence = map_step_runner._select_route(branch, "some task with no signals")
+
+    assert route == "map-plan"
+    assert {e["signal"] for e in evidence} == {
+        "step_state.json",
+        "workflow-fit.json",
+        "check_plan_resume",
+        "classify_scope.classify",
+    }
+
+
+def test_select_route_ignores_task_text_content_once_step_state_resolves(branch_workspace):
+    branch = branch_workspace.name
+    _write_blueprint(branch_workspace, ["ST-001", "ST-002"])
+    _write_step_state(branch_workspace, {"ST-001": ["actor"]})
+
+    route_a, evidence_a = map_step_runner._select_route(
+        branch, "implement rate limiting for the payments API"
+    )
+    route_b, evidence_b = map_step_runner._select_route(
+        branch, "zzz totally unrelated banana fruit salad recipe"
+    )
+
+    assert route_a == route_b == "map-resume"
+    assert evidence_a == evidence_b
+
+
+def test_select_route_step_state_wins_over_conflicting_workflow_fit(branch_workspace):
+    branch = branch_workspace.name
+    _write_blueprint(branch_workspace, ["ST-001"])
+    _write_step_state(branch_workspace, {})
+    _write_workflow_fit(branch_workspace, "map-fast")
+
+    route, evidence = map_step_runner._select_route(branch, "any task text")
+
+    assert route == "map-resume"
+    workflow_fit_entry = next(e for e in evidence if e["signal"] == "workflow-fit.json")
+    assert workflow_fit_entry == {
+        "signal": "workflow-fit.json",
+        "value": "map-fast",
+        "source": _route_signal_path(branch, "workflow-fit.json"),
+    }
+
+
+def test_select_route_step_state_without_blueprint_fails_closed_to_resume(branch_workspace):
+    """Regression (code-review-1 HIGH): a step_state.json with no usable
+    blueprint.json must never be asserted complete -- that would be an
+    unevidenced guess. Fails closed to map-resume, NOT map-check.
+    """
+    branch = branch_workspace.name
+    _write_step_state(branch_workspace, {})
+    # Deliberately no blueprint.json.
+
+    route, evidence = map_step_runner._select_route(branch, "anything")
+
+    assert route == "map-resume"
+    assert route != "map-check"
+    entry = next(e for e in evidence if e["signal"] == "step_state.json")
+    assert entry["value"] == "blueprint_unavailable"
+
+
+def test_select_route_step_state_with_empty_blueprint_fails_closed_to_resume(branch_workspace):
+    """Regression (code-review-1 HIGH), zero-subtask-ids variant: blueprint.json
+    present but declaring no subtasks is equally unusable as a pending-set
+    universe and must also fail closed to map-resume.
+    """
+    branch = branch_workspace.name
+    _write_blueprint(branch_workspace, [])
+    _write_step_state(branch_workspace, {})
+
+    route, evidence = map_step_runner._select_route(branch, "anything")
+
+    assert route == "map-resume"
+    entry = next(e for e in evidence if e["signal"] == "step_state.json")
+    assert entry["value"] == "blueprint_unavailable"
+
+
+def test_select_route_started_but_not_done_class_subtask_stays_pending(branch_workspace):
+    """Regression (code-review-1 MEDIUM): completed_steps key presence alone
+    (the first phase landed) must NOT be read as completion once the
+    canonical done-class signal (subtask_results/subtask_phases) is
+    available -- only a done-class status counts. update_step_state inserts
+    the completed_steps key at the FIRST recorded phase, so key-presence
+    conflates "started" with "done".
+    """
+    branch = branch_workspace.name
+    _write_blueprint(branch_workspace, ["ST-001"])
+    (branch_workspace / "step_state.json").write_text(
+        json.dumps({
+            "completed_steps": {"ST-001": ["actor"]},
+            "subtask_phases": {"ST-001": "actor"},
+        }),
+        encoding="utf-8",
+    )
+
+    route, evidence = map_step_runner._select_route(branch, "anything")
+
+    assert route == "map-resume"
+    entry = next(e for e in evidence if e["signal"] == "step_state.json")
+    assert entry["value"]["status"] == "pending"
+    assert entry["value"]["completion_source"] == "canonical_done_class"
+
+
+def test_select_route_canonical_done_class_result_yields_map_check(branch_workspace):
+    """Companion positive case for the MEDIUM regression: a genuine done-class
+    subtask_results status DOES count as complete via the canonical signal.
+    """
+    branch = branch_workspace.name
+    _write_blueprint(branch_workspace, ["ST-001"])
+    (branch_workspace / "step_state.json").write_text(
+        json.dumps({
+            "completed_steps": {"ST-001": ["actor"]},
+            "subtask_results": {"ST-001": {"status": "valid"}},
+        }),
+        encoding="utf-8",
+    )
+
+    route, evidence = map_step_runner._select_route(branch, "anything")
+
+    assert route == "map-check"
+    entry = next(e for e in evidence if e["signal"] == "step_state.json")
+    assert entry["value"]["completion_source"] == "canonical_done_class"
+
+
+def test_select_route_task_text_sanctioned_exception_drives_tier3_verdict(branch_workspace):
+    """Documents the sanctioned exception (code-review-1 LOW) to task-text
+    invariance: check_plan_resume (tier 3) IS one of the five allowed
+    signals, so its goal-overlap comparison legitimately changes with
+    task_text content -- unlike tier 1, where task_text has zero influence
+    (see test_select_route_ignores_task_text_content_once_step_state_resolves).
+    This is intentional signal-reading, not the keyword routing INV-3 forbids.
+    """
+    branch = branch_workspace.name
+    goal = "Auditable Graph-Guided Incident Analysis"
+    _write_resumable_plan(branch_workspace, branch, goal)
+
+    _, resume_evidence = map_step_runner._select_route(branch, "")
+    _, mismatch_evidence = map_step_runner._select_route(
+        branch, "Add per-subtask token budget reporting to the statusline meter"
+    )
+
+    resume_verdict = next(e for e in resume_evidence if e["signal"] == "check_plan_resume")
+    mismatch_verdict = next(e for e in mismatch_evidence if e["signal"] == "check_plan_resume")
+    assert resume_verdict["value"] == "resume"
+    assert mismatch_verdict["value"] == "goal_mismatch"
+
+
 def test_validate_blueprint_contract_accepts_contract_sized_plan(branch_workspace):
     blueprint = {
         "summary": "Deliver a user-visible fix",
