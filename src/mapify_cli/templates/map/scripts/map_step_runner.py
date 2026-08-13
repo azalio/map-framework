@@ -471,6 +471,16 @@ APPROVAL_HOLD_ALL_STATES = frozenset({"pending"}) | APPROVAL_HOLD_TERMINAL_STATE
 # AUTO_APPROVABLE_HOLD_KINDS set immediately alongside this one.
 HARD_STOP_HOLD_KINDS = frozenset({"dangerous_action", "safety_guardrail"})
 
+# /map-auto (issue #414, ST-006): hold kinds auto_decide_holds may decide
+# without a human -- workflow-control gates, never safety gates. Together
+# with HARD_STOP_HOLD_KINDS these must exactly partition
+# APPROVAL_HOLD_KINDS (disjoint, union == whole set) so a future sixth hold
+# kind hard-fails a test instead of being silently auto-approved by
+# omission.
+AUTO_APPROVABLE_HOLD_KINDS = frozenset(
+    {"autonomy_posture", "plan_approval", "template_overwrite"}
+)
+
 # Truncation infrastructure deleted by user directive ("убери транкейт уже
 # вообще"). build_context_block / _budget_review_prompt now emit raw text;
 # operators handle context size via /compact opt-in. The mapify_cli
@@ -17754,6 +17764,60 @@ def get_pending_holds(branch: str | None = None) -> dict[str, Any]:
     }
 
 
+def auto_decide_holds(branch: str | None = None) -> dict[str, Any]:
+    """Split pending approval holds into auto-approved and hard-stopped (#414).
+
+    Reads pending holds via `get_pending_holds` and, for each one, decides
+    solely on AUTO_APPROVABLE_HOLD_KINDS membership -- a positive allowlist,
+    never an exclusion of HARD_STOP_HOLD_KINDS. `decide_approval_hold` is
+    therefore only ever reachable from the branch guarded by that allowlist
+    check, so no code path here can transition a dangerous_action or
+    safety_guardrail hold (INV-2), even if hard-stop membership itself were
+    ever misconfigured.
+
+    - Holds whose kind is in AUTO_APPROVABLE_HOLD_KINDS are decided
+      "approved" via the existing `decide_approval_hold(hold_id, "approved",
+      "auto-approved by map-auto", branch)` and collected into
+      `auto_approved[]`.
+    - Holds whose kind is in HARD_STOP_HOLD_KINDS are left untouched
+      (still `pending`) and collected into `hard_stops[]`.
+    """
+    branch_name = branch or get_branch_name()
+    pending = get_pending_holds(branch_name)
+    auto_approved: list[dict[str, str]] = []
+    hard_stops: list[dict[str, str]] = []
+
+    for hold in cast(list[Any], pending.get("holds", [])):
+        if not isinstance(hold, dict):
+            continue
+        hold_id = str(hold.get("id", ""))
+        kind = str(hold.get("kind", ""))
+        if kind in AUTO_APPROVABLE_HOLD_KINDS:
+            decide_approval_hold(hold_id, "approved", "auto-approved by map-auto", branch_name)
+            auto_approved.append(
+                {"id": hold_id, "kind": kind, "note": "auto-approved by map-auto"}
+            )
+        elif kind in HARD_STOP_HOLD_KINDS:
+            hard_stops.append(
+                {
+                    "id": hold_id,
+                    "kind": kind,
+                    "reason": "hard-stop hold kind; requires an explicit human decision",
+                }
+            )
+        # Any other kind is left pending and reported in neither bucket --
+        # unreachable while AUTO_APPROVABLE_HOLD_KINDS | HARD_STOP_HOLD_KINDS
+        # == APPROVAL_HOLD_KINDS holds, but fails closed if that invariant
+        # is ever violated.
+
+    return {
+        "status": "ok",
+        "branch": branch_name,
+        "auto_approved": auto_approved,
+        "hard_stops": hard_stops,
+    }
+
+
 # --- Per-subtask git worktree isolation (#284) ---------------------------------
 # Runner-owned explicit worktrees (NOT the harness-native isolation="worktree").
 # llm-council-reviewed design (conv 461b92f9):
@@ -22094,6 +22158,18 @@ if __name__ == "__main__":
         _a = _p.parse_args(sys.argv[2:])
         _r = get_pending_holds(_a.branch)
         print(json.dumps(_r, indent=2))
+
+    elif func_name == "auto_decide_holds":
+        # CLI: auto_decide_holds [--branch B]
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py auto_decide_holds")
+        _p.add_argument("--branch", default=None, help="Branch name (default: current branch)")
+        _a = _p.parse_args(sys.argv[2:])
+        _r = auto_decide_holds(_a.branch)
+        print(json.dumps(_r, indent=2))
+        if _r.get("status") == "error":
+            sys.exit(1)
 
     elif func_name == "write_implementer_readiness_review" and len(sys.argv) >= 3:
         # CLI: write_implementer_readiness_review <verdict>

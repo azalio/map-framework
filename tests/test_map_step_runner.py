@@ -2226,6 +2226,123 @@ def test_vc5_route_task_blocks_on_pending_hard_stop_hold_under_dry_run(branch_wo
     assert result["blocked_by"] == [hold_id]
 
 
+# --- auto_decide_holds (issue #414 ST-006: auto-approve workflow-control
+# holds via a positive allowlist; dangerous_action/safety_guardrail can
+# never be decided by this code path) -------------------------------------
+
+
+def _read_approval_holds(branch_workspace: Path) -> dict[str, Any]:
+    return json.loads((branch_workspace / "approval_holds.json").read_text(encoding="utf-8"))
+
+
+def test_vc4_auto_approvable_and_hard_stop_kinds_partition_approval_hold_kinds():
+    auto_approvable = map_step_runner.AUTO_APPROVABLE_HOLD_KINDS
+    hard_stop = map_step_runner.HARD_STOP_HOLD_KINDS
+    assert auto_approvable.isdisjoint(hard_stop)
+    assert auto_approvable | hard_stop == map_step_runner.APPROVAL_HOLD_KINDS
+
+
+def test_auto_decide_holds_with_nothing_pending_returns_empty_lists(branch_workspace):
+    branch = branch_workspace.name
+
+    result = map_step_runner.auto_decide_holds(branch=branch)
+
+    assert result["status"] == "ok"
+    assert result["auto_approved"] == []
+    assert result["hard_stops"] == []
+
+
+def test_vc1_auto_decide_holds_approves_every_auto_approvable_kind(branch_workspace):
+    branch = branch_workspace.name
+    hold_ids: dict[str, str] = {}
+    for kind in sorted(map_step_runner.AUTO_APPROVABLE_HOLD_KINDS):
+        created = map_step_runner.create_approval_hold(
+            kind=kind,
+            reason=f"synthetic {kind} hold for auto_decide_holds test",
+            request_summary=f"synthetic request for {kind}",
+            branch=branch,
+        )
+        hold_ids[kind] = created["hold_id"]
+
+    result = map_step_runner.auto_decide_holds(branch=branch)
+
+    approved_ids = {entry["id"] for entry in result["auto_approved"]}
+    assert approved_ids == set(hold_ids.values())
+    for entry in result["auto_approved"]:
+        assert entry["note"] == "auto-approved by map-auto"
+        assert entry["kind"] in map_step_runner.AUTO_APPROVABLE_HOLD_KINDS
+
+    # Re-read from disk -- the return value alone does not prove persistence.
+    store = _read_approval_holds(branch_workspace)
+    for kind, hold_id in hold_ids.items():
+        hold = store["holds"][hold_id]
+        assert hold["state"] == "approved"
+        assert hold["decision_note"] == "auto-approved by map-auto"
+
+    follow_up = map_step_runner.get_pending_holds(branch)
+    assert follow_up["pending_count"] == 0
+
+
+def test_vc2_auto_decide_holds_leaves_hard_stop_kinds_pending(branch_workspace):
+    branch = branch_workspace.name
+    hold_ids: dict[str, str] = {}
+    for kind in sorted(map_step_runner.HARD_STOP_HOLD_KINDS):
+        created = map_step_runner.create_approval_hold(
+            kind=kind,
+            reason=f"synthetic {kind} hold for auto_decide_holds test",
+            request_summary=f"synthetic request for {kind}",
+            branch=branch,
+        )
+        hold_ids[kind] = created["hold_id"]
+
+    result = map_step_runner.auto_decide_holds(branch=branch)
+
+    hard_stop_ids = {entry["id"] for entry in result["hard_stops"]}
+    assert hard_stop_ids == set(hold_ids.values())
+    assert result["auto_approved"] == []
+
+    # Re-read from disk -- must still be pending, not merely absent from auto_approved.
+    store = _read_approval_holds(branch_workspace)
+    for kind, hold_id in hold_ids.items():
+        hold = store["holds"][hold_id]
+        assert hold["state"] == "pending"
+        assert hold["decision"] is None
+
+
+def test_vc3_auto_decide_holds_never_invokes_decide_approval_hold_on_hard_stop_kind(
+    branch_workspace, monkeypatch
+):
+    branch = branch_workspace.name
+    hard_stop_hold_ids: set[str] = set()
+    for kind in sorted(map_step_runner.APPROVAL_HOLD_KINDS):
+        created = map_step_runner.create_approval_hold(
+            kind=kind,
+            reason=f"synthetic {kind} hold for the mixed-population VC3 test",
+            request_summary=f"synthetic request for {kind}",
+            branch=branch,
+        )
+        if kind in map_step_runner.HARD_STOP_HOLD_KINDS:
+            hard_stop_hold_ids.add(created["hold_id"])
+
+    real_decide_approval_hold = map_step_runner.decide_approval_hold
+
+    def _guarded_decide(
+        hold_id: str, decision: str, note: str = "", branch: str | None = None
+    ) -> dict[str, Any]:
+        if hold_id in hard_stop_hold_ids:
+            raise AssertionError(
+                f"decide_approval_hold must never be invoked on hard-stop hold {hold_id!r}"
+            )
+        return real_decide_approval_hold(hold_id, decision, note, branch)
+
+    monkeypatch.setattr(map_step_runner, "decide_approval_hold", _guarded_decide)
+
+    result = map_step_runner.auto_decide_holds(branch=branch)  # must not raise
+
+    assert len(result["auto_approved"]) == len(map_step_runner.AUTO_APPROVABLE_HOLD_KINDS)
+    assert len(result["hard_stops"]) == len(map_step_runner.HARD_STOP_HOLD_KINDS)
+
+
 def test_validate_blueprint_contract_accepts_contract_sized_plan(branch_workspace):
     blueprint = {
         "summary": "Deliver a user-visible fix",
