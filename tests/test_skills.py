@@ -126,6 +126,20 @@ HIGH_TRAFFIC_SKILL_BODY_BUDGETS = {
     "map-tdd": 545,
 }
 
+# map-release is NOT "justified high-traffic" like the skills above -- it is a
+# tracked LEGACY oversize with no split-into-reference-file done yet. Keeping
+# it out of HIGH_TRAFFIC_SKILL_BODY_BUDGETS means the naming stays honest: a
+# reader of that dict should only find deliberate, justified higher caps, not
+# an untouched pre-existing violation. The pinned value here is a ratchet --
+# it may only shrink (as map-release gets trimmed/split) and must never grow,
+# so the guard test below still catches any further regression on this file.
+_LEGACY_OVERSIZED_SKILL_BODIES = {
+    "map-release": 1248,  # tracked in #418 -- ratchet: may shrink, must NOT grow;
+    # remove this entry entirely once map-release is split into a compact
+    # active body + reference file (the HIGH_TRAFFIC_COMPACT_SKILL_REFS
+    # pattern already used by map-plan/map-efficient/map-review/map-check).
+}
+
 CLAUDE_MUTATION_BOUNDARY_SURFACES = [
     Path("agents") / "actor.md",
     Path("skills") / "map-fast" / "SKILL.md",
@@ -547,6 +561,63 @@ class TestSkillStructure:
                 reference = reference_file.read_text(encoding="utf-8")
                 assert "## Examples" in reference
                 assert "## Troubleshooting" in reference
+
+    def test_every_non_high_traffic_skill_body_within_default_budget(
+        self, skill_rules, skills_dir, template_skills_dir
+    ):
+        """General body-budget guard (closes the ST-008 Monitor LOW finding).
+
+        Every skill registered in skill-rules.json whose SKILL.md exists and
+        is NOT explicitly exempted via HIGH_TRAFFIC_SKILL_BODY_BUDGETS must
+        keep its rendered active body within the default line budget. Unlike
+        the per-skill budget tests above (map-resume, the
+        HIGH_TRAFFIC_COMPACT_SKILL_REFS set, map-auto), this loop is derived
+        dynamically from skill-rules.json, so it covers map-auto AND every
+        future skill without needing a dedicated per-skill test to be added
+        by hand.
+
+        `_LEGACY_OVERSIZED_SKILL_BODIES` (tracked in #418) is a RATCHET, not
+        an exemption: a skill listed there is pinned to its currently-known
+        line count and may only shrink from here, never grow. It is
+        deliberately kept OUT of HIGH_TRAFFIC_SKILL_BODY_BUDGETS -- that dict
+        is for skills whose higher cap is a justified design choice (multiple
+        review modes, Iron Law enforcement); a legacy oversize that hasn't
+        been split into body + reference file yet is not "justified", so the
+        naming must not conflate the two. Every skill NOT in either dict
+        keeps the strict default budget. A brand-new violation (a skill not
+        already in `_LEGACY_OVERSIZED_SKILL_BODIES`) means it genuinely needs
+        either a HIGH_TRAFFIC_SKILL_BODY_BUDGETS entry (with a justification
+        comment) or a split into a compact body + reference file -- never a
+        silent exemption.
+        """
+        violations: list[str] = []
+        for base_dir in (skills_dir, template_skills_dir):
+            for skill_name in skill_rules.get("skills", {}):
+                if skill_name in HIGH_TRAFFIC_SKILL_BODY_BUDGETS:
+                    continue
+                skill_md = base_dir / skill_name / "SKILL.md"
+                if not skill_md.exists():
+                    continue
+                line_count = len(skill_md.read_text(encoding="utf-8").splitlines())
+                if skill_name in _LEGACY_OVERSIZED_SKILL_BODIES:
+                    pinned = _LEGACY_OVERSIZED_SKILL_BODIES[skill_name]
+                    if line_count > pinned:
+                        violations.append(
+                            f"{skill_md}: {line_count} lines grew past the "
+                            f"pinned legacy ratchet of {pinned} (#418) -- the "
+                            "ratchet may only shrink, never grow"
+                        )
+                    continue
+                if line_count > _DEFAULT_SKILL_BODY_BUDGET:
+                    violations.append(
+                        f"{skill_md}: {line_count} lines "
+                        f"(budget {_DEFAULT_SKILL_BODY_BUDGET})"
+                    )
+        assert not violations, (
+            "Skill(s) exceed their active-body line budget with no "
+            "HIGH_TRAFFIC_SKILL_BODY_BUDGETS or _LEGACY_OVERSIZED_SKILL_BODIES "
+            "coverage: " + "; ".join(violations)
+        )
 
     def test_write_capable_claude_surfaces_have_constraint_first_boundaries(
         self, project_root
