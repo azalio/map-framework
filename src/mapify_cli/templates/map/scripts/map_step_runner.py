@@ -465,6 +465,12 @@ APPROVAL_HOLD_KINDS = frozenset(
 APPROVAL_HOLD_TERMINAL_STATES = frozenset({"approved", "denied", "expired", "cancelled"})
 APPROVAL_HOLD_ALL_STATES = frozenset({"pending"}) | APPROVAL_HOLD_TERMINAL_STATES
 
+# /map-auto (issue #414, ST-005): hold kinds that hard-stop autonomous
+# routing outright -- route_task blocks the chain rather than proceeding
+# when either is pending. ST-006 defines the complementary
+# AUTO_APPROVABLE_HOLD_KINDS set immediately alongside this one.
+HARD_STOP_HOLD_KINDS = frozenset({"dangerous_action", "safety_guardrail"})
+
 # Truncation infrastructure deleted by user directive ("убери транкейт уже
 # вообще"). build_context_block / _budget_review_prompt now emit raw text;
 # operators handle context size via /compact opt-in. The mapify_cli
@@ -14727,18 +14733,56 @@ def route_task(
 
     `executed` and `chain_status` are always set together in one atomic
     artifact write: non-dry-run -> executed=True, chain_status="in_progress";
-    --dry-run -> executed=False, chain_status="recommended_only". Guards that
-    refuse to re-route an in-progress chain, block on a goal mismatch, or
-    surface pending hard-stop holds are added by a later subcommand -- this
-    call always re-routes and overwrites, preserving the prior selected_route
-    in route_history.
+    --dry-run -> executed=False, chain_status="recommended_only" -- UNLESS
+    one of the guards below blocks the chain, in which case executed is
+    forced False regardless of dry_run.
+
+    Three guards run, in this precedence order, BEFORE the normal write
+    (ST-005, INV-6):
+
+      1. In-progress refusal: an existing auto-route.json with
+         chain_status "in_progress" refuses to re-route -- returns
+         status="refused" with a /map-resume pointer, and neither the
+         artifact nor the manifest is touched. chain_status in
+         {recommended_only, blocked, completed, aborted} may be re-routed
+         (the prior selected_route is preserved in route_history).
+      2. Hard-stop holds: a pending dangerous_action or safety_guardrail
+         hold (HARD_STOP_HOLD_KINDS) blocks the chain -- chain_status
+         "blocked", executed False, blocked_by populated with the pending
+         hold ids -- even under --dry-run ("blocked" outranks
+         "recommended_only").
+      3. goal_mismatch block: check_plan_resume's verdict, already surfaced
+         in _select_route's evidence trail (read here, never re-queried),
+         blocks the chain with chain_status "blocked" and a block_reason.
+         The prior spec/task_plan/blueprint artifacts are left untouched --
+         route_task never archives or overwrites them.
+
+    Per Decision 14, route_task writes ONLY auto-route.json and its manifest
+    stage across every branch above -- it never calls record_workflow_fit or
+    create_approval_hold.
     """
     branch_name = branch or get_branch_name()
+    artifact_path = auto_route_artifact_path(branch_name)
+    prior = _read_json_file(artifact_path)
+
+    # Guard 1: refuse to re-route a chain that is already in progress --
+    # the operator must resume it explicitly (/map-resume) instead of this
+    # call silently clobbering the active decision.
+    if isinstance(prior, dict) and prior.get("chain_status") == "in_progress":
+        return {
+            "status": "refused",
+            "branch": branch_name,
+            "path": str(artifact_path),
+            "reason": (
+                f"branch '{branch_name}' has an in-progress /map-auto chain; "
+                "re-routing is refused to avoid clobbering the active run."
+            ),
+            "next_command": "/map-resume",
+        }
+
     selected_route, raw_evidence = _select_route(branch_name, task)
     next_command = _AUTO_ROUTE_NEXT_COMMAND[selected_route]
 
-    artifact_path = auto_route_artifact_path(branch_name)
-    prior = _read_json_file(artifact_path)
     route_history: list[str] = []
     if isinstance(prior, dict):
         prior_history = prior.get("route_history")
@@ -14750,26 +14794,65 @@ def route_task(
 
     executed = not dry_run
     chain_status = "in_progress" if executed else "recommended_only"
+    blocked_by: list[str] = []
+    block_reason = ""
+
+    # Guard 2: pending hard-stop holds block the chain outright, including
+    # under --dry-run -- "blocked" always outranks "recommended_only".
+    pending_holds = get_pending_holds(branch_name)
+    hard_stop_ids = [
+        str(hold["id"])
+        for hold in cast(list[Any], pending_holds.get("holds", []))
+        if isinstance(hold, dict) and hold.get("kind") in HARD_STOP_HOLD_KINDS
+    ]
+    if hard_stop_ids:
+        chain_status = "blocked"
+        executed = False
+        blocked_by = hard_stop_ids
+        block_reason = f"pending hard-stop hold(s): {', '.join(hard_stop_ids)}"
+    else:
+        # Guard 3: a goal_mismatch verdict from check_plan_resume, already
+        # surfaced by _select_route above -- reused, not re-queried --
+        # blocks the chain without touching the prior plan artifacts.
+        mismatch_entry = next(
+            (
+                entry
+                for entry in raw_evidence
+                if entry.get("signal") == "check_plan_resume"
+                and entry.get("value") == "goal_mismatch"
+            ),
+            None,
+        )
+        if mismatch_entry is not None:
+            chain_status = "blocked"
+            executed = False
+            block_reason = (
+                f"check_plan_resume reported goal_mismatch for branch "
+                f"'{branch_name}'; resolve the mismatch (archive/rename the "
+                "prior plan or confirm intent) before routing."
+            )
 
     artifact: dict[str, object] = {
         "schema_version": "1.0",
         "task_summary": _sanitize_for_json(task),
         "selected_route": selected_route,
         "evidence": _auto_route_evidence_for_artifact(raw_evidence),
-        "blocked_by": [],
+        "blocked_by": blocked_by,
         "next_command": next_command,
         "executed": executed,
         "chain_status": chain_status,
         "phases": [],
         "route_history": route_history,
     }
+    if block_reason:
+        artifact["block_reason"] = block_reason
     _write_json_file(artifact_path, artifact)
 
     manifest = load_artifact_manifest(branch_name)
     _set_manifest_stage(
         manifest,
         "auto_route",
-        "recommended" if dry_run else "in_progress",
+        "blocked" if chain_status == "blocked" else ("recommended" if dry_run else "in_progress"),
         artifacts=[_artifact_ref(artifact_path, "auto-route-decision")],
         metadata={
             "selected_route": selected_route,
@@ -14779,13 +14862,14 @@ def route_task(
     save_artifact_manifest(manifest, branch_name)
 
     return {
-        "status": "success",
+        "status": "blocked" if chain_status == "blocked" else "success",
         "branch": branch_name,
         "path": str(artifact_path),
         "selected_route": selected_route,
         "chain_status": chain_status,
         "next_command": next_command,
         "executed": executed,
+        "blocked_by": blocked_by,
     }
 
 

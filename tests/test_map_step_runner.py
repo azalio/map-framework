@@ -2022,6 +2022,210 @@ def test_route_task_preserves_route_history_on_second_write(branch_workspace):
     assert artifact["route_history"] == ["map-plan"]
 
 
+# --- route_task guards (issue #414 ST-005: dry-run write isolation,
+# in-progress re-route refusal, hard-stop hold block, goal_mismatch block) -
+
+
+def _snapshot_tree(root: Path) -> dict[str, int]:
+    """Recursive path -> mtime_ns snapshot of every file under `root`.
+
+    Used to prove a call touches only the files it claims to (VC1's
+    write-isolation assertion) without depending on file content/hashing.
+    """
+    return {
+        str(path.relative_to(root)): path.stat().st_mtime_ns
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
+def test_vc1_route_task_dry_run_write_isolation(tmp_path, branch_workspace):
+    branch = branch_workspace.name
+    before = _snapshot_tree(tmp_path)
+
+    map_step_runner.route_task(
+        "just recommend, touch nothing else", branch=branch, dry_run=True
+    )
+
+    after = _snapshot_tree(tmp_path)
+    # Диффим полные dict'ы (path -> mtime_ns): ловим и новые файлы, и
+    # in-place мутации существующих — не только появление новых путей.
+    changed = {
+        path
+        for path in set(before) | set(after)
+        if before.get(path) != after.get(path)
+    }
+    assert changed == {
+        f".map/{branch}/auto-route.json",
+        f".map/{branch}/artifact_manifest.json",
+    }
+    artifact = _read_auto_route_artifact(branch_workspace)
+    assert artifact["executed"] is False
+    assert artifact["chain_status"] == "recommended_only"
+
+
+def test_vc2_route_task_never_calls_record_workflow_fit_or_create_approval_hold(
+    branch_workspace, monkeypatch
+):
+    branch = branch_workspace.name
+
+    def _boom(*args: object, **kwargs: object) -> dict[str, object]:
+        raise AssertionError(f"must not be called: args={args} kwargs={kwargs}")
+
+    monkeypatch.setattr(map_step_runner, "record_workflow_fit", _boom)
+    monkeypatch.setattr(map_step_runner, "create_approval_hold", _boom)
+
+    def _reset_signals() -> None:
+        for name in (
+            "auto-route.json",
+            "blueprint.json",
+            "step_state.json",
+            "workflow-fit.json",
+            f"spec_{branch}.md",
+            f"task_plan_{branch}.md",
+        ):
+            path = branch_workspace / name
+            if path.exists():
+                path.unlink()
+
+    # Representative tier matrix: tier1 pending, tier2 workflow-fit,
+    # tier3 resume, tier5 default -- each run in both dry-run and
+    # non-dry-run mode. Every iteration is reset first so a prior
+    # iteration's in_progress artifact never trips the in-progress refusal
+    # guard before the forbidden-call assertion is exercised.
+    tier_setups = [
+        lambda: (
+            _write_blueprint(branch_workspace, ["ST-001"]),
+            _write_step_state(branch_workspace, {}),
+        ),
+        lambda: _write_workflow_fit(branch_workspace, "map-efficient"),
+        lambda: _write_resumable_plan(
+            branch_workspace, branch, "Implement token authentication middleware"
+        ),
+        lambda: None,  # tier5 default: no signals at all
+    ]
+    for setup in tier_setups:
+        for dry_run in (True, False):
+            _reset_signals()
+            setup()
+            map_step_runner.route_task("some task", branch=branch, dry_run=dry_run)
+
+
+def test_vc3_route_task_refuses_in_progress_chain_and_leaves_artifact_untouched(
+    branch_workspace,
+):
+    branch = branch_workspace.name
+    first = map_step_runner.route_task("first task", branch=branch, dry_run=False)
+    assert first["chain_status"] == "in_progress"
+
+    artifact_path = branch_workspace / "auto-route.json"
+    manifest_path = branch_workspace / "artifact_manifest.json"
+    artifact_before = artifact_path.read_bytes()
+    manifest_before = manifest_path.read_bytes()
+
+    result = map_step_runner.route_task(
+        "a completely different task", branch=branch, dry_run=False
+    )
+
+    assert result["status"] == "refused"
+    assert result["next_command"] == "/map-resume"
+    assert artifact_path.read_bytes() == artifact_before
+    assert manifest_path.read_bytes() == manifest_before
+
+
+def test_vc3_route_task_reroutes_when_prior_status_allows(branch_workspace):
+    branch = branch_workspace.name
+    artifact_path = branch_workspace / "auto-route.json"
+
+    for allowed_status in ("recommended_only", "completed", "aborted"):
+        artifact_path.write_text(
+            json.dumps({
+                "schema_version": "1.0",
+                "task_summary": "prior task",
+                "selected_route": "map-fast",
+                "evidence": [],
+                "blocked_by": [],
+                "next_command": "/map-fast",
+                "executed": allowed_status != "recommended_only",
+                "chain_status": allowed_status,
+                "phases": [],
+                "route_history": [],
+            }),
+            encoding="utf-8",
+        )
+
+        result = map_step_runner.route_task("new task", branch=branch, dry_run=True)
+
+        assert result["status"] != "refused", f"status={allowed_status} should re-route"
+        artifact = _read_auto_route_artifact(branch_workspace)
+        assert artifact["route_history"] == ["map-fast"]
+
+
+def test_vc4_route_task_blocks_on_goal_mismatch_and_leaves_plan_artifacts_untouched(
+    branch_workspace,
+):
+    branch = branch_workspace.name
+    goal = "Auditable Graph-Guided Incident Analysis"
+    _write_resumable_plan(branch_workspace, branch, goal)
+    spec_path = branch_workspace / f"spec_{branch}.md"
+    task_plan_path = branch_workspace / f"task_plan_{branch}.md"
+    spec_before = spec_path.read_bytes()
+    task_plan_before = task_plan_path.read_bytes()
+
+    result = map_step_runner.route_task(
+        "Add per-subtask token budget reporting to the statusline meter",
+        branch=branch,
+    )
+
+    assert result["chain_status"] == "blocked"
+    assert result["executed"] is False
+    artifact = _read_auto_route_artifact(branch_workspace)
+    assert artifact["chain_status"] == "blocked"
+    assert artifact.get("block_reason"), "block reason must be present in the artifact"
+    assert "goal_mismatch" in str(artifact["block_reason"])
+    assert spec_path.read_bytes() == spec_before
+    assert task_plan_path.read_bytes() == task_plan_before
+    assert not (branch_workspace / "blueprint.json").exists()
+
+
+def test_vc5_route_task_blocks_on_pending_hard_stop_hold(branch_workspace):
+    branch = branch_workspace.name
+    hold_result = map_step_runner.create_approval_hold(
+        kind="dangerous_action",
+        reason="Risky shell command flagged",
+        request_summary="rm -rf staging bucket",
+        branch=branch,
+    )
+    hold_id = hold_result["hold_id"]
+
+    result = map_step_runner.route_task("run the cleanup", branch=branch, dry_run=False)
+
+    assert result["chain_status"] == "blocked"
+    assert result["executed"] is False
+    assert result["blocked_by"] == [hold_id]
+    artifact = _read_auto_route_artifact(branch_workspace)
+    assert artifact["blocked_by"] == [hold_id]
+    assert artifact["chain_status"] == "blocked"
+
+
+def test_vc5_route_task_blocks_on_pending_hard_stop_hold_under_dry_run(branch_workspace):
+    branch = branch_workspace.name
+    hold_result = map_step_runner.create_approval_hold(
+        kind="safety_guardrail",
+        reason="Hook denied a destructive command",
+        request_summary="rm -rf .map",
+        branch=branch,
+    )
+    hold_id = hold_result["hold_id"]
+
+    result = map_step_runner.route_task("run the cleanup", branch=branch, dry_run=True)
+
+    # blocked outranks recommended_only even though dry_run=True was requested.
+    assert result["chain_status"] == "blocked"
+    assert result["executed"] is False
+    assert result["blocked_by"] == [hold_id]
+
+
 def test_validate_blueprint_contract_accepts_contract_sized_plan(branch_workspace):
     blueprint = {
         "summary": "Deliver a user-visible fix",
