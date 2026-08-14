@@ -9,6 +9,7 @@ outside of Actor-related phases. Uses step_state.json as source of truth.
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -16,9 +17,22 @@ import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 
+# Real runner (+ its map_utils dependency) used to give the state-tamper
+# detector's best-effort create_approval_hold subprocess call a working
+# target in tests that need to observe a real hold being written.
+_RUNNER_SRC_DIR = (
+    REPO_ROOT / "src" / "mapify_cli" / "templates" / "map" / "scripts"
+)
 
-class TestWorkflowGate:
-    """Tests for workflow-gate.py PreToolUse hook."""
+
+class _WorkflowGateTestHelpers:
+    """Shared subprocess-harness helpers for workflow-gate.py tests.
+
+    Holds no test methods itself — TestWorkflowGate and
+    TestStateTamperDetector both inherit from this so they reuse the same
+    hook-invocation plumbing without pytest re-collecting each other's
+    test methods (which plain test-class inheritance would cause).
+    """
 
     HOOK_PATH = REPO_ROOT / ".claude/hooks/workflow-gate.py"
 
@@ -158,6 +172,16 @@ class TestWorkflowGate:
         }
         (map_dir / "step_state.json").write_text(json.dumps(state))
 
+    def _install_runner(self, tmp_path: Path) -> None:
+        """Copy the real map_step_runner.py (+ map_utils.py dependency) into
+        tmp_path/.map/scripts/ so the state-tamper detector's best-effort
+        create_approval_hold subprocess call has a working target.
+        """
+        dest = tmp_path / ".map" / "scripts"
+        dest.mkdir(parents=True, exist_ok=True)
+        for name in ("map_step_runner.py", "map_utils.py"):
+            shutil.copy(_RUNNER_SRC_DIR / name, dest / name)
+
     def _setup_blueprint(
         self,
         tmp_path: Path,
@@ -176,6 +200,9 @@ class TestWorkflowGate:
         body = {"subtasks": subtasks}
         payload = {"blueprint": body} if nested else body
         (map_dir / "blueprint.json").write_text(json.dumps(payload))
+
+class TestWorkflowGate(_WorkflowGateTestHelpers):
+    """Tests for workflow-gate.py PreToolUse hook."""
 
     # --- Terminal / end-of-flow behavior ---
 
@@ -1129,3 +1156,353 @@ class TestWorkflowGate:
         )
         assert code == 0
         self._assert_allowed(stdout)
+
+
+class TestStateTamperDetector(_WorkflowGateTestHelpers):
+    """State-tamper detector (D3): runner-owned MAP state is never
+    hand-editable while a MAP workflow is active, even though the blanket
+    `.map/` exemption would otherwise allow it. A denied attempt records a
+    pending `safety_guardrail` approval hold.
+    """
+
+    def _read_holds(self, tmp_path: Path, branch: str) -> dict:
+        holds_file = tmp_path / ".map" / branch / "approval_holds.json"
+        return json.loads(holds_file.read_text())
+
+    def _pending_safety_guardrail_holds(self, tmp_path: Path, branch: str) -> list[dict]:
+        store = self._read_holds(tmp_path, branch)
+        return [
+            h
+            for h in store.get("holds", {}).values()
+            if h.get("kind") == "safety_guardrail" and h.get("state") == "pending"
+        ]
+
+    # --- VC1: protected path classes denied + hold recorded ---
+
+    @pytest.mark.parametrize(
+        "rel_template",
+        [
+            ".map/{branch}/step_state.json",
+            ".map/{branch}/approval_holds.json",
+            ".map/{branch}/auto-route.json",
+            ".map/{branch}/artifact_manifest.json",
+            ".map/scripts/map_step_runner.py",
+            ".map/scripts/lib/helper.py",
+        ],
+    )
+    def test_denies_protected_path_and_creates_safety_guardrail_hold(
+        self, tmp_path: Path, rel_template: str
+    ) -> None:
+        branch = "master"
+        self._setup_step_state(tmp_path, branch, "ACTOR")
+        self._install_runner(tmp_path)
+        rel = rel_template.format(branch=branch)
+        target = tmp_path / rel
+
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(target)}},
+            tmp_path,
+            branch=branch,
+        )
+        assert code == 0
+        reason = self._assert_denied(stdout)
+        assert "map_step_runner.py" in reason
+        assert rel in reason
+
+        matches = self._pending_safety_guardrail_holds(tmp_path, branch)
+        assert len(matches) == 1, matches
+        hold = matches[0]
+        assert hold["source"] == "workflow-gate"
+        assert rel in hold["request_summary"]
+
+    def test_denies_and_dedups_hold_on_repeated_attempt(self, tmp_path: Path) -> None:
+        """Idempotency: the same protected-path attempt twice must not
+        create a second pending hold — the stable request_summary dedups.
+        """
+        branch = "master"
+        self._setup_step_state(tmp_path, branch, "ACTOR")
+        self._install_runner(tmp_path)
+        target = tmp_path / ".map" / branch / "step_state.json"
+
+        for _ in range(2):
+            code, stdout, _ = self.run_hook(
+                {"tool_name": "Edit", "tool_input": {"file_path": str(target)}},
+                tmp_path,
+                branch=branch,
+            )
+            assert code == 0
+            self._assert_denied(stdout)
+
+        matches = self._pending_safety_guardrail_holds(tmp_path, branch)
+        assert len(matches) == 1, matches
+
+    # --- VC4: evaluated BEFORE is_exempt_path; Write denied like Edit ---
+
+    def test_tamper_check_precedes_exempt_allow_in_source_order(self) -> None:
+        source = self.HOOK_PATH.read_text(encoding="utf-8")
+        tamper_line = None
+        exempt_line = None
+        for lineno, line in enumerate(source.splitlines(), start=1):
+            if "if is_state_tamper_path(p)" in line and tamper_line is None:
+                tamper_line = lineno
+            if "all(is_exempt_path(p) for p in target_paths)" in line and exempt_line is None:
+                exempt_line = lineno
+        assert tamper_line is not None, "tamper-path filter not found in main()"
+        assert exempt_line is not None, "is_exempt_path allow not found in main()"
+        assert tamper_line < exempt_line, (
+            f"state-tamper check (line {tamper_line}) must precede the "
+            f"is_exempt_path allow (line {exempt_line})"
+        )
+
+    def test_write_to_protected_state_denied_despite_map_exemption(
+        self, tmp_path: Path
+    ) -> None:
+        branch = "master"
+        self._setup_step_state(tmp_path, branch, "ACTOR")
+        self._install_runner(tmp_path)
+        target = tmp_path / ".map" / branch / "step_state.json"
+
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Write", "tool_input": {"file_path": str(target)}},
+            tmp_path,
+            branch=branch,
+        )
+        assert code == 0
+        self._assert_denied(stdout)
+
+    def test_mixed_batch_with_one_protected_path_denies_as_a_whole(
+        self, tmp_path: Path
+    ) -> None:
+        """A MultiEdit batch mixing a protected path with an ordinary
+        exempt planning artifact must deny as a whole (fail closed)."""
+        branch = "master"
+        self._setup_step_state(tmp_path, branch, "ACTOR")
+        self._install_runner(tmp_path)
+        protected = tmp_path / ".map" / branch / "step_state.json"
+        ordinary = tmp_path / ".map" / branch / f"spec_{branch}.md"
+        ordinary.parent.mkdir(parents=True, exist_ok=True)
+        ordinary.write_text("# spec\n", encoding="utf-8")
+
+        code, stdout, _ = self.run_hook(
+            {
+                "tool_name": "MultiEdit",
+                "tool_input": {
+                    "file_path": str(protected),
+                    "edits": [
+                        {"file_path": str(ordinary)},
+                        {"file_path": str(protected)},
+                    ],
+                },
+            },
+            tmp_path,
+            branch=branch,
+        )
+        assert code == 0
+        self._assert_denied(stdout)
+
+    # --- Path resolution: dotdot traversal must not defeat the protected set ---
+
+    @pytest.mark.parametrize(
+        "dotdot_suffix",
+        [
+            "{branch}/../{branch}/step_state.json",
+            "x/../scripts/foo.py",
+        ],
+    )
+    def test_path_traversal_dotdot_still_matches_protected_set(
+        self, tmp_path: Path, dotdot_suffix: str
+    ) -> None:
+        """is_state_tamper_path resolves the candidate path (strict=False)
+        before classifying it, exactly like is_exempt_path does — a literal
+        '..' segment in the tool-supplied path string must not let a
+        protected target slip past the detector. Both cases below resolve
+        to a genuinely protected path: '.map/<branch>/../<branch>/step_state.json'
+        collapses to '.map/<branch>/step_state.json' (protected basename);
+        '.map/x/../scripts/foo.py' collapses to '.map/scripts/foo.py'
+        (protected parts[1] == 'scripts').
+        """
+        branch = "master"
+        self._setup_step_state(tmp_path, branch, "ACTOR")
+        self._install_runner(tmp_path)
+        rel = ".map/" + dotdot_suffix.format(branch=branch)
+        target_str = str(tmp_path / rel)
+        assert ".." in target_str, "fixture must actually embed a literal '..' segment"
+
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": target_str}},
+            tmp_path,
+            branch=branch,
+        )
+        assert code == 0
+        self._assert_denied(stdout)
+
+    # --- VC2: planning artifacts stay allowed, no hold ---
+
+    def test_planning_artifacts_still_allowed_during_active_workflow_no_hold(
+        self, tmp_path: Path
+    ) -> None:
+        branch = "master"
+        # Use a BLOCKING phase (not an editing phase) so an "allowed" result
+        # is provably due to the .map/ exemption, not the phase itself.
+        self._setup_step_state(tmp_path, branch, "PREDICTOR")
+        self._install_runner(tmp_path)
+
+        for rel in (
+            f".map/{branch}/spec_{branch}.md",
+            f".map/{branch}/task_plan_{branch}.md",
+            f".map/{branch}/blueprint.json",
+            f".map/{branch}/research/notes.md",
+            f".map/{branch}/code-review-001.md",
+            f".map/{branch}/compacted/notes.md",
+            f".map/{branch}/approval_hold_hold-001.md",
+        ):
+            target = tmp_path / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("content\n", encoding="utf-8")
+            code, stdout, _ = self.run_hook(
+                {"tool_name": "Edit", "tool_input": {"file_path": str(target)}},
+                tmp_path,
+                branch=branch,
+            )
+            assert code == 0, rel
+            self._assert_allowed(stdout)
+
+        holds_file = tmp_path / ".map" / branch / "approval_holds.json"
+        assert not holds_file.exists()
+
+    def test_ordinary_phase_deny_creates_no_hold(self, tmp_path: Path) -> None:
+        branch = "master"
+        self._setup_step_state(tmp_path, branch, "DECOMPOSE")
+        self._install_runner(tmp_path)
+
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": "src/app.py"}},
+            tmp_path,
+            branch=branch,
+        )
+        assert code == 0
+        self._assert_denied(stdout)
+
+        holds_file = tmp_path / ".map" / branch / "approval_holds.json"
+        assert not holds_file.exists()
+
+    # --- VC3: hold-creation failure must still deny; never fail-open ---
+
+    def test_missing_runner_still_denies_and_never_fails_open(
+        self, tmp_path: Path
+    ) -> None:
+        """Fixture repo lacking .map/scripts/ entirely: create_approval_hold's
+        subprocess call fails (script not found), but the hook must still
+        deny — INV-4, hold creation is best-effort and must never convert a
+        tamper deny into an allow, and must never escape to the outer
+        fail-open handler.
+        """
+        branch = "master"
+        self._setup_step_state(tmp_path, branch, "ACTOR")
+        # Deliberately do NOT call self._install_runner(tmp_path).
+        target = tmp_path / ".map" / branch / "step_state.json"
+
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(target)}},
+            tmp_path,
+            branch=branch,
+        )
+        assert code == 0
+        self._assert_denied(stdout)
+        # No runner was present, so no approval_holds.json could be written —
+        # the deny must still have fired regardless.
+        assert not (tmp_path / ".map" / branch / "approval_holds.json").exists()
+
+    def test_vc3_deny_delivered_when_producer_raises(self, tmp_path: Path) -> None:
+        """VC3 (INV-4), distinct from the runner-missing case above: the
+        runner SCRIPT EXISTS but raises internally (e.g. a bug inside
+        create_approval_hold itself, not a missing-file condition). The
+        hook must still emit permissionDecision=deny and exit 0 — hold
+        creation is best-effort regardless of WHY it failed, and a
+        producer exception must never convert a tamper deny into an
+        allow or escape to the outer fail-open handler.
+        """
+        branch = "master"
+        self._setup_step_state(tmp_path, branch, "ACTOR")
+        # A real file at the expected runner path, but its body raises
+        # immediately — distinct from "script not found".
+        dest = tmp_path / ".map" / "scripts"
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "map_step_runner.py").write_text(
+            "raise RuntimeError('boom')\n", encoding="utf-8"
+        )
+        target = tmp_path / ".map" / branch / "step_state.json"
+
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(target)}},
+            tmp_path,
+            branch=branch,
+        )
+        assert code == 0
+        self._assert_denied(stdout)
+        # The producer raised before it could write anything durable.
+        assert not (tmp_path / ".map" / branch / "approval_holds.json").exists()
+
+    # --- VC5: no-op outside an active workflow ---
+
+    def test_noop_when_no_step_state_json(self, tmp_path: Path) -> None:
+        branch = "master"
+        self._install_runner(tmp_path)
+        target = tmp_path / ".map" / branch / "approval_holds.json"
+
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(target)}},
+            tmp_path,
+            branch=branch,
+        )
+        assert code == 0
+        self._assert_allowed(stdout)
+        assert not target.exists()
+
+    def test_noop_when_workflow_status_complete(self, tmp_path: Path) -> None:
+        branch = "master"
+        map_dir = tmp_path / ".map" / branch
+        map_dir.mkdir(parents=True, exist_ok=True)
+        (map_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "current_step_phase": "COMPLETE",
+                    "current_subtask_id": "ST-001",
+                    "workflow_status": "WORKFLOW_COMPLETE",
+                }
+            )
+        )
+        self._install_runner(tmp_path)
+        target = map_dir / "step_state.json"
+
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(target)}},
+            tmp_path,
+            branch=branch,
+        )
+        assert code == 0
+        self._assert_allowed(stdout)
+        assert not (map_dir / "approval_holds.json").exists()
+
+    def test_noop_outside_git_repo(self, tmp_path: Path) -> None:
+        """Outside a git repo, get_branch_name() falls back to 'default' and,
+        absent a .map/default/step_state.json, the detector no-ops —
+        matching today's fail-open behavior (no .git dir at all here).
+        """
+        target = tmp_path / ".map" / "scripts" / "map_step_runner.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# script\n", encoding="utf-8")
+
+        result = subprocess.run(
+            ["python3", str(self.HOOK_PATH)],
+            input=json.dumps(
+                {"tool_name": "Edit", "tool_input": {"file_path": str(target)}}
+            ),
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+            check=False,
+        )
+        assert result.returncode == 0
+        self._assert_allowed(result.stdout)
+        assert not (tmp_path / ".map" / "default" / "approval_holds.json").exists()

@@ -55,6 +55,21 @@ EDITING_PHASES = {"ACTOR", "APPLY", "TEST_WRITER"}
 DOCS_ONLY_EXTENSIONS = {".md", ".mdx", ".rst", ".txt", ".adoc"}
 DOCS_ONLY_PATH_PREFIXES = ("docs/", "doc/", "documentation/", "CHANGELOG", "RELEASING", "README")
 
+# State-tamper detector (D3): runner-owned MAP state basenames that are
+# never hand-editable directly, even though the blanket `.map/` exemption
+# below (is_exempt_path) would otherwise allow them. Planning artifacts
+# (spec_*, task_plan_*, blueprint.json, research/, code-review-*,
+# compacted/, approval_hold_*.md) are NOT in this set and stay exempt as
+# today — only the runner's own durable state is protected.
+STATE_TAMPER_PROTECTED_BASENAMES = frozenset(
+    {
+        "step_state.json",
+        "approval_holds.json",
+        "auto-route.json",
+        "artifact_manifest.json",
+    }
+)
+
 # TERMINAL_PHASES contains phases where the workflow is considered closed.
 # Edits during COMPLETE are intentionally permissive because:
 #   1. Post-workflow polish (doc tweaks, follow-up review fixes) must not be gated —
@@ -204,6 +219,44 @@ def is_exempt_path(file_path: str) -> bool:
     )
 
 
+def is_state_tamper_path(file_path: str) -> bool:
+    """Return True if *file_path* is runner-owned MAP state protected from
+    direct hand-editing (the state-tamper detector, D3).
+
+    Mirrors is_exempt_path's PROJECT_DIR-relative resolution. Protected
+    under `.map/`:
+      - any path whose second segment is "scripts" (``.map/scripts/**`` —
+        the runner and its helper modules), or
+      - a basename in STATE_TAMPER_PROTECTED_BASENAMES anywhere under
+        `.map/` (branch-scoped durable state: `.map/<branch>/step_state.json`,
+        `approval_holds.json`, `auto-route.json`, `artifact_manifest.json`).
+
+    Everything else under `.map/` (spec_*, task_plan_*, blueprint.json,
+    research/, code-review-*, compacted/, approval_hold_*.md) is left
+    alone by this predicate — it stays exempt via is_exempt_path.
+    """
+    if not isinstance(file_path, str) or not file_path.strip():
+        return False
+
+    candidate = Path(file_path)
+    resolved = (
+        candidate.resolve(strict=False)
+        if candidate.is_absolute()
+        else (PROJECT_DIR / candidate).resolve(strict=False)
+    )
+    try:
+        rel = resolved.relative_to(PROJECT_DIR)
+    except ValueError:
+        return False
+
+    parts = rel.parts
+    if not parts or parts[0] != ".map":
+        return False
+    if len(parts) >= 2 and parts[1] == "scripts":
+        return True
+    return rel.name in STATE_TAMPER_PROTECTED_BASENAMES
+
+
 def sanitize_branch_name(branch: str) -> str:
     """Sanitize branch name for filesystem paths."""
     sanitized = branch.replace("/", "-")
@@ -246,6 +299,27 @@ def _current_phase_is_research(branch: str) -> bool:
         return False
     phase = state.get("current_step_phase", "")
     return isinstance(phase, str) and phase.upper() == "RESEARCH"
+
+
+def _is_workflow_active(branch: str) -> bool:
+    """Return True iff a MAP workflow is active on *branch*.
+
+    Active means `.map/<branch>/step_state.json` exists and its
+    `workflow_status` is not `WORKFLOW_COMPLETE`. Scopes the state-tamper
+    detector (D3): outside an active workflow — no step_state.json yet, a
+    corrupt/unreadable one, or a finished workflow — the detector no-ops
+    and today's exempt-path behavior applies unchanged.
+    """
+    step_file = PROJECT_DIR / ".map" / branch / "step_state.json"
+    if not step_file.exists():
+        return False
+    try:
+        with open(step_file, "r", encoding="utf-8") as f:
+            state = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return False
+    status = str(state.get("workflow_status", "")).strip().upper()
+    return status != "WORKFLOW_COMPLETE"
 
 
 def _load_blueprint_subtasks(branch: str) -> list | None:
@@ -510,6 +584,57 @@ def check_constraints(branch: str, target_paths: list[str]) -> str | None:
     return None
 
 
+def _create_safety_guardrail_hold(branch: str, rel_path: str) -> None:
+    """Best-effort creation of a `safety_guardrail` approval hold recording
+    a denied direct edit of runner-owned MAP state.
+
+    INV-4: the caller wraps this call in its own try/except — hold creation
+    is best-effort and must NEVER convert a tamper deny into an allow. Any
+    failure here (missing runner script, non-zero exit, a raised exception)
+    is swallowed by the caller; deny() still fires and the outer fail-open
+    handler is never reached from this path. Idempotency comes from the
+    stable request_summary (naming rel_path) plus create_approval_hold's
+    own dedup-by-(kind, request_summary, pending).
+    """
+    import subprocess
+
+    runner = PROJECT_DIR / ".map" / "scripts" / "map_step_runner.py"
+    reason = (
+        "Runner-owned MAP state must be mutated only through "
+        "map_step_runner.py subcommands; a direct Edit/Write bypasses "
+        "its validation and audit trail."
+    )
+    safe_continuation = (
+        "Revert the direct edit. Use the appropriate "
+        "`python3 .map/scripts/map_step_runner.py` subcommand instead "
+        "(e.g. record_step, create_approval_hold, decide_approval_hold)."
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(runner),
+            "create_approval_hold",
+            "--kind",
+            "safety_guardrail",
+            "--reason",
+            reason,
+            "--request-summary",
+            f"Direct edit of runner-owned MAP state: {rel_path}",
+            "--source",
+            "workflow-gate",
+            "--safe-continuation",
+            safe_continuation,
+            "--branch",
+            branch,
+        ],
+        capture_output=True,
+        text=True,
+        cwd=PROJECT_DIR,
+        timeout=5,
+        check=False,
+    )
+
+
 def deny(reason: str) -> None:
     """Print deny response and exit."""
     print(
@@ -541,12 +666,42 @@ def main() -> None:
         if tool_name not in EDITING_TOOLS:
             allow()
 
-        # Exempt paths (.map/, ~/.claude/memory/) → always allow
         target_paths = extract_target_file_paths(tool_call)
+        branch = get_branch_name()
+
+        # State-tamper detector (D3): runner-owned MAP state
+        # (step_state.json, approval_holds.json, auto-route.json,
+        # artifact_manifest.json, and anything under .map/scripts/) is
+        # never hand-editable while a MAP workflow is active on this
+        # branch — even though the blanket `.map/` exemption below would
+        # otherwise allow it. Evaluated BEFORE is_exempt_path
+        # (blocklist-before-allowlist, per the learned security-pattern)
+        # so the exemption cannot mask tampering. A mixed batch (one
+        # protected path alongside ordinary ones) denies as a whole — fail
+        # closed on any protected target.
+        tamper_paths = [p for p in target_paths if is_state_tamper_path(p)]
+        if tamper_paths and _is_workflow_active(branch):
+            attempted = _to_repo_relative(tamper_paths[0]) or tamper_paths[0]
+            try:
+                _create_safety_guardrail_hold(branch, attempted)
+            except Exception:  # noqa: BLE001, S110 -- INV-4: producer failure must still reach deny(), never escape to the fail-open outer handler
+                pass
+            deny(
+                "Workflow gate: runner-owned MAP state is not "
+                f"hand-editable ('{attempted}').\n"
+                "This path is written exclusively by "
+                ".map/scripts/map_step_runner.py — use its CLI "
+                "subcommands (create_approval_hold, record_step, "
+                "decide_approval_hold, etc.) instead of editing it "
+                "directly.\n"
+                "A pending safety_guardrail approval hold has been "
+                "recorded for this attempt (best-effort; see "
+                f".map/{branch}/approval_holds.json)."
+            )
+
+        # Exempt paths (.map/, ~/.claude/memory/) → always allow
         if target_paths and all(is_exempt_path(p) for p in target_paths):
             allow()
-
-        branch = get_branch_name()
 
         # Phase check (step_state.json)
         allowed, error = is_editing_phase(branch)
