@@ -68,30 +68,30 @@ _AC7_MATRIX: dict[str, tuple[set[str], list[str]]] = {
         _STEP_RUNNER_TESTS,
         [
             "test_route_task_dry_run_sets_executed_false_and_recommended_only",
-            "test_vc1_route_task_dry_run_write_isolation",
-            "test_vc2_route_task_never_calls_record_workflow_fit_or_create_approval_hold",
+            "test_route_task_dry_run_write_isolation",
+            "test_route_task_never_calls_record_workflow_fit_or_create_approval_hold",
         ],
     ),
     # (c) hold auto-approve vs hard-stop split.
     "hold_auto_approve_vs_hard_stop": (
         _STEP_RUNNER_TESTS,
         [
-            "test_vc4_auto_approvable_and_hard_stop_kinds_partition_approval_hold_kinds",
-            "test_vc1_auto_decide_holds_approves_every_auto_approvable_kind",
-            "test_vc2_auto_decide_holds_leaves_hard_stop_kinds_pending",
-            "test_vc3_auto_decide_holds_never_invokes_decide_approval_hold_on_hard_stop_kind",
+            "test_auto_approvable_and_hard_stop_kinds_partition_approval_hold_kinds",
+            "test_auto_decide_holds_approves_every_auto_approvable_kind",
+            "test_auto_decide_holds_leaves_hard_stop_kinds_pending",
+            "test_auto_decide_holds_never_invokes_decide_approval_hold_on_hard_stop_kind",
         ],
     ),
     # (d) phase ledger + chain_status transitions + in-progress re-route refusal.
     "phase_ledger_and_reroute_refusal": (
         _STEP_RUNNER_TESTS,
         [
-            "test_vc1_record_auto_phase_appends_one_schema_valid_six_field_entry",
-            "test_vc2_record_auto_phase_terminal_success_status_completes_chain",
-            "test_vc2_record_auto_phase_abort_class_status_aborts_chain",
-            "test_vc3_record_auto_phase_attempt_counter_and_third_attempt_refused",
-            "test_vc3_route_task_refuses_in_progress_chain_and_leaves_artifact_untouched",
-            "test_vc3_route_task_reroutes_when_prior_status_allows",
+            "test_record_auto_phase_appends_one_schema_valid_six_field_entry",
+            "test_record_auto_phase_terminal_success_status_completes_chain",
+            "test_record_auto_phase_abort_class_status_aborts_chain",
+            "test_record_auto_phase_attempt_counter_and_third_attempt_refused",
+            "test_route_task_refuses_in_progress_chain_and_leaves_artifact_untouched",
+            "test_route_task_reroutes_when_prior_status_allows",
         ],
     ),
     # (e) AUTO_ROUTE_SCHEMA golden-artifact validation.
@@ -110,7 +110,7 @@ _AC7_MATRIX: dict[str, tuple[set[str], list[str]]] = {
         _SKILLS_TESTS,
         [
             "test_map_auto_is_default_on_with_no_gating_flag",
-            "test_vc5_skill_body_within_default_budget",
+            "test_skill_body_within_default_budget",
             "test_every_non_high_traffic_skill_body_within_default_budget",
         ],
     ),
