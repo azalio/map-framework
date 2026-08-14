@@ -465,13 +465,13 @@ APPROVAL_HOLD_KINDS = frozenset(
 APPROVAL_HOLD_TERMINAL_STATES = frozenset({"approved", "denied", "expired", "cancelled"})
 APPROVAL_HOLD_ALL_STATES = frozenset({"pending"}) | APPROVAL_HOLD_TERMINAL_STATES
 
-# /map-auto (issue #414, ): hold kinds that hard-stop autonomous
+# /map-auto (issue #414): hold kinds that hard-stop autonomous
 # routing outright -- route_task blocks the chain rather than proceeding
-# when either is pending. defines the complementary
-# AUTO_APPROVABLE_HOLD_KINDS set immediately alongside this one.
+# when either is pending. The complementary AUTO_APPROVABLE_HOLD_KINDS
+# set is defined immediately alongside this one.
 HARD_STOP_HOLD_KINDS = frozenset({"dangerous_action", "safety_guardrail"})
 
-# /map-auto (issue #414, ): hold kinds auto_decide_holds may decide
+# /map-auto (issue #414): hold kinds auto_decide_holds may decide
 # without a human -- workflow-control gates, never safety gates. Together
 # with HARD_STOP_HOLD_KINDS these must exactly partition
 # APPROVAL_HOLD_KINDS (disjoint, union == whole set) so a future sixth hold
@@ -14699,7 +14699,7 @@ _AUTO_ROUTE_NEXT_COMMAND: dict[str, str] = {
     "map-efficient": "/map-efficient",
 }
 
-# /map-auto phase ledger (issue #414, ): closed status vocabulary for
+# /map-auto phase ledger (issue #414): closed status vocabulary for
 # record_auto_phase's chain_status transitions. A phase status in
 # AUTO_PHASE_TERMINAL_SUCCESS_STATUSES completes the chain; a status in
 # AUTO_PHASE_ABORT_STATUSES aborts it; any other status leaves the chain
@@ -14709,9 +14709,9 @@ _AUTO_ROUTE_NEXT_COMMAND: dict[str, str] = {
 AUTO_PHASE_TERMINAL_SUCCESS_STATUSES = frozenset({"completed"})
 AUTO_PHASE_ABORT_STATUSES = frozenset({"aborted", "failed"})
 
-# at most ONE re-entry per phase -- attempt 1 (first record) plus
-# attempt 2 (the single permitted re-entry) are allowed; a 3rd record of the
-# same phase name is refused by record_auto_phase.
+# Chain-level retry bound: at most ONE re-entry per phase -- attempt 1
+# (first record) plus attempt 2 (the single permitted re-entry) are allowed;
+# a 3rd record of the same phase name is refused by record_auto_phase.
 AUTO_PHASE_MAX_ATTEMPTS = 2
 
 

@@ -25,7 +25,7 @@ parallel_tool_policy: sequential_by_default
 
 ## Determinism boundary
 
-All routing and phase-ledger state lives in `.map/<branch>/auto-route.json` and is mutated ONLY through the three runner subcommands below: `route_task` (routing decision), `auto_decide_holds` (approval-hold triage), and `record_auto_phase` (phase ledger). Never hand-edit `auto-route.json`. Every command prints a JSON result; a non-success `status` means stop and read the message before continuing.
+All routing and phase-ledger state lives in `.map/<branch>/auto-route.json` and is mutated ONLY through two runner subcommands below: `route_task` (routing decision) and `record_auto_phase` (phase ledger). `auto_decide_holds` (approval-hold triage) mutates `approval_holds.json` separately — its approvals surface in the `approval_hold` manifest stage, not in `auto-route.json`. Never hand-edit `auto-route.json`. Every command prints a JSON result; a non-success `status` means stop and read the message before continuing.
 
 ## Step 1: Route the Task
 
