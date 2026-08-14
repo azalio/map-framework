@@ -420,13 +420,21 @@ invoked; there is no shadow mode, calibration period, or opt-in flag.
   consuming `record_auto_phase` call's `evidence_refs`. `HARD_STOP_HOLD_KINDS`
   (`dangerous_action`, `safety_guardrail`) are never decided by any `/map-auto` code
   path; they are only ever returned in `hard_stops[]` for a human to act on.
-- **Honesty caveat (spec Decision 4).** As of this slice, no shipped skill prose or hook
-  actually creates any approval hold — the #344 mechanism (see Durable Approval Holds
-  above) is CLI plumbing without live producers. `/map-auto`'s auto-approve path is
-  therefore exercised only by synthetic test holds in this slice, not by any real routing
-  decision that has ever created a hold; wiring a live producer (e.g. a `plan_approval`
-  hold at a `/map-plan` decision point) into an existing workflow is a tracked follow-up,
-  and the auto-approve path must not be read as an active mitigation until that lands.
+- **Live approval-hold producers (#422).** Three workflow paths create real approval
+  holds via the #344 mechanism (see Durable Approval Holds below); the auto-approve and
+  hard-stop mechanics above act on holds those paths actually create, not synthetic test
+  fixtures. `plan_approval` is created by `record_plan_artifacts` once a plan reaches
+  `ready` (task_plan + blueprint both present, the `/map-plan` Step 7 boundary) and is
+  decided interactively at `/map-efficient`'s `INIT_STATE` phase or `/map-task`'s
+  preflight, or auto-approved by `/map-auto`'s `auto_decide_holds` (audit note
+  "auto-approved by map-auto"). `dangerous_action` is created by `merge_wave_worktrees`
+  when it refuses to merge a wave onto a working branch with uncommitted changes
+  (dirty-target refusal); it is always a hard stop, blocking `route_task` via
+  `blocked_by[]` and surfacing in `auto_decide_holds`'s `hard_stops[]` until a human
+  decides it. `safety_guardrail` is created by the workflow-gate hook's state-tamper
+  detector when an Edit/Write targets runner-owned MAP state (`.map/<branch>` state
+  files or `.map/scripts/`) during an active workflow; the hook denies the write
+  regardless of hold creation, and the hold itself is also a hard stop, human-only.
 - **Out of scope (first slice, HC-1)**: the autopilot run ends at a committed feature
   branch. `/map-auto` never creates a pull request, never merges, and never polls CI.
 
