@@ -2238,6 +2238,13 @@ def _read_approval_holds(branch_workspace: Path) -> dict[str, Any]:
 def test_auto_approvable_and_hard_stop_kinds_partition_approval_hold_kinds():
     auto_approvable = map_step_runner.AUTO_APPROVABLE_HOLD_KINDS
     hard_stop = map_step_runner.HARD_STOP_HOLD_KINDS
+    # Exact membership pin, not just disjointness/union -- a new kind added
+    # to either side must fail this test loudly instead of silently
+    # widening (or narrowing) the auto-approve surface.
+    assert auto_approvable == frozenset(
+        {"autonomy_posture", "plan_approval", "template_overwrite"}
+    )
+    assert hard_stop == frozenset({"dangerous_action", "safety_guardrail"})
     assert auto_approvable.isdisjoint(hard_stop)
     assert auto_approvable | hard_stop == map_step_runner.APPROVAL_HOLD_KINDS
 
