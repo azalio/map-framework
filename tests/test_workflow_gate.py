@@ -1254,6 +1254,36 @@ class TestStateTamperDetector(_WorkflowGateTestHelpers):
             f"is_exempt_path allow (line {exempt_line})"
         )
 
+    def test_display_path_resolution_inside_producer_try(self) -> None:
+        """INV-4 hardening (PR #427 review): the display-path resolution
+        (`_to_repo_relative(...)`) on the tamper deny path must sit INSIDE
+        the best-effort try block, after a plain fallback assignment — so
+        even an exotic exception out of path resolution reaches deny()
+        instead of escaping to the fail-open outer handler.
+        """
+        source = self.HOOK_PATH.read_text(encoding="utf-8")
+        fallback_line = None
+        try_line = None
+        resolve_line = None
+        for lineno, line in enumerate(source.splitlines(), start=1):
+            if "attempted = tamper_paths[0]" in line and fallback_line is None:
+                fallback_line = lineno
+            if fallback_line is not None and try_line is None and line.strip() == "try:":
+                try_line = lineno
+            if (
+                "_to_repo_relative(tamper_paths[0]) or tamper_paths[0]" in line
+                and resolve_line is None
+            ):
+                resolve_line = lineno
+        assert fallback_line is not None, "plain fallback assignment not found"
+        assert try_line is not None, "producer try block not found after fallback"
+        assert resolve_line is not None, "display-path resolution not found"
+        assert fallback_line < try_line < resolve_line, (
+            f"display-path resolution (line {resolve_line}) must sit inside the "
+            f"try block (line {try_line}) that follows the plain fallback "
+            f"assignment (line {fallback_line})"
+        )
+
     def test_write_to_protected_state_denied_despite_map_exemption(
         self, tmp_path: Path
     ) -> None:

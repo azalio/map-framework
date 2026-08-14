@@ -681,10 +681,11 @@ def main() -> None:
         # closed on any protected target.
         tamper_paths = [p for p in target_paths if is_state_tamper_path(p)]
         if tamper_paths and _is_workflow_active(branch):
-            attempted = _to_repo_relative(tamper_paths[0]) or tamper_paths[0]
+            attempted = tamper_paths[0]
             try:
+                attempted = _to_repo_relative(tamper_paths[0]) or tamper_paths[0]
                 _create_safety_guardrail_hold(branch, attempted)
-            except Exception:  # noqa: BLE001, S110 -- INV-4: producer failure must still reach deny(), never escape to the fail-open outer handler
+            except Exception:  # noqa: BLE001, S110 -- INV-4: producer/display-path failure must still reach deny(), never escape to the fail-open outer handler
                 pass
             deny(
                 "Workflow gate: runner-owned MAP state is not "

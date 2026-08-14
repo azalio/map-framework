@@ -3348,8 +3348,11 @@ def record_plan_artifacts(branch: str | None = None) -> dict[str, object]:
             )
             if hold_result.get("status") == "ok":
                 result["plan_approval_hold_id"] = hold_result["hold_id"]
-        except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
-            pass
+        except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
+            # Surface the degradation instead of losing the approval gate
+            # silently: the Step 8 checkpoint prints this flag and the operator
+            # can create/decide the hold manually before execution.
+            result["plan_approval_hold_error"] = True
 
     return result
 

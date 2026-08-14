@@ -5,9 +5,10 @@ Load only the section needed by the active phase.
 
 ## Approval-Hold Preflight
 
-Resolve any pending approval hold before INIT_STATE proceeds to the test
-baseline — a hold left pending means execution has not been explicitly
-authorized.
+Resolve any pending approval hold BEFORE Step 0's `resume_from_plan`
+bootstraps execution state — a hold left pending means execution has not
+been explicitly authorized, and a denied plan must stop before any
+`step_state.json` exists.
 
 ```bash
 python3 .map/scripts/map_step_runner.py list_approval_holds --state pending
@@ -37,7 +38,7 @@ Each pending hold's `kind` decides the branch:
 
 An autonomous chain never reaches the interactive ask above: its pre-phase
 `auto_decide_holds` poll auto-approves `plan_approval` before `$map-efficient`
-INIT_STATE runs, so the preflight here finds nothing pending. If the operator
+starts, so the preflight here finds nothing pending. If the operator
 already decided the hold manually (CLI) before starting `$map-efficient`, the
 preflight likewise finds nothing pending and proceeds without asking.
 

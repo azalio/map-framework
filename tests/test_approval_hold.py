@@ -412,6 +412,7 @@ class TestListApprovalHolds:
 
 class TestGetPendingHolds:
     def test_resume_blocked_true_when_pending_exists(self, branch_dir: Path) -> None:
+        del branch_dir  # fixture used for chdir side effect only
         map_step_runner.create_approval_hold(
             kind="plan_approval",
             reason="Needs approval",
@@ -425,12 +426,14 @@ class TestGetPendingHolds:
         assert result["resume_blocked"] is True
 
     def test_resume_not_blocked_when_no_pending(self, branch_dir: Path) -> None:
+        del branch_dir  # fixture used for chdir side effect only
         result = map_step_runner.get_pending_holds(branch="test-branch")
         assert result["has_pending"] is False
         assert result["pending_count"] == 0
         assert result["resume_blocked"] is False
 
     def test_resume_not_blocked_after_decision(self, branch_dir: Path) -> None:
+        del branch_dir  # fixture used for chdir side effect only
         r = map_step_runner.create_approval_hold(
             kind="plan_approval",
             reason="Needs approval",
@@ -491,7 +494,7 @@ class TestCLI:
     def test_create_approval_hold_cli_success(
         self, branch_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        del monkeypatch
+        del branch_dir, monkeypatch
         code, result = _run_cli(
             "create_approval_hold",
             "--kind", "plan_approval",
@@ -520,7 +523,7 @@ class TestCLI:
     def test_decide_approval_hold_cli(
         self, branch_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        del monkeypatch
+        del branch_dir, monkeypatch
         # First create a hold
         _run_cli(
             "create_approval_hold",
@@ -562,7 +565,7 @@ class TestCLI:
     def test_get_pending_holds_cli_with_pending(
         self, branch_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        del monkeypatch
+        del branch_dir, monkeypatch
         _run_cli(
             "create_approval_hold",
             "--kind", "safety_guardrail",
@@ -620,6 +623,30 @@ class TestPlanApprovalHoldProducer:
         assert hold["kind"] == "plan_approval"
         assert hold["source"] == "map-plan"
         assert hold["state"] == "pending"
+
+    def test_producer_failure_records_hold_error_but_still_succeeds(
+        self, branch_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PR #427 review: a create_approval_hold failure must not fail the
+        plan-artifact recording (INV-3 best-effort posture), but it must NOT
+        be silent either — the result carries plan_approval_hold_error so the
+        /map-plan Step 8 checkpoint can surface the degraded gate.
+        """
+        _write_ready_plan_artifacts(branch_dir)
+
+        def _boom(*_args: object, **_kwargs: object) -> dict[str, Any]:
+            del _args, _kwargs
+            raise RuntimeError("hold store unavailable")
+
+        monkeypatch.setattr(map_step_runner, "create_approval_hold", _boom)
+
+        result = map_step_runner.record_plan_artifacts("test-branch")
+
+        assert result["status"] == "success"
+        assert result["plan_status"] == "ready"
+        assert "plan_approval_hold_id" not in result
+        assert result["plan_approval_hold_error"] is True
+        assert not (_map_dir(branch_dir) / "approval_holds.json").exists()
 
     def test_rerun_is_idempotent_no_duplicate_hold(self, branch_dir: Path) -> None:
         _write_ready_plan_artifacts(branch_dir)

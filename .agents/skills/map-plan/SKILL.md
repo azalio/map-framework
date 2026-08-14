@@ -701,10 +701,10 @@ shell_command:
   cmd: |
     PLAN_ARTIFACTS_RESULT=$(python3 .map/scripts/map_step_runner.py record_plan_artifacts)
     echo "$PLAN_ARTIFACTS_RESULT"
-    PLAN_APPROVAL_HOLD_ID=$(echo "$PLAN_ARTIFACTS_RESULT" | jq -r '.plan_approval_hold_id // empty')
+    PLAN_APPROVAL_HOLD_ID=$(printf '%s' "$PLAN_ARTIFACTS_RESULT" | jq -r '.plan_approval_hold_id // empty')
 ```
 
-`record_plan_artifacts` also opens a `plan_approval` hold at the plan-ready boundary and returns it as `plan_approval_hold_id` (idempotent — re-running finds the same pending hold instead of spamming a new one). Capture `PLAN_APPROVAL_HOLD_ID` for the Step 8 checkpoint. This hold does **not** block `$map-plan` itself: planning artifacts are written and Step 8 prints its checkpoint regardless of whether the hold is still pending. The decision (`decide_approval_hold <hold-id> approved|denied`) happens later, at the `$map-efficient` INIT_STATE preflight — or automatically via an autonomous chain's `auto_decide_holds` poll.
+`record_plan_artifacts` also opens a `plan_approval` hold at the plan-ready boundary and returns it as `plan_approval_hold_id` (idempotent — re-running finds the same pending hold instead of spamming a new one). Capture `PLAN_APPROVAL_HOLD_ID` for the Step 8 checkpoint. This hold does **not** block `$map-plan` itself: planning artifacts are written and Step 8 prints its checkpoint regardless of whether the hold is still pending. The decision (`decide_approval_hold <hold-id> approved|denied`) happens later, at the `$map-efficient` approval-hold preflight — or automatically via an autonomous chain's `auto_decide_holds` poll. If the result instead carries `plan_approval_hold_error: true`, the hold store failed — say so in the Step 8 checkpoint and have the operator create/decide the hold manually (`create_approval_hold --kind plan_approval ...`).
 
 ---
 

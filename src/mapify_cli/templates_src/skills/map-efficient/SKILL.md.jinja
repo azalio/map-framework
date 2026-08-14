@@ -94,6 +94,14 @@ In every other case you MUST execute Step 0 first and let `resume_from_plan` /
 `get_next_step` decide the next phase. The DECOMPOSE phase (1.0) is the only
 phase that reads `$TASK_ARGS` — and resumed workflows skip it.
 
+## Approval-hold preflight (MANDATORY — run BEFORE Step 0)
+
+```bash
+python3 .map/scripts/map_step_runner.py list_approval_holds --state pending
+```
+
+Pending `plan_approval`: ask the operator to approve/deny, then record via `decide_approval_hold <hold-id> <approved|denied> --note "<operator note>"` — approved continues into Step 0, denied STOPS here, BEFORE `resume_from_plan` initializes any execution state, with "revise the plan and re-run `/map-plan`" (no staleness re-check); `/map-auto` never reaches this ask because its pre-phase `auto_decide_holds` poll approves `plan_approval` first. Pending `dangerous_action`/`safety_guardrail`: refuse to proceed — surface the hold's `reason` and stop. Full recipe: [efficient-reference.md](efficient-reference.md#approval-hold-preflight).
+
 ## Step 0: Detect Existing State or Plan
 
 Run this BEFORE any `$TASK_ARGS` validation.
@@ -182,14 +190,6 @@ Execution mode is `batch`; the orchestrator skips this step.
 ### Phase: INIT_STATE (1.6)
 
 State is managed by the orchestrator. Do not create `step_state.json` manually.
-
-### Pending-hold preflight (MANDATORY at INIT_STATE)
-
-```bash
-python3 .map/scripts/map_step_runner.py list_approval_holds --state pending
-```
-
-Pending `plan_approval`: ask the operator to approve/deny, then record via `decide_approval_hold <hold-id> <approved|denied> --note "<operator note>"` — approved continues into the test baseline below, denied STOPS with "revise the plan and re-run `/map-plan`" (no staleness re-check); `/map-auto` never reaches this ask because its pre-phase `auto_decide_holds` poll approves `plan_approval` first. Pending `dangerous_action`/`safety_guardrail`: refuse to proceed — surface the hold's `reason` and stop. Full recipe: [efficient-reference.md](efficient-reference.md#approval-hold-preflight).
 
 ### Pre-flight test baseline (MANDATORY at INIT_STATE)
 

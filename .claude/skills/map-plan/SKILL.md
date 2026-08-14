@@ -404,12 +404,12 @@ Record planning artifacts in the branch manifest after spec, blueprint, and task
 ```bash
 PLAN_ARTIFACTS_RESULT=$(python3 .map/scripts/map_step_runner.py record_plan_artifacts)
 echo "$PLAN_ARTIFACTS_RESULT"
-PLAN_APPROVAL_HOLD_ID=$(echo "$PLAN_ARTIFACTS_RESULT" | jq -r '.plan_approval_hold_id // empty')
+PLAN_APPROVAL_HOLD_ID=$(printf '%s' "$PLAN_ARTIFACTS_RESULT" | jq -r '.plan_approval_hold_id // empty')
 ```
 
 `/map-plan` deliberately stops BEFORE `INIT_STATE` (that step belongs to `/map-efficient`), so `plan_status: "ready"` requires only `task_plan_<branch>.md` + `blueprint.json` — `step_state.json` will land later. Don't be alarmed by `has_step_state: false` in the response; it's the expected planning-complete state.
 
-`record_plan_artifacts` also opens a `plan_approval` hold at the plan-ready boundary and returns it as `plan_approval_hold_id` (idempotent — re-running finds the same pending hold instead of spamming a new one). Capture `PLAN_APPROVAL_HOLD_ID` for the Step 8 checkpoint. This hold does **not** block `/map-plan` itself: planning artifacts are written and Step 8 prints its checkpoint regardless of whether the hold is still pending. The decision (`decide_approval_hold <hold-id> approved|denied`) happens later, at the `/map-efficient` INIT_STATE preflight or the `/map-task` Step 1 preflight — or automatically via `/map-auto`'s hold poll.
+`record_plan_artifacts` also opens a `plan_approval` hold at the plan-ready boundary and returns it as `plan_approval_hold_id` (idempotent — re-running finds the same pending hold instead of spamming a new one). Capture `PLAN_APPROVAL_HOLD_ID` for the Step 8 checkpoint. This hold does **not** block `/map-plan` itself: planning artifacts are written and Step 8 prints its checkpoint regardless of whether the hold is still pending. The decision (`decide_approval_hold <hold-id> approved|denied`) happens later, at the `/map-efficient` approval-hold preflight or the `/map-task` Step 1 preflight — or automatically via `/map-auto`'s hold poll. If the result instead carries `plan_approval_hold_error: true`, the hold store failed — say so in the Step 8 checkpoint and have the operator create/decide the hold manually (`create_approval_hold --kind plan_approval ...`).
 
 Runner functions you'll commonly need from `/map-plan`:
 
