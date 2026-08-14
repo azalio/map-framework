@@ -8,6 +8,12 @@ the native Claude Code permission layer.
 The safety-guardrails.py hook provides a separate, more nuanced layer that
 handles these same concerns with safe-path-prefix allowlisting; these tests
 guard only the coarser settings.json deny-glob layer.
+
+Also guards (issue #428) that the deny list contains no path-scoped
+``Write(...)`` rules and no ``MultiEdit(...)`` rules at all: Claude Code
+resolves file permissions through ``Edit(path)`` rules only (they cover every
+file-editing tool), and MultiEdit is no longer a tool.  Both forms produce
+startup warnings while enforcing nothing.
 """
 
 from __future__ import annotations
@@ -26,6 +32,9 @@ SETTINGS_FILES = [
     REPO_ROOT / "src" / "mapify_cli" / "templates" / "settings.json",
 ]
 SETTINGS_IDS = [str(p.relative_to(REPO_ROOT)) for p in SETTINGS_FILES]
+
+# Tool names Claude Code no longer recognises in permission rules (issue #428).
+_RETIRED_TOOL_NAMES = frozenset({"MultiEdit"})
 
 
 def _edit_deny_globs(settings_path: Path) -> list[str]:
@@ -218,116 +227,66 @@ def test_subdirectory_env_files_blocked(settings_path: Path, env_file: str) -> N
 
 
 # ---------------------------------------------------------------------------
-# Security Gap 12: Write and MultiEdit deny globs must mirror Edit globs
+# Path-scoped Write(...) / MultiEdit(...) deny rules must be ABSENT (issue #428)
+#
+# These rules were added for "security gap 12" on the assumption that Claude
+# Code treats Edit/Write/MultiEdit as distinct tools for FILE permission
+# checks.  That assumption no longer holds:
+#
+#   * MultiEdit was removed as a tool entirely — every MultiEdit(...) rule
+#     emits 'matches no known tool — check for typos' at startup.
+#   * File permission checks only consult Edit(path) rules; Edit rules cover
+#     ALL file-editing tools (Write included).  Claude Code emits
+#     'Write(...) is not matched by file permission checks — only Edit(path)
+#     rules are.  Use Edit(...) instead.'
+#
+# Keeping them produced 22 startup warnings in every repo installed via
+# `mapify init` while adding zero enforcement.  The Edit(...) globs above are
+# the real gate; safety-guardrails.py is the second layer and still matches
+# on the Write tool NAME (not a path rule), so nothing is left unguarded.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("settings_path", SETTINGS_FILES, ids=SETTINGS_IDS)
-def test_write_env_glob_present(settings_path: Path) -> None:
-    """Write(**/.env*) must be in the deny list (security gap 12).
+def test_no_path_scoped_write_deny_rules(settings_path: Path) -> None:
+    """Write(<path>) deny rules must be absent — they are silently ignored."""
+    globs = _write_deny_globs(settings_path)
+    assert globs == [], (
+        f"{settings_path.relative_to(REPO_ROOT)}: path-scoped Write deny rules "
+        f"{globs!r} are not enforced by Claude Code's file permission checks "
+        "and emit a startup warning — express them as Edit(...) instead "
+        "(Edit rules cover all file-editing tools). See issue #428."
+    )
 
-    Claude Code treats Edit, Write, and MultiEdit as distinct tools — a deny
-    rule for Edit(...) does not block Write(...).  Before the fix only Edit
-    rules covered .env files, leaving Write open.
+
+@pytest.mark.parametrize("settings_path", SETTINGS_FILES, ids=SETTINGS_IDS)
+def test_no_multiedit_deny_rules(settings_path: Path) -> None:
+    """MultiEdit(...) deny rules must be absent — MultiEdit is not a tool anymore."""
+    globs = _multiedit_deny_globs(settings_path)
+    assert globs == [], (
+        f"{settings_path.relative_to(REPO_ROOT)}: MultiEdit deny rules {globs!r} "
+        "reference a tool that no longer exists — Claude Code reports "
+        "'matches no known tool' at startup. Use Edit(...) instead. See issue #428."
+    )
+
+
+@pytest.mark.parametrize("settings_path", SETTINGS_FILES, ids=SETTINGS_IDS)
+def test_every_deny_rule_targets_a_known_tool(settings_path: Path) -> None:
+    """No deny rule may name a tool Claude Code does not know about.
+
+    Guards the whole deny list, not just the Write/MultiEdit patterns this
+    issue removed — a future edit that reintroduces any retired tool name
+    fails here rather than in the user's terminal at startup.
     """
-    globs = _write_deny_globs(settings_path)
-    assert "**/.env*" in globs, (
-        f"{settings_path.relative_to(REPO_ROOT)}: "
-        "Write(**/.env*) is missing from the deny list — "
-        "Claude Code treats Write as a separate tool from Edit"
-    )
-
-
-@pytest.mark.parametrize("settings_path", SETTINGS_FILES, ids=SETTINGS_IDS)
-def test_multiedit_env_glob_present(settings_path: Path) -> None:
-    """MultiEdit(**/.env*) must be in the deny list (security gap 12)."""
-    globs = _multiedit_deny_globs(settings_path)
-    assert "**/.env*" in globs, (
-        f"{settings_path.relative_to(REPO_ROOT)}: "
-        "MultiEdit(**/.env*) is missing from the deny list — "
-        "Claude Code treats MultiEdit as a separate tool from Edit"
-    )
-
-
-@pytest.mark.parametrize("settings_path", SETTINGS_FILES, ids=SETTINGS_IDS)
-@pytest.mark.parametrize("src_file", _BLOCKED_SECRET_FILES)
-def test_secret_manifest_files_blocked_by_write(
-    settings_path: Path, src_file: str
-) -> None:
-    """Secret manifest files (.yaml/.json/etc.) must also be blocked by Write deny globs."""
-    globs = _write_deny_globs(settings_path)
-    matched = any(fnmatch.fnmatch(src_file, g) for g in globs)
-    assert matched, (
-        f"{settings_path.relative_to(REPO_ROOT)}: secret file {src_file!r} "
-        "is not blocked by any Write deny glob — check extension-scoped patterns"
-    )
-
-
-@pytest.mark.parametrize("settings_path", SETTINGS_FILES, ids=SETTINGS_IDS)
-@pytest.mark.parametrize("src_file", _BLOCKED_SECRET_FILES)
-def test_secret_manifest_files_blocked_by_multiedit(
-    settings_path: Path, src_file: str
-) -> None:
-    """Secret manifest files (.yaml/.json/etc.) must also be blocked by MultiEdit deny globs."""
-    globs = _multiedit_deny_globs(settings_path)
-    matched = any(fnmatch.fnmatch(src_file, g) for g in globs)
-    assert matched, (
-        f"{settings_path.relative_to(REPO_ROOT)}: secret file {src_file!r} "
-        "is not blocked by any MultiEdit deny glob — check extension-scoped patterns"
-    )
-
-
-@pytest.mark.parametrize("settings_path", SETTINGS_FILES, ids=SETTINGS_IDS)
-@pytest.mark.parametrize("src_file", _BLOCKED_CREDENTIALS_FILES)
-def test_credentials_manifest_files_blocked_by_write(
-    settings_path: Path, src_file: str
-) -> None:
-    """Credential manifest files (.yaml/.json/etc.) must also be blocked by Write deny globs."""
-    globs = _write_deny_globs(settings_path)
-    matched = any(fnmatch.fnmatch(src_file, g) for g in globs)
-    assert matched, (
-        f"{settings_path.relative_to(REPO_ROOT)}: credentials file {src_file!r} "
-        "is not blocked by any Write deny glob — check extension-scoped patterns"
-    )
-
-
-@pytest.mark.parametrize("settings_path", SETTINGS_FILES, ids=SETTINGS_IDS)
-@pytest.mark.parametrize("src_file", _BLOCKED_CREDENTIALS_FILES)
-def test_credentials_manifest_files_blocked_by_multiedit(
-    settings_path: Path, src_file: str
-) -> None:
-    """Credential manifest files (.yaml/.json/etc.) must also be blocked by MultiEdit deny globs."""
-    globs = _multiedit_deny_globs(settings_path)
-    matched = any(fnmatch.fnmatch(src_file, g) for g in globs)
-    assert matched, (
-        f"{settings_path.relative_to(REPO_ROOT)}: credentials file {src_file!r} "
-        "is not blocked by any MultiEdit deny glob — check extension-scoped patterns"
-    )
-
-
-@pytest.mark.parametrize("settings_path", SETTINGS_FILES, ids=SETTINGS_IDS)
-@pytest.mark.parametrize("env_file", _BLOCKED_SUBDIRECTORY_ENV_FILES)
-def test_subdirectory_env_files_blocked_by_write(
-    settings_path: Path, env_file: str
-) -> None:
-    """Subdirectory .env* files must also be blocked by Write deny globs (security gap 12)."""
-    globs = _write_deny_globs(settings_path)
-    matched = any(fnmatch.fnmatch(env_file, g) for g in globs)
-    assert matched, (
-        f"{settings_path.relative_to(REPO_ROOT)}: .env file {env_file!r} "
-        "is not blocked by any Write deny glob"
-    )
-
-
-@pytest.mark.parametrize("settings_path", SETTINGS_FILES, ids=SETTINGS_IDS)
-@pytest.mark.parametrize("env_file", _BLOCKED_SUBDIRECTORY_ENV_FILES)
-def test_subdirectory_env_files_blocked_by_multiedit(
-    settings_path: Path, env_file: str
-) -> None:
-    """Subdirectory .env* files must also be blocked by MultiEdit deny globs (security gap 12)."""
-    globs = _multiedit_deny_globs(settings_path)
-    matched = any(fnmatch.fnmatch(env_file, g) for g in globs)
-    assert matched, (
-        f"{settings_path.relative_to(REPO_ROOT)}: .env file {env_file!r} "
-        "is not blocked by any MultiEdit deny glob"
+    data = json.loads(settings_path.read_text())
+    deny_rules: list[str] = data.get("permissions", {}).get("deny", [])
+    offenders = [
+        rule
+        for rule in deny_rules
+        for tool in [rule.split("(", 1)[0]]
+        if tool in _RETIRED_TOOL_NAMES
+    ]
+    assert offenders == [], (
+        f"{settings_path.relative_to(REPO_ROOT)}: deny rules {offenders!r} name "
+        f"tools that no longer exist ({sorted(_RETIRED_TOOL_NAMES)}). See issue #428."
     )

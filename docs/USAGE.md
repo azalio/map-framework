@@ -1965,9 +1965,9 @@ Access control rules in `.claude/settings.json`:
 {
   "permissions": {
     "deny": [
-      "Write(./.env*)",
-      "Write(**/*credentials*)",
-      "Write(**/*secret*)",
+      "Edit(**/.env*)",
+      "Edit(**/*credentials*.yaml)",
+      "Edit(**/*secret*.yaml)",
       "Bash(rm:-rf)",
       "Bash(git:push:--force:origin:main)"
     ],
@@ -1979,6 +1979,11 @@ Access control rules in `.claude/settings.json`:
   }
 }
 ```
+
+Path-scoped deny rules must use `Edit(<glob>)` — Claude Code resolves file
+permissions through `Edit` rules only, and they already cover every
+file-editing tool. A `Write(<glob>)` rule is silently ignored (and warned
+about at startup); `MultiEdit(...)` names a tool that no longer exists.
 
 **Enforcement:** Medium (tool-level blocking with bypass risk)
 
