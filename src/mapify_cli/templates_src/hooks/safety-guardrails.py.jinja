@@ -248,8 +248,10 @@ VERIFIER_AGENT_TYPES = frozenset(
     }
 )
 
-# Write scope a verifier keeps: its own branch-scoped artifact directory.
-VERIFIER_WRITABLE_PREFIXES = (".map/", "/.map/")
+# Write scope a verifier keeps: the project-root `.map/` artifact tree, and only
+# that one. Resolved against CLAUDE_PROJECT_DIR at call time — see
+# check_verifier_path.
+VERIFIER_WRITABLE_DIRNAME = ".map"
 
 # git subcommands that mutate the index, the worktree, refs, history, or config.
 # `pull`/`fetch`/`submodule` are included because they move the very refs the
@@ -338,29 +340,32 @@ def check_verifier_command(command: str) -> tuple[bool, str]:
 
 
 def check_verifier_path(path: str) -> tuple[bool, str]:
-    """Confine verifier writes to `.map/`. Returns (is_safe, reason).
+    """Confine verifier writes to the PROJECT-ROOT `.map/`. Returns (is_safe, reason).
 
-    The path is normalized BEFORE the prefix check: a raw text comparison accepts
-    `.map/../src/mapify_cli/cli.py`, which starts with `.map/` yet resolves outside
-    the allowed workspace.
+    Containment is decided on the resolved path, never on path text. A textual
+    check is bypassable three ways, all of which land outside the artifact tree:
+    `.map/../src/cli.py` (starts with the prefix), `src/.map/payload.py` (contains
+    `/.map/`), and `/elsewhere/.map/x` (an unrelated project's directory).
 
-    This is the outer boundary only. Runner-owned state inside `.map/`
+    This is the outer boundary only. Runner-owned state INSIDE `.map/`
     (`.map/scripts/**`, `step_state.json`, `approval_holds.json`, …) is separately
     protected from direct hand-editing by the workflow-gate state-tamper detector,
     which applies to every caller, not just verifiers.
     """
     if not path:
         return True, ""
-    normalized = os.path.normpath(path.replace("\\", "/")).replace("\\", "/")
-    normalized = normalized.removeprefix("./")
-    if normalized.startswith(VERIFIER_WRITABLE_PREFIXES) or "/.map/" in normalized:
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+    map_root = os.path.realpath(os.path.join(project_dir, VERIFIER_WRITABLE_DIRNAME))
+    candidate = path if os.path.isabs(path) else os.path.join(project_dir, path)
+    resolved = os.path.realpath(candidate)
+    if resolved == map_root or resolved.startswith(map_root + os.sep):
         return True, ""
     return (
         False,
         (
-            f"Blocked: verifier-class agents may only write under `.map/`; "
-            f"refused write to {path}. Report the required change in your verdict "
-            "instead of applying it."
+            f"Blocked: verifier-class agents may only write under the project's "
+            f"`{VERIFIER_WRITABLE_DIRNAME}/` artifact tree; refused write to {path}. "
+            "Report the required change in your verdict instead of applying it."
         ),
     )
 

@@ -685,14 +685,34 @@ class TestVerifierAgentBoundary:
         [
             ".map/feat-x/final_verification.json",
             "./.map/feat-x/progress_feat-x.md",
-            "/abs/repo/.map/feat-x/code-review-001.md",
+            str(HOOK_PATH.parent.parent.parent / ".map" / "feat-x" / "code-review-001.md"),
         ],
     )
     def test_map_artifact_writes_allowed_for_verifiers(self, agent, path):
-        """final-verifier legitimately writes its own verdict artifacts."""
+        """final-verifier legitimately writes its own verdict artifacts, whether it
+        names them relative to the project root or by absolute path."""
         exit_code, stdout, _ = run_hook_as_agent("Write", {"file_path": path}, agent)
         assert exit_code == 0
         assert _parse_stdout(stdout) == {}, f"{path!r} was wrongly blocked"
+
+    @pytest.mark.parametrize("agent", VERIFIERS)
+    @pytest.mark.parametrize(
+        "path",
+        [
+            # A nested `.map/` is not the project's artifact tree.
+            "src/.map/payload.py",
+            "src/mapify_cli/.map/cli.py",
+            # Another project's `.map/` is out of bounds too.
+            "/tmp/other-repo/.map/feat-x/anything.py",
+            "../sibling-repo/.map/feat-x/anything.py",
+        ],
+    )
+    def test_foreign_or_nested_map_dirs_are_blocked(self, agent, path):
+        """Containment is decided on the RESOLVED path against CLAUDE_PROJECT_DIR —
+        a substring check on `/.map/` accepts all of these."""
+        exit_code, stdout, _ = run_hook_as_agent("Write", {"file_path": path}, agent)
+        assert exit_code == 0
+        _assert_denied(_parse_stdout(stdout))
 
     @pytest.mark.parametrize("agent", VERIFIERS)
     @pytest.mark.parametrize(
