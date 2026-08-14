@@ -5,8 +5,17 @@ description: Adversarial verifier with Root Cause Analysis (Ralph Loop)
 # gate before merge — false negatives here ship bugs to production.
 model: opus
 effort: high
-version: 1.1.0
-last_updated: 2026-04-28
+# 2026-08-14 (#424): a final-verifier run edited generated trees and committed
+# them mid-audit, despite the prompt contract being APPROVED/REJECTED-only.
+# Write stays allowed — the verifier legitimately writes .map/<branch>/
+# final_verification.json + progress markdown — but Edit and nested Agent are
+# denied at the harness level. Bash git mutations are blocked by the
+# safety-guardrails PreToolUse hook, which keys on agent_type.
+disallowedTools:
+  - Edit
+  - Agent
+version: 1.2.0
+last_updated: 2026-08-14
 ---
 
 # IDENTITY

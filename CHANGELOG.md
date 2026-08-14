@@ -8,6 +8,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Verifier-class agents can no longer mutate the branch (#424).** A `final-verifier`
+  run created and committed `3c6a7db` mid-audit under an APPROVED/REJECTED-only prompt
+  contract: it hand-edited four *generated* trees without touching their `.jinja`
+  sources (breaking the single-source render invariant and failing three byte-parity
+  tests), mangled `(#422 AC-1, AC-2, AC-6)` comments into `(#422 , , )`, renamed a
+  blueprint-named regression test, then reported "working tree clean / make check exit 0"
+  for its own post-commit state. Prompt text is not a capability boundary. `final-verifier`
+  now ships `disallowedTools: [Edit, Agent]` (Write stays — it owns
+  `.map/<branch>/final_verification.json` + progress markdown), and `safety-guardrails.py`
+  keys on the PreToolUse `agent_type` field to deny git-mutating Bash and any
+  `Edit`/`Write`/`MultiEdit` outside `.map/` for `final-verifier`, `monitor`, `evaluator`,
+  `predictor`, and `documentation-reviewer`. Reads and read-only git are untouched; the
+  main thread and `actor` are unaffected. Completes the #378 hardening direction, which
+  had explicitly deferred `final-verifier`.
+- **Review bundle diffed uncommitted changes only (#426).** `snapshot_code_state`
+  computed its diff with `git diff HEAD`, so on a fully-committed branch — the normal
+  `/map-check` → `/map-review` state — `review-bundle.md` self-reported
+  `Files changed: 0`, `[no git diff output]`, and `Prior-Stage Consumption: blocked /
+  missing code diff snapshot` for a branch carrying a 50-file, +2192-line diff. All three
+  reviewers flagged the contradiction and fell back to raw git. The snapshot now resolves
+  the review base from `origin/main | origin/master | main | master` and diffs
+  `merge-base..HEAD`, keeping the uncommitted diff as a secondary work-in-progress signal
+  (`uncommitted_files_changed` / `uncommitted_diff_stat`) and reporting the range it used
+  (`diff_base`, `diff_base_ref`, `diff_range`). `/map-review` Step A.1 gathers the same
+  range. Degrades to the old HEAD-only view when no default-branch ref resolves.
+- **`echo "$VAR" | jq` mangled JSON escapes under zsh (#425).** zsh's builtin `echo`
+  interprets backslash escapes, so `\n`/`\t` inside JSON string values became raw C0
+  control bytes and `jq` aborted with `control characters from U+0000 through U+001F must
+  be escaped`. Captured in `$(...)` the failure was swallowed and the variable landed
+  EMPTY — observed as an empty-bodied `pr-draft.md` written with exit 0. Every remaining
+  instance across shipped skills, references, the orchestrator usage block, and the four
+  static-analysis handlers now uses `printf '%s'` (or `printf '%s\n'` for `while read`
+  consumers), including the `python3 -c` consumers of the same class.
+  `tests/test_shell_json_pipes.py` scans `templates_src` plus every generated tree so the
+  pattern cannot reland; the convention is documented in `CLAUDE.md` and
+  `references/bash-guidelines.md`.
+- **Dead worktree-isolation resolver wired up; subtask merge had no dirty guard (#423).**
+  `resolve_worktree_isolation` (the ST-009 fallback matrix) and `_require_clean_merge_target`
+  had zero production callers, so the documented `require_clean_merge_target` config key
+  was a dead toggle and the degrade reason codes that `parallelism_observability` publishes
+  were never produced at runtime. `worktree_isolation_status` now reports the live decision
+  (`isolated` | `sequential` | `abort`) with `degraded` / `degraded_reason` / `warning` /
+  `mode`, so a dirty merge target surfaces *before* a wave starts rather than when
+  `create_subtask_worktree` refuses mid-flight. The dead `require_clean_merge_target` key is
+  gone (a clean target is not optional for a squash-merge accept path). One scanner
+  (`_wt_dirty_paths`) now backs every dirty-target decision, and the shared
+  `_wt_dirty_target_guard` — DIRTY_TARGET refusal plus the #422 `dangerous_action` hold — is
+  applied by `merge_subtask_worktree` as well as `merge_wave_worktrees`, closing a gap where
+  the single-subtask accept path could squash-merge onto a dirty working branch.
 - **22 dead permission deny rules removed from `settings.json` (#428).** Every repo
   installed via `mapify init` printed 22 warnings at `claude` startup — 11
   `MultiEdit(<glob>)` rules naming a tool that no longer exists, and 11

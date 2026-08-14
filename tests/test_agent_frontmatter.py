@@ -330,9 +330,32 @@ class TestAgentCapabilityHardening:
             "actor is a legitimate writer — do not add disallowedTools"
         )
 
-    def test_final_verifier_has_no_disallowed_tools(self):
-        """final-verifier is a legitimate writer and must NOT be capability-restricted."""
+    def test_final_verifier_has_edit_in_disallowed_tools(self):
+        """#424 supersedes the #378 'final-verifier is unrestricted' contract.
+
+        A final-verifier run hand-edited generated trees and committed them
+        mid-audit under an APPROVED/REJECTED-only prompt contract. Edit is now
+        denied at the harness level.
+        """
         fm = self._load_frontmatter("final-verifier")
-        assert "disallowedTools" not in fm, (
-            "final-verifier is a legitimate writer — do not add disallowedTools"
+        disallowed = fm.get("disallowedTools", [])
+        assert "Edit" in disallowed, (
+            "final-verifier must deny Edit — it audits, it does not fix"
+        )
+
+    def test_final_verifier_has_agent_in_disallowed_tools(self):
+        fm = self._load_frontmatter("final-verifier")
+        disallowed = fm.get("disallowedTools", [])
+        assert "Agent" in disallowed, (
+            "final-verifier must deny Agent — it must not spawn sub-agents"
+        )
+
+    def test_final_verifier_write_not_denied(self):
+        """final-verifier IS allowed to Write — it owns .map/<branch>/
+        final_verification.json + the progress markdown. The hook confines those
+        writes to `.map/` (#424); the frontmatter must not remove Write outright."""
+        fm = self._load_frontmatter("final-verifier")
+        disallowed = fm.get("disallowedTools", [])
+        assert "Write" not in disallowed, (
+            "final-verifier needs Write for .map/ verdict artifacts — do not deny it"
         )

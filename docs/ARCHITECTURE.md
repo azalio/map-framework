@@ -1635,6 +1635,8 @@ If you forked the skill-backed `/map-efficient` workflow, you must manually inte
 
 **Responsibility:** Adversarial verifier applying the "Four-Eyes Principle" — verifies the ENTIRE task goal is achieved, not just individual subtasks. Catches premature completion and hallucinated success.
 
+**Capability Constraints (frontmatter + hook):** `disallowedTools: [Edit, Agent]`. FinalVerifier audits, it does not fix — and it must not spawn sub-agents. `Write` stays permitted because it owns `.map/<branch>/final_verification.json` and the progress markdown; the `safety-guardrails.py` PreToolUse hook confines those writes to `.map/` and blocks git-mutating Bash (`commit`, `push`, `reset`, `checkout`, `restore`, `add`, …) for every verifier-class `agent_type` (`final-verifier`, `monitor`, `evaluator`, `predictor`, `documentation-reviewer`). Read-only git (`status`, `diff`, `log`, `show`, `rev-parse`, `ls-files`) and all reads stay unrestricted — a verifier gathers evidence, then reports it in the verdict.
+
 **Input:**
 ```json
 {
