@@ -265,9 +265,16 @@ Mode semantics:
 
 ### Step A.1: Gather changes
 
+Diff against the **merge-base with the default branch**, not `HEAD`. On a
+fully-committed branch — the normal `/map-check` → `/map-review` state —
+`git diff HEAD` is empty and under-reports the review scope to zero (#426).
+
 ```bash
-git diff HEAD
-git status
+BASE=$(git rev-parse --verify --quiet origin/main >/dev/null && echo origin/main \
+       || (git rev-parse --verify --quiet origin/master >/dev/null && echo origin/master))
+git --no-pager diff --stat "${BASE:-HEAD}"...HEAD
+git --no-pager diff "${BASE:-HEAD}"...HEAD
+git status          # uncommitted work in progress — secondary signal
 ```
 
 ### Step A.1b: Load canonical review context (bundle + handoff)

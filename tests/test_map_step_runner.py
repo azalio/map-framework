@@ -4808,6 +4808,87 @@ class TestSnapshotCodeState:
 
         assert len(result["git_ref"]) <= 12
 
+    def test_diff_uses_merge_base_not_head_when_branch_is_committed(
+        self, monkeypatch
+    ):
+        """#426: a fully-committed branch must still report its real scope.
+
+        `git diff HEAD` is empty once every subtask is committed, which made the
+        review bundle self-report `Files changed: 0` on a 50-file branch.
+        """
+        import subprocess as real_subprocess
+
+        def mock_run(cmd, **kwargs):
+            del kwargs
+
+            def ok(out: str):
+                return real_subprocess.CompletedProcess(cmd, 0, out, "")
+
+            if cmd[:2] == ["git", "rev-parse"] and "HEAD" in cmd and "--verify" not in cmd:
+                return ok("deadbeefcafebabe\n")
+            if "--verify" in cmd:
+                # only origin/main resolves
+                return ok("base000\n") if "origin/main^{commit}" in cmd else \
+                    real_subprocess.CompletedProcess(cmd, 1, "", "")
+            if "merge-base" in cmd:
+                return ok("base0000000000\n")
+            # Working tree is clean: every `git diff ... HEAD` form is empty,
+            # while the merge-base range carries the branch delta.
+            if cmd[:2] == ["git", "diff"] and "base0000000000" in cmd:
+                if "--stat" in cmd:
+                    return ok(" a.py | 2 +-\n b.py | 3 +++\n 2 files changed")
+                return ok("a.py\nb.py")
+            return ok("")
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        result = map_step_runner.snapshot_code_state(branch="feat-x")
+
+        assert result["files_changed"] == ["a.py", "b.py"]
+        assert result["diff_base_ref"] == "origin/main"
+        assert result["diff_base"] == "base00000000"
+        assert result["diff_range"] == "base00000000..HEAD"
+        # Uncommitted diff is retained as the secondary work-in-progress signal.
+        assert result["uncommitted_files_changed"] == []
+        assert result["uncommitted_diff_stat"] == ""
+
+    def test_diff_falls_back_to_head_without_default_branch_ref(self, monkeypatch):
+        """No origin/main|master and no local main|master → HEAD-only snapshot."""
+        import subprocess as real_subprocess
+
+        def mock_run(cmd, **kwargs):
+            del kwargs
+            if "--verify" in cmd:
+                return real_subprocess.CompletedProcess(cmd, 1, "", "")
+            if cmd[:2] == ["git", "rev-parse"]:
+                return real_subprocess.CompletedProcess(cmd, 0, "abc123abc123\n", "")
+            if cmd[:2] == ["git", "diff"] and "--name-only" in cmd:
+                return real_subprocess.CompletedProcess(cmd, 0, "wip.py", "")
+            if cmd[:2] == ["git", "diff"] and "--stat" in cmd:
+                return real_subprocess.CompletedProcess(cmd, 0, " wip.py | 1 +", "")
+            return real_subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        result = map_step_runner.snapshot_code_state(branch="orphan")
+
+        assert result["diff_base"] == ""
+        assert result["diff_base_ref"] == ""
+        assert result["diff_range"] == "HEAD"
+        assert result["files_changed"] == ["wip.py"]
+
+    def test_prior_stage_diff_entry_names_the_actual_range(self):
+        """#426: the consumption entry must quote the range the snapshot used."""
+        entry = map_step_runner._prior_stage_diff_entry(
+            {
+                "status": "success",
+                "files_changed": [],
+                "diff_stat": "",
+                "diff_range": "base00000000..HEAD",
+            }
+        )
+        assert entry["path"] == "git diff --stat base00000000..HEAD"
+        assert "base00000000..HEAD" in entry["reason"]
+        assert entry["present"] is False
+
 
 class TestLoadBlueprint:
     """Tests for load_blueprint function."""

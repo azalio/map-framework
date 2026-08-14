@@ -1880,16 +1880,24 @@ def _prior_stage_diff_entry(
     file_count = len(files_changed) if isinstance(files_changed, list) else 0
     diff_stat = code_state.get("diff_stat")
     present = code_state.get("status") == "success" and (file_count > 0 or bool(diff_stat))
+    # Name the range the snapshot actually used (#426): a HEAD-only diff on a
+    # fully-committed branch is empty, and reporting the wrong command in the
+    # "missing" reason sent reviewers looking for the wrong problem.
+    diff_range = code_state.get("diff_range") or "HEAD"
     return {
         "key": "code_diff",
         "label": "code diff",
         "kind": "git-diff",
-        "path": "git diff --stat HEAD",
+        "path": f"git diff --stat {diff_range}",
         "required": required,
         "present": present,
         "consumed": present,
         "count": file_count,
-        "reason": "" if present else "missing code diff snapshot; no changed files were visible against HEAD",
+        "reason": (
+            ""
+            if present
+            else f"missing code diff snapshot; no changed files were visible in {diff_range}"
+        ),
     }
 
 
@@ -9284,11 +9292,20 @@ def _render_bundle_markdown(result: dict) -> str:
     if cs_status == "success":
         lines.append(f"- Git ref: `{code_state.get('git_ref', 'unknown')}`")
         lines.append(f"- Branch: `{code_state.get('branch', 'unknown')}`")
+        base_ref = code_state.get("diff_base_ref") or ""
+        diff_range = code_state.get("diff_range") or "HEAD"
+        lines.append(
+            f"- Review target: `{diff_range}`"
+            + (f" (merge-base with `{base_ref}`)" if base_ref else " (no default-branch ref resolved)")
+        )
         files = code_state.get("files_changed", [])
         lines.append(f"- Files changed: {len(files)}")
         diff_stat = code_state.get("diff_stat", "")
         if diff_stat:
             lines.append(f"- Diff stat: {diff_stat[:200]}")
+        uncommitted = code_state.get("uncommitted_files_changed")
+        if isinstance(uncommitted, list):
+            lines.append(f"- Uncommitted (work in progress): {len(uncommitted)} file(s)")
     else:
         lines.append(f"- Status: {cs_status}")
         reason = code_state.get("reason", "")
@@ -11921,12 +11938,50 @@ def run_test_gate() -> dict:
 _DIFF_STAT_MAX_CHARS = 65_536
 _FILES_CHANGED_MAX_ENTRIES = 500
 
+# Candidate default-branch refs, tried in order when resolving the review base.
+# Remote-tracking refs come first: they survive a local branch that was reset or
+# never checked out, which is the common CI/clone shape.
+_REVIEW_BASE_CANDIDATE_REFS = (
+    "origin/main",
+    "origin/master",
+    "main",
+    "master",
+)
+
+
+def _resolve_review_base(run_git: Callable[[list[str]], str]) -> tuple[str, str]:
+    """Return ``(base_sha, base_ref)`` for the branch's review target.
+
+    The review target is the merge-base with the default branch, NOT ``HEAD``:
+    on a fully-committed feature branch (the normal /map-check → /map-review
+    state) ``git diff HEAD`` is empty, so a HEAD-based snapshot self-reports
+    "Files changed: 0" for a branch that actually carries the whole diff (#426).
+
+    Returns ``("", "")`` when no default-branch ref resolves (fresh repo, no
+    remote, shallow clone) — callers then fall back to the uncommitted diff.
+    """
+    for ref in _REVIEW_BASE_CANDIDATE_REFS:
+        if not run_git(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"]):
+            continue
+        base = run_git(["merge-base", ref, "HEAD"])
+        if base:
+            return base, ref
+    return "", ""
+
 
 def snapshot_code_state(branch: str | None = None) -> dict:
     """Capture current git state for artifact-to-code verification.
 
     Records git ref, changed files, and diff stat so review artifacts
     can be tied to actual code state. Populates subtask_files_changed.
+
+    ``files_changed``/``diff_stat`` describe the REVIEW TARGET — the range from
+    the merge-base with the default branch up to HEAD — so a branch whose work is
+    already committed still reports its real scope (#426). The uncommitted
+    working-tree diff is kept alongside as a secondary work-in-progress signal
+    (``uncommitted_files_changed``/``uncommitted_diff_stat``). When no
+    default-branch ref resolves, the snapshot degrades to the uncommitted diff and
+    reports ``diff_base_ref=""``.
 
     Very large repos can produce huge ``diff_stat`` and ``files_changed`` outputs that
     bloat the bundle JSON. Both are capped here (``_DIFF_STAT_MAX_CHARS`` /
@@ -11949,10 +12004,26 @@ def snapshot_code_state(branch: str | None = None) -> dict:
         except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
             return ""
 
+    def _names(raw: str) -> list[str]:
+        return [f for f in raw.splitlines() if f.strip()] if raw else []
+
     git_ref = _run_git(["rev-parse", "HEAD"])
-    diff_stat = _run_git(["diff", "--stat", "HEAD"])
-    diff_names = _run_git(["diff", "--name-only", "HEAD"])
-    files_changed = [f for f in diff_names.splitlines() if f.strip()] if diff_names else []
+
+    # Secondary signal: uncommitted work in the main checkout.
+    uncommitted_stat = _run_git(["diff", "--stat", "HEAD"])
+    uncommitted_files = _names(_run_git(["diff", "--name-only", "HEAD"]))
+
+    base_sha, base_ref = _resolve_review_base(_run_git)
+    if base_sha:
+        diff_range = f"{base_sha[:12]}..HEAD"
+        diff_stat = _run_git(["diff", "--stat", base_sha, "HEAD"])
+        files_changed = _names(_run_git(["diff", "--name-only", base_sha, "HEAD"]))
+    else:
+        # No default-branch ref to anchor on — degrade to the old HEAD-only view
+        # rather than reporting nothing at all.
+        diff_range = "HEAD"
+        diff_stat = uncommitted_stat
+        files_changed = list(uncommitted_files)
 
     diff_truncated = False
     if len(diff_stat) > _DIFF_STAT_MAX_CHARS:
@@ -11960,6 +12031,12 @@ def snapshot_code_state(branch: str | None = None) -> dict:
         diff_truncated = True
     if len(files_changed) > _FILES_CHANGED_MAX_ENTRIES:
         files_changed = files_changed[:_FILES_CHANGED_MAX_ENTRIES]
+        diff_truncated = True
+    if len(uncommitted_stat) > _DIFF_STAT_MAX_CHARS:
+        uncommitted_stat = uncommitted_stat[:_DIFF_STAT_MAX_CHARS] + "\n... [truncated]"
+        diff_truncated = True
+    if len(uncommitted_files) > _FILES_CHANGED_MAX_ENTRIES:
+        uncommitted_files = uncommitted_files[:_FILES_CHANGED_MAX_ENTRIES]
         diff_truncated = True
 
     return {
@@ -11969,6 +12046,11 @@ def snapshot_code_state(branch: str | None = None) -> dict:
         "diff_stat": diff_stat,
         "branch": branch_name,
         "diff_truncated": diff_truncated,
+        "diff_base": base_sha[:12] if base_sha else "",
+        "diff_base_ref": base_ref,
+        "diff_range": diff_range,
+        "uncommitted_files_changed": uncommitted_files,
+        "uncommitted_diff_stat": uncommitted_stat,
     }
 
 
