@@ -183,6 +183,14 @@ Execution mode is `batch`; the orchestrator skips this step.
 
 State is managed by the orchestrator. Do not create `step_state.json` manually.
 
+### Pending-hold preflight (MANDATORY at INIT_STATE)
+
+```bash
+python3 .map/scripts/map_step_runner.py list_approval_holds --state pending
+```
+
+Pending `plan_approval`: ask the operator to approve/deny, then record via `decide_approval_hold <hold-id> <approved|denied> --note "<operator note>"` — approved continues into the test baseline below, denied STOPS with "revise the plan and re-run `/map-plan`" (no staleness re-check); `/map-auto` never reaches this ask because its pre-phase `auto_decide_holds` poll approves `plan_approval` first. Pending `dangerous_action`/`safety_guardrail`: refuse to proceed — surface the hold's `reason` and stop. Full recipe: [efficient-reference.md](efficient-reference.md#approval-hold-preflight).
+
 ### Pre-flight test baseline (MANDATORY at INIT_STATE)
 
 ```bash

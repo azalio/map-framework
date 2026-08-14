@@ -158,6 +158,15 @@ After approval, validate the step.
 
 Let the orchestrator create or update state. Do not write JSON by hand.
 
+Before the test baseline, resolve pending approval holds — full recipe in
+[efficient-reference.md](efficient-reference.md#approval-hold-preflight).
+
+```bash
+python3 .map/scripts/map_step_runner.py list_approval_holds --state pending
+```
+
+A pending `plan_approval` requires an explicit operator approve/deny, recorded via `decide_approval_hold <hold-id> <approved|denied> --note "<operator note>"`: approved continues into the test baseline below, denied STOPS — revise the plan and re-run `$map-plan` (no staleness re-check); an autonomous chain never reaches this ask because its pre-phase `auto_decide_holds` poll approves `plan_approval` first. A pending `dangerous_action`/`safety_guardrail` hold refuses to proceed instead — surface the hold's `reason` and stop.
+
 ```bash
 python3 .map/scripts/map_step_runner.py record_test_baseline "$BRANCH"
 python3 .map/scripts/map_orchestrator.py validate_step "$STEP_ID"
