@@ -34,7 +34,7 @@ _CITATION_RE = re.compile(
     (?<![:\w])                  # not preceded by another colon-citation or word
     (?P<path>
         [\w./\-]+               # path component
-        \.(?:py|md|sh|toml|yaml|yml|json|js|ts|go|rs|tsx|jsx)
+        \.(?:py|md|sh|toml|yaml|yml|json|js|ts|go|rs|tsx|jsx|jinja)
     )
     :
     (?P<line>\d+)

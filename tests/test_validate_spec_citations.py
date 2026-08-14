@@ -170,6 +170,23 @@ def test_recognised_extensions_only(validator, tmp_path: Path):
     assert result["passed"] is True
 
 
+def test_recognises_jinja_template_citations(validator, tmp_path: Path):
+    # Regression: `.jinja` sources (map_step_runner.py.jinja, SKILL.md.jinja) are
+    # the primary citation targets in this repo; the regex used to skip them
+    # silently, validating almost nothing in specs that cite template sources.
+    repo = _seed_repo(
+        tmp_path,
+        {"templates_src/runner.py.jinja": "first\nIDENT_TOKEN = 1\nthird\n"},
+    )
+    spec = _write_spec(
+        repo, "See `IDENT_TOKEN` at `templates_src/runner.py.jinja:2` for details."
+    )
+    result = validator.validate_spec(spec, repo)
+    assert result["total_citations"] == 1
+    assert result["passed"] is True
+    assert result["details"][0]["status"] == "ok"
+
+
 def test_resolves_path_escapes_repo_root(validator, tmp_path: Path):
     repo = tmp_path / "inside"
     repo.mkdir()
