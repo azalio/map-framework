@@ -339,7 +339,37 @@ LEARNING_CONSUMPTION_SOURCES = {"auto-handoff", "file-handoff", "inline-summary"
 REVIEW_SECTION_IDS: tuple[str, ...] = ("architecture", "code_quality", "tests", "performance")
 REVIEW_VALID_MODES: tuple[str, ...] = ("default", "reverse-sections", "shuffle-sections")
 LEARNING_IMMEDIATE_WINDOW_SECONDS = 30 * 60
-ACCEPTANCE_TAG_RE = re.compile(r"\[([A-Za-z][A-Za-z0-9_-]*-\d+[A-Za-z0-9_-]*)\]")
+# Requirement tags (AC-1, INV-4, HC-2, SC-1, ...) as they actually appear in
+# artifacts. Brackets are OPTIONAL: reviewer verdicts, commit messages and
+# verification prose write `HC-2 audit: pass`, never `[HC-2]`, so a
+# bracket-only matcher found nothing and the coverage table read 0/N forever.
+# Over-matching (`feat-422`, `ST-001`) is harmless — extracted tags are only
+# ever intersected with the blueprint's coverage_map keys.
+ACCEPTANCE_TAG_RE = re.compile(
+    r"(?<![A-Za-z0-9_])\[?([A-Za-z][A-Za-z0-9_-]*-\d+[A-Za-z0-9_-]*)\]?(?![A-Za-z0-9_])"
+)
+
+# Sentinels around the GENERATED acceptance-coverage block. write_verification_summary
+# appends that block to verification-summary.md, which is itself an evidence source —
+# without an exact exclusion span the report would read its own "AC-1 owned by ST-001"
+# lines back as evidence and report 100% forever. The markers are inline HTML comments
+# so they survive the newline-flattening applied when the summary is embedded in
+# pr-draft.md.
+ACCEPTANCE_COVERAGE_BLOCK_START = "<!-- map:acceptance-coverage:start -->"
+ACCEPTANCE_COVERAGE_BLOCK_END = "<!-- map:acceptance-coverage:end -->"
+ACCEPTANCE_COVERAGE_BLOCK_RE = re.compile(
+    re.escape(ACCEPTANCE_COVERAGE_BLOCK_START)
+    + r".*?"
+    + re.escape(ACCEPTANCE_COVERAGE_BLOCK_END),
+    re.DOTALL,
+)
+# Structural fallback for artifacts written BEFORE the sentinels existed (every
+# already-installed repo has them on disk). Spans the heading up to the next
+# `## ` heading or end of text — the non-greedy body plus the lookahead also
+# handles pr-draft.md, where the whole summary is flattened onto one line.
+ACCEPTANCE_COVERAGE_LEGACY_BLOCK_RE = re.compile(
+    r"##\s+Acceptance Coverage.*?(?=##\s+|\Z)", re.DOTALL
+)
 REVIEW_PROMPT_DEFAULT_BUDGET_TOKENS = 12_000
 REVIEW_PROMPT_MIN_BUDGET_TOKENS = 1_024
 REVIEW_PROMPT_BUDGET_ENV = "MAP_REVIEW_PROMPT_BUDGET_TOKENS"
@@ -4655,23 +4685,71 @@ def _load_blueprint_for_coverage(branch_dir: Path) -> tuple[dict[str, object] | 
     return blueprint, ""
 
 
+def _strip_generated_coverage_blocks(text: str) -> str:
+    """Remove every generated acceptance-coverage block from evidence text.
+
+    The coverage report must never count its own output as evidence — see
+    ACCEPTANCE_COVERAGE_BLOCK_START. Sentinel-delimited blocks are removed exactly;
+    unmarked legacy blocks fall back to the section-heading span.
+    """
+    stripped = ACCEPTANCE_COVERAGE_BLOCK_RE.sub(" ", text)
+    return ACCEPTANCE_COVERAGE_LEGACY_BLOCK_RE.sub(" ", stripped)
+
+
 def _extract_acceptance_tags(text: object) -> set[str]:
-    """Return bracketed acceptance/invariant tags found in artifact text."""
+    """Return acceptance/invariant tags found in artifact text (brackets optional)."""
     if not isinstance(text, str) or not text:
         return set()
-    return {match.group(1) for match in ACCEPTANCE_TAG_RE.finditer(text)}
+    return {
+        match.group(1)
+        for match in ACCEPTANCE_TAG_RE.finditer(_strip_generated_coverage_blocks(text))
+    }
+
+
+def _branch_commit_messages() -> str:
+    """Return the branch's commit messages (merge-base..HEAD), or "" on any failure.
+
+    Commit messages are upstream-owned evidence: the Actor writes them at the moment
+    the work lands, they are immutable afterwards, and unlike code comments they are
+    NOT rewritten by the scrub-internal-ids Stop hook. Never raises.
+    """
+
+    def _run_git(args: list[str]) -> str:
+        try:
+            result = subprocess.run(
+                ["git"] + args,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            return result.stdout.strip() if result.returncode == 0 else ""
+        except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
+            return ""
+
+    base_sha, _ = _resolve_review_base(_run_git)
+    if not base_sha:
+        return ""
+    return _run_git(["log", "--format=%B", f"{base_sha}..HEAD"])
 
 
 def _collect_acceptance_evidence_texts(
     branch_dir: Path,
     extra_artifacts: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    """Collect review/verification artifact text that can prove acceptance tags."""
+    """Collect review/verification artifact text that can prove acceptance tags.
+
+    Planning artifacts (spec, task plan, plan-review) are deliberately excluded:
+    they state the requirement, they do not prove it. The independent downstream
+    verdicts — reviewer agent outputs and the final verifier — ARE included, because
+    they are the artifacts that actually cite a tag while checking it.
+    """
     evidence: dict[str, str] = {}
     for label, name in (
         ("verification_summary", "verification-summary.md"),
         ("qa", "qa-001.md"),
         ("pr_draft", "pr-draft.md"),
+        ("final_verification", "final_verification.json"),
     ):
         text = _read_branch_artifact_text(branch_dir, name)
         if text:
@@ -4683,7 +4761,12 @@ def _collect_acceptance_evidence_texts(
         if isinstance(text, str) and text:
             evidence[label] = text
 
+    commit_messages = _branch_commit_messages()
+    if commit_messages:
+        evidence["commit_messages"] = _sanitize_for_json(commit_messages)
+
     for pattern, label_prefix in (
+        ("review-agent-*.json", "review_agent"),
         ("test_contract_*.md", "test_contract"),
         ("test_handoff_*.json", "test_handoff"),
     ):
@@ -4771,20 +4854,36 @@ def build_acceptance_coverage_report(
             for source, tags in evidence_tags_by_source.items()
             if requirement in tags
         )
+        if evidence_artifacts:
+            status = "covered"
+        elif validation_criteria_cited:
+            # The blueprint owner names the requirement in its validation criteria,
+            # but nothing downstream verified it. That is a REVIEW gap, not a
+            # decomposition gap — collapsing both into "missing_evidence" hid which
+            # one an operator has to go fix.
+            status = "planned_only"
+        else:
+            status = "missing_evidence"
         requirements.append(
             {
                 "id": requirement,
                 "owner": owner_id,
                 "validation_criteria_cited": validation_criteria_cited,
                 "evidence_artifacts": evidence_artifacts,
-                "status": "covered" if evidence_artifacts else "missing_evidence",
+                "status": status,
             }
         )
 
     covered = sum(1 for item in requirements if item["status"] == "covered")
     missing = len(requirements) - covered
+    # Only sources that cited a REAL requirement count as evidence sources. With
+    # brackets optional, every source matches incidental tokens (`ST-001`,
+    # `feat-422`); listing those would make the field noise.
+    requirement_ids = {str(key) for key in coverage_map}
     tagged_evidence_sources = sorted(
-        source for source, tags in evidence_tags_by_source.items() if tags
+        source
+        for source, tags in evidence_tags_by_source.items()
+        if tags & requirement_ids
     )
     return {
         "status": "success",
@@ -4797,16 +4896,28 @@ def build_acceptance_coverage_report(
 
 
 def _render_acceptance_coverage_markdown(report: Mapping[str, object]) -> str:
-    """Render an acceptance coverage report into a compact Markdown section."""
+    """Render an acceptance coverage report into a compact Markdown section.
+
+    The output is fenced with ACCEPTANCE_COVERAGE_BLOCK_START/END so that when it is
+    appended to verification-summary.md — which the report later reads back as an
+    evidence source — the block can be excised exactly instead of counting as proof
+    of the very tags it reports as missing.
+    """
     if report.get("status") != "success":
         reason = report.get("reason", "not available")
-        return "## Acceptance Coverage\n- Status: not available\n- Reason: " + str(reason) + "\n"
+        return (
+            f"{ACCEPTANCE_COVERAGE_BLOCK_START}\n"
+            "## Acceptance Coverage\n- Status: not available\n- Reason: "
+            + str(reason)
+            + f"\n{ACCEPTANCE_COVERAGE_BLOCK_END}\n"
+        )
 
     summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
     total = summary.get("total", 0) if isinstance(summary, dict) else 0
     covered = summary.get("covered", 0) if isinstance(summary, dict) else 0
     missing = summary.get("missing", 0) if isinstance(summary, dict) else 0
     lines = [
+        ACCEPTANCE_COVERAGE_BLOCK_START,
         "## Acceptance Coverage",
         f"- Covered tags: {covered}/{total}",
         f"- Missing evidence: {missing}",
@@ -4825,6 +4936,7 @@ def _render_acceptance_coverage_markdown(report: Mapping[str, object]) -> str:
                 f"- [{item.get('status', 'unknown')}] {item.get('id', 'unknown')} "
                 f"owned by {item.get('owner') or 'unknown'}; evidence: {evidence_text}"
             )
+    lines.append(ACCEPTANCE_COVERAGE_BLOCK_END)
     return "\n".join(lines) + "\n"
 
 

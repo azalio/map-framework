@@ -22,6 +22,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `predictor`, and `documentation-reviewer`. Reads and read-only git are untouched; the
   main thread and `actor` are unaffected. Completes the #378 hardening direction, which
   had explicitly deferred `final-verifier`.
+- **Acceptance Coverage reported 0/N on every branch (#426).** Three defects stacked.
+  (1) `ACCEPTANCE_TAG_RE` required brackets, but reviewer verdicts, commit messages and
+  verification prose write `HC-2 audit: pass`, never `[HC-2]` — so nothing matched, ever.
+  (2) `write_verification_summary` appends the *generated* coverage table to
+  `verification-summary.md`, which the report then reads back as an evidence source: with
+  brackets relaxed the report would have counted its own `AC-1 owned by ST-001` lines and
+  flipped to a permanent false-green 100%. (3) The evidence set omitted the independent
+  downstream verdicts that actually cite tags while checking them. Now: brackets are
+  optional (extracted tags are only ever intersected with `coverage_map` keys, so
+  over-matching is inert); the generated block is fenced with
+  `<!-- map:acceptance-coverage:start/end -->` and excised before extraction, with a
+  heading-span fallback for the unmarked blocks already on disk in every installed repo
+  (the markers are inline HTML comments so they survive the newline-flattening applied
+  when the summary is embedded in `pr-draft.md`); and `final_verification.json`,
+  `review-agent-*.json`, and the branch's commit messages (`merge-base..HEAD`) join the
+  evidence set. A requirement its owner's `validation_criteria` names but nothing
+  downstream verified now reports `planned_only` rather than being lumped into
+  `missing_evidence` — a review gap and a decomposition gap need different fixes.
+  Re-running the report over the `feat-422-live-hold-producers` artifacts that produced
+  the original `0/19` yields `19/19`, every tag backed by an independent verdict, commit
+  message, or reviewer artifact — and the self-referential block contributes nothing.
 - **Review bundle diffed uncommitted changes only (#426).** `snapshot_code_state`
   computed its diff with `git diff HEAD`, so on a fully-committed branch — the normal
   `/map-check` → `/map-review` state — `review-bundle.md` self-reported
