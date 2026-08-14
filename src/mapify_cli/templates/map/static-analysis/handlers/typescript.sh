@@ -35,7 +35,7 @@ if command -v eslint &> /dev/null || [[ -x "./node_modules/.bin/eslint" ]]; then
     ESLINT_OUT=$(timeout 60 "$ESLINT_CMD" --format json "$FILES" 2>/dev/null || echo "[]")
 
     if [[ "$ESLINT_OUT" != "[]" && -n "$ESLINT_OUT" ]]; then
-        ESLINT_NORM=$(echo "$ESLINT_OUT" | jq -c '[.[] | .filePath as $file | .messages[] | {
+        ESLINT_NORM=$(printf '%s' "$ESLINT_OUT" | jq -c '[.[] | .filePath as $file | .messages[] | {
             tool: "eslint",
             file: $file,
             line: .line,
@@ -63,7 +63,7 @@ if [[ -f "tsconfig.json" ]]; then
 
         if [[ -n "$TSC_OUT" ]]; then
             # Parse format: file(line,col): error TSxxxx: message
-            TSC_NORM=$(echo "$TSC_OUT" | while IFS= read -r line; do
+            TSC_NORM=$(printf '%s\n' "$TSC_OUT" | while IFS= read -r line; do
                 if [[ "$line" =~ ^(.+)\(([0-9]+),([0-9]+)\):\ error\ (TS[0-9]+):\ (.*)$ ]]; then
                     file="${BASH_REMATCH[1]}"
                     linenum="${BASH_REMATCH[2]}"

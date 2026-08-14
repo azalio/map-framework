@@ -315,11 +315,11 @@ If `truncated: true`:
 confirmed intact, run:
 
 ```bash
-FILES_DECLARED=$(echo "$ACTOR_OUTPUT" | jq -r '.files_changed | join(",")')
+FILES_DECLARED=$(printf '%s' "$ACTOR_OUTPUT" | jq -r '.files_changed | join(",")')
 MISMATCH=$(detect_actor_files_changed_mismatch "$BRANCH" "$SUBTASK_ID" \
   --declared "$FILES_DECLARED")
 echo "$MISMATCH"
-STATUS_MISMATCH=$(echo "$MISMATCH" | jq -r '.status_mismatch')
+STATUS_MISMATCH=$(printf '%s' "$MISMATCH" | jq -r '.status_mismatch')
 ```
 
 - `status_mismatch == true` — Actor declared files it did not write (mid-edit
@@ -344,8 +344,8 @@ Monitor failure), after `monitor_failed`:
 #    test_failure, gate_failure}. Exit 0 always — this is a sensor, not a gate.
 REC=$(python3 .map/scripts/map_step_runner.py record_failure_signature \
   "$MONITOR_FEEDBACK" "$SUBTASK_ID" --source monitor_rejection)
-ARMED=$(echo "$REC" | jq -r '.armed')
-ESCALATE=$(echo "$REC" | jq -r '.escalation_recommended')
+ARMED=$(printf '%s' "$REC" | jq -r '.armed')
+ESCALATE=$(printf '%s' "$REC" | jq -r '.escalation_recommended')
 
 # 2. If armed (same normalized failure >= 2x), prepend the hard constraint to
 #    the TOP of the next Actor prompt. Pass --quarantine-active when CLEAN_RETRY
@@ -380,7 +380,7 @@ fi
       build_escalation_outcome "$SUBTASK_ID" repeated_failure)
     #  Pass --quarantine-active on a CLEAN_RETRY iteration: it returns
     #  status:"deferred" so the one-shot reset runs before any terminal stop.
-    STATUS=$(echo "$OUT" | jq -r '.status')
+    STATUS=$(printf '%s' "$OUT" | jq -r '.status')
     #  status:"escalated"-> surface OUT.blocker_summary + OUT.recommended_action
     #    to the user and STOP (outcome:"BLOCKED", .map/<branch>/escalation_*.md).
     #  status:"not_escalated" -> the LATEST failure was a NEW signature; the
@@ -418,7 +418,7 @@ Before dispatching Monitor, run the blast-radius detector:
 BLAST=$(python3 .map/scripts/map_step_runner.py \
   detect_symbol_blast_radius "$BRANCH" "$SUBTASK_ID")
 echo "$BLAST"   # inspect changed_symbols / external_callers / reason
-GATE=$(echo "$BLAST" | jq -r '.recommended_gate')
+GATE=$(printf '%s' "$BLAST" | jq -r '.recommended_gate')
 ```
 
 - `recommended_gate == "validate_callers"` — the subtask changed a
@@ -449,7 +449,7 @@ scoped run is safe:
 RISK=$(python3 .map/scripts/map_step_runner.py \
   detect_cross_subtask_regression_risk "$BRANCH" "$SUBTASK_ID")
 echo "$RISK"   # inspect shared_source_files / prior_owners / reason
-GATE=$(echo "$RISK" | jq -r '.recommended_gate')
+GATE=$(printf '%s' "$RISK" | jq -r '.recommended_gate')
 ```
 
 - `recommended_gate == "full_suite"` — the current diff overlaps a file a

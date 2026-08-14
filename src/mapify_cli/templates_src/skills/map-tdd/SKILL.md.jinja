@@ -115,10 +115,10 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|
 
 ```bash
 RESULT=$(python3 .map/scripts/map_orchestrator.py resume_single_subtask "$SUBTASK_ID" --tdd)
-STATUS=$(echo "$RESULT" | jq -r '.status')
+STATUS=$(printf '%s' "$RESULT" | jq -r '.status')
 
 if [ "$STATUS" = "error" ]; then
-  echo "$RESULT" | jq -r '.message'
+  printf '%s' "$RESULT" | jq -r '.message'
   # If no plan: "Run /map-plan first"
   # If subtask not found: shows available IDs
   exit 1
@@ -185,7 +185,7 @@ Call `get_next_step` and execute based on the returned phase.
 
 ```bash
 NEXT_STEP=$(python3 .map/scripts/map_orchestrator.py get_next_step)
-PHASE=$(echo "$NEXT_STEP" | jq -r '.phase')
+PHASE=$(printf '%s' "$NEXT_STEP" | jq -r '.phase')
 ```
 
 Route to the appropriate executor based on `$PHASE`. All phases from /map-efficient work identically.

@@ -115,7 +115,7 @@ if [ -f "$STATE_FILE" ]; then
   echo "Existing step_state.json found — proceeding straight to Step 1 get_next_step."
 elif [ -f "$PLAN_FILE" ]; then
   RESUME_RESULT=$(python3 .map/scripts/map_orchestrator.py resume_from_plan)
-  RESUME_STATUS=$(echo "$RESUME_RESULT" | jq -r '.status')
+  RESUME_STATUS=$(printf '%s' "$RESUME_RESULT" | jq -r '.status')
   if [ "$RESUME_STATUS" = "success" ]; then
     echo "Resumed from /map-plan artifacts."
   else
@@ -141,10 +141,10 @@ fi
 
 ```bash
 NEXT_STEP=$(python3 .map/scripts/map_orchestrator.py get_next_step)
-STEP_ID=$(echo "$NEXT_STEP" | jq -r '.step_id')
-PHASE=$(echo "$NEXT_STEP" | jq -r '.phase')
-INSTRUCTION=$(echo "$NEXT_STEP" | jq -r '.instruction')
-IS_COMPLETE=$(echo "$NEXT_STEP" | jq -r '.is_complete')
+STEP_ID=$(printf '%s' "$NEXT_STEP" | jq -r '.step_id')
+PHASE=$(printf '%s' "$NEXT_STEP" | jq -r '.phase')
+INSTRUCTION=$(printf '%s' "$NEXT_STEP" | jq -r '.instruction')
+IS_COMPLETE=$(printf '%s' "$NEXT_STEP" | jq -r '.is_complete')
 ```
 
 If `IS_COMPLETE=true`, skip to final verification.

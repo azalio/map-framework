@@ -277,7 +277,7 @@ CURRENT_BRANCH=$(git branch --show-current)
 [[ "$CURRENT_BRANCH" != "main" ]] && echo "❌ ABORT: Not on main branch" && exit 1
 
 LATEST_RUN=$(gh run list --branch main --limit 1 --json conclusion,status,createdAt,headBranch --jq '.[0]')
-RUN_CONCLUSION=$(echo "$LATEST_RUN" | jq -r '.conclusion')
+RUN_CONCLUSION=$(printf '%s' "$LATEST_RUN" | jq -r '.conclusion')
 [[ "$RUN_CONCLUSION" != "success" ]] && echo "❌ ABORT: Latest CI did not succeed" && exit 1
 
 LAST_TAG=$(git tag --sort=-version:refname | head -1)
@@ -324,13 +324,13 @@ echo "Waiting for release workflow to start..."
 sleep 10
 
 RELEASE_RUN=$(gh run list --workflow=release.yml --limit 1 --json databaseId,status,conclusion,createdAt)
-RUN_ID=$(echo "$RELEASE_RUN" | jq -r '.[0].databaseId')
+RUN_ID=$(printf '%s' "$RELEASE_RUN" | jq -r '.[0].databaseId')
 
 if [[ -z "$RUN_ID" || "$RUN_ID" == "null" ]]; then
   echo "⚠️  Workflow not started yet; retrying in 30s..."
   sleep 30
   RELEASE_RUN=$(gh run list --workflow=release.yml --limit 1 --json databaseId,status,conclusion,createdAt)
-  RUN_ID=$(echo "$RELEASE_RUN" | jq -r '.[0].databaseId')
+  RUN_ID=$(printf '%s' "$RELEASE_RUN" | jq -r '.[0].databaseId')
 fi
 
 echo "Workflow URL: https://github.com/azalio/map-framework/actions/runs/$RUN_ID"
