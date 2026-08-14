@@ -127,6 +127,20 @@ HIGH_TRAFFIC_SKILL_BODY_BUDGETS = {
     "map-tdd": 545,
 }
 
+# map-release is NOT "justified high-traffic" like the skills above -- it is a
+# tracked LEGACY oversize with no split-into-reference-file done yet. Keeping
+# it out of HIGH_TRAFFIC_SKILL_BODY_BUDGETS means the naming stays honest: a
+# reader of that dict should only find deliberate, justified higher caps, not
+# an untouched pre-existing violation. The pinned value here is a ratchet --
+# it may only shrink (as map-release gets trimmed/split) and must never grow,
+# so the guard test below still catches any further regression on this file.
+_LEGACY_OVERSIZED_SKILL_BODIES = {
+    "map-release": 1248,  # tracked in #418 -- ratchet: may shrink, must NOT grow;
+    # remove this entry entirely once map-release is split into a compact
+    # active body + reference file (the HIGH_TRAFFIC_COMPACT_SKILL_REFS
+    # pattern already used by map-plan/map-efficient/map-review/map-check).
+}
+
 CLAUDE_MUTATION_BOUNDARY_SURFACES = [
     Path("agents") / "actor.md",
     Path("skills") / "map-fast" / "SKILL.md",
@@ -549,6 +563,63 @@ class TestSkillStructure:
                 assert "## Examples" in reference
                 assert "## Troubleshooting" in reference
 
+    def test_every_non_high_traffic_skill_body_within_default_budget(
+        self, skill_rules, skills_dir, template_skills_dir
+    ):
+        """General body-budget guard (closes the ST-008 Monitor LOW finding).
+
+        Every skill registered in skill-rules.json whose SKILL.md exists and
+        is NOT explicitly exempted via HIGH_TRAFFIC_SKILL_BODY_BUDGETS must
+        keep its rendered active body within the default line budget. Unlike
+        the per-skill budget tests above (map-resume, the
+        HIGH_TRAFFIC_COMPACT_SKILL_REFS set, map-auto), this loop is derived
+        dynamically from skill-rules.json, so it covers map-auto AND every
+        future skill without needing a dedicated per-skill test to be added
+        by hand.
+
+        `_LEGACY_OVERSIZED_SKILL_BODIES` (tracked in #418) is a RATCHET, not
+        an exemption: a skill listed there is pinned to its currently-known
+        line count and may only shrink from here, never grow. It is
+        deliberately kept OUT of HIGH_TRAFFIC_SKILL_BODY_BUDGETS -- that dict
+        is for skills whose higher cap is a justified design choice (multiple
+        review modes, Iron Law enforcement); a legacy oversize that hasn't
+        been split into body + reference file yet is not "justified", so the
+        naming must not conflate the two. Every skill NOT in either dict
+        keeps the strict default budget. A brand-new violation (a skill not
+        already in `_LEGACY_OVERSIZED_SKILL_BODIES`) means it genuinely needs
+        either a HIGH_TRAFFIC_SKILL_BODY_BUDGETS entry (with a justification
+        comment) or a split into a compact body + reference file -- never a
+        silent exemption.
+        """
+        violations: list[str] = []
+        for base_dir in (skills_dir, template_skills_dir):
+            for skill_name in skill_rules.get("skills", {}):
+                if skill_name in HIGH_TRAFFIC_SKILL_BODY_BUDGETS:
+                    continue
+                skill_md = base_dir / skill_name / "SKILL.md"
+                if not skill_md.exists():
+                    continue
+                line_count = len(skill_md.read_text(encoding="utf-8").splitlines())
+                if skill_name in _LEGACY_OVERSIZED_SKILL_BODIES:
+                    pinned = _LEGACY_OVERSIZED_SKILL_BODIES[skill_name]
+                    if line_count > pinned:
+                        violations.append(
+                            f"{skill_md}: {line_count} lines grew past the "
+                            f"pinned legacy ratchet of {pinned} (#418) -- the "
+                            "ratchet may only shrink, never grow"
+                        )
+                    continue
+                if line_count > _DEFAULT_SKILL_BODY_BUDGET:
+                    violations.append(
+                        f"{skill_md}: {line_count} lines "
+                        f"(budget {_DEFAULT_SKILL_BODY_BUDGET})"
+                    )
+        assert not violations, (
+            "Skill(s) exceed their active-body line budget with no "
+            "HIGH_TRAFFIC_SKILL_BODY_BUDGETS or _LEGACY_OVERSIZED_SKILL_BODIES "
+            "coverage: " + "; ".join(violations)
+        )
+
     def test_write_capable_claude_surfaces_have_constraint_first_boundaries(
         self, project_root
     ):
@@ -676,6 +747,37 @@ class TestSkillStructure:
         assert entry.get("skillClass") == "task"
         assert entry.get("enforcement") == "manual"
         assert not entry.get("runtimeEffects")
+
+    def test_map_auto_is_default_on_with_no_gating_flag(
+        self, skill_rules, skills_dir
+    ):
+        """AC-9: /map-auto is available by default -- no shadow mode, calibration
+        gate, or opt-in flag in either the skill-rules entry or the SKILL.md body."""
+        entry = skill_rules.get("skills", {}).get("map-auto")
+        assert entry is not None, "map-auto missing from skill-rules.json"
+        gating_fields = {
+            "disabled",
+            "enabled",
+            "gated",
+            "shadow_mode",
+            "shadowMode",
+            "calibration",
+            "opt_in",
+            "optIn",
+        }
+        present_gating_fields = gating_fields & set(entry.keys())
+        assert not present_gating_fields, (
+            f"map-auto skill-rules entry declares gating field(s) "
+            f"{sorted(present_gating_fields)}; AC-9 requires default-on behavior "
+            "with no shadow mode, calibration gate, or opt-in flag."
+        )
+
+        skill_file = skills_dir / "map-auto" / "SKILL.md"
+        content = skill_file.read_text(encoding="utf-8").lower()
+        assert "enable this first" not in content, (
+            f"{skill_file} contains an 'enable this first' precondition step; "
+            "AC-9 requires /map-auto to run autonomously the moment it is invoked."
+        )
 
     def test_task_skill_class_matches_manual_runtime_metadata(
         self, skills_dir, skill_folders, skill_rules
@@ -965,6 +1067,178 @@ class TestSkillStructure:
                         f"Script '{script}' is not executable. "
                         f"Run: chmod +x {script}"
                     )
+
+
+class TestMapAutoChainSemantics:
+    """ST-009: /map-auto autonomous chain semantics.
+
+    VC1 [HC-1]: run ends at a committed feature branch, never opens/merges a
+    PR, never polls CI. VC2 [INV-5]: a Monitor `valid=false` inside a
+    chained phase is that phase's own hard stop, never overridden. VC3
+    [INV-5]: phases are driven only by the existing slash workflows plus the
+    three runner subcommands -- no new subprocess-driven execution engine.
+    VC4 [HC-1/HC-2]: ground-truth inspection before the single permitted
+    phase re-entry, fail-closed to /map-resume on a second failure, and a
+    terminal chain refuses further appends. VC5 [HC-1]: auto-reference.md
+    exists and is linked from both rendered trees, SKILL.md stays within the
+    default line budget.
+    """
+
+    _FORBIDDEN_PR_PATTERNS = (
+        "gh pr create",
+        "gh pr merge",
+        "git push origin main",
+        "git push origin master",
+    )
+
+    _FORBIDDEN_MONITOR_OVERRIDE_PATTERNS = (
+        "retry past monitor",
+        "suppress the monitor",
+        "re-run past monitor",
+        "bypass monitor",
+        "override monitor",
+        "skip monitor",
+    )
+
+    _FORBIDDEN_EXECUTION_ENGINE_PATTERNS = ("subprocess", "claude -p", "popen")
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-auto"),
+            Path("src/mapify_cli/templates/skills/map-auto"),
+        ],
+        ids=["dev", "template"],
+    )
+    def skill_dir(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    @pytest.fixture
+    def skill_content(self, skill_dir: Path) -> str:
+        return (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+
+    @pytest.fixture
+    def reference_content(self, skill_dir: Path) -> str:
+        return (skill_dir / "auto-reference.md").read_text(encoding="utf-8")
+
+    # no PR/merge instruction; explicit committed-branch end state ---
+
+    def test_no_pr_or_merge_instruction(
+        self, skill_content: str, reference_content: str
+    ) -> None:
+        combined = (skill_content + "\n" + reference_content).lower()
+        for pattern in self._FORBIDDEN_PR_PATTERNS:
+            assert pattern not in combined, (
+                f"map-auto surfaces must never instruct {pattern!r} -- HC-1 "
+                "requires the run to end at a committed feature branch, "
+                "never a PR/merge."
+            )
+
+    def test_grep_self_test_detects_synthetic_violation(self) -> None:
+        """Negative-proof: the forbidden-pattern set actually catches a
+        violation, so a typo in the pattern list can't silently pass VC1."""
+        synthetic_bad = "After Monitor passes, run `gh pr create --fill` to open the PR."
+        lowered = synthetic_bad.lower()
+        assert any(pattern in lowered for pattern in self._FORBIDDEN_PR_PATTERNS)
+
+    def test_states_committed_branch_end_state(self, skill_content: str) -> None:
+        assert "ends at a committed feature branch" in skill_content
+        assert "never opens a pull request" in skill_content
+        assert "never merges" in skill_content
+        assert "never polls CI" in skill_content
+
+    # Monitor valid=false is a hard stop, never overridden ---
+
+    def test_monitor_hard_stop_never_overridden(self, skill_content: str) -> None:
+        assert "valid=false" in skill_content
+        assert (
+            "never overrides, suppresses, or re-runs past a Monitor rejection"
+            in skill_content
+        )
+
+    def test_no_monitor_bypass_instruction(
+        self, skill_content: str, reference_content: str
+    ) -> None:
+        combined = (skill_content + "\n" + reference_content).lower()
+        for pattern in self._FORBIDDEN_MONITOR_OVERRIDE_PATTERNS:
+            assert pattern not in combined, (
+                f"map-auto must never instruct {pattern!r} -- INV-5 requires "
+                "a phase's own Monitor rejection to stand unmodified."
+            )
+
+    # no new execution engine; existing surfaces only ---
+
+    def test_no_subprocess_execution_engine(
+        self, skill_content: str, reference_content: str
+    ) -> None:
+        combined = (skill_content + "\n" + reference_content).lower()
+        for pattern in self._FORBIDDEN_EXECUTION_ENGINE_PATTERNS:
+            assert pattern not in combined, (
+                f"map-auto prose must not describe a new phase-driving "
+                f"mechanism ({pattern!r} found) -- INV-5 forbids a new "
+                "execution engine."
+            )
+        assert "never shells out to a separate Claude process" in skill_content
+
+    # [/]: ground truth before re-entry; fail-closed recovery ---
+
+    def test_ground_truth_inspection_before_reentry(self, skill_content: str) -> None:
+        assert "git status" in skill_content
+        assert "git diff" in skill_content
+        assert "step_state.json" in skill_content
+        assert "Before spending the single permitted re-entry" in skill_content
+
+    def test_second_failure_hands_off_to_map_resume(self, skill_content: str) -> None:
+        assert "STOP and hand off to `/map-resume`" in skill_content
+        assert "never attempt a third call for that phase" in skill_content
+
+    def test_terminal_chain_refuses_further_appends(self, skill_content: str) -> None:
+        assert "refuses every further `record_auto_phase` call" in skill_content
+        assert (
+            "a new `route_task` call is the ONLY legitimate way to continue"
+            in skill_content
+        )
+
+    # auto-reference.md exists, linked, render parity, budget ---
+
+    def test_reference_file_exists_and_linked(
+        self, skill_dir: Path, skill_content: str
+    ) -> None:
+        assert (skill_dir / "auto-reference.md").exists(), (
+            f"{skill_dir}/auto-reference.md must exist in every rendered tree"
+        )
+        assert "[auto-reference.md](auto-reference.md)" in skill_content
+
+    def test_skill_body_within_default_budget(self, skill_content: str) -> None:
+        assert len(skill_content.splitlines()) <= _DEFAULT_SKILL_BODY_BUDGET, (
+            "map-auto/SKILL.md must stay within the default active-body "
+            f"line budget ({_DEFAULT_SKILL_BODY_BUDGET} lines)."
+        )
+
+    def test_reference_covers_required_topics(self, reference_content: str) -> None:
+        for marker in (
+            "## CLI Reference",
+            "## Chain Walkthrough Example",
+            "## Failure-Mode Table",
+            "## Recovery Procedures",
+            "## Dry-run Usage",
+        ):
+            assert marker in reference_content, (
+                f"auto-reference.md missing required section: {marker}"
+            )
+        for flag in ("--dry-run", "--evidence-refs", "--reason", "--branch"):
+            assert flag in reference_content, (
+                f"auto-reference.md CLI reference missing real flag: {flag}"
+            )
+        for failure_mode in (
+            "Hard-stop hold",
+            "Repeated phase failure",
+            "goal_mismatch",
+            "In-progress re-route",
+            "blueprint_unavailable",
+        ):
+            assert failure_mode in reference_content, (
+                f"auto-reference.md failure-mode table missing: {failure_mode}"
+            )
 
 
 class TestLightweightWorkflowSkillContracts:

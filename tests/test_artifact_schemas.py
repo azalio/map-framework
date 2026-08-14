@@ -1,6 +1,7 @@
 """Focused tests for new artifact schemas without importing package extras."""
 
 import importlib.util
+import sys
 from pathlib import Path
 
 SCHEMAS_PATH = Path(__file__).resolve().parents[1] / "src" / "mapify_cli" / "schemas.py"
@@ -8,6 +9,15 @@ SPEC = importlib.util.spec_from_file_location("artifact_schemas", SCHEMAS_PATH)
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
+
+# map_step_runner.py is generated (stdlib-only), so importing it here does not
+# pull in package extras — it is the single authority for ARTIFACT_STAGE_NAMES
+# (see architecture-patterns: Contract-First Inter-Component JSON Schemas).
+_RUNNER_SCRIPTS_PATH = (
+    Path(__file__).resolve().parents[1] / "src" / "mapify_cli" / "templates" / "map" / "scripts"
+)
+sys.path.insert(0, str(_RUNNER_SCRIPTS_PATH))
+import map_step_runner  # type: ignore[import-not-found]
 
 
 def _minimal_prior_stage_consumption() -> dict:
@@ -734,3 +744,102 @@ def test_validate_implementer_readiness_schema_rejects_additional_properties():
     )[0]
 
     assert not is_valid
+
+
+def _minimal_auto_route() -> dict:
+    return {
+        "schema_version": "1.0",
+        "task_summary": "Add AUTO_ROUTE_SCHEMA to schemas.py",
+        "selected_route": "map-efficient",
+        "evidence": [
+            {
+                "signal": "step_state",
+                "value": "pending",
+                "source": ".map/feat-map-auto/step_state.json",
+            }
+        ],
+        "blocked_by": [],
+        "next_command": "/map-efficient",
+        "executed": True,
+        "chain_status": "in_progress",
+        "phases": [
+            {
+                "phase": "plan",
+                "status": "completed",
+                "attempt": 1,
+                "evidence_refs": [],
+                "reason": "",
+                "recorded_at": "2026-08-13T12:00:00Z",
+            }
+        ],
+        "route_history": [],
+    }
+
+
+def test_validate_auto_route_schema_golden():
+    artifact = _minimal_auto_route()
+
+    is_valid, errors = MODULE.validate_artifact(artifact, MODULE.AUTO_ROUTE_SCHEMA)
+    assert is_valid, f"Errors: {errors}"
+
+
+def test_validate_auto_route_schema_rejects_unknown_chain_status():
+    artifact = _minimal_auto_route()
+    artifact["chain_status"] = "not-a-status"
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.AUTO_ROUTE_SCHEMA)[0]
+
+    assert not is_valid
+
+
+def test_validate_auto_route_schema_rejects_unknown_selected_route():
+    artifact = _minimal_auto_route()
+    artifact["selected_route"] = "map-tdd"
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.AUTO_ROUTE_SCHEMA)[0]
+
+    assert not is_valid
+
+
+def test_validate_auto_route_schema_evidence_missing_source_fails():
+    artifact = _minimal_auto_route()
+    artifact["evidence"] = [{"signal": "step_state", "value": "pending"}]
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.AUTO_ROUTE_SCHEMA)[0]
+
+    assert not is_valid
+
+
+def test_validate_auto_route_schema_phases_missing_attempt_fails():
+    artifact = _minimal_auto_route()
+    artifact["phases"] = [
+        {
+            "phase": "plan",
+            "status": "completed",
+            "evidence_refs": [],
+            "reason": "",
+            "recorded_at": "2026-08-13T12:00:00Z",
+        }
+    ]
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.AUTO_ROUTE_SCHEMA)[0]
+
+    assert not is_valid
+
+
+def test_artifact_manifest_schema_stages_cover_every_runner_stage_name():
+    """Every stage in map_step_runner's ARTIFACT_STAGE_NAMES authority must be
+    declared in ARTIFACT_MANIFEST_SCHEMA's stages.properties, or a manifest
+    carrying that stage fails schema validation (stages.additionalProperties
+    is False). Prevents this drift class from recurring silently.
+    """
+    schema_stage_names = set(
+        MODULE.ARTIFACT_MANIFEST_SCHEMA["properties"]["stages"]["properties"]
+    )
+    runner_stage_names = set(map_step_runner.ARTIFACT_STAGE_NAMES)
+
+    missing_from_schema = runner_stage_names - schema_stage_names
+    assert not missing_from_schema, (
+        f"Stages present in ARTIFACT_STAGE_NAMES but missing from "
+        f"ARTIFACT_MANIFEST_SCHEMA stages.properties: {sorted(missing_from_schema)}"
+    )

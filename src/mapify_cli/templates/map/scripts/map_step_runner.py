@@ -242,6 +242,7 @@ ARTIFACT_STAGE_NAMES = (
     "workflow_fit",
     "spec",
     "plan",
+    "auto_route",
     "test_contract",
     "repro_probe",
     "implementation",
@@ -463,6 +464,22 @@ APPROVAL_HOLD_KINDS = frozenset(
 )
 APPROVAL_HOLD_TERMINAL_STATES = frozenset({"approved", "denied", "expired", "cancelled"})
 APPROVAL_HOLD_ALL_STATES = frozenset({"pending"}) | APPROVAL_HOLD_TERMINAL_STATES
+
+# /map-auto (issue #414): hold kinds that hard-stop autonomous
+# routing outright -- route_task blocks the chain rather than proceeding
+# when either is pending. The complementary AUTO_APPROVABLE_HOLD_KINDS
+# set is defined immediately alongside this one.
+HARD_STOP_HOLD_KINDS = frozenset({"dangerous_action", "safety_guardrail"})
+
+# /map-auto (issue #414): hold kinds auto_decide_holds may decide
+# without a human -- workflow-control gates, never safety gates. Together
+# with HARD_STOP_HOLD_KINDS these must exactly partition
+# APPROVAL_HOLD_KINDS (disjoint, union == whole set) so a future sixth hold
+# kind hard-fails a test instead of being silently auto-approved by
+# omission.
+AUTO_APPROVABLE_HOLD_KINDS = frozenset(
+    {"autonomy_posture", "plan_approval", "template_overwrite"}
+)
 
 # Truncation infrastructure deleted by user directive ("убери транкейт уже
 # вообще"). build_context_block / _budget_review_prompt now emit raw text;
@@ -4855,18 +4872,16 @@ _DONE_PHASE_STATUSES_FOR_COMPLETION = {
 }
 
 
-def _state_subtask_coverage_complete(state: dict[str, object]) -> bool:
-    """Return True iff every subtask in subtask_sequence has a "done"-class
-    signal recorded (subtask_results entry OR subtask_phases marker).
+def _done_class_subtask_ids(state: dict[str, object]) -> set[str]:
+    """Return subtask ids with a "done"-class signal recorded in step_state.json
+    (a subtask_results entry OR a subtask_phases done-class marker).
 
-    Mirrors the orchestrator's _completed_subtask_ids_for_deps logic. Used
-    by _derive_terminal_status so a stuck cursor (ST-033 friction) no
-    longer makes write_run_health_report report ``pending`` when 51/51
-    entries actually exist.
+    Shared canonical-completion primitive: used by
+    _state_subtask_coverage_complete below (global "is the whole run done"
+    check) AND by the /map-auto tier 1 routing signal (per-subtask
+    pending/complete split) so both read the identical done-class
+    definition instead of two definitions that could silently drift apart.
     """
-    sequence_value = state.get("subtask_sequence")
-    if not isinstance(sequence_value, list) or not sequence_value:
-        return False
     results_value = state.get("subtask_results")
     results = results_value if isinstance(results_value, dict) else {}
     phases_value = state.get("subtask_phases")
@@ -4881,6 +4896,22 @@ def _state_subtask_coverage_complete(state: dict[str, object]) -> bool:
     for sid, phase in phases.items():
         if isinstance(sid, str) and isinstance(phase, str) and phase.lower() in _DONE_PHASE_STATUSES_FOR_COMPLETION:
             completed.add(sid)
+    return completed
+
+
+def _state_subtask_coverage_complete(state: dict[str, object]) -> bool:
+    """Return True iff every subtask in subtask_sequence has a "done"-class
+    signal recorded (subtask_results entry OR subtask_phases marker).
+
+    Mirrors the orchestrator's _completed_subtask_ids_for_deps logic. Used
+    by _derive_terminal_status so a stuck cursor (ST-033 friction) no
+    longer makes write_run_health_report report ``pending`` when 51/51
+    entries actually exist.
+    """
+    sequence_value = state.get("subtask_sequence")
+    if not isinstance(sequence_value, list) or not sequence_value:
+        return False
+    completed = _done_class_subtask_ids(state)
     return all(isinstance(sid, str) and sid in completed for sid in sequence_value)
 
 
@@ -14406,6 +14437,642 @@ def check_plan_resume(request: str = "", branch: str | None = None) -> dict:
     }
 
 
+# /map-auto routing (issue #414): the recommended workflow values a route
+# selector may pick automatically. Values outside this set (direct-edit,
+# map-tdd, map-wayfind) require a human decision and must fall through to a
+# lower-precedence signal instead of being auto-selected.
+_AUTO_ROUTE_TIER2_ALLOWED = frozenset({"map-fast", "map-plan", "map-efficient"})
+
+
+def _blueprint_subtask_ids(blueprint: dict | None) -> set[str]:
+    """Return the set of subtask ids declared in a loaded blueprint.json payload."""
+    if not isinstance(blueprint, dict):
+        return set()
+    subtasks = blueprint.get("subtasks")
+    if not isinstance(subtasks, list):
+        return set()
+    return {
+        subtask["id"]
+        for subtask in subtasks
+        if isinstance(subtask, dict) and isinstance(subtask.get("id"), str)
+    }
+
+
+def _tier1_completed_subtask_ids(state: dict[str, object]) -> tuple[set[str], bool]:
+    """Return (completed subtask ids, used_legacy_fallback) for tier 1 routing.
+
+    Prefers the canonical done-class signal (_done_class_subtask_ids, shared
+    with _state_subtask_coverage_complete): a subtask_results status or a
+    subtask_phases marker in the done class. Falls back to legacy
+    completed_steps KEY PRESENCE only when NEITHER canonical field exists in
+    state at all. Key presence alone is not a safe completion signal even in
+    the fallback case's absence check -- update_step_state (the classic,
+    pre-orchestrator writer) inserts a completed_steps[subtask_id] key at
+    the FIRST recorded phase, so "key exists" means "started", not "done".
+    The canonical fields are preferred specifically so a subtask with only
+    an in-progress phase recorded is never misread as complete.
+    """
+    canonical_present = "subtask_results" in state or "subtask_phases" in state
+    if canonical_present:
+        return _done_class_subtask_ids(state), False
+    completed_steps = state.get("completed_steps")
+    if isinstance(completed_steps, dict):
+        return {key for key in completed_steps if isinstance(key, str)}, True
+    return set(), True
+
+
+def _classify_scope_bracket(estimated_files: int, estimated_lines: int) -> str | None:
+    """Call classify_scope.classify() in-process for the auto-route scope tier.
+
+    classify_scope.py ships alongside this script in every generated tree but
+    is not an importable package member, so it is loaded by file location
+    (mirrors the existing lazy schemas-module import pattern in this file)
+    rather than imported at module scope or shelled out to as a subprocess.
+    """
+    try:
+        import importlib.util as _importlib_util
+
+        script_path = Path(__file__).resolve().parent / "classify_scope.py"
+        spec = _importlib_util.spec_from_file_location("classify_scope", script_path)
+        if spec is None or spec.loader is None:
+            return None
+        module = _importlib_util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except (ImportError, OSError):
+        return None
+
+    classify_fn = getattr(module, "classify", None)
+    if not callable(classify_fn):
+        return None
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    result = classify_fn(estimated_files, estimated_lines, project_dir)
+    bracket = result.get("bracket") if isinstance(result, dict) else None
+    return bracket if isinstance(bracket, str) else None
+
+
+def _select_route(
+    branch: str | None,
+    task_text: str,
+    *,
+    estimated_files: int | None = None,
+    estimated_lines: int | None = None,
+) -> tuple[str, list[dict[str, object]]]:
+    """Pure five-tier routing precedence engine for /map-auto (issue #414).
+
+    Reads exactly five existing signals -- step_state.json, workflow-fit.json,
+    check_plan_resume(), a direct blueprint.json stat, and
+    classify_scope.classify() -- and returns the route picked by the
+    highest-precedence signal that fires, plus an evidence trail of every
+    signal consulted (including signals that lost or were absent). Never
+    inspects ``task_text`` itself for keywords; the only tier that reads its
+    content is check_plan_resume() (tier 3), which is one of the five
+    allowed signals. This function only selects a route -- it writes nothing
+    and creates no CLI surface.
+
+    Tiers, in strict precedence order:
+      1. step_state.json exists: pending subtasks (blueprint ids minus the
+         canonical done-class subtask ids) -> map-resume; all complete ->
+         map-check. When blueprint.json is missing/unparseable/empty, the
+         pending set cannot be computed at all -- this fails CLOSED to
+         map-resume (never asserts completion without evidence) rather than
+         guessing.
+      2. workflow-fit.json recommended_workflow, restricted to
+         {map-fast, map-plan, map-efficient} -- any other recorded value
+         (e.g. direct-edit) is recorded in evidence and falls through.
+      3. check_plan_resume(task_text) verdict "resume" (only reachable once
+         step_state.json is confirmed absent): task_plan artifact present
+         AND a direct blueprint.json stat succeeds -> map-efficient;
+         otherwise -> map-plan. A goal_mismatch or no_plan verdict is only
+         surfaced in evidence here -- blocking on it is not this function's
+         responsibility. NOTE: this is the one SANCTIONED exception to
+         "task_text never influences the route" -- check_plan_resume is one
+         of the five allowed signals, and its goal-overlap comparison is
+         supposed to vary with task_text content. That is intentional
+         signal-reading, not the ad-hoc keyword routing this function
+         otherwise forbids (see the invariance test docstrings below).
+      4. classify_scope.classify() bracket "trivial" -> map-fast, only when
+         the caller supplied non-negative estimated_files/estimated_lines;
+         otherwise the tier is recorded as unavailable and skipped rather
+         than guessed.
+      5. Default: map-plan.
+    """
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    evidence: list[dict[str, object]] = []
+
+    # Tier 1 signal: step_state.json. Always read up front (even when a
+    # later tier would otherwise win) so a conflicting workflow-fit.json
+    # recommendation is still captured in evidence per the losing-signal
+    # requirement below.
+    step_state_path = branch_dir / "step_state.json"
+    state = _read_json_file(step_state_path)
+    step_state_route: str | None = None
+    if state is not None:
+        blueprint = load_blueprint(branch_name)
+        subtask_ids = _blueprint_subtask_ids(blueprint)
+        if not subtask_ids:
+            # Fail closed: with no subtask id universe from blueprint.json,
+            # "pending minus completed" cannot be computed at all. Asserting
+            # "complete" here would be an unevidenced guess, so route back
+            # to resuming the plan instead.
+            step_state_route = "map-resume"
+            evidence.append({
+                "signal": "step_state.json",
+                "value": "blueprint_unavailable",
+                "source": str(step_state_path),
+            })
+        else:
+            completed_ids, used_legacy_fallback = _tier1_completed_subtask_ids(state)
+            pending_ids = subtask_ids - completed_ids
+            completion_source = (
+                "legacy_completed_steps" if used_legacy_fallback else "canonical_done_class"
+            )
+            if pending_ids:
+                step_state_route = "map-resume"
+                evidence.append({
+                    "signal": "step_state.json",
+                    "value": {
+                        "status": "pending",
+                        "pending_subtask_ids": sorted(pending_ids),
+                        "completion_source": completion_source,
+                    },
+                    "source": str(step_state_path),
+                })
+            else:
+                step_state_route = "map-check"
+                evidence.append({
+                    "signal": "step_state.json",
+                    "value": {
+                        "status": "complete",
+                        "subtask_count": len(subtask_ids),
+                        "completion_source": completion_source,
+                    },
+                    "source": str(step_state_path),
+                })
+    else:
+        evidence.append({
+            "signal": "step_state.json",
+            "value": {"status": "absent"},
+            "source": str(step_state_path),
+        })
+
+    # Tier 2 signal: workflow-fit.json. Also always read up front for the
+    # same losing-signal reason as tier 1.
+    workflow_fit_path = branch_dir / "workflow-fit.json"
+    fit_payload = _read_json_file(workflow_fit_path)
+    recommended: str | None = None
+    if fit_payload is not None:
+        raw_recommended = fit_payload.get("recommended_workflow")
+        recommended = raw_recommended if isinstance(raw_recommended, str) else None
+    evidence.append({
+        "signal": "workflow-fit.json",
+        "value": recommended,
+        "source": str(workflow_fit_path),
+    })
+
+    if step_state_route is not None:
+        return step_state_route, evidence
+
+    if recommended is not None and recommended in _AUTO_ROUTE_TIER2_ALLOWED:
+        return recommended, evidence
+
+    # Tier 3 signals: check_plan_resume() verdict, plus a direct
+    # blueprint.json stat (check_plan_resume's own artifacts dict has no
+    # blueprint key). check_plan_resume is allowed to read task_text -- see
+    # the sanctioned-exception note in the docstring above.
+    resume_report = check_plan_resume(task_text, branch=branch_name)
+    verdict = resume_report.get("verdict")
+    evidence.append({
+        "signal": "check_plan_resume",
+        "value": verdict,
+        "source": "check_plan_resume()",
+    })
+    if verdict == "resume":
+        artifacts = resume_report.get("artifacts")
+        has_task_plan = bool(isinstance(artifacts, dict) and artifacts.get("task_plan"))
+        blueprint_path = branch_dir / "blueprint.json"
+        has_blueprint = blueprint_path.exists()
+        evidence.append({
+            "signal": "blueprint.json",
+            "value": has_blueprint,
+            "source": str(blueprint_path),
+        })
+        return ("map-efficient" if (has_task_plan and has_blueprint) else "map-plan"), evidence
+
+    # Tier 4 signal: classify_scope.classify() bracket. Only fires when the
+    # caller supplied a real scope estimate -- there is no sixth signal in
+    # this function's allowed set (e.g. a git diff stat) that could derive
+    # estimated_files/estimated_lines on its own, so an absent estimate is
+    # recorded and the tier is skipped rather than guessed.
+    if (
+        estimated_files is not None
+        and estimated_lines is not None
+        and estimated_files >= 0
+        and estimated_lines >= 0
+    ):
+        bracket = _classify_scope_bracket(estimated_files, estimated_lines)
+        evidence.append({
+            "signal": "classify_scope.classify",
+            "value": {"estimated": True, "bracket": bracket},
+            "source": "classify_scope.classify()",
+        })
+        if bracket == "trivial":
+            return "map-fast", evidence
+    else:
+        evidence.append({
+            "signal": "classify_scope.classify",
+            "value": {"estimated": False},
+            "source": "classify_scope.classify()",
+        })
+
+    # Tier 5: default.
+    return "map-plan", evidence
+
+
+# /map-auto routing (issue #414): route -> slash command surfaced to the
+# operator as the next step.
+_AUTO_ROUTE_NEXT_COMMAND: dict[str, str] = {
+    "map-resume": "/map-resume",
+    "map-check": "/map-check",
+    "map-fast": "/map-fast",
+    "map-plan": "/map-plan",
+    "map-efficient": "/map-efficient",
+}
+
+# /map-auto phase ledger (issue #414): closed status vocabulary for
+# record_auto_phase's chain_status transitions. A phase status in
+# AUTO_PHASE_TERMINAL_SUCCESS_STATUSES completes the chain; a status in
+# AUTO_PHASE_ABORT_STATUSES aborts it; any other status leaves the chain
+# in_progress. These two sets are intentionally NOT required to partition
+# every possible status string -- callers may pass phase-specific statuses
+# (e.g. "monitor_rejected") that fall through to in_progress.
+AUTO_PHASE_TERMINAL_SUCCESS_STATUSES = frozenset({"completed"})
+AUTO_PHASE_ABORT_STATUSES = frozenset({"aborted", "failed"})
+
+# Chain-level retry bound: at most ONE re-entry per phase -- attempt 1
+# (first record) plus attempt 2 (the single permitted re-entry) are allowed;
+# a 3rd record of the same phase name is refused by record_auto_phase.
+AUTO_PHASE_MAX_ATTEMPTS = 2
+
+
+def auto_route_artifact_path(branch: str | None = None) -> Path:
+    """Return the branch-scoped /map-auto routing decision artifact path."""
+    return get_branch_dir(branch) / "auto-route.json"
+
+
+def _auto_route_evidence_for_artifact(
+    evidence: list[dict[str, object]],
+) -> list[dict[str, str]]:
+    """Coerce _select_route's evidence into AUTO_ROUTE_SCHEMA's string shape.
+
+    _select_route returns richer Python values (dict, bool, None) per signal
+    for in-process callers; AUTO_ROUTE_SCHEMA (schemas.py) declares
+    evidence[].value as a plain string for the persisted artifact. JSON-encode
+    non-string values so no signal detail is lost while staying schema-valid.
+    """
+    stringified: list[dict[str, str]] = []
+    for entry in evidence:
+        value = entry.get("value")
+        value_str = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+        stringified.append({
+            "signal": str(entry.get("signal", "")),
+            "value": value_str,
+            "source": str(entry.get("source", "")),
+        })
+    return stringified
+
+
+def route_task(
+    task: str,
+    branch: str | None = None,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    """Select a route for /map-auto and persist the decision (issue #414).
+
+    Wraps _select_route with the write side of the routing contract: writes
+    .map/<branch>/auto-route.json (all ten AUTO_ROUTE_SCHEMA fields) and
+    registers the `auto_route` manifest stage in the same call, so the route
+    selection is never observable only in stdout. `phases` is always
+    initialized empty here -- record_auto_phase (a later subcommand) is the
+    sole writer of that ledger.
+
+    `executed` and `chain_status` are always set together in one atomic
+    artifact write: non-dry-run -> executed=True, chain_status="in_progress";
+    --dry-run -> executed=False, chain_status="recommended_only" -- UNLESS
+    one of the guards below blocks the chain, in which case executed is
+    forced False regardless of dry_run.
+
+    Three guards run, in this precedence order, BEFORE the normal write
+    (ST-005, INV-6):
+
+      1. In-progress refusal: an existing auto-route.json with
+         chain_status "in_progress" refuses to re-route -- returns
+         status="refused" with a /map-resume pointer, and neither the
+         artifact nor the manifest is touched. chain_status in
+         {recommended_only, blocked, completed, aborted} may be re-routed
+         (the prior selected_route is preserved in route_history).
+      2. Hard-stop holds: a pending dangerous_action or safety_guardrail
+         hold (HARD_STOP_HOLD_KINDS) blocks the chain -- chain_status
+         "blocked", executed False, blocked_by populated with the pending
+         hold ids -- even under --dry-run ("blocked" outranks
+         "recommended_only").
+      3. goal_mismatch block: check_plan_resume's verdict, already surfaced
+         in _select_route's evidence trail (read here, never re-queried),
+         blocks the chain with chain_status "blocked" and a block_reason.
+         The prior spec/task_plan/blueprint artifacts are left untouched --
+         route_task never archives or overwrites them.
+
+    Per Decision 14, route_task writes ONLY auto-route.json and its manifest
+    stage across every branch above -- it never calls record_workflow_fit or
+    create_approval_hold.
+    """
+    branch_name = branch or get_branch_name()
+    artifact_path = auto_route_artifact_path(branch_name)
+    prior = _read_json_file(artifact_path)
+
+    # Guard 1: refuse to re-route a chain that is already in progress --
+    # the operator must resume it explicitly (/map-resume) instead of this
+    # call silently clobbering the active decision.
+    if isinstance(prior, dict) and prior.get("chain_status") == "in_progress":
+        return {
+            "status": "refused",
+            "branch": branch_name,
+            "path": str(artifact_path),
+            "reason": (
+                f"branch '{branch_name}' has an in-progress /map-auto chain; "
+                "re-routing is refused to avoid clobbering the active run."
+            ),
+            "next_command": "/map-resume",
+        }
+
+    selected_route, raw_evidence = _select_route(branch_name, task)
+    next_command = _AUTO_ROUTE_NEXT_COMMAND[selected_route]
+
+    route_history: list[str] = []
+    if isinstance(prior, dict):
+        prior_history = prior.get("route_history")
+        if isinstance(prior_history, list):
+            route_history = [item for item in prior_history if isinstance(item, str)]
+        prior_route = prior.get("selected_route")
+        if isinstance(prior_route, str) and prior_route:
+            route_history.append(prior_route)
+
+    executed = not dry_run
+    chain_status = "in_progress" if executed else "recommended_only"
+    blocked_by: list[str] = []
+    block_reason = ""
+
+    # Guard 2: pending hard-stop holds block the chain outright, including
+    # under --dry-run -- "blocked" always outranks "recommended_only".
+    pending_holds = get_pending_holds(branch_name)
+    hard_stop_ids = [
+        str(hold["id"])
+        for hold in cast(list[Any], pending_holds.get("holds", []))
+        if isinstance(hold, dict) and hold.get("kind") in HARD_STOP_HOLD_KINDS
+    ]
+    if hard_stop_ids:
+        chain_status = "blocked"
+        executed = False
+        blocked_by = hard_stop_ids
+        block_reason = f"pending hard-stop hold(s): {', '.join(hard_stop_ids)}"
+    else:
+        # Guard 3: a goal_mismatch verdict from check_plan_resume, already
+        # surfaced by _select_route above -- reused, not re-queried --
+        # blocks the chain without touching the prior plan artifacts.
+        mismatch_entry = next(
+            (
+                entry
+                for entry in raw_evidence
+                if entry.get("signal") == "check_plan_resume"
+                and entry.get("value") == "goal_mismatch"
+            ),
+            None,
+        )
+        if mismatch_entry is not None:
+            chain_status = "blocked"
+            executed = False
+            block_reason = (
+                f"check_plan_resume reported goal_mismatch for branch "
+                f"'{branch_name}'; resolve the mismatch (archive/rename the "
+                "prior plan or confirm intent) before routing."
+            )
+
+    artifact: dict[str, object] = {
+        "schema_version": "1.0",
+        "task_summary": _sanitize_for_json(task),
+        "selected_route": selected_route,
+        "evidence": _auto_route_evidence_for_artifact(raw_evidence),
+        "blocked_by": blocked_by,
+        "next_command": next_command,
+        "executed": executed,
+        "chain_status": chain_status,
+        "phases": [],
+        "route_history": route_history,
+    }
+    if block_reason:
+        artifact["block_reason"] = block_reason
+    _write_json_file(artifact_path, artifact)
+
+    manifest = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        manifest,
+        "auto_route",
+        "blocked" if chain_status == "blocked" else ("recommended" if dry_run else "in_progress"),
+        artifacts=[_artifact_ref(artifact_path, "auto-route-decision")],
+        metadata={
+            "selected_route": selected_route,
+            "chain_status": chain_status,
+        },
+    )
+    save_artifact_manifest(manifest, branch_name)
+
+    return {
+        "status": "blocked" if chain_status == "blocked" else "success",
+        "branch": branch_name,
+        "path": str(artifact_path),
+        "selected_route": selected_route,
+        "chain_status": chain_status,
+        "next_command": next_command,
+        "executed": executed,
+        "blocked_by": blocked_by,
+    }
+
+
+def record_auto_phase(
+    phase: str,
+    status: str,
+    branch: str | None = None,
+    evidence_refs: list[str] | None = None,
+    reason: str = "",
+) -> dict[str, object]:
+    """Append one entry to auto-route.json's phase ledger (issue #414, ST-007).
+
+    record_auto_phase is the ONLY function that mutates `phases[]` --
+    route_task always initializes it empty and never appends (Decision 11
+    single-writer invariant). Requires an existing auto-route.json (written
+    by route_task); returns status="error" if none is found.
+
+    `attempt` mechanizes HC-2's at-most-one-re-entry bound: it is
+    ``1 + count of prior phases[] entries with the SAME phase name``. A
+    first call for a phase records attempt=1; a re-entry records attempt=2.
+    A THIRD call for the same phase is refused outright -- no entry is
+    appended for that call. Instead the chain is force-aborted: chain_status
+    is set to "aborted" and the abort reason is persisted in the top-level
+    `abort_reason` field (mirroring route_task's `block_reason` field for
+    the "blocked" chain_status -- one field, schema-valid via the schema's
+    `additionalProperties: true`, so the operator sees WHY directly in
+    auto-route.json without needing to scan phases[] for a synthetic entry).
+
+    On every non-refused call, chain_status transitions from the recorded
+    `status` using a closed vocabulary (AUTO_PHASE_TERMINAL_SUCCESS_STATUSES
+    -> "completed", AUTO_PHASE_ABORT_STATUSES -> "aborted", otherwise
+    "in_progress") and the `abort_reason` field is set/cleared to match. The
+    `auto_route` manifest stage is refreshed on every call (refused or not)
+    so progress is observable outside the artifact, with its status
+    mirroring the resulting chain_status.
+
+    `evidence_refs` persists caller-supplied ids (e.g. hold ids
+    auto-approved by `auto_decide_holds`) in the phase entry, giving every
+    auto-approval a second durable recording site alongside the hold's own
+    audit note (INV-4).
+
+    HC-2 fail-closed guard (code review 2): once chain_status is "aborted"
+    (3rd-attempt refusal above) or "blocked" (route_task hard-stop hold),
+    the chain must stay terminal until an explicit NEW route_task call --
+    route_task's own overwrite policy is the only legitimate way out of
+    "aborted"/"blocked". A call naming a DIFFERENT phase must never act as a
+    side door that resurrects the chain by appending a fresh entry and
+    flipping chain_status back to in_progress/completed. This guard runs
+    BEFORE the attempt-counter logic (which only protects the SAME phase
+    name) and mutates nothing on the terminal-state path: no phases[]
+    append, no chain_status change, no abort_reason/block_reason pop, no
+    manifest write.
+    """
+    branch_name = branch or get_branch_name()
+    artifact_path = auto_route_artifact_path(branch_name)
+    artifact = _read_json_file(artifact_path)
+    if artifact is None:
+        return {
+            "status": "error",
+            "branch": branch_name,
+            "path": str(artifact_path),
+            "reason": (
+                f"no auto-route.json found for branch '{branch_name}'; "
+                "run route_task first"
+            ),
+        }
+
+    terminal_chain_status = artifact.get("chain_status")
+    if terminal_chain_status in {"aborted", "blocked"}:
+        return {
+            "status": "refused",
+            "branch": branch_name,
+            "path": str(artifact_path),
+            "phase": phase,
+            "chain_status": terminal_chain_status,
+            "reason": (
+                f"branch '{branch_name}' auto-route chain is already "
+                f"'{terminal_chain_status}'; record_auto_phase refuses to "
+                "mutate a terminal chain -- call route_task to re-route "
+                "explicitly."
+            ),
+            "abort_reason": artifact.get("abort_reason"),
+            "block_reason": artifact.get("block_reason"),
+        }
+
+    raw_phases = artifact.get("phases")
+    phases = [entry for entry in raw_phases if isinstance(entry, dict)] if isinstance(
+        raw_phases, list
+    ) else []
+    prior_attempts = sum(1 for entry in phases if entry.get("phase") == phase)
+    attempt = prior_attempts + 1
+
+    manifest = load_artifact_manifest(branch_name)
+
+    if attempt > AUTO_PHASE_MAX_ATTEMPTS:
+        # refusal: do not append an entry for this call -- force-abort
+        # the chain instead, with the reason visible at the top level.
+        abort_reason = (
+            f"phase '{phase}' refused at attempt {attempt} (max "
+            f"{AUTO_PHASE_MAX_ATTEMPTS} attempts per HC-2); forcing "
+            "chain_status=aborted."
+        )
+        if reason:
+            abort_reason += f" caller reason: {reason}"
+        abort_reason = _sanitize_for_json(abort_reason)
+
+        artifact["chain_status"] = "aborted"
+        artifact["abort_reason"] = abort_reason
+        _write_json_file(artifact_path, artifact)
+
+        _set_manifest_stage(
+            manifest,
+            "auto_route",
+            "aborted",
+            artifacts=[_artifact_ref(artifact_path, "auto-route-decision")],
+            metadata={
+                "chain_status": "aborted",
+                "aborted_phase": phase,
+                "attempt": attempt,
+            },
+        )
+        save_artifact_manifest(manifest, branch_name)
+
+        return {
+            "status": "refused",
+            "branch": branch_name,
+            "path": str(artifact_path),
+            "phase": phase,
+            "attempt": attempt,
+            "chain_status": "aborted",
+            "abort_reason": abort_reason,
+        }
+
+    entry: dict[str, object] = {
+        "phase": phase,
+        "status": status,
+        "attempt": attempt,
+        "evidence_refs": list(evidence_refs or []),
+        "reason": _sanitize_for_json(reason),
+        "recorded_at": _utc_timestamp(),
+    }
+    phases.append(entry)
+    artifact["phases"] = phases
+
+    if status in AUTO_PHASE_TERMINAL_SUCCESS_STATUSES:
+        chain_status = "completed"
+    elif status in AUTO_PHASE_ABORT_STATUSES:
+        chain_status = "aborted"
+    else:
+        chain_status = "in_progress"
+    artifact["chain_status"] = chain_status
+    if chain_status == "aborted":
+        artifact["abort_reason"] = _sanitize_for_json(
+            reason or f"phase '{phase}' reported status '{status}'"
+        )
+    else:
+        artifact.pop("abort_reason", None)
+    _write_json_file(artifact_path, artifact)
+
+    _set_manifest_stage(
+        manifest,
+        "auto_route",
+        chain_status,
+        artifacts=[_artifact_ref(artifact_path, "auto-route-decision")],
+        metadata={"chain_status": chain_status, "phase": phase, "attempt": attempt},
+    )
+    save_artifact_manifest(manifest, branch_name)
+
+    return {
+        "status": "success",
+        "branch": branch_name,
+        "path": str(artifact_path),
+        "phase": phase,
+        "attempt": attempt,
+        "chain_status": chain_status,
+    }
+
+
 def record_scope_baseline(branch: str) -> dict:
     """Snapshot the current uncommitted / untracked file set as a baseline
     that validate_mutation_boundary will subtract from `actual` on future
@@ -17284,6 +17951,60 @@ def get_pending_holds(branch: str | None = None) -> dict[str, Any]:
         "has_pending": bool(pending),
         "pending_count": len(pending),
         "resume_blocked": bool(pending),
+    }
+
+
+def auto_decide_holds(branch: str | None = None) -> dict[str, Any]:
+    """Split pending approval holds into auto-approved and hard-stopped (#414).
+
+    Reads pending holds via `get_pending_holds` and, for each one, decides
+    solely on AUTO_APPROVABLE_HOLD_KINDS membership -- a positive allowlist,
+    never an exclusion of HARD_STOP_HOLD_KINDS. `decide_approval_hold` is
+    therefore only ever reachable from the branch guarded by that allowlist
+    check, so no code path here can transition a dangerous_action or
+    safety_guardrail hold (INV-2), even if hard-stop membership itself were
+    ever misconfigured.
+
+    - Holds whose kind is in AUTO_APPROVABLE_HOLD_KINDS are decided
+      "approved" via the existing `decide_approval_hold(hold_id, "approved",
+      "auto-approved by map-auto", branch)` and collected into
+      `auto_approved[]`.
+    - Holds whose kind is in HARD_STOP_HOLD_KINDS are left untouched
+      (still `pending`) and collected into `hard_stops[]`.
+    """
+    branch_name = branch or get_branch_name()
+    pending = get_pending_holds(branch_name)
+    auto_approved: list[dict[str, str]] = []
+    hard_stops: list[dict[str, str]] = []
+
+    for hold in cast(list[Any], pending.get("holds", [])):
+        if not isinstance(hold, dict):
+            continue
+        hold_id = str(hold.get("id", ""))
+        kind = str(hold.get("kind", ""))
+        if kind in AUTO_APPROVABLE_HOLD_KINDS:
+            decide_approval_hold(hold_id, "approved", "auto-approved by map-auto", branch_name)
+            auto_approved.append(
+                {"id": hold_id, "kind": kind, "note": "auto-approved by map-auto"}
+            )
+        elif kind in HARD_STOP_HOLD_KINDS:
+            hard_stops.append(
+                {
+                    "id": hold_id,
+                    "kind": kind,
+                    "reason": "hard-stop hold kind; requires an explicit human decision",
+                }
+            )
+        # Any other kind is left pending and reported in neither bucket --
+        # unreachable while AUTO_APPROVABLE_HOLD_KINDS | HARD_STOP_HOLD_KINDS
+        # == APPROVAL_HOLD_KINDS holds, but fails closed if that invariant
+        # is ever violated.
+
+    return {
+        "status": "ok",
+        "branch": branch_name,
+        "auto_approved": auto_approved,
+        "hard_stops": hard_stops,
     }
 
 
@@ -21628,6 +22349,18 @@ if __name__ == "__main__":
         _r = get_pending_holds(_a.branch)
         print(json.dumps(_r, indent=2))
 
+    elif func_name == "auto_decide_holds":
+        # CLI: auto_decide_holds [--branch B]
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py auto_decide_holds")
+        _p.add_argument("--branch", default=None, help="Branch name (default: current branch)")
+        _a = _p.parse_args(sys.argv[2:])
+        _r = auto_decide_holds(_a.branch)
+        print(json.dumps(_r, indent=2))
+        if _r.get("status") == "error":
+            sys.exit(1)
+
     elif func_name == "write_implementer_readiness_review" and len(sys.argv) >= 3:
         # CLI: write_implementer_readiness_review <verdict>
         #        [--blocking-questions '<JSON>']
@@ -21741,6 +22474,54 @@ if __name__ == "__main__":
             branch=_rvl_flag("branch") or None,
         )
         print(json.dumps(result, indent=2, ensure_ascii=True))
+
+    elif func_name == "route_task" and len(sys.argv) >= 3:
+        # CLI: route_task <task> [--branch B] [--dry-run]
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py route_task")
+        _p.add_argument("task", help="Task description text to route")
+        _p.add_argument("--branch", default=None, help="Branch name (default: current branch)")
+        _p.add_argument(
+            "--dry-run",
+            action="store_true",
+            dest="dry_run",
+            help="Recommend a route without marking the chain in_progress",
+        )
+        _a = _p.parse_args(sys.argv[2:])
+        _r = route_task(_a.task, branch=_a.branch, dry_run=_a.dry_run)
+        print(json.dumps(_r, indent=2))
+        if _r.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "record_auto_phase" and len(sys.argv) >= 4:
+        # CLI: record_auto_phase <phase> <status> [--branch B]
+        #        [--evidence-refs a,b,c] [--reason "..."]
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py record_auto_phase")
+        _p.add_argument("phase", help="Phase name to record (e.g. map-plan, map-efficient)")
+        _p.add_argument(
+            "status", help="Phase status (e.g. completed, in_progress, failed, aborted)"
+        )
+        _p.add_argument("--branch", default=None, help="Branch name (default: current branch)")
+        _p.add_argument(
+            "--evidence-refs",
+            default="",
+            dest="evidence_refs",
+            help="Comma-separated evidence ids (e.g. auto-approved hold ids)",
+        )
+        _p.add_argument(
+            "--reason", default="", help="Reason recorded alongside the phase entry"
+        )
+        _a = _p.parse_args(sys.argv[2:])
+        _refs = [ref.strip() for ref in _a.evidence_refs.split(",") if ref.strip()]
+        _r = record_auto_phase(
+            _a.phase, _a.status, branch=_a.branch, evidence_refs=_refs, reason=_a.reason
+        )
+        print(json.dumps(_r, indent=2))
+        if _r.get("status") == "error":
+            sys.exit(1)
 
     else:
         # Helpful redirect: when the user passes a command that belongs to

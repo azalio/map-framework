@@ -476,15 +476,25 @@ def detect_skill_deps(skill_dir: Path) -> dict[str, set[str]]:
 # ---------------------------------------------------------------------------
 
 
-def test_skill_discovery_non_empty(skill_names: list[str]) -> None:
-    """Guard: skill-rules.json must list exactly 21 skills (prevents vacuous pass).
+def test_skill_discovery_non_empty(skill_names: list[str], skills_dir: Path) -> None:
+    """Guard: skill-rules.json entries == shipped skill dirs (prevents vacuous pass).
 
-    21 = the 16 core MAP skills + map-so-search + map-understand + map-wayfind
-         + map-architecture (#363) + map-prd-review (#413).
+    Derived from the directory tree instead of a hardcoded count so a new skill
+    doesn't break this guard (the old literal was bumped for #363, #413, ...).
+    A dir without a registry entry, or a stale entry without a dir, both fail;
+    an empty discovery on either side fails the non-empty assertions.
     """
-    assert len(skill_names) == 21, (
-        f"Expected 21 skills in skill-rules.json, found {len(skill_names)}: "
-        f"{sorted(skill_names)}"
+    dir_names = {
+        p.name
+        for p in skills_dir.iterdir()
+        if p.is_dir() and (p / "SKILL.md").exists()
+    }
+    assert dir_names, f"empty skill-dir discovery under {skills_dir}"
+    assert skill_names, "empty skills mapping in skill-rules.json"
+    assert set(skill_names) == dir_names, (
+        "skill-rules.json entries and .claude/skills/ dirs diverge: "
+        f"only-in-rules={sorted(set(skill_names) - dir_names)}, "
+        f"only-on-disk={sorted(dir_names - set(skill_names))}"
     )
 
 
