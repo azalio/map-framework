@@ -19798,10 +19798,41 @@ def merge_wave_worktrees(
         if ln.strip() and not _wt_is_runtime_state_path(_wt_porcelain_path(ln))
     ]
     if dirty:
+        # Intent: emit a dangerous_action hold at this refusal (#422 AC-4) so the
+        # approval-hold hard-stop path (#344) has a live producer instead of only
+        # synthetic test fixtures. request_summary is derived solely from the
+        # branch name (no dirty-file-list) so create_approval_hold's
+        # (kind, request_summary, pending) dedup keeps repeated refusals against
+        # the same dirty tree idempotent (INV-2); the repo-relative dirty paths
+        # ride in `reason` instead, never file contents. Hold creation is best-
+        # effort: the refusal must still reach the caller even if it fails.
+        dirty_paths = [_wt_porcelain_path(ln) for ln in dirty[:20]]
+        hold_id: str | None = None
+        try:
+            hold_result = create_approval_hold(
+                kind="dangerous_action",
+                reason=(
+                    "The working tree has uncommitted changes blocking a wave "
+                    "merge; affected paths: " + ", ".join(dirty_paths)
+                ),
+                request_summary=f"Uncommitted changes blocking wave merge on {branch_name}",
+                source="worktree-merge",
+                branch=branch_name,
+                safe_continuation=(
+                    "Commit or stash the listed changes, then retry the wave merge."
+                ),
+            )
+            if hold_result.get("status") == "ok":
+                hold_id = cast(str, hold_result["hold_id"])
+        except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
+            hold_id = None
+        error_extra: dict[str, object] = {"dirty": dirty[:20]}
+        if hold_id is not None:
+            error_extra["hold_id"] = hold_id
         return _wt_error(
             "DIRTY_TARGET",
             "the working tree has uncommitted changes; commit/stash before a wave merge",
-            dirty=dirty[:20],
+            **error_extra,
         )
 
     # Serialize coordinators so two waves never interleave squash commits.
