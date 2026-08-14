@@ -7,12 +7,16 @@ model: opus
 effort: high
 # 2026-08-14 (#424): a final-verifier run edited generated trees and committed
 # them mid-audit, despite the prompt contract being APPROVED/REJECTED-only.
-# Write stays allowed — the verifier legitimately writes .map/<branch>/
-# final_verification.json + progress markdown — but Edit and nested Agent are
-# denied at the harness level. Bash git mutations are blocked by the
-# safety-guardrails PreToolUse hook, which keys on agent_type.
+# Nested Agent is denied at the harness level. Edit/Write are NOT denied here:
+# this agent's own contract requires an in-place append to
+# .map/<branch>/progress_<branch>.md and a `[ ]` -> `[x]` update in the
+# task-plan Acceptance Criteria table — forcing those through whole-file Write
+# would drop surrounding content. The boundary is enforced by scope instead:
+# the safety-guardrails PreToolUse hook keys on agent_type and confines every
+# verifier Edit/Write/MultiEdit to `.map/` (normalized, so `.map/../src` cannot
+# escape) while blocking all git-mutating Bash. Runner-owned state inside
+# `.map/` stays protected for everyone by the workflow-gate tamper detector.
 disallowedTools:
-  - Edit
   - Agent
 version: 1.2.0
 last_updated: 2026-08-14

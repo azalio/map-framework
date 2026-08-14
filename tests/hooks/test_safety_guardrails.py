@@ -612,6 +612,13 @@ class TestVerifierAgentBoundary:
             "git -C /repo commit --no-verify -m x",
             "bash -c 'git commit -m sneaky'",
             "make check && git commit -am wip",
+            # Ref-moving commands change the very branch under audit.
+            "git pull --rebase origin main",
+            "git fetch origin",
+            "git submodule update --init",
+            "git update-ref refs/heads/main HEAD",
+            "git symbolic-ref HEAD refs/heads/other",
+            "git config user.email x@y.z",
         ],
     )
     def test_git_mutation_blocked_for_verifiers(self, agent, command):
@@ -686,6 +693,21 @@ class TestVerifierAgentBoundary:
         exit_code, stdout, _ = run_hook_as_agent("Write", {"file_path": path}, agent)
         assert exit_code == 0
         assert _parse_stdout(stdout) == {}, f"{path!r} was wrongly blocked"
+
+    @pytest.mark.parametrize("agent", VERIFIERS)
+    @pytest.mark.parametrize(
+        "path",
+        [
+            ".map/../src/mapify_cli/cli.py",
+            ".map/feat-x/../../.claude/hooks/workflow-gate.py",
+            "./.map/../README.md",
+        ],
+    )
+    def test_traversal_out_of_map_is_blocked(self, agent, path):
+        """A raw prefix check accepts `.map/../src/...`; normalize before matching."""
+        exit_code, stdout, _ = run_hook_as_agent("Write", {"file_path": path}, agent)
+        assert exit_code == 0
+        _assert_denied(_parse_stdout(stdout))
 
     @pytest.mark.parametrize("agent", VERIFIERS)
     def test_reads_are_never_restricted(self, agent):

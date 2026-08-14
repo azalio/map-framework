@@ -1524,7 +1524,15 @@ REVIEW_BUNDLE_SCHEMA = {
                             },
                             "status": {
                                 "type": "string",
-                                "enum": ["covered", "missing_evidence"],
+                                # planned_only: the owner subtask's validation_criteria
+                                # names the requirement but nothing downstream verified
+                                # it — a review gap, distinct from a requirement no
+                                # artifact ever mentions (missing_evidence).
+                                "enum": [
+                                    "covered",
+                                    "planned_only",
+                                    "missing_evidence",
+                                ],
                             },
                         },
                         "required": [
@@ -1542,7 +1550,11 @@ REVIEW_BUNDLE_SCHEMA = {
                     "properties": {
                         "total": {"type": "integer", "minimum": 0},
                         "covered": {"type": "integer", "minimum": 0},
+                        # `missing` stays the total un-covered count for backward
+                        # compatibility; `planned_only` breaks out the review-gap
+                        # subset so the two failure modes are separable.
                         "missing": {"type": "integer", "minimum": 0},
+                        "planned_only": {"type": "integer", "minimum": 0},
                     },
                     "required": ["total", "covered", "missing"],
                     "additionalProperties": False,

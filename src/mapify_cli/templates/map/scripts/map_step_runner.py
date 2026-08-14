@@ -363,12 +363,25 @@ ACCEPTANCE_COVERAGE_BLOCK_RE = re.compile(
     + re.escape(ACCEPTANCE_COVERAGE_BLOCK_END),
     re.DOTALL,
 )
-# Structural fallback for artifacts written BEFORE the sentinels existed (every
-# already-installed repo has them on disk). Spans the heading up to the next
-# `## ` heading or end of text — the non-greedy body plus the lookahead also
-# handles pr-draft.md, where the whole summary is flattened onto one line.
-ACCEPTANCE_COVERAGE_LEGACY_BLOCK_RE = re.compile(
-    r"##\s+Acceptance Coverage.*?(?=##\s+|\Z)", re.DOTALL
+# Fallback for artifacts written BEFORE the sentinels existed (every already-installed
+# repo has them on disk). Deliberately NOT a heading-to-heading span: when the block is
+# the last section — or when pr-draft.md has flattened every newline into a space so no
+# later `## ` is recognisable — a span would swallow the rest of the file and drop
+# genuine citations. These patterns match the generated block's own line grammar
+# instead, so only report-authored text is ever removed.
+ACCEPTANCE_COVERAGE_LEGACY_LINE_RES = (
+    # The per-requirement rows — the only part that carries tags. The evidence
+    # tail is a bounded, comma-separated label list (labels never contain spaces),
+    # NOT `[^\n]*`: an open-ended tail would run past the last row and swallow
+    # whatever prose follows it on a flattened line.
+    re.compile(
+        r"-\s*\[[a-z_]+\]\s*\S+\s+owned by\s+\S+;\s*evidence:\s*"
+        r"[\w:./-]+(?:,\s*[\w:./-]+)*"
+    ),
+    re.compile(r"-\s*Covered tags:\s*\d+/\d+"),
+    re.compile(r"-\s*Missing evidence:\s*\d+"),
+    re.compile(r"-\s*Uncovered:\s*\d+\s*\([^)]*\)"),
+    re.compile(r"##\s+Acceptance Coverage"),
 )
 REVIEW_PROMPT_DEFAULT_BUDGET_TOKENS = 12_000
 REVIEW_PROMPT_MIN_BUDGET_TOKENS = 1_024
@@ -4690,10 +4703,13 @@ def _strip_generated_coverage_blocks(text: str) -> str:
 
     The coverage report must never count its own output as evidence — see
     ACCEPTANCE_COVERAGE_BLOCK_START. Sentinel-delimited blocks are removed exactly;
-    unmarked legacy blocks fall back to the section-heading span.
+    unmarked legacy blocks are removed line-by-line so nothing beyond the report's
+    own output is ever discarded.
     """
     stripped = ACCEPTANCE_COVERAGE_BLOCK_RE.sub(" ", text)
-    return ACCEPTANCE_COVERAGE_LEGACY_BLOCK_RE.sub(" ", stripped)
+    for pattern in ACCEPTANCE_COVERAGE_LEGACY_LINE_RES:
+        stripped = pattern.sub(" ", stripped)
+    return stripped
 
 
 def _extract_acceptance_tags(text: object) -> set[str]:
@@ -4875,6 +4891,7 @@ def build_acceptance_coverage_report(
         )
 
     covered = sum(1 for item in requirements if item["status"] == "covered")
+    planned_only = sum(1 for item in requirements if item["status"] == "planned_only")
     missing = len(requirements) - covered
     # Only sources that cited a REAL requirement count as evidence sources. With
     # brackets optional, every source matches incidental tokens (`ST-001`,
@@ -4891,7 +4908,15 @@ def build_acceptance_coverage_report(
         "blueprint_path": str(branch_dir / "blueprint.json"),
         "evidence_sources": tagged_evidence_sources,
         "requirements": requirements,
-        "summary": {"total": len(requirements), "covered": covered, "missing": missing},
+        # `missing` stays the total un-covered count (backward-compatible);
+        # `planned_only` breaks out the review-gap subset so an operator can tell
+        # "nobody verified it" from "nobody even owns it".
+        "summary": {
+            "total": len(requirements),
+            "covered": covered,
+            "missing": missing,
+            "planned_only": planned_only,
+        },
     }
 
 
@@ -4916,11 +4941,15 @@ def _render_acceptance_coverage_markdown(report: Mapping[str, object]) -> str:
     total = summary.get("total", 0) if isinstance(summary, dict) else 0
     covered = summary.get("covered", 0) if isinstance(summary, dict) else 0
     missing = summary.get("missing", 0) if isinstance(summary, dict) else 0
+    planned_only = summary.get("planned_only", 0) if isinstance(summary, dict) else 0
     lines = [
         ACCEPTANCE_COVERAGE_BLOCK_START,
         "## Acceptance Coverage",
         f"- Covered tags: {covered}/{total}",
-        f"- Missing evidence: {missing}",
+        (
+            f"- Uncovered: {missing} ({planned_only} planned but unverified, "
+            f"{missing - planned_only} with no evidence at all)"
+        ),
     ]
     requirements = report.get("requirements")
     if isinstance(requirements, list) and requirements:
@@ -12134,6 +12163,15 @@ def snapshot_code_state(branch: str | None = None) -> dict:
         # No default-branch ref to anchor on — degrade to the old HEAD-only view
         # rather than reporting nothing at all.
         diff_range = "HEAD"
+        diff_stat = uncommitted_stat
+        files_changed = list(uncommitted_files)
+
+    if not files_changed and not diff_stat and (uncommitted_files or uncommitted_stat):
+        # Base resolved but the range is empty (nothing committed yet, or sitting on
+        # the default branch) while the working tree carries the whole change.
+        # Reporting "no code diff" here would re-create the always-red gate that
+        # #426 is about, just from the other direction.
+        diff_range = f"{diff_range} (empty; showing uncommitted working tree)"
         diff_stat = uncommitted_stat
         files_changed = list(uncommitted_files)
 

@@ -251,7 +251,11 @@ VERIFIER_AGENT_TYPES = frozenset(
 # Write scope a verifier keeps: its own branch-scoped artifact directory.
 VERIFIER_WRITABLE_PREFIXES = (".map/", "/.map/")
 
-# git subcommands that mutate the index, the worktree, or history.
+# git subcommands that mutate the index, the worktree, refs, history, or config.
+# `pull`/`fetch`/`submodule` are included because they move the very refs the
+# verifier is auditing; `config`/`update-ref`/`symbolic-ref`/`filter-branch`/`notes`
+# because they rewrite repository state out from under the audit. A verifier needs
+# none of them — the list is deliberately fail-closed.
 _GIT_MUTATING_SUBCOMMANDS = (
     "add",
     "am",
@@ -261,17 +265,28 @@ _GIT_MUTATING_SUBCOMMANDS = (
     "cherry-pick",
     "clean",
     "commit",
+    "config",
+    "fetch",
+    "filter-branch",
+    "gc",
     "merge",
     "mv",
+    "notes",
+    "prune",
+    "pull",
     "push",
     "rebase",
     "reset",
     "restore",
     "revert",
     "rm",
+    "sparse-checkout",
     "stash",
+    "submodule",
     "switch",
+    "symbolic-ref",
     "tag",
+    "update-ref",
     "worktree",
 )
 
@@ -323,10 +338,20 @@ def check_verifier_command(command: str) -> tuple[bool, str]:
 
 
 def check_verifier_path(path: str) -> tuple[bool, str]:
-    """Confine verifier writes to `.map/`. Returns (is_safe, reason)."""
+    """Confine verifier writes to `.map/`. Returns (is_safe, reason).
+
+    The path is normalized BEFORE the prefix check: a raw text comparison accepts
+    `.map/../src/mapify_cli/cli.py`, which starts with `.map/` yet resolves outside
+    the allowed workspace.
+
+    This is the outer boundary only. Runner-owned state inside `.map/`
+    (`.map/scripts/**`, `step_state.json`, `approval_holds.json`, …) is separately
+    protected from direct hand-editing by the workflow-gate state-tamper detector,
+    which applies to every caller, not just verifiers.
+    """
     if not path:
         return True, ""
-    normalized = path.replace("\\", "/")
+    normalized = os.path.normpath(path.replace("\\", "/")).replace("\\", "/")
     normalized = normalized.removeprefix("./")
     if normalized.startswith(VERIFIER_WRITABLE_PREFIXES) or "/.map/" in normalized:
         return True, ""

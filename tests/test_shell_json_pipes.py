@@ -25,13 +25,14 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# `echo "$VAR" |` feeding a JSON/text consumer.  Matches the quoted-variable form
-# only — that is the one that carries a captured payload; bare `echo foo | grep`
-# literals are not affected by escape interpretation.  `python3`/`node` consumers
-# belong to the same class: mangled escapes there surface as a JSON decode error
-# (or, worse, silently wrong values) instead of jq's loud abort.
+# `echo $VAR |` feeding a JSON/text consumer.  Both the quoted and the unquoted
+# form carry a captured payload and both hit zsh's escape interpretation (the
+# unquoted one additionally word-splits); a bare `echo foo | grep` literal is
+# unaffected and must not trip the gate.  `python3`/`node` consumers belong to the
+# same class: mangled escapes there surface as a JSON decode error (or, worse,
+# silently wrong values) instead of jq's loud abort.
 BANNED_RE = re.compile(
-    r"""echo\s+"\$\{?[A-Za-z_][A-Za-z0-9_]*\}?"\s*\|\s*(?:jq|while|python3?|node)\b"""
+    r"""echo\s+"?\$\{?[A-Za-z_][A-Za-z0-9_]*\}?"?\s*\|\s*(?:jq|while|python3?|node)\b"""
 )
 
 # Source of truth plus every generated tree, so a direct edit to a generated copy
@@ -42,6 +43,10 @@ SCAN_PREFIXES = (
     ".claude/",
     ".codex/",
     ".agents/",
+    # `.map/` holds the rendered runner and the static-analysis handlers that
+    # actually execute the pipelines — omitting it left the shipped handlers
+    # outside the gate they exist to protect.
+    ".map/",
 )
 
 SCAN_SUFFIXES = (".jinja", ".md", ".sh", ".py", ".json")
@@ -60,7 +65,8 @@ def _scan_files() -> list[Path]:
     offender forever.
     """
     out = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "ls-files", "-z", "--", *SCAN_PREFIXES],
+        ["git", "ls-files", "-z", "--", *SCAN_PREFIXES],
+        cwd=REPO_ROOT,
         capture_output=True,
         text=True,
         check=True,
@@ -107,6 +113,8 @@ def test_no_echo_pipe_into_jq_or_read_loop() -> None:
         ('NORM=$(echo "$OUT" | while IFS= read -r line; do', True),
         ('COUNT=$(echo "${ALL}" | jq length)', True),
         ('P=$(echo "$BUNDLE_JSON" | python3 -c "import sys,json; ...")', True),
+        ("COUNT=$(echo $ALL | jq length)", True),
+        ("NORM=$(echo ${OUT} | while read -r l; do :; done", True),
         ("STEP_ID=$(printf '%s' \"$NEXT_STEP\" | jq -r '.step_id')", False),
         ("NORM=$(printf '%s\\n' \"$OUT\" | while IFS= read -r line; do", False),
         ('echo "done" | grep -q done', False),

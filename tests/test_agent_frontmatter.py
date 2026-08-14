@@ -330,32 +330,25 @@ class TestAgentCapabilityHardening:
             "actor is a legitimate writer — do not add disallowedTools"
         )
 
-    def test_final_verifier_has_edit_in_disallowed_tools(self):
-        """#424 supersedes the #378 'final-verifier is unrestricted' contract.
-
-        A final-verifier run hand-edited generated trees and committed them
-        mid-audit under an APPROVED/REJECTED-only prompt contract. Edit is now
-        denied at the harness level.
-        """
-        fm = self._load_frontmatter("final-verifier")
-        disallowed = fm.get("disallowedTools", [])
-        assert "Edit" in disallowed, (
-            "final-verifier must deny Edit — it audits, it does not fix"
-        )
-
     def test_final_verifier_has_agent_in_disallowed_tools(self):
+        """#424 supersedes the #378 'final-verifier is unrestricted' contract."""
         fm = self._load_frontmatter("final-verifier")
         disallowed = fm.get("disallowedTools", [])
         assert "Agent" in disallowed, (
             "final-verifier must deny Agent — it must not spawn sub-agents"
         )
 
-    def test_final_verifier_write_not_denied(self):
-        """final-verifier IS allowed to Write — it owns .map/<branch>/
-        final_verification.json + the progress markdown. The hook confines those
-        writes to `.map/` (#424); the frontmatter must not remove Write outright."""
+    @pytest.mark.parametrize("tool", ["Edit", "Write"])
+    def test_final_verifier_keeps_map_write_capabilities(self, tool):
+        """final-verifier's own contract requires an in-place append to
+        `.map/<branch>/progress_<branch>.md` and a `[ ]` -> `[x]` update in the
+        task-plan Acceptance Criteria table. Denying Edit would force those through
+        whole-file Write and drop surrounding content. The boundary is enforced by
+        SCOPE instead — safety-guardrails.py confines every verifier write to
+        `.map/` (#424) — not by removing the capability."""
         fm = self._load_frontmatter("final-verifier")
         disallowed = fm.get("disallowedTools", [])
-        assert "Write" not in disallowed, (
-            "final-verifier needs Write for .map/ verdict artifacts — do not deny it"
+        assert tool not in disallowed, (
+            f"final-verifier needs {tool} for its .map/ artifacts; the `.map/` scope "
+            "check in safety-guardrails.py is the boundary, not a blanket denial"
         )
