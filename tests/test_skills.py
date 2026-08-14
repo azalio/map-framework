@@ -92,6 +92,7 @@ HIGH_TRAFFIC_COMPACT_SKILL_REFS = {
     "map-efficient": "efficient-reference.md",
     "map-review": "review-reference.md",
     "map-check": "check-reference.md",
+    "map-release": "release-reference.md",
 }
 
 # Per-skill active-body line budget for the always-loaded SKILL.md (it costs
