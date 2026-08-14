@@ -27,9 +27,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # `echo "$VAR" |` feeding a JSON/text consumer.  Matches the quoted-variable form
 # only — that is the one that carries a captured payload; bare `echo foo | grep`
-# literals are not affected by escape interpretation.
+# literals are not affected by escape interpretation.  `python3`/`node` consumers
+# belong to the same class: mangled escapes there surface as a JSON decode error
+# (or, worse, silently wrong values) instead of jq's loud abort.
 BANNED_RE = re.compile(
-    r"""echo\s+"\$\{?[A-Za-z_][A-Za-z0-9_]*\}?"\s*\|\s*(?:jq|while)\b"""
+    r"""echo\s+"\$\{?[A-Za-z_][A-Za-z0-9_]*\}?"\s*\|\s*(?:jq|while|python3?|node)\b"""
 )
 
 # Source of truth plus every generated tree, so a direct edit to a generated copy
@@ -104,6 +106,7 @@ def test_no_echo_pipe_into_jq_or_read_loop() -> None:
         ('STEP_ID=$(echo "$NEXT_STEP" | jq -r \'.step_id\')', True),
         ('NORM=$(echo "$OUT" | while IFS= read -r line; do', True),
         ('COUNT=$(echo "${ALL}" | jq length)', True),
+        ('P=$(echo "$BUNDLE_JSON" | python3 -c "import sys,json; ...")', True),
         ("STEP_ID=$(printf '%s' \"$NEXT_STEP\" | jq -r '.step_id')", False),
         ("NORM=$(printf '%s\\n' \"$OUT\" | while IFS= read -r line; do", False),
         ('echo "done" | grep -q done', False),

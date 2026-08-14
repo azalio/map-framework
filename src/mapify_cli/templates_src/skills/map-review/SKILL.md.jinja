@@ -276,7 +276,7 @@ Run this before any reviewer agent:
 
 ```bash
 BUNDLE_JSON=$(python3 .map/scripts/map_step_runner.py create_review_bundle)
-BUNDLE_JSON_PATH=$(echo "$BUNDLE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['bundle_path_json'])")
+BUNDLE_JSON_PATH=$(printf '%s' "$BUNDLE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['bundle_path_json'])")
 ```
 
 This creates `.map/<branch>/review-bundle.json` and `.map/<branch>/review-bundle.md`. These are PRIMARY review context. The bundle includes prior-stage consumption status; missing inputs are review evidence, not invisible setup noise.
@@ -288,9 +288,9 @@ DETACHED_PATH=""
 if [ "$DETACHED_FLAG" = "true" ]; then
   # EC-15: prepare detached review once; compare runs reuse the same path.
   DETACHED_JSON=$(python3 .map/scripts/map_step_runner.py prepare_detached_review "$BUNDLE_JSON_PATH")
-  DETACHED_STATUS=$(echo "$DETACHED_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))")
-  DETACHED_PATH=$(echo "$DETACHED_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('worktree_path') or '')")
-  DETACHED_REASON=$(echo "$DETACHED_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('reason') or '')")
+  DETACHED_STATUS=$(printf '%s' "$DETACHED_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))")
+  DETACHED_PATH=$(printf '%s' "$DETACHED_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('worktree_path') or '')")
+  DETACHED_REASON=$(printf '%s' "$DETACHED_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('reason') or '')")
 fi
 ```
 
