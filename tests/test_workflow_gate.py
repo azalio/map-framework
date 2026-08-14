@@ -1177,7 +1177,7 @@ class TestStateTamperDetector(_WorkflowGateTestHelpers):
             if h.get("kind") == "safety_guardrail" and h.get("state") == "pending"
         ]
 
-    # --- VC1: protected path classes denied + hold recorded ---
+    # protected path classes denied + hold recorded ---
 
     @pytest.mark.parametrize(
         "rel_template",
@@ -1236,7 +1236,7 @@ class TestStateTamperDetector(_WorkflowGateTestHelpers):
         matches = self._pending_safety_guardrail_holds(tmp_path, branch)
         assert len(matches) == 1, matches
 
-    # --- VC4: evaluated BEFORE is_exempt_path; Write denied like Edit ---
+    # evaluated BEFORE is_exempt_path; Write denied like Edit ---
 
     def test_tamper_check_precedes_exempt_allow_in_source_order(self) -> None:
         source = self.HOOK_PATH.read_text(encoding="utf-8")
@@ -1336,7 +1336,7 @@ class TestStateTamperDetector(_WorkflowGateTestHelpers):
         assert code == 0
         self._assert_denied(stdout)
 
-    # --- VC2: planning artifacts stay allowed, no hold ---
+    # planning artifacts stay allowed, no hold ---
 
     def test_planning_artifacts_still_allowed_during_active_workflow_no_hold(
         self, tmp_path: Path
@@ -1386,7 +1386,7 @@ class TestStateTamperDetector(_WorkflowGateTestHelpers):
         holds_file = tmp_path / ".map" / branch / "approval_holds.json"
         assert not holds_file.exists()
 
-    # --- VC3: hold-creation failure must still deny; never fail-open ---
+    # hold-creation failure must still deny; never fail-open ---
 
     def test_missing_runner_still_denies_and_never_fails_open(
         self, tmp_path: Path
@@ -1413,7 +1413,7 @@ class TestStateTamperDetector(_WorkflowGateTestHelpers):
         # the deny must still have fired regardless.
         assert not (tmp_path / ".map" / branch / "approval_holds.json").exists()
 
-    def test_vc3_deny_delivered_when_producer_raises(self, tmp_path: Path) -> None:
+    def test_deny_delivered_when_producer_raises(self, tmp_path: Path) -> None:
         """VC3 (INV-4), distinct from the runner-missing case above: the
         runner SCRIPT EXISTS but raises internally (e.g. a bug inside
         create_approval_hold itself, not a missing-file condition). The
@@ -1443,7 +1443,7 @@ class TestStateTamperDetector(_WorkflowGateTestHelpers):
         # The producer raised before it could write anything durable.
         assert not (tmp_path / ".map" / branch / "approval_holds.json").exists()
 
-    # --- VC5: no-op outside an active workflow ---
+    # no-op outside an active workflow ---
 
     def test_noop_when_no_step_state_json(self, tmp_path: Path) -> None:
         branch = "master"

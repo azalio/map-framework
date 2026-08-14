@@ -684,7 +684,7 @@ def main() -> None:
             attempted = _to_repo_relative(tamper_paths[0]) or tamper_paths[0]
             try:
                 _create_safety_guardrail_hold(branch, attempted)
-            except Exception:  # noqa: BLE001, S110 -- INV-4: producer failure must still reach deny(), never escape to the fail-open outer handler
+            except Exception:  # noqa: BLE001, S110 -- : producer failure must still reach deny, never escape to the fail-open outer handler
                 pass
             deny(
                 "Workflow gate: runner-owned MAP state is not "

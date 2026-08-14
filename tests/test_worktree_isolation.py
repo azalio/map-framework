@@ -631,7 +631,7 @@ class TestWaveWorktreeMerge:
 
 
 # --------------------------------------------------------------------------- #
-# dangerous_action hold producer at the DIRTY_TARGET refusal (#422 ST-002)
+# dangerous_action hold producer at the DIRTY_TARGET refusal (#422 )
 # --------------------------------------------------------------------------- #
 _DIRTY_FILE_CONTENT_MARKER = "SHOULD-NEVER-LEAK-INTO-A-HOLD"
 
@@ -645,7 +645,7 @@ def _make_dirty_working_tree(repo: Path) -> str:
 
 
 class TestDirtyTargetApprovalHold:
-    def test_vc1_dirty_target_creates_pending_dangerous_action_hold(
+    def test_dirty_target_creates_pending_dangerous_action_hold(
         self, repo: Path
     ) -> None:
         branch = _make_dirty_working_tree(repo)
@@ -668,7 +668,7 @@ class TestDirtyTargetApprovalHold:
         assert _DIRTY_FILE_CONTENT_MARKER not in hold["reason"]
         assert _DIRTY_FILE_CONTENT_MARKER not in hold["request_summary"]
 
-    def test_vc2_repeated_dirty_refusals_are_idempotent(self, repo: Path) -> None:
+    def test_repeated_dirty_refusals_are_idempotent(self, repo: Path) -> None:
         _make_dirty_working_tree(repo)
         first = m.merge_wave_worktrees(["ST-001"], verify_cmds=[], post_wave_cmds=[])
         second = m.merge_wave_worktrees(["ST-001"], verify_cmds=[], post_wave_cmds=[])
@@ -681,7 +681,7 @@ class TestDirtyTargetApprovalHold:
         dangerous = [h for h in store["holds"].values() if h.get("kind") == "dangerous_action"]
         assert len(dangerous) == 1
 
-    def test_vc4_refusal_payload_carries_hold_id_alongside_existing_fields(
+    def test_refusal_payload_carries_hold_id_alongside_existing_fields(
         self, repo: Path
     ) -> None:
         _make_dirty_working_tree(repo)
@@ -713,7 +713,7 @@ class TestDirtyTargetHoldRoutingIntegration:
     real `auto_decide_holds`, and the real `route_task`. No hold in this class
     is constructed via a direct `create_approval_hold` call."""
 
-    def test_vc3_dirty_target_hold_hard_stops_and_blocks_route_task(
+    def test_dirty_target_hold_hard_stops_and_blocks_route_task(
         self, repo: Path
     ) -> None:
         branch = _make_dirty_working_tree(repo)
@@ -735,7 +735,7 @@ class TestDirtyTargetHoldRoutingIntegration:
         assert route_result["chain_status"] == "blocked"
         assert hold_id in route_result["blocked_by"]
 
-    def test_vc3_live_plan_approval_hold_does_not_block_route_task(
+    def test_live_plan_approval_hold_does_not_block_route_task(
         self, repo: Path
     ) -> None:
         """VC3/AC-9 (#422 ST-004): a live plan_approval hold -- created via
@@ -767,7 +767,7 @@ class TestDirtyTargetHoldRoutingIntegration:
         assert not_blocked["blocked_by"] == []
         assert plan_hold_id not in not_blocked["blocked_by"]
 
-        # VC4, same test: the complementary live dangerous_action hold.
+        # same test: the complementary live dangerous_action hold.
         _make_dirty_working_tree(repo)
         refusal = m.merge_wave_worktrees(["ST-001"], verify_cmds=[], post_wave_cmds=[])
         assert refusal["kind"] == "DIRTY_TARGET"
