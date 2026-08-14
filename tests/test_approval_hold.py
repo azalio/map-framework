@@ -580,7 +580,7 @@ class TestCLI:
 
 
 # ---------------------------------------------------------------------------
-# Live plan_approval producer (#422 , , )
+# Live plan_approval producer (#422 AC-1, AC-2, AC-6)
 #
 # Synthetic-free: this class never calls create_approval_hold directly. It
 # writes only plan artifacts to disk and drives the real

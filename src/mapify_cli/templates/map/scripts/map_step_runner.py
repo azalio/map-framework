@@ -3323,13 +3323,13 @@ def record_plan_artifacts(branch: str | None = None) -> dict[str, object]:
     }
 
     # Intent: emit the plan_approval hold at the plan-ready boundary (#422
-    # ) -- once task_plan + blueprint are both present -- so the
+    # AC-1) -- once task_plan + blueprint are both present -- so the
     # existing approval-hold lifecycle (#344) has a live producer instead of
     # only synthetic test fixtures. request_summary is derived solely from
     # the branch name (no timestamp/sha) so create_approval_hold's
     # (kind, request_summary, pending) dedup makes re-running this function
     # idempotent rather than spamming a fresh hold on every call.
-    # The producer is best-effort like the other live producers (#422
+    # The producer is best-effort like the other live producers (#422 INV-4
     # posture): a hold-store I/O failure must not fail the plan-artifact
     # recording that already completed above -- the result simply carries no
     # plan_approval_hold_id.
@@ -19805,12 +19805,12 @@ def merge_wave_worktrees(
         if ln.strip() and not _wt_is_runtime_state_path(_wt_porcelain_path(ln))
     ]
     if dirty:
-        # Intent: emit a dangerous_action hold at this refusal (#422 ) so the
+        # Intent: emit a dangerous_action hold at this refusal (#422 AC-4) so the
         # approval-hold hard-stop path (#344) has a live producer instead of only
         # synthetic test fixtures. request_summary is derived solely from the
         # branch name (no dirty-file-list) so create_approval_hold's
         # (kind, request_summary, pending) dedup keeps repeated refusals against
-        # the same dirty tree idempotent ; the repo-relative dirty paths
+        # the same dirty tree idempotent (INV-2); the repo-relative dirty paths
         # ride in `reason` instead, never file contents. Hold creation is best-
         # effort: the refusal must still reach the caller even if it fails.
         dirty_paths = [_wt_porcelain_path(ln) for ln in dirty[:20]]
