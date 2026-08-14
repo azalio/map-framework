@@ -3315,12 +3315,46 @@ def record_plan_artifacts(branch: str | None = None) -> dict[str, object]:
 
     manifest_result = save_artifact_manifest(manifest, branch_name)
     stages = cast(dict[str, dict[str, object]], manifest["stages"])
-    return {
+    result: dict[str, object] = {
         "status": "success",
         "manifest_path": manifest_result["path"],
         "spec_status": stages["spec"]["status"],
         "plan_status": stages["plan"]["status"],
     }
+
+    # Intent: emit the plan_approval hold at the plan-ready boundary (#422
+    # AC-1) -- once task_plan + blueprint are both present -- so the
+    # existing approval-hold lifecycle (#344) has a live producer instead of
+    # only synthetic test fixtures. request_summary is derived solely from
+    # the branch name (no timestamp/sha) so create_approval_hold's
+    # (kind, request_summary, pending) dedup makes re-running this function
+    # idempotent rather than spamming a fresh hold on every call.
+    # The producer is best-effort like the other live producers (#422 INV-4
+    # posture): a hold-store I/O failure must not fail the plan-artifact
+    # recording that already completed above -- the result simply carries no
+    # plan_approval_hold_id.
+    if plan_status == "ready":
+        try:
+            hold_result = create_approval_hold(
+                kind="plan_approval",
+                reason="The generated plan requires explicit approval before execution.",
+                request_summary=f"Approve the generated plan for {branch_name}",
+                source="map-plan",
+                branch=branch_name,
+                safe_continuation=(
+                    "Review the plan and decide the hold via decide_approval_hold "
+                    "(approved/denied) before starting /map-efficient or /map-task."
+                ),
+            )
+            if hold_result.get("status") == "ok":
+                result["plan_approval_hold_id"] = hold_result["hold_id"]
+        except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
+            # Surface the degradation instead of losing the approval gate
+            # silently: the Step 8 checkpoint prints this flag and the operator
+            # can create/decide the hold manually before execution.
+            result["plan_approval_hold_error"] = True
+
+    return result
 
 
 _REQ_INDEX_OPEN = "<!-- mapify:requirements-index:v1 -->"
@@ -19774,10 +19808,41 @@ def merge_wave_worktrees(
         if ln.strip() and not _wt_is_runtime_state_path(_wt_porcelain_path(ln))
     ]
     if dirty:
+        # Intent: emit a dangerous_action hold at this refusal (#422 AC-4) so the
+        # approval-hold hard-stop path (#344) has a live producer instead of only
+        # synthetic test fixtures. request_summary is derived solely from the
+        # branch name (no dirty-file-list) so create_approval_hold's
+        # (kind, request_summary, pending) dedup keeps repeated refusals against
+        # the same dirty tree idempotent (INV-2); the repo-relative dirty paths
+        # ride in `reason` instead, never file contents. Hold creation is best-
+        # effort: the refusal must still reach the caller even if it fails.
+        dirty_paths = [_wt_porcelain_path(ln) for ln in dirty[:20]]
+        hold_id: str | None = None
+        try:
+            hold_result = create_approval_hold(
+                kind="dangerous_action",
+                reason=(
+                    "The working tree has uncommitted changes blocking a wave "
+                    "merge; affected paths: " + ", ".join(dirty_paths)
+                ),
+                request_summary=f"Uncommitted changes blocking wave merge on {branch_name}",
+                source="worktree-merge",
+                branch=branch_name,
+                safe_continuation=(
+                    "Commit or stash the listed changes, then retry the wave merge."
+                ),
+            )
+            if hold_result.get("status") == "ok":
+                hold_id = cast(str, hold_result["hold_id"])
+        except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
+            hold_id = None
+        error_extra: dict[str, object] = {"dirty": dirty[:20]}
+        if hold_id is not None:
+            error_extra["hold_id"] = hold_id
         return _wt_error(
             "DIRTY_TARGET",
             "the working tree has uncommitted changes; commit/stash before a wave merge",
-            dirty=dirty[:20],
+            **error_extra,
         )
 
     # Serialize coordinators so two waves never interleave squash commits.

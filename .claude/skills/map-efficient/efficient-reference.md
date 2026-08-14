@@ -463,6 +463,45 @@ GATE=$(echo "$RISK" | jq -r '.recommended_gate')
 
 It is read-only and exits 0 always; callers branch on `recommended_gate`.
 
+## Approval-hold preflight
+
+Resolve any pending approval hold BEFORE Step 0's `resume_from_plan`
+bootstraps execution state — a hold left pending means execution has not
+been explicitly authorized, and a denied plan must stop before any
+`step_state.json` exists.
+
+```bash
+python3 .map/scripts/map_step_runner.py list_approval_holds --state pending
+```
+
+Each pending hold's `kind` decides the branch:
+
+- **`plan_approval`** — the operator must explicitly approve or deny before
+  execution starts:
+  ```bash
+  python3 .map/scripts/map_step_runner.py decide_approval_hold \
+    <hold-id> approved --note "approved by operator; proceeding with plan"
+  # or:
+  python3 .map/scripts/map_step_runner.py decide_approval_hold \
+    <hold-id> denied --note "<why the plan was denied>"
+  ```
+  - **Approved** — continue into the pre-flight test baseline below.
+  - **Denied** — STOP. Tell the operator to revise the plan and re-run
+    `/map-plan`; there is no staleness re-check against the denied blueprint —
+    the operator who denied it is the same operator re-running
+    `/map-efficient`.
+- **`dangerous_action` / `safety_guardrail`** (hard stops,
+  `HARD_STOP_HOLD_KINDS`) — never decide these from inside the preflight.
+  Refuse to proceed: surface the hold's `reason` and `request_summary`, and
+  stop. The operator resolves the underlying issue out of band and decides
+  the hold via `decide_approval_hold` before retrying.
+
+`/map-auto` runs never reach the interactive ask above: its pre-phase
+`auto_decide_holds` poll auto-approves `plan_approval` before `/map-efficient`
+starts, so the preflight here finds nothing pending. If the operator
+already decided the hold manually (CLI) before starting `/map-efficient`, the
+preflight likewise finds nothing pending and proceeds without asking.
+
 ## Pre-flight test baseline
 
 Snapshot pre-existing failures BEFORE any subtask executes so later

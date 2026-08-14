@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Live approval-hold producers for the #344 lifecycle (#422).** Three workflow paths
+  now create real approval holds instead of only synthetic test fixtures: `plan_approval`
+  (`record_plan_artifacts`, at the plan-ready boundary — task_plan + blueprint both
+  present), `dangerous_action` (`merge_wave_worktrees`, on a dirty-target wave-merge
+  refusal), and `safety_guardrail` (the workflow-gate hook's state-tamper detector, on a
+  direct Edit/Write to runner-owned MAP state). `plan_approval` is decided interactively
+  at `/map-efficient` `INIT_STATE` or `/map-task` preflight, or auto-approved by
+  `/map-auto`; `dangerous_action` and `safety_guardrail` are always hard stops, decided
+  only by a human.
 - **`/map-auto` single-entry autonomous autopilot (#414).** Routes a task through the existing MAP workflows via `route_task`, then drives the selected chain (`map-plan` -> `map-efficient` -> `map-check` -> `map-review`, as routed) to a committed feature branch in one session, auto-approving `autonomy_posture`/`plan_approval`/`template_overwrite` holds and hard-stopping on `dangerous_action`/`safety_guardrail` holds. Routing and phase-ledger state live in `.map/<branch>/auto-route.json` (`AUTO_ROUTE_SCHEMA`), mutated only through `route_task` and `record_auto_phase`; `auto_decide_holds` mutates `approval_holds.json` separately, surfacing its approvals via the `approval_hold` manifest stage. Out of scope for this slice: `/map-auto` never creates a pull request, never polls CI, and never merges — the run ends at the committed branch.
 
 ## [3.25.0] - 2026-08-12

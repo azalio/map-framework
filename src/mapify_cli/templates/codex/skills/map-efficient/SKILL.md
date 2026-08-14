@@ -77,6 +77,16 @@ Empty `$TASK_ARGS` is a stop condition only when all of these are true:
 
 Otherwise proceed to resume detection.
 
+## Approval-hold preflight (MANDATORY — run BEFORE Step 0)
+
+Resolve pending approval holds before `resume_from_plan` initializes any execution state — full recipe in [efficient-reference.md](efficient-reference.md#approval-hold-preflight).
+
+```bash
+python3 .map/scripts/map_step_runner.py list_approval_holds --state pending
+```
+
+A pending `plan_approval` requires an explicit operator approve/deny, recorded via `decide_approval_hold <hold-id> <approved|denied> --note "<operator note>"`: approved continues into Step 0, denied STOPS here — revise the plan and re-run `$map-plan` (no staleness re-check); an autonomous chain never reaches this ask because its pre-phase `auto_decide_holds` poll approves `plan_approval` first. A pending `dangerous_action`/`safety_guardrail` hold refuses to proceed instead — surface the hold's `reason` and stop.
+
 ## Step 0: Resume Existing State Or Plan
 
 Run this before validating `$TASK_ARGS`.

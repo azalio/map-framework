@@ -62,6 +62,14 @@ fi
 
 ## Step 1: Initialize Single Subtask
 
+### Approval-hold preflight (MANDATORY before `resume_single_subtask` / `resume_from_test_contract`)
+
+```bash
+python3 .map/scripts/map_step_runner.py list_approval_holds --state pending
+```
+
+Pending `plan_approval`: ask the operator to approve or deny, then record the decision via `decide_approval_hold <hold-id> <approved|denied> --note "<operator note>"` — approved continues to the resume call below; denied STOPS here — tell the operator to revise the plan and re-run `/map-plan` (do not resume the subtask). Pending `dangerous_action`/`safety_guardrail`: refuse to proceed — surface the hold's `reason` and stop. `/map-task` never auto-decides either kind; both a hard-stop hold and a pending `plan_approval` always require an explicit operator response before single-subtask execution starts.
+
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 

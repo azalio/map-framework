@@ -53,6 +53,7 @@ def _map_dir(branch_dir: Path) -> Path:
 
 class TestCreateApprovalHold:
     def test_creates_hold_with_required_fields(self, branch_dir: Path) -> None:
+        del branch_dir  # fixture used for chdir side effect only
         result = map_step_runner.create_approval_hold(
             kind="safety_guardrail",
             reason="Hook denied rm -rf",
@@ -103,6 +104,7 @@ class TestCreateApprovalHold:
         assert "safety-guardrails.py" in content
 
     def test_sequential_ids_increment(self, branch_dir: Path) -> None:
+        del branch_dir  # fixture used for chdir side effect only
         r1 = map_step_runner.create_approval_hold(
             kind="plan_approval", reason="A", request_summary="S1", branch="test-branch"
         )
@@ -135,6 +137,7 @@ class TestCreateApprovalHold:
         assert len(store["holds"]) == 1
 
     def test_error_on_invalid_kind(self, branch_dir: Path) -> None:
+        del branch_dir  # fixture used for chdir side effect only
         result = map_step_runner.create_approval_hold(
             kind="invalid_kind",
             reason="Some reason",
@@ -145,6 +148,7 @@ class TestCreateApprovalHold:
         assert any("invalid_kind" in r for r in result["reasons"])
 
     def test_error_on_empty_reason(self, branch_dir: Path) -> None:
+        del branch_dir  # fixture used for chdir side effect only
         result = map_step_runner.create_approval_hold(
             kind="plan_approval",
             reason="   ",
@@ -155,6 +159,7 @@ class TestCreateApprovalHold:
         assert any("reason" in r for r in result["reasons"])
 
     def test_error_on_empty_request_summary(self, branch_dir: Path) -> None:
+        del branch_dir  # fixture used for chdir side effect only
         result = map_step_runner.create_approval_hold(
             kind="plan_approval",
             reason="Some reason",
@@ -165,6 +170,7 @@ class TestCreateApprovalHold:
         assert any("request_summary" in r for r in result["reasons"])
 
     def test_strips_whitespace_from_fields(self, branch_dir: Path) -> None:
+        del branch_dir  # fixture used for chdir side effect only
         result = map_step_runner.create_approval_hold(
             kind="plan_approval",
             reason="  reason with spaces  ",
@@ -189,6 +195,7 @@ class TestCreateApprovalHold:
         assert stage.get("status") == "pending"
 
     def test_all_valid_kinds_accepted(self, branch_dir: Path) -> None:
+        del branch_dir  # fixture used for chdir side effect only
         kinds = list(map_step_runner.APPROVAL_HOLD_KINDS)
         for i, kind in enumerate(kinds):
             result = map_step_runner.create_approval_hold(
@@ -300,6 +307,7 @@ class TestDecideApprovalHold:
         assert any("pending" in r for r in result["reasons"])
 
     def test_error_on_unknown_hold_id(self, branch_dir: Path) -> None:
+        del branch_dir  # fixture used for chdir side effect only
         result = map_step_runner.decide_approval_hold(
             "hold-999", "approved", branch="test-branch"
         )
@@ -378,11 +386,13 @@ class TestListApprovalHolds:
         assert result["holds"][0]["state"] == "approved"
 
     def test_empty_store_returns_zero_count(self, branch_dir: Path) -> None:
+        del branch_dir  # fixture used for chdir side effect only
         result = map_step_runner.list_approval_holds(branch="test-branch")
         assert result["count"] == 0
         assert result["holds"] == []
 
     def test_error_on_invalid_state_filter(self, branch_dir: Path) -> None:
+        del branch_dir  # fixture used for chdir side effect only
         result = map_step_runner.list_approval_holds(
             branch="test-branch", state="invalid"
         )
@@ -402,6 +412,7 @@ class TestListApprovalHolds:
 
 class TestGetPendingHolds:
     def test_resume_blocked_true_when_pending_exists(self, branch_dir: Path) -> None:
+        del branch_dir  # fixture used for chdir side effect only
         map_step_runner.create_approval_hold(
             kind="plan_approval",
             reason="Needs approval",
@@ -415,12 +426,14 @@ class TestGetPendingHolds:
         assert result["resume_blocked"] is True
 
     def test_resume_not_blocked_when_no_pending(self, branch_dir: Path) -> None:
+        del branch_dir  # fixture used for chdir side effect only
         result = map_step_runner.get_pending_holds(branch="test-branch")
         assert result["has_pending"] is False
         assert result["pending_count"] == 0
         assert result["resume_blocked"] is False
 
     def test_resume_not_blocked_after_decision(self, branch_dir: Path) -> None:
+        del branch_dir  # fixture used for chdir side effect only
         r = map_step_runner.create_approval_hold(
             kind="plan_approval",
             reason="Needs approval",
@@ -481,7 +494,7 @@ class TestCLI:
     def test_create_approval_hold_cli_success(
         self, branch_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        del monkeypatch
+        del branch_dir, monkeypatch
         code, result = _run_cli(
             "create_approval_hold",
             "--kind", "plan_approval",
@@ -510,7 +523,7 @@ class TestCLI:
     def test_decide_approval_hold_cli(
         self, branch_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        del monkeypatch
+        del branch_dir, monkeypatch
         # First create a hold
         _run_cli(
             "create_approval_hold",
@@ -552,7 +565,7 @@ class TestCLI:
     def test_get_pending_holds_cli_with_pending(
         self, branch_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        del monkeypatch
+        del branch_dir, monkeypatch
         _run_cli(
             "create_approval_hold",
             "--kind", "safety_guardrail",
@@ -567,3 +580,119 @@ class TestCLI:
         assert code == 0
         assert result.get("resume_blocked") is True
         assert result.get("pending_count") == 1
+
+
+# ---------------------------------------------------------------------------
+# Live plan_approval producer (#422 AC-1, AC-2, AC-6)
+#
+# Synthetic-free: this class never calls create_approval_hold directly. It
+# writes only plan artifacts to disk and drives the real
+# record_plan_artifacts / auto_decide_holds functions end to end.
+# ---------------------------------------------------------------------------
+
+
+def _write_ready_plan_artifacts(branch_dir: Path) -> Path:
+    """Write task_plan + blueprint so record_plan_artifacts sees plan_status 'ready'."""
+    map_dir = _map_dir(branch_dir)
+    map_dir.mkdir(parents=True, exist_ok=True)
+    (map_dir / "task_plan_test-branch.md").write_text("# Task Plan\n", encoding="utf-8")
+    (map_dir / "blueprint.json").write_text('{"subtasks": []}\n', encoding="utf-8")
+    return map_dir
+
+
+class TestPlanApprovalHoldProducer:
+    def test_ready_plan_creates_pending_plan_approval_hold(
+        self, branch_dir: Path
+    ) -> None:
+        _write_ready_plan_artifacts(branch_dir)
+
+        result = map_step_runner.record_plan_artifacts("test-branch")
+
+        assert result["status"] == "success"
+        assert result["plan_status"] == "ready"
+        hold_id = result["plan_approval_hold_id"]
+        assert hold_id
+
+        store = json.loads(
+            (_map_dir(branch_dir) / "approval_holds.json").read_text(encoding="utf-8")
+        )
+        holds = list(store["holds"].values())
+        assert len(holds) == 1
+        hold = holds[0]
+        assert hold["id"] == hold_id
+        assert hold["kind"] == "plan_approval"
+        assert hold["source"] == "map-plan"
+        assert hold["state"] == "pending"
+
+    def test_producer_failure_records_hold_error_but_still_succeeds(
+        self, branch_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PR #427 review: a create_approval_hold failure must not fail the
+        plan-artifact recording (INV-3 best-effort posture), but it must NOT
+        be silent either — the result carries plan_approval_hold_error so the
+        /map-plan Step 8 checkpoint can surface the degraded gate.
+        """
+        _write_ready_plan_artifacts(branch_dir)
+
+        def _boom(*_args: object, **_kwargs: object) -> dict[str, Any]:
+            del _args, _kwargs
+            raise RuntimeError("hold store unavailable")
+
+        monkeypatch.setattr(map_step_runner, "create_approval_hold", _boom)
+
+        result = map_step_runner.record_plan_artifacts("test-branch")
+
+        assert result["status"] == "success"
+        assert result["plan_status"] == "ready"
+        assert "plan_approval_hold_id" not in result
+        assert result["plan_approval_hold_error"] is True
+        assert not (_map_dir(branch_dir) / "approval_holds.json").exists()
+
+    def test_rerun_is_idempotent_no_duplicate_hold(self, branch_dir: Path) -> None:
+        _write_ready_plan_artifacts(branch_dir)
+
+        first = map_step_runner.record_plan_artifacts("test-branch")
+        second = map_step_runner.record_plan_artifacts("test-branch")
+
+        assert first["plan_approval_hold_id"] == second["plan_approval_hold_id"]
+        store = json.loads(
+            (_map_dir(branch_dir) / "approval_holds.json").read_text(encoding="utf-8")
+        )
+        assert len(store["holds"]) == 1
+
+    def test_auto_decide_holds_approves_live_plan_approval_hold(
+        self, branch_dir: Path
+    ) -> None:
+        _write_ready_plan_artifacts(branch_dir)
+        record_result = map_step_runner.record_plan_artifacts("test-branch")
+        hold_id = record_result["plan_approval_hold_id"]
+
+        decision = map_step_runner.auto_decide_holds(branch="test-branch")
+
+        assert decision["hard_stops"] == []
+        auto_approved_ids = {entry["id"] for entry in decision["auto_approved"]}
+        assert hold_id in auto_approved_ids
+        approved_entry = next(e for e in decision["auto_approved"] if e["id"] == hold_id)
+        assert approved_entry["note"] == "auto-approved by map-auto"
+
+        store = json.loads(
+            (_map_dir(branch_dir) / "approval_holds.json").read_text(encoding="utf-8")
+        )
+        assert store["holds"][hold_id]["state"] == "approved"
+
+        manifest = json.loads(
+            (_map_dir(branch_dir) / "artifact_manifest.json").read_text(encoding="utf-8")
+        )
+        assert manifest["stages"]["approval_hold"]["status"] == "decided"
+
+    def test_partial_plan_creates_no_hold(self, branch_dir: Path) -> None:
+        map_dir = _map_dir(branch_dir)
+        map_dir.mkdir(parents=True, exist_ok=True)
+        (map_dir / "task_plan_test-branch.md").write_text("# Task Plan\n", encoding="utf-8")
+
+        result = map_step_runner.record_plan_artifacts("test-branch")
+
+        assert result["plan_status"] == "partial"
+        assert "plan_approval_hold_id" not in result
+        holds_path = map_dir / "approval_holds.json"
+        assert not holds_path.exists()

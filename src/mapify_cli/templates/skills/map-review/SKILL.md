@@ -576,9 +576,9 @@ python3 .map/scripts/map_step_runner.py replace_active_issues \
   "- [remaining reviewer action items, or '(None)']"
 
 BUNDLE=$(python3 .map/scripts/map_step_runner.py build_handoff_bundle)
-SUMMARY=$(echo "$BUNDLE" | jq -r '.summary')
-VALIDATION=$(echo "$BUNDLE" | jq -r '.validation')
-RISKS=$(echo "$BUNDLE" | jq -r '.risks_follow_up')
+SUMMARY=$(printf '%s' "$BUNDLE" | jq -r '.summary')
+VALIDATION=$(printf '%s' "$BUNDLE" | jq -r '.validation')
+RISKS=$(printf '%s' "$BUNDLE" | jq -r '.risks_follow_up')
 python3 .map/scripts/map_step_runner.py write_pr_draft "$SUMMARY" "$VALIDATION" "$RISKS"
 
 python3 .map/scripts/map_step_runner.py write_learning_handoff \

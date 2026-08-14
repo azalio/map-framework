@@ -631,6 +631,155 @@ class TestWaveWorktreeMerge:
 
 
 # --------------------------------------------------------------------------- #
+# dangerous_action hold producer at the DIRTY_TARGET refusal (#422 ST-002)
+# --------------------------------------------------------------------------- #
+_DIRTY_FILE_CONTENT_MARKER = "SHOULD-NEVER-LEAK-INTO-A-HOLD"
+
+
+def _make_dirty_working_tree(repo: Path) -> str:
+    """Register one legit worktree, then dirty the WORKING branch (not the
+    worktree) so `merge_wave_worktrees` refuses with DIRTY_TARGET."""
+    _wt_with_files("ST-001", {"b.txt": "from-001\n"})
+    (repo / "dirty.txt").write_text(f"{_DIRTY_FILE_CONTENT_MARKER}\n", encoding="utf-8")
+    return m.get_branch_name()
+
+
+class TestDirtyTargetApprovalHold:
+    def test_vc1_dirty_target_creates_pending_dangerous_action_hold(
+        self, repo: Path
+    ) -> None:
+        branch = _make_dirty_working_tree(repo)
+        result = m.merge_wave_worktrees(["ST-001"], verify_cmds=[], post_wave_cmds=[])
+        assert result["kind"] == "DIRTY_TARGET"
+
+        holds_path = repo / ".map" / branch / "approval_holds.json"
+        assert holds_path.exists()
+        store = json.loads(holds_path.read_text(encoding="utf-8"))
+        pending = [
+            h
+            for h in store["holds"].values()
+            if h.get("state") == "pending" and h.get("kind") == "dangerous_action"
+        ]
+        assert len(pending) == 1
+        hold = pending[0]
+        assert hold["source"] == "worktree-merge"
+        # Repo-relative path only -- the dirtied file's CONTENT never leaks in.
+        assert "dirty.txt" in hold["reason"]
+        assert _DIRTY_FILE_CONTENT_MARKER not in hold["reason"]
+        assert _DIRTY_FILE_CONTENT_MARKER not in hold["request_summary"]
+
+    def test_vc2_repeated_dirty_refusals_are_idempotent(self, repo: Path) -> None:
+        _make_dirty_working_tree(repo)
+        first = m.merge_wave_worktrees(["ST-001"], verify_cmds=[], post_wave_cmds=[])
+        second = m.merge_wave_worktrees(["ST-001"], verify_cmds=[], post_wave_cmds=[])
+        third = m.merge_wave_worktrees(["ST-001"], verify_cmds=[], post_wave_cmds=[])
+        assert first["hold_id"] == second["hold_id"] == third["hold_id"]
+
+        branch = m.get_branch_name()
+        holds_path = repo / ".map" / branch / "approval_holds.json"
+        store = json.loads(holds_path.read_text(encoding="utf-8"))
+        dangerous = [h for h in store["holds"].values() if h.get("kind") == "dangerous_action"]
+        assert len(dangerous) == 1
+
+    def test_vc4_refusal_payload_carries_hold_id_alongside_existing_fields(
+        self, repo: Path
+    ) -> None:
+        _make_dirty_working_tree(repo)
+        result = m.merge_wave_worktrees(["ST-001"], verify_cmds=[], post_wave_cmds=[])
+        assert result["status"] == "error"
+        assert result["ok"] is False
+        assert result["kind"] == "DIRTY_TARGET"
+        assert "message" in result
+        assert isinstance(result["dirty"], list) and result["dirty"]
+        assert isinstance(result["hold_id"], str) and result["hold_id"]
+
+    def test_hold_not_created_for_other_refusal_kinds(self, repo: Path) -> None:
+        # CAUTION: the producer must fire ONLY for DIRTY_TARGET, never for a
+        # sibling _wt_error kind such as EXTERNAL_HEAD_MOVED.
+        _wt_with_files("ST-001", {"b.txt": "x\n"})
+        (repo / "external.txt").write_text("outside the wave\n")
+        _git(["add", "external.txt"], repo)
+        _git(["commit", "-q", "-m", "external"], repo)
+
+        result = m.merge_wave_worktrees(["ST-001"], verify_cmds=[], post_wave_cmds=[])
+        assert result["kind"] == "EXTERNAL_HEAD_MOVED"
+        assert "hold_id" not in result
+        holds_path = repo / ".map" / m.get_branch_name() / "approval_holds.json"
+        assert not holds_path.exists()
+
+
+class TestDirtyTargetHoldRoutingIntegration:
+    """VC3 / AC-7: synthetic-free -- drives the real DIRTY_TARGET refusal, the
+    real `auto_decide_holds`, and the real `route_task`. No hold in this class
+    is constructed via a direct `create_approval_hold` call."""
+
+    def test_vc3_dirty_target_hold_hard_stops_and_blocks_route_task(
+        self, repo: Path
+    ) -> None:
+        branch = _make_dirty_working_tree(repo)
+
+        refusal = m.merge_wave_worktrees(["ST-001"], verify_cmds=[], post_wave_cmds=[])
+        assert refusal["kind"] == "DIRTY_TARGET"
+        hold_id = refusal["hold_id"]
+
+        decisions = m.auto_decide_holds(branch)
+        assert decisions["auto_approved"] == []
+        assert hold_id in [h["id"] for h in decisions["hard_stops"]]
+
+        holds_path = repo / ".map" / branch / "approval_holds.json"
+        store = json.loads(holds_path.read_text(encoding="utf-8"))
+        assert store["holds"][hold_id]["state"] == "pending"
+
+        # Fresh branch, no in-progress auto-route chain to short-circuit Guard 1.
+        route_result = m.route_task("merge the wave", branch=branch, dry_run=False)
+        assert route_result["chain_status"] == "blocked"
+        assert hold_id in route_result["blocked_by"]
+
+    def test_vc3_live_plan_approval_hold_does_not_block_route_task(
+        self, repo: Path
+    ) -> None:
+        """VC3/AC-9 (#422 ST-004): a live plan_approval hold -- created via
+        the real `record_plan_artifacts`, never via a synthetic
+        `create_approval_hold` call -- must NOT block `route_task`: no
+        "blocked" chain state, the hold id absent from blocked_by[], route
+        proceeds normally. VC4 pins the complementary case in this SAME
+        test (not a separate, order-dependent one) so the assertion above
+        cannot pass vacuously if a regression made route_task stop
+        checking HARD_STOP_HOLD_KINDS altogether: the live dangerous_action
+        hold from the real ST-002 producer (merge_wave_worktrees DIRTY_TARGET
+        refusal) DOES block, with its id in blocked_by[].
+        """
+        branch = m.get_branch_name()
+        map_dir = repo / ".map" / branch
+        map_dir.mkdir(parents=True, exist_ok=True)
+        (map_dir / f"task_plan_{branch}.md").write_text("# Task Plan\n", encoding="utf-8")
+        (map_dir / "blueprint.json").write_text('{"subtasks": []}\n', encoding="utf-8")
+
+        plan_result = m.record_plan_artifacts(branch)
+        plan_hold_id = plan_result["plan_approval_hold_id"]
+        assert plan_hold_id
+
+        # dry_run=True keeps chain_status at "recommended_only" (not
+        # "in_progress") so the second route_task call below is still
+        # eligible for re-routing instead of hitting Guard 1's refusal.
+        not_blocked = m.route_task("review the generated plan", branch=branch, dry_run=True)
+        assert not_blocked["chain_status"] != "blocked"
+        assert not_blocked["blocked_by"] == []
+        assert plan_hold_id not in not_blocked["blocked_by"]
+
+        # VC4, same test: the complementary live dangerous_action hold.
+        _make_dirty_working_tree(repo)
+        refusal = m.merge_wave_worktrees(["ST-001"], verify_cmds=[], post_wave_cmds=[])
+        assert refusal["kind"] == "DIRTY_TARGET"
+        dangerous_hold_id = refusal["hold_id"]
+
+        blocked = m.route_task("merge the wave", branch=branch, dry_run=True)
+        assert blocked["chain_status"] == "blocked"
+        assert dangerous_hold_id in blocked["blocked_by"]
+        assert plan_hold_id not in blocked["blocked_by"]
+
+
+# --------------------------------------------------------------------------- #
 # concurrency_ready — coordinator-owned read-only readiness check (ST-003/AC-3)
 # --------------------------------------------------------------------------- #
 class TestConcurrencyReady:
