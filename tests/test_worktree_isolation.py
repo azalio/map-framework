@@ -708,6 +708,101 @@ class TestDirtyTargetApprovalHold:
         assert not holds_path.exists()
 
 
+class TestSubtaskMergeDirtyTargetGuard:
+    """#423: the single-subtask accept path had NO dirty-target guard at all,
+    unlike the wave path — a squash-merge onto a dirty working branch cannot be
+    rolled back cleanly. Both paths now share `_wt_dirty_target_guard`."""
+
+    def test_merge_subtask_refuses_dirty_working_tree(self, repo: Path) -> None:
+        wt = _wt_with_files("ST-100", {"b.txt": "from-100\n"})
+        head_before = _git(["rev-parse", "HEAD"], repo).stdout.strip()
+        (repo / "dirty.txt").write_text("uncommitted user work\n", encoding="utf-8")
+
+        result = m.merge_subtask_worktree("ST-100", verify_cmds=[])
+
+        assert result["status"] == "error"
+        assert result["kind"] == "DIRTY_TARGET"
+        assert isinstance(result["dirty"], list) and result["dirty"]
+        # Working branch untouched and the worktree survives for a retry.
+        assert _git(["rev-parse", "HEAD"], repo).stdout.strip() == head_before
+        assert wt.is_dir()
+        assert not (repo / "b.txt").exists()
+
+    def test_merge_subtask_dirty_refusal_creates_dangerous_action_hold(
+        self, repo: Path
+    ) -> None:
+        _wt_with_files("ST-101", {"b.txt": "x\n"})
+        (repo / "dirty.txt").write_text(f"{_DIRTY_FILE_CONTENT_MARKER}\n", encoding="utf-8")
+        branch = m.get_branch_name()
+
+        result = m.merge_subtask_worktree("ST-101", verify_cmds=[])
+        assert result["kind"] == "DIRTY_TARGET"
+        assert isinstance(result["hold_id"], str) and result["hold_id"]
+
+        store = json.loads(
+            (repo / ".map" / branch / "approval_holds.json").read_text(encoding="utf-8")
+        )
+        hold = store["holds"][result["hold_id"]]
+        assert hold["kind"] == "dangerous_action"
+        assert hold["state"] == "pending"
+        assert hold["source"] == "worktree-merge"
+        assert "subtask merge" in hold["request_summary"]
+        # Repo-relative path only — the dirtied file's CONTENT never leaks in.
+        assert "dirty.txt" in hold["reason"]
+        assert _DIRTY_FILE_CONTENT_MARKER not in hold["reason"]
+
+    @pytest.mark.usefixtures("repo")
+    def test_merge_subtask_clean_tree_still_merges(self) -> None:
+        """Negative proof: the new guard must not block the clean happy path."""
+        _wt_with_files("ST-102", {"b.txt": "clean\n"})
+        merged = m.merge_subtask_worktree("ST-102", verify_cmds=[])
+        assert merged["status"] == "success"
+        assert merged["merged"] is True
+
+
+class TestIsolationStatusDecision:
+    """#423: `resolve_worktree_isolation` had zero production callers; the whole
+    ST-009 fallback matrix (and its observability reason codes) was never
+    produced at runtime. `worktree_isolation_status` now reports the decision."""
+
+    def test_status_reports_isolated_decision_on_clean_repo(self, repo: Path) -> None:
+        _write_config(repo, "worktree.isolation: auto\n")
+        st = m.worktree_isolation_status()
+        assert st["mode"] == "auto"
+        assert st["decision"] == "isolated"
+        assert st["degraded"] is False
+        assert st["degraded_reason"] == ""
+
+    def test_status_degrades_to_sequential_on_dirty_merge_target(
+        self, repo: Path
+    ) -> None:
+        _write_config(repo, "worktree.isolation: auto\n")
+        (repo / "dirty.txt").write_text("uncommitted\n", encoding="utf-8")
+        st = m.worktree_isolation_status()
+        assert st["decision"] == "sequential"
+        assert st["degraded"] is True
+        assert st["degraded_reason"] == m._WT_REASON_DIRTY_MERGE_TARGET
+        assert str(st["warning"])
+
+    def test_status_reports_abort_under_required_isolation(self, repo: Path) -> None:
+        _write_config(repo, "worktree.isolation: required\n")
+        (repo / "dirty.txt").write_text("uncommitted\n", encoding="utf-8")
+        st = m.worktree_isolation_status()
+        assert st["status"] == "success"  # status command itself never errors
+        assert st["decision"] == "abort"
+        assert st["degraded"] is False
+        assert st["degraded_reason"] == m._WT_REASON_DIRTY_MERGE_TARGET
+
+    def test_status_decision_is_dormant_sequential_when_isolation_off(
+        self, repo: Path
+    ) -> None:
+        _write_config(repo, "worktree.isolation: off\n")
+        st = m.worktree_isolation_status()
+        assert st["enabled"] is False
+        assert st["decision"] == "sequential"
+        assert st["degraded"] is False
+
+
 class TestDirtyTargetHoldRoutingIntegration:
     """VC3 / AC-7: synthetic-free -- drives the real DIRTY_TARGET refusal, the
     real `auto_decide_holds`, and the real `route_task`. No hold in this class

@@ -18614,35 +18614,49 @@ def _worktree_probe(project_dir: Path) -> dict[str, object]:
     return result
 
 
+def _wt_dirty_paths(timeout: int = 15) -> tuple[list[str], str]:
+    """Return ``(dirty porcelain lines, error)`` for the main checkout.
+
+    Single scanner behind every dirty-target decision (#423): the isolation
+    resolver and both merge paths used to each carry their own copy of this
+    filter, which is how ``merge_subtask_worktree`` ended up with no guard at all.
+
+    MAP runtime state (``.map/<branch>/``, ``.codex/``, ``.agents/``) is excluded:
+    in a real target repo those are gitignored, and the guard must care only about
+    the USER's uncommitted source — never refuse because of our own state writes.
+    """
+    st = _wt_git(["status", "--porcelain"], timeout=timeout)
+    if st.returncode != 0:
+        return [], (st.stderr.strip() or "git status failed")
+    return [
+        ln
+        for ln in st.stdout.splitlines()
+        if ln.strip() and not _wt_is_runtime_state_path(_wt_porcelain_path(ln))
+    ], ""
+
+
 def _require_clean_merge_target(project_dir: Path) -> dict[str, object]:
     """Check that the main checkout is clean enough for a worktree merge.
 
     Dormant when worktree.isolation is 'off' (per-repo opt-out / kill-switch — HC-1).
-    When the check is active AND require_clean_merge_target config is True
-    (default True), runs `git status --porcelain` and returns:
+    Otherwise runs `git status --porcelain` and returns:
       * {"status":"ok","ok":True}  when clean (excluding MAP runtime state)
       * {"status":"dirty","ok":False,"kind":"DIRTY_MERGE_TARGET","dirty":[...]}
         when uncommitted changes are present.
     Never raises.
+
+    Reached from ``resolve_worktree_isolation``, which ``worktree_isolation_status``
+    calls — there is no separate ``require_clean_merge_target`` config key: it was
+    a dead toggle nothing consulted (#423), and a clean merge target is not
+    optional for a squash-merge-based accept path.
     """
     mode = _worktree_isolation_mode(project_dir)
     if mode == "off":
         return {"status": "dormant", "ok": False, "reason": "worktree.isolation is off"}
 
-    # Read the require_clean_merge_target flag (default True)
-    raw_require = _map_config_str(project_dir, "require_clean_merge_target", "true")
-    if not _parse_boolish(raw_require):
-        return {"status": "ok", "ok": True, "skipped": True}
-
-    st = _wt_git(["status", "--porcelain"], timeout=15)
-    if st.returncode != 0:
-        return _wt_error("CLEAN_CHECK_FAILED", st.stderr.strip() or "git status failed")
-
-    dirty = [
-        ln
-        for ln in st.stdout.splitlines()
-        if ln.strip() and not _wt_is_runtime_state_path(_wt_porcelain_path(ln))
-    ]
+    dirty, error = _wt_dirty_paths()
+    if error:
+        return _wt_error("CLEAN_CHECK_FAILED", error)
     if dirty:
         return {
             "status": "dirty",
@@ -19190,22 +19204,18 @@ def create_subtask_worktree(
         )
 
     if not allow_dirty:
-        status = _wt_git(["status", "--porcelain"])
-        # Exclude MAP runtime state (.map/<branch>/, .codex/, .agents/): in a real
-        # target repo these are gitignored, but the dirty guard must care only
-        # about the USER's uncommitted source — never refuse because of our own
-        # state writes (council Q6 dirty-main/runtime-state interaction).
-        dirty = [
-            ln
-            for ln in status.stdout.splitlines()
-            if ln.strip() and not _wt_is_runtime_state_path(_wt_porcelain_path(ln))
-        ]
+        # MAP runtime state is excluded by _wt_dirty_paths — see its docstring.
+        dirty, clean_error = _wt_dirty_paths()
+        if clean_error:
+            return _wt_error("CLEAN_CHECK_FAILED", clean_error)
         if dirty:
             return _wt_error(
                 "DIRTY_MAIN",
                 "the main checkout has uncommitted changes; the worktree would "
                 "start from committed HEAD and silently diverge. Commit/stash "
-                "first, or pass --allow-dirty.",
+                "first, or pass --allow-dirty (the accept path still requires a "
+                "clean tree, so the changes must be committed or stashed before "
+                "the merge).",
                 dirty=dirty[:20],
             )
 
@@ -19589,6 +19599,61 @@ def _wt_release_lifecycle_lock(handle: Any | None) -> None:
         pass
 
 
+def _wt_dirty_target_guard(branch_name: str, operation: str) -> dict[str, object] | None:
+    """Refuse to squash-merge onto a working tree carrying uncommitted user work.
+
+    Returns ``None`` when the target is clean, otherwise a structured
+    ``DIRTY_TARGET`` error. Shared by the wave coordinator and the single-subtask
+    accept path so both refuse identically — ``merge_subtask_worktree`` previously
+    had no dirty guard at all while the wave path did (#423).
+
+    Emits a pending ``dangerous_action`` approval hold at the refusal (#422) so
+    the approval-hold hard-stop path has a live producer. ``request_summary`` is
+    derived solely from the branch name and operation (no dirty-file list) so
+    ``create_approval_hold``'s (kind, request_summary, pending) dedup keeps
+    repeated refusals against the same dirty tree idempotent; the repo-relative
+    dirty paths ride in ``reason`` instead, never file contents. Hold creation is
+    best-effort: the refusal must still reach the caller even if it fails.
+    """
+    dirty, error = _wt_dirty_paths()
+    if error:
+        return _wt_error("CLEAN_CHECK_FAILED", error)
+    if not dirty:
+        return None
+
+    dirty_paths = [_wt_porcelain_path(ln) for ln in dirty[:20]]
+    hold_id: str | None = None
+    try:
+        hold_result = create_approval_hold(
+            kind="dangerous_action",
+            reason=(
+                f"The working tree has uncommitted changes blocking a {operation}; "
+                "affected paths: " + ", ".join(dirty_paths)
+            ),
+            request_summary=(
+                f"Uncommitted changes blocking {operation} on {branch_name}"
+            ),
+            source="worktree-merge",
+            branch=branch_name,
+            safe_continuation=(
+                f"Commit or stash the listed changes, then retry the {operation}."
+            ),
+        )
+        if hold_result.get("status") == "ok":
+            hold_id = cast(str, hold_result["hold_id"])
+    except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
+        hold_id = None
+
+    error_extra: dict[str, object] = {"dirty": dirty[:20]}
+    if hold_id is not None:
+        error_extra["hold_id"] = hold_id
+    return _wt_error(
+        "DIRTY_TARGET",
+        f"the working tree has uncommitted changes; commit/stash before a {operation}",
+        **error_extra,
+    )
+
+
 def merge_subtask_worktree(
     subtask_id: str,
     attempt: int = 0,
@@ -19645,6 +19710,12 @@ def merge_subtask_worktree(
             base_sha=base_sha,
             working_head=working_head,
         )
+
+    # Same dirty-target refusal the wave coordinator applies: a squash-merge onto
+    # a dirty working branch cannot be rolled back cleanly (#423).
+    dirty_refusal = _wt_dirty_target_guard(branch_name, "subtask merge")
+    if dirty_refusal is not None:
+        return dirty_refusal
 
     prep = _wt_freeze_and_verify(
         subtask_id, record, project_dir, branch_name, verify_cmds, skip_verify
@@ -19883,49 +19954,9 @@ def merge_wave_worktrees(
             "DETACHED_HEAD",
             "refusing to wave-merge onto a detached HEAD; check out the working branch",
         )
-    status = _wt_git(["status", "--porcelain"])
-    dirty = [
-        ln
-        for ln in status.stdout.splitlines()
-        if ln.strip() and not _wt_is_runtime_state_path(_wt_porcelain_path(ln))
-    ]
-    if dirty:
-        # Intent: emit a dangerous_action hold at this refusal (#422 AC-4) so the
-        # approval-hold hard-stop path (#344) has a live producer instead of only
-        # synthetic test fixtures. request_summary is derived solely from the
-        # branch name (no dirty-file-list) so create_approval_hold's
-        # (kind, request_summary, pending) dedup keeps repeated refusals against
-        # the same dirty tree idempotent (INV-2); the repo-relative dirty paths
-        # ride in `reason` instead, never file contents. Hold creation is best-
-        # effort: the refusal must still reach the caller even if it fails.
-        dirty_paths = [_wt_porcelain_path(ln) for ln in dirty[:20]]
-        hold_id: str | None = None
-        try:
-            hold_result = create_approval_hold(
-                kind="dangerous_action",
-                reason=(
-                    "The working tree has uncommitted changes blocking a wave "
-                    "merge; affected paths: " + ", ".join(dirty_paths)
-                ),
-                request_summary=f"Uncommitted changes blocking wave merge on {branch_name}",
-                source="worktree-merge",
-                branch=branch_name,
-                safe_continuation=(
-                    "Commit or stash the listed changes, then retry the wave merge."
-                ),
-            )
-            if hold_result.get("status") == "ok":
-                hold_id = cast(str, hold_result["hold_id"])
-        except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
-            hold_id = None
-        error_extra: dict[str, object] = {"dirty": dirty[:20]}
-        if hold_id is not None:
-            error_extra["hold_id"] = hold_id
-        return _wt_error(
-            "DIRTY_TARGET",
-            "the working tree has uncommitted changes; commit/stash before a wave merge",
-            **error_extra,
-        )
+    dirty_refusal = _wt_dirty_target_guard(branch_name, "wave merge")
+    if dirty_refusal is not None:
+        return dirty_refusal
 
     # Serialize coordinators so two waves never interleave squash commits.
     lock_handle = _wt_acquire_merge_lock()
@@ -20126,8 +20157,50 @@ def merge_wave_worktrees(
         _wt_release_merge_lock(lock_handle)
 
 
+def _wt_isolation_decision(project_dir: Path) -> dict[str, object]:
+    """Flatten ``resolve_worktree_isolation`` into a reportable decision block.
+
+    ``resolve_worktree_isolation`` implements the ST-009 fallback matrix (not a git
+    repo / worktrees unsupported / dirty merge target) but had no production caller
+    until this one (#423) — the reason codes it emits are the same vocabulary
+    ``parallelism_observability`` publishes, so leaving it unwired meant the whole
+    degrade classification was never produced at runtime.
+
+    Always returns success-shaped keys so the status command stays exit-0 and the
+    caller reads ``decision``/``degraded``/``reason`` instead of a mixed envelope.
+    """
+    resolution = resolve_worktree_isolation(project_dir)
+    if resolution.get("status") == "dormant":
+        return {
+            "decision": "sequential",
+            "degraded": False,
+            "degraded_reason": "",
+            "warning": "",
+        }
+    if resolution.get("status") == "error":
+        # mode == 'required' with a fallback condition — isolation cannot run.
+        return {
+            "decision": "abort",
+            "degraded": False,
+            "degraded_reason": str(resolution.get("kind", "")).lower(),
+            "warning": str(resolution.get("message", "")),
+        }
+    return {
+        "decision": str(resolution.get("decision", "isolated")),
+        "degraded": bool(resolution.get("degraded", False)),
+        "degraded_reason": str(resolution.get("reason", "")),
+        "warning": str(resolution.get("warning", "")),
+    }
+
+
 def worktree_isolation_status(branch: str | None = None) -> dict[str, object]:
-    """Report whether isolation is enabled + reconcile recorded vs live worktrees."""
+    """Report whether isolation is enabled + reconcile recorded vs live worktrees.
+
+    Also reports the live isolation DECISION (isolated / sequential / abort) from
+    the fallback matrix, so an operator can see BEFORE a wave starts that e.g. a
+    dirty merge target will degrade the run — rather than discovering it when
+    ``create_subtask_worktree`` refuses mid-flight (#423).
+    """
     project_dir = _wt_project_dir()
     branch_name = branch or get_branch_name()
     state = _read_worktree_state(branch_name)
@@ -20158,10 +20231,12 @@ def worktree_isolation_status(branch: str | None = None) -> dict[str, object]:
         "status": "success",
         "ok": True,
         "enabled": _wt_isolation_enabled(project_dir),
+        "mode": _worktree_isolation_mode(project_dir),
         "branch": branch_name,
         "active_worktrees": active,
         "live_git_worktrees": live,
         "max_deletions": _wt_max_deletions(project_dir),
+        **_wt_isolation_decision(project_dir),
     }
 
 
