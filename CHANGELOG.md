@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **22 dead permission deny rules removed from `settings.json` (#428).** Every repo
+  installed via `mapify init` printed 22 warnings at `claude` startup — 11
+  `MultiEdit(<glob>)` rules naming a tool that no longer exists, and 11
+  `Write(<glob>)` rules that Claude Code does not consult for file permissions. Path
+  scoping is now expressed with `Edit(<glob>)` only, which already covers every
+  file-editing tool. No protection is lost: the `Edit(**/.env*)` /
+  `Edit(**/*credentials*.*)` / `Edit(**/*secret*.*)` globs are unchanged, and
+  `safety-guardrails.py` remains a second, independent layer that matches on the tool
+  name rather than a path rule. `tests/test_settings_deny_globs.py` previously required
+  the dead rules to be present and now guards against their reintroduction.
+
 ### Added
 - **Live approval-hold producers for the #344 lifecycle (#422).** Three workflow paths
   now create real approval holds instead of only synthetic test fixtures: `plan_approval`
