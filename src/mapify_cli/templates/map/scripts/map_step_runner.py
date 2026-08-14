@@ -3315,12 +3315,36 @@ def record_plan_artifacts(branch: str | None = None) -> dict[str, object]:
 
     manifest_result = save_artifact_manifest(manifest, branch_name)
     stages = cast(dict[str, dict[str, object]], manifest["stages"])
-    return {
+    result: dict[str, object] = {
         "status": "success",
         "manifest_path": manifest_result["path"],
         "spec_status": stages["spec"]["status"],
         "plan_status": stages["plan"]["status"],
     }
+
+    # Intent: emit the plan_approval hold at the plan-ready boundary (#422
+    # AC-1) -- once task_plan + blueprint are both present -- so the
+    # existing approval-hold lifecycle (#344) has a live producer instead of
+    # only synthetic test fixtures. request_summary is derived solely from
+    # the branch name (no timestamp/sha) so create_approval_hold's
+    # (kind, request_summary, pending) dedup makes re-running this function
+    # idempotent rather than spamming a fresh hold on every call.
+    if plan_status == "ready":
+        hold_result = create_approval_hold(
+            kind="plan_approval",
+            reason="The generated plan requires explicit approval before execution.",
+            request_summary=f"Approve the generated plan for {branch_name}",
+            source="map-plan",
+            branch=branch_name,
+            safe_continuation=(
+                "Review the plan and decide the hold via decide_approval_hold "
+                "(approved/denied) before starting /map-efficient or /map-task."
+            ),
+        )
+        if hold_result.get("status") == "ok":
+            result["plan_approval_hold_id"] = hold_result["hold_id"]
+
+    return result
 
 
 _REQ_INDEX_OPEN = "<!-- mapify:requirements-index:v1 -->"
