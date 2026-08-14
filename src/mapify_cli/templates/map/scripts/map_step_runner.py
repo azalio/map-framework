@@ -3329,20 +3329,27 @@ def record_plan_artifacts(branch: str | None = None) -> dict[str, object]:
     # the branch name (no timestamp/sha) so create_approval_hold's
     # (kind, request_summary, pending) dedup makes re-running this function
     # idempotent rather than spamming a fresh hold on every call.
+    # The producer is best-effort like the other live producers (#422 INV-4
+    # posture): a hold-store I/O failure must not fail the plan-artifact
+    # recording that already completed above -- the result simply carries no
+    # plan_approval_hold_id.
     if plan_status == "ready":
-        hold_result = create_approval_hold(
-            kind="plan_approval",
-            reason="The generated plan requires explicit approval before execution.",
-            request_summary=f"Approve the generated plan for {branch_name}",
-            source="map-plan",
-            branch=branch_name,
-            safe_continuation=(
-                "Review the plan and decide the hold via decide_approval_hold "
-                "(approved/denied) before starting /map-efficient or /map-task."
-            ),
-        )
-        if hold_result.get("status") == "ok":
-            result["plan_approval_hold_id"] = hold_result["hold_id"]
+        try:
+            hold_result = create_approval_hold(
+                kind="plan_approval",
+                reason="The generated plan requires explicit approval before execution.",
+                request_summary=f"Approve the generated plan for {branch_name}",
+                source="map-plan",
+                branch=branch_name,
+                safe_continuation=(
+                    "Review the plan and decide the hold via decide_approval_hold "
+                    "(approved/denied) before starting /map-efficient or /map-task."
+                ),
+            )
+            if hold_result.get("status") == "ok":
+                result["plan_approval_hold_id"] = hold_result["hold_id"]
+        except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
+            pass
 
     return result
 
