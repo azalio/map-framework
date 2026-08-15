@@ -39,6 +39,33 @@ head -n 10 logfile.txt  # Direct file read is OK
 
 ---
 
+## ⚠️ CRITICAL: Never pipe a captured variable through `echo`
+
+zsh (the default macOS shell) has a builtin `echo` that interprets backslash
+escapes without `-E`. Piping captured JSON through it turns the `\n`/`\t`
+escapes inside JSON string values into raw C0 control bytes, and `jq` aborts
+with `control characters from U+0000 through U+001F must be escaped`. Inside
+`$(...)` the failure is swallowed, so the variable lands **empty** and the
+recipe writes an empty-bodied artifact with exit 0.
+
+```bash
+# ❌ BAD - mangles escapes under zsh; SUMMARY silently ends up empty
+SUMMARY=$(echo "$BUNDLE" | jq -r '.summary')
+NORM=$(echo "$TOOL_OUT" | while IFS= read -r line; do ...; done)
+
+# ✅ GOOD - printf emits the bytes verbatim
+SUMMARY=$(printf '%s' "$BUNDLE" | jq -r '.summary')
+
+# ✅ GOOD - keep the trailing newline when a `while read` loop consumes it,
+#           otherwise the last line is dropped
+NORM=$(printf '%s\n' "$TOOL_OUT" | while IFS= read -r line; do ...; done)
+```
+
+The convention is enforced by `tests/test_shell_json_pipes.py`, which scans every
+shipped recipe and handler for the banned form.
+
+---
+
 ## When Checking Command Output
 
 ### Pattern 1: Run Commands Directly

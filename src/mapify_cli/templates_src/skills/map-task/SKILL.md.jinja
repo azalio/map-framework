@@ -80,10 +80,10 @@ if [ -f ".map/${BRANCH}/test_handoff_${SUBTASK_ID}.json" ] && [ -f ".map/${BRANC
 else
   RESULT=$(python3 .map/scripts/map_orchestrator.py resume_single_subtask "$SUBTASK_ID")
 fi
-STATUS=$(echo "$RESULT" | jq -r '.status')
+STATUS=$(printf '%s' "$RESULT" | jq -r '.status')
 
 if [ "$STATUS" = "error" ]; then
-  echo "$RESULT" | jq -r '.message'
+  printf '%s' "$RESULT" | jq -r '.message'
   exit 1
 fi
 ```
@@ -125,7 +125,7 @@ Follow the same state machine loop as `/map-efficient`. Call `get_next_step` and
 
 ```bash
 NEXT_STEP=$(python3 .map/scripts/map_orchestrator.py get_next_step)
-PHASE=$(echo "$NEXT_STEP" | jq -r '.phase')
+PHASE=$(printf '%s' "$NEXT_STEP" | jq -r '.phase')
 ```
 
 Route to the appropriate executor based on `$PHASE`. All phases from `/map-efficient` work identically:
@@ -170,10 +170,10 @@ python3 .map/scripts/map_step_runner.py update_plan_status "${SUBTASK_ID}" "comp
 2. Get overall plan progress:
 ```bash
 PROGRESS=$(python3 .map/scripts/map_orchestrator.py get_plan_progress)
-TOTAL=$(echo "$PROGRESS" | jq -r '.total')
-DONE=$(echo "$PROGRESS" | jq -r '.completed_count')
-REMAINING=$(echo "$PROGRESS" | jq -r '.pending_count')
-SUGGESTED=$(echo "$PROGRESS" | jq -r '.suggested_next')
+TOTAL=$(printf '%s' "$PROGRESS" | jq -r '.total')
+DONE=$(printf '%s' "$PROGRESS" | jq -r '.completed_count')
+REMAINING=$(printf '%s' "$PROGRESS" | jq -r '.pending_count')
+SUGGESTED=$(printf '%s' "$PROGRESS" | jq -r '.suggested_next')
 ```
 
 3. Display completion report with remaining subtasks:

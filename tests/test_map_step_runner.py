@@ -3069,11 +3069,15 @@ def test_acceptance_coverage_report_tracks_downstream_evidence(branch_workspace)
     result = map_step_runner.build_acceptance_coverage_report()
 
     assert result["status"] == "success"
-    assert result["summary"] == {"total": 2, "covered": 1, "missing": 1}
+    assert result["summary"] == {
+        "total": 2, "covered": 1, "missing": 1, "planned_only": 1,
+    }
     requirements = {item["id"]: item for item in result["requirements"]}
     assert requirements["AC-1"]["status"] == "covered"
     assert requirements["AC-1"]["evidence_artifacts"] == ["verification_summary"]
-    assert requirements["INV-1"]["status"] == "missing_evidence"
+    # INV-1 is named by its owner's validation criteria but nothing downstream
+    # verified it — a REVIEW gap, distinct from a requirement nobody ever owned.
+    assert requirements["INV-1"]["status"] == "planned_only"
 
 
 def test_acceptance_coverage_report_ignores_planning_artifacts(branch_workspace):
@@ -3107,9 +3111,283 @@ def test_acceptance_coverage_report_ignores_planning_artifacts(branch_workspace)
 
     result = map_step_runner.build_acceptance_coverage_report()
 
-    assert result["summary"] == {"total": 1, "covered": 0, "missing": 1}
+    assert result["summary"] == {
+        "total": 1, "covered": 0, "missing": 1, "planned_only": 1,
+    }
     assert result["evidence_sources"] == []
-    assert result["requirements"][0]["status"] == "missing_evidence"
+    # Cited by the owner's validation criteria, proven by nothing downstream.
+    assert result["requirements"][0]["status"] == "planned_only"
+
+
+def _coverage_blueprint(criteria: list[str], coverage_map: dict[str, str]) -> dict:
+    return {
+        "summary": "Deliver a user-visible fix",
+        **_blueprint_constraint_fields(),
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Fix checkout timeout message",
+                "aag_contract": (
+                    "CheckoutService -> handle_timeout() -> user sees retryable error"
+                ),
+                "dependencies": [],
+                "affected_files": ["src/checkout.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": criteria,
+            }
+        ],
+        "coverage_map": coverage_map,
+    }
+
+
+def test_acceptance_coverage_counts_unbracketed_citations(branch_workspace):
+    """#426: reviewer verdicts and prose write `HC-2 audit: pass`, never `[HC-2]`.
+
+    The bracket-only matcher found nothing, so the table read 0/N on every branch.
+    """
+    (branch_workspace / "blueprint.json").write_text(
+        json.dumps(_coverage_blueprint(["VC1 [HC-2]: flag audit"], {"HC-2": "ST-001"}))
+    )
+    (branch_workspace / "verification-summary.md").write_text(
+        "# Verification Summary\n\n## Checks Run\n- HC-2 no-activation-flag audit: pass\n",
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.build_acceptance_coverage_report()
+
+    assert result["summary"] == {
+        "total": 1, "covered": 1, "missing": 0, "planned_only": 0,
+    }
+    assert result["requirements"][0]["evidence_artifacts"] == ["verification_summary"]
+
+
+def test_acceptance_coverage_ignores_its_own_generated_block(branch_workspace):
+    """#426 regression: the report must not read its own output back as evidence.
+
+    write_verification_summary appends the rendered coverage table to
+    verification-summary.md, which is itself an evidence source. Without an exact
+    exclusion span, relaxing the bracket requirement would make every branch report
+    100% covered — a false green far worse than the 0/N it replaced.
+    """
+    (branch_workspace / "blueprint.json").write_text(
+        json.dumps(_coverage_blueprint(["VC1 [AC-1]: timeout"], {"AC-1": "ST-001"}))
+    )
+    generated = map_step_runner._render_acceptance_coverage_markdown(
+        {
+            "status": "success",
+            "summary": {"total": 1, "covered": 0, "missing": 1},
+            "requirements": [
+                {"id": "AC-1", "owner": "ST-001", "status": "missing_evidence"}
+            ],
+        }
+    )
+    assert "AC-1" in generated, "fixture must actually contain the tag"
+    (branch_workspace / "verification-summary.md").write_text(
+        "# Verification Summary\n\n## Checks Run\n- pytest: pass\n\n" + generated,
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.build_acceptance_coverage_report()
+
+    assert result["summary"]["covered"] == 0
+    assert result["evidence_sources"] == []
+
+
+def test_acceptance_coverage_survives_flattened_generated_block(branch_workspace):
+    """pr-draft.md embeds the summary with newlines flattened to spaces — the
+    exclusion markers are inline HTML comments precisely so they survive that."""
+    (branch_workspace / "blueprint.json").write_text(
+        json.dumps(_coverage_blueprint(["VC1 [AC-1]: timeout"], {"AC-1": "ST-001"}))
+    )
+    generated = map_step_runner._render_acceptance_coverage_markdown(
+        {
+            "status": "success",
+            "summary": {"total": 1, "covered": 0, "missing": 1},
+            "requirements": [
+                {"id": "AC-1", "owner": "ST-001", "status": "missing_evidence"}
+            ],
+        }
+    )
+    (branch_workspace / "pr-draft.md").write_text(
+        "# PR Draft\n\n## Validation\n" + generated.replace("\n", " ") + "\n",
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.build_acceptance_coverage_report()
+
+    assert result["summary"]["covered"] == 0
+
+
+def test_acceptance_coverage_ignores_unmarked_legacy_block(branch_workspace):
+    """Every already-installed repo has coverage blocks on disk written before the
+    sentinels existed. The heading-span fallback must exclude those too, while
+    leaving a genuine citation elsewhere in the SAME file intact."""
+    (branch_workspace / "blueprint.json").write_text(
+        json.dumps(
+            _coverage_blueprint(
+                ["VC1 [AC-1]: timeout", "VC2 [HC-2]: flag audit"],
+                {"AC-1": "ST-001", "HC-2": "ST-001"},
+            )
+        )
+    )
+    (branch_workspace / "verification-summary.md").write_text(
+        "# Verification Summary\n\n"
+        "## Checks Run\n- HC-2 no-activation-flag audit: pass\n\n"
+        # Legacy block: no sentinels, exactly as pre-fix runs wrote it.
+        "## Acceptance Coverage\n"
+        "- Covered tags: 0/2\n"
+        "- Missing evidence: 2\n"
+        "- [missing_evidence] AC-1 owned by ST-001; evidence: missing\n"
+        "- [missing_evidence] HC-2 owned by ST-001; evidence: missing\n\n"
+        "## Prior-Stage Consumption\n- Stage: implementation\n",
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.build_acceptance_coverage_report()
+
+    requirements = {item["id"]: item for item in result["requirements"]}
+    # HC-2 survives on the real Checks Run citation; AC-1 only ever appeared
+    # inside the report's own output and must NOT count.
+    assert requirements["HC-2"]["status"] == "covered"
+    assert requirements["AC-1"]["status"] == "planned_only"
+    assert result["summary"] == {
+        "total": 2, "covered": 1, "missing": 1, "planned_only": 1,
+    }
+
+
+def test_acceptance_coverage_legacy_strip_preserves_trailing_evidence(branch_workspace):
+    """A heading-to-heading span would swallow everything after a trailing legacy
+    coverage block — including genuine citations. The strip matches the generated
+    block's own line grammar instead, so evidence AFTER it survives even when no
+    further `## ` heading exists (the flattened pr-draft.md shape)."""
+    (branch_workspace / "blueprint.json").write_text(
+        json.dumps(
+            _coverage_blueprint(
+                ["VC1 [AC-1]: timeout", "VC2 [SC-1]: no leak"],
+                {"AC-1": "ST-001", "SC-1": "ST-001"},
+            )
+        )
+    )
+    (branch_workspace / "pr-draft.md").write_text(
+        "# PR Draft ## Validation "
+        "## Acceptance Coverage - Covered tags: 0/2 - Missing evidence: 2 "
+        "- [missing_evidence] AC-1 owned by ST-001; evidence: missing "
+        "- [missing_evidence] SC-1 owned by ST-001; evidence: missing "
+        # Genuine citation AFTER the block, with no further `## ` heading.
+        "Reviewer confirmed SC-1 by inspecting the redaction path.\n",
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.build_acceptance_coverage_report()
+
+    requirements = {item["id"]: item for item in result["requirements"]}
+    assert requirements["SC-1"]["status"] == "covered", (
+        "the trailing genuine citation must survive the legacy-block strip"
+    )
+    assert requirements["AC-1"]["status"] == "planned_only", (
+        "AC-1 appears only inside the report's own output — not evidence"
+    )
+
+
+def test_acceptance_coverage_summary_separates_planned_only(branch_workspace):
+    """`missing` stays the total un-covered count; `planned_only` breaks out the
+    review-gap subset so the two failure modes are separable."""
+    (branch_workspace / "blueprint.json").write_text(
+        json.dumps(
+            _coverage_blueprint(
+                ["VC1 [AC-1]: timeout"],  # AC-1 planned, INV-9 owned by nothing
+                {"AC-1": "ST-001", "INV-9": "ST-001"},
+            )
+        )
+    )
+
+    result = map_step_runner.build_acceptance_coverage_report()
+
+    assert result["summary"] == {
+        "total": 2,
+        "covered": 0,
+        "missing": 2,
+        "planned_only": 1,
+    }
+    rendered = map_step_runner._render_acceptance_coverage_markdown(result)
+    assert "1 planned but unverified" in rendered
+    assert "1 with no evidence at all" in rendered
+
+
+def test_acceptance_coverage_accepts_independent_verdict_artifacts(branch_workspace):
+    """final_verification.json and review-agent-*.json are the artifacts that
+    actually cite a tag WHILE checking it — they are the strongest evidence."""
+    (branch_workspace / "blueprint.json").write_text(
+        json.dumps(
+            _coverage_blueprint(
+                ["VC1 [AC-1]: timeout", "VC2 [SC-1]: no secret leak"],
+                {"AC-1": "ST-001", "SC-1": "ST-001"},
+            )
+        )
+    )
+    (branch_workspace / "final_verification.json").write_text(
+        json.dumps({"verdict": "PASS", "criteria_met": ["AC-1 verified end to end"]}),
+        encoding="utf-8",
+    )
+    (branch_workspace / "review-agent-monitor.json").write_text(
+        json.dumps({"valid": True, "summary": "SC-1 checked: no credential written"}),
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.build_acceptance_coverage_report()
+
+    requirements = {item["id"]: item for item in result["requirements"]}
+    assert result["summary"] == {
+        "total": 2, "covered": 2, "missing": 0, "planned_only": 0,
+    }
+    assert requirements["AC-1"]["evidence_artifacts"] == ["final_verification"]
+    assert requirements["SC-1"]["evidence_artifacts"] == [
+        "review_agent:review-agent-monitor.json"
+    ]
+
+
+def test_acceptance_coverage_accepts_branch_commit_messages(tmp_path, monkeypatch):
+    """Commit messages are upstream-owned evidence: written when the work lands,
+    immutable after, and not rewritten by the scrub-internal-ids Stop hook."""
+    import subprocess as _sp
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _sp.run(["git", "init", "-b", "main", str(repo)], check=True, capture_output=True)
+    for key, value in (("user.email", "t@example.com"), ("user.name", "T")):
+        _sp.run(["git", "config", key, value], cwd=str(repo), check=True, capture_output=True)
+    (repo / "README.md").write_text("hello", encoding="utf-8")
+    _sp.run(["git", "add", "."], cwd=str(repo), check=True, capture_output=True)
+    _sp.run(["git", "commit", "-m", "init"], cwd=str(repo), check=True, capture_output=True)
+
+    _sp.run(["git", "checkout", "-b", "feat-x"], cwd=str(repo), check=True, capture_output=True)
+    (repo / "checkout.py").write_text("ok\n", encoding="utf-8")
+    _sp.run(["git", "add", "."], cwd=str(repo), check=True, capture_output=True)
+    _sp.run(
+        ["git", "commit", "-m", "ST-001: retryable timeout message (AC-1, INV-1)"],
+        cwd=str(repo), check=True, capture_output=True,
+    )
+
+    branch_dir = repo / ".map" / "feat-x"
+    branch_dir.mkdir(parents=True)
+    (branch_dir / "blueprint.json").write_text(
+        json.dumps(
+            _coverage_blueprint(
+                ["VC1 [AC-1]: timeout", "VC2 [INV-1]: retry state"],
+                {"AC-1": "ST-001", "INV-1": "ST-001"},
+            )
+        )
+    )
+    monkeypatch.chdir(repo)
+
+    result = map_step_runner.build_acceptance_coverage_report(branch="feat-x")
+
+    assert result["summary"] == {
+        "total": 2, "covered": 2, "missing": 0, "planned_only": 0,
+    }
+    assert result["evidence_sources"] == ["commit_messages"]
 
 
 def test_write_verification_summary_appends_acceptance_coverage(branch_workspace):
@@ -3142,6 +3420,7 @@ def test_write_verification_summary_appends_acceptance_coverage(branch_workspace
         "total": 1,
         "covered": 1,
         "missing": 0,
+        "planned_only": 0,
     }
     summary = (branch_workspace / "verification-summary.md").read_text(encoding="utf-8")
     assert "## Acceptance Coverage" in summary
@@ -4807,6 +5086,127 @@ class TestSnapshotCodeState:
         result = map_step_runner.snapshot_code_state()
 
         assert len(result["git_ref"]) <= 12
+
+    def test_diff_uses_merge_base_not_head_when_branch_is_committed(
+        self, monkeypatch
+    ):
+        """#426: a fully-committed branch must still report its real scope.
+
+        `git diff HEAD` is empty once every subtask is committed, which made the
+        review bundle self-report `Files changed: 0` on a 50-file branch.
+        """
+        import subprocess as real_subprocess
+
+        def mock_run(cmd, **kwargs):
+            del kwargs
+
+            def ok(out: str):
+                return real_subprocess.CompletedProcess(cmd, 0, out, "")
+
+            if cmd[:2] == ["git", "rev-parse"] and "HEAD" in cmd and "--verify" not in cmd:
+                return ok("deadbeefcafebabe\n")
+            if "--verify" in cmd:
+                # only origin/main resolves
+                return ok("base000\n") if "origin/main^{commit}" in cmd else \
+                    real_subprocess.CompletedProcess(cmd, 1, "", "")
+            if "merge-base" in cmd:
+                return ok("base0000000000\n")
+            # Working tree is clean: every `git diff ... HEAD` form is empty,
+            # while the merge-base range carries the branch delta.
+            if cmd[:2] == ["git", "diff"] and "base0000000000" in cmd:
+                if "--stat" in cmd:
+                    return ok(" a.py | 2 +-\n b.py | 3 +++\n 2 files changed")
+                return ok("a.py\nb.py")
+            return ok("")
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        result = map_step_runner.snapshot_code_state(branch="feat-x")
+
+        assert result["files_changed"] == ["a.py", "b.py"]
+        assert result["diff_base_ref"] == "origin/main"
+        assert result["diff_base"] == "base00000000"
+        assert result["diff_range"] == "base00000000..HEAD"
+        # Uncommitted diff is retained as the secondary work-in-progress signal.
+        assert result["uncommitted_files_changed"] == []
+        assert result["uncommitted_diff_stat"] == ""
+
+    def test_diff_falls_back_to_head_without_default_branch_ref(self, monkeypatch):
+        """No origin/main|master and no local main|master → HEAD-only snapshot."""
+        import subprocess as real_subprocess
+
+        def mock_run(cmd, **kwargs):
+            del kwargs
+            if "--verify" in cmd:
+                return real_subprocess.CompletedProcess(cmd, 1, "", "")
+            if cmd[:2] == ["git", "rev-parse"]:
+                return real_subprocess.CompletedProcess(cmd, 0, "abc123abc123\n", "")
+            if cmd[:2] == ["git", "diff"] and "--name-only" in cmd:
+                return real_subprocess.CompletedProcess(cmd, 0, "wip.py", "")
+            if cmd[:2] == ["git", "diff"] and "--stat" in cmd:
+                return real_subprocess.CompletedProcess(cmd, 0, " wip.py | 1 +", "")
+            return real_subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        result = map_step_runner.snapshot_code_state(branch="orphan")
+
+        assert result["diff_base"] == ""
+        assert result["diff_base_ref"] == ""
+        assert result["diff_range"] == "HEAD"
+        assert result["files_changed"] == ["wip.py"]
+
+    def test_empty_merge_base_range_falls_back_to_working_tree(self, monkeypatch):
+        """#426: base resolves but nothing is committed yet (or we sit on the
+        default branch), so `merge-base..HEAD` is empty while the working tree
+        carries the whole change. Reporting "no code diff" there re-creates the
+        always-red gate from the other direction."""
+        import subprocess as real_subprocess
+
+        def mock_run(cmd, **kwargs):
+            del kwargs
+
+            def ok(out: str):
+                return real_subprocess.CompletedProcess(cmd, 0, out, "")
+
+            if "--verify" in cmd:
+                return ok("base000\n") if "origin/main^{commit}" in cmd else \
+                    real_subprocess.CompletedProcess(cmd, 1, "", "")
+            if "merge-base" in cmd:
+                return ok("headsha000000\n")
+            if cmd[:2] == ["git", "rev-parse"]:
+                return ok("headsha000000\n")
+            # merge-base == HEAD -> the committed range is empty ...
+            if cmd[:2] == ["git", "diff"] and "headsha000000" in cmd:
+                return ok("")
+            # ... but the working tree is dirty.
+            if cmd[:2] == ["git", "diff"] and "--name-only" in cmd:
+                return ok("wip.py")
+            if cmd[:2] == ["git", "diff"] and "--stat" in cmd:
+                return ok("wip.py | 4 ++++")
+            return ok("")
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        result = map_step_runner.snapshot_code_state(branch="feat-x")
+
+        assert result["files_changed"] == ["wip.py"]
+        assert result["diff_stat"] == "wip.py | 4 ++++"
+        assert "empty" in result["diff_range"]
+        # The entry must therefore report the diff as PRESENT, not blocked.
+        entry = map_step_runner._prior_stage_diff_entry(result)
+        assert entry["present"] is True
+
+    def test_prior_stage_diff_entry_names_the_actual_range(self):
+        """#426: the consumption entry must quote the range the snapshot used."""
+        entry = map_step_runner._prior_stage_diff_entry(
+            {
+                "status": "success",
+                "files_changed": [],
+                "diff_stat": "",
+                "diff_range": "base00000000..HEAD",
+            }
+        )
+        assert entry["path"] == "git diff --stat base00000000..HEAD"
+        assert "base00000000..HEAD" in entry["reason"]
+        assert entry["present"] is False
 
 
 class TestLoadBlueprint:
@@ -9686,6 +10086,7 @@ def test_create_review_bundle_includes_acceptance_coverage(branch_workspace):
         "total": 1,
         "covered": 1,
         "missing": 0,
+        "planned_only": 0,
     }
     bundle = json.loads((branch_workspace / "review-bundle.json").read_text())
     assert bundle["acceptance_coverage"]["requirements"][0]["id"] == "AC-1"
@@ -9697,6 +10098,7 @@ def test_create_review_bundle_includes_acceptance_coverage(branch_workspace):
         "total": 1,
         "covered": 1,
         "missing": 0,
+        "planned_only": 0,
     }
 
 

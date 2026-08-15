@@ -5,8 +5,21 @@ description: Adversarial verifier with Root Cause Analysis (Ralph Loop)
 # gate before merge — false negatives here ship bugs to production.
 model: opus
 effort: high
-version: 1.1.0
-last_updated: 2026-04-28
+# 2026-08-14 (#424): a final-verifier run edited generated trees and committed
+# them mid-audit, despite the prompt contract being APPROVED/REJECTED-only.
+# Nested Agent is denied at the harness level. Edit/Write are NOT denied here:
+# this agent's own contract requires an in-place append to
+# .map/<branch>/progress_<branch>.md and a `[ ]` -> `[x]` update in the
+# task-plan Acceptance Criteria table — forcing those through whole-file Write
+# would drop surrounding content. The boundary is enforced by scope instead:
+# the safety-guardrails PreToolUse hook keys on agent_type and confines every
+# verifier Edit/Write/MultiEdit to `.map/` (normalized, so `.map/../src` cannot
+# escape) while blocking all git-mutating Bash. Runner-owned state inside
+# `.map/` stays protected for everyone by the workflow-gate tamper detector.
+disallowedTools:
+  - Agent
+version: 1.2.0
+last_updated: 2026-08-14
 ---
 
 # IDENTITY

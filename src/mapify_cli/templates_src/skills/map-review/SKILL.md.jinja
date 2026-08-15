@@ -265,9 +265,21 @@ Mode semantics:
 
 ### Step A.1: Gather changes
 
+Diff against the **merge-base with the default branch**, not `HEAD`. On a
+fully-committed branch — the normal `/map-check` → `/map-review` state —
+`git diff HEAD` is empty and under-reports the review scope to zero (#426).
+
 ```bash
-git diff HEAD
-git status
+BASE=""
+for ref in origin/main origin/master main master; do
+  git rev-parse --verify --quiet "$ref" >/dev/null && { BASE="$ref"; break; }
+done
+# No default-branch ref: diff the working tree. NEVER "HEAD...HEAD" — that range
+# is always empty and re-creates the very bug this step fixes.
+[ -n "$BASE" ] && RANGE="$BASE...HEAD" || RANGE="HEAD"
+git --no-pager diff --stat "$RANGE"
+git --no-pager diff "$RANGE"
+git status          # uncommitted work in progress — secondary signal
 ```
 
 ### Step A.1b: Load canonical review context (bundle + handoff)
@@ -276,7 +288,7 @@ Run this before any reviewer agent:
 
 ```bash
 BUNDLE_JSON=$(python3 .map/scripts/map_step_runner.py create_review_bundle)
-BUNDLE_JSON_PATH=$(echo "$BUNDLE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['bundle_path_json'])")
+BUNDLE_JSON_PATH=$(printf '%s' "$BUNDLE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['bundle_path_json'])")
 ```
 
 This creates `.map/<branch>/review-bundle.json` and `.map/<branch>/review-bundle.md`. These are PRIMARY review context. The bundle includes prior-stage consumption status; missing inputs are review evidence, not invisible setup noise.
@@ -288,9 +300,9 @@ DETACHED_PATH=""
 if [ "$DETACHED_FLAG" = "true" ]; then
   # EC-15: prepare detached review once; compare runs reuse the same path.
   DETACHED_JSON=$(python3 .map/scripts/map_step_runner.py prepare_detached_review "$BUNDLE_JSON_PATH")
-  DETACHED_STATUS=$(echo "$DETACHED_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))")
-  DETACHED_PATH=$(echo "$DETACHED_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('worktree_path') or '')")
-  DETACHED_REASON=$(echo "$DETACHED_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('reason') or '')")
+  DETACHED_STATUS=$(printf '%s' "$DETACHED_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))")
+  DETACHED_PATH=$(printf '%s' "$DETACHED_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('worktree_path') or '')")
+  DETACHED_REASON=$(printf '%s' "$DETACHED_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('reason') or '')")
 fi
 ```
 

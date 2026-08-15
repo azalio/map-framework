@@ -5,6 +5,9 @@ Safety Guardrails - PreToolUse Hook
 Merged hook that blocks:
 - Access to sensitive files (.env, credentials, private keys)
 - Dangerous shell commands (rm -rf /, force push, etc.)
+- Branch mutation from verifier-class subagents (#424): no git commit/push/reset
+  and no Edit/Write outside `.map/` when `agent_type` names a read-and-report
+  agent. Reads are never restricted.
 
 Trigger: Edit|Write|Bash
 Exit codes:
@@ -226,6 +229,147 @@ def check_autonomy_git_block(command: str) -> tuple[bool, str]:
     return True, ""
 
 
+# =============================================================================
+# Verifier-class capability boundary (#424)
+# =============================================================================
+
+# Agents dispatched with a read-and-report contract. They legitimately write
+# their own review artifacts under `.map/<branch>/`, but must never mutate
+# source or the branch — a final-verifier run once hand-edited generated trees
+# and committed them mid-audit, then reported "working tree clean" for its own
+# post-commit state, masking the breakage from the orchestrating session.
+VERIFIER_AGENT_TYPES = frozenset(
+    {
+        "final-verifier",
+        "monitor",
+        "evaluator",
+        "predictor",
+        "documentation-reviewer",
+    }
+)
+
+# Write scope a verifier keeps: the project-root `.map/` artifact tree, and only
+# that one. Resolved against CLAUDE_PROJECT_DIR at call time — see
+# check_verifier_path.
+VERIFIER_WRITABLE_DIRNAME = ".map"
+
+# git subcommands that mutate the index, the worktree, refs, history, or config.
+# `pull`/`fetch`/`submodule` are included because they move the very refs the
+# verifier is auditing; `config`/`update-ref`/`symbolic-ref`/`filter-branch`/`notes`
+# because they rewrite repository state out from under the audit. A verifier needs
+# none of them — the list is deliberately fail-closed.
+_GIT_MUTATING_SUBCOMMANDS = (
+    "add",
+    "am",
+    "apply",
+    "branch",
+    "checkout",
+    "cherry-pick",
+    "clean",
+    "commit",
+    "config",
+    "fetch",
+    "filter-branch",
+    "gc",
+    "merge",
+    "mv",
+    "notes",
+    "prune",
+    "pull",
+    "push",
+    "rebase",
+    "reset",
+    "restore",
+    "revert",
+    "rm",
+    "sparse-checkout",
+    "stash",
+    "submodule",
+    "switch",
+    "symbolic-ref",
+    "tag",
+    "update-ref",
+    "worktree",
+)
+
+
+def _normalize_agent_type(raw: object) -> str:
+    """Strip plugin scoping (`plugin:pkg:monitor` -> `monitor`) and lowercase."""
+    if not isinstance(raw, str):
+        return ""
+    return raw.strip().split(":")[-1].lower()
+
+
+def is_verifier_agent(agent_type: object) -> bool:
+    """True when the tool call originates from a read-and-report agent."""
+    return _normalize_agent_type(agent_type) in VERIFIER_AGENT_TYPES
+
+
+def check_verifier_command(command: str) -> tuple[bool, str]:
+    """Block git mutations from a verifier-class agent. Returns (is_safe, reason).
+
+    Same token-anchored matching as the autonomy block so `bash -c 'git commit'`
+    and `git -C <path> commit` are caught too. Read-only git (status, diff, log,
+    show, rev-parse, ls-files) stays allowed — it is how a verifier gathers
+    evidence.
+    """
+    if not command:
+        return True, ""
+
+    import re
+
+    pattern = re.compile(
+        r"(?:^|[\s;&|`'\"()])"
+        r"git\s+"
+        r"(?:-\S+\s+|-C\s+\S+\s+|-c\s+\S+\s+)*"
+        r"(?:" + "|".join(_GIT_MUTATING_SUBCOMMANDS) + r")"
+        r"(?:$|[\s;&|`'\"()])",
+        re.IGNORECASE,
+    )
+    match = pattern.search(command)
+    if match:
+        return (
+            False,
+            (
+                f"Blocked: verifier-class agents must not mutate the branch "
+                f"(matched `{match.group(0).strip()}`). Report the finding in your "
+                "verdict instead — the orchestrating session owns all git writes."
+            ),
+        )
+    return True, ""
+
+
+def check_verifier_path(path: str) -> tuple[bool, str]:
+    """Confine verifier writes to the PROJECT-ROOT `.map/`. Returns (is_safe, reason).
+
+    Containment is decided on the resolved path, never on path text. A textual
+    check is bypassable three ways, all of which land outside the artifact tree:
+    `.map/../src/cli.py` (starts with the prefix), `src/.map/payload.py` (contains
+    `/.map/`), and `/elsewhere/.map/x` (an unrelated project's directory).
+
+    This is the outer boundary only. Runner-owned state INSIDE `.map/`
+    (`.map/scripts/**`, `step_state.json`, `approval_holds.json`, …) is separately
+    protected from direct hand-editing by the workflow-gate state-tamper detector,
+    which applies to every caller, not just verifiers.
+    """
+    if not path:
+        return True, ""
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+    map_root = os.path.realpath(os.path.join(project_dir, VERIFIER_WRITABLE_DIRNAME))
+    candidate = path if os.path.isabs(path) else os.path.join(project_dir, path)
+    resolved = os.path.realpath(candidate)
+    if resolved == map_root or resolved.startswith(map_root + os.sep):
+        return True, ""
+    return (
+        False,
+        (
+            f"Blocked: verifier-class agents may only write under the project's "
+            f"`{VERIFIER_WRITABLE_DIRNAME}/` artifact tree; refused write to {path}. "
+            "Report the required change in your verdict instead of applying it."
+        ),
+    )
+
+
 def deny(reason: str) -> None:
     """Deny tool execution using structured PreToolUse decision control."""
     print(
@@ -251,6 +395,8 @@ def main() -> None:
 
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
+    # `agent_type` is present only when the hook fires inside a subagent.
+    verifier = is_verifier_agent(input_data.get("agent_type"))
 
     # Check file-based tools
     if tool_name in ("Edit", "Write", "Read", "MultiEdit"):
@@ -258,6 +404,11 @@ def main() -> None:
         is_safe, reason = check_file_safety(file_path)
         if not is_safe:
             deny(f"{reason} (tool={tool_name})")
+        # Reads stay unrestricted — a verifier must be able to read everything.
+        if verifier and tool_name in ("Edit", "Write", "MultiEdit"):
+            is_safe, reason = check_verifier_path(file_path)
+            if not is_safe:
+                deny(f"{reason} (tool={tool_name})")
 
     # Check bash commands
     elif tool_name == "Bash":
@@ -265,6 +416,10 @@ def main() -> None:
         is_safe, reason = check_command_safety(command)
         if not is_safe:
             deny(f"{reason} (tool={tool_name})")
+        if verifier:
+            is_safe, reason = check_verifier_command(command)
+            if not is_safe:
+                deny(reason)
         is_safe, reason = check_autonomy_git_block(command)
         if not is_safe:
             deny(reason)

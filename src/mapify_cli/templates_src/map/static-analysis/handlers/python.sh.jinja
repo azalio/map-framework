@@ -31,7 +31,7 @@ if command -v ruff &> /dev/null; then
 
     # Normalize ruff output to standard format
     if [[ "$RUFF_OUT" != "[]" && -n "$RUFF_OUT" ]]; then
-        RUFF_NORM=$(echo "$RUFF_OUT" | jq -c '[.[] | {
+        RUFF_NORM=$(printf '%s' "$RUFF_OUT" | jq -c '[.[] | {
             tool: "ruff",
             file: .filename,
             line: .location.row,
@@ -53,7 +53,7 @@ if command -v mypy &> /dev/null; then
 
     # Parse mypy text output to JSON using robust parsing
     if [[ -n "$MYPY_OUT" ]]; then
-        MYPY_NORM=$(echo "$MYPY_OUT" | while IFS= read -r line; do
+        MYPY_NORM=$(printf '%s\n' "$MYPY_OUT" | while IFS= read -r line; do
             if parse_colon_delimited "$line" file lineno col msg; then
                 # Determine severity from message
                 severity="warning"

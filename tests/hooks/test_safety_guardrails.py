@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -558,6 +559,199 @@ class TestDirectoryNameFalsePositives:
         exit_code, stdout, _ = run_hook_file("Read", path)
         assert exit_code == 0
         _assert_denied(_parse_stdout(stdout))
+
+
+# =============================================================================
+# Verifier-class capability boundary (#424)
+# =============================================================================
+
+
+def run_hook_as_agent(
+    tool_name: str, tool_input: dict, agent_type: str | None
+) -> tuple[int, str, str]:
+    """Execute the hook with an explicit `agent_type` (subagent context)."""
+    input_data: dict[str, object] = {
+        "tool_name": tool_name,
+        "tool_input": tool_input,
+    }
+    if agent_type is not None:
+        input_data["agent_type"] = agent_type
+    result = subprocess.run(
+        [sys.executable, str(HOOK_PATH)],
+        input=json.dumps(input_data),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode, result.stdout, result.stderr
+
+
+class TestVerifierAgentBoundary:
+    """A final-verifier run created and committed `3c6a7db` mid-audit, hand-editing
+    generated trees and renaming a blueprint-named test, despite an
+    APPROVED/REJECTED-only prompt contract. Prompt text is not a capability
+    boundary — these tests pin the mechanical one."""
+
+    VERIFIERS: ClassVar[list[str]] = [
+        "final-verifier",
+        "monitor",
+        "evaluator",
+        "predictor",
+    ]
+
+    @pytest.mark.parametrize("agent", VERIFIERS)
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git commit -m 'chore(map): strip internal workflow IDs'",
+            "git add -A",
+            "git push origin HEAD",
+            "git reset --soft HEAD~1",
+            "git checkout -- src/",
+            "git restore .claude/hooks/workflow-gate.py",
+            "git -C /repo commit --no-verify -m x",
+            "bash -c 'git commit -m sneaky'",
+            "make check && git commit -am wip",
+            # Ref-moving commands change the very branch under audit.
+            "git pull --rebase origin main",
+            "git fetch origin",
+            "git submodule update --init",
+            "git update-ref refs/heads/main HEAD",
+            "git symbolic-ref HEAD refs/heads/other",
+            "git config user.email x@y.z",
+        ],
+    )
+    def test_git_mutation_blocked_for_verifiers(self, agent, command):
+        exit_code, stdout, _ = run_hook_as_agent("Bash", {"command": command}, agent)
+        assert exit_code == 0
+        _assert_denied(_parse_stdout(stdout))
+
+    @pytest.mark.parametrize("agent", VERIFIERS)
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git status",
+            "git diff origin/main...HEAD",
+            "git log -n 5",
+            "git show HEAD",
+            "git rev-parse HEAD",
+            "git ls-files src/",
+            "make check",
+            "pytest tests/ -q",
+        ],
+    )
+    def test_read_only_evidence_gathering_still_allowed(self, agent, command):
+        """The verifier must keep every read/verify capability it needs."""
+        exit_code, stdout, _ = run_hook_as_agent("Bash", {"command": command}, agent)
+        assert exit_code == 0
+        assert _parse_stdout(stdout) == {}, f"{command!r} was wrongly blocked"
+
+    def test_git_mutation_allowed_on_main_thread(self):
+        """Negative proof: without agent_type the boundary must not engage —
+        the orchestrating session owns commits."""
+        exit_code, stdout, _ = run_hook_as_agent(
+            "Bash", {"command": "git commit -m 'ST-001: real work'"}, None
+        )
+        assert exit_code == 0
+        assert _parse_stdout(stdout) == {}
+
+    def test_git_mutation_allowed_for_actor(self):
+        """actor is a legitimate writer — it must keep committing its subtask."""
+        exit_code, stdout, _ = run_hook_as_agent(
+            "Bash", {"command": "git commit -m 'ST-001: real work'"}, "actor"
+        )
+        assert exit_code == 0
+        assert _parse_stdout(stdout) == {}
+
+    @pytest.mark.parametrize("agent", VERIFIERS)
+    @pytest.mark.parametrize("tool", ["Edit", "Write", "MultiEdit"])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            ".claude/hooks/workflow-gate.py",
+            "src/mapify_cli/templates/map/scripts/map_step_runner.py",
+            "tests/test_workflow_gate.py",
+            "README.md",
+        ],
+    )
+    def test_source_writes_blocked_for_verifiers(self, agent, tool, path):
+        exit_code, stdout, _ = run_hook_as_agent(tool, {"file_path": path}, agent)
+        assert exit_code == 0
+        _assert_denied(_parse_stdout(stdout))
+
+    @pytest.mark.parametrize("agent", VERIFIERS)
+    @pytest.mark.parametrize(
+        "path",
+        [
+            ".map/feat-x/final_verification.json",
+            "./.map/feat-x/progress_feat-x.md",
+            str(HOOK_PATH.parent.parent.parent / ".map" / "feat-x" / "code-review-001.md"),
+        ],
+    )
+    def test_map_artifact_writes_allowed_for_verifiers(self, agent, path):
+        """final-verifier legitimately writes its own verdict artifacts, whether it
+        names them relative to the project root or by absolute path."""
+        exit_code, stdout, _ = run_hook_as_agent("Write", {"file_path": path}, agent)
+        assert exit_code == 0
+        assert _parse_stdout(stdout) == {}, f"{path!r} was wrongly blocked"
+
+    @pytest.mark.parametrize("agent", VERIFIERS)
+    @pytest.mark.parametrize(
+        "path",
+        [
+            # A nested `.map/` is not the project's artifact tree.
+            "src/.map/payload.py",
+            "src/mapify_cli/.map/cli.py",
+            # Another project's `.map/` is out of bounds too.
+            "/tmp/other-repo/.map/feat-x/anything.py",
+            "../sibling-repo/.map/feat-x/anything.py",
+        ],
+    )
+    def test_foreign_or_nested_map_dirs_are_blocked(self, agent, path):
+        """Containment is decided on the RESOLVED path against CLAUDE_PROJECT_DIR —
+        a substring check on `/.map/` accepts all of these."""
+        exit_code, stdout, _ = run_hook_as_agent("Write", {"file_path": path}, agent)
+        assert exit_code == 0
+        _assert_denied(_parse_stdout(stdout))
+
+    @pytest.mark.parametrize("agent", VERIFIERS)
+    @pytest.mark.parametrize(
+        "path",
+        [
+            ".map/../src/mapify_cli/cli.py",
+            ".map/feat-x/../../.claude/hooks/workflow-gate.py",
+            "./.map/../README.md",
+        ],
+    )
+    def test_traversal_out_of_map_is_blocked(self, agent, path):
+        """A raw prefix check accepts `.map/../src/...`; normalize before matching."""
+        exit_code, stdout, _ = run_hook_as_agent("Write", {"file_path": path}, agent)
+        assert exit_code == 0
+        _assert_denied(_parse_stdout(stdout))
+
+    @pytest.mark.parametrize("agent", VERIFIERS)
+    def test_reads_are_never_restricted(self, agent):
+        exit_code, stdout, _ = run_hook_as_agent(
+            "Read", {"file_path": "src/mapify_cli/cli.py"}, agent
+        )
+        assert exit_code == 0
+        assert _parse_stdout(stdout) == {}
+
+    def test_plugin_scoped_agent_type_is_normalized(self):
+        """`plugin:pkg:monitor` must resolve to the monitor boundary."""
+        exit_code, stdout, _ = run_hook_as_agent(
+            "Bash", {"command": "git commit -m x"}, "plugin:some-pkg:monitor"
+        )
+        assert exit_code == 0
+        _assert_denied(_parse_stdout(stdout))
+
+    def test_source_write_allowed_on_main_thread(self):
+        """Negative proof for the path boundary: no agent_type → no confinement."""
+        exit_code, stdout, _ = run_hook_as_agent(
+            "Write", {"file_path": "src/mapify_cli/cli.py"}, None
+        )
+        assert exit_code == 0
+        assert _parse_stdout(stdout) == {}
 
 
 # =============================================================================

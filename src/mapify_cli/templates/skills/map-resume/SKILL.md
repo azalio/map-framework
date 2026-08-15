@@ -189,9 +189,9 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|
 
 # Get next step from orchestrator (reads step_state.json internally)
 NEXT_STEP=$(python3 .map/scripts/map_orchestrator.py get_next_step)
-STEP_ID=$(echo "$NEXT_STEP" | jq -r '.step_id')
-PHASE=$(echo "$NEXT_STEP" | jq -r '.phase')
-IS_COMPLETE=$(echo "$NEXT_STEP" | jq -r '.is_complete')
+STEP_ID=$(printf '%s' "$NEXT_STEP" | jq -r '.step_id')
+PHASE=$(printf '%s' "$NEXT_STEP" | jq -r '.phase')
+IS_COMPLETE=$(printf '%s' "$NEXT_STEP" | jq -r '.is_complete')
 ```
 
 **Then follow the same phase routing as /map-efficient:**

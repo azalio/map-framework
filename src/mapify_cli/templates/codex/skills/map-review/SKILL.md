@@ -112,9 +112,21 @@ otherwise) and mode semantics.
 
 ### Step A.1: Gather changes
 
+Diff against the **merge-base with the default branch**, not `HEAD`. On a
+fully-committed branch — the normal `/map-check` → `/map-review` state —
+`git diff HEAD` is empty and under-reports the review scope to zero (#426).
+
 ```bash
-git diff HEAD
-git status
+BASE=""
+for ref in origin/main origin/master main master; do
+  git rev-parse --verify --quiet "$ref" >/dev/null && { BASE="$ref"; break; }
+done
+# No default-branch ref: diff the working tree. NEVER "HEAD...HEAD" — that range
+# is always empty and re-creates the very bug this step fixes.
+[ -n "$BASE" ] && RANGE="$BASE...HEAD" || RANGE="HEAD"
+git --no-pager diff --stat "$RANGE"
+git --no-pager diff "$RANGE"
+git status          # uncommitted work in progress — secondary signal
 ```
 
 ### Step A.1b: Load canonical review context (bundle + handoff)

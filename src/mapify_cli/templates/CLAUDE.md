@@ -70,6 +70,13 @@ When you pipe through `head/tail/less/more`, the source command keeps running bu
 
 **Exception:** Filtering pipes are OK (grep, awk, sed) because they process all input.
 
+### Never pipe a captured variable through `echo`
+
+zsh's builtin `echo` interprets backslash escapes, so piping `echo "$JSON"` into `jq`
+turns the `\n` inside JSON string values into raw control bytes and jq aborts — inside
+`$(...)` the failure is swallowed and the variable lands empty. Use
+`printf '%s' "$VAR" | jq` (or `printf '%s\n'` when a `while read` loop consumes it).
+
 **Full guidelines:** `.claude/references/bash-guidelines.md`
 
 ## Progressive disclosure pointers

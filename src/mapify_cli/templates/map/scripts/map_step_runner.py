@@ -339,7 +339,50 @@ LEARNING_CONSUMPTION_SOURCES = {"auto-handoff", "file-handoff", "inline-summary"
 REVIEW_SECTION_IDS: tuple[str, ...] = ("architecture", "code_quality", "tests", "performance")
 REVIEW_VALID_MODES: tuple[str, ...] = ("default", "reverse-sections", "shuffle-sections")
 LEARNING_IMMEDIATE_WINDOW_SECONDS = 30 * 60
-ACCEPTANCE_TAG_RE = re.compile(r"\[([A-Za-z][A-Za-z0-9_-]*-\d+[A-Za-z0-9_-]*)\]")
+# Requirement tags (AC-1, INV-4, HC-2, SC-1, ...) as they actually appear in
+# artifacts. Brackets are OPTIONAL: reviewer verdicts, commit messages and
+# verification prose write `HC-2 audit: pass`, never `[HC-2]`, so a
+# bracket-only matcher found nothing and the coverage table read 0/N forever.
+# Over-matching (`feat-422`, `ST-001`) is harmless — extracted tags are only
+# ever intersected with the blueprint's coverage_map keys.
+ACCEPTANCE_TAG_RE = re.compile(
+    r"(?<![A-Za-z0-9_])\[?([A-Za-z][A-Za-z0-9_-]*-\d+[A-Za-z0-9_-]*)\]?(?![A-Za-z0-9_])"
+)
+
+# Sentinels around the GENERATED acceptance-coverage block. write_verification_summary
+# appends that block to verification-summary.md, which is itself an evidence source —
+# without an exact exclusion span the report would read its own "AC-1 owned by ST-001"
+# lines back as evidence and report 100% forever. The markers are inline HTML comments
+# so they survive the newline-flattening applied when the summary is embedded in
+# pr-draft.md.
+ACCEPTANCE_COVERAGE_BLOCK_START = "<!-- map:acceptance-coverage:start -->"
+ACCEPTANCE_COVERAGE_BLOCK_END = "<!-- map:acceptance-coverage:end -->"
+ACCEPTANCE_COVERAGE_BLOCK_RE = re.compile(
+    re.escape(ACCEPTANCE_COVERAGE_BLOCK_START)
+    + r".*?"
+    + re.escape(ACCEPTANCE_COVERAGE_BLOCK_END),
+    re.DOTALL,
+)
+# Fallback for artifacts written BEFORE the sentinels existed (every already-installed
+# repo has them on disk). Deliberately NOT a heading-to-heading span: when the block is
+# the last section — or when pr-draft.md has flattened every newline into a space so no
+# later `## ` is recognisable — a span would swallow the rest of the file and drop
+# genuine citations. These patterns match the generated block's own line grammar
+# instead, so only report-authored text is ever removed.
+ACCEPTANCE_COVERAGE_LEGACY_LINE_RES = (
+    # The per-requirement rows — the only part that carries tags. The evidence
+    # tail is a bounded, comma-separated label list (labels never contain spaces),
+    # NOT `[^\n]*`: an open-ended tail would run past the last row and swallow
+    # whatever prose follows it on a flattened line.
+    re.compile(
+        r"-\s*\[[a-z_]+\]\s*\S+\s+owned by\s+\S+;\s*evidence:\s*"
+        r"[\w:./-]+(?:,\s*[\w:./-]+)*"
+    ),
+    re.compile(r"-\s*Covered tags:\s*\d+/\d+"),
+    re.compile(r"-\s*Missing evidence:\s*\d+"),
+    re.compile(r"-\s*Uncovered:\s*\d+\s*\([^)]*\)"),
+    re.compile(r"##\s+Acceptance Coverage"),
+)
 REVIEW_PROMPT_DEFAULT_BUDGET_TOKENS = 12_000
 REVIEW_PROMPT_MIN_BUDGET_TOKENS = 1_024
 REVIEW_PROMPT_BUDGET_ENV = "MAP_REVIEW_PROMPT_BUDGET_TOKENS"
@@ -1880,16 +1923,24 @@ def _prior_stage_diff_entry(
     file_count = len(files_changed) if isinstance(files_changed, list) else 0
     diff_stat = code_state.get("diff_stat")
     present = code_state.get("status") == "success" and (file_count > 0 or bool(diff_stat))
+    # Name the range the snapshot actually used (#426): a HEAD-only diff on a
+    # fully-committed branch is empty, and reporting the wrong command in the
+    # "missing" reason sent reviewers looking for the wrong problem.
+    diff_range = code_state.get("diff_range") or "HEAD"
     return {
         "key": "code_diff",
         "label": "code diff",
         "kind": "git-diff",
-        "path": "git diff --stat HEAD",
+        "path": f"git diff --stat {diff_range}",
         "required": required,
         "present": present,
         "consumed": present,
         "count": file_count,
-        "reason": "" if present else "missing code diff snapshot; no changed files were visible against HEAD",
+        "reason": (
+            ""
+            if present
+            else f"missing code diff snapshot; no changed files were visible in {diff_range}"
+        ),
     }
 
 
@@ -4647,23 +4698,74 @@ def _load_blueprint_for_coverage(branch_dir: Path) -> tuple[dict[str, object] | 
     return blueprint, ""
 
 
+def _strip_generated_coverage_blocks(text: str) -> str:
+    """Remove every generated acceptance-coverage block from evidence text.
+
+    The coverage report must never count its own output as evidence — see
+    ACCEPTANCE_COVERAGE_BLOCK_START. Sentinel-delimited blocks are removed exactly;
+    unmarked legacy blocks are removed line-by-line so nothing beyond the report's
+    own output is ever discarded.
+    """
+    stripped = ACCEPTANCE_COVERAGE_BLOCK_RE.sub(" ", text)
+    for pattern in ACCEPTANCE_COVERAGE_LEGACY_LINE_RES:
+        stripped = pattern.sub(" ", stripped)
+    return stripped
+
+
 def _extract_acceptance_tags(text: object) -> set[str]:
-    """Return bracketed acceptance/invariant tags found in artifact text."""
+    """Return acceptance/invariant tags found in artifact text (brackets optional)."""
     if not isinstance(text, str) or not text:
         return set()
-    return {match.group(1) for match in ACCEPTANCE_TAG_RE.finditer(text)}
+    return {
+        match.group(1)
+        for match in ACCEPTANCE_TAG_RE.finditer(_strip_generated_coverage_blocks(text))
+    }
+
+
+def _branch_commit_messages() -> str:
+    """Return the branch's commit messages (merge-base..HEAD), or "" on any failure.
+
+    Commit messages are upstream-owned evidence: the Actor writes them at the moment
+    the work lands, they are immutable afterwards, and unlike code comments they are
+    NOT rewritten by the scrub-internal-ids Stop hook. Never raises.
+    """
+
+    def _run_git(args: list[str]) -> str:
+        try:
+            result = subprocess.run(
+                ["git"] + args,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            return result.stdout.strip() if result.returncode == 0 else ""
+        except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
+            return ""
+
+    base_sha, _ = _resolve_review_base(_run_git)
+    if not base_sha:
+        return ""
+    return _run_git(["log", "--format=%B", f"{base_sha}..HEAD"])
 
 
 def _collect_acceptance_evidence_texts(
     branch_dir: Path,
     extra_artifacts: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    """Collect review/verification artifact text that can prove acceptance tags."""
+    """Collect review/verification artifact text that can prove acceptance tags.
+
+    Planning artifacts (spec, task plan, plan-review) are deliberately excluded:
+    they state the requirement, they do not prove it. The independent downstream
+    verdicts — reviewer agent outputs and the final verifier — ARE included, because
+    they are the artifacts that actually cite a tag while checking it.
+    """
     evidence: dict[str, str] = {}
     for label, name in (
         ("verification_summary", "verification-summary.md"),
         ("qa", "qa-001.md"),
         ("pr_draft", "pr-draft.md"),
+        ("final_verification", "final_verification.json"),
     ):
         text = _read_branch_artifact_text(branch_dir, name)
         if text:
@@ -4675,7 +4777,12 @@ def _collect_acceptance_evidence_texts(
         if isinstance(text, str) and text:
             evidence[label] = text
 
+    commit_messages = _branch_commit_messages()
+    if commit_messages:
+        evidence["commit_messages"] = _sanitize_for_json(commit_messages)
+
     for pattern, label_prefix in (
+        ("review-agent-*.json", "review_agent"),
         ("test_contract_*.md", "test_contract"),
         ("test_handoff_*.json", "test_handoff"),
     ):
@@ -4763,20 +4870,37 @@ def build_acceptance_coverage_report(
             for source, tags in evidence_tags_by_source.items()
             if requirement in tags
         )
+        if evidence_artifacts:
+            status = "covered"
+        elif validation_criteria_cited:
+            # The blueprint owner names the requirement in its validation criteria,
+            # but nothing downstream verified it. That is a REVIEW gap, not a
+            # decomposition gap — collapsing both into "missing_evidence" hid which
+            # one an operator has to go fix.
+            status = "planned_only"
+        else:
+            status = "missing_evidence"
         requirements.append(
             {
                 "id": requirement,
                 "owner": owner_id,
                 "validation_criteria_cited": validation_criteria_cited,
                 "evidence_artifacts": evidence_artifacts,
-                "status": "covered" if evidence_artifacts else "missing_evidence",
+                "status": status,
             }
         )
 
     covered = sum(1 for item in requirements if item["status"] == "covered")
+    planned_only = sum(1 for item in requirements if item["status"] == "planned_only")
     missing = len(requirements) - covered
+    # Only sources that cited a REAL requirement count as evidence sources. With
+    # brackets optional, every source matches incidental tokens (`ST-001`,
+    # `feat-422`); listing those would make the field noise.
+    requirement_ids = {str(key) for key in coverage_map}
     tagged_evidence_sources = sorted(
-        source for source, tags in evidence_tags_by_source.items() if tags
+        source
+        for source, tags in evidence_tags_by_source.items()
+        if tags & requirement_ids
     )
     return {
         "status": "success",
@@ -4784,24 +4908,48 @@ def build_acceptance_coverage_report(
         "blueprint_path": str(branch_dir / "blueprint.json"),
         "evidence_sources": tagged_evidence_sources,
         "requirements": requirements,
-        "summary": {"total": len(requirements), "covered": covered, "missing": missing},
+        # `missing` stays the total un-covered count (backward-compatible);
+        # `planned_only` breaks out the review-gap subset so an operator can tell
+        # "nobody verified it" from "nobody even owns it".
+        "summary": {
+            "total": len(requirements),
+            "covered": covered,
+            "missing": missing,
+            "planned_only": planned_only,
+        },
     }
 
 
 def _render_acceptance_coverage_markdown(report: Mapping[str, object]) -> str:
-    """Render an acceptance coverage report into a compact Markdown section."""
+    """Render an acceptance coverage report into a compact Markdown section.
+
+    The output is fenced with ACCEPTANCE_COVERAGE_BLOCK_START/END so that when it is
+    appended to verification-summary.md — which the report later reads back as an
+    evidence source — the block can be excised exactly instead of counting as proof
+    of the very tags it reports as missing.
+    """
     if report.get("status") != "success":
         reason = report.get("reason", "not available")
-        return "## Acceptance Coverage\n- Status: not available\n- Reason: " + str(reason) + "\n"
+        return (
+            f"{ACCEPTANCE_COVERAGE_BLOCK_START}\n"
+            "## Acceptance Coverage\n- Status: not available\n- Reason: "
+            + str(reason)
+            + f"\n{ACCEPTANCE_COVERAGE_BLOCK_END}\n"
+        )
 
     summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
     total = summary.get("total", 0) if isinstance(summary, dict) else 0
     covered = summary.get("covered", 0) if isinstance(summary, dict) else 0
     missing = summary.get("missing", 0) if isinstance(summary, dict) else 0
+    planned_only = summary.get("planned_only", 0) if isinstance(summary, dict) else 0
     lines = [
+        ACCEPTANCE_COVERAGE_BLOCK_START,
         "## Acceptance Coverage",
         f"- Covered tags: {covered}/{total}",
-        f"- Missing evidence: {missing}",
+        (
+            f"- Uncovered: {missing} ({planned_only} planned but unverified, "
+            f"{missing - planned_only} with no evidence at all)"
+        ),
     ]
     requirements = report.get("requirements")
     if isinstance(requirements, list) and requirements:
@@ -4817,6 +4965,7 @@ def _render_acceptance_coverage_markdown(report: Mapping[str, object]) -> str:
                 f"- [{item.get('status', 'unknown')}] {item.get('id', 'unknown')} "
                 f"owned by {item.get('owner') or 'unknown'}; evidence: {evidence_text}"
             )
+    lines.append(ACCEPTANCE_COVERAGE_BLOCK_END)
     return "\n".join(lines) + "\n"
 
 
@@ -9284,11 +9433,20 @@ def _render_bundle_markdown(result: dict) -> str:
     if cs_status == "success":
         lines.append(f"- Git ref: `{code_state.get('git_ref', 'unknown')}`")
         lines.append(f"- Branch: `{code_state.get('branch', 'unknown')}`")
+        base_ref = code_state.get("diff_base_ref") or ""
+        diff_range = code_state.get("diff_range") or "HEAD"
+        lines.append(
+            f"- Review target: `{diff_range}`"
+            + (f" (merge-base with `{base_ref}`)" if base_ref else " (no default-branch ref resolved)")
+        )
         files = code_state.get("files_changed", [])
         lines.append(f"- Files changed: {len(files)}")
         diff_stat = code_state.get("diff_stat", "")
         if diff_stat:
             lines.append(f"- Diff stat: {diff_stat[:200]}")
+        uncommitted = code_state.get("uncommitted_files_changed")
+        if isinstance(uncommitted, list):
+            lines.append(f"- Uncommitted (work in progress): {len(uncommitted)} file(s)")
     else:
         lines.append(f"- Status: {cs_status}")
         reason = code_state.get("reason", "")
@@ -11921,12 +12079,50 @@ def run_test_gate() -> dict:
 _DIFF_STAT_MAX_CHARS = 65_536
 _FILES_CHANGED_MAX_ENTRIES = 500
 
+# Candidate default-branch refs, tried in order when resolving the review base.
+# Remote-tracking refs come first: they survive a local branch that was reset or
+# never checked out, which is the common CI/clone shape.
+_REVIEW_BASE_CANDIDATE_REFS = (
+    "origin/main",
+    "origin/master",
+    "main",
+    "master",
+)
+
+
+def _resolve_review_base(run_git: Callable[[list[str]], str]) -> tuple[str, str]:
+    """Return ``(base_sha, base_ref)`` for the branch's review target.
+
+    The review target is the merge-base with the default branch, NOT ``HEAD``:
+    on a fully-committed feature branch (the normal /map-check → /map-review
+    state) ``git diff HEAD`` is empty, so a HEAD-based snapshot self-reports
+    "Files changed: 0" for a branch that actually carries the whole diff (#426).
+
+    Returns ``("", "")`` when no default-branch ref resolves (fresh repo, no
+    remote, shallow clone) — callers then fall back to the uncommitted diff.
+    """
+    for ref in _REVIEW_BASE_CANDIDATE_REFS:
+        if not run_git(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"]):
+            continue
+        base = run_git(["merge-base", ref, "HEAD"])
+        if base:
+            return base, ref
+    return "", ""
+
 
 def snapshot_code_state(branch: str | None = None) -> dict:
     """Capture current git state for artifact-to-code verification.
 
     Records git ref, changed files, and diff stat so review artifacts
     can be tied to actual code state. Populates subtask_files_changed.
+
+    ``files_changed``/``diff_stat`` describe the REVIEW TARGET — the range from
+    the merge-base with the default branch up to HEAD — so a branch whose work is
+    already committed still reports its real scope (#426). The uncommitted
+    working-tree diff is kept alongside as a secondary work-in-progress signal
+    (``uncommitted_files_changed``/``uncommitted_diff_stat``). When no
+    default-branch ref resolves, the snapshot degrades to the uncommitted diff and
+    reports ``diff_base_ref=""``.
 
     Very large repos can produce huge ``diff_stat`` and ``files_changed`` outputs that
     bloat the bundle JSON. Both are capped here (``_DIFF_STAT_MAX_CHARS`` /
@@ -11949,10 +12145,35 @@ def snapshot_code_state(branch: str | None = None) -> dict:
         except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
             return ""
 
+    def _names(raw: str) -> list[str]:
+        return [f for f in raw.splitlines() if f.strip()] if raw else []
+
     git_ref = _run_git(["rev-parse", "HEAD"])
-    diff_stat = _run_git(["diff", "--stat", "HEAD"])
-    diff_names = _run_git(["diff", "--name-only", "HEAD"])
-    files_changed = [f for f in diff_names.splitlines() if f.strip()] if diff_names else []
+
+    # Secondary signal: uncommitted work in the main checkout.
+    uncommitted_stat = _run_git(["diff", "--stat", "HEAD"])
+    uncommitted_files = _names(_run_git(["diff", "--name-only", "HEAD"]))
+
+    base_sha, base_ref = _resolve_review_base(_run_git)
+    if base_sha:
+        diff_range = f"{base_sha[:12]}..HEAD"
+        diff_stat = _run_git(["diff", "--stat", base_sha, "HEAD"])
+        files_changed = _names(_run_git(["diff", "--name-only", base_sha, "HEAD"]))
+    else:
+        # No default-branch ref to anchor on — degrade to the old HEAD-only view
+        # rather than reporting nothing at all.
+        diff_range = "HEAD"
+        diff_stat = uncommitted_stat
+        files_changed = list(uncommitted_files)
+
+    if not files_changed and not diff_stat and (uncommitted_files or uncommitted_stat):
+        # Base resolved but the range is empty (nothing committed yet, or sitting on
+        # the default branch) while the working tree carries the whole change.
+        # Reporting "no code diff" here would re-create the always-red gate that
+        # #426 is about, just from the other direction.
+        diff_range = f"{diff_range} (empty; showing uncommitted working tree)"
+        diff_stat = uncommitted_stat
+        files_changed = list(uncommitted_files)
 
     diff_truncated = False
     if len(diff_stat) > _DIFF_STAT_MAX_CHARS:
@@ -11960,6 +12181,12 @@ def snapshot_code_state(branch: str | None = None) -> dict:
         diff_truncated = True
     if len(files_changed) > _FILES_CHANGED_MAX_ENTRIES:
         files_changed = files_changed[:_FILES_CHANGED_MAX_ENTRIES]
+        diff_truncated = True
+    if len(uncommitted_stat) > _DIFF_STAT_MAX_CHARS:
+        uncommitted_stat = uncommitted_stat[:_DIFF_STAT_MAX_CHARS] + "\n... [truncated]"
+        diff_truncated = True
+    if len(uncommitted_files) > _FILES_CHANGED_MAX_ENTRIES:
+        uncommitted_files = uncommitted_files[:_FILES_CHANGED_MAX_ENTRIES]
         diff_truncated = True
 
     return {
@@ -11969,6 +12196,11 @@ def snapshot_code_state(branch: str | None = None) -> dict:
         "diff_stat": diff_stat,
         "branch": branch_name,
         "diff_truncated": diff_truncated,
+        "diff_base": base_sha[:12] if base_sha else "",
+        "diff_base_ref": base_ref,
+        "diff_range": diff_range,
+        "uncommitted_files_changed": uncommitted_files,
+        "uncommitted_diff_stat": uncommitted_stat,
     }
 
 
@@ -18532,35 +18764,49 @@ def _worktree_probe(project_dir: Path) -> dict[str, object]:
     return result
 
 
+def _wt_dirty_paths(timeout: int = 15) -> tuple[list[str], str]:
+    """Return ``(dirty porcelain lines, error)`` for the main checkout.
+
+    Single scanner behind every dirty-target decision (#423): the isolation
+    resolver and both merge paths used to each carry their own copy of this
+    filter, which is how ``merge_subtask_worktree`` ended up with no guard at all.
+
+    MAP runtime state (``.map/<branch>/``, ``.codex/``, ``.agents/``) is excluded:
+    in a real target repo those are gitignored, and the guard must care only about
+    the USER's uncommitted source — never refuse because of our own state writes.
+    """
+    st = _wt_git(["status", "--porcelain"], timeout=timeout)
+    if st.returncode != 0:
+        return [], (st.stderr.strip() or "git status failed")
+    return [
+        ln
+        for ln in st.stdout.splitlines()
+        if ln.strip() and not _wt_is_runtime_state_path(_wt_porcelain_path(ln))
+    ], ""
+
+
 def _require_clean_merge_target(project_dir: Path) -> dict[str, object]:
     """Check that the main checkout is clean enough for a worktree merge.
 
     Dormant when worktree.isolation is 'off' (per-repo opt-out / kill-switch — HC-1).
-    When the check is active AND require_clean_merge_target config is True
-    (default True), runs `git status --porcelain` and returns:
+    Otherwise runs `git status --porcelain` and returns:
       * {"status":"ok","ok":True}  when clean (excluding MAP runtime state)
       * {"status":"dirty","ok":False,"kind":"DIRTY_MERGE_TARGET","dirty":[...]}
         when uncommitted changes are present.
     Never raises.
+
+    Reached from ``resolve_worktree_isolation``, which ``worktree_isolation_status``
+    calls — there is no separate ``require_clean_merge_target`` config key: it was
+    a dead toggle nothing consulted (#423), and a clean merge target is not
+    optional for a squash-merge-based accept path.
     """
     mode = _worktree_isolation_mode(project_dir)
     if mode == "off":
         return {"status": "dormant", "ok": False, "reason": "worktree.isolation is off"}
 
-    # Read the require_clean_merge_target flag (default True)
-    raw_require = _map_config_str(project_dir, "require_clean_merge_target", "true")
-    if not _parse_boolish(raw_require):
-        return {"status": "ok", "ok": True, "skipped": True}
-
-    st = _wt_git(["status", "--porcelain"], timeout=15)
-    if st.returncode != 0:
-        return _wt_error("CLEAN_CHECK_FAILED", st.stderr.strip() or "git status failed")
-
-    dirty = [
-        ln
-        for ln in st.stdout.splitlines()
-        if ln.strip() and not _wt_is_runtime_state_path(_wt_porcelain_path(ln))
-    ]
+    dirty, error = _wt_dirty_paths()
+    if error:
+        return _wt_error("CLEAN_CHECK_FAILED", error)
     if dirty:
         return {
             "status": "dirty",
@@ -19108,22 +19354,18 @@ def create_subtask_worktree(
         )
 
     if not allow_dirty:
-        status = _wt_git(["status", "--porcelain"])
-        # Exclude MAP runtime state (.map/<branch>/, .codex/, .agents/): in a real
-        # target repo these are gitignored, but the dirty guard must care only
-        # about the USER's uncommitted source — never refuse because of our own
-        # state writes (council Q6 dirty-main/runtime-state interaction).
-        dirty = [
-            ln
-            for ln in status.stdout.splitlines()
-            if ln.strip() and not _wt_is_runtime_state_path(_wt_porcelain_path(ln))
-        ]
+        # MAP runtime state is excluded by _wt_dirty_paths — see its docstring.
+        dirty, clean_error = _wt_dirty_paths()
+        if clean_error:
+            return _wt_error("CLEAN_CHECK_FAILED", clean_error)
         if dirty:
             return _wt_error(
                 "DIRTY_MAIN",
                 "the main checkout has uncommitted changes; the worktree would "
                 "start from committed HEAD and silently diverge. Commit/stash "
-                "first, or pass --allow-dirty.",
+                "first, or pass --allow-dirty (the accept path still requires a "
+                "clean tree, so the changes must be committed or stashed before "
+                "the merge).",
                 dirty=dirty[:20],
             )
 
@@ -19507,6 +19749,61 @@ def _wt_release_lifecycle_lock(handle: Any | None) -> None:
         pass
 
 
+def _wt_dirty_target_guard(branch_name: str, operation: str) -> dict[str, object] | None:
+    """Refuse to squash-merge onto a working tree carrying uncommitted user work.
+
+    Returns ``None`` when the target is clean, otherwise a structured
+    ``DIRTY_TARGET`` error. Shared by the wave coordinator and the single-subtask
+    accept path so both refuse identically — ``merge_subtask_worktree`` previously
+    had no dirty guard at all while the wave path did (#423).
+
+    Emits a pending ``dangerous_action`` approval hold at the refusal (#422) so
+    the approval-hold hard-stop path has a live producer. ``request_summary`` is
+    derived solely from the branch name and operation (no dirty-file list) so
+    ``create_approval_hold``'s (kind, request_summary, pending) dedup keeps
+    repeated refusals against the same dirty tree idempotent; the repo-relative
+    dirty paths ride in ``reason`` instead, never file contents. Hold creation is
+    best-effort: the refusal must still reach the caller even if it fails.
+    """
+    dirty, error = _wt_dirty_paths()
+    if error:
+        return _wt_error("CLEAN_CHECK_FAILED", error)
+    if not dirty:
+        return None
+
+    dirty_paths = [_wt_porcelain_path(ln) for ln in dirty[:20]]
+    hold_id: str | None = None
+    try:
+        hold_result = create_approval_hold(
+            kind="dangerous_action",
+            reason=(
+                f"The working tree has uncommitted changes blocking a {operation}; "
+                "affected paths: " + ", ".join(dirty_paths)
+            ),
+            request_summary=(
+                f"Uncommitted changes blocking {operation} on {branch_name}"
+            ),
+            source="worktree-merge",
+            branch=branch_name,
+            safe_continuation=(
+                f"Commit or stash the listed changes, then retry the {operation}."
+            ),
+        )
+        if hold_result.get("status") == "ok":
+            hold_id = cast(str, hold_result["hold_id"])
+    except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
+        hold_id = None
+
+    error_extra: dict[str, object] = {"dirty": dirty[:20]}
+    if hold_id is not None:
+        error_extra["hold_id"] = hold_id
+    return _wt_error(
+        "DIRTY_TARGET",
+        f"the working tree has uncommitted changes; commit/stash before a {operation}",
+        **error_extra,
+    )
+
+
 def merge_subtask_worktree(
     subtask_id: str,
     attempt: int = 0,
@@ -19563,6 +19860,12 @@ def merge_subtask_worktree(
             base_sha=base_sha,
             working_head=working_head,
         )
+
+    # Same dirty-target refusal the wave coordinator applies: a squash-merge onto
+    # a dirty working branch cannot be rolled back cleanly (#423).
+    dirty_refusal = _wt_dirty_target_guard(branch_name, "subtask merge")
+    if dirty_refusal is not None:
+        return dirty_refusal
 
     prep = _wt_freeze_and_verify(
         subtask_id, record, project_dir, branch_name, verify_cmds, skip_verify
@@ -19801,49 +20104,9 @@ def merge_wave_worktrees(
             "DETACHED_HEAD",
             "refusing to wave-merge onto a detached HEAD; check out the working branch",
         )
-    status = _wt_git(["status", "--porcelain"])
-    dirty = [
-        ln
-        for ln in status.stdout.splitlines()
-        if ln.strip() and not _wt_is_runtime_state_path(_wt_porcelain_path(ln))
-    ]
-    if dirty:
-        # Intent: emit a dangerous_action hold at this refusal (#422 AC-4) so the
-        # approval-hold hard-stop path (#344) has a live producer instead of only
-        # synthetic test fixtures. request_summary is derived solely from the
-        # branch name (no dirty-file-list) so create_approval_hold's
-        # (kind, request_summary, pending) dedup keeps repeated refusals against
-        # the same dirty tree idempotent (INV-2); the repo-relative dirty paths
-        # ride in `reason` instead, never file contents. Hold creation is best-
-        # effort: the refusal must still reach the caller even if it fails.
-        dirty_paths = [_wt_porcelain_path(ln) for ln in dirty[:20]]
-        hold_id: str | None = None
-        try:
-            hold_result = create_approval_hold(
-                kind="dangerous_action",
-                reason=(
-                    "The working tree has uncommitted changes blocking a wave "
-                    "merge; affected paths: " + ", ".join(dirty_paths)
-                ),
-                request_summary=f"Uncommitted changes blocking wave merge on {branch_name}",
-                source="worktree-merge",
-                branch=branch_name,
-                safe_continuation=(
-                    "Commit or stash the listed changes, then retry the wave merge."
-                ),
-            )
-            if hold_result.get("status") == "ok":
-                hold_id = cast(str, hold_result["hold_id"])
-        except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
-            hold_id = None
-        error_extra: dict[str, object] = {"dirty": dirty[:20]}
-        if hold_id is not None:
-            error_extra["hold_id"] = hold_id
-        return _wt_error(
-            "DIRTY_TARGET",
-            "the working tree has uncommitted changes; commit/stash before a wave merge",
-            **error_extra,
-        )
+    dirty_refusal = _wt_dirty_target_guard(branch_name, "wave merge")
+    if dirty_refusal is not None:
+        return dirty_refusal
 
     # Serialize coordinators so two waves never interleave squash commits.
     lock_handle = _wt_acquire_merge_lock()
@@ -20044,8 +20307,50 @@ def merge_wave_worktrees(
         _wt_release_merge_lock(lock_handle)
 
 
+def _wt_isolation_decision(project_dir: Path) -> dict[str, object]:
+    """Flatten ``resolve_worktree_isolation`` into a reportable decision block.
+
+    ``resolve_worktree_isolation`` implements the ST-009 fallback matrix (not a git
+    repo / worktrees unsupported / dirty merge target) but had no production caller
+    until this one (#423) — the reason codes it emits are the same vocabulary
+    ``parallelism_observability`` publishes, so leaving it unwired meant the whole
+    degrade classification was never produced at runtime.
+
+    Always returns success-shaped keys so the status command stays exit-0 and the
+    caller reads ``decision``/``degraded``/``reason`` instead of a mixed envelope.
+    """
+    resolution = resolve_worktree_isolation(project_dir)
+    if resolution.get("status") == "dormant":
+        return {
+            "decision": "sequential",
+            "degraded": False,
+            "degraded_reason": "",
+            "warning": "",
+        }
+    if resolution.get("status") == "error":
+        # mode == 'required' with a fallback condition — isolation cannot run.
+        return {
+            "decision": "abort",
+            "degraded": False,
+            "degraded_reason": str(resolution.get("kind", "")).lower(),
+            "warning": str(resolution.get("message", "")),
+        }
+    return {
+        "decision": str(resolution.get("decision", "isolated")),
+        "degraded": bool(resolution.get("degraded", False)),
+        "degraded_reason": str(resolution.get("reason", "")),
+        "warning": str(resolution.get("warning", "")),
+    }
+
+
 def worktree_isolation_status(branch: str | None = None) -> dict[str, object]:
-    """Report whether isolation is enabled + reconcile recorded vs live worktrees."""
+    """Report whether isolation is enabled + reconcile recorded vs live worktrees.
+
+    Also reports the live isolation DECISION (isolated / sequential / abort) from
+    the fallback matrix, so an operator can see BEFORE a wave starts that e.g. a
+    dirty merge target will degrade the run — rather than discovering it when
+    ``create_subtask_worktree`` refuses mid-flight (#423).
+    """
     project_dir = _wt_project_dir()
     branch_name = branch or get_branch_name()
     state = _read_worktree_state(branch_name)
@@ -20076,10 +20381,12 @@ def worktree_isolation_status(branch: str | None = None) -> dict[str, object]:
         "status": "success",
         "ok": True,
         "enabled": _wt_isolation_enabled(project_dir),
+        "mode": _worktree_isolation_mode(project_dir),
         "branch": branch_name,
         "active_worktrees": active,
         "live_git_worktrees": live,
         "max_deletions": _wt_max_deletions(project_dir),
+        **_wt_isolation_decision(project_dir),
     }
 
 

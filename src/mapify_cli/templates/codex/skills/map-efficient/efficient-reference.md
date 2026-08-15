@@ -86,7 +86,7 @@ python3 .map/scripts/map_step_runner.py validate_flaky_test_triage
 # Preferred close — the verdict path. Monitor emits valid:false plus
 # disposition {kind: deferred_nondeterministic, check_id: ...}; close 2.4 with
 # the same disposition piped through (see "Verdict-path route" below).
-echo "$MONITOR_JSON" | python3 .map/scripts/map_orchestrator.py \
+printf '%s' "$MONITOR_JSON" | python3 .map/scripts/map_orchestrator.py \
   validate_step 2.4 --disposition deferred_nondeterministic \
   --check-id "pytest::test_name" --monitor-envelope -
 ```

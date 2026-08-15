@@ -30,7 +30,7 @@ if command -v go &> /dev/null; then
     VET_OUT=$(timeout 30 go vet "$FILES" 2>&1 || true)
 
     if [[ -n "$VET_OUT" ]]; then
-        VET_NORM=$(echo "$VET_OUT" | while IFS= read -r line; do
+        VET_NORM=$(printf '%s\n' "$VET_OUT" | while IFS= read -r line; do
             if parse_colon_delimited "$line" file lineno col msg; then
                 msg="${msg# }"
                 msg=$(json_escape "$msg")
@@ -55,7 +55,7 @@ if command -v gofmt &> /dev/null; then
     fi
 
     if [[ -n "$FMT_OUT" ]]; then
-        FMT_NORM=$(echo "$FMT_OUT" | while IFS= read -r file; do
+        FMT_NORM=$(printf '%s\n' "$FMT_OUT" | while IFS= read -r file; do
             file=$(json_escape "$file")
             echo "{\"tool\":\"gofmt\",\"file\":\"$file\",\"line\":1,\"column\":0,\"severity\":\"warning\",\"code\":\"format\",\"message\":\"File needs formatting\",\"fixable\":true}"
         done | jq -s '.' 2>/dev/null || echo "[]")
@@ -72,7 +72,7 @@ if command -v staticcheck &> /dev/null; then
     if [[ -n "$SC_OUT" ]]; then
         # staticcheck outputs NDJSON (one JSON object per line)
         # Use jq -s to slurp all objects into an array, then transform each
-        SC_NORM=$(echo "$SC_OUT" | jq -s '[.[] | {
+        SC_NORM=$(printf '%s' "$SC_OUT" | jq -s '[.[] | {
             tool: "staticcheck",
             file: .location.file,
             line: .location.line,

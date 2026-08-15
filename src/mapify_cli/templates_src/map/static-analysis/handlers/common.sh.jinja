@@ -33,9 +33,9 @@ generate_output() {
 
     # Calculate summary
     local error_count warning_count total_count tools_json
-    error_count=$(echo "$all_findings" | jq '[.[] | select(.severity=="error")] | length')
-    warning_count=$(echo "$all_findings" | jq '[.[] | select(.severity=="warning")] | length')
-    total_count=$(echo "$all_findings" | jq 'length')
+    error_count=$(printf '%s' "$all_findings" | jq '[.[] | select(.severity=="error")] | length')
+    warning_count=$(printf '%s' "$all_findings" | jq '[.[] | select(.severity=="warning")] | length')
+    total_count=$(printf '%s' "$all_findings" | jq 'length')
 
     # Convert tools array to JSON (handle empty array safely)
     if [[ ${#TOOLS_RUN[@]} -gt 0 ]]; then

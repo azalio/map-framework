@@ -120,7 +120,16 @@ HIGH_TRAFFIC_COMPACT_SKILL_REFS = {
 # review-reference.md § Verdict Ledger and are NOT counted here.
 _DEFAULT_SKILL_BODY_BUDGET = 515
 HIGH_TRAFFIC_SKILL_BODY_BUDGETS = {
-    "map-review": 630,
+    # Budget bumped 630 → 639 (#426): Step A.1 now resolves the review base from
+    # the default branch and diffs `merge-base..HEAD`. `git diff HEAD` is empty on
+    # a fully-committed branch, so the old two-line recipe silently reviewed
+    # nothing. The base-resolution shell is the ACTIVE gather step — it cannot
+    # move to the reference file without leaving the workflow path broken. The
+    # ref loop (origin/main, origin/master, main, master) matches what
+    # snapshot_code_state resolves, and the explicit RANGE branch exists because
+    # a `"${BASE:-HEAD}"...HEAD` shorthand degenerates to the always-empty
+    # `HEAD...HEAD` and silently re-creates the bug.
+    "map-review": 639,
     # map-tdd carries Iron Law enforcement (rationalization table, Red Flags,
     # RED-GREEN-REFACTOR cycle), spec compliance reviewer dispatch, and code
     # quality reviewer dispatch — all irreducible active control flow (#285).
