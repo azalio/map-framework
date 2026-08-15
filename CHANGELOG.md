@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`bump-version.sh` supports non-interactive runs via `-y`/`--yes`.** The script's
+  30-second `read -t 30` confirmation prompt timed out and cancelled the bump whenever
+  it ran without a TTY answer — the v3.26.0 release had to work around it by piping
+  `y` on stdin. The new flag skips the prompt; `/map-release` Phase 3 (and the rollback
+  examples) now invoke `./scripts/bump-version.sh --yes`, since the workflow already
+  gates the bump behind an explicit `AskUserQuestion` confirmation.
+
 ## [3.26.0] - 2026-08-15
 
 ### Fixed

@@ -223,7 +223,7 @@ echo "Changes will be committed locally but NOT pushed yet."
 ### 3.2 Execute
 
 ```bash
-./scripts/bump-version.sh "$BUMP_TYPE"
+./scripts/bump-version.sh --yes "$BUMP_TYPE"
 ```
 
 ### 3.3 Verify
@@ -387,7 +387,7 @@ Common issues:
 # Example: clean up and retry
 git status
 git add . && git commit -m "chore: prepare for release"
-./scripts/bump-version.sh patch
+./scripts/bump-version.sh --yes patch
 ```
 
 ### Scenario 3: Tag Pushed, But CI/CD Failed (Phase 5)
@@ -401,7 +401,7 @@ gh run view --log
 # Fix issue in new commit, then create a new patch release
 git add . && git commit -m "fix: resolve release workflow failure"
 git push origin main
-./scripts/bump-version.sh patch
+./scripts/bump-version.sh --yes patch
 git push origin main
 git push origin v1.0.2
 ```
