@@ -84,7 +84,7 @@ See [release-reference.md § Phase 2](release-reference.md#phase-2-version-deter
 
 ## Phase 3: Execute Version Bump Script
 
-Run `./scripts/bump-version.sh "$BUMP_TYPE"`, then verify:
+Run `./scripts/bump-version.sh --yes "$BUMP_TYPE"`, then verify:
 
 ```bash
 # Verify tag points to HEAD

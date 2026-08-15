@@ -10,13 +10,14 @@
 #   creates annotated git tag with changelog excerpt.
 #
 # USAGE:
-#   ./scripts/bump-version.sh <major|minor|patch|X.Y.Z>
+#   ./scripts/bump-version.sh [-y|--yes] <major|minor|patch|X.Y.Z>
 #
 # EXAMPLES:
 #   ./scripts/bump-version.sh patch      # 1.0.0 -> 1.0.1
 #   ./scripts/bump-version.sh minor      # 1.0.0 -> 1.1.0
 #   ./scripts/bump-version.sh major      # 1.0.0 -> 2.0.0
 #   ./scripts/bump-version.sh 1.2.3      # explicit version
+#   ./scripts/bump-version.sh -y minor   # skip confirmation prompt
 #
 # BEHAVIOR:
 #   1. Validates input: major/minor/patch or explicit X.Y.Z semver format
@@ -100,7 +101,7 @@ die() {
 # Usage information
 usage() {
     cat << EOF
-Usage: $(basename "$0") <major|minor|patch|X.Y.Z>
+Usage: $(basename "$0") [-y|--yes] <major|minor|patch|X.Y.Z>
 
 Arguments:
   major         Bump major version (X.0.0)
@@ -108,11 +109,15 @@ Arguments:
   patch         Bump patch version (x.y.Z)
   X.Y.Z         Explicit version (e.g., 1.2.3)
 
+Options:
+  -y, --yes     Skip the confirmation prompt (non-interactive use)
+
 Examples:
   $(basename "$0") patch      # 1.0.0 -> 1.0.1
   $(basename "$0") minor      # 1.0.0 -> 1.1.0
   $(basename "$0") major      # 1.0.0 -> 2.0.0
   $(basename "$0") 1.2.3      # explicit version
+  $(basename "$0") -y minor   # no confirmation prompt
 
 Description:
   Automates version bumping by:
@@ -423,12 +428,26 @@ ${changelog_excerpt}
 
 # Main execution
 main() {
-    # Check arguments
-    if [[ $# -ne 1 ]]; then
+    # Parse arguments: optional -y/--yes flag + one bump-type argument
+    local assume_yes=0
+    local input=""
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            -y|--yes)
+                assume_yes=1
+                ;;
+            *)
+                [[ -n "$input" ]] && usage
+                input="$arg"
+                ;;
+        esac
+    done
+
+    if [[ -z "$input" ]]; then
         usage
     fi
 
-    local input="$1"
     local current_version
     local new_version
 
@@ -497,15 +516,19 @@ main() {
     echo "  3. Create git commit"
     echo "  4. Create git tag v${new_version}"
     echo ""
-    read -t 30 -p "Continue? [y/N] " -n 1 -r || true
-    echo
+    if [[ "$assume_yes" -eq 1 ]]; then
+        info "Confirmation skipped (--yes)"
+    else
+        read -t 30 -p "Continue? [y/N] " -n 1 -r || true
+        echo
 
-    if [[ -z "$REPLY" ]]; then
-        warn "Version bump cancelled (no response: timed out after 30 seconds)"
-        exit 0
-    elif [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        warn "Version bump cancelled (explicitly declined)"
-        exit 0
+        if [[ -z "$REPLY" ]]; then
+            warn "Version bump cancelled (no response: timed out after 30 seconds)"
+            exit 0
+        elif [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            warn "Version bump cancelled (explicitly declined)"
+            exit 0
+        fi
     fi
 
     # Execute version bump
