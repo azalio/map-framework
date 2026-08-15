@@ -43,11 +43,12 @@ MAP uses the following host and project paths:
   - `~/.map/locks/` — advisory lock files acquired by the orchestrator to prevent concurrent MAP sessions on the same branch.
   - `~/.map/hooks/` — host-level hook scripts invoked by the MAP hook harness before/after workflow phases.
 
-Root `.gitignore` mutation uses one persistent cross-process lock keyed by the
-SHA-256 of the resolved project root. POSIX hosts place it at the fixed path
-`/tmp/mapify-gitignore-<digest>.lock`, independently of `TMPDIR`; Windows uses the
-centrally ignored project-root fallback `.map-gitignore.lock`. These lock files do
-not introduce another MAP state directory.
+Root `.gitignore` mutation uses one cross-process lock keyed by the SHA-256 of
+the project directory's filesystem identity (`st_dev:st_ino`). POSIX hosts place
+the persistent lock at `/tmp/mapify-gitignore-<digest>.lock`, independently of
+`TMPDIR`; Windows uses the machine-wide named mutex
+`Global\MapifyGitignore-<digest>`, so it creates no project file. Neither form
+introduces another MAP state directory.
 
 ### Update Refresh Lease
 

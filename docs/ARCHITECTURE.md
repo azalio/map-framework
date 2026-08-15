@@ -89,7 +89,7 @@ The remainder of this file contains the deeper implementation dive (workflow-spe
 - `.map/update.lock`: gitignored project-local updater mutex; lock contention is a silent automatic skip and an explicit manual error
 - `.map/installer.lock`: gitignored package-mutation barrier owned by the installer controller child; it remains held if the updater parent dies while pip/uv continues
 - `.map/provider-refresh.lock`: gitignored provider-mutation barrier; it prevents a replacement updater from racing an orphaned refresh child
-- `/tmp/mapify-gitignore-<sha256(resolved-root)>.lock`: persistent POSIX root-`.gitignore` mutation lock, deliberately independent of `TMPDIR`; Windows uses the centrally ignored project-root `.map-gitignore.lock` fallback
+- `/tmp/mapify-gitignore-<sha256(st_dev:st_ino)>.lock`: persistent POSIX root-`.gitignore` mutation lock, deliberately independent of `TMPDIR`; Windows uses the machine-wide `Global\MapifyGitignore-<digest>` named mutex and creates no project lock file
 - `.sofa/credentials.lock`: private opt-in SOFA credential-file lock, ignored with the rest of `.sofa/`
 - `.map/<branch>/approval_holds.json` and `.map/<branch>/approval_hold_<id>.md`: Durable human-gate artifacts for pending/decided approval holds
 - `.map/wayfind/<slug>/`: **Repo-level** (not branch-scoped) decision maps for `/map-wayfind`. Holds the canonical `state.json`, regenerated `map.md` and `tickets/*.md` views (DO-NOT-EDIT banner), author-written `resolutions/*.md` (+ `*.human.md` verbatim human answers), and the final `handoff.md`/`handoff.json`. Maps outlive branches and are committed by default.
