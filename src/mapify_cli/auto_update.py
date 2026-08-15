@@ -137,6 +137,43 @@ def _timestamp(now: datetime) -> str:
     return now.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def record_declined_major(
+    project_path: Path,
+    current_version: str,
+    declined_major: str,
+) -> None:
+    """Persist one exact, project-local major offer without network activity."""
+    current = StableVersion.parse(current_version)
+    declined = StableVersion.parse(declined_major)
+    if current is None:
+        raise ValueError("installed MAP version is not a stable version")
+    if declined is None or declined.major <= current.major:
+        raise ValueError(
+            "declined major must be a stable version above the installed major"
+        )
+
+    project = Path(project_path).resolve()
+    with project_update_lock(project, timeout_s=LOCK_TIMEOUT_SECONDS):
+        # A child can outlive its updater parent while retaining an installer or
+        # provider barrier. Follow the global lock order before reading state so
+        # the child cannot race this rejection write with recovery completion.
+        with installer_process_probe(
+            project,
+            timeout_s=REFRESH_BARRIER_TIMEOUT_SECONDS,
+        ):
+            pass
+        with provider_refresh_lock(
+            project,
+            timeout_s=REFRESH_BARRIER_TIMEOUT_SECONDS,
+        ):
+            pass
+        state = read_update_state(project)
+        write_update_state(
+            project,
+            replace(state, declined_major_version=str(declined)),
+        )
+
+
 def _highest_target(targets: VersionTargets) -> StableVersion | None:
     candidates = tuple(
         target
@@ -172,10 +209,25 @@ def _merge_providers(
     return tuple(dict.fromkeys((*first, *second)))
 
 
+def _declined_major_after_recovery(state: UpdateState) -> str | None:
+    """Drop a rejection made obsolete by an installed equal-or-newer major."""
+    declined = StableVersion.parse(state.declined_major_version or "")
+    installed = StableVersion.parse(state.last_installed_version or "")
+    if (
+        declined is not None
+        and installed is not None
+        and installed.major >= declined.major
+    ):
+        return None
+    return state.declined_major_version
+
+
 def _install_and_refresh(
     project_path: Path,
     progress: _UpdateProgress,
     target: StableVersion,
+    *,
+    clear_declined_major: bool = False,
 ) -> None:
     providers = installed_providers(project_path)
     if not providers:
@@ -192,6 +244,12 @@ def _install_and_refresh(
         pending_install_version=str(target),
         pending_refresh=False,
         pending_providers=providers,
+        # Consent supersedes any prior rejection. Persist that decision before
+        # authorizing the installer so provider-child completion remains correct
+        # even if the updater parent dies before its final state write.
+        declined_major_version=(
+            None if clear_declined_major else progress.state.declined_major_version
+        ),
     )
 
     def authorize_install_start() -> None:
@@ -244,6 +302,9 @@ def _install_and_refresh(
         pending_install_version=None,
         pending_refresh=False,
         pending_providers=(),
+        declined_major_version=(
+            None if clear_declined_major else progress.state.declined_major_version
+        ),
     )
     write_update_state(project_path, progress.state)
 
@@ -462,6 +523,10 @@ def _check_locked(
                 # Intent: Recovery succeeded, so the backoff window must not
                 # outlive it and delay a future pending refresh.
                 last_refresh_failure_at=None,
+                # An installed target equal to the rejected offer can only have
+                # crossed the explicit major-consent gate. An accepted newer
+                # release in that major also makes the old exact rejection stale.
+                declined_major_version=_declined_major_after_recovery(progress.state),
             )
             write_update_state(project_path, progress.state)
             if mode is UpdateMode.AUTOMATIC:
@@ -532,7 +597,12 @@ def _check_locked(
                         reload_current_skill=progress.reload_current_skill,
                         refresh_complete=progress.refresh_complete,
                     )
-                _install_and_refresh(project_path, progress, approved)
+                _install_and_refresh(
+                    project_path,
+                    progress,
+                    approved,
+                    clear_declined_major=True,
+                )
                 return UpdateResult(
                     UpdateStatus.UPDATED,
                     current_version,
@@ -546,6 +616,29 @@ def _check_locked(
                 _install_and_refresh(project_path, progress, targets.same_major)
 
             if targets.next_major is not None:
+                if str(targets.next_major) == progress.state.declined_major_version:
+                    if (
+                        progress.installed_version is not None
+                        or progress.recovered_refresh
+                    ):
+                        return UpdateResult(
+                            UpdateStatus.UPDATED,
+                            current_version,
+                            installed_version=progress.installed_version,
+                            refreshed_providers=progress.refreshed_providers,
+                            reload_current_skill=progress.reload_current_skill,
+                            refresh_complete=progress.refresh_complete,
+                        )
+                    return UpdateResult(
+                        UpdateStatus.SKIPPED,
+                        current_version,
+                        message=(
+                            f"MAP {targets.next_major} was previously declined "
+                            "for this project."
+                            if mode is UpdateMode.MANUAL
+                            else None
+                        ),
+                    )
                 try:
                     highlights = fetch_release_highlights(targets.next_major, client)
                 except Exception:

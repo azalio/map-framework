@@ -87,8 +87,10 @@ That's the whole golden path.
 **Framework updates.** Automatic stable updates are enabled by default. Normal
 MAP skills check at most once per project every 24 hours, apply eligible patch
 and minor releases, and ask before a major release after showing its official
-feature highlights. Use these project controls and provider-specific manual
-skills when needed:
+feature highlights. Rejecting a major offer is remembered per project for that
+exact version, so it is not offered again; any different patch, minor, or major
+version is offered normally. Use these project controls and provider-specific
+manual skills when needed:
 
 ```text
 mapify init . --no-auto-update   # persist updates.auto: false

@@ -4096,6 +4096,78 @@ class TestInternalUpdateCommand:
             approved_major="4.0.0",
         )
 
+    def test_internal_update_records_declined_major_without_output(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "_update",
+                "--mode",
+                "automatic",
+                "--project",
+                str(tmp_path),
+                "--decline-major",
+                "4.0.0",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert result.stdout == ""
+        assert result.stderr == ""
+        assert read_update_state(tmp_path).declined_major_version == "4.0.0"
+
+    @mock.patch("mapify_cli.auto_update.record_declined_major")
+    def test_internal_update_declined_major_failure_is_silent(
+        self,
+        mock_record: mock.Mock,
+        tmp_path: Path,
+    ) -> None:
+        mock_record.side_effect = OSError("state unavailable")
+
+        result = runner.invoke(
+            app,
+            [
+                "_update",
+                "--mode",
+                "automatic",
+                "--project",
+                str(tmp_path),
+                "--decline-major",
+                "4.0.0",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert result.stdout == ""
+        assert result.stderr == ""
+        assert read_update_state(tmp_path).declined_major_version is None
+
+    def test_internal_update_conflicting_major_decisions_are_silent_and_mutation_free(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "_update",
+                "--mode",
+                "automatic",
+                "--project",
+                str(tmp_path),
+                "--approve-major",
+                "4.0.0",
+                "--decline-major",
+                "4.0.0",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert result.stdout == ""
+        assert result.stderr == ""
+        assert read_update_state(tmp_path).declined_major_version is None
+
     @mock.patch("mapify_cli.auto_update.check_and_update")
     def test_internal_update_automatic_approved_major_rejection_is_silent(
         self, mock_update: mock.Mock, tmp_path: Path

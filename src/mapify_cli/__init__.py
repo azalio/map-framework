@@ -2196,6 +2196,7 @@ def internal_update(
     mode: str = typer.Option(..., "--mode"),
     project: Path = typer.Option(Path("."), "--project"),
     approve_major: str | None = typer.Option(None, "--approve-major"),
+    decline_major: str | None = typer.Option(None, "--decline-major"),
 ) -> None:
     """Run the machine-readable project update protocol used by MAP skills."""
     if mode not in {"automatic", "manual"}:
@@ -2211,6 +2212,25 @@ def internal_update(
         raise typer.Exit(1) from None
 
     automatic = mode == "automatic"
+    if decline_major is not None:
+        try:
+            if approve_major is not None:
+                return
+            with (
+                contextlib.redirect_stdout(io.StringIO()),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                from mapify_cli.auto_update import record_declined_major
+
+                record_declined_major(
+                    project.resolve(),
+                    current_version=__version__,
+                    declined_major=decline_major,
+                )
+        except Exception:  # noqa: BLE001, S110 -- rejection memory is best-effort
+            pass
+        return
+
     try:
         # The internal protocol owns presentation. Suppress incidental warnings,
         # prints, and library diagnostics, then emit at most one JSON object.

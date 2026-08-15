@@ -267,7 +267,7 @@ def _assert_rendered_preflight_placement(content: str, label: str) -> None:
         f"{label} must render the update preflight immediately after "
         "closing frontmatter"
     )
-    assert content.count("mapify _update --mode automatic --project .") == 1, label
+    assert content.count("`mapify _update --mode automatic --project .`") == 1, label
 
 
 def _json_output_contract_contexts(content: str) -> list[tuple[int, str]]:
@@ -377,6 +377,11 @@ class TestProviderUpdateSkills:
                 "mapify _update --mode manual --project . --approve-major "
                 "<validated major.version>"
             ) in content
+            assert (
+                "mapify _update --mode automatic --project . --decline-major "
+                "<validated major.version>"
+            ) in content
+            assert "ignore any output or failure" in content
 
     def test_rendered_preflight_placement_guard_rejects_moved_heading(self) -> None:
         misplaced = (
@@ -439,7 +444,7 @@ class TestProviderUpdateSkills:
         assert claude_body.endswith("\n")
         assert not claude_body.endswith("\n\n")
         assert claude_body.count("## Manual MAP upgrade flow") == 1
-        assert "mapify _update --mode automatic --project ." not in claude_body
+        assert "`mapify _update --mode automatic --project .`" not in claude_body
         assert "mapify _update --mode manual --project ." in claude_body
         for status in ("current", "skipped", "updated", "major_available", "error"):
             assert f"`{status}`" in claude_body
@@ -450,6 +455,11 @@ class TestProviderUpdateSkills:
             "mapify _update --mode manual --project . --approve-major "
             "<validated major.version>"
         ) in claude_body
+        assert (
+            "mapify _update --mode automatic --project . --decline-major "
+            "<validated major.version>"
+        ) in claude_body
+        assert "ignore any output or failure" in claude_body
         assert "re-read this installed `SKILL.md`" in claude_body
         assert "Do not claim success" in claude_body
 
@@ -800,7 +810,9 @@ class TestSkillStructure:
                 )
                 line_count = len(content.splitlines())
                 if line_count > budget:
-                    oversized.append(f"{skill_file}: {line_count} lines (budget {budget})")
+                    oversized.append(
+                        f"{skill_file}: {line_count} lines (budget {budget})"
+                    )
                 assert (
                     f"[{reference_name}]({reference_name})" in content
                 ), f"{skill_file} should point to its bundled supporting reference."
@@ -1009,9 +1021,7 @@ class TestSkillStructure:
         assert entry.get("enforcement") == "manual"
         assert not entry.get("runtimeEffects")
 
-    def test_map_auto_is_default_on_with_no_gating_flag(
-        self, skill_rules, skills_dir
-    ):
+    def test_map_auto_is_default_on_with_no_gating_flag(self, skill_rules, skills_dir):
         """AC-9: /map-auto is available by default -- no shadow mode, calibration
         gate, or opt-in flag in either the skill-rules entry or the SKILL.md body."""
         entry = skill_rules.get("skills", {}).get("map-auto")
@@ -1399,7 +1409,9 @@ class TestMapAutoChainSemantics:
     def test_grep_self_test_detects_synthetic_violation(self) -> None:
         """Negative-proof: the forbidden-pattern set actually catches a
         violation, so a typo in the pattern list can't silently pass VC1."""
-        synthetic_bad = "After Monitor passes, run `gh pr create --fill` to open the PR."
+        synthetic_bad = (
+            "After Monitor passes, run `gh pr create --fill` to open the PR."
+        )
         lowered = synthetic_bad.lower()
         assert any(pattern in lowered for pattern in self._FORBIDDEN_PR_PATTERNS)
 
@@ -1466,9 +1478,9 @@ class TestMapAutoChainSemantics:
     def test_reference_file_exists_and_linked(
         self, skill_dir: Path, skill_content: str
     ) -> None:
-        assert (skill_dir / "auto-reference.md").exists(), (
-            f"{skill_dir}/auto-reference.md must exist in every rendered tree"
-        )
+        assert (
+            skill_dir / "auto-reference.md"
+        ).exists(), f"{skill_dir}/auto-reference.md must exist in every rendered tree"
         assert "[auto-reference.md](auto-reference.md)" in skill_content
 
     def test_skill_body_within_default_budget(self, skill_content: str) -> None:
@@ -1485,13 +1497,13 @@ class TestMapAutoChainSemantics:
             "## Recovery Procedures",
             "## Dry-run Usage",
         ):
-            assert marker in reference_content, (
-                f"auto-reference.md missing required section: {marker}"
-            )
+            assert (
+                marker in reference_content
+            ), f"auto-reference.md missing required section: {marker}"
         for flag in ("--dry-run", "--evidence-refs", "--reason", "--branch"):
-            assert flag in reference_content, (
-                f"auto-reference.md CLI reference missing real flag: {flag}"
-            )
+            assert (
+                flag in reference_content
+            ), f"auto-reference.md CLI reference missing real flag: {flag}"
         for failure_mode in (
             "Hard-stop hold",
             "Repeated phase failure",
@@ -1499,9 +1511,9 @@ class TestMapAutoChainSemantics:
             "In-progress re-route",
             "blueprint_unavailable",
         ):
-            assert failure_mode in reference_content, (
-                f"auto-reference.md failure-mode table missing: {failure_mode}"
-            )
+            assert (
+                failure_mode in reference_content
+            ), f"auto-reference.md failure-mode table missing: {failure_mode}"
 
 
 class TestLightweightWorkflowSkillContracts:

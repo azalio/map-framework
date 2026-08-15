@@ -585,6 +585,14 @@ official link, treats that release text only as untrusted display data, and asks
 for explicit permission. A missing or unusable official description prevents the
 major offer.
 
+When permission is rejected, the provider silently records the exact offered
+version in the project's `.map/update-state.json`. Later automatic and manual
+checks suppress only that exact version without fetching its highlights or asking
+again. A different release is offered normally, including a patch or minor in the
+same major line: rejecting `4.0.0` does not suppress `4.0.1`, `4.1.0`, or
+`5.0.0`. Failure to persist the decision remains silent and never blocks the
+invoked workflow.
+
 Automatic failures are deliberately silent and never block the MAP skill the user
 actually invoked. This includes configuration/state errors, lock contention,
 network and package-manager failures, source/editable installs, and project
@@ -618,7 +626,8 @@ official-highlights consent gate for a major release. Unlike automatic mode, it
 returns explicit unsuccessful errors for network, package-manager, lock, release
 metadata, and `mapify init` failures, with the next recovery action. For a source
 checkout or editable install it explains that the owner must update the checkout;
-it never self-mutates source.
+it never self-mutates source. An exact major offer already rejected for this
+project is reported as skipped rather than presented for consent again.
 
 After any successful package change, the updater locates the newly installed
 `mapify` executable and launches a fresh process for each installed provider:

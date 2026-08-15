@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import time
 from collections.abc import Callable, Generator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Self
@@ -72,6 +73,74 @@ def _authorized_installer(
         effect(project, version)
 
     return install
+
+
+def test_record_declined_major_is_project_local_and_network_free(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+    project_a.mkdir()
+    project_b.mkdir()
+    forbidden = Mock(side_effect=AssertionError("rejection recording must be local"))
+    monkeypatch.setattr(auto_update, "fetch_version_targets", forbidden)
+    monkeypatch.setattr(auto_update, "install_exact_version", forbidden)
+    monkeypatch.setattr(auto_update, "refresh_installed_providers", forbidden)
+    recorder = getattr(auto_update, "record_declined_major", None)
+    assert callable(recorder), "major rejection needs a persisted updater boundary"
+
+    recorder(project_a, "3.26.0", "4.0.0")
+
+    assert read_update_state(project_a).declined_major_version == "4.0.0"
+    assert read_update_state(project_b).declined_major_version is None
+
+
+@pytest.mark.parametrize("declined", ["invalid", "4.0", "3.27.0", "2.9.0"])
+def test_record_declined_major_rejects_invalid_or_non_major_versions(
+    tmp_path: Path,
+    declined: str,
+) -> None:
+    original = UpdateState(last_observed_version="4.0.0")
+    write_update_state(tmp_path, original)
+    recorder = getattr(auto_update, "record_declined_major", None)
+    assert callable(recorder), "major rejection needs a persisted updater boundary"
+
+    with pytest.raises(ValueError, match="declined major"):
+        recorder(tmp_path, "3.26.0", declined)
+
+    assert read_update_state(tmp_path) == original
+
+
+def test_record_declined_major_uses_the_project_update_lock(tmp_path: Path) -> None:
+    recorder = getattr(auto_update, "record_declined_major", None)
+    assert callable(recorder), "major rejection needs a persisted updater boundary"
+
+    with (
+        auto_update.project_update_lock(tmp_path, timeout_s=0.0),
+        pytest.raises(UpdateLockBusy),
+    ):
+        recorder(tmp_path, "3.26.0", "4.0.0")
+
+    assert read_update_state(tmp_path).declined_major_version is None
+
+
+@pytest.mark.parametrize(
+    "barrier",
+    [installer_process_lock, provider_refresh_lock],
+    ids=["installer", "provider-refresh"],
+)
+def test_record_declined_major_respects_orphan_child_barriers(
+    tmp_path: Path,
+    barrier: Callable[..., contextlib.AbstractContextManager[None]],
+) -> None:
+    with (
+        barrier(tmp_path, timeout_s=0.0),
+        pytest.raises(UpdateLockBusy),
+    ):
+        auto_update.record_declined_major(tmp_path, "3.26.0", "4.0.0")
+
+    assert read_update_state(tmp_path).declined_major_version is None
 
 
 def test_result_serializes_only_present_optional_fields() -> None:
@@ -261,7 +330,9 @@ def test_manual_mode_retries_a_failed_pending_refresh_inside_the_window(
     refresh = Mock(return_value=("codex",))
     monkeypatch.setattr(auto_update, "refresh_installed_providers", refresh)
     monkeypatch.setattr(
-        auto_update, "fetch_version_targets", Mock(return_value=VersionTargets(None, None))
+        auto_update,
+        "fetch_version_targets",
+        Mock(return_value=VersionTargets(None, None)),
     )
 
     check_and_update(tmp_path, "3.26.0", UpdateMode.MANUAL, now=NOW)
@@ -677,6 +748,280 @@ def test_major_is_offered_but_never_installed_without_approval(
     assert result.major is not None and result.major.version == target
     assert result.installed_version is None
     install.assert_not_called()
+
+
+@pytest.mark.parametrize("mode", [UpdateMode.AUTOMATIC, UpdateMode.MANUAL])
+def test_exact_declined_major_is_not_offered_again(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: UpdateMode,
+) -> None:
+    target = StableVersion(4, 0, 0)
+    write_update_state(tmp_path, UpdateState(declined_major_version="4.0.0"))
+    monkeypatch.setattr(
+        auto_update,
+        "fetch_version_targets",
+        lambda current, client: VersionTargets(None, target),
+    )
+    monkeypatch.setattr(
+        auto_update,
+        "fetch_release_highlights",
+        Mock(
+            side_effect=AssertionError("declined release metadata must not be fetched")
+        ),
+        raising=False,
+    )
+
+    result = check_and_update(tmp_path, "3.26.0", mode, now=NOW)
+
+    assert result.status is UpdateStatus.SKIPPED
+    assert result.major is None
+    if mode is UpdateMode.MANUAL:
+        assert result.message == "MAP 4.0.0 was previously declined for this project."
+    else:
+        assert result.message is None
+
+
+@pytest.mark.parametrize("target", ["4.0.1", "4.1.0", "5.0.0"])
+def test_a_different_major_release_is_offered_after_an_exact_rejection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+) -> None:
+    target_version = StableVersion.parse(target)
+    assert target_version is not None
+    write_update_state(tmp_path, UpdateState(declined_major_version="4.0.0"))
+    monkeypatch.setattr(
+        auto_update,
+        "fetch_version_targets",
+        lambda current, client: VersionTargets(None, target_version),
+    )
+    monkeypatch.setattr(
+        auto_update,
+        "fetch_release_highlights",
+        lambda version, client: ReleaseHighlights(
+            version,
+            f"MAP {version}",
+            "New features",
+            f"https://example.test/v{version}",
+        ),
+        raising=False,
+    )
+
+    result = check_and_update(
+        tmp_path,
+        "3.26.0",
+        UpdateMode.AUTOMATIC,
+        now=NOW,
+    )
+
+    assert result.status is UpdateStatus.MAJOR_AVAILABLE
+    assert result.major is not None
+    assert result.major.version == target_version
+
+
+def test_same_major_install_plus_declined_major_returns_updated_without_prompt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_update_state(tmp_path, UpdateState(declined_major_version="4.0.0"))
+    monkeypatch.setattr(
+        auto_update,
+        "fetch_version_targets",
+        lambda current, client: VersionTargets(
+            StableVersion(3, 26, 1),
+            StableVersion(4, 0, 0),
+        ),
+    )
+    monkeypatch.setattr(
+        auto_update,
+        "install_exact_version",
+        _authorized_installer(lambda project, version: None),
+        raising=False,
+    )
+    monkeypatch.setattr(auto_update, "installed_providers", lambda project: ("codex",))
+    monkeypatch.setattr(
+        auto_update,
+        "refresh_installed_providers",
+        lambda project, providers: ("codex",),
+    )
+    monkeypatch.setattr(
+        auto_update,
+        "fetch_release_highlights",
+        Mock(
+            side_effect=AssertionError("declined release metadata must not be fetched")
+        ),
+        raising=False,
+    )
+
+    result = check_and_update(tmp_path, "3.26.0", UpdateMode.MANUAL, now=NOW)
+
+    assert result.status is UpdateStatus.UPDATED
+    assert result.installed_version == "3.26.1"
+    assert result.refreshed_providers == ("codex",)
+    assert result.reload_current_skill is True
+    assert result.major is None
+    assert read_update_state(tmp_path).declined_major_version == "4.0.0"
+
+
+def test_approved_major_clears_a_previous_exact_rejection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = StableVersion(4, 0, 0)
+    write_update_state(tmp_path, UpdateState(declined_major_version="4.0.0"))
+    monkeypatch.setattr(
+        auto_update,
+        "fetch_version_targets",
+        lambda current, client: VersionTargets(None, target),
+    )
+    monkeypatch.setattr(
+        auto_update,
+        "fetch_release_highlights",
+        lambda version, client: ReleaseHighlights(
+            version,
+            "MAP 4",
+            "New planning engine",
+            "https://example.test/v4",
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        auto_update,
+        "install_exact_version",
+        _authorized_installer(lambda project, version: None),
+        raising=False,
+    )
+    monkeypatch.setattr(auto_update, "installed_providers", lambda project: ("claude",))
+    monkeypatch.setattr(
+        auto_update,
+        "refresh_installed_providers",
+        lambda project, providers: ("claude",),
+    )
+
+    result = check_and_update(
+        tmp_path,
+        "3.26.0",
+        UpdateMode.MANUAL,
+        approved_major="4.0.0",
+        now=NOW,
+    )
+
+    assert result.status is UpdateStatus.UPDATED
+    assert result.installed_version == "4.0.0"
+    assert read_update_state(tmp_path).declined_major_version is None
+
+
+@pytest.mark.parametrize("phase", ["pending-install", "pending-refresh"])
+@pytest.mark.parametrize("installed", ["4.0.0", "4.0.1"])
+def test_recovered_approved_major_clears_the_exact_rejection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+    installed: str,
+) -> None:
+    common = {
+        "declined_major_version": "4.0.0",
+        "pending_providers": ("codex",),
+    }
+    if phase == "pending-install":
+        state = UpdateState(pending_install_version=installed, **common)
+    else:
+        state = UpdateState(
+            last_installed_version=installed,
+            pending_refresh=True,
+            **common,
+        )
+    write_update_state(tmp_path, state)
+    monkeypatch.setattr(
+        auto_update,
+        "refresh_installed_providers",
+        lambda project, providers: ("codex",),
+    )
+    monkeypatch.setattr(
+        auto_update,
+        "fetch_version_targets",
+        Mock(side_effect=AssertionError("recovery must complete before network")),
+    )
+
+    result = check_and_update(
+        tmp_path,
+        installed,
+        UpdateMode.AUTOMATIC,
+        now=NOW,
+    )
+
+    assert result.status is UpdateStatus.UPDATED
+    assert result.installed_version == installed
+    recovered = read_update_state(tmp_path)
+    assert recovered.pending_refresh is False
+    assert recovered.declined_major_version is None
+
+
+def test_approved_major_clears_rejection_before_provider_parent_death(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = StableVersion(4, 0, 1)
+    write_update_state(tmp_path, UpdateState(declined_major_version="4.0.0"))
+    monkeypatch.setattr(
+        auto_update,
+        "fetch_version_targets",
+        lambda current, client: VersionTargets(None, target),
+    )
+    monkeypatch.setattr(
+        auto_update,
+        "fetch_release_highlights",
+        lambda version, client: ReleaseHighlights(
+            version,
+            "MAP 4.0.1",
+            "New planning engine",
+            "https://example.test/v4.0.1",
+        ),
+    )
+    monkeypatch.setattr(auto_update, "installed_providers", lambda project: ("codex",))
+    monkeypatch.setattr(
+        auto_update,
+        "install_exact_version",
+        _authorized_installer(lambda project, version: None),
+    )
+
+    def complete_child_then_lose_parent(
+        project: Path,
+        providers: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        state = read_update_state(project)
+        assert state.pending_refresh is True
+        write_update_state(
+            project,
+            replace(
+                state,
+                pending_refresh=False,
+                pending_providers=(),
+            ),
+        )
+        raise SystemExit("simulated updater-parent death")
+
+    monkeypatch.setattr(
+        auto_update,
+        "refresh_installed_providers",
+        complete_child_then_lose_parent,
+    )
+
+    with pytest.raises(SystemExit, match="simulated updater-parent death"):
+        check_and_update(
+            tmp_path,
+            "3.26.0",
+            UpdateMode.MANUAL,
+            approved_major="4.0.1",
+            now=NOW,
+        )
+
+    persisted = read_update_state(tmp_path)
+    assert persisted.pending_install_version is None
+    assert persisted.pending_refresh is False
+    assert persisted.pending_providers == ()
+    assert persisted.declined_major_version is None
 
 
 @pytest.mark.parametrize(

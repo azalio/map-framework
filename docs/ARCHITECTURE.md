@@ -100,7 +100,7 @@ Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json`
 
 - **Initialize**: `mapify init` selects a provider, copies templates, and writes provider-specific prompts/skills plus shared `.map/` scripts. At the end of init, `build_manifest()` scans every installed provider directory and writes `.map/mapify.lock.json` — recording the canonical provider collection, each file's path, SHA-256 content/template hash, management mode (`fenced`/`full`/`hooks-merge`), and install timestamp. A dual-provider manifest stores `providers: ["claude", "codex"]` and a deduplicated union of both surfaces. This manifest is the audit baseline for `mapify check-installed`.
 - **Audit Install**: `mapify check-installed [project-path]` reads `.map/mapify.lock.json` and compares it against the current filesystem. It reports missing files (in manifest, absent on disk), drifted files (template_hash changed — a newer MAP template is available), orphaned files (MAP-managed on disk but not in the manifest), and ok files (present and matching). Exit codes: 0=all ok, 1=issues found, 2=no manifest. Security invariants: no absolute paths are stored in the manifest; `settings.local.json` (machine-specific statusline config) is excluded from the committed manifest; symlinks are excluded from scanning.
-- **Update Preflight**: Every normal generated Claude/Codex MAP skill invokes the hidden automatic adapter before its workflow; the two `map-upgrade` skills invoke manual mode instead. The orchestrator enforces the feature flag and rolling 24-hour project throttle, installs eligible stable patch/minor releases, gates major releases on official highlights plus user consent, and turns all automatic failures into silent continuation. Manual mode bypasses the flag/throttle and makes failures actionable.
+- **Update Preflight**: Every normal generated Claude/Codex MAP skill invokes the hidden automatic adapter before its workflow; the two `map-upgrade` skills invoke manual mode instead. The orchestrator enforces the feature flag and rolling 24-hour project throttle, installs eligible stable patch/minor releases, gates major releases on official highlights plus user consent, remembers an exact rejected offer per project, and turns all automatic failures into silent continuation. Manual mode bypasses the flag/throttle and makes failures actionable, while rejection persistence remains silent.
 - **Run Workflow**: User triggers MAP commands (e.g., `/map-plan`, `/map-efficient`, `/map-check`, `/map-review`, `/map-learn`, `/map-understand`) through the provider UI, or `$map-*` skills for Codex. Each command orchestrates a specific agent sequence or teaching loop defined in generated skill/template files.
 - **Apply Minimality Doctrine**: `.map/config.yaml` controls `minimality` (`off`, `lite`, `full`, `ultra`). The global default is `lite` (Phase 3 flip, #183) for ALL projects — keyless configs that previously loaded as `off` now resolve to `lite` at both the `MapConfig` and runner `_load_minimality_level` layers; set `minimality: off` to opt out (bare `off` is YAML-coerced to a boolean and normalized back to the `off` level so opt-out is not silently lost). Runtime prompt builders inject the doctrine into Actor context, Evaluator scores `simplicity` while keeping `completeness` highest-weight, Monitor distinguishes real scope/risk drift from harmless implementation size, and the orchestrator forwards only BLOCKER-class retry feedback back to Actor. Decomposer blueprints classify active subtasks with `requiredness`/`pruneable`; only `full`/`ultra` may carry a non-empty `deferred_yagni` parking lot, and plan approval must expose those omissions plus restore hints before execution. If the user restores an omission, `restore_deferred_yagni` rewrites `blueprint.json` and the task plan before approval continues. `run_health_report.json` records the historical minimality level for each workflow, and `mapify minimality-report` compares complete `off` and opt-in cohorts, reports sample gaps and cohort branch names, lists next telemetry actions, and emits a candidate-only manual review gate before maintainers consider the Phase 3 global default flip.
 - **Persist Artifacts**: Each workflow stage records durable artifacts under `.map/<branch>/`, including specs, blueprints, test contracts, verification summaries, review bundles, learning handoffs, token-budget reports, run-health reports, and retry quarantine state. Research/discovery uses a single namespace: plan-scope discovery is `.map/<branch>/research/plan__discovery.md`, and subtask-scope artifacts are `.map/<branch>/research/<subtask_id>__<kind>.md`; legacy `findings_<branch>.md` files are compatibility fallbacks, not the primary source.
@@ -119,6 +119,7 @@ package-manager logic in prompt text:
 mapify _update --mode automatic --project .
 mapify _update --mode manual --project .
 mapify _update --mode manual --project . --approve-major X.Y.Z
+mapify _update --mode automatic --project . --decline-major X.Y.Z
 ```
 
 The adapter is absent from normal help. Successful calls emit at most one bounded
@@ -127,6 +128,12 @@ errors exit successfully with no output, while manual errors emit one `error`
 object and exit nonzero. The approved-major value is revalidated as a strict,
 currently eligible major target, so release text, URLs, and shell fragments never
 enter package arguments.
+
+The decline action is a silent, network-free state transition under
+`.map/update.lock`. It accepts only a strict stable version above the running
+major and records that exact version in the current project's update state. A
+matching discovered target is skipped before highlight retrieval; any different
+stable version remains eligible for a new consent prompt.
 
 `auto_update.py` composes the three lower-level modules. `update_versions.py`
 selects non-yanked strict stable releases and fetches bounded official highlights;
@@ -137,7 +144,8 @@ policy with `.map/update.lock`, serializes the package-manager lifetime with
 `uv tool` or the current interpreter's pip and never mutates source/editable
 installs. The state timestamp records an automatic attempt, not only success.
 
-Update-state schema v2 is a three-phase write-ahead state machine:
+Update-state schema v4 retains the three-phase write-ahead state machine and adds
+an optional `declined_major_version` exact-version policy field:
 
 | Phase | Install target | Refresh flag | Provider set | Meaning |
 |---|---|---|---|---|
@@ -150,9 +158,10 @@ it to refresh-pending before the throttle or any network access. A mismatch neve
 treats the persisted target as install authority: automatic mode retains a recent
 intent until the throttle expires, while manual mode (or a due automatic check)
 re-enters freshly fetched version and major-consent policy. Exact legacy v1 state
-is migrated in memory; its historical provider-less pending-refresh form is
+is migrated in memory; v2 and v3 documents also gain a null rejection field. The
+historical provider-less pending-refresh form is
 normalized by detecting and persisting the provider set before a child is started.
-All new writes obey the strict v2 phase invariants.
+All new writes obey the strict phase invariants.
 
 Package installation uses a dedicated controller process rather than launching
 pip/uv directly from the updater. The controller first acquires

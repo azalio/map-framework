@@ -390,7 +390,9 @@ update preflight. Automatic checks are enabled by default, throttled to one
 attempt per project in a rolling 24-hour window, and apply eligible stable patch
 or minor releases. A major release is offered only after the provider shows its
 official release highlights and link, and it is installed only with your explicit
-consent.
+consent. A rejected offer is remembered in that project's update state for the
+exact release only: rejecting `4.0.0` suppresses later `4.0.0` prompts but not
+`4.0.1`, `4.1.0`, or `5.0.0`.
 
 Control the project setting or bypass the setting and throttle with a manual
 provider skill:
@@ -405,7 +407,7 @@ $map-upgrade                     # Codex manual check/upgrade
 Omitting both init flags preserves the existing `updates.auto` value. The flag
 controls automatic preflights only; manual `map-upgrade` always checks. Automatic
 errors are silent and non-blocking, while the manual skill reports a clear error
-and recovery action.
+and recovery action. Recording a rejection is best-effort and silent as well.
 
 ### Installation ownership
 

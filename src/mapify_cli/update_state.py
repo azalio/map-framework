@@ -25,7 +25,7 @@ else:
     import fcntl
 
 
-STATE_SCHEMA_VERSION = 3
+STATE_SCHEMA_VERSION = 4
 STATE_RELATIVE_PATH = Path(".map/update-state.json")
 MAP_UPDATE_PARENT_LEASE_ENV = "MAP_UPDATE_PARENT_LEASE"
 UPDATE_INTERVAL = timedelta(hours=24)
@@ -54,7 +54,8 @@ _V1_KEYS = frozenset(
 )
 _V2_KEYS = _V1_KEYS | {"pending_install_version"}
 _V3_KEYS = _V2_KEYS | {"last_refresh_failure_at"}
-_SCHEMA_KEYS = {1: _V1_KEYS, 2: _V2_KEYS, 3: _V3_KEYS}
+_V4_KEYS = _V3_KEYS | {"declined_major_version"}
+_SCHEMA_KEYS = {1: _V1_KEYS, 2: _V2_KEYS, 3: _V3_KEYS, 4: _V4_KEYS}
 _LEASE_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{43}")
 _LOCK_RECORD_KEYS = frozenset(
     {"schema_version", "lease_digest", "owner_pid", "project"}
@@ -99,6 +100,7 @@ class UpdateState:
     # Intent: Stamped only when a pending-refresh retry FAILS, so the recovery
     # path can back off without throttling the first (post-install) attempt.
     last_refresh_failure_at: str | None = None
+    declined_major_version: str | None = None
 
 
 def _state_from_payload(payload: Any) -> UpdateState | None:
@@ -137,6 +139,13 @@ def _state_from_payload(payload: Any) -> UpdateState | None:
         pending_install_version, str
     ):
         return None
+    declined_major_version = (
+        None if schema_version < 4 else payload.get("declined_major_version")
+    )
+    if declined_major_version is not None and not isinstance(
+        declined_major_version, str
+    ):
+        return None
 
     state = UpdateState(
         schema_version=STATE_SCHEMA_VERSION,
@@ -147,6 +156,7 @@ def _state_from_payload(payload: Any) -> UpdateState | None:
         pending_refresh=pending_refresh,
         pending_providers=tuple(pending_providers),
         last_refresh_failure_at=payload.get("last_refresh_failure_at"),
+        declined_major_version=declined_major_version,
     )
     if _valid_state(state):
         return state
@@ -177,6 +187,7 @@ def _valid_state(state: UpdateState) -> bool:
             state.last_observed_version,
             state.last_installed_version,
             state.pending_install_version,
+            state.declined_major_version,
         )
     ):
         return False
@@ -226,6 +237,7 @@ def write_update_state(project_path: Path, state: UpdateState) -> None:
                     "pending_refresh": state.pending_refresh,
                     "pending_providers": list(state.pending_providers),
                     "last_refresh_failure_at": state.last_refresh_failure_at,
+                    "declined_major_version": state.declined_major_version,
                 },
                 temp_file,
                 sort_keys=True,

@@ -47,6 +47,7 @@ def test_state_round_trip_is_project_local(tmp_path: Path) -> None:
     state = UpdateState(
         last_attempt_at="2026-08-13T11:00:00Z",
         last_installed_version="3.25.1",
+        declined_major_version="4.0.0",
     )
 
     write_update_state(tmp_path, state)
@@ -72,6 +73,7 @@ def test_state_write_replaces_the_previous_document(tmp_path: Path) -> None:
         (tmp_path / ".map" / "update-state.json").read_text(encoding="utf-8")
     )
     assert payload == {
+        "declined_major_version": None,
         "last_attempt_at": None,
         "last_installed_version": "3.26.0",
         "last_observed_version": "3.26.0",
@@ -79,11 +81,11 @@ def test_state_write_replaces_the_previous_document(tmp_path: Path) -> None:
         "pending_providers": ["claude"],
         "last_refresh_failure_at": None,
         "pending_refresh": True,
-        "schema_version": 3,
+        "schema_version": 4,
     }
 
 
-def test_schema_v1_idle_state_migrates_strictly_to_v3(tmp_path: Path) -> None:
+def test_schema_v1_idle_state_migrates_strictly_to_v4(tmp_path: Path) -> None:
     state_path = tmp_path / ".map" / "update-state.json"
     state_path.parent.mkdir(parents=True)
     state_path.write_text(
@@ -101,7 +103,7 @@ def test_schema_v1_idle_state_migrates_strictly_to_v3(tmp_path: Path) -> None:
     )
 
     assert read_update_state(tmp_path) == UpdateState(
-        schema_version=3,
+        schema_version=4,
         last_attempt_at="2026-08-13T11:00:00Z",
         last_observed_version="3.26.0",
         last_installed_version="3.25.1",
@@ -109,10 +111,10 @@ def test_schema_v1_idle_state_migrates_strictly_to_v3(tmp_path: Path) -> None:
         pending_refresh=False,
         pending_providers=(),
     )
-    assert STATE_SCHEMA_VERSION == 3
+    assert STATE_SCHEMA_VERSION == 4
 
 
-def test_schema_v1_refresh_state_migrates_strictly_to_v3(tmp_path: Path) -> None:
+def test_schema_v1_refresh_state_migrates_strictly_to_v4(tmp_path: Path) -> None:
     state_path = tmp_path / ".map" / "update-state.json"
     state_path.parent.mkdir(parents=True)
     state_path.write_text(
@@ -130,7 +132,7 @@ def test_schema_v1_refresh_state_migrates_strictly_to_v3(tmp_path: Path) -> None
     )
 
     assert read_update_state(tmp_path) == UpdateState(
-        schema_version=3,
+        schema_version=4,
         last_observed_version="3.26.0",
         last_installed_version="3.26.0",
         pending_refresh=True,
@@ -138,7 +140,7 @@ def test_schema_v1_refresh_state_migrates_strictly_to_v3(tmp_path: Path) -> None
     )
 
 
-def test_schema_v2_state_migrates_to_v3_and_retries_refresh_promptly(
+def test_schema_v2_state_migrates_to_v4_and_retries_refresh_promptly(
     tmp_path: Path,
 ) -> None:
     """The upgrade path every currently-installed project takes.
@@ -167,7 +169,7 @@ def test_schema_v2_state_migrates_to_v3_and_retries_refresh_promptly(
     migrated = read_update_state(tmp_path)
 
     assert migrated == UpdateState(
-        schema_version=3,
+        schema_version=4,
         last_attempt_at="2026-08-13T11:00:00Z",
         last_observed_version="3.26.0",
         last_installed_version="3.26.0",
@@ -177,6 +179,36 @@ def test_schema_v2_state_migrates_to_v3_and_retries_refresh_promptly(
     )
     assert migrated is not None
     assert refresh_retry_due(migrated, NOW) is True
+
+
+def test_schema_v3_state_migrates_to_v4_without_a_declined_major(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / ".map" / "update-state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 3,
+                "last_attempt_at": "2026-08-13T11:00:00Z",
+                "last_observed_version": "4.0.0",
+                "last_installed_version": "3.26.0",
+                "pending_install_version": None,
+                "pending_refresh": False,
+                "pending_providers": [],
+                "last_refresh_failure_at": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert read_update_state(tmp_path) == UpdateState(
+        schema_version=4,
+        last_attempt_at="2026-08-13T11:00:00Z",
+        last_observed_version="4.0.0",
+        last_installed_version="3.26.0",
+        declined_major_version=None,
+    )
 
 
 def test_schema_v1_refresh_without_providers_remains_transitional_for_discovery(
@@ -199,7 +231,7 @@ def test_schema_v1_refresh_without_providers_remains_transitional_for_discovery(
     )
 
     assert read_update_state(tmp_path) == UpdateState(
-        schema_version=3,
+        schema_version=4,
         last_attempt_at="2026-08-13T11:00:00Z",
         last_observed_version="3.26.0",
         last_installed_version="3.26.0",
@@ -232,6 +264,33 @@ def test_schema_v1_providerless_transition_still_rejects_unstable_versions(
     state_path = tmp_path / ".map" / "update-state.json"
     state_path.parent.mkdir(parents=True)
     state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert read_update_state(tmp_path) == UpdateState()
+
+
+@pytest.mark.parametrize("value", ["4.0", "4.0.0rc1", "v4.0.0", 4, []])
+def test_schema_v4_rejects_invalid_declined_major_versions(
+    tmp_path: Path,
+    value: object,
+) -> None:
+    state_path = tmp_path / ".map" / "update-state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 4,
+                "last_attempt_at": None,
+                "last_observed_version": "4.0.0",
+                "last_installed_version": "3.26.0",
+                "pending_install_version": None,
+                "pending_refresh": False,
+                "pending_providers": [],
+                "last_refresh_failure_at": None,
+                "declined_major_version": value,
+            }
+        ),
+        encoding="utf-8",
+    )
 
     assert read_update_state(tmp_path) == UpdateState()
 

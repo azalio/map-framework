@@ -39,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now collects every violation and reports them together.
 
 ### Added
+- **Exact declined major offers are remembered per project.** When a user rejects
+  a `major_available` proposal, generated Claude and Codex skills silently persist
+  that exact stable version in update-state schema v4. Automatic and manual checks
+  suppress only the matching release before highlight retrieval; `4.0.1`, `4.1.0`,
+  or `5.0.0` are still offered after rejecting `4.0.0`. Rejection-persistence
+  failures remain silent and never block the invoked workflow.
 - **Automatic MAP updates.** `mapify` can now keep itself and the installed
   provider surfaces current. Every shipped `/map-*` (Claude) and `$map-*` (Codex)
   skill runs a `mapify _update --mode automatic --project .` preflight as its
