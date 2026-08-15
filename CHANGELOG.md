@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.26.0] - 2026-08-15
+
 ### Fixed
 - **Verifier-class agents can no longer mutate the branch (#424).** A `final-verifier`
   run created and committed `3c6a7db` mid-audit under an APPROVED/REJECTED-only prompt
