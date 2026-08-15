@@ -119,7 +119,7 @@ def assert_no_stray_delimiters(text: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def get_environment() -> jinja2.Environment:
+def get_environment(loader_root: Path | None = None) -> jinja2.Environment:
     """Return a Jinja2 Environment configured with MAP-safe custom delimiters.
 
     Uses delimiters that do NOT conflict with Handlebars, bash, or Python
@@ -128,12 +128,19 @@ def get_environment() -> jinja2.Environment:
     Jinja2 is imported lazily here so that importing this module does not
     load jinja2 into ``sys.modules``.
 
+    Args:
+        loader_root: Optional filesystem root for template includes.
+
     Returns:
         Configured jinja2.Environment instance.
     """
     import jinja2
 
+    loader = (
+        jinja2.FileSystemLoader(str(loader_root)) if loader_root is not None else None
+    )
     return jinja2.Environment(
+        loader=loader,
         block_start_string="[%",
         block_end_string="%]",
         variable_start_string="<%",
@@ -170,7 +177,7 @@ def _path_is_hook(dest_path: Path) -> bool:
             for i in range(len(parts) - 1):
                 if parts[i] == parent_name and parts[i + 1] == child_name:
                     return True
-    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
+    except Exception:  # noqa: BLE001, S110 - resilience boundary
         pass
     return False
 
@@ -235,7 +242,7 @@ def _atomic_write_file(src: Path, dest: Path) -> None:
     except Exception:
         try:
             tmp_path.unlink(missing_ok=True)
-        except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
+        except Exception:  # noqa: BLE001, S110 - best-effort cleanup
             pass  # best-effort cleanup
         raise
 
@@ -300,7 +307,7 @@ def _build_claude_resolver(
         # --- map/** prefix: remap map/ -> .map/ for dev dest ---
         if rel_str.startswith("map/"):
             # Intent: dev tree uses .map/ prefix, not map/
-            dev_rel = Path(rel_str[len("map/"):])
+            dev_rel = Path(rel_str[len("map/") :])
             return [shipped, map_root / dev_rel]
 
         # --- Shared subtrees: shipped + .claude/ ---
@@ -359,7 +366,7 @@ def _build_codex_resolver(
         # --- skills/<rest>: remap to .agents/skills/<rest> for dev dest ---
         if rel_str.startswith("skills/"):
             # Intent: codex skills live in .agents/skills/, not .codex/skills/
-            dev_rel = Path(rel_str[len("skills/"):])
+            dev_rel = Path(rel_str[len("skills/") :])
             return [shipped, agents_skills_root / dev_rel]
 
         # --- All other codex paths: shipped codex/ tree + .codex/ dev tree ---
@@ -378,6 +385,7 @@ def render_tree(
     *,
     dry_run: bool = False,
     templates_src_root: Path | None = None,
+    template_loader_root: Path | None = None,
     dest_root: Path | None = None,
     dest_resolver: Callable[[Path], list[Path]] | None = None,
 ) -> list[Path]:
@@ -405,6 +413,8 @@ def render_tree(
         dry_run:  When True, render+verify but do not write live files.
         templates_src_root: Root of the ``.jinja`` source tree.
                   Defaults to ``<package>/templates_src``.
+        template_loader_root: Filesystem root used to resolve Jinja includes.
+                  Defaults to *templates_src_root*.
         dest_root: Root for live destination files (identity mode only).
                   Defaults to current working directory.
         dest_resolver: Optional callable mapping each rendered relative path
@@ -422,6 +432,8 @@ def render_tree(
     # Resolve defaults
     if templates_src_root is None:
         templates_src_root = _default_templates_src_root()
+    if template_loader_root is None:
+        template_loader_root = templates_src_root
     if dest_root is None:
         dest_root = Path.cwd()
 
@@ -444,11 +456,16 @@ def render_tree(
     else:
         _resolver = dest_resolver
 
-    env = get_environment()
+    env = get_environment(template_loader_root)
     context = {"PROVIDER": provider}
 
-    # Collect all .jinja templates under templates_src_root
-    jinja_files = sorted(templates_src_root.rglob("*.jinja"))
+    # Loader-only partials remain available to includes but never render to
+    # their own destination files.
+    jinja_files = sorted(
+        path
+        for path in templates_src_root.rglob("*.jinja")
+        if "_partials" not in path.relative_to(templates_src_root).parts
+    )
 
     # Phase 1: render ALL templates into a temp dir; abort on first error.
     write_plan: list[_WriteEntry] = []
@@ -464,8 +481,8 @@ def render_tree(
             tmp_dest.parent.mkdir(parents=True, exist_ok=True)
 
             # Render (may raise TemplateSyntaxError / UndefinedError / etc.)
-            template_text = jinja_file.read_text(encoding="utf-8")
-            tmpl = env.from_string(template_text)
+            template_name = jinja_file.relative_to(template_loader_root).as_posix()
+            tmpl = env.get_template(template_name)
             rendered = tmpl.render(**context)
 
             # D7a: check for residual directive tokens
@@ -592,14 +609,14 @@ def render_repo_trees(
         provider_templates_src = templates_src_root / "codex"
     else:
         raise ValueError(
-            f"Unknown provider {provider!r}. "
-            "Expected 'claude' or 'codex'."
+            f"Unknown provider {provider!r}. " "Expected 'claude' or 'codex'."
         )
 
     return render_tree(
         provider,
         dry_run=dry_run,
         templates_src_root=provider_templates_src,
+        template_loader_root=templates_src_root,
         dest_resolver=resolver,
     )
 

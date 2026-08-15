@@ -383,6 +383,51 @@ pip install -r requirements-semantic.txt
 
 ## Updating MAP Framework
 
+### Provider-driven project updates
+
+Every installed MAP skill except `map-upgrade` performs a silent automatic
+update preflight. Automatic checks are enabled by default, throttled to one
+attempt per project in a rolling 24-hour window, and apply eligible stable patch
+or minor releases. A major release is offered only after the provider shows its
+official release highlights and link, and it is installed only with your explicit
+consent.
+
+Control the project setting or bypass the setting and throttle with a manual
+provider skill:
+
+```text
+mapify init . --no-auto-update   # persist updates.auto: false
+mapify init . --auto-update      # re-enable automatic checks
+/map-upgrade                     # Claude manual check/upgrade
+$map-upgrade                     # Codex manual check/upgrade
+```
+
+Omitting both init flags preserves the existing `updates.auto` value. The flag
+controls automatic preflights only; manual `map-upgrade` always checks. Automatic
+errors are silent and non-blocking, while the manual skill reports a clear error
+and recovery action.
+
+### Installation ownership
+
+The project updater follows the installation that owns the running `mapify`
+executable:
+
+- A `uv tool` install is updated to an exact validated release with
+  `uv tool install --force mapify-cli==X.Y.Z`.
+- A pip/site-packages install uses the current interpreter and
+  `python -m pip install --upgrade mapify-cli==X.Y.Z`.
+- A source checkout or editable install is owner-managed. Automatic mode skips it
+  silently; `/map-upgrade` or `$map-upgrade` explains that you must update the
+  checkout yourself and then refresh the project. MAP never runs `git pull` or
+  mutates a source checkout on your behalf.
+
+After a successful package update, MAP launches the newly installed `mapify` in a
+fresh process and refreshes every provider already installed in the project. A
+project containing both Claude and Codex therefore keeps both skill catalogs and
+a combined install manifest.
+
+### Public CLI self-upgrade
+
 Upgrade the `mapify` CLI itself to the latest release:
 
 ```bash
@@ -403,6 +448,11 @@ python -m pip install --upgrade mapify-cli    # if installed via pip
 
 > Running `mapify upgrade` from a source checkout / editable install disables
 > self-upgrade — update that clone with `git pull` instead.
+
+This public command is unchanged and distinct from `/map-upgrade` and
+`$map-upgrade`: it upgrades only the CLI package, writes no project files, and
+still requires the explicit `mapify init . --force` shown above to refresh a
+project.
 
 ## Troubleshooting
 

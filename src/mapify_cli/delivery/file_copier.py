@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+import contextlib
+import errno
+import hashlib
+import importlib
 import importlib.util
+import inspect
 import json
 import os
+import secrets
 import shutil
+import stat
+import tempfile
+import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, NoReturn
 
 from mapify_cli.delivery.agent_generator import (
     create_actor_content,
@@ -40,9 +51,7 @@ _IGNORED_TEMPLATE_SUFFIXES = {".pyc", ".pyo"}
 # not just documented. (A bare ``assert`` would be stripped under ``python -O``,
 # silently turning the guarantee into a no-op, so we raise explicitly.)
 # requires-skills is warn-only (not a skip), handled separately.
-_BLOCKING_REQUIRES_KEYS = {
-    k for k in SKILL_REQUIREMENTS_KEYS if k != "requires-skills"
-}
+_BLOCKING_REQUIRES_KEYS = {k for k in SKILL_REQUIREMENTS_KEYS if k != "requires-skills"}
 
 
 def _check_requires_cmd(name: str) -> bool:
@@ -94,7 +103,9 @@ if _BLOCKING_REQUIRES_KEYS != set(_REQUIRES_CHECKER):
     )
 
 
-def _skill_missing_dependency(requires_block: dict[str, list[str]]) -> tuple[str, str] | None:
+def _skill_missing_dependency(
+    requires_block: dict[str, list[str]],
+) -> tuple[str, str] | None:
     """Return (kind, name) of the first missing blocking dependency, or None.
 
     Checks requires-cmd, requires-pip, requires-env in that order (dict
@@ -196,7 +207,7 @@ def get_templates_dir() -> Path:
         # Python 3.11+ with importlib.resources.files
         if hasattr(importlib.resources, "files"):
             return Path(str(importlib.resources.files("mapify_cli") / "templates"))
-    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
+    except Exception:  # noqa: BLE001, S110
         pass
 
     # Fallback to module directory
@@ -309,7 +320,9 @@ def create_command_files(
     return 0
 
 
-def _load_template_skill_catalog(skills_template_dir: Path) -> dict[str, dict[str, object]]:
+def _load_template_skill_catalog(
+    skills_template_dir: Path,
+) -> dict[str, dict[str, object]]:
     """Parse the template skill-rules.json and return the skills dict.
 
     Returns an empty dict on any error (missing file, invalid JSON) so the
@@ -371,7 +384,9 @@ def create_skill_files(project_path: Path) -> int:
             requires_block = _extract_requires_block(skill_name, entry)
 
             # Emit WARNING for requires-skills (read-only; never a skip).
-            req_skills = entry.get("requires-skills") if isinstance(entry, dict) else None
+            req_skills = (
+                entry.get("requires-skills") if isinstance(entry, dict) else None
+            )
             if isinstance(req_skills, list) and req_skills:
                 _warn_requires_skills(skill_name, req_skills)
 
@@ -406,7 +421,10 @@ def _install_managed_tree(src_dir: Path, dest_dir: Path, version: str) -> None:
     for src in sorted(src_dir.rglob("*")):
         if not src.is_file():
             continue
-        if src.name in _IGNORED_TEMPLATE_NAMES or src.suffix in _IGNORED_TEMPLATE_SUFFIXES:
+        if (
+            src.name in _IGNORED_TEMPLATE_NAMES
+            or src.suffix in _IGNORED_TEMPLATE_SUFFIXES
+        ):
             continue
         rel = src.relative_to(src_dir)
         _install_managed_file(src, dest_dir / rel, version)
@@ -424,7 +442,10 @@ def _copy_map_path(src: Path, dest: Path, version: str) -> int:
         for child in sorted(src.rglob("*")):
             if not child.is_file():
                 continue
-            if child.name in _IGNORED_TEMPLATE_NAMES or child.suffix in _IGNORED_TEMPLATE_SUFFIXES:
+            if (
+                child.name in _IGNORED_TEMPLATE_NAMES
+                or child.suffix in _IGNORED_TEMPLATE_SUFFIXES
+            ):
                 continue
             rel = child.relative_to(src)
             count += _install_map_file(child, dest / rel, version)
@@ -466,6 +487,734 @@ _SOFA_GITIGNORE_BLOCK = (
     ".sofa/\n"
 )
 
+_AGENT_MEMORY_LOCAL_GITIGNORE_MARKER = "# map:agent-memory-local"
+_AGENT_MEMORY_LOCAL_GITIGNORE_BLOCK = (
+    "# map:agent-memory-local — user-local agent memory (opt-in); never commit.\n"
+    ".claude/agent-memory-local/\n"
+)
+
+_SETTINGS_LOCAL_GITIGNORE_MARKER = "# map:settings-local"
+_SETTINGS_LOCAL_GITIGNORE_BLOCK = (
+    "# map:settings-local — per-user Claude Code approvals / autonomy posture; "
+    "never commit\n"
+    ".claude/settings.local.json\n"
+)
+
+
+_UPDATE_RUNTIME_GITIGNORE_MARKER = (
+    "# map:update-runtime — local automatic-update state; never commit."
+)
+_UPDATE_RUNTIME_GITIGNORE_PATHS = (
+    ".map/update-state.json",
+    ".map/update.lock",
+    ".map/provider-refresh.lock",
+    ".map/installer.lock",
+)
+_WINDOWS_GITIGNORE_MUTEX_TIMEOUT_MS = 30_000
+
+
+class UpdateRuntimeGitignoreSecurityError(RuntimeError):
+    """Raised when the project .gitignore is unsafe to read or replace."""
+
+
+def _unsafe_project_gitignore(gitignore: Path, reason: str) -> NoReturn:
+    raise UpdateRuntimeGitignoreSecurityError(
+        f"unsafe project .gitignore at {gitignore}: {reason}"
+    )
+
+
+def _uses_windows_gitignore_mutex() -> bool:
+    """Return whether this platform uses a no-file named mutex."""
+    return os.name == "nt"
+
+
+def _validated_project_root_stat(project_root: Path) -> os.stat_result:
+    """Return the direct directory identity used to key and guard the lock."""
+    try:
+        current = os.stat(project_root, follow_symlinks=False)
+    except OSError as exc:
+        _unsafe_gitignore_lock(
+            project_root,
+            f"could not validate the project root ({exc})",
+        )
+    if stat.S_ISLNK(current.st_mode) or not stat.S_ISDIR(current.st_mode):
+        _unsafe_gitignore_lock(
+            project_root, "the project root must be a direct directory"
+        )
+    return current
+
+
+def _validate_project_root_unchanged(
+    project_root: Path,
+    original: os.stat_result,
+) -> None:
+    current = _validated_project_root_stat(project_root)
+    if (current.st_dev, current.st_ino) != (original.st_dev, original.st_ino):
+        _unsafe_gitignore_lock(project_root, "the project root changed")
+
+
+def _replace_supports_directory_fds() -> bool:
+    """Return whether ``os.replace`` accepts pinned directory descriptors."""
+    try:
+        parameters = inspect.signature(os.replace).parameters
+    except (TypeError, ValueError):
+        return False
+    return "src_dir_fd" in parameters and "dst_dir_fd" in parameters
+
+
+_CAN_USE_PROJECT_DIRECTORY_FD = (
+    os.open in os.supports_dir_fd
+    and os.stat in os.supports_dir_fd
+    and os.unlink in os.supports_dir_fd
+    and _replace_supports_directory_fds()
+)
+
+
+def _supports_pinned_project_root() -> bool:
+    return _CAN_USE_PROJECT_DIRECTORY_FD
+
+
+def _gitignore_lock_path_for_stat(
+    project_root: Path,
+    project_stat: os.stat_result,
+) -> Path:
+    """Return the shared lock path used by every MAP .gitignore writer.
+
+    The lock is persistent by design: unlinking it after release would create
+    an inode race between a waiter and a new caller. POSIX uses a fixed system
+    temp root so differing TMPDIR environments cannot split the lock identity;
+    Windows uses a named mutex and never calls this file-path helper.
+    """
+    del project_root
+    identity = f"{project_stat.st_dev}:{project_stat.st_ino}".encode("ascii")
+    digest = hashlib.sha256(identity).hexdigest()
+    # A fixed POSIX root makes independent processes agree even when TMPDIR,
+    # TMP, or TEMP differ. The lock file itself is private and identity-checked.
+    return Path("/tmp") / f"mapify-gitignore-{digest}.lock"
+
+
+def _windows_gitignore_mutex_name(project_stat: os.stat_result) -> str:
+    identity = f"{project_stat.st_dev}:{project_stat.st_ino}".encode("ascii")
+    digest = hashlib.sha256(identity).hexdigest()
+    return f"Global\\MapifyGitignore-{digest}"
+
+
+@contextlib.contextmanager
+def _windows_project_gitignore_mutex(
+    project_stat: os.stat_result,
+) -> Iterator[None]:
+    """Acquire a process-shared Windows mutex without a filesystem artifact."""
+    ctypes: Any = importlib.import_module("ctypes")
+    wintypes: Any = importlib.import_module("ctypes.wintypes")
+    kernel32: Any = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_mutex = kernel32.CreateMutexW
+    create_mutex.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+    create_mutex.restype = wintypes.HANDLE
+    wait_for_single_object = kernel32.WaitForSingleObject
+    wait_for_single_object.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    wait_for_single_object.restype = wintypes.DWORD
+    release_mutex = kernel32.ReleaseMutex
+    release_mutex.argtypes = [wintypes.HANDLE]
+    release_mutex.restype = wintypes.BOOL
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+
+    handle = create_mutex(None, False, _windows_gitignore_mutex_name(project_stat))
+    if not handle:
+        create_error = ctypes.get_last_error()
+        _unsafe_gitignore_lock(
+            Path("<windows-mutex>"),
+            "could not create or open the required cross-session mutex "
+            f"(WinError {create_error}); run MAP under one Windows account with "
+            "Global object access; refusing a session-local fallback",
+        )
+    wait_result = wait_for_single_object(handle, _WINDOWS_GITIGNORE_MUTEX_TIMEOUT_MS)
+    if wait_result not in {0x00000000, 0x00000080}:
+        wait_error = ctypes.get_last_error() if wait_result == 0xFFFFFFFF else None
+        close_error = None
+        if not close_handle(handle):
+            close_error = ctypes.get_last_error()
+        if wait_result == 0x00000102:
+            reason = "the MAP .gitignore mutex timed out"
+        elif wait_result == 0xFFFFFFFF:
+            reason = f"WaitForSingleObject failed (WinError {wait_error})"
+        else:
+            reason = f"WaitForSingleObject returned unexpected status {wait_result:#x}"
+        if close_error is not None:
+            reason += f"; CloseHandle also failed (WinError {close_error})"
+        _unsafe_gitignore_lock(Path("<windows-mutex>"), reason)
+    try:
+        yield
+    finally:
+        release_error = None
+        if not release_mutex(handle):
+            release_error = ctypes.get_last_error()
+        close_error = None
+        if not close_handle(handle):
+            close_error = ctypes.get_last_error()
+        if release_error is not None or close_error is not None:
+            failures: list[str] = []
+            if release_error is not None:
+                failures.append(f"ReleaseMutex failed (WinError {release_error})")
+            if close_error is not None:
+                failures.append(f"CloseHandle failed (WinError {close_error})")
+            _unsafe_gitignore_lock(Path("<windows-mutex>"), "; ".join(failures))
+
+
+@contextlib.contextmanager
+def _windows_pinned_project_root(
+    project_root: Path,
+    project_original: os.stat_result,
+) -> Iterator[None]:
+    """Prevent replacement of a Windows project directory during mutation."""
+    ctypes: Any = importlib.import_module("ctypes")
+    wintypes: Any = importlib.import_module("ctypes.wintypes")
+    kernel32: Any = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    create_file.restype = wintypes.HANDLE
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+
+    # FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, OPEN_EXISTING,
+    # FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT. Deliberately
+    # omitting FILE_SHARE_DELETE prevents a rename/replacement while held.
+    handle = create_file(
+        str(project_root),
+        0x00000080,
+        0x00000003,
+        None,
+        3,
+        0x02200000,
+        None,
+    )
+    invalid_handle = wintypes.HANDLE(-1).value
+    if not handle or handle == invalid_handle:
+        _unsafe_gitignore_lock(
+            project_root,
+            f"could not pin the Windows project root ({ctypes.get_last_error()})",
+        )
+    try:
+        _validate_project_root_unchanged(project_root, project_original)
+        yield
+    finally:
+        if not close_handle(handle):
+            close_error = ctypes.get_last_error()
+            _unsafe_gitignore_lock(
+                project_root,
+                f"CloseHandle failed for the project root (WinError {close_error})",
+            )
+
+
+@contextlib.contextmanager
+def _pinned_project_root(
+    project_root: Path,
+    project_original: os.stat_result,
+) -> Iterator[int | None]:
+    """Pin the project identity used by every relative .gitignore operation."""
+    if os.name == "nt":
+        with _windows_pinned_project_root(project_root, project_original):
+            yield None
+        return
+    if not _supports_pinned_project_root():
+        _unsafe_gitignore_lock(
+            project_root,
+            "this platform cannot pin project-relative file operations",
+        )
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor = os.open(project_root, flags)
+    except OSError as exc:
+        _unsafe_gitignore_lock(project_root, f"could not pin the project root ({exc})")
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISDIR(opened.st_mode) or (
+            opened.st_dev,
+            opened.st_ino,
+        ) != (
+            project_original.st_dev,
+            project_original.st_ino,
+        ):
+            _unsafe_gitignore_lock(
+                project_root, "the project root changed while opening"
+            )
+        _validate_project_root_unchanged(project_root, project_original)
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+def _gitignore_lock_path(project_root: Path) -> Path:
+    """Resolve the shared lock from stable filesystem identity, not spelling."""
+    return _gitignore_lock_path_for_stat(
+        project_root,
+        _validated_project_root_stat(project_root),
+    )
+
+
+def _unsafe_gitignore_lock(lock_path: Path, reason: str) -> NoReturn:
+    raise UpdateRuntimeGitignoreSecurityError(
+        f"unsafe MAP .gitignore lock at {lock_path}: {reason}"
+    )
+
+
+def _descriptor_mode_matches(descriptor: int, expected: int) -> bool:
+    """Compare only permission bits the current platform can represent."""
+    actual = stat.S_IMODE(os.fstat(descriptor).st_mode)
+    if os.name == "nt":
+        # Windows chmod/open modes expose only the read-only flag.  Continue
+        # validating through the descriptor without requiring POSIX-only bits.
+        return bool(actual & stat.S_IWRITE) == bool(expected & stat.S_IWRITE)
+    return actual == expected
+
+
+def _validate_lock_stat(lock_path: Path, current: os.stat_result) -> None:
+    if stat.S_ISLNK(current.st_mode):
+        _unsafe_gitignore_lock(lock_path, "symbolic links are not allowed")
+    if not stat.S_ISREG(current.st_mode):
+        _unsafe_gitignore_lock(lock_path, "the path must be a regular file")
+    if current.st_nlink != 1:
+        _unsafe_gitignore_lock(lock_path, "hard-linked files are not allowed")
+    if hasattr(os, "getuid") and current.st_uid != os.getuid():
+        _unsafe_gitignore_lock(lock_path, "the file must be owned by the current user")
+
+
+def _required_lock_stat(lock_path: Path) -> os.stat_result:
+    try:
+        current = os.lstat(lock_path)
+    except FileNotFoundError:
+        _unsafe_gitignore_lock(lock_path, "the path disappeared")
+    _validate_lock_stat(lock_path, current)
+    return current
+
+
+def _open_gitignore_lock(lock_path: Path) -> int:
+    """Open a private persistent lock without following or accepting links."""
+    try:
+        initial = os.lstat(lock_path)
+    except FileNotFoundError:
+        initial = None
+    if initial is not None:
+        _validate_lock_stat(lock_path, initial)
+
+    flags = (
+        os.O_RDWR
+        | os.O_CREAT
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        _unsafe_gitignore_lock(lock_path, f"could not open it safely ({exc})")
+    try:
+        opened = os.fstat(descriptor)
+        _validate_lock_stat(lock_path, opened)
+        current = _required_lock_stat(lock_path)
+        if (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
+            _unsafe_gitignore_lock(lock_path, "the path changed while being opened")
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, 0o600)
+        elif not _descriptor_mode_matches(descriptor, 0o600):
+            _unsafe_gitignore_lock(
+                lock_path,
+                "cannot enforce private mode without descriptor chmod support",
+            )
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _lock_descriptor(descriptor: int) -> None:
+    if os.name == "nt":
+        msvcrt: Any = importlib.import_module("msvcrt")
+        if os.fstat(descriptor).st_size == 0:
+            os.write(descriptor, b"\0")
+            os.fsync(descriptor)
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        while True:
+            try:
+                msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+                break
+            except OSError as exc:
+                if exc.errno not in {
+                    errno.EACCES,
+                    errno.EAGAIN,
+                    errno.EDEADLK,
+                } and getattr(exc, "winerror", None) not in {33, 36}:
+                    raise
+                time.sleep(0.05)
+        return
+    fcntl: Any = importlib.import_module("fcntl")
+    fcntl.flock(descriptor, fcntl.LOCK_EX)
+
+
+def _unlock_descriptor(descriptor: int) -> None:
+    if os.name == "nt":
+        msvcrt: Any = importlib.import_module("msvcrt")
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+        return
+    fcntl: Any = importlib.import_module("fcntl")
+    fcntl.flock(descriptor, fcntl.LOCK_UN)
+
+
+@contextlib.contextmanager
+def _project_gitignore_lock(
+    project_root: Path,
+) -> Iterator[tuple[int | None, os.stat_result]]:
+    """Serialize a complete MAP-owned root .gitignore transaction."""
+    project_original = _validated_project_root_stat(project_root)
+    with _pinned_project_root(project_root, project_original) as directory_fd:
+        if _uses_windows_gitignore_mutex():
+            with _windows_project_gitignore_mutex(project_original):
+                _validate_project_root_unchanged(project_root, project_original)
+                yield directory_fd, project_original
+                _validate_project_root_unchanged(project_root, project_original)
+            return
+        lock_path = _gitignore_lock_path_for_stat(project_root, project_original)
+        descriptor = _open_gitignore_lock(lock_path)
+        locked = False
+        try:
+            _lock_descriptor(descriptor)
+            locked = True
+            opened = os.fstat(descriptor)
+            _validate_lock_stat(lock_path, opened)
+            current = _required_lock_stat(lock_path)
+            if (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
+                _unsafe_gitignore_lock(lock_path, "the path changed while waiting")
+            _validate_project_root_unchanged(project_root, project_original)
+            yield directory_fd, project_original
+            _validate_project_root_unchanged(project_root, project_original)
+        finally:
+            if locked:
+                _unlock_descriptor(descriptor)
+            os.close(descriptor)
+
+
+def _validated_gitignore_stat(
+    gitignore: Path,
+    directory_fd: int | None,
+) -> os.stat_result | None:
+    """Return a safe direct-child .gitignore stat, or None when absent."""
+    try:
+        if directory_fd is None:
+            current = os.lstat(gitignore)
+        else:
+            current = os.stat(
+                gitignore.name,
+                dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+    except FileNotFoundError:
+        return None
+    if stat.S_ISLNK(current.st_mode):
+        _unsafe_project_gitignore(gitignore, "symbolic links are not allowed")
+    if not stat.S_ISREG(current.st_mode):
+        _unsafe_project_gitignore(gitignore, "the path must be a regular file")
+    if current.st_nlink != 1:
+        _unsafe_project_gitignore(gitignore, "hard-linked files are not allowed")
+    return current
+
+
+def _read_safe_gitignore(
+    gitignore: Path,
+    directory_fd: int | None,
+) -> tuple[bytes, os.stat_result | None]:
+    """Read .gitignore without following links and retain its identity."""
+    initial = _validated_gitignore_stat(gitignore, directory_fd)
+    if initial is None:
+        return b"", None
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        if directory_fd is None:
+            descriptor = os.open(gitignore, flags)
+        else:
+            descriptor = os.open(gitignore.name, flags, dir_fd=directory_fd)
+    except OSError as exc:
+        _unsafe_project_gitignore(gitignore, f"could not open it safely ({exc})")
+
+    try:
+        opened = os.fstat(descriptor)
+        current = _validated_gitignore_stat(gitignore, directory_fd)
+        if current is None or (
+            opened.st_dev,
+            opened.st_ino,
+        ) != (
+            current.st_dev,
+            current.st_ino,
+        ):
+            _unsafe_project_gitignore(gitignore, "the path changed while being read")
+        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+            _unsafe_project_gitignore(gitignore, "the opened file is not private")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            return stream.read(), opened
+    finally:
+        os.close(descriptor)
+
+
+def _validate_gitignore_unchanged(
+    gitignore: Path,
+    original: os.stat_result | None,
+    directory_fd: int | None,
+) -> None:
+    """Reject a target created or swapped after the initial safe read."""
+    current = _validated_gitignore_stat(gitignore, directory_fd)
+    if original is None:
+        if current is not None:
+            _unsafe_project_gitignore(gitignore, "the path appeared during the update")
+        return
+    if current is None or (current.st_dev, current.st_ino) != (
+        original.st_dev,
+        original.st_ino,
+    ):
+        _unsafe_project_gitignore(gitignore, "the path changed during the update")
+
+
+def _create_gitignore_temporary(
+    gitignore: Path,
+    directory_fd: int | None,
+) -> tuple[int, str | Path]:
+    if directory_fd is None:
+        descriptor, temporary_name = tempfile.mkstemp(
+            dir=gitignore.parent,
+            prefix=".gitignore.",
+            suffix=".tmp",
+        )
+        return descriptor, Path(temporary_name)
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    for _ in range(32):
+        temporary_name = f".gitignore.{secrets.token_hex(12)}.tmp"
+        try:
+            descriptor = os.open(
+                temporary_name,
+                flags,
+                0o600,
+                dir_fd=directory_fd,
+            )
+        except FileExistsError:
+            continue
+        return descriptor, temporary_name
+    raise FileExistsError("could not allocate a private .gitignore temporary file")
+
+
+def _atomic_replace_gitignore(
+    gitignore: Path,
+    content: bytes,
+    original: os.stat_result | None,
+    directory_fd: int | None,
+    project_root: Path,
+    project_original: os.stat_result,
+) -> None:
+    """Durably prepare a replacement, then atomically install it."""
+    _validate_project_root_unchanged(project_root, project_original)
+    descriptor, temporary = _create_gitignore_temporary(gitignore, directory_fd)
+    try:
+        _validate_project_root_unchanged(project_root, project_original)
+        mode = stat.S_IMODE(original.st_mode) if original is not None else 0o644
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, mode)
+        else:
+            if original is not None and not _descriptor_mode_matches(descriptor, mode):
+                _unsafe_project_gitignore(
+                    gitignore,
+                    "cannot preserve its mode without descriptor chmod support",
+                )
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = -1
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        _validate_project_root_unchanged(project_root, project_original)
+        _validate_gitignore_unchanged(gitignore, original, directory_fd)
+        if directory_fd is None:
+            os.replace(temporary, gitignore)
+        else:
+            os.replace(
+                temporary,
+                gitignore.name,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+            )
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            if directory_fd is None:
+                Path(temporary).unlink()
+            else:
+                os.unlink(temporary, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+
+
+def _has_effective_gitignore_path(lines: list[bytes], required_path: str) -> bool:
+    """Return whether an exact path remains authoritative after later rules.
+
+    Git evaluates ignore rules in order.  MAP deliberately uses a conservative
+    rule here instead of attempting to reproduce git's wildmatch semantics: an
+    exact canonical path is effective only when no later unescaped negation
+    rule follows it.  Leading-space and otherwise non-canonical variants do not
+    count as the required path.
+    """
+    required = required_path.encode()
+    last_exact = -1
+    for index, line in enumerate(lines):
+        if line == required:
+            last_exact = index
+    return last_exact >= 0 and not any(
+        line.startswith(b"!") for line in lines[last_exact + 1 :]
+    )
+
+
+def _has_gitignore_marker(lines: list[bytes], marker: str) -> bool:
+    encoded = marker.encode()
+    return any(line == encoded or line.startswith(encoded + b" ") for line in lines)
+
+
+def _merge_project_gitignore_locked(
+    project_root: Path,
+    directory_fd: int | None,
+    project_original: os.stat_result,
+    *,
+    include_runtime: bool = False,
+    include_sofa: bool = False,
+    include_agent_memory_local: bool = False,
+    include_settings_local: bool = False,
+) -> int:
+    """Append selected MAP-owned blocks while the shared lock is held."""
+    gitignore = project_root / ".gitignore"
+    existing, original = _read_safe_gitignore(gitignore, directory_fd)
+    _validate_project_root_unchanged(project_root, project_original)
+    existing_lines = existing.splitlines()
+
+    additions: list[bytes] = []
+    if include_runtime:
+        missing_runtime_paths = [
+            path
+            for path in _UPDATE_RUNTIME_GITIGNORE_PATHS
+            if not _has_effective_gitignore_path(existing_lines, path)
+        ]
+        if missing_runtime_paths:
+            runtime_lines: list[bytes] = []
+            marker = _UPDATE_RUNTIME_GITIGNORE_MARKER.encode()
+            if not _has_gitignore_marker(
+                existing_lines, _UPDATE_RUNTIME_GITIGNORE_MARKER
+            ):
+                runtime_lines.append(marker)
+            runtime_lines.extend(path.encode() for path in missing_runtime_paths)
+            additions.append(b"\n".join(runtime_lines) + b"\n")
+
+    def append_optional_block(
+        *, marker: str, required_line: str, block: str, enabled: bool
+    ) -> None:
+        if not enabled or _has_effective_gitignore_path(existing_lines, required_line):
+            return
+        if _has_gitignore_marker(existing_lines, marker):
+            additions.append(f"{required_line}\n".encode())
+        else:
+            additions.append(block.encode())
+
+    # The exact privacy path is the completion authority. A marker alone is
+    # descriptive metadata and must never authorize feature enablement.
+    append_optional_block(
+        marker=_SOFA_GITIGNORE_MARKER,
+        required_line=".sofa/",
+        block=_SOFA_GITIGNORE_BLOCK,
+        enabled=include_sofa,
+    )
+    append_optional_block(
+        marker=_AGENT_MEMORY_LOCAL_GITIGNORE_MARKER,
+        required_line=".claude/agent-memory-local/",
+        block=_AGENT_MEMORY_LOCAL_GITIGNORE_BLOCK,
+        enabled=include_agent_memory_local,
+    )
+    append_optional_block(
+        marker=_SETTINGS_LOCAL_GITIGNORE_MARKER,
+        required_line=".claude/settings.local.json",
+        block=_SETTINGS_LOCAL_GITIGNORE_BLOCK,
+        enabled=include_settings_local,
+    )
+
+    if not additions:
+        _validate_gitignore_unchanged(gitignore, original, directory_fd)
+        return 0
+    separator = b"" if not existing or existing.endswith(b"\n") else b"\n"
+    replacement = existing + separator + b"".join(additions)
+    _atomic_replace_gitignore(
+        gitignore,
+        replacement,
+        original,
+        directory_fd,
+        project_root,
+        project_original,
+    )
+    return 1
+
+
+def _merge_project_gitignore(
+    project_path: Path,
+    *,
+    include_runtime: bool = False,
+    include_sofa: bool = False,
+    include_agent_memory_local: bool = False,
+    include_settings_local: bool = False,
+) -> int:
+    """Safely, atomically, and serially append MAP-owned ignore blocks."""
+    project_root = project_path.resolve(strict=True)
+    if not project_root.is_dir():
+        raise NotADirectoryError(f"MAP project root is not a directory: {project_root}")
+    with _project_gitignore_lock(project_root) as (directory_fd, project_original):
+        return _merge_project_gitignore_locked(
+            project_root,
+            directory_fd,
+            project_original,
+            include_runtime=include_runtime,
+            include_sofa=include_sofa,
+            include_agent_memory_local=include_agent_memory_local,
+            include_settings_local=include_settings_local,
+        )
+
+
+def merge_update_runtime_gitignore(
+    project_path: Path,
+    *,
+    sofa: bool = False,
+    agent_memory_local: bool = False,
+    settings_local: bool = False,
+) -> int:
+    """Atomically establish runtime and requested privacy ignore entries."""
+    return _merge_project_gitignore(
+        project_path,
+        include_runtime=True,
+        include_sofa=sofa,
+        include_agent_memory_local=agent_memory_local,
+        include_settings_local=settings_local,
+    )
+
 
 def merge_sofa_gitignore(project_path: Path) -> int:
     """Idempotently add .sofa/ entry to the repo-root .gitignore.
@@ -474,35 +1223,7 @@ def merge_sofa_gitignore(project_path: Path) -> int:
     Returns 1 when the file was created or modified, 0 when already up-to-date
     (no-op / idempotent).
     """
-    gitignore = project_path / ".gitignore"
-
-    if not gitignore.exists():
-        gitignore.write_text(_SOFA_GITIGNORE_BLOCK)
-        return 1
-
-    existing = gitignore.read_text()
-
-    # Idempotency: skip if our marker OR an active `.sofa/` line is already
-    # present. The OR is deliberate (not AND): if the user already ignores
-    # `.sofa/` without our marker, appending the block would create a duplicate
-    # entry. Skipping on either signal keeps `.sofa/` present exactly once. The
-    # stripped-line-set check is symmetric with ensure_sofa_gitignore in the
-    # shipped sofa_client.py (avoids false matches on comments/path fragments).
-    ignored_lines = {line.strip() for line in existing.splitlines()}
-    if _SOFA_GITIGNORE_MARKER in existing or ".sofa/" in ignored_lines:
-        return 0
-
-    # Append with a separating newline if the file does not end with one.
-    separator = "" if existing.endswith("\n") else "\n"
-    gitignore.write_text(existing + separator + _SOFA_GITIGNORE_BLOCK)
-    return 1
-
-
-_AGENT_MEMORY_LOCAL_GITIGNORE_MARKER = "# map:agent-memory-local"
-_AGENT_MEMORY_LOCAL_GITIGNORE_BLOCK = (
-    "# map:agent-memory-local — user-local agent memory (opt-in); never commit.\n"
-    ".claude/agent-memory-local/\n"
-)
+    return _merge_project_gitignore(project_path, include_sofa=True)
 
 
 def merge_agent_memory_gitignore(project_path: Path) -> int:
@@ -514,26 +1235,12 @@ def merge_agent_memory_gitignore(project_path: Path) -> int:
 
     Returns 1 when the file was created or modified, 0 when already up-to-date.
     """
-    gitignore = project_path / ".gitignore"
+    return _merge_project_gitignore(project_path, include_agent_memory_local=True)
 
-    if not gitignore.exists():
-        gitignore.write_text(_AGENT_MEMORY_LOCAL_GITIGNORE_BLOCK)
-        return 1
 
-    existing = gitignore.read_text()
-
-    # OR-not-AND idempotency guard: skip if our marker OR the exact path is
-    # already present (prevents duplicates when user already has the line).
-    ignored_lines = {line.strip() for line in existing.splitlines()}
-    if (
-        _AGENT_MEMORY_LOCAL_GITIGNORE_MARKER in existing
-        or ".claude/agent-memory-local/" in ignored_lines
-    ):
-        return 0
-
-    separator = "" if existing.endswith("\n") else "\n"
-    gitignore.write_text(existing + separator + _AGENT_MEMORY_LOCAL_GITIGNORE_BLOCK)
-    return 1
+def merge_settings_local_gitignore(project_path: Path) -> int:
+    """Safely ignore the user-local Claude settings file for autonomy mode."""
+    return _merge_project_gitignore(project_path, include_settings_local=True)
 
 
 def apply_reflector_memory_field(project_path: Path, level: str) -> int:
@@ -596,8 +1303,7 @@ def create_commands_dir(project_path: Path) -> None:
     commands_dir.mkdir(parents=True, exist_ok=True)
 
     readme = commands_dir / "README.md"
-    readme.write_text(
-        """# Claude Code Commands
+    readme.write_text("""# Claude Code Commands
 
 This directory exists for **user-custom** slash commands. All MAP slash
 commands now ship as Skills (`.claude/skills/map-*/SKILL.md`) which give
@@ -636,8 +1342,7 @@ The filename becomes the command name (without the `.md` extension).
 Per the Claude Code docs, a skill at `.claude/skills/<name>/SKILL.md`
 takes precedence over a command at `.claude/commands/<name>.md` with
 the same name.
-"""
-    )
+""")
 
 
 def create_hook_files(
@@ -801,13 +1506,14 @@ def ensure_map_statusline(
     settings = _read_json_object(local_settings) or {}
     settings["statusLine"] = {"type": "command", "command": command}
 
+    # Revalidate the user-local settings privacy boundary immediately before
+    # this direct writer runs.  Init's earlier combined preflight cannot protect
+    # against a later .gitignore swap, and this function is also a public test /
+    # provider seam that can be called independently.
+    merge_settings_local_gitignore(project_path)
     claude_dir.mkdir(parents=True, exist_ok=True)
-    local_settings.write_text(
-        json.dumps(settings, indent=2) + "\n", encoding="utf-8"
-    )
-    return StatuslineResult(
-        wired=True, reason="wired", settings_path=local_settings
-    )
+    local_settings.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    return StatuslineResult(wired=True, reason="wired", settings_path=local_settings)
 
 
 def create_rules_dir(

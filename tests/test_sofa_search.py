@@ -22,12 +22,16 @@ import pytest
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).parent.parent
-_SEARCH_PATH = _REPO_ROOT / ".claude" / "skills" / "map-so-search" / "scripts" / "sofa_search.py"
+_SEARCH_PATH = (
+    _REPO_ROOT / ".claude" / "skills" / "map-so-search" / "scripts" / "sofa_search.py"
+)
 
 
 def _load_module() -> types.ModuleType:
     if not _SEARCH_PATH.exists():
-        pytest.skip(f"Generated skill not found at {_SEARCH_PATH} — run make render-templates first")
+        pytest.skip(
+            f"Generated skill not found at {_SEARCH_PATH} — run make render-templates first"
+        )
     spec = importlib.util.spec_from_file_location("sofa_search", _SEARCH_PATH)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
@@ -52,6 +56,7 @@ sofa_search = _load_module()
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_post(
     *,
@@ -96,6 +101,7 @@ def _make_fake_client(
     session_id: str = "sess-xyz",
     onboarding_called: list[bool] | None = None,
     onboarding_flow_ok: bool = True,
+    registration_result: dict[str, Any] | None = None,
 ) -> types.SimpleNamespace:
     """Build a fake sofa_client module exposing the typed-dict API.
 
@@ -103,7 +109,9 @@ def _make_fake_client(
     store_credentials) and records the args each received in ``.calls`` so the
     end-to-end onboarding flow can be asserted without a tty or real network.
     """
-    _onboarding_called: list[bool] = onboarding_called if onboarding_called is not None else []
+    _onboarding_called: list[bool] = (
+        onboarding_called if onboarding_called is not None else []
+    )
     calls: dict[str, Any] = {}
 
     def resolve_key(**_kwargs: object) -> dict[str, Any]:
@@ -115,9 +123,15 @@ def _make_fake_client(
     def resolve_base_url() -> dict[str, Any]:
         return {"ok": True, "base_url": "https://agents.stackoverflow.com"}
 
-    def create_session(_base_url: str, _api_key: str, **_kwargs: object) -> dict[str, Any]:
+    def create_session(
+        _base_url: str, _api_key: str, **_kwargs: object
+    ) -> dict[str, Any]:
         del _base_url, _api_key, _kwargs
-        return {"ok": True, "session_id": session_id, "expires_at": "2026-06-13T00:00:00Z"}
+        return {
+            "ok": True,
+            "session_id": session_id,
+            "expires_at": "2026-06-13T00:00:00Z",
+        }
 
     def search_posts(
         _base_url: str,
@@ -182,14 +196,18 @@ def _make_fake_client(
             "description": description,
             "persona": persona,
         }
-        return {
-            "ok": True,
-            "agent_id": "agent-live",
-            "api_key": "sk-live-secret",
-            "api_key_prefix": "sk-li",
-            "api_key_suffix": "cret",
-            "next_step": "search",
-        }
+        return (
+            registration_result
+            if registration_result is not None
+            else {
+                "ok": True,
+                "agent_id": "agent-live",
+                "api_key": "sk-live-secret",
+                "api_key_prefix": "sk-li",
+                "api_key_suffix": "cret",
+                "next_step": "search",
+            }
+        )
 
     def store_credentials(
         *,
@@ -202,8 +220,16 @@ def _make_fake_client(
         api_key_suffix: str,
     ) -> dict[str, Any]:
         del agent_name, base_url, api_key_prefix, api_key_suffix
-        calls["store"] = {"repo_root": repo_root, "agent_id": agent_id, "api_key": api_key}
-        return {"ok": True, "agent_id": agent_id, "path": str(repo_root / ".sofa" / "credentials.json")}
+        calls["store"] = {
+            "repo_root": repo_root,
+            "agent_id": agent_id,
+            "api_key": api_key,
+        }
+        return {
+            "ok": True,
+            "agent_id": agent_id,
+            "path": str(repo_root / ".sofa" / "credentials.json"),
+        }
 
     return types.SimpleNamespace(
         resolve_key=resolve_key,
@@ -222,6 +248,7 @@ def _make_fake_client(
 # ---------------------------------------------------------------------------
 # VC1 — link allowlist + scheme strip
 # ---------------------------------------------------------------------------
+
 
 class TestVC1LinkAllowlistAndSchemeStrip:
     """apply_link_allowlist replaces off-allowlist / dangerous-scheme URLs."""
@@ -283,30 +310,33 @@ class TestVC1LinkAllowlistAndSchemeStrip:
 # VC2 — injection pattern detection
 # ---------------------------------------------------------------------------
 
+
 class TestVC2InjectionPatternsLabelPositiveAndBenignNegative:
     """scan_injection_patterns fires on every known pattern; benign text clean."""
 
     @pytest.mark.parametrize("pattern", sofa_search.INJECTION_PATTERNS)
     def test_each_pattern_triggers_label_lowercase(self, pattern: str) -> None:
         import re as _re
+
         # Build a concrete trigger string by substituting the first branch of
         # any alternation and dropping optional groups.
         trigger_text = _re.sub(r"\(([^)]+)\)\?", "", pattern)
         trigger_text = _re.sub(r"\(([^|)]+)\|[^)]+\)", r"\1", trigger_text)
         trigger_text = trigger_text.replace("\\", "")  # unescape re.escape artifacts
-        assert sofa_search.scan_injection_patterns(trigger_text), (
-            f"Pattern {pattern!r} did not fire on trigger {trigger_text!r}"
-        )
+        assert sofa_search.scan_injection_patterns(
+            trigger_text
+        ), f"Pattern {pattern!r} did not fire on trigger {trigger_text!r}"
 
     @pytest.mark.parametrize("pattern", sofa_search.INJECTION_PATTERNS)
     def test_each_pattern_triggers_label_uppercase(self, pattern: str) -> None:
         import re as _re
+
         trigger_text = _re.sub(r"\(([^)]+)\)\?", "", pattern)
         trigger_text = _re.sub(r"\(([^|)]+)\|[^)]+\)", r"\1", trigger_text)
         trigger_text = trigger_text.replace("\\", "")
-        assert sofa_search.scan_injection_patterns(trigger_text.upper()), (
-            f"Pattern {pattern!r} (uppercase) did not fire"
-        )
+        assert sofa_search.scan_injection_patterns(
+            trigger_text.upper()
+        ), f"Pattern {pattern!r} (uppercase) did not fire"
 
     def test_benign_post_no_label(self) -> None:
         benign = (
@@ -331,6 +361,7 @@ class TestVC2InjectionPatternsLabelPositiveAndBenignNegative:
 # ---------------------------------------------------------------------------
 # VC3 — untrusted reference wrapper
 # ---------------------------------------------------------------------------
+
 
 class TestVC3UntrustedReferenceWrapper:
     """Every emitted block contains UNTRUSTED_LABEL and is fenced."""
@@ -361,10 +392,13 @@ class TestVC3UntrustedReferenceWrapper:
 # VC4 — degrade-to-no-op + interactive auth
 # ---------------------------------------------------------------------------
 
+
 class TestVC4EnabledNoCredsNoninteractiveNoop:
     """Enabled + no creds + non-interactive → NOOP_MESSAGE logged; no calls."""
 
-    def test_noop_message_logged(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    def test_noop_message_logged(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         # Write a config with sofa.enabled: true
         map_dir = tmp_path / ".map"
         map_dir.mkdir()
@@ -373,9 +407,13 @@ class TestVC4EnabledNoCredsNoninteractiveNoop:
         fake_client = _make_fake_client(has_key=False)
 
         import logging
-        with caplog.at_level(logging.INFO, logger="sofa_search"), unittest.mock.patch.object(
+
+        with (
+            caplog.at_level(logging.INFO, logger="sofa_search"),
+            unittest.mock.patch.object(
                 sofa_search, "_load_sofa_client", return_value=fake_client
-            ):
+            ),
+        ):
             result = sofa_search.dispatch(
                 "test query",
                 project_dir=tmp_path,
@@ -393,7 +431,9 @@ class TestVC4EnabledNoCredsNoninteractiveNoop:
         (map_dir / "config.yaml").write_text("sofa.enabled: true\n")
 
         onboarding_calls: list[bool] = []
-        fake_client = _make_fake_client(has_key=False, onboarding_called=onboarding_calls)
+        fake_client = _make_fake_client(
+            has_key=False, onboarding_called=onboarding_calls
+        )
 
         with unittest.mock.patch.object(
             sofa_search, "_load_sofa_client", return_value=fake_client
@@ -405,7 +445,9 @@ class TestVC4EnabledNoCredsNoninteractiveNoop:
                 auth_intent=False,
             )
 
-        assert not onboarding_calls, "onboarding must NOT be called in non-interactive no-creds path"
+        assert (
+            not onboarding_calls
+        ), "onboarding must NOT be called in non-interactive no-creds path"
 
     def test_no_exception_on_noop(self, tmp_path: Path) -> None:
         map_dir = tmp_path / ".map"
@@ -451,15 +493,20 @@ class TestVC4InteractiveAuthTriggersOnboarding:
         (map_dir / "config.yaml").write_text("sofa.enabled: true\n")
 
         onboarding_calls: list[bool] = []
-        fake_client = _make_fake_client(has_key=False, onboarding_called=onboarding_calls)
+        fake_client = _make_fake_client(
+            has_key=False, onboarding_called=onboarding_calls
+        )
 
         # dispatch -> _run_onboarding uses input()/print() by default; patch
         # input so the interactive flow runs end-to-end without a tty. Four
         # prompts: browser-login Enter, agent_name, description, persona-skip.
-        with unittest.mock.patch(
-            "builtins.input", side_effect=["", "MyAgent", "a test agent", ""]
-        ), unittest.mock.patch.object(
-            sofa_search, "_load_sofa_client", return_value=fake_client
+        with (
+            unittest.mock.patch(
+                "builtins.input", side_effect=["", "MyAgent", "a test agent", ""]
+            ),
+            unittest.mock.patch.object(
+                sofa_search, "_load_sofa_client", return_value=fake_client
+            ),
         ):
             result = sofa_search.dispatch(
                 "auth",
@@ -469,7 +516,9 @@ class TestVC4InteractiveAuthTriggersOnboarding:
             )
 
         # Routing reached onboarding, and the full flow completed.
-        assert onboarding_calls, "dispatch must route interactive+auth_intent+no-creds to onboarding"
+        assert (
+            onboarding_calls
+        ), "dispatch must route interactive+auth_intent+no-creds to onboarding"
         assert result.get("ok") is True
         assert result.get("onboarding_complete") is True
         # The secret api_key must NEVER appear in the result dict (Actor context).
@@ -516,6 +565,42 @@ class TestRunOnboardingFullFlow:
         assert "register" not in fake_client.calls
         assert "store" not in fake_client.calls
 
+    @pytest.mark.parametrize(
+        "registration_result",
+        [
+            {"ok": True, "agent_id": None, "api_key": "secret"},
+            {"ok": True, "agent_id": "agent", "api_key": None},
+            {"ok": True, "agent_id": 42, "api_key": "secret"},
+            {
+                "ok": True,
+                "agent_id": "agent",
+                "api_key": "secret",
+                "api_key_prefix": [],
+            },
+        ],
+    )
+    def test_malformed_registration_never_reaches_store(
+        self,
+        tmp_path: Path,
+        registration_result: dict[str, Any],
+    ) -> None:
+        fake_client = _make_fake_client(
+            has_key=False,
+            registration_result=registration_result,
+        )
+
+        result = sofa_search._run_onboarding(
+            fake_client,
+            tmp_path,
+            prompt=_scripted_prompt(["", "Ada", "research agent", ""]),
+            notify=_silent_notify,
+        )
+
+        assert result["ok"] is False
+        assert "invalid credentials" in result["error"]
+        assert "secret" not in str(result)
+        assert "store" not in fake_client.calls
+
     def test_base_url_unresolved_returns_error(self, tmp_path: Path) -> None:
         fake_client = _make_fake_client(has_key=False)
         # Force resolve_base_url to fail.
@@ -535,6 +620,7 @@ class TestRunOnboardingFullFlow:
 
     def test_no_auth_code_after_poll_returns_error(self, tmp_path: Path) -> None:
         fake_client = _make_fake_client(has_key=False)
+
         def _pending_poll(*_a: object, **_k: object) -> dict[str, Any]:
             del _a, _k
             return {"ok": True, "state": "pending"}
@@ -554,6 +640,7 @@ class TestRunOnboardingFullFlow:
 # ---------------------------------------------------------------------------
 # VC5 — trust summary + zero posts
 # ---------------------------------------------------------------------------
+
 
 class TestVC5TrustSummaryAndZeroPosts:
     """trust_summary rendered correctly; zero items → ZERO_POSTS_MESSAGE."""
@@ -646,6 +733,7 @@ class TestVC5TrustSummaryAndZeroPosts:
 # Integration — VC4 search-to-block end-to-end mocked (urlopen call_count==0)
 # ---------------------------------------------------------------------------
 
+
 class TestVC4SearchToBlockEndToEndMocked:
     """Fake client returns typed dicts; dispatch emits guarded UNTRUSTED block.
     urllib.request.urlopen must never be called by the formatter path."""
@@ -664,9 +752,12 @@ class TestVC4SearchToBlockEndToEndMocked:
         )
         fake_client = _make_fake_client(has_key=True, search_items=[post])
 
-        with unittest.mock.patch("urllib.request.urlopen") as mock_urlopen, unittest.mock.patch.object(
+        with (
+            unittest.mock.patch("urllib.request.urlopen") as mock_urlopen,
+            unittest.mock.patch.object(
                 sofa_search, "_load_sofa_client", return_value=fake_client
-            ):
+            ),
+        ):
             result = sofa_search.dispatch(
                 "rate limiting",
                 project_dir=tmp_path,
@@ -697,9 +788,10 @@ class TestVC4SearchToBlockEndToEndMocked:
         map_dir.mkdir()
         (map_dir / "config.yaml").write_text("sofa.enabled: false\n")
 
-        with unittest.mock.patch("urllib.request.urlopen") as mock_urlopen, unittest.mock.patch.object(
-                sofa_search, "_load_sofa_client"
-            ) as mock_load:
+        with (
+            unittest.mock.patch("urllib.request.urlopen") as mock_urlopen,
+            unittest.mock.patch.object(sofa_search, "_load_sofa_client") as mock_load,
+        ):
             result = sofa_search.dispatch("anything", project_dir=tmp_path)
 
         assert mock_urlopen.call_count == 0
@@ -712,9 +804,15 @@ class TestVC4SearchToBlockEndToEndMocked:
         map_dir.mkdir()
         (map_dir / "config.yaml").write_text("sofa.enabled: true\n")
 
-        def broken_search(*_args: object, **_kwargs: object) -> tuple[dict[str, Any], str]:
+        def broken_search(
+            *_args: object, **_kwargs: object
+        ) -> tuple[dict[str, Any], str]:
             del _args, _kwargs
-            return {"ok": False, "kind": "timeout", "error": "Request timed out"}, "sess"
+            return {
+                "ok": False,
+                "kind": "timeout",
+                "error": "Request timed out",
+            }, "sess"
 
         fake_client = _make_fake_client(has_key=True)
         fake_client.search_posts = broken_search  # type: ignore[assignment]
@@ -732,6 +830,7 @@ class TestVC4SearchToBlockEndToEndMocked:
 # ---------------------------------------------------------------------------
 # Config reader
 # ---------------------------------------------------------------------------
+
 
 class TestReadSofaEnabled:
     """_read_sofa_enabled parses the flat dotted key correctly."""
@@ -762,9 +861,7 @@ class TestReadSofaEnabled:
     def test_nested_yaml_does_not_match(self, tmp_path: Path) -> None:
         """Nested `sofa:` + `  enabled: true` must NOT match the flat key."""
         (tmp_path / ".map").mkdir()
-        (tmp_path / ".map" / "config.yaml").write_text(
-            "sofa:\n  enabled: true\n"
-        )
+        (tmp_path / ".map" / "config.yaml").write_text("sofa:\n  enabled: true\n")
         # The flat dotted key `sofa.enabled` is absent; nested yaml != our key
         assert sofa_search._read_sofa_enabled(tmp_path) is False
 
@@ -772,6 +869,7 @@ class TestReadSofaEnabled:
 # ---------------------------------------------------------------------------
 # ST-006 — cross-cutting zero-network proofs (AC-6 / AC-10 / HC-6)
 # ---------------------------------------------------------------------------
+
 
 class TestVC6ZeroNetwork:
     """Disabled-default and unauthenticated paths never reach the network."""
@@ -783,9 +881,9 @@ class TestVC6ZeroNetwork:
         from mapify_cli.config.project_config import generate_default_config
 
         default_cfg = generate_default_config()
-        assert "sofa.enabled: true" not in default_cfg, (
-            "default config must not enable SOFA"
-        )
+        assert (
+            "sofa.enabled: true" not in default_cfg
+        ), "default config must not enable SOFA"
 
         # A project seeded with the default config reads as disabled, and no
         # .sofa/ directory is created by reading config.
@@ -803,14 +901,15 @@ class TestVC6ZeroNetwork:
         map_dir.mkdir()
         (map_dir / "config.yaml").write_text("sofa.enabled: false\n")
 
-        with unittest.mock.patch("urllib.request.urlopen") as mock_urlopen, unittest.mock.patch.object(
-                sofa_search, "_load_sofa_client"
-            ) as mock_load:
+        with (
+            unittest.mock.patch("urllib.request.urlopen") as mock_urlopen,
+            unittest.mock.patch.object(sofa_search, "_load_sofa_client") as mock_load,
+        ):
             result = sofa_search.dispatch("any query", project_dir=tmp_path)
 
-        assert mock_urlopen.call_count == 0, (
-            f"urlopen called {mock_urlopen.call_count} time(s) on the disabled path"
-        )
+        assert (
+            mock_urlopen.call_count == 0
+        ), f"urlopen called {mock_urlopen.call_count} time(s) on the disabled path"
         mock_load.assert_not_called()
         assert result.get("noop") is True
 
@@ -818,6 +917,7 @@ class TestVC6ZeroNetwork:
         """VC3 [AC-10][HC-6]: a urlopen guard that RAISES on any call proves the
         disabled/default paths reach no network; plus a source-scan guard that
         every HTTP-touching SOFA test file patches urllib.request.urlopen."""
+
         def _guard(*_args: object, **_kwargs: object) -> None:
             del _args, _kwargs
             raise AssertionError("live network blocked: urlopen called in tests")
@@ -839,9 +939,9 @@ class TestVC6ZeroNetwork:
         suite = _REPO_ROOT / "tests"
         for name in ("test_sofa_client.py", "test_sofa_search.py"):
             src = (suite / name).read_text(encoding="utf-8")
-            assert 'urllib.request.urlopen' in src, (
-                f"{name} does not reference the urllib.request.urlopen patch seam"
-            )
+            assert (
+                "urllib.request.urlopen" in src
+            ), f"{name} does not reference the urllib.request.urlopen patch seam"
 
 
 class TestRenderPostBlockTags:

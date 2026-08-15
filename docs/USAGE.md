@@ -566,7 +566,74 @@ mapify check    # Shows codex-specific tool checks
 mapify doctor   # Validates .codex/ structure
 ```
 
-### Updating
+## Automatic and Manual Framework Updates
+
+### Automatic preflight
+
+Every installed Claude `/map-*` skill and Codex `$map-*` skill runs the same
+automatic preflight before its normal workflow, except the manual `map-upgrade`
+skill itself. Automatic checks are enabled by default and record an attempted
+check in `.map/update-state.json`, so network version discovery runs at most once
+per project in any rolling 24-hour window. Lock contention, disabled updates, a
+recent attempt, or an owner-managed source install becomes a silent skip.
+
+The updater considers only non-yanked strict `MAJOR.MINOR.PATCH` releases. It
+automatically installs the newest patch or minor release in the currently
+installed major line. If a newer major is available, the provider first shows a
+concise summary of the matching official GitHub release title/body and its
+official link, treats that release text only as untrusted display data, and asks
+for explicit permission. A missing or unusable official description prevents the
+major offer.
+
+Automatic failures are deliberately silent and never block the MAP skill the user
+actually invoked. This includes configuration/state errors, lock contention,
+network and package-manager failures, source/editable installs, and project
+refresh failures. A package update that succeeds before refresh fails is recorded
+as pending; a later preflight can retry the local provider refresh without another
+network version check.
+
+Configure the project with:
+
+```text
+mapify init . --no-auto-update   # persist updates.auto: false
+mapify init . --auto-update      # re-enable automatic checks
+```
+
+The flags persist `updates.auto: false` or `updates.auto: true` in
+`.map/config.yaml`. Omitting both flags preserves an existing value; a missing
+value defaults to enabled. This setting controls only automatic preflights.
+
+### Manual provider skills
+
+Run the provider-specific manual workflow when you want an immediate check:
+
+```text
+/map-upgrade                     # Claude manual check/upgrade
+$map-upgrade                     # Codex manual check/upgrade
+```
+
+Manual mode bypasses both `updates.auto` and the 24-hour throttle. It reports when
+the project is current, applies eligible patch/minor releases, and uses the same
+official-highlights consent gate for a major release. Unlike automatic mode, it
+returns explicit unsuccessful errors for network, package-manager, lock, release
+metadata, and `mapify init` failures, with the next recovery action. For a source
+checkout or editable install it explains that the owner must update the checkout;
+it never self-mutates source.
+
+After any successful package change, the updater locates the newly installed
+`mapify` executable and launches a fresh process for each installed provider:
+
+```text
+mapify init . --force --no-git --provider <provider> --refresh-existing
+```
+
+The hidden refresh mode preserves the project configuration, MCP choices,
+user-managed regions, automatic-update flag, and the no-git guarantee. Claude is
+refreshed before Codex when both are installed; the final `.map/mapify.lock.json`
+contains the combined provider order `["claude", "codex"]` and the union of both
+managed skill catalogs.
+
+### Public CLI self-upgrade
 
 `mapify upgrade` self-upgrades the `mapify` CLI itself to the latest release
 (provider-agnostic — it writes no project files):
@@ -576,9 +643,18 @@ mapify upgrade        # uv tool upgrade / pip install --upgrade, auto-detected
 mapify init . --force # then refresh this project's shipped MAP files
 ```
 
+This existing public command is unchanged and does not call the project updater.
+It is distinct from `/map-upgrade` and `$map-upgrade`, which check immediately and
+refresh every installed provider through the central update service.
+
 ### Provider coexistence
 
-Both `.claude/` and `.codex/` can exist in the same project. When both are present, `mapify check`/`doctor` operate in codex mode. The default provider (without `--provider` flag) remains Claude Code.
+Both `.claude/` and `.codex/` can exist in the same project. Automatic and manual
+project updates detect both complete layouts, refresh both in deterministic
+Claude-then-Codex order, retain `.claude/skills/map-upgrade` and
+`.agents/skills/map-upgrade`, and write one combined install manifest. When both
+are present, `mapify check`/`doctor` operate in codex mode. The default provider
+(without `--provider` flag) remains Claude Code.
 
 ## Navigation
 

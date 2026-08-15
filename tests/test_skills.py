@@ -57,6 +57,11 @@ NEGATIVE_TRIGGER_FIXTURES = {
 
 SUPPORTED_SKILL_CLASSES = {"reference", "task", "hybrid"}
 
+# Task 8 requires this provider command's exact shared frontmatter description.
+# Its manual-only scope is enforced by disable-model-invocation + skill-rules,
+# so the generic Claude negative-trigger convention does not apply here.
+NEGATIVE_TRIGGER_DESCRIPTION_EXEMPT_SKILLS = {"map-upgrade"}
+
 WORKFLOW_EFFORT_PROFILES = {
     "map-fast": "low/direct",
     "map-check": "low/direct",
@@ -198,6 +203,61 @@ EVIDENCE_FIRST_JSON_PATTERN = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+AUTO_UPDATE_PREFLIGHT_INCLUDE = (
+    '[% include "_partials/auto-update-preflight.md.jinja" %]'
+)
+MANUAL_UPGRADE_FLOW_INCLUDE = '[% include "_partials/manual-upgrade-flow.md.jinja" %]'
+CLAUDE_AUTO_UPDATE_SKILLS = {
+    "map-architecture",
+    "map-auto",
+    "map-check",
+    "map-debug",
+    "map-efficient",
+    "map-explain",
+    "map-fast",
+    "map-learn",
+    "map-memory-now",
+    "map-plan",
+    "map-prd-review",
+    "map-release",
+    "map-resume",
+    "map-review",
+    "map-skill-eval",
+    "map-so-search",
+    "map-state",
+    "map-task",
+    "map-tdd",
+    "map-tokenreport",
+    "map-understand",
+    "map-wayfind",
+}
+CODEX_AUTO_UPDATE_SKILLS = {
+    "map-check",
+    "map-efficient",
+    "map-explain",
+    "map-fast",
+    "map-plan",
+    "map-review",
+    "map-understand",
+}
+RENDERED_AUTO_UPDATE_SKILL_ROOTS = [
+    (Path(".claude/skills"), CLAUDE_AUTO_UPDATE_SKILLS),
+    (Path(".agents/skills"), CODEX_AUTO_UPDATE_SKILLS),
+    (Path("src/mapify_cli/templates/skills"), CLAUDE_AUTO_UPDATE_SKILLS),
+    (Path("src/mapify_cli/templates/codex/skills"), CODEX_AUTO_UPDATE_SKILLS),
+]
+
+
+def _assert_rendered_preflight_placement(content: str, label: str) -> None:
+    """Assert that a rendered normal skill starts with exactly one preflight."""
+    _frontmatter, separator, body = content.partition("\n---\n")
+    assert separator, f"{label} has no closing frontmatter"
+    assert body.startswith("## MAP update preflight\n"), (
+        f"{label} must render the update preflight immediately after "
+        "closing frontmatter"
+    )
+    assert content.count("mapify _update --mode automatic --project .") == 1, label
+
 
 def _json_output_contract_contexts(content: str) -> list[tuple[int, str]]:
     lines = content.splitlines()
@@ -239,6 +299,172 @@ def _shell_invocations(content: str, subcommand: str) -> list[list[str]]:
         invocations.append(tokens[tokens.index(subcommand) + 1 :])
         index += 1
     return invocations
+
+
+class TestProviderUpdateSkills:
+    """Provider skills share one automatic preflight and one manual flow."""
+
+    @pytest.fixture
+    def project_root(self) -> Path:
+        return Path(__file__).parent.parent
+
+    @pytest.mark.parametrize(
+        ("relative_root", "expected_skills"),
+        [
+            (Path("skills"), CLAUDE_AUTO_UPDATE_SKILLS),
+            (Path("codex/skills"), CODEX_AUTO_UPDATE_SKILLS),
+        ],
+    )
+    def test_every_existing_skill_source_includes_preflight_immediately_after_frontmatter(
+        self,
+        project_root: Path,
+        relative_root: Path,
+        expected_skills: set[str],
+    ) -> None:
+        source_root = project_root / "src/mapify_cli/templates_src" / relative_root
+        sources = {
+            path.parent.name: path
+            for path in source_root.glob("map-*/SKILL.md.jinja")
+            if path.parent.name != "map-upgrade"
+        }
+        assert set(sources) == expected_skills
+
+        for skill_name, source in sources.items():
+            content = source.read_text(encoding="utf-8")
+            assert content.count(AUTO_UPDATE_PREFLIGHT_INCLUDE) == 1, skill_name
+            _frontmatter, separator, body = content.partition("\n---\n")
+            assert separator, f"{source} has no closing frontmatter"
+            assert body.startswith(f"{AUTO_UPDATE_PREFLIGHT_INCLUDE}\n"), (
+                f"{source} must include the update preflight immediately after "
+                "closing frontmatter"
+            )
+
+    @pytest.mark.parametrize(
+        ("relative_root", "expected_skills"),
+        RENDERED_AUTO_UPDATE_SKILL_ROOTS,
+    )
+    def test_every_rendered_normal_map_skill_starts_with_exactly_one_update_preflight(
+        self,
+        project_root: Path,
+        relative_root: Path,
+        expected_skills: set[str],
+    ) -> None:
+        skill_root = project_root / relative_root
+        skills = {
+            path.parent.name: path
+            for path in skill_root.glob("map-*/SKILL.md")
+            if path.parent.name != "map-upgrade"
+        }
+        assert set(skills) == expected_skills
+
+        for skill in skills.values():
+            content = skill.read_text(encoding="utf-8")
+            _assert_rendered_preflight_placement(content, str(skill))
+            assert "Never report automatic updater errors." in content
+            assert "untrusted quoted release notes" in content
+            assert (
+                "mapify _update --mode manual --project . --approve-major "
+                "<validated major.version>"
+            ) in content
+
+    def test_rendered_preflight_placement_guard_rejects_moved_heading(self) -> None:
+        misplaced = (
+            "---\n"
+            "name: map-check\n"
+            "description: fixture\n"
+            "---\n"
+            "# Map check body started first\n\n"
+            "## MAP update preflight\n\n"
+            "Run `mapify _update --mode automatic --project .`.\n"
+        )
+
+        with pytest.raises(
+            AssertionError,
+            match="must render the update preflight immediately after closing frontmatter",
+        ):
+            _assert_rendered_preflight_placement(misplaced, "misplaced fixture")
+
+    def test_map_upgrade_sources_are_frontmatter_plus_shared_manual_include(
+        self, project_root: Path
+    ) -> None:
+        templates_src = project_root / "src/mapify_cli/templates_src"
+        description = (
+            "Manually check and upgrade the MAP Framework for this project. "
+            "Use when the user asks to update, upgrade, or check the installed "
+            "MAP version."
+        )
+        claude = templates_src / "skills/map-upgrade/SKILL.md.jinja"
+        codex = templates_src / "codex/skills/map-upgrade/SKILL.md.jinja"
+
+        assert claude.read_text(encoding="utf-8") == (
+            "---\n"
+            "name: map-upgrade\n"
+            f'description: "{description}"\n'
+            "effort: low\n"
+            "disable-model-invocation: true\n"
+            'argument-hint: "[no arguments]"\n'
+            "---\n"
+            f"{MANUAL_UPGRADE_FLOW_INCLUDE}\n"
+        )
+        assert codex.read_text(encoding="utf-8") == (
+            "---\n"
+            "name: map-upgrade\n"
+            f'description: "{description}"\n'
+            "---\n"
+            f"{MANUAL_UPGRADE_FLOW_INCLUDE}\n"
+        )
+
+    def test_rendered_map_upgrade_skills_share_complete_manual_status_flow(
+        self, project_root: Path
+    ) -> None:
+        claude = project_root / ".claude/skills/map-upgrade/SKILL.md"
+        codex = project_root / ".agents/skills/map-upgrade/SKILL.md"
+        assert claude.is_file()
+        assert codex.is_file()
+
+        claude_body = claude.read_text(encoding="utf-8").partition("\n---\n")[2]
+        codex_body = codex.read_text(encoding="utf-8").partition("\n---\n")[2]
+        assert claude_body == codex_body
+        assert claude_body.endswith("\n")
+        assert not claude_body.endswith("\n\n")
+        assert claude_body.count("## Manual MAP upgrade flow") == 1
+        assert "mapify _update --mode automatic --project ." not in claude_body
+        assert "mapify _update --mode manual --project ." in claude_body
+        for status in ("current", "skipped", "updated", "major_available", "error"):
+            assert f"`{status}`" in claude_body
+        assert "nonzero" in claude_body
+        assert "untrusted quoted release notes" in claude_body
+        assert "ask permission" in claude_body
+        assert (
+            "mapify _update --mode manual --project . --approve-major "
+            "<validated major.version>"
+        ) in claude_body
+        assert "re-read this installed `SKILL.md`" in claude_body
+        assert "Do not claim success" in claude_body
+
+    def test_map_upgrade_catalog_entry_is_manual_task(self, project_root: Path) -> None:
+        rules = json.loads(
+            (project_root / ".claude/skills/skill-rules.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        rule = rules["skills"]["map-upgrade"]
+        assert rule["type"] == "manual"
+        assert rule["enforcement"] == "manual"
+        assert rule["skillClass"] == "task"
+        assert {"map-upgrade", "upgrade MAP", "update framework"} <= set(
+            rule["promptTriggers"]["keywords"]
+        )
+        assert len(rule["promptTriggers"]["intentPatterns"]) >= 2
+
+    def test_update_state_and_locks_are_ignored(self, project_root: Path) -> None:
+        gitignore = (project_root / "src/mapify_cli/templates/.gitignore").read_text(
+            encoding="utf-8"
+        )
+        assert ".map/update-state.json" in gitignore.splitlines()
+        assert ".map/update.lock" in gitignore.splitlines()
+        assert ".map/provider-refresh.lock" in gitignore.splitlines()
+        assert ".map/installer.lock" in gitignore.splitlines()
 
 
 class TestSkillStructure:
@@ -380,6 +606,8 @@ class TestSkillStructure:
             r"[Nn]ot for",
         ]
         for folder in skill_folders:
+            if folder in NEGATIVE_TRIGGER_DESCRIPTION_EXEMPT_SKILLS:
+                continue
             skill_file = skills_dir / folder / "SKILL.md"
             fm = self._parse_frontmatter(skill_file)
             desc = fm.get("description", "")
@@ -493,15 +721,14 @@ class TestSkillStructure:
                     "provider prompts do not overthink or over-parallelize."
                 )
                 assert frontmatter.get("effort") == expected_effort, (
-                    f"{skill_file} should set Claude Code effort: "
-                    f"{expected_effort}"
+                    f"{skill_file} should set Claude Code effort: " f"{expected_effort}"
                 )
-                assert f"thinking_policy: {profile}" in content, (
-                    f"{skill_file} should declare thinking_policy: {profile}"
-                )
-                assert "parallel_tool_policy:" in content, (
-                    f"{skill_file} should declare a parallel_tool_policy."
-                )
+                assert (
+                    f"thinking_policy: {profile}" in content
+                ), f"{skill_file} should declare thinking_policy: {profile}"
+                assert (
+                    "parallel_tool_policy:" in content
+                ), f"{skill_file} should declare a parallel_tool_policy."
 
     def test_map_resume_keeps_recovery_skill_body_compact(
         self, skills_dir, template_skills_dir
@@ -516,12 +743,12 @@ class TestSkillStructure:
                 f"{skill_file} should keep the active recovery flow compact; "
                 "move low-frequency examples or troubleshooting to supporting files."
             )
-            assert "[resume-reference.md](resume-reference.md)" in content, (
-                f"{skill_file} should point to the bundled supporting reference."
-            )
-            assert reference_file.exists(), (
-                f"{reference_file} should hold detailed resume examples and troubleshooting."
-            )
+            assert (
+                "[resume-reference.md](resume-reference.md)" in content
+            ), f"{skill_file} should point to the bundled supporting reference."
+            assert (
+                reference_file.exists()
+            ), f"{reference_file} should hold detailed resume examples and troubleshooting."
             reference = reference_file.read_text()
             assert "## Examples" in reference
             assert "## Troubleshooting" in reference
@@ -559,15 +786,16 @@ class TestSkillStructure:
                     f"(budget {budget} lines); move examples, rationale, and "
                     "troubleshooting into supporting files."
                 )
-                assert f"[{reference_name}]({reference_name})" in content, (
-                    f"{skill_file} should point to its bundled supporting reference."
-                )
-                assert "supporting files are not assumed to be in context automatically" in content, (
-                    f"{skill_file} should make supporting-reference loading explicit."
-                )
-                assert reference_file.exists(), (
-                    f"{reference_file} should hold low-frequency workflow material."
-                )
+                assert (
+                    f"[{reference_name}]({reference_name})" in content
+                ), f"{skill_file} should point to its bundled supporting reference."
+                assert (
+                    "supporting files are not assumed to be in context automatically"
+                    in content
+                ), f"{skill_file} should make supporting-reference loading explicit."
+                assert (
+                    reference_file.exists()
+                ), f"{reference_file} should hold low-frequency workflow material."
                 reference = reference_file.read_text(encoding="utf-8")
                 assert "## Examples" in reference
                 assert "## Troubleshooting" in reference
@@ -646,37 +874,40 @@ class TestSkillStructure:
                     "write-capable instructions."
                 )
                 for phrase in MUTATION_BOUNDARY_REQUIRED_PHRASES:
-                    assert phrase in content, (
-                        f"{surface} must include constraint-first guardrail: {phrase}"
-                    )
+                    assert (
+                        phrase in content
+                    ), f"{surface} must include constraint-first guardrail: {phrase}"
 
                 constraint_index = content.index("## Mutation Boundary Constraints")
                 directive_match = MUTATION_DIRECTIVE_PATTERN.search(content)
-                assert directive_match is None or constraint_index < directive_match.start(), (
+                assert (
+                    directive_match is None
+                    or constraint_index < directive_match.start()
+                ), (
                     f"{surface} should present scope/dependency constraints before "
                     "broad write directives."
                 )
 
-    def test_write_capable_codex_surfaces_have_mutation_boundaries(
-        self, project_root
-    ):
+    def test_write_capable_codex_surfaces_have_mutation_boundaries(self, project_root):
         """Installed Codex scaffolds need the same unrelated-edit/dependency guardrail."""
         codex_root = project_root / "src" / "mapify_cli" / "templates" / "codex"
         for relative_path in CODEX_MUTATION_BOUNDARY_SURFACES:
             surface = codex_root / relative_path
             content = surface.read_text(encoding="utf-8")
 
-            assert "## Mutation Boundary Constraints" in content, (
-                f"{surface} must declare mutation boundary constraints."
-            )
+            assert (
+                "## Mutation Boundary Constraints" in content
+            ), f"{surface} must declare mutation boundary constraints."
             for phrase in MUTATION_BOUNDARY_REQUIRED_PHRASES:
-                assert phrase in content, (
-                    f"{surface} must include constraint-first guardrail: {phrase}"
-                )
+                assert (
+                    phrase in content
+                ), f"{surface} must include constraint-first guardrail: {phrase}"
 
             constraint_index = content.index("## Mutation Boundary Constraints")
             directive_match = MUTATION_DIRECTIVE_PATTERN.search(content)
-            assert directive_match is None or constraint_index < directive_match.start(), (
+            assert (
+                directive_match is None or constraint_index < directive_match.start()
+            ), (
                 f"{surface} should present scope/dependency constraints before "
                 "broad write directives."
             )
@@ -736,9 +967,9 @@ class TestSkillStructure:
         runtimeEffects EXACTLY {network-http-read, filesystem-sofa-credentials}."""
         entry = skill_rules.get("skills", {}).get("map-so-search")
         assert entry is not None, "map-so-search missing from skill-rules.json"
-        assert entry.get("skillClass") == "hybrid", (
-            f"map-so-search skillClass must be 'hybrid', got {entry.get('skillClass')!r}"
-        )
+        assert (
+            entry.get("skillClass") == "hybrid"
+        ), f"map-so-search skillClass must be 'hybrid', got {entry.get('skillClass')!r}"
         assert sorted(entry.get("runtimeEffects", [])) == [
             "filesystem-sofa-credentials",
             "network-http-read",
@@ -855,9 +1086,9 @@ class TestSkillStructure:
                 f"Hybrid skill '{name}' must list runtimeEffects that distinguish "
                 "operational side effects from reference guidance."
             )
-            assert all(isinstance(effect, str) and effect for effect in effects), (
-                f"Hybrid skill '{name}' has invalid runtimeEffects entries."
-            )
+            assert all(
+                isinstance(effect, str) and effect for effect in effects
+            ), f"Hybrid skill '{name}' has invalid runtimeEffects entries."
 
     def test_manual_skill_rules_match_frontmatter(
         self, skills_dir, skill_folders, skill_rules
@@ -908,9 +1139,7 @@ class TestSkillStructure:
                 "in at least one intent pattern."
             )
 
-    def test_selected_skills_do_not_match_negative_trigger_fixtures(
-        self, skill_rules
-    ):
+    def test_selected_skills_do_not_match_negative_trigger_fixtures(self, skill_rules):
         """Representative unrelated utterances should not trigger noisy skills."""
 
         def matches_rule(rule, utterance: str) -> bool:
@@ -1029,13 +1258,11 @@ class TestSkillStructure:
             return {
                 path.relative_to(root): path
                 for path in root.rglob("*")
-                if path.is_file()
-                and path.name not in {"SKILL.md", "skill-rules.json"}
+                if path.is_file() and path.name not in {"SKILL.md", "skill-rules.json"}
                 # Python bytecode caches are generated artifacts (a test that
                 # imports a rendered skill script writes them into .claude/),
                 # never shipped supporting files — exclude them from the sync.
-                and "__pycache__" not in path.parts
-                and path.suffix != ".pyc"
+                and "__pycache__" not in path.parts and path.suffix != ".pyc"
             }
 
         source_files = supporting_files(skills_dir)
@@ -1043,13 +1270,15 @@ class TestSkillStructure:
         missing = sorted(source_files.keys() - target_files.keys())
         extra = sorted(target_files.keys() - source_files.keys())
 
-        assert not missing, (
-            "Skill supporting files missing from templates: "
-            + ", ".join(str(path) for path in missing)
+        assert (
+            not missing
+        ), "Skill supporting files missing from templates: " + ", ".join(
+            str(path) for path in missing
         )
-        assert not extra, (
-            "Skill supporting files present only in templates: "
-            + ", ".join(str(path) for path in extra)
+        assert (
+            not extra
+        ), "Skill supporting files present only in templates: " + ", ".join(
+            str(path) for path in extra
         )
 
         for rel_path, source in source_files.items():
@@ -1069,7 +1298,11 @@ class TestSkillStructure:
                 continue
             for script in scripts_dir.iterdir():
                 # Check file has executable permission or is a python script
-                if script.is_file() and script.suffix in (".sh", ".py") and script.suffix == ".sh":
+                if (
+                    script.is_file()
+                    and script.suffix in (".sh", ".py")
+                    and script.suffix == ".sh"
+                ):
                     import os
 
                     assert os.access(script, os.X_OK), (
@@ -1260,9 +1493,9 @@ class TestLightweightWorkflowSkillContracts:
     def _section(self, content: str, start_heading: str, next_heading: str) -> str:
         assert start_heading in content, f"Missing section heading: {start_heading}"
         start = content.index(start_heading)
-        assert next_heading in content[start:], (
-            f"Missing section end marker after {start_heading}: {next_heading}"
-        )
+        assert (
+            next_heading in content[start:]
+        ), f"Missing section end marker after {start_heading}: {next_heading}"
         end = content.index(next_heading, start)
         return content[start:end]
 
@@ -1328,13 +1561,13 @@ class TestPromptToneCalibration:
         return Path(__file__).parent.parent
 
     @pytest.mark.parametrize("skills_root", PROMPT_TONE_SKILL_ROOTS)
-    @pytest.mark.parametrize("skill_name", sorted(WORKFLOW_EFFORT_PROFILES))
+    @pytest.mark.parametrize(
+        "skill_name",
+        sorted(set(WORKFLOW_EFFORT_PROFILES) - PROMPT_TONE_EXEMPT_SKILLS),
+    )
     def test_non_release_skills_avoid_blanket_prohibition_blocks(
         self, project_root, skill_name, skills_root
     ):
-        if skill_name in PROMPT_TONE_EXEMPT_SKILLS:
-            pytest.skip("Release keeps explicit hard-stop language for tag/PyPI safety")
-
         skill_md = project_root / skills_root / skill_name / "SKILL.md"
         content = skill_md.read_text(encoding="utf-8")
 
@@ -1359,14 +1592,24 @@ class TestPromptToneCalibration:
         assert "Do not" in scope_section
         assert any(
             marker in scope_section
-            for marker in ("switch to", "hand off", "current checkpoint", "selected subtask")
+            for marker in (
+                "switch to",
+                "hand off",
+                "current checkpoint",
+                "selected subtask",
+            )
         ), f"{skill_name} scope clause should name the correct off-ramp or boundary"
 
 
 class TestXMLPromptEnvelopeContracts:
     """Regression tests for long-context MAP subagent prompt structure."""
 
-    XML_ENVELOPE_SKILLS: ClassVar[list] = ["map-plan", "map-efficient", "map-debug", "map-review"]
+    XML_ENVELOPE_SKILLS: ClassVar[list] = [
+        "map-plan",
+        "map-efficient",
+        "map-debug",
+        "map-review",
+    ]
 
     def _map_review_prompt_source(self, project_root, skills_root):
         if str(skills_root).startswith(".claude"):
@@ -1423,18 +1666,24 @@ class TestXMLPromptEnvelopeContracts:
     ):
         skill_md = project_root / skills_root / "map-review" / "SKILL.md"
         content = skill_md.read_text(encoding="utf-8")
-        launch_section = content.split("### Step A.2: Launch all parallel calls", maxsplit=1)[1]
+        launch_section = content.split(
+            "### Step A.2: Launch all parallel calls", maxsplit=1
+        )[1]
         launch_section = launch_section.split("### Hard Stop Check", maxsplit=1)[0]
         prompt_source = self._map_review_prompt_source(
             project_root, skills_root
         ).read_text(encoding="utf-8")
 
         assert "build_review_prompts" in launch_section
-        assert launch_section.index("build_review_prompts") < launch_section.index("Task(")
+        assert launch_section.index("build_review_prompts") < launch_section.index(
+            "Task("
+        )
         assert prompt_source.count('"subagent_type"') >= 3
         assert "priority='primary'" in prompt_source
         assert "<workflow_policy>" in prompt_source
-        assert prompt_source.index("<documents>") < prompt_source.index("<instructions>")
+        assert prompt_source.index("<documents>") < prompt_source.index(
+            "<instructions>"
+        )
 
     @pytest.mark.parametrize("skills_root", PROMPT_TONE_SKILL_ROOTS)
     def test_map_efficient_actor_and_monitor_put_artifacts_before_task(
@@ -1468,12 +1717,7 @@ class TestXMLPromptEnvelopeContracts:
         import sys
 
         scripts_path = (
-            project_root
-            / "src"
-            / "mapify_cli"
-            / "templates"
-            / "map"
-            / "scripts"
+            project_root / "src" / "mapify_cli" / "templates" / "map" / "scripts"
         )
         if str(scripts_path) not in sys.path:
             sys.path.insert(0, str(scripts_path))
@@ -1679,13 +1923,19 @@ class TestRunHealthCloseoutWiring:
         # require the status variable rather than a hardcoded literal in either form.
         token_gap = r"\s+\\?\s*"
         assert re.search(
-            "write_run_health_report" + token_gap + re.escape(skill_name)
-            + token_gap + r'"\$RUN_HEALTH_STATUS"',
+            "write_run_health_report"
+            + token_gap
+            + re.escape(skill_name)
+            + token_gap
+            + r'"\$RUN_HEALTH_STATUS"',
             content,
         ), f"{skill_name} must invoke write_run_health_report with $RUN_HEALTH_STATUS"
         assert not re.search(
-            "write_run_health_report" + token_gap + re.escape(skill_name)
-            + token_gap + r"""["']?(?:complete|pending|blocked|won't_do|superseded)\b""",
+            "write_run_health_report"
+            + token_gap
+            + re.escape(skill_name)
+            + token_gap
+            + r"""["']?(?:complete|pending|blocked|won't_do|superseded)\b""",
             content,
         ), f"{skill_name} must not hardcode a literal status into write_run_health_report"
         assert "run_health_report.json" in content
@@ -1953,9 +2203,9 @@ class TestMapReviewSkillBundleWiring:
 
     def test_map_review_skill_invokes_create_review_bundle(self, skill_md):
         """create_review_bundle must appear in SKILL.md before the first Task( call (AC-5)."""
-        assert "create_review_bundle" in skill_md, (
-            "map-review/SKILL.md does not reference create_review_bundle"
-        )
+        assert (
+            "create_review_bundle" in skill_md
+        ), "map-review/SKILL.md does not reference create_review_bundle"
         bundle_pos = skill_md.index("create_review_bundle")
         task_pos = skill_md.index("Task(")
         assert bundle_pos < task_pos, (
@@ -1965,9 +2215,9 @@ class TestMapReviewSkillBundleWiring:
 
     def test_map_review_skill_builds_budgeted_prompts_before_agents(self, skill_md):
         """Review fan-out must use budgeted prompts before launching Task calls."""
-        assert "build_review_prompts" in skill_md, (
-            "map-review/SKILL.md must build bounded reviewer prompts"
-        )
+        assert (
+            "build_review_prompts" in skill_md
+        ), "map-review/SKILL.md must build bounded reviewer prompts"
         prompt_pos = skill_md.index("build_review_prompts")
         task_pos = skill_md.index("Task(")
         assert prompt_pos < task_pos, (
@@ -1978,29 +2228,31 @@ class TestMapReviewSkillBundleWiring:
         assert "Review Prompt Budget" in skill_md
         assert "clips lower-priority raw diff" in skill_md
 
-    def test_map_review_skill_references_bundle_artifacts_in_agent_prompts(self, skill_md):
+    def test_map_review_skill_references_bundle_artifacts_in_agent_prompts(
+        self, skill_md
+    ):
         """Agent prompts must reference both review-bundle.json and review-bundle.md (AC-5)."""
-        assert "review-bundle.json" in skill_md, (
-            "map-review/SKILL.md does not reference review-bundle.json in agent prompts"
-        )
-        assert "review-bundle.md" in skill_md, (
-            "map-review/SKILL.md does not reference review-bundle.md in agent prompts"
-        )
+        assert (
+            "review-bundle.json" in skill_md
+        ), "map-review/SKILL.md does not reference review-bundle.json in agent prompts"
+        assert (
+            "review-bundle.md" in skill_md
+        ), "map-review/SKILL.md does not reference review-bundle.md in agent prompts"
 
     def test_map_review_skill_preserves_handoff_flows(self, skill_md):
         """Existing review gate / active issues / PR draft / learning handoff flows must remain (INV-7)."""
-        assert "write_stage_gate" in skill_md, (
-            "map-review/SKILL.md is missing write_stage_gate — review gate flow was removed"
-        )
-        assert "active-issues" in skill_md, (
-            "map-review/SKILL.md is missing active-issues reference — active issues flow was removed"
-        )
-        assert "pr-draft" in skill_md, (
-            "map-review/SKILL.md is missing pr-draft reference — PR draft flow was removed"
-        )
-        assert "learning-handoff" in skill_md, (
-            "map-review/SKILL.md is missing learning-handoff reference — learning handoff flow was removed"
-        )
+        assert (
+            "write_stage_gate" in skill_md
+        ), "map-review/SKILL.md is missing write_stage_gate — review gate flow was removed"
+        assert (
+            "active-issues" in skill_md
+        ), "map-review/SKILL.md is missing active-issues reference — active issues flow was removed"
+        assert (
+            "pr-draft" in skill_md
+        ), "map-review/SKILL.md is missing pr-draft reference — PR draft flow was removed"
+        assert (
+            "learning-handoff" in skill_md
+        ), "map-review/SKILL.md is missing learning-handoff reference — learning handoff flow was removed"
 
     def test_map_review_skill_stage_gate_calls_use_consistent_arg_positions(
         self, skill_md
@@ -2020,28 +2272,29 @@ class TestMapReviewSkillBundleWiring:
 
     def test_map_review_skill_documents_verdict_normalization(self, skill_md):
         """Regression #388: SKILL.md must state how PROCEED/REVISE/BLOCK map to gates."""
-        assert "needs-revision" in skill_md, (
-            "map-review/SKILL.md must document the runner's gate verdict spellings"
-        )
+        assert (
+            "needs-revision" in skill_md
+        ), "map-review/SKILL.md must document the runner's gate verdict spellings"
 
     def test_map_review_skill_documents_detached_flag(self, skill_md):
         """AC-6 part 1: --detached flag must be documented in SKILL.md."""
-        assert "--detached" in skill_md, (
-            "map-review/SKILL.md does not document the --detached flag (AC-6)"
-        )
+        assert (
+            "--detached" in skill_md
+        ), "map-review/SKILL.md does not document the --detached flag (AC-6)"
 
     def test_map_review_skill_documents_no_source_mutation(self, skill_md):
         """INV-6: SKILL.md must state that the source branch is not mutated."""
         lower = skill_md.lower()
-        assert "does not mutate" in lower or "not mutate the source branch" in lower or (
-            "never mutated" in lower
-        ), (
-            "map-review/SKILL.md must state that the source branch is never mutated (INV-6)"
-        )
+        assert (
+            "does not mutate" in lower
+            or "not mutate the source branch" in lower
+            or ("never mutated" in lower)
+        ), "map-review/SKILL.md must state that the source branch is never mutated (INV-6)"
 
     def test_map_review_skill_docs_mention_bundle_in_user_facing_files(self):
         """AC-8: README.md, docs/USAGE.md, and docs/ARCHITECTURE.md must each contain
-        the literal string 'review-bundle.json' so the review contract is publicly documented."""
+        the literal string 'review-bundle.json' so the review contract is publicly documented.
+        """
         project_root = Path(__file__).parent.parent
         files_to_check = [
             project_root / "README.md",
@@ -2162,54 +2415,57 @@ class TestMapReviewSkillOrderingWiring:
         hint_match = re.search(r'^argument-hint:\s*"([^"]+)"', skill_md, re.MULTILINE)
         assert hint_match, "argument-hint field not found in frontmatter"
         hint = hint_match.group(1)
-        for flag in ("--reverse-sections", "--shuffle-sections", "--seed", "--compare-orderings"):
-            assert flag in hint, (
-                f"argument-hint missing '{flag}' (AC-9). Current hint: {hint!r}"
-            )
+        for flag in (
+            "--reverse-sections",
+            "--shuffle-sections",
+            "--seed",
+            "--compare-orderings",
+        ):
+            assert (
+                flag in hint
+            ), f"argument-hint missing '{flag}' (AC-9). Current hint: {hint!r}"
 
     def test_vc9_step0_parses_reverse_sections(self, skill_md):
         """AC-9: Step 0 must contain bash parsing block for --reverse-sections."""
-        assert "--reverse-sections" in skill_md, (
-            "Step 0 does not parse --reverse-sections flag (AC-9)"
-        )
-        assert "REVERSE_FLAG" in skill_md, (
-            "Step 0 does not set REVERSE_FLAG variable for --reverse-sections (AC-9)"
-        )
+        assert (
+            "--reverse-sections" in skill_md
+        ), "Step 0 does not parse --reverse-sections flag (AC-9)"
+        assert (
+            "REVERSE_FLAG" in skill_md
+        ), "Step 0 does not set REVERSE_FLAG variable for --reverse-sections (AC-9)"
 
     def test_vc9_step0_parses_shuffle_sections(self, skill_md):
         """AC-9: Step 0 must contain bash parsing block for --shuffle-sections."""
-        assert "--shuffle-sections" in skill_md, (
-            "Step 0 does not parse --shuffle-sections flag (AC-9)"
-        )
-        assert "SHUFFLE_FLAG" in skill_md, (
-            "Step 0 does not set SHUFFLE_FLAG variable for --shuffle-sections (AC-9)"
-        )
+        assert (
+            "--shuffle-sections" in skill_md
+        ), "Step 0 does not parse --shuffle-sections flag (AC-9)"
+        assert (
+            "SHUFFLE_FLAG" in skill_md
+        ), "Step 0 does not set SHUFFLE_FLAG variable for --shuffle-sections (AC-9)"
 
     def test_vc9_step0_parses_seed_flag(self, skill_md):
         """AC-9: Step 0 must parse --seed using grep/sed pattern (EC-16: no $(...)-expansion)."""
-        assert "--seed" in skill_md, (
-            "Step 0 does not parse --seed flag (AC-9)"
-        )
-        assert "SEED_RAW" in skill_md, (
-            "Step 0 does not set SEED_RAW variable for --seed (AC-9 / EC-16)"
-        )
+        assert "--seed" in skill_md, "Step 0 does not parse --seed flag (AC-9)"
+        assert (
+            "SEED_RAW" in skill_md
+        ), "Step 0 does not set SEED_RAW variable for --seed (AC-9 / EC-16)"
         # EC-16: extraction must use sed pattern-match, not eval or bare $()
-        assert "sed -nE" in skill_md or "sed -n" in skill_md, (
-            "Step 0 --seed extraction must use sed for pattern-matched extraction (EC-16)"
-        )
+        assert (
+            "sed -nE" in skill_md or "sed -n" in skill_md
+        ), "Step 0 --seed extraction must use sed for pattern-matched extraction (EC-16)"
         # EC-16: the regex must constrain to digits only
-        assert "[0-9]" in skill_md, (
-            "Step 0 --seed sed pattern must constrain to [0-9]+ digits (EC-16)"
-        )
+        assert (
+            "[0-9]" in skill_md
+        ), "Step 0 --seed sed pattern must constrain to [0-9]+ digits (EC-16)"
 
     def test_vc9_step0_parses_compare_orderings(self, skill_md):
         """AC-9: Step 0 must contain bash parsing block for --compare-orderings."""
-        assert "--compare-orderings" in skill_md, (
-            "Step 0 does not parse --compare-orderings flag (AC-9)"
-        )
-        assert "COMPARE_FLAG" in skill_md, (
-            "Step 0 does not set COMPARE_FLAG variable for --compare-orderings (AC-9)"
-        )
+        assert (
+            "--compare-orderings" in skill_md
+        ), "Step 0 does not parse --compare-orderings flag (AC-9)"
+        assert (
+            "COMPARE_FLAG" in skill_md
+        ), "Step 0 does not set COMPARE_FLAG variable for --compare-orderings (AC-9)"
 
     # --- AC-10 / INV-6: neutral option presentation; (Recommended) marker after label ---
 
@@ -2225,13 +2481,13 @@ class TestMapReviewSkillOrderingWiring:
         lower = skill_md.lower()
         # Must mention neutral listing
         has_neutral = "neutral" in lower or "a/b/c" in lower
-        assert has_neutral, (
-            "INV-6: SKILL.md must describe neutral option listing (A/B/C) — not found"
-        )
+        assert (
+            has_neutral
+        ), "INV-6: SKILL.md must describe neutral option listing (A/B/C) — not found"
         # (Recommended) marker must appear after option label, not before
-        assert "(Recommended)" in skill_md, (
-            "INV-6: '(Recommended)' marker text must be present in SKILL.md"
-        )
+        assert (
+            "(Recommended)" in skill_md
+        ), "INV-6: '(Recommended)' marker text must be present in SKILL.md"
 
     def test_vc10_ci_uses_marker_not_position(self, skill_md):
         """AC-10 / INV-11: CI auto-select must identify recommended option by (Recommended) marker,
@@ -2241,8 +2497,10 @@ class TestMapReviewSkillOrderingWiring:
         has_marker_select = (
             "recommended) marker" in lower
             or "recommended) substring" in lower
-            or "(recommended)" in lower and "scan" in lower
-            or "(recommended)" in lower and "marker" in lower
+            or "(recommended)" in lower
+            and "scan" in lower
+            or "(recommended)" in lower
+            and "marker" in lower
         )
         assert has_marker_select, (
             "AC-10/INV-11: CI auto-select must use (Recommended) marker lookup, "
@@ -2253,12 +2511,12 @@ class TestMapReviewSkillOrderingWiring:
 
     def test_vc11_phase_b_calls_shuffle_sections_helper(self, skill_md):
         """AC-11: Phase B must call shuffle-sections helper to determine section order."""
-        assert "shuffle-sections" in skill_md, (
-            "AC-11: Phase B must reference 'shuffle-sections' helper call to get section order"
-        )
-        assert "SECTIONS_JSON" in skill_md, (
-            "AC-11: Phase B must capture result of shuffle-sections into SECTIONS_JSON variable"
-        )
+        assert (
+            "shuffle-sections" in skill_md
+        ), "AC-11: Phase B must reference 'shuffle-sections' helper call to get section order"
+        assert (
+            "SECTIONS_JSON" in skill_md
+        ), "AC-11: Phase B must capture result of shuffle-sections into SECTIONS_JSON variable"
 
     def test_vc11_no_hardcoded_section_n_plus_1(self, skill_md):
         """AC-11: 'Section 2', 'Section 3', 'Section 4' hand-off phrasing must be absent."""
@@ -2270,9 +2528,9 @@ class TestMapReviewSkillOrderingWiring:
 
     def test_vc11_next_section_wording_present(self, skill_md):
         """AC-11: 'next section' wording must appear in Phase B summaries."""
-        assert "next section" in skill_md, (
-            "AC-11: 'next section' wording must replace 'Section N+1' in Phase B hand-offs"
-        )
+        assert (
+            "next section" in skill_md
+        ), "AC-11: 'next section' wording must replace 'Section N+1' in Phase B hand-offs"
 
     # --- AC-12: --compare-orderings flow ---
 
@@ -2280,24 +2538,24 @@ class TestMapReviewSkillOrderingWiring:
         """AC-12: SKILL.md must describe launching agents with default order AND reverse order."""
         has_default_run = "ordering_label" in skill_md and "'default'" in skill_md
         has_reverse_run = "ordering_label" in skill_md and "'reverse'" in skill_md
-        assert has_default_run, (
-            "AC-12: compare-mode must document default-order agent run with ordering_label='default'"
-        )
-        assert has_reverse_run, (
-            "AC-12: compare-mode must document reverse-order agent run with ordering_label='reverse'"
-        )
+        assert (
+            has_default_run
+        ), "AC-12: compare-mode must document default-order agent run with ordering_label='default'"
+        assert (
+            has_reverse_run
+        ), "AC-12: compare-mode must document reverse-order agent run with ordering_label='reverse'"
 
     def test_vc12_compare_mode_calls_compare_review_runs(self, skill_md):
         """AC-12: SKILL.md must instruct calling compare-review-runs to aggregate drift."""
-        assert "compare-review-runs" in skill_md, (
-            "AC-12: SKILL.md must call compare-review-runs to aggregate compare-mode results"
-        )
+        assert (
+            "compare-review-runs" in skill_md
+        ), "AC-12: SKILL.md must call compare-review-runs to aggregate compare-mode results"
 
     def test_vc12_compare_mode_calls_record_review_ordering(self, skill_md):
         """AC-12: SKILL.md must instruct calling record-review-ordering to stage the payload."""
-        assert "record-review-ordering" in skill_md, (
-            "AC-12: SKILL.md must call record-review-ordering after compare aggregation"
-        )
+        assert (
+            "record-review-ordering" in skill_md
+        ), "AC-12: SKILL.md must call record-review-ordering after compare aggregation"
 
     # --- EC-1/EC-17: mutual exclusion ---
 
@@ -2311,9 +2569,9 @@ class TestMapReviewSkillOrderingWiring:
             "--shuffle-sections not found in SKILL.md"
         )
         # Must have an exit 1 path
-        assert "exit 1" in skill_md, (
-            "EC-1/EC-17: mutual exclusion block must contain 'exit 1' to abort the workflow"
-        )
+        assert (
+            "exit 1" in skill_md
+        ), "EC-1/EC-17: mutual exclusion block must contain 'exit 1' to abort the workflow"
 
     # --- EC-15: prepare_detached_review called exactly once ---
 
@@ -2370,9 +2628,9 @@ class TestTaskDecomposerWaveParallelismGuidance:
     def test_logical_ordering_anti_pattern_called_out(self, doc_path: Path) -> None:
         content = doc_path.read_text(encoding="utf-8")
         assert "Logical ordering" in content or "logical ordering" in content
-        assert "Risk hedging" in content or "risk hedging" in content, (
-            f"{doc_path} must explicitly forbid risk-hedging dependencies."
-        )
+        assert (
+            "Risk hedging" in content or "risk hedging" in content
+        ), f"{doc_path} must explicitly forbid risk-hedging dependencies."
 
     def test_checklist_includes_load_bearing_edge_check(self, doc_path: Path) -> None:
         content = doc_path.read_text(encoding="utf-8")
@@ -2413,27 +2671,25 @@ class TestPlanDiscoveryResearchNamespace:
         self, map_plan_path: Path
     ) -> None:
         content = map_plan_path.read_text(encoding="utf-8")
-        assert "research/plan__discovery.md" in content, (
-            f"{map_plan_path} must document canonical plan discovery under research/."
-        )
-        assert 'save_research "$BRANCH" plan discovery' in content, (
-            f"{map_plan_path} must save new discovery through the shared research API."
-        )
+        assert (
+            "research/plan__discovery.md" in content
+        ), f"{map_plan_path} must document canonical plan discovery under research/."
+        assert (
+            'save_research "$BRANCH" plan discovery' in content
+        ), f"{map_plan_path} must save new discovery through the shared research API."
 
-    def test_map_plan_documents_runtime_state_gate(
-        self, map_plan_path: Path
-    ) -> None:
+    def test_map_plan_documents_runtime_state_gate(self, map_plan_path: Path) -> None:
         """Every map-plan surface (Claude + Codex) must ship the Step 0.6 gate (#243)."""
         content = map_plan_path.read_text(encoding="utf-8")
-        assert "depends_on_runtime_state" in content, (
-            f"{map_plan_path} must document the depends_on_runtime_state signal."
-        )
-        assert "Step 0.6" in content, (
-            f"{map_plan_path} must define the Step 0.6 runtime-state gate."
-        )
-        assert "Verify Live/Runtime State" in content, (
-            f"{map_plan_path} must name the Verify Live/Runtime State gate."
-        )
+        assert (
+            "depends_on_runtime_state" in content
+        ), f"{map_plan_path} must document the depends_on_runtime_state signal."
+        assert (
+            "Step 0.6" in content
+        ), f"{map_plan_path} must define the Step 0.6 runtime-state gate."
+        assert (
+            "Verify Live/Runtime State" in content
+        ), f"{map_plan_path} must name the Verify Live/Runtime State gate."
 
     @pytest.fixture(
         params=[
@@ -2454,9 +2710,9 @@ class TestPlanDiscoveryResearchNamespace:
             f"{plan_reference_path} must hold the Verify Live/Runtime State section "
             "the SKILL body links to (#verify-liveruntime-state anchor)."
         )
-        assert "Unverified Runtime Assumption" in content, (
-            f"{plan_reference_path} must document the record-the-check contract."
-        )
+        assert (
+            "Unverified Runtime Assumption" in content
+        ), f"{plan_reference_path} must document the record-the-check contract."
 
     def test_codex_map_plan_no_longer_writes_legacy_findings(self) -> None:
         path = (
@@ -2477,12 +2733,14 @@ class TestPlanDiscoveryResearchNamespace:
             "src/mapify_cli/templates/skills/map-plan/SKILL.md",
         ):
             content = (root / rel).read_text(encoding="utf-8")
-            assert "map-wayfind" in content, f"{rel} must document the map-wayfind route"
+            assert (
+                "map-wayfind" in content
+            ), f"{rel} must document the map-wayfind route"
             assert "record_workflow_fit" in content
             # the too-foggy off-ramp must recommend charting a map, not just mention it
-            assert "/map-wayfind chart" in content, (
-                f"{rel} must recommend `/map-wayfind chart` when too foggy to specify"
-            )
+            assert (
+                "/map-wayfind chart" in content
+            ), f"{rel} must recommend `/map-wayfind chart` when too foggy to specify"
 
     @pytest.fixture(
         params=[
@@ -2536,26 +2794,30 @@ class TestMapEfficientNoInterSubtaskPause:
     def skill_path(self, request: pytest.FixtureRequest) -> Path:
         return Path(__file__).parent.parent / request.param
 
-    def test_skill_explicitly_forbids_inter_subtask_pause(self, skill_path: Path) -> None:
+    def test_skill_explicitly_forbids_inter_subtask_pause(
+        self, skill_path: Path
+    ) -> None:
         content = skill_path.read_text(encoding="utf-8")
         assert "Do NOT pause between subtasks" in content, (
             f"{skill_path} must include 'Do NOT pause between subtasks' "
             "rule so models don't default to per-subtask checkpoints."
         )
 
-    def test_skill_enumerates_legitimate_stop_conditions(self, skill_path: Path) -> None:
+    def test_skill_enumerates_legitimate_stop_conditions(
+        self, skill_path: Path
+    ) -> None:
         content = skill_path.read_text(encoding="utf-8")
         # The 4-of-4 stop list — anything else is the "wrong default"
         # the user explicitly complained about.
         for marker in (
-            "next_step: \"COMPLETE\"",
+            'next_step: "COMPLETE"',
             "retry_quarantine",
             "User explicitly interrupts",
             "Circuit-breaker",
         ):
-            assert marker in content, (
-                f"{skill_path} stop-condition list missing: {marker!r}"
-            )
+            assert (
+                marker in content
+            ), f"{skill_path} stop-condition list missing: {marker!r}"
 
 
 class TestMapEfficientPerSubtaskCommitAllowance:
@@ -2595,12 +2857,12 @@ class TestMapEfficientPerSubtaskCommitAllowance:
         # correct stage → commit → record → validate order on the
         # reference side, and that SKILL.md points to it.
         skill_content = skill_path.read_text(encoding="utf-8")
-        assert "efficient-reference.md" in skill_content, (
-            f"{skill_path}: must point to efficient-reference.md for the full recipe."
-        )
+        assert (
+            "efficient-reference.md" in skill_content
+        ), f"{skill_path}: must point to efficient-reference.md for the full recipe."
         reference = skill_path.parent / "efficient-reference.md"
         ref_content = reference.read_text(encoding="utf-8")
-        commit_pos = ref_content.find("git commit -m \"ST-NNN")
+        commit_pos = ref_content.find('git commit -m "ST-NNN')
         record_pos = ref_content.find("record_subtask_result \\")
         # The clean-pass close is the FIRST validate_step 2.4 at/after the
         # record step in the commit recipe. Search from record_pos so an
@@ -2611,9 +2873,9 @@ class TestMapEfficientPerSubtaskCommitAllowance:
             f"{reference}: commit must precede record_subtask_result so "
             "--commit-sha gets the real SHA, not the prior one."
         )
-        assert record_pos < validate_pos, (
-            f"{reference}: record_subtask_result must precede validate_step 2.4."
-        )
+        assert (
+            record_pos < validate_pos
+        ), f"{reference}: record_subtask_result must precede validate_step 2.4."
 
     def test_skill_warns_against_no_verify_and_amend(self, skill_path: Path) -> None:
         content = skill_path.read_text(encoding="utf-8")
@@ -2641,9 +2903,9 @@ class TestMapEfficientTruncatedMonitorResponseGate:
 
     def test_skill_has_truncated_response_gate(self, skill_path: Path) -> None:
         content = skill_path.read_text(encoding="utf-8")
-        assert "Truncated-response gate" in content, (
-            f"{skill_path} missing the truncated-Monitor-response gate."
-        )
+        assert (
+            "Truncated-response gate" in content
+        ), f"{skill_path} missing the truncated-Monitor-response gate."
         # Gate must be MANDATORY and ordered before the verdict-contract
         # rule, so prose responses don't sneak past on a default recommendation.
         gate_pos = content.find("Truncated-response gate")
@@ -2658,15 +2920,15 @@ class TestMapEfficientTruncatedMonitorResponseGate:
     ) -> None:
         content = skill_path.read_text(encoding="utf-8")
         # Retry via the detect->log->retry triplet, then stop.
-        assert "detect_truncated_agent_output" in content, (
-            f"{skill_path} must reference detect_truncated_agent_output"
-        )
-        assert "log_agent_failure" in content, (
-            f"{skill_path} must reference log_agent_failure"
-        )
-        assert "build_json_retry_prompt" in content, (
-            f"{skill_path} must reference build_json_retry_prompt"
-        )
+        assert (
+            "detect_truncated_agent_output" in content
+        ), f"{skill_path} must reference detect_truncated_agent_output"
+        assert (
+            "log_agent_failure" in content
+        ), f"{skill_path} must reference log_agent_failure"
+        assert (
+            "build_json_retry_prompt" in content
+        ), f"{skill_path} must reference build_json_retry_prompt"
         assert "CLARIFICATION_NEEDED" in content, skill_path
         # Three diagnostic signs must be enumerated.
         # Whitespace-tolerant check: SKILL.md uses backtick-formatted markdown
@@ -2676,9 +2938,9 @@ class TestMapEfficientTruncatedMonitorResponseGate:
             "valid`/`summary`/`issues",
             "ends mid-sentence",
         ):
-            assert sign in content, (
-                f"{skill_path} truncated-response diagnosis must list: {sign!r}"
-            )
+            assert (
+                sign in content
+            ), f"{skill_path} truncated-response diagnosis must list: {sign!r}"
 
 
 class TestRetryTripletCoverage:
@@ -2700,7 +2962,9 @@ class TestRetryTripletCoverage:
             Path(".claude/skills/map-efficient/SKILL.md"),
             Path("src/mapify_cli/templates/skills/map-efficient/SKILL.md"),
             Path(".claude/skills/map-efficient/efficient-reference.md"),
-            Path("src/mapify_cli/templates/skills/map-efficient/efficient-reference.md"),
+            Path(
+                "src/mapify_cli/templates/skills/map-efficient/efficient-reference.md"
+            ),
             Path(".claude/skills/map-review/SKILL.md"),
             Path("src/mapify_cli/templates/skills/map-review/SKILL.md"),
         ],
@@ -2719,16 +2983,14 @@ class TestRetryTripletCoverage:
     def test_references_all_triplet_fns(self, skill_path: Path) -> None:
         content = skill_path.read_text(encoding="utf-8")
         for fn in self.TRIPLET_FNS:
-            assert fn in content, (
-                f"{skill_path} must reference runtime fn: {fn!r}"
-            )
+            assert fn in content, f"{skill_path} must reference runtime fn: {fn!r}"
 
     def test_no_banned_emit_only_literals(self, skill_path: Path) -> None:
         content = skill_path.read_text(encoding="utf-8")
         for literal in self.BANNED_LITERALS:
-            assert literal not in content, (
-                f"{skill_path} must not contain banned literal: {literal!r}"
-            )
+            assert (
+                literal not in content
+            ), f"{skill_path} must not contain banned literal: {literal!r}"
 
 
 class TestMapReviewSourceNote:
@@ -2747,12 +3009,12 @@ class TestMapReviewSourceNote:
 
     def test_schema_source_note_present(self, skill_path: Path) -> None:
         content = skill_path.read_text(encoding="utf-8")
-        assert "build_review_prompts" in content, (
-            f"{skill_path} must note that output schema is generated by build_review_prompts"
-        )
-        assert "AGENT_OUTPUT_SCHEMAS" in content, (
-            f"{skill_path} must reference AGENT_OUTPUT_SCHEMAS as the single source of truth"
-        )
+        assert (
+            "build_review_prompts" in content
+        ), f"{skill_path} must note that output schema is generated by build_review_prompts"
+        assert (
+            "AGENT_OUTPUT_SCHEMAS" in content
+        ), f"{skill_path} must reference AGENT_OUTPUT_SCHEMAS as the single source of truth"
 
 
 class TestMapEfficientEmptyArgsResumeGuard:
@@ -2822,18 +3084,14 @@ class TestMapEfficientSaveResearchWiring:
 
     def test_research_phase_invokes_save_research_cli(self, skill_path: Path) -> None:
         content = skill_path.read_text(encoding="utf-8")
-        assert (
-            "python3 .map/scripts/map_step_runner.py save_research" in content
-        ), (
+        assert "python3 .map/scripts/map_step_runner.py save_research" in content, (
             f"{skill_path} must show the save_research CLI for the RESEARCH phase. "
             "Without it, .map/<branch>/research/ remains discipline-only."
         )
 
     def test_research_phase_invokes_load_research_cli(self, skill_path: Path) -> None:
         content = skill_path.read_text(encoding="utf-8")
-        assert (
-            "python3 .map/scripts/map_step_runner.py load_research" in content
-        ), (
+        assert "python3 .map/scripts/map_step_runner.py load_research" in content, (
             f"{skill_path} must show the load_research CLI so downstream phases "
             "read findings through the canonical path."
         )
@@ -2842,9 +3100,7 @@ class TestMapEfficientSaveResearchWiring:
         self, skill_path: Path
     ) -> None:
         content = skill_path.read_text(encoding="utf-8")
-        assert (
-            "python3 .map/scripts/map_step_runner.py validate_research" in content
-        ), (
+        assert "python3 .map/scripts/map_step_runner.py validate_research" in content, (
             f"{skill_path} must show the validate_research CLI before "
             "validate_step 2.2 so malformed research cannot reach Actor."
         )
@@ -2856,9 +3112,9 @@ class TestMapEfficientSaveResearchWiring:
         and point to the authoritative schema so the first save validates."""
         content = skill_path.read_text(encoding="utf-8")
         # Exact status enum (the prose used to imply free text).
-        assert "OK, PARTIAL_RESULTS, NO_RESULTS, SEARCH_FAILED" in content, (
-            f"{skill_path} must name the exact research status enum."
-        )
+        assert (
+            "OK, PARTIAL_RESULTS, NO_RESULTS, SEARCH_FAILED" in content
+        ), f"{skill_path} must name the exact research status enum."
         # Pointer to the authoritative schema + the self-correcting skeleton.
         assert "RESEARCH artifact schema" in content
         assert "[efficient-reference.md](efficient-reference.md)" in content
@@ -2876,7 +3132,9 @@ class TestMapEfficientSaveResearchWiring:
         self, skill_path: Path
     ) -> None:
         content = skill_path.read_text(encoding="utf-8")
-        assert "Actor must consume high-confidence research before re-exploring" in content
+        assert (
+            "Actor must consume high-confidence research before re-exploring" in content
+        )
         assert "`confidence >= 0.7`" in content
         assert "first read 1-3 cited ranges" in content
         assert "detect_research_consumption_drift" in content
@@ -2893,7 +3151,10 @@ class TestMapEfficientSaveResearchWiring:
             assert "`researcher`" in content
             assert "when independent exploration is useful" in content
             assert "If the subtask truly needs no Actor/Monitor" in content
-            assert "Actor must consume high-confidence research before re-exploring" in content
+            assert (
+                "Actor must consume high-confidence research before re-exploring"
+                in content
+            )
             assert "detect_research_consumption_drift" in content
 
     def test_hook_hint_mentions_required_artifact_not_required_subagent(self) -> None:
@@ -2906,7 +3167,9 @@ class TestMapEfficientSaveResearchWiring:
             assert "Persist RESEARCH artifact" in content
             assert "Run research-agent (conditional" not in content
 
-    def test_orchestrator_error_offers_delegated_and_direct_research_paths(self) -> None:
+    def test_orchestrator_error_offers_delegated_and_direct_research_paths(
+        self,
+    ) -> None:
         project_root = Path(__file__).parent.parent
         for relative_path in [
             Path(".map/scripts/map_orchestrator.py"),
@@ -2917,7 +3180,9 @@ class TestMapEfficientSaveResearchWiring:
             assert "Use research-agent for broad/high-risk/unclear discovery" in content
             assert "save direct current-session findings" in content
 
-    def test_actor_prompt_requires_narrow_reads_for_high_confidence_research(self) -> None:
+    def test_actor_prompt_requires_narrow_reads_for_high_confidence_research(
+        self,
+    ) -> None:
         project_root = Path(__file__).parent.parent
         for relative_path in [
             Path(".claude/agents/actor.md"),
@@ -2939,7 +3204,9 @@ class TestResearchArtifactSchemaDocumented:
     @pytest.fixture(
         params=[
             Path(".claude/skills/map-efficient/efficient-reference.md"),
-            Path("src/mapify_cli/templates/skills/map-efficient/efficient-reference.md"),
+            Path(
+                "src/mapify_cli/templates/skills/map-efficient/efficient-reference.md"
+            ),
             Path(".agents/skills/map-efficient/efficient-reference.md"),
             Path(
                 "src/mapify_cli/templates/codex/skills/map-efficient/efficient-reference.md"
@@ -2954,15 +3221,21 @@ class TestResearchArtifactSchemaDocumented:
         self, reference_path: Path
     ) -> None:
         content = reference_path.read_text(encoding="utf-8")
-        assert "## RESEARCH artifact schema" in content, (
-            f"{reference_path} must document the exact research artifact schema."
-        )
+        assert (
+            "## RESEARCH artifact schema" in content
+        ), f"{reference_path} must document the exact research artifact schema."
         # Exact enum + field names the validator enforces (the values the issue
         # reported guessing wrong: 'complete'/'high'/'files_examined').
         for token in (
-            "OK", "PARTIAL_RESULTS", "NO_RESULTS", "SEARCH_FAILED",
-            "files_scanned", "total_matches_found", "results_truncated",
-            "relevant_locations", "skeleton",
+            "OK",
+            "PARTIAL_RESULTS",
+            "NO_RESULTS",
+            "SEARCH_FAILED",
+            "files_scanned",
+            "total_matches_found",
+            "results_truncated",
+            "relevant_locations",
+            "skeleton",
         ):
             assert token in content, f"{reference_path} schema missing {token!r}"
 
@@ -2973,11 +3246,16 @@ class TestResearchArtifactSchemaDocumented:
         block = content.split("```json", 1)[1].split("```", 1)[0]
         skeleton = json.loads(block)
         assert skeleton["status"] in {
-            "OK", "PARTIAL_RESULTS", "NO_RESULTS", "SEARCH_FAILED",
+            "OK",
+            "PARTIAL_RESULTS",
+            "NO_RESULTS",
+            "SEARCH_FAILED",
         }
         assert 0 <= skeleton["confidence"] <= 1
         assert set(skeleton["search_stats"]) == {
-            "files_scanned", "total_matches_found", "results_truncated",
+            "files_scanned",
+            "total_matches_found",
+            "results_truncated",
         }
         assert len(skeleton["relevant_locations"]) <= 5
         loc = skeleton["relevant_locations"][0]
@@ -3086,8 +3364,7 @@ class TestMapEfficientBuildContextBlockCli:
     def test_cli_invocation_is_documented(self, skill_path: Path) -> None:
         content = skill_path.read_text(encoding="utf-8")
         assert (
-            "python3 .map/scripts/map_step_runner.py build_context_block"
-            in content
+            "python3 .map/scripts/map_step_runner.py build_context_block" in content
         ), (
             f"{skill_path} must document the CLI form "
             "`python3 .map/scripts/map_step_runner.py build_context_block "
@@ -3100,7 +3377,7 @@ class TestMapEfficientBuildContextBlockCli:
         # workaround that the CLI form replaces.
         offending_patterns = [
             'python -c "import sys; sys.path.insert',
-            "python3 -c \"import sys; sys.path.insert",
+            'python3 -c "import sys; sys.path.insert',
         ]
         hits = [p for p in offending_patterns if p in content]
         assert not hits, (
@@ -3132,9 +3409,7 @@ class TestMapCheckPendingStepsSchema:
     def skill_path(self, request: pytest.FixtureRequest) -> Path:
         return Path(__file__).parent.parent / request.param
 
-    def test_skill_does_not_index_pending_steps_as_dict(
-        self, skill_path: Path
-    ) -> None:
+    def test_skill_does_not_index_pending_steps_as_dict(self, skill_path: Path) -> None:
         content = skill_path.read_text(encoding="utf-8")
         # Only inspect executable bash code fences — prose that warns about the
         # anti-pattern (in inline backticks) is legitimate and must stay.
@@ -3150,15 +3425,12 @@ class TestMapCheckPendingStepsSchema:
             "runtime with 'Cannot index array with string'."
         )
 
-    def test_skill_completion_check_uses_flat_schema(
-        self, skill_path: Path
-    ) -> None:
+    def test_skill_completion_check_uses_flat_schema(self, skill_path: Path) -> None:
         content = skill_path.read_text(encoding="utf-8")
         # A valid check needs to inspect either workflow_status or pending_steps
         # as a flat array. Without one of these the schema-aware check is gone.
         has_flat_pending = (
-            ".pending_steps | length" in content
-            or ".pending_steps[]" in content
+            ".pending_steps | length" in content or ".pending_steps[]" in content
         )
         has_workflow_status = "workflow_status" in content
         assert has_flat_pending or has_workflow_status, (
@@ -3200,17 +3472,15 @@ class TestMapReviewWalkthroughHardening:
         # Precheck appears BEFORE the first Task( call.
         precheck_pos = content.find("Step A.0: Lint / test precheck")
         first_task = content.find("Task(")
-        assert 0 <= precheck_pos < first_task, (
-            f"{skill_path}: precheck must run before reviewer agents."
-        )
+        assert (
+            0 <= precheck_pos < first_task
+        ), f"{skill_path}: precheck must run before reviewer agents."
 
     def test_mode_detection_step_present(self, skill_path: Path) -> None:
         content = skill_path.read_text(encoding="utf-8")
         assert "Step A.0b: Detect review mode" in content, skill_path
         for needle in ("lightweight", "sibling-aware", "review-mode.json"):
-            assert needle in content, (
-                f"{skill_path} mode detection missing: {needle!r}"
-            )
+            assert needle in content, f"{skill_path} mode detection missing: {needle!r}"
 
     def test_evidence_required_on_agent_schemas(self, skill_path: Path) -> None:
         content = skill_path.read_text(encoding="utf-8")
@@ -3222,9 +3492,7 @@ class TestMapReviewWalkthroughHardening:
         # Evaluator audits Monitor's severity.
         assert "`monitor_severity_audit`" in content, skill_path
 
-    def test_verification_gate_present_with_six_checks(
-        self, skill_path: Path
-    ) -> None:
+    def test_verification_gate_present_with_six_checks(self, skill_path: Path) -> None:
         content = skill_path.read_text(encoding="utf-8")
         assert "Step A.3: Verification gate" in content, skill_path
         # Six numbered checks: Evidence, Pre-existing, Sibling, Precheck dup,
@@ -3237,19 +3505,15 @@ class TestMapReviewWalkthroughHardening:
             "Reachability check",
             "Cross-agent challenge",
         ):
-            assert check in content, (
-                f"{skill_path} verification gate missing: {check!r}"
-            )
+            assert (
+                check in content
+            ), f"{skill_path} verification gate missing: {check!r}"
 
-    def test_hard_stop_no_longer_immediate_publication(
-        self, skill_path: Path
-    ) -> None:
+    def test_hard_stop_no_longer_immediate_publication(self, skill_path: Path) -> None:
         content = skill_path.read_text(encoding="utf-8")
         # The legacy "report findings immediately and skip Phase B" line
         # must be gone — replaced with verification-gated publication.
-        assert (
-            "report findings immediately and skip Phase B" not in content
-        ), (
+        assert "report findings immediately and skip Phase B" not in content, (
             f"{skill_path}: hard-stop must require verification before "
             "publication (legacy unconditional dump is gone)."
         )
@@ -3268,9 +3532,7 @@ class TestMapReviewWalkthroughHardening:
             "sibling reference BEFORE reviewers search for differences."
         )
 
-    def test_lightweight_mode_drops_to_monitor_only(
-        self, skill_path: Path
-    ) -> None:
+    def test_lightweight_mode_drops_to_monitor_only(self, skill_path: Path) -> None:
         content = skill_path.read_text(encoding="utf-8")
         # Lightweight = monitor only, two sections, stricter evidence.
         assert "lightweight" in content

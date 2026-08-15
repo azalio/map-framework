@@ -132,6 +132,12 @@ ignore = [
     "TRY004",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Test modules intentionally adjust sys.path before importing generated scripts.
+"tests/**/*.py" = ["E402"]
+# These standalone generated scripts resolve sibling map_utils imports at runtime.
+"src/mapify_cli/templates/map/scripts/*.py" = ["E402"]
+
 [tool.ruff.lint.flake8-bugbear]
 # typer's CLI parameter declarations require typer.Option(...)/typer.Argument(...)
 # as argument defaults -- that's the framework's own idiomatic API, not the

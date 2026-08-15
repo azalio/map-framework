@@ -67,6 +67,10 @@ The remainder of this file contains the deeper implementation dive (workflow-spe
 - `src/mapify_cli/delivery/`: Provider abstraction plus Claude/Codex scaffolding generators and managed file copier logic
 - `src/mapify_cli/memory/`: cross-session scratch capture, digest schema, finalize, and recall helpers used by generated hooks and `/map-memory-now`
 - `src/mapify_cli/skills_eval/`: skill trigger eval runner, assertions, aggregation, Claude dispatcher, description optimizer, patcher, proposer, schema, and HTML viewer
+- `src/mapify_cli/update_versions.py`: strict stable-version parsing, non-yanked PyPI target selection, and bounded official GitHub release highlights
+- `src/mapify_cli/update_state.py`: atomic project-local update state, rolling 24-hour due checks, updater/installer/provider lock ordering, and direct-child refresh leases
+- `src/mapify_cli/update_install.py`: install-kind classification, isolated child-owned package installation, installed-provider detection, and fresh-process provider refresh
+- `src/mapify_cli/auto_update.py`: central automatic/manual policy orchestrator and typed result model consumed by provider skills
 - `src/mapify_cli/templates/`: Shipped provider templates, hooks, agents, references, rule files, Codex config, and shared `.map/scripts/` payloads used by `mapify init`
 - `src/mapify_cli/{token_budget,workflow_state,workflow_finalizer,verification_recorder,skill_ir,dependency_graph,repo_insight,_locking,install_manifest}.py`: Deterministic helpers used by templates, release checks, locks, install auditing, and tests
 - `tests/`: Unit and integration coverage for CLI behavior, generated templates, hooks, workflow artifacts, SkillIR, provider frontmatter, and artifact schemas
@@ -81,6 +85,12 @@ The remainder of this file contains the deeper implementation dive (workflow-spe
 - `.map/<branch>/`: Branch-scoped run artifacts (plans/contracts, check outputs, review notes, learning handoffs, session-memory digests)
 - `.map/eval-runs/<skill>/`: durable skill-evaluation run logs and optimization JSON/HTML reports
 - `.map/mapify.lock.json`: Install manifest/lock — aggregate audit of all MAP-managed files, written by `mapify init` and read by `mapify check-installed`
+- `.map/update-state.json`: gitignored automatic-update attempt/install/pending-refresh state, written atomically
+- `.map/update.lock`: gitignored project-local updater mutex; lock contention is a silent automatic skip and an explicit manual error
+- `.map/installer.lock`: gitignored package-mutation barrier owned by the installer controller child; it remains held if the updater parent dies while pip/uv continues
+- `.map/provider-refresh.lock`: gitignored provider-mutation barrier; it prevents a replacement updater from racing an orphaned refresh child
+- `/tmp/mapify-gitignore-<sha256(resolved-root)>.lock`: persistent POSIX root-`.gitignore` mutation lock, deliberately independent of `TMPDIR`; Windows uses the centrally ignored project-root `.map-gitignore.lock` fallback
+- `.sofa/credentials.lock`: private opt-in SOFA credential-file lock, ignored with the rest of `.sofa/`
 - `.map/<branch>/approval_holds.json` and `.map/<branch>/approval_hold_<id>.md`: Durable human-gate artifacts for pending/decided approval holds
 - `.map/wayfind/<slug>/`: **Repo-level** (not branch-scoped) decision maps for `/map-wayfind`. Holds the canonical `state.json`, regenerated `map.md` and `tickets/*.md` views (DO-NOT-EDIT banner), author-written `resolutions/*.md` (+ `*.human.md` verbatim human answers), and the final `handoff.md`/`handoff.json`. Maps outlive branches and are committed by default.
 
@@ -88,8 +98,9 @@ Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json`
 
 ## Runtime Flows
 
-- **Initialize**: `mapify init` selects a provider, copies templates, and writes provider-specific prompts/skills plus shared `.map/` scripts. At the end of init, `build_manifest()` scans the installed provider directories for all MAP-MANAGED files and writes `.map/mapify.lock.json` — recording each file's path, SHA-256 content/template hash, management mode (`fenced`/`full`/`hooks-merge`), and install timestamp. This manifest is the audit baseline for `mapify check-installed`.
+- **Initialize**: `mapify init` selects a provider, copies templates, and writes provider-specific prompts/skills plus shared `.map/` scripts. At the end of init, `build_manifest()` scans every installed provider directory and writes `.map/mapify.lock.json` — recording the canonical provider collection, each file's path, SHA-256 content/template hash, management mode (`fenced`/`full`/`hooks-merge`), and install timestamp. A dual-provider manifest stores `providers: ["claude", "codex"]` and a deduplicated union of both surfaces. This manifest is the audit baseline for `mapify check-installed`.
 - **Audit Install**: `mapify check-installed [project-path]` reads `.map/mapify.lock.json` and compares it against the current filesystem. It reports missing files (in manifest, absent on disk), drifted files (template_hash changed — a newer MAP template is available), orphaned files (MAP-managed on disk but not in the manifest), and ok files (present and matching). Exit codes: 0=all ok, 1=issues found, 2=no manifest. Security invariants: no absolute paths are stored in the manifest; `settings.local.json` (machine-specific statusline config) is excluded from the committed manifest; symlinks are excluded from scanning.
+- **Update Preflight**: Every normal generated Claude/Codex MAP skill invokes the hidden automatic adapter before its workflow; the two `map-upgrade` skills invoke manual mode instead. The orchestrator enforces the feature flag and rolling 24-hour project throttle, installs eligible stable patch/minor releases, gates major releases on official highlights plus user consent, and turns all automatic failures into silent continuation. Manual mode bypasses the flag/throttle and makes failures actionable.
 - **Run Workflow**: User triggers MAP commands (e.g., `/map-plan`, `/map-efficient`, `/map-check`, `/map-review`, `/map-learn`, `/map-understand`) through the provider UI, or `$map-*` skills for Codex. Each command orchestrates a specific agent sequence or teaching loop defined in generated skill/template files.
 - **Apply Minimality Doctrine**: `.map/config.yaml` controls `minimality` (`off`, `lite`, `full`, `ultra`). The global default is `lite` (Phase 3 flip, #183) for ALL projects — keyless configs that previously loaded as `off` now resolve to `lite` at both the `MapConfig` and runner `_load_minimality_level` layers; set `minimality: off` to opt out (bare `off` is YAML-coerced to a boolean and normalized back to the `off` level so opt-out is not silently lost). Runtime prompt builders inject the doctrine into Actor context, Evaluator scores `simplicity` while keeping `completeness` highest-weight, Monitor distinguishes real scope/risk drift from harmless implementation size, and the orchestrator forwards only BLOCKER-class retry feedback back to Actor. Decomposer blueprints classify active subtasks with `requiredness`/`pruneable`; only `full`/`ultra` may carry a non-empty `deferred_yagni` parking lot, and plan approval must expose those omissions plus restore hints before execution. If the user restores an omission, `restore_deferred_yagni` rewrites `blueprint.json` and the task plan before approval continues. `run_health_report.json` records the historical minimality level for each workflow, and `mapify minimality-report` compares complete `off` and opt-in cohorts, reports sample gaps and cohort branch names, lists next telemetry actions, and emits a candidate-only manual review gate before maintainers consider the Phase 3 global default flip.
 - **Persist Artifacts**: Each workflow stage records durable artifacts under `.map/<branch>/`, including specs, blueprints, test contracts, verification summaries, review bundles, learning handoffs, token-budget reports, run-health reports, and retry quarantine state. Research/discovery uses a single namespace: plan-scope discovery is `.map/<branch>/research/plan__discovery.md`, and subtask-scope artifacts are `.map/<branch>/research/<subtask_id>__<kind>.md`; legacy `findings_<branch>.md` files are compatibility fallbacks, not the primary source.
@@ -98,6 +109,105 @@ Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json`
 - **Capture/Recall Memory**: Generated memory hooks capture session scratch records under `.map/<branch>/sessions/scratch/`, finalize them into `.map/<branch>/sessions/<session-id>.md`, and recall branch/session digests at the next session start. `/map-memory-now` can finalize dirty scratches immediately.
 - **Evaluate Skills**: `/map-skill-eval` and `mapify skill-eval` run trigger/cost eval sets through isolated `claude -p` workers, append resumable JSONL rows, aggregate pass/fail and usage, optimize frontmatter descriptions against held-out eval cases, and render stored optimization reports.
 - **Audit/Validate**: Maintainers use tests and helper modules such as `python -m mapify_cli.skill_ir ...`, `mapify check`, `mapify doctor`, template-sync tests, artifact-schema tests, workflow-gate tests, and adversarial governance violation fixtures to keep shipped provider surfaces aligned with the documented runtime contract.
+
+### Automatic update subsystem
+
+Installed skills use a hidden JSON CLI adapter instead of embedding network or
+package-manager logic in prompt text:
+
+```text
+mapify _update --mode automatic --project .
+mapify _update --mode manual --project .
+mapify _update --mode manual --project . --approve-major X.Y.Z
+```
+
+The adapter is absent from normal help. Successful calls emit at most one bounded
+JSON object with `current`, `skipped`, `updated`, or `major_available`; automatic
+errors exit successfully with no output, while manual errors emit one `error`
+object and exit nonzero. The approved-major value is revalidated as a strict,
+currently eligible major target, so release text, URLs, and shell fragments never
+enter package arguments.
+
+`auto_update.py` composes the three lower-level modules. `update_versions.py`
+selects non-yanked strict stable releases and fetches bounded official highlights;
+`update_state.py` atomically maintains `.map/update-state.json`, serializes package
+policy with `.map/update.lock`, serializes the package-manager lifetime with
+`.map/installer.lock`, and serializes provider mutation with
+`.map/provider-refresh.lock`; `update_install.py` updates an exact version through
+`uv tool` or the current interpreter's pip and never mutates source/editable
+installs. The state timestamp records an automatic attempt, not only success.
+
+Update-state schema v2 is a three-phase write-ahead state machine:
+
+| Phase | Install target | Refresh flag | Provider set | Meaning |
+|---|---|---|---|---|
+| Idle | absent | false | empty | No recovery work is authorized. |
+| Install intent | exact stable version | false | non-empty | Persisted before the package manager starts; the install outcome may be ambiguous. |
+| Refresh pending | absent | true | non-empty | The target package is known to be running and these providers still need refresh. |
+
+A fresh process whose running version exactly matches an install intent promotes
+it to refresh-pending before the throttle or any network access. A mismatch never
+treats the persisted target as install authority: automatic mode retains a recent
+intent until the throttle expires, while manual mode (or a due automatic check)
+re-enters freshly fetched version and major-consent policy. Exact legacy v1 state
+is migrated in memory; its historical provider-less pending-refresh form is
+normalized by detecting and persisting the provider set before a child is started.
+All new writes obey the strict v2 phase invariants.
+
+Package installation uses a dedicated controller process rather than launching
+pip/uv directly from the updater. The controller first acquires
+`.map/installer.lock` and signals `READY`; only then does the updater durably write
+the install intent and send `GO`. If the updater dies before `GO`, control-pipe EOF
+makes the controller exit without starting the package manager. If it dies after
+`GO`, the controller retains the installer barrier until the real package-manager
+child exits, even when its result pipe is broken. The controller starts through
+the current interpreter's isolated mode with a constant bootstrap and the resolved
+trusted package root, so the target project's working directory and `PYTHONPATH`
+cannot shadow `mapify_cli` before authorization. No lease or handshake secret is
+placed in argv or diagnostics. Pip is likewise launched through the current
+interpreter's isolated mode, while retaining the project as its working directory,
+so neither the project nor `PYTHONPATH` can shadow pip's module entry point.
+
+After installation, refresh deliberately crosses a process boundary so it imports
+the newly installed package rather than the old in-memory module. The updater
+retains `update.lock` and delegates a cryptorandom, project-bound lease only to the
+direct `mapify init` child through `MAP_UPDATE_PARENT_LEASE`. The raw lease appears
+only in that child's environment: it is removed before init runs, is never placed
+in argv or passed to a package manager, and is never written to disk. The lock
+record contains only its SHA-256 digest, the updater PID, and the resolved project.
+A child may borrow the parent's lock authority only while contention proves the
+parent still owns the lock and the digest, direct parent PID, project, provider,
+running version, and pending phase all match.
+
+Lock order is always `update.lock` then `installer.lock` then
+`provider-refresh.lock`. The updater retains `update.lock` while its controller
+child owns only `installer.lock`; the package manager never receives either lock or
+the refresh lease. A delegated provider child does not recursively acquire
+`update.lock`; after installation has completed, it acquires only the provider
+barrier for the whole filesystem mutation. A standalone recovery acquires the
+update lock, probes an existing installer barrier, and then acquires the provider
+barrier. Before reading state or querying versions, every new updater follows the
+same update → installer-probe → provider-probe order without waiting. This prevents
+concurrent package or provider mutation when either child outlives a failed parent.
+Automatic mode silently skips contention; manual mode reports it clearly without
+network or state mutation.
+
+Installed providers are detected in canonical Claude-then-Codex order, then each
+receives:
+
+```text
+mapify init . --force --no-git --provider <provider> --refresh-existing
+```
+
+The hidden init mode preserves configuration, MCP selections, user-managed
+regions, and `updates.auto`, and it never initializes Git. The update service
+reports refresh completion explicitly only after every provider succeeds; the
+hidden adapter uses that signal rather than inferring success from a manifest that
+may have been replaced during a partial refresh. Each refresh rebuilds the
+aggregate `.map/mapify.lock.json`; when both providers coexist, the final manifest
+audits both catalogs with `providers: ["claude", "codex"]` and deduplicates shared
+`.map/scripts` entries. Legacy single-provider manifests remain readable through
+the retained compatibility field.
 
 ## Source of Truth
 
@@ -109,7 +219,8 @@ Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json`
 - **Deterministic helpers**: `src/mapify_cli/*` helper modules and `.map/scripts/` templates enforce artifact schemas, workflow state, prompt budgets, SkillIR checks, memory finalization, skill-eval assertions, and prior-stage validation.
 - **Host-path and lock contract**: `src/mapify_cli/_locking.py` owns the `flock_with_state` implementation; `src/mapify_cli/templates/references/host-paths.md` is the shipped user-facing reference for `MAP_*`, `~/.map/`, and lock state-marker semantics.
 - **Spec citation gate**: `.map/scripts/validate_spec_citations.py` and its template twin validate `file:line` references before `/map-plan` decomposes work.
-- **Install manifest**: `.map/mapify.lock.json` is the audit lock written by `mapify init` via `src/mapify_cli/install_manifest.py`; `mapify check-installed` reads it to detect missing/drifted/orphaned MAP-managed files. Security invariants: no absolute paths, no secrets, machine-local `settings.local.json` excluded from the committed manifest.
+- **Install manifest**: `.map/mapify.lock.json` is the aggregate audit lock written by `mapify init` via `src/mapify_cli/install_manifest.py`; `mapify check-installed` reads its canonical provider collection and managed-file union to detect missing/drifted/orphaned files. Security invariants: no absolute paths, no secrets, machine-local `settings.local.json` excluded from the committed manifest.
+- **Automatic update state**: `.map/update-state.json`, `.map/update.lock`, `.map/installer.lock`, and `.map/provider-refresh.lock` are gitignored local runtime files owned by `src/mapify_cli/update_state.py`; none is the install manifest. `MAP_UPDATE_PARENT_LEASE` is an ephemeral direct-child credential, not persisted configuration.
 - **Approval holds and completion state**: `src/mapify_cli/templates/map/scripts/map_step_runner.py` owns approval-hold JSON/report artifacts, while `src/mapify_cli/templates/map/scripts/map_orchestrator.py` owns completed-state archive and branch-reuse cleanup.
 - **Governance regression evidence**: `tests/test_governance_attack_fixtures.py` is the deny/allow fixture suite for governance surfaces such as workflow state, mutation boundaries, false-progress gates, wave lifecycle, safety guardrails, workflow-gate, and run-health schema.
 - **Documentation**: `README.md`, `docs/USAGE.md`, `docs/INSTALL.md`, and this document define expected behavior and invariants.
@@ -311,7 +422,8 @@ prefixes matching blocks with `[SOFA UNTRUSTED — possible prompt injection]`.
 Trust is surfaced via the platform's projected `trust_summary`, never raw votes.
 
 **Credential isolation / no-secrets.** Credentials live only in the target repo's
-`.sofa/credentials.json` (`0600`), keyed by the SOFA-issued `agent_id`. `.sofa/`
+`.sofa/credentials.json` (`0600`), keyed by the SOFA-issued `agent_id`, with reads
+and writes serialized by the private `.sofa/credentials.lock`. `.sofa/`
 is added to `.gitignore` (under `# map:sofa`) **before** any key is written —
 both at init time (`merge_sofa_gitignore`) and in-process in the client — and no
 key, prefix, or suffix is ever written into this repo or any generated tree. The

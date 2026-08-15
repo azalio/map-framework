@@ -113,10 +113,7 @@ def apply_link_allowlist(text: str) -> str:
             return OFF_ALLOWLIST_PLACEHOLDER
 
     # Match absolute URLs, scheme-relative URLs, and common bare-host patterns.
-    pattern = (
-        r"(?:https?://|//|file://|data:|javascript:)"
-        r"[^\s\]\)\">]+"
-    )
+    pattern = r"(?:https?://|//|file://|data:|javascript:)" r"[^\s\]\)\">]+"
     return re.sub(pattern, _replace, text, flags=re.IGNORECASE)
 
 
@@ -152,9 +149,7 @@ def wrap_untrusted(body: str) -> str:
 # Config reader (stdlib text scan — CRITICAL: flat dotted key `sofa.enabled`)
 # ---------------------------------------------------------------------------
 
-_CONFIG_PATTERN = re.compile(
-    r"^\s*sofa\.enabled\s*:\s*(\S+)", re.MULTILINE
-)
+_CONFIG_PATTERN = re.compile(r"^\s*sofa\.enabled\s*:\s*(\S+)", re.MULTILINE)
 
 
 def _read_sofa_enabled(project_dir: Path) -> bool:
@@ -332,14 +327,22 @@ def dispatch(
     url_result: _ResultDict = client.resolve_base_url()
     if not url_result.get("ok"):
         logger.warning("sofa_search: %s", url_result.get("error"))
-        return {"ok": True, "noop": True, "reason": url_result.get("error", "no base url")}
+        return {
+            "ok": True,
+            "noop": True,
+            "reason": url_result.get("error", "no base url"),
+        }
     base_url: str = url_result["base_url"]
 
     # Create session.
     sess_result: _ResultDict = client.create_session(base_url, api_key)
     if not sess_result.get("ok"):
         logger.warning("sofa_search: session error: %s", sess_result.get("error"))
-        return {"ok": True, "noop": True, "reason": f"session error: {sess_result.get('error')}"}
+        return {
+            "ok": True,
+            "noop": True,
+            "reason": f"session error: {sess_result.get('error')}",
+        }
     session_id: str = sess_result["session_id"]
 
     # Search posts.
@@ -353,7 +356,11 @@ def dispatch(
 
     if not search_result.get("ok"):
         logger.warning("sofa_search: search failed: %s", search_result.get("error"))
-        return {"ok": True, "noop": True, "reason": f"search failed: {search_result.get('error')}"}
+        return {
+            "ok": True,
+            "noop": True,
+            "reason": f"search failed: {search_result.get('error')}",
+        }
 
     items: list[dict[str, Any]] = search_result.get("items") or []
 
@@ -420,16 +427,24 @@ def _run_onboarding(
         # Step 1: base URL — resolved, never guessed.
         url_result: _ResultDict = client.resolve_base_url()
         if not url_result.get("ok"):
-            return {"ok": False, "error": f"Cannot start onboarding: {url_result.get('error')}"}
+            return {
+                "ok": False,
+                "error": f"Cannot start onboarding: {url_result.get('error')}",
+            }
         base_url: str = url_result["base_url"]
 
         # Step 2: fetch the onboarding contract (informational / best-effort).
         client.onboarding_start(base_url)
 
         # Step 3: create the flow -> claim_url + claim_code + poll token.
-        flow: _ResultDict = client.onboarding_create_flow(base_url, **_onboarding_metadata())
+        flow: _ResultDict = client.onboarding_create_flow(
+            base_url, **_onboarding_metadata()
+        )
         if not flow.get("ok"):
-            return {"ok": False, "error": f"Onboarding flow failed: {flow.get('error')}"}
+            return {
+                "ok": False,
+                "error": f"Onboarding flow failed: {flow.get('error')}",
+            }
 
         poll_after = int(flow.get("poll_after_seconds") or 1)
 
@@ -469,17 +484,37 @@ def _run_onboarding(
         if not reg.get("ok"):
             return {"ok": False, "error": f"Registration failed: {reg.get('error')}"}
 
+        agent_id = reg.get("agent_id")
+        api_key = reg.get("api_key")
+        api_key_prefix = reg.get("api_key_prefix", "")
+        api_key_suffix = reg.get("api_key_suffix", "")
+        if (
+            not isinstance(agent_id, str)
+            or not agent_id.strip()
+            or not isinstance(api_key, str)
+            or not api_key.strip()
+            or not isinstance(api_key_prefix, str)
+            or not isinstance(api_key_suffix, str)
+        ):
+            return {
+                "ok": False,
+                "error": "Registration returned invalid credentials; nothing was stored.",
+            }
+
         store: _ResultDict = client.store_credentials(
             repo_root=project_dir,
-            agent_id=reg.get("agent_id"),
-            api_key=reg.get("api_key"),
+            agent_id=agent_id,
+            api_key=api_key,
             agent_name=agent_name,
             base_url=base_url,
-            api_key_prefix=reg.get("api_key_prefix") or "",
-            api_key_suffix=reg.get("api_key_suffix") or "",
+            api_key_prefix=api_key_prefix,
+            api_key_suffix=api_key_suffix,
         )
         if not store.get("ok"):
-            return {"ok": False, "error": f"Could not store credentials: {store.get('error')}"}
+            return {
+                "ok": False,
+                "error": f"Could not store credentials: {store.get('error')}",
+            }
 
         # SUCCESS — never echo the api_key back into the Actor context.
         return {
@@ -487,11 +522,11 @@ def _run_onboarding(
             "noop": False,
             "onboarding_started": True,
             "onboarding_complete": True,
-            "agent_id": reg.get("agent_id"),
+            "agent_id": agent_id,
             "base_url": base_url,
             "reason": (
                 f"SOFA onboarding complete; credentials stored for "
-                f"agent_id={reg.get('agent_id')}."
+                f"agent_id={agent_id}."
             ),
         }
     except Exception as exc:  # noqa: BLE001

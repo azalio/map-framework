@@ -224,8 +224,8 @@ def _scan_sh_commands(path: Path) -> set[str]:
         defined_functions.add(m.group(1))
 
     in_sq_block = False  # True while inside a multi-line single-quoted string
-    in_heredoc = False   # True while inside a here-document body
-    heredoc_term = ""    # Terminator word (bare, unquoted) to watch for
+    in_heredoc = False  # True while inside a here-document body
+    heredoc_term = ""  # Terminator word (bare, unquoted) to watch for
     heredoc_indented = False  # True for <<- variant (tab-stripped terminator)
 
     for line in text.splitlines():
@@ -330,9 +330,7 @@ def _scan_sh_commands(path: Path) -> set[str]:
 # ---------------------------------------------------------------------------
 
 
-def _check_call_node(
-    node: ast.Call, result: dict[str, set[str]]
-) -> None:
+def _check_call_node(node: ast.Call, result: dict[str, set[str]]) -> None:
     """Inspect a Call AST node for os.getenv (env) and subprocess calls (cmd)."""
     func = node.func
 
@@ -345,14 +343,10 @@ def _check_call_node(
         and func.attr == "getenv"
     ):
         args = node.args
-        has_default = len(args) >= 2 or any(
-            kw.arg == "default" for kw in node.keywords
-        )
+        has_default = len(args) >= 2 or any(kw.arg == "default" for kw in node.keywords)
         if not has_default and args:
             key_node = args[0]
-            if isinstance(key_node, ast.Constant) and isinstance(
-                key_node.value, str
-            ):
+            if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str):
                 result["requires-env"].add(key_node.value)
         return
 
@@ -389,9 +383,7 @@ def _check_call_node(
     elif isinstance(first_arg, ast.List) and first_arg.elts:
         # List form: subprocess.run(["git", "status"])
         first_elt = first_arg.elts[0]
-        if isinstance(first_elt, ast.Constant) and isinstance(
-            first_elt.value, str
-        ):
+        if isinstance(first_elt, ast.Constant) and isinstance(first_elt.value, str):
             result["requires-cmd"].add(first_elt.value)
 
 
@@ -523,17 +515,13 @@ def test_declared_superset_of_detected(
         declared_vals: set[str] = set(skill_entry.get(key) or [])
         missing = detected_vals - declared_vals
         if missing:
-            undeclared.append(
-                f"  {key}: detected {sorted(missing)} but not declared"
-            )
+            undeclared.append(f"  {key}: detected {sorted(missing)} but not declared")
 
     assert not undeclared, (
         f"Skill '{skill_name}' has under-declared requirements:\n"
         + "\n".join(undeclared)
         + "\n\nCurrent declared entry:\n"
-        + json.dumps(
-            {k: skill_entry.get(k) for k in SKILL_REQUIREMENTS_KEYS}, indent=2
-        )
+        + json.dumps({k: skill_entry.get(k) for k in SKILL_REQUIREMENTS_KEYS}, indent=2)
     )
 
 
@@ -581,8 +569,8 @@ def test_no_dangling_requires_skills(skill_rules: dict[str, Any]) -> None:
                     f"  '{skill_name}' requires-skills -> '{target}' (not in catalog)"
                 )
 
-    assert not dangling, (
-        "Dangling requires-skills references found:\n" + "\n".join(dangling)
+    assert not dangling, "Dangling requires-skills references found:\n" + "\n".join(
+        dangling
     )
 
 
@@ -602,15 +590,15 @@ def test_scanner_ignores_getenv_with_default(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     deps = _scan_py_deps(script)
-    assert "WITH_DEFAULT" not in deps["requires-env"], (
-        "getenv with default must be ignored as a required env var"
-    )
-    assert "NO_DEFAULT" in deps["requires-env"], (
-        "getenv without default must be detected as a required env var"
-    )
-    assert "DIRECT_KEY" in deps["requires-env"], (
-        "os.environ['KEY'] must be detected as a required env var"
-    )
+    assert (
+        "WITH_DEFAULT" not in deps["requires-env"]
+    ), "getenv with default must be ignored as a required env var"
+    assert (
+        "NO_DEFAULT" in deps["requires-env"]
+    ), "getenv without default must be detected as a required env var"
+    assert (
+        "DIRECT_KEY" in deps["requires-env"]
+    ), "os.environ['KEY'] must be detected as a required env var"
 
 
 def test_scanner_ignores_sh_comments(tmp_path: Path) -> None:
@@ -643,7 +631,9 @@ def test_scanner_ignores_posix_builtins(tmp_path: Path) -> None:
     )
     cmds = _scan_sh_commands(script)
     for builtin in ("set", "mkdir", "cp", "grep"):
-        assert builtin not in cmds, f"Builtin '{builtin}' must not appear in requires-cmd"
+        assert (
+            builtin not in cmds
+        ), f"Builtin '{builtin}' must not appear in requires-cmd"
     assert "git" in cmds, "git must be detected (not a builtin)"
 
 
@@ -656,16 +646,16 @@ def test_scanner_ignores_multiline_awk_program(tmp_path: Path) -> None:
         "    awk '\n"
         "        /pattern/ { getline; print; next }\n"
         "        in_section { print }\n"
-        "    ' \"$INFILE\"\n"
+        '    \' "$INFILE"\n'
         ")\n"
         "git log --oneline\n",
         encoding="utf-8",
     )
     cmds = _scan_sh_commands(script)
     for awk_token in ("getline", "print", "next", "in_section"):
-        assert awk_token not in cmds, (
-            f"awk token '{awk_token}' inside awk program must not be flagged"
-        )
+        assert (
+            awk_token not in cmds
+        ), f"awk token '{awk_token}' inside awk program must not be flagged"
     assert "git" in cmds, "git outside awk block must still be detected"
 
 
@@ -673,13 +663,13 @@ def test_scanner_ignores_won_t_do_in_echo(tmp_path: Path) -> None:
     """VC4: Apostrophe inside a double-quoted string (won't_do) must not open sq block."""
     script = tmp_path / "test_wontdo.sh"
     script.write_text(
-        "#!/usr/bin/env bash\n"
-        "echo \"won't_do count: $COUNT\"\n"
-        "git status\n",
+        "#!/usr/bin/env bash\n" 'echo "won\'t_do count: $COUNT"\n' "git status\n",
         encoding="utf-8",
     )
     cmds = _scan_sh_commands(script)
-    assert "git" in cmds, "git must be detected after double-quoted string with apostrophe"
+    assert (
+        "git" in cmds
+    ), "git must be detected after double-quoted string with apostrophe"
 
 
 def test_scanner_ignores_heredoc_body(tmp_path: Path) -> None:
@@ -694,9 +684,9 @@ def test_scanner_ignores_heredoc_body(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     cmds = _scan_sh_commands(script)
-    assert "docker" not in cmds, (
-        "Command inside heredoc body must not be flagged as a required command"
-    )
+    assert (
+        "docker" not in cmds
+    ), "Command inside heredoc body must not be flagged as a required command"
     assert "git" in cmds, "git outside the heredoc must still be detected"
 
 
@@ -714,20 +704,20 @@ def test_scanner_heredoc_token_in_comment_or_string_does_not_swallow(
     script = tmp_path / "tricky.sh"
     script.write_text(
         "#!/usr/bin/env bash\n"
-        "# example: cat <<EOF writes a file\n"   # <<EOF in a COMMENT
+        "# example: cat <<EOF writes a file\n"  # <<EOF in a COMMENT
         'echo "here is a <<EOF token in a string"\n'  # <<EOF in a DQ string
-        "terraform apply\n"                      # real, undeclared command AFTER
-        "awk '<<NOPE inside awk program'\n"      # <<NOPE inside a SQ string
-        "kubectl get pods\n",                    # another real command AFTER
+        "terraform apply\n"  # real, undeclared command AFTER
+        "awk '<<NOPE inside awk program'\n"  # <<NOPE inside a SQ string
+        "kubectl get pods\n",  # another real command AFTER
         encoding="utf-8",
     )
     cmds = _scan_sh_commands(script)
-    assert "terraform" in cmds, (
-        "a <<WORD in a comment/string must not swallow the following command"
-    )
-    assert "kubectl" in cmds, (
-        "a <<WORD inside a single-quoted awk program must not swallow lines"
-    )
+    assert (
+        "terraform" in cmds
+    ), "a <<WORD in a comment/string must not swallow the following command"
+    assert (
+        "kubectl" in cmds
+    ), "a <<WORD inside a single-quoted awk program must not swallow lines"
     # And the fake delimiters themselves are never treated as commands.
     assert "EOF" not in cmds and "NOPE" not in cmds
 
@@ -749,9 +739,9 @@ def test_scanner_real_heredoc_with_quoted_and_indented_delimiters(
         encoding="utf-8",
     )
     cmds = _scan_sh_commands(script)
-    assert "docker" not in cmds and "podman" not in cmds, (
-        "bodies of <<\"END1\" and <<-END2 heredocs must be suppressed"
-    )
+    assert (
+        "docker" not in cmds and "podman" not in cmds
+    ), 'bodies of <<"END1" and <<-END2 heredocs must be suppressed'
     assert "git" in cmds
 
 

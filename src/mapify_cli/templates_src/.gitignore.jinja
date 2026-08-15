@@ -1,4 +1,8 @@
 # Phase E cross-session memory: scratch WAL is transient (never commit)
+.map/update-state.json
+.map/update.lock
+.map/provider-refresh.lock
+.map/installer.lock
 .map/*/sessions/scratch/
 # Offloaded tool outputs (#232) may contain secrets — never commit. A
 # self-contained .map/<branch>/compacted/.gitignore enforces this too.

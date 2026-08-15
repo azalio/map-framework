@@ -2,6 +2,27 @@
   "version": "1.0",
   "description": "Skill activation triggers for MAP Framework",
   "skills": {
+    "map-upgrade": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "high",
+      "description": "Manually check or upgrade the MAP Framework installed in this project.",
+      "promptTriggers": {
+        "keywords": [
+          "map-upgrade",
+          "upgrade MAP",
+          "update framework",
+          "check MAP version",
+          "upgrade framework"
+        ],
+        "intentPatterns": [
+          "map-upgrade",
+          "(/|\\$)map-upgrade",
+          "(upgrade|update|check).*(MAP|framework)"
+        ]
+      }
+    },
     "map-state": {
       "type": "domain",
       "skillClass": "hybrid",

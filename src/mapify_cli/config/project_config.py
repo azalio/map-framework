@@ -35,6 +35,9 @@ class MapConfig:
     # Workflow profile: "core", "full", or "custom"
     profile: str = "full"
 
+    # Automatically apply stable MAP Framework updates to this project.
+    updates_auto: bool = True
+
     # Project context injected into all agent prompts
     context: str = ""
 
@@ -367,6 +370,7 @@ def load_map_config(project_path: Path) -> MapConfig:
         # this the toggles are silent dead fields (load logs "unknown key" and
         # the defaults stand even when the YAML sets them).
         for dotted, field_name in (
+            ("updates.auto", "updates_auto"),
             ("review.cross_ai.enabled", "review_cross_ai_enabled"),
             ("review.cross_ai.runtime", "review_cross_ai_runtime"),
             ("review.cross_ai.timeout_seconds", "review_cross_ai_timeout_seconds"),
@@ -594,7 +598,12 @@ def generate_default_config(include_comments: bool = True) -> str:
     """
     if not include_comments:
         # Minimal config without comments
-        return "# MAP Framework Project Configuration\nprofile: full\nminimality: lite\n"
+        return (
+            "# MAP Framework Project Configuration\n"
+            "profile: full\n"
+            "minimality: lite\n"
+            "updates.auto: true\n"
+        )
 
     return """\
 # MAP Framework Project Configuration
@@ -658,6 +667,9 @@ profile: full
 # lazier alternatives without silently dropping required work.
 # Allowed: off, lite, full, ultra
 minimality: lite
+
+# Automatic stable MAP updates. Disable with `mapify init --no-auto-update`.
+updates.auto: true
 
 # Agent-prompt layering for repeated same-workflow dispatches (#231).
 # "docs_first" (default) orders the variable <documents> first and the stable
@@ -848,6 +860,26 @@ def apply_compression_overrides(
         text = _set("compression_policy", policy, text)
     if threshold is not None:
         text = _set("compression_threshold_tokens", str(int(threshold)), text)
+    config_path.write_text(text, encoding="utf-8")
+
+
+def apply_auto_update_override(config_path: Path, enabled: bool) -> None:
+    """Write the automatic-update setting into an existing config file."""
+    if not config_path.is_file():
+        return
+    import re
+
+    text = config_path.read_text(encoding="utf-8")
+    active = re.compile(r"(?m)^updates\.auto\s*:.*$")
+    commented = re.compile(r"(?m)^#\s*updates\.auto\s*:.*$")
+    line = f"updates.auto: {'true' if enabled else 'false'}"
+    if active.search(text):
+        text = active.sub(line, text, count=1)
+    elif commented.search(text):
+        text = commented.sub(line, text, count=1)
+    else:
+        separator = "" if text.endswith("\n") else "\n"
+        text = f"{text}{separator}{line}\n"
     config_path.write_text(text, encoding="utf-8")
 
 

@@ -23,12 +23,16 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+import mapify_cli.install_manifest as install_manifest_module
 from mapify_cli.delivery.managed_file_copier import (
     compute_hash,
     inject_metadata,
@@ -36,12 +40,14 @@ from mapify_cli.delivery.managed_file_copier import (
 from mapify_cli.install_manifest import (
     MANIFEST_FILENAME,
     InstallManifest,
+    ReconcileResult,
     _build_entry_from_file,
     _infer_management_mode,
     _scan_mcp_config_entries,
     _scan_statusline_config_entry,
     build_manifest,
     check_installed,
+    normalize_providers,
     read_manifest,
     reconcile_config,
     write_manifest,
@@ -309,6 +315,78 @@ class TestVC3Idempotency:
         assert ".claude/agents/actor.md" not in dests2
 
 
+def test_write_manifest_fsyncs_a_same_directory_tempfile_before_replace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = InstallManifest(
+        mapify_version=VERSION,
+        provider="claude",
+        installed_at="2026-08-13T00:00:00Z",
+        providers=["claude"],
+    )
+    events: list[tuple[str, Path | None, Path | None]] = []
+    real_fsync = os.fsync
+    real_replace = os.replace
+
+    def recording_fsync(fd: int) -> None:
+        events.append(("fsync", None, None))
+        real_fsync(fd)
+
+    def recording_replace(source: str | Path, destination: str | Path) -> None:
+        events.append(("replace", Path(source), Path(destination)))
+        real_replace(source, destination)
+
+    monkeypatch.setattr(os, "fsync", recording_fsync)
+    monkeypatch.setattr(os, "replace", recording_replace)
+
+    manifest_path = write_manifest(tmp_path, manifest)
+
+    assert [event[0] for event in events] == ["fsync", "replace"]
+    _, temp_path, replacement_path = events[1]
+    assert temp_path is not None
+    assert replacement_path == manifest_path
+    assert temp_path.parent == manifest_path.parent
+    assert temp_path != manifest_path
+    assert not temp_path.exists()
+    assert read_manifest(tmp_path) == manifest
+
+
+def test_write_manifest_replace_failure_preserves_old_file_and_cleans_tempfile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = InstallManifest(
+        mapify_version="3.25.0",
+        provider="claude",
+        installed_at="2026-08-13T00:00:00Z",
+        providers=["claude"],
+    )
+    replacement = InstallManifest(
+        mapify_version="3.26.0",
+        provider="claude",
+        installed_at="2026-08-14T00:00:00Z",
+        providers=["claude"],
+    )
+    manifest_path = write_manifest(tmp_path, original)
+    original_bytes = manifest_path.read_bytes()
+    replace_error = OSError("replace failed")
+
+    def fail_replace(source: str | Path, destination: str | Path) -> None:
+        del source, destination
+        raise replace_error
+
+    monkeypatch.setattr(os, "replace", fail_replace)
+
+    with pytest.raises(OSError) as caught:
+        write_manifest(tmp_path, replacement)
+
+    assert caught.value is replace_error
+    assert manifest_path.read_bytes() == original_bytes
+    assert read_manifest(tmp_path) == original
+    assert list(manifest_path.parent.glob(f".{manifest_path.name}.*.tmp")) == []
+
+
 # ---------------------------------------------------------------------------
 # VC4: check_installed detects missing files
 # ---------------------------------------------------------------------------
@@ -440,6 +518,42 @@ class TestVC6OrphanDetection:
 # VC7: read_manifest returns None for missing/corrupt
 # ---------------------------------------------------------------------------
 
+
+def _valid_raw_manifest() -> dict[str, Any]:
+    """Return a complete persisted manifest fixture with literal values."""
+    return {
+        "mapify_version": VERSION,
+        "provider": "claude",
+        "installed_at": "2026-07-05T00:00:00Z",
+        "entries": [
+            {
+                "dest": ".claude/skills/map-plan/SKILL.md",
+                "content_hash": "content-sha256",
+                "template_hash": "template-sha256",
+                "management_mode": "fenced",
+                "committed": True,
+                "mapify_version": VERSION,
+                "installed_at": "2026-07-05T00:00:00Z",
+            }
+        ],
+        "config_entries": [
+            {
+                "file": ".mcp.json",
+                "key_path": "mcpServers.sequential-thinking",
+                "installed_at": "2026-07-05T00:00:00Z",
+                "mapify_version": VERSION,
+            }
+        ],
+        "providers": ["claude"],
+    }
+
+
+def _write_raw_manifest(project_path: Path, payload: object) -> None:
+    manifest_path = project_path / ".map" / MANIFEST_FILENAME
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+
 class TestVC7ReadManifestEdgeCases:
     def test_missing_manifest_returns_none(self, tmp_path: Path) -> None:
         result = read_manifest(tmp_path)
@@ -467,16 +581,659 @@ class TestVC7ReadManifestEdgeCases:
             provider="claude",
             installed_at="2026-07-05T00:00:00Z",
             entries=[],
+            providers=["claude"],
         )
         write_manifest(tmp_path, manifest)
         loaded = read_manifest(tmp_path)
         assert loaded is not None
         assert loaded.entries == []
 
+    @pytest.mark.parametrize(
+        "missing_field",
+        ["mapify_version", "provider", "installed_at", "entries"],
+    )
+    def test_missing_required_manifest_field_returns_none(
+        self,
+        tmp_path: Path,
+        missing_field: str,
+    ) -> None:
+        raw = _valid_raw_manifest()
+        del raw[missing_field]
+        _write_raw_manifest(tmp_path, raw)
+
+        assert read_manifest(tmp_path) is None
+
+    @pytest.mark.parametrize(
+        ("field", "invalid_value"),
+        [
+            pytest.param("mapify_version", None, id="mapify-version-null"),
+            pytest.param("mapify_version", 321, id="mapify-version-number"),
+            pytest.param("installed_at", [], id="installed-at-array"),
+            pytest.param("installed_at", {}, id="installed-at-object"),
+            pytest.param("provider", [], id="legacy-provider-array"),
+            pytest.param("provider", None, id="legacy-provider-null"),
+        ],
+    )
+    def test_wrong_typed_manifest_metadata_returns_none(
+        self,
+        tmp_path: Path,
+        field: str,
+        invalid_value: object,
+    ) -> None:
+        raw = _valid_raw_manifest()
+        raw[field] = invalid_value
+        _write_raw_manifest(tmp_path, raw)
+
+        assert read_manifest(tmp_path) is None
+
+    @pytest.mark.parametrize(
+        "invalid_providers",
+        [
+            pytest.param("claude", id="string-not-array"),
+            pytest.param({}, id="object-not-array"),
+            pytest.param(None, id="null-not-array"),
+            pytest.param([], id="empty-array"),
+            pytest.param(["claude", 7], id="non-string-element"),
+            pytest.param(["unknown"], id="unknown-provider"),
+            pytest.param(["codex", "claude"], id="non-canonical-order"),
+            pytest.param(["claude", "claude"], id="duplicate-provider"),
+            pytest.param(["codex"], id="disagrees-with-legacy-provider"),
+        ],
+    )
+    def test_malformed_providers_returns_none(
+        self,
+        tmp_path: Path,
+        invalid_providers: object,
+    ) -> None:
+        raw = _valid_raw_manifest()
+        raw["providers"] = invalid_providers
+        _write_raw_manifest(tmp_path, raw)
+
+        assert read_manifest(tmp_path) is None
+
+    def test_wrong_typed_legacy_provider_without_providers_returns_none(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        raw = _valid_raw_manifest()
+        raw["provider"] = []
+        del raw["providers"]
+        _write_raw_manifest(tmp_path, raw)
+
+        assert read_manifest(tmp_path) is None
+
+    @pytest.mark.parametrize(
+        ("field", "invalid_value"),
+        [
+            pytest.param("entries", {}, id="entries-object"),
+            pytest.param("entries", "entry", id="entries-string"),
+            pytest.param("entries", None, id="entries-null"),
+            pytest.param("config_entries", {}, id="config-entries-object"),
+            pytest.param("config_entries", "entry", id="config-entries-string"),
+            pytest.param("config_entries", None, id="config-entries-null"),
+        ],
+    )
+    def test_non_list_record_collections_return_none(
+        self,
+        tmp_path: Path,
+        field: str,
+        invalid_value: object,
+    ) -> None:
+        raw = _valid_raw_manifest()
+        raw[field] = invalid_value
+        _write_raw_manifest(tmp_path, raw)
+
+        assert read_manifest(tmp_path) is None
+
+    @pytest.mark.parametrize(
+        "invalid_entry",
+        [
+            pytest.param("entry", id="not-an-object"),
+            pytest.param({}, id="missing-fields"),
+            pytest.param(
+                {
+                    **_valid_raw_manifest()["entries"][0],
+                    "unexpected": "field",
+                },
+                id="extra-field",
+            ),
+            pytest.param(
+                {
+                    **_valid_raw_manifest()["entries"][0],
+                    "dest": [],
+                },
+                id="dest-array",
+            ),
+            pytest.param(
+                {
+                    **_valid_raw_manifest()["entries"][0],
+                    "content_hash": None,
+                },
+                id="content-hash-null",
+            ),
+            pytest.param(
+                {
+                    **_valid_raw_manifest()["entries"][0],
+                    "template_hash": 12,
+                },
+                id="template-hash-number",
+            ),
+            pytest.param(
+                {
+                    **_valid_raw_manifest()["entries"][0],
+                    "management_mode": "partial",
+                },
+                id="invalid-management-mode",
+            ),
+            pytest.param(
+                {
+                    **_valid_raw_manifest()["entries"][0],
+                    "committed": "yes",
+                },
+                id="committed-string",
+            ),
+            pytest.param(
+                {
+                    **_valid_raw_manifest()["entries"][0],
+                    "mapify_version": [],
+                },
+                id="entry-mapify-version-array",
+            ),
+            pytest.param(
+                {
+                    **_valid_raw_manifest()["entries"][0],
+                    "installed_at": False,
+                },
+                id="entry-installed-at-boolean",
+            ),
+        ],
+    )
+    def test_malformed_manifest_entry_returns_none(
+        self,
+        tmp_path: Path,
+        invalid_entry: object,
+    ) -> None:
+        raw = _valid_raw_manifest()
+        raw["entries"] = [invalid_entry]
+        _write_raw_manifest(tmp_path, raw)
+
+        assert read_manifest(tmp_path) is None
+
+    @pytest.mark.parametrize(
+        "invalid_config_entry",
+        [
+            pytest.param(7, id="not-an-object"),
+            pytest.param({}, id="missing-fields"),
+            pytest.param(
+                {
+                    **_valid_raw_manifest()["config_entries"][0],
+                    "unexpected": "field",
+                },
+                id="extra-field",
+            ),
+            pytest.param(
+                {
+                    **_valid_raw_manifest()["config_entries"][0],
+                    "file": [],
+                },
+                id="file-array",
+            ),
+            pytest.param(
+                {
+                    **_valid_raw_manifest()["config_entries"][0],
+                    "key_path": None,
+                },
+                id="key-path-null",
+            ),
+            pytest.param(
+                {
+                    **_valid_raw_manifest()["config_entries"][0],
+                    "installed_at": 1,
+                },
+                id="installed-at-number",
+            ),
+            pytest.param(
+                {
+                    **_valid_raw_manifest()["config_entries"][0],
+                    "mapify_version": {},
+                },
+                id="mapify-version-object",
+            ),
+        ],
+    )
+    def test_malformed_config_entry_returns_none(
+        self,
+        tmp_path: Path,
+        invalid_config_entry: object,
+    ) -> None:
+        raw = _valid_raw_manifest()
+        raw["config_entries"] = [invalid_config_entry]
+        _write_raw_manifest(tmp_path, raw)
+
+        assert read_manifest(tmp_path) is None
+
+    def test_invalid_utf8_returns_none(self, tmp_path: Path) -> None:
+        manifest_path = tmp_path / ".map" / MANIFEST_FILENAME
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_bytes(b"\xff\xfe")
+
+        assert read_manifest(tmp_path) is None
+
+    @pytest.mark.parametrize(
+        "unsafe_dest",
+        [
+            pytest.param("", id="empty"),
+            pytest.param(".claude/skills/\x00", id="nul-byte"),
+            pytest.param(".", id="current-directory"),
+            pytest.param("/tmp/x", id="posix-absolute"),
+            pytest.param("../x", id="parent-traversal"),
+            pytest.param(".claude/skills/../../x", id="nested-parent-traversal"),
+            pytest.param(r"C:\tmp\x", id="windows-drive-backslashes"),
+            pytest.param("C:/tmp/x", id="windows-drive-slashes"),
+            pytest.param("C:relative", id="windows-drive-relative"),
+            pytest.param(r"\rooted", id="windows-rooted"),
+            pytest.param(r"\\server\share\x", id="windows-unc"),
+            pytest.param(r".claude\skills\map-plan\SKILL.md", id="backslashes"),
+            pytest.param(
+                r".claude\skills\..\outside.md",
+                id="backslash-traversal",
+            ),
+            pytest.param(
+                ".claude//skills/map-plan/SKILL.md",
+                id="redundant-separator",
+            ),
+            pytest.param(
+                ".claude/./skills/map-plan/SKILL.md",
+                id="dot-segment",
+            ),
+            pytest.param(
+                ".claude/skills/map-plan/SKILL.md/",
+                id="trailing-separator",
+            ),
+            pytest.param("README.md", id="outside-managed-roots"),
+            pytest.param(
+                ".claude/settings.local.json",
+                id="machine-local-file",
+            ),
+        ],
+    )
+    def test_unsafe_or_unmanaged_dest_returns_none(
+        self,
+        tmp_path: Path,
+        unsafe_dest: str,
+    ) -> None:
+        raw = _valid_raw_manifest()
+        raw["entries"][0]["dest"] = unsafe_dest
+        _write_raw_manifest(tmp_path, raw)
+
+        assert read_manifest(tmp_path) is None
+
+    def test_dest_must_belong_to_a_manifest_provider(self, tmp_path: Path) -> None:
+        raw = _valid_raw_manifest()
+        raw["entries"][0]["dest"] = ".codex/config.toml"
+        _write_raw_manifest(tmp_path, raw)
+
+        assert read_manifest(tmp_path) is None
+
+    @pytest.mark.parametrize(
+        "unsafe_file",
+        [
+            pytest.param("", id="empty"),
+            pytest.param("/tmp/settings.json", id="posix-absolute"),
+            pytest.param("../settings.json", id="parent-traversal"),
+            pytest.param(r"C:\tmp\settings.json", id="windows-drive-backslashes"),
+            pytest.param("C:/tmp/settings.json", id="windows-drive-slashes"),
+            pytest.param("C:settings.json", id="windows-drive-relative"),
+            pytest.param(r"\settings.json", id="windows-rooted"),
+            pytest.param(r"\\server\share\settings.json", id="windows-unc"),
+            pytest.param(r"..\settings.json", id="backslash-traversal"),
+            pytest.param(".claude//settings.local.json", id="redundant-separator"),
+            pytest.param(".claude/./settings.local.json", id="dot-segment"),
+        ],
+    )
+    def test_unsafe_config_file_returns_none(
+        self,
+        tmp_path: Path,
+        unsafe_file: str,
+    ) -> None:
+        raw = _valid_raw_manifest()
+        raw["config_entries"][0]["file"] = unsafe_file
+        _write_raw_manifest(tmp_path, raw)
+
+        assert read_manifest(tmp_path) is None
+
+    @pytest.mark.parametrize(
+        ("file", "key_path"),
+        [
+            pytest.param(
+                ".mcp.json",
+                "statusLine",
+                id="statusline-in-mcp-config",
+            ),
+            pytest.param(
+                ".claude/settings.local.json",
+                "mcpServers.sequential-thinking",
+                id="mcp-server-in-statusline-config",
+            ),
+            pytest.param(
+                ".mcp.json",
+                "mcpServers.custom-server",
+                id="unknown-mcp-server",
+            ),
+            pytest.param(
+                ".mcp.json",
+                "mcpServers.",
+                id="empty-mcp-server-name",
+            ),
+        ],
+    )
+    def test_unowned_config_pair_returns_none(
+        self,
+        tmp_path: Path,
+        file: str,
+        key_path: str,
+    ) -> None:
+        raw = _valid_raw_manifest()
+        raw["config_entries"][0]["file"] = file
+        raw["config_entries"][0]["key_path"] = key_path
+        _write_raw_manifest(tmp_path, raw)
+
+        assert read_manifest(tmp_path) is None
+
+    def test_config_entry_requires_claude_provider(self, tmp_path: Path) -> None:
+        raw = _valid_raw_manifest()
+        raw["provider"] = "codex"
+        raw["providers"] = ["codex"]
+        raw["entries"][0]["dest"] = ".codex/config.toml"
+        _write_raw_manifest(tmp_path, raw)
+
+        assert read_manifest(tmp_path) is None
+
+    def test_reconcile_rejects_outside_statusline_without_mutating_it(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        outside_path = tmp_path.parent / f"{tmp_path.name}-outside-settings.json"
+        original = (
+            b'{"statusLine":{"type":"command",'
+            b'"command":"map-statusline.py"},"keep":true}\n'
+        )
+        outside_path.write_bytes(original)
+        raw = _valid_raw_manifest()
+        raw["config_entries"] = [
+            {
+                "file": str(outside_path),
+                "key_path": "statusLine",
+                "installed_at": "2026-07-05T00:00:00Z",
+                "mapify_version": VERSION,
+            }
+        ]
+        _write_raw_manifest(tmp_path, raw)
+
+        assert read_manifest(tmp_path) is None
+        assert reconcile_config(tmp_path) == ReconcileResult()
+        assert outside_path.read_bytes() == original
+
+    def test_reconcile_rejects_unknown_mcp_owner_without_mutating_config(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        mcp_path = tmp_path / ".mcp.json"
+        original = b'{"mcpServers":{"custom-server":null},"keep":true}\n'
+        mcp_path.write_bytes(original)
+        raw = _valid_raw_manifest()
+        raw["config_entries"] = [
+            {
+                "file": ".mcp.json",
+                "key_path": "mcpServers.custom-server",
+                "installed_at": "2026-07-05T00:00:00Z",
+                "mapify_version": VERSION,
+            }
+        ]
+        _write_raw_manifest(tmp_path, raw)
+
+        assert read_manifest(tmp_path) is None
+        assert reconcile_config(tmp_path) == ReconcileResult()
+        assert mcp_path.read_bytes() == original
+
+    def test_read_rejects_statusline_through_symlinked_claude_directory(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        outside_dir = tmp_path.parent / f"{tmp_path.name}-outside-claude"
+        outside_dir.mkdir()
+        outside_settings = outside_dir / "settings.local.json"
+        original = b'{"statusLine":{"command":"map-statusline.py"},"keep":true}\n'
+        outside_settings.write_bytes(original)
+        (tmp_path / ".claude").symlink_to(outside_dir, target_is_directory=True)
+        raw = _valid_raw_manifest()
+        raw["entries"] = []
+        raw["config_entries"] = [
+            {
+                "file": ".claude/settings.local.json",
+                "key_path": "statusLine",
+                "installed_at": "2026-07-05T00:00:00Z",
+                "mapify_version": VERSION,
+            }
+        ]
+        _write_raw_manifest(tmp_path, raw)
+
+        assert read_manifest(tmp_path) is None
+        assert reconcile_config(tmp_path) == ReconcileResult()
+        assert outside_settings.read_bytes() == original
+
+    def test_read_rejects_mcp_config_final_symlink(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        outside_mcp = tmp_path.parent / f"{tmp_path.name}-outside-mcp.json"
+        original = json.dumps(
+            {"mcpServers": {_MAP_SERVER_NAME: _MAP_SERVER_CONFIG}, "keep": True}
+        ).encode()
+        outside_mcp.write_bytes(original)
+        (tmp_path / ".mcp.json").symlink_to(outside_mcp)
+        raw = _valid_raw_manifest()
+        raw["entries"] = []
+        _write_raw_manifest(tmp_path, raw)
+
+        assert read_manifest(tmp_path) is None
+        assert reconcile_config(tmp_path) == ReconcileResult()
+        assert outside_mcp.read_bytes() == original
+
+    def test_read_rejects_managed_dest_through_symlinked_ancestor(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        outside_skills = tmp_path.parent / f"{tmp_path.name}-outside-skills"
+        outside_skill = outside_skills / "map-plan" / "SKILL.md"
+        _write_managed_file(outside_skill, "outside\n")
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "skills").symlink_to(
+            outside_skills,
+            target_is_directory=True,
+        )
+        raw = _valid_raw_manifest()
+        raw["config_entries"] = []
+        _write_raw_manifest(tmp_path, raw)
+
+        assert read_manifest(tmp_path) is None
+
+    def test_read_rejects_managed_dest_final_symlink(self, tmp_path: Path) -> None:
+        outside_skill = tmp_path.parent / f"{tmp_path.name}-outside-skill.md"
+        _write_managed_file(outside_skill, "outside\n")
+        managed_skill = tmp_path / ".claude" / "skills" / "map-plan" / "SKILL.md"
+        managed_skill.parent.mkdir(parents=True)
+        managed_skill.symlink_to(outside_skill)
+        raw = _valid_raw_manifest()
+        raw["config_entries"] = []
+        _write_raw_manifest(tmp_path, raw)
+
+        assert read_manifest(tmp_path) is None
+
+    def test_check_revalidates_ancestor_symlinks_after_manifest_load(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        raw = _valid_raw_manifest()
+        raw["config_entries"] = []
+        _write_raw_manifest(tmp_path, raw)
+        accepted_manifest = read_manifest(tmp_path)
+        assert accepted_manifest is not None
+
+        outside_skills = tmp_path.parent / f"{tmp_path.name}-late-skills"
+        outside_skill = outside_skills / "map-plan" / "SKILL.md"
+        _write_managed_file(
+            outside_skill,
+            "outside\n",
+            template_hash="template-sha256",
+        )
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "skills").symlink_to(
+            outside_skills,
+            target_is_directory=True,
+        )
+        monkeypatch.setattr(
+            install_manifest_module,
+            "read_manifest",
+            lambda project_path: accepted_manifest,
+        )
+
+        result = check_installed(tmp_path)
+
+        assert ".claude/skills/map-plan/SKILL.md" in result.missing
+        assert ".claude/skills/map-plan/SKILL.md" not in result.ok
+
+    def test_reconcile_revalidates_statusline_ancestor_before_mutation(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        settings = tmp_path / ".claude" / "settings.local.json"
+        settings.parent.mkdir()
+        settings.write_text('{"statusLine":{"command":"map-statusline.py"}}\n')
+        raw = _valid_raw_manifest()
+        raw["entries"] = []
+        raw["config_entries"] = [
+            {
+                "file": ".claude/settings.local.json",
+                "key_path": "statusLine",
+                "installed_at": "2026-07-05T00:00:00Z",
+                "mapify_version": VERSION,
+            }
+        ]
+        _write_raw_manifest(tmp_path, raw)
+        accepted_manifest = read_manifest(tmp_path)
+        assert accepted_manifest is not None
+
+        safe_claude = tmp_path / ".claude-safe"
+        settings.parent.rename(safe_claude)
+        outside_claude = tmp_path.parent / f"{tmp_path.name}-late-claude"
+        outside_claude.mkdir()
+        outside_settings = outside_claude / "settings.local.json"
+        original = b'{"statusLine":{"command":"map-statusline.py"},"keep":true}\n'
+        outside_settings.write_bytes(original)
+        (tmp_path / ".claude").symlink_to(
+            outside_claude,
+            target_is_directory=True,
+        )
+        monkeypatch.setattr(
+            install_manifest_module,
+            "read_manifest",
+            lambda project_path: accepted_manifest,
+        )
+
+        result = reconcile_config(tmp_path)
+
+        assert result.removed == []
+        assert outside_settings.read_bytes() == original
+
+    def test_reconcile_revalidates_mcp_final_symlink_before_mutation(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        mcp_path = tmp_path / ".mcp.json"
+        mcp_path.write_text(
+            json.dumps({"mcpServers": {_MAP_SERVER_NAME: _MAP_SERVER_CONFIG}}),
+            encoding="utf-8",
+        )
+        raw = _valid_raw_manifest()
+        raw["entries"] = []
+        _write_raw_manifest(tmp_path, raw)
+        accepted_manifest = read_manifest(tmp_path)
+        assert accepted_manifest is not None
+
+        safe_mcp = tmp_path / ".mcp.safe.json"
+        mcp_path.rename(safe_mcp)
+        outside_mcp = tmp_path.parent / f"{tmp_path.name}-late-mcp.json"
+        original = json.dumps(
+            {"mcpServers": {_MAP_SERVER_NAME: _MAP_SERVER_CONFIG}, "keep": True}
+        ).encode()
+        outside_mcp.write_bytes(original)
+        mcp_path.symlink_to(outside_mcp)
+        monkeypatch.setattr(
+            install_manifest_module,
+            "read_manifest",
+            lambda project_path: accepted_manifest,
+        )
+
+        result = reconcile_config(tmp_path)
+
+        assert result.removed == []
+        assert outside_mcp.read_bytes() == original
+
+    def test_read_rejects_symlinked_manifest_file(self, tmp_path: Path) -> None:
+        outside_manifest = tmp_path.parent / f"{tmp_path.name}-manifest.json"
+        outside_manifest.write_text(json.dumps(_valid_raw_manifest()), encoding="utf-8")
+        manifest_path = tmp_path / ".map" / MANIFEST_FILENAME
+        manifest_path.parent.mkdir()
+        manifest_path.symlink_to(outside_manifest)
+
+        assert read_manifest(tmp_path) is None
+
+    def test_write_rejects_symlinked_map_directory(self, tmp_path: Path) -> None:
+        outside_map = tmp_path.parent / f"{tmp_path.name}-outside-map"
+        outside_map.mkdir()
+        (tmp_path / ".map").symlink_to(outside_map, target_is_directory=True)
+        manifest = InstallManifest(
+            mapify_version=VERSION,
+            provider="claude",
+            installed_at="2026-07-05T00:00:00Z",
+            providers=["claude"],
+        )
+
+        with pytest.raises(OSError, match="symlink"):
+            write_manifest(tmp_path, manifest)
+
+        assert not (outside_map / MANIFEST_FILENAME).exists()
+
+    def test_write_rejects_symlinked_manifest_file(self, tmp_path: Path) -> None:
+        outside_manifest = tmp_path.parent / f"{tmp_path.name}-write-target.json"
+        original = b"outside sentinel\n"
+        outside_manifest.write_bytes(original)
+        manifest_path = tmp_path / ".map" / MANIFEST_FILENAME
+        manifest_path.parent.mkdir()
+        manifest_path.symlink_to(outside_manifest)
+        manifest = InstallManifest(
+            mapify_version=VERSION,
+            provider="claude",
+            installed_at="2026-07-05T00:00:00Z",
+            providers=["claude"],
+        )
+
+        with pytest.raises(OSError, match="symlink"):
+            write_manifest(tmp_path, manifest)
+
+        assert outside_manifest.read_bytes() == original
+
 
 # ---------------------------------------------------------------------------
 # VC8: management_mode inference
 # ---------------------------------------------------------------------------
+
 
 class TestVC8ManagementModeInference:
     def test_md_with_fence_marker_is_fenced(self, tmp_path: Path) -> None:
@@ -887,3 +1644,98 @@ class TestVC17BackwardCompat:
         assert m_read is not None
         config_keys = [e.key_path for e in m_read.config_entries]
         assert len(config_keys) == len(set(config_keys)), "no duplicate config entries"
+
+
+# ---------------------------------------------------------------------------
+# Provider-aware manifests: legacy compatibility and dual-provider auditing
+# ---------------------------------------------------------------------------
+
+
+def test_old_single_provider_manifest_populates_providers(tmp_path: Path) -> None:
+    raw = {
+        "mapify_version": VERSION,
+        "provider": "claude",
+        "installed_at": _TIMESTAMP,
+        "entries": [],
+    }
+    path = tmp_path / ".map" / MANIFEST_FILENAME
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    loaded = read_manifest(tmp_path)
+
+    assert loaded is not None
+    assert loaded.provider == "claude"
+    assert loaded.providers == ["claude"]
+
+
+def test_provider_normalization_orders_and_deduplicates_requested_providers() -> None:
+    assert normalize_providers(["codex", "claude", "codex"]) == ["claude", "codex"]
+
+
+def test_legacy_dual_provider_manifest_populates_both_providers(tmp_path: Path) -> None:
+    raw = {
+        "mapify_version": VERSION,
+        "provider": "claude+codex",
+        "installed_at": _TIMESTAMP,
+        "entries": [],
+    }
+    path = tmp_path / ".map" / MANIFEST_FILENAME
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    loaded = read_manifest(tmp_path)
+
+    assert loaded is not None
+    assert loaded.providers == ["claude", "codex"]
+
+
+def test_dual_provider_manifest_contains_union_without_duplicate_shared_files(
+    tmp_path: Path,
+) -> None:
+    _setup_claude_install(tmp_path)
+    _setup_codex_install(tmp_path)
+
+    manifest = build_manifest(tmp_path, ["claude", "codex"], VERSION)
+
+    assert manifest.providers == ["claude", "codex"]
+    destinations = [entry.dest for entry in manifest.entries]
+    assert len(destinations) == len(set(destinations))
+    assert any(dest.startswith(".claude/") for dest in destinations)
+    assert any(
+        dest.startswith((".codex/", ".agents/"))
+        for dest in destinations
+    )
+
+
+def test_dual_provider_manifest_serializes_legacy_provider_field(tmp_path: Path) -> None:
+    _setup_claude_install(tmp_path)
+    _setup_codex_install(tmp_path)
+
+    manifest = build_manifest(tmp_path, ["claude", "codex"], VERSION)
+
+    assert manifest.provider == "claude+codex"
+
+
+def test_dual_provider_manifest_preserves_claude_config_entries(tmp_path: Path) -> None:
+    _setup_claude_install(tmp_path)
+    _setup_codex_install(tmp_path)
+    _write_mcp_json(tmp_path, {_MAP_SERVER_NAME: _MAP_SERVER_CONFIG})
+    _write_statusline_local(tmp_path, '"/path/to/map-statusline.py"')
+
+    manifest = build_manifest(tmp_path, ["claude", "codex"], VERSION)
+
+    assert {entry.key_path for entry in manifest.config_entries} == {
+        f"mcpServers.{_MAP_SERVER_NAME}",
+        "statusLine",
+    }
+
+
+def test_check_installed_scans_both_provider_roots(tmp_path: Path) -> None:
+    _setup_claude_install(tmp_path)
+    _setup_codex_install(tmp_path)
+    write_manifest(tmp_path, build_manifest(tmp_path, ["claude", "codex"], VERSION))
+    extra = tmp_path / ".agents" / "skills" / "map-extra" / "SKILL.md"
+    _write_managed_file(extra, "# Extra\n", fenced=True)
+
+    assert ".agents/skills/map-extra/SKILL.md" in check_installed(tmp_path).orphaned

@@ -70,7 +70,7 @@ if [[ -f "tsconfig.json" ]]; then
                     col="${BASH_REMATCH[3]}"
                     code="${BASH_REMATCH[4]}"
                     message="${BASH_REMATCH[5]}"
- 
+
                     file=$(json_escape "$file")
                     message=$(json_escape "$message")
 

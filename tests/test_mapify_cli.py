@@ -1,9 +1,15 @@
 """Test suite for mapify CLI tool."""
 
+import builtins
+import contextlib
 import json
 import os
+import shlex
+import stat
 import subprocess
 import sys
+import time
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from unittest import mock
 
@@ -14,6 +20,7 @@ from typer.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import mapify_cli
+import mapify_cli.update_state as update_state_module
 from mapify_cli import (
     app,
     build_standard_mcp_servers,
@@ -33,9 +40,82 @@ from mapify_cli import (
     read_project_mcp_json,
     write_project_mcp_json,
 )
+from mapify_cli.auto_update import (
+    UpdateMode,
+    UpdateResult,
+    UpdateStatus,
+    check_and_update,
+)
 from mapify_cli.delivery import create_map_tools
+from mapify_cli.install_manifest import read_manifest
+from mapify_cli.update_install import (
+    InstallKind,
+    ProjectRefreshError,
+    refresh_installed_providers,
+)
+from mapify_cli.update_state import (
+    MAP_UPDATE_PARENT_LEASE_ENV,
+    UpdateLockBusy,
+    UpdateState,
+    project_update_lock,
+    provider_refresh_lock,
+    read_update_state,
+    write_update_state,
+)
+from mapify_cli.update_versions import (
+    ReleaseHighlights,
+    StableVersion,
+    VersionTargets,
+)
 
 runner = CliRunner()
+
+
+LOCKED_PROVIDER_REFRESH_PARENT = r"""
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from mapify_cli.update_state import MAP_UPDATE_PARENT_LEASE_ENV, project_update_lock
+
+project = Path(sys.argv[1])
+lock_held = Path(sys.argv[2])
+release = Path(sys.argv[3])
+command = sys.argv[4:]
+with project_update_lock(project, timeout_s=0.0) as lease:
+    lock_held.write_text("held\n", encoding="utf-8")
+    while not release.exists():
+        time.sleep(0.01)
+    environment = os.environ.copy()
+    environment[MAP_UPDATE_PARENT_LEASE_ENV] = lease.token
+    result = subprocess.run(
+        command,
+        cwd=project,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+sys.stdout.write(result.stdout)
+sys.stderr.write(result.stderr)
+raise SystemExit(result.returncode)
+"""
+
+
+def _snapshot_tree(root: Path) -> dict[str, bytes]:
+    """Capture file paths and bytes so failed refreshes prove non-mutation."""
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+        and path.relative_to(root).as_posix()
+        not in {
+            ".map/update.lock",
+            ".map/provider-refresh.lock",
+        }
+    }
 
 
 class TestSSLContext:
@@ -111,7 +191,10 @@ class TestTemplates:
         """Test error when templates not found anywhere."""
         del mock_files  # side_effect fires on call; mock object itself not needed
         # Mock Path methods to simulate templates not existing
-        with mock.patch("pathlib.Path.exists", return_value=False), pytest.raises(RuntimeError, match="Templates directory not found"):
+        with (
+            mock.patch("pathlib.Path.exists", return_value=False),
+            pytest.raises(RuntimeError, match="Templates directory not found"),
+        ):
             get_templates_dir()
 
 
@@ -166,6 +249,977 @@ class TestGitOperations:
 
 class TestInitCommand:
     """Test the init command."""
+
+    @pytest.mark.parametrize("provider", ["claude", "codex"])
+    def test_init_installs_manual_upgrade_and_default_auto_config(
+        self, tmp_path: Path, provider: str
+    ) -> None:
+        os.chdir(tmp_path)
+        args = [
+            "init",
+            ".",
+            "--force",
+            "--no-git",
+            "--mcp",
+            "none",
+            "--provider",
+            provider,
+        ]
+
+        result = runner.invoke(app, args)
+
+        assert result.exit_code == 0, result.stdout
+        assert "updates.auto: true" in (tmp_path / ".map" / "config.yaml").read_text(
+            encoding="utf-8"
+        )
+        assert (
+            ".map/provider-refresh.lock"
+            in (tmp_path / ".gitignore").read_text(encoding="utf-8").splitlines()
+        )
+        assert (
+            ".map/installer.lock"
+            in (tmp_path / ".gitignore").read_text(encoding="utf-8").splitlines()
+        )
+        settings_local_line = ".claude/settings.local.json"
+        gitignore_lines = (
+            (tmp_path / ".gitignore").read_text(encoding="utf-8").splitlines()
+        )
+        if provider == "claude":
+            assert settings_local_line in gitignore_lines
+        else:
+            assert settings_local_line not in gitignore_lines
+        skill_root = tmp_path / (
+            ".claude/skills" if provider == "claude" else ".agents/skills"
+        )
+        assert (skill_root / "map-upgrade" / "SKILL.md").is_file()
+
+    def test_init_no_auto_update_persists_false(self, tmp_path: Path) -> None:
+        os.chdir(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--mcp",
+                "none",
+                "--no-auto-update",
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+        assert "updates.auto: false" in (tmp_path / ".map" / "config.yaml").read_text()
+
+    def test_init_merges_update_runtime_ignores_idempotently(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text("custom-cache/\n.map/update.lock\n", encoding="utf-8")
+        gitignore.chmod(0o640)
+        args = ["init", ".", "--force", "--no-git", "--mcp", "none"]
+
+        first = runner.invoke(app, args)
+        first_text = gitignore.read_text(encoding="utf-8")
+        second = runner.invoke(app, args)
+        second_text = gitignore.read_text(encoding="utf-8")
+
+        assert first.exit_code == second.exit_code == 0
+        assert first_text == second_text
+        assert stat.S_IMODE(gitignore.stat().st_mode) == 0o640
+        assert "custom-cache/" in first_text.splitlines()
+        for path in (
+            ".map/update-state.json",
+            ".map/update.lock",
+            ".map/provider-refresh.lock",
+            ".map/installer.lock",
+        ):
+            assert first_text.splitlines().count(path) == 1
+
+    @pytest.mark.parametrize(
+        "required_line",
+        [
+            ".map/update-state.json",
+            ".map/update.lock",
+            ".map/provider-refresh.lock",
+            ".map/installer.lock",
+        ],
+    )
+    @pytest.mark.parametrize("negation_kind", ["exact", "wildcard", "unrelated"])
+    def test_update_runtime_gitignore_repairs_paths_before_later_negations(
+        self,
+        tmp_path: Path,
+        required_line: str,
+        negation_kind: str,
+    ) -> None:
+        from mapify_cli.delivery.file_copier import merge_update_runtime_gitignore
+
+        negation = {
+            "exact": f"!{required_line}",
+            "wildcard": "!.map/**",
+            "unrelated": "!unrelated/**",
+        }[negation_kind]
+        original = f"user-rule/\n{required_line}\n{negation}\n"
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text(original, encoding="utf-8")
+        gitignore.chmod(0o640)
+
+        changed = merge_update_runtime_gitignore(tmp_path)
+        repaired = gitignore.read_text(encoding="utf-8")
+        repaired_lines = repaired.splitlines()
+
+        assert changed == 1
+        assert repaired.startswith(original)
+        assert repaired_lines.count(required_line) == 2
+        assert max(
+            index for index, line in enumerate(repaired_lines) if line == required_line
+        ) > repaired_lines.index(negation)
+        assert stat.S_IMODE(gitignore.stat().st_mode) == 0o640
+
+        assert merge_update_runtime_gitignore(tmp_path) == 0
+        assert gitignore.read_text(encoding="utf-8") == repaired
+
+    def test_update_runtime_gitignore_noop_rejects_post_read_swap(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from mapify_cli.delivery import file_copier
+
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text(
+            "# map:update-runtime\n"
+            ".map/update-state.json\n"
+            ".map/update.lock\n"
+            ".map/provider-refresh.lock\n"
+            ".map/installer.lock\n",
+            encoding="utf-8",
+        )
+        real_read = file_copier._read_safe_gitignore
+
+        def read_then_swap(path: Path, directory_fd: int | None):
+            existing, original = real_read(path, directory_fd)
+            replacement = path.with_name("replacement.gitignore")
+            replacement.write_bytes(existing)
+            os.replace(replacement, path)
+            return existing, original
+
+        monkeypatch.setattr(file_copier, "_read_safe_gitignore", read_then_swap)
+
+        with pytest.raises(file_copier.UpdateRuntimeGitignoreSecurityError):
+            file_copier.merge_update_runtime_gitignore(tmp_path)
+
+    @pytest.mark.parametrize("attack", ["symlink", "hardlink"])
+    def test_init_refuses_unsafe_gitignore_without_mutating_outside_file(
+        self,
+        tmp_path: Path,
+        attack: str,
+    ) -> None:
+        if attack == "hardlink" and os.name == "nt":
+            pytest.skip("POSIX hardlink security contract")
+        os.chdir(tmp_path)
+        outside = tmp_path / "outside-gitignore"
+        outside.write_bytes(b"outside-gitignore-sentinel\n")
+        outside.chmod(0o640)
+        gitignore = tmp_path / ".gitignore"
+        if attack == "symlink":
+            gitignore.symlink_to(outside)
+        else:
+            try:
+                os.link(outside, gitignore)
+            except (NotImplementedError, OSError) as exc:
+                pytest.skip(f"hardlinks unavailable: {exc}")
+
+        result = runner.invoke(
+            app,
+            ["init", ".", "--force", "--no-git", "--mcp", "none"],
+        )
+
+        assert result.exit_code == 1
+        assert "unsafe project .gitignore" in result.stdout
+        assert outside.read_bytes() == b"outside-gitignore-sentinel\n"
+        assert stat.S_IMODE(outside.stat().st_mode) == 0o640
+        if attack == "symlink":
+            assert gitignore.is_symlink()
+        else:
+            assert os.path.samefile(gitignore, outside)
+            assert outside.stat().st_nlink == 2
+
+    def test_init_refuses_nonregular_gitignore(self, tmp_path: Path) -> None:
+        os.chdir(tmp_path)
+        gitignore = tmp_path / ".gitignore"
+        gitignore.mkdir()
+
+        result = runner.invoke(
+            app,
+            ["init", ".", "--force", "--no-git", "--mcp", "none"],
+        )
+
+        assert result.exit_code == 1
+        assert "unsafe project .gitignore" in result.stdout
+        assert gitignore.is_dir()
+
+    @pytest.mark.parametrize(
+        ("provider", "extra_args"),
+        [
+            ("codex", ["--sofa"]),
+            ("claude", ["--agent-memory", "local"]),
+            ("claude", ["--autonomy"]),
+        ],
+    )
+    @pytest.mark.parametrize("attack", ["symlink", "hardlink"])
+    def test_init_rejects_unsafe_gitignore_before_flag_specific_writers(
+        self,
+        tmp_path: Path,
+        provider: str,
+        extra_args: list[str],
+        attack: str,
+    ) -> None:
+        if attack == "hardlink" and os.name == "nt":
+            pytest.skip("POSIX hardlink security contract")
+        os.chdir(tmp_path)
+        outside = tmp_path / "outside-flag-gitignore"
+        outside.write_bytes(b"outside-flag-sentinel\n")
+        outside.chmod(0o640)
+        gitignore = tmp_path / ".gitignore"
+        if attack == "symlink":
+            gitignore.symlink_to(outside)
+        else:
+            try:
+                os.link(outside, gitignore)
+            except (NotImplementedError, OSError) as exc:
+                pytest.skip(f"hardlinks unavailable: {exc}")
+
+        result = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--mcp",
+                "none",
+                "--provider",
+                provider,
+                *extra_args,
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "unsafe project .gitignore" in result.stdout
+        assert outside.read_bytes() == b"outside-flag-sentinel\n"
+        assert stat.S_IMODE(outside.stat().st_mode) == 0o640
+        if attack == "symlink":
+            assert gitignore.is_symlink()
+        else:
+            assert os.path.samefile(gitignore, outside)
+            assert outside.stat().st_nlink == 2
+
+    @pytest.mark.parametrize(
+        ("provider", "extra_args", "required_line", "feature_path", "feature_marker"),
+        [
+            (
+                "codex",
+                ["--sofa"],
+                ".sofa/",
+                ".map/config.yaml",
+                "sofa.enabled: true",
+            ),
+            (
+                "claude",
+                ["--agent-memory", "local"],
+                ".claude/agent-memory-local/",
+                ".map/config.yaml",
+                "claude_agents.persistent_memory: local",
+            ),
+            (
+                "claude",
+                ["--autonomy"],
+                ".claude/settings.local.json",
+                ".claude/settings.local.json",
+                '"autonomy": true',
+            ),
+        ],
+    )
+    def test_init_premerges_requested_feature_into_readonly_gitignore(
+        self,
+        tmp_path: Path,
+        provider: str,
+        extra_args: list[str],
+        required_line: str,
+        feature_path: str,
+        feature_marker: str,
+    ) -> None:
+        os.chdir(tmp_path)
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text("user-rule/\n", encoding="utf-8")
+        gitignore.chmod(0o444)
+
+        with mock.patch("mapify_cli.configure_global_permissions"):
+            result = runner.invoke(
+                app,
+                [
+                    "init",
+                    ".",
+                    "--force",
+                    "--no-git",
+                    "--mcp",
+                    "none",
+                    "--provider",
+                    provider,
+                    *extra_args,
+                ],
+            )
+
+        feature_file = tmp_path / feature_path
+        feature_text = (
+            feature_file.read_text(encoding="utf-8") if feature_file.is_file() else ""
+        )
+        if result.exit_code == 0:
+            ignore_text = gitignore.read_text(encoding="utf-8")
+            assert required_line in ignore_text.splitlines()
+            assert ignore_text.startswith("user-rule/\n")
+            assert stat.S_IMODE(gitignore.stat().st_mode) == 0o444
+            assert feature_marker in feature_text
+        else:
+            # Platforms that cannot replace a read-only file must fail during
+            # the early atomic merge, before enabling the requested feature.
+            assert feature_marker not in feature_text
+
+    @pytest.mark.parametrize("feature", ["sofa", "agent-memory", "settings-local"])
+    @pytest.mark.parametrize("attack", ["symlink", "hardlink"])
+    def test_feature_gitignore_mergers_reject_unsafe_targets(
+        self,
+        tmp_path: Path,
+        feature: str,
+        attack: str,
+    ) -> None:
+        from mapify_cli.delivery.file_copier import UpdateRuntimeGitignoreSecurityError
+
+        if attack == "hardlink" and os.name == "nt":
+            pytest.skip("POSIX hardlink security contract")
+        if feature == "sofa":
+            from mapify_cli.delivery.file_copier import merge_sofa_gitignore as merge
+        elif feature == "agent-memory":
+            from mapify_cli.delivery.file_copier import (
+                merge_agent_memory_gitignore as merge,
+            )
+        else:
+            from mapify_cli.config.settings import (
+                ensure_settings_local_gitignored as merge,
+            )
+
+        outside = tmp_path / f"outside-{feature}-gitignore"
+        outside.write_bytes(b"outside-feature-sentinel\n")
+        outside.chmod(0o640)
+        gitignore = tmp_path / ".gitignore"
+        if attack == "symlink":
+            gitignore.symlink_to(outside)
+        else:
+            try:
+                os.link(outside, gitignore)
+            except (NotImplementedError, OSError) as exc:
+                pytest.skip(f"hardlinks unavailable: {exc}")
+
+        with pytest.raises(UpdateRuntimeGitignoreSecurityError):
+            merge(tmp_path)
+
+        assert outside.read_bytes() == b"outside-feature-sentinel\n"
+        assert stat.S_IMODE(outside.stat().st_mode) == 0o640
+
+    @pytest.mark.parametrize(
+        ("feature", "marker", "required_line"),
+        [
+            ("sofa", "# map:sofa", ".sofa/"),
+            (
+                "agent-memory",
+                "# map:agent-memory-local",
+                ".claude/agent-memory-local/",
+            ),
+            (
+                "settings-local",
+                "# map:settings-local",
+                ".claude/settings.local.json",
+            ),
+        ],
+    )
+    def test_feature_gitignore_mergers_are_atomic_and_idempotent(
+        self,
+        tmp_path: Path,
+        feature: str,
+        marker: str,
+        required_line: str,
+    ) -> None:
+        if feature == "sofa":
+            from mapify_cli.delivery.file_copier import merge_sofa_gitignore as merge
+        elif feature == "agent-memory":
+            from mapify_cli.delivery.file_copier import (
+                merge_agent_memory_gitignore as merge,
+            )
+        else:
+            from mapify_cli.config.settings import (
+                ensure_settings_local_gitignored as merge,
+            )
+
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text("user-rule/\n", encoding="utf-8")
+        gitignore.chmod(0o640)
+
+        first = merge(tmp_path)
+        second = merge(tmp_path)
+        content = gitignore.read_text(encoding="utf-8")
+
+        assert first == 1
+        assert second == 0
+        assert content.startswith("user-rule/\n")
+        assert content.count(marker) == 1
+        assert content.splitlines().count(required_line) == 1
+        assert stat.S_IMODE(gitignore.stat().st_mode) == 0o640
+
+    @pytest.mark.parametrize(
+        ("feature", "marker", "required_line"),
+        [
+            ("sofa", "# map:sofa", ".sofa/"),
+            (
+                "agent-memory",
+                "# map:agent-memory-local",
+                ".claude/agent-memory-local/",
+            ),
+            (
+                "settings-local",
+                "# map:settings-local",
+                ".claude/settings.local.json",
+            ),
+        ],
+    )
+    def test_feature_gitignore_mergers_repair_marker_only_state(
+        self,
+        tmp_path: Path,
+        feature: str,
+        marker: str,
+        required_line: str,
+    ) -> None:
+        if feature == "sofa":
+            from mapify_cli.delivery.file_copier import merge_sofa_gitignore as merge
+        elif feature == "agent-memory":
+            from mapify_cli.delivery.file_copier import (
+                merge_agent_memory_gitignore as merge,
+            )
+        else:
+            from mapify_cli.config.settings import (
+                ensure_settings_local_gitignored as merge,
+            )
+
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text(f"{marker}\n", encoding="utf-8")
+        gitignore.chmod(0o640)
+
+        changed = merge(tmp_path)
+        content = gitignore.read_text(encoding="utf-8")
+
+        assert changed == 1
+        assert content.splitlines().count(marker) == 1
+        assert content.splitlines().count(required_line) == 1
+        assert stat.S_IMODE(gitignore.stat().st_mode) == 0o640
+
+    @pytest.mark.parametrize(
+        ("feature", "marker", "required_line", "wildcard_negation"),
+        [
+            ("sofa", "# map:sofa", ".sofa/", "!.sofa/**"),
+            (
+                "agent-memory",
+                "# map:agent-memory-local",
+                ".claude/agent-memory-local/",
+                "!.claude/agent-memory-local/**",
+            ),
+            (
+                "settings-local",
+                "# map:settings-local",
+                ".claude/settings.local.json",
+                "!.claude/settings.*",
+            ),
+        ],
+    )
+    @pytest.mark.parametrize("negation_kind", ["exact", "wildcard", "unrelated"])
+    def test_feature_gitignore_mergers_repair_paths_before_later_negations(
+        self,
+        tmp_path: Path,
+        feature: str,
+        marker: str,
+        required_line: str,
+        wildcard_negation: str,
+        negation_kind: str,
+    ) -> None:
+        if feature == "sofa":
+            from mapify_cli.delivery.file_copier import merge_sofa_gitignore as merge
+        elif feature == "agent-memory":
+            from mapify_cli.delivery.file_copier import (
+                merge_agent_memory_gitignore as merge,
+            )
+        else:
+            from mapify_cli.config.settings import (
+                ensure_settings_local_gitignored as merge,
+            )
+
+        negation = {
+            "exact": f"!{required_line}",
+            "wildcard": wildcard_negation,
+            "unrelated": "!unrelated/**",
+        }[negation_kind]
+        original = f"user-rule/\n{marker}\n{required_line}\n{negation}\n"
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text(original, encoding="utf-8")
+        gitignore.chmod(0o640)
+
+        changed = merge(tmp_path)
+        repaired = gitignore.read_text(encoding="utf-8")
+        repaired_lines = repaired.splitlines()
+
+        assert changed == 1
+        assert repaired.startswith(original)
+        assert repaired_lines.count(marker) == 1
+        assert repaired_lines.count(required_line) == 2
+        assert repaired_lines[-1] == required_line
+        assert stat.S_IMODE(gitignore.stat().st_mode) == 0o640
+
+        assert merge(tmp_path) == 0
+        assert gitignore.read_text(encoding="utf-8") == repaired
+
+    def test_feature_gitignore_merger_does_not_accept_leading_space_path(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from mapify_cli.delivery.file_copier import merge_sofa_gitignore
+
+        original = "user-rule/\n  .sofa/\n"
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text(original, encoding="utf-8")
+
+        assert merge_sofa_gitignore(tmp_path) == 1
+        repaired = gitignore.read_text(encoding="utf-8")
+        assert repaired.startswith(original)
+        assert repaired.splitlines().count(".sofa/") == 1
+
+    @pytest.mark.parametrize(
+        (
+            "provider",
+            "extra_args",
+            "marker",
+            "required_line",
+            "feature_path",
+            "feature_marker",
+        ),
+        [
+            (
+                "codex",
+                ["--sofa"],
+                "# map:sofa",
+                ".sofa/",
+                ".map/config.yaml",
+                "sofa.enabled: true",
+            ),
+            (
+                "claude",
+                ["--agent-memory", "local"],
+                "# map:agent-memory-local",
+                ".claude/agent-memory-local/",
+                ".map/config.yaml",
+                "claude_agents.persistent_memory: local",
+            ),
+            (
+                "claude",
+                ["--autonomy"],
+                "# map:settings-local",
+                ".claude/settings.local.json",
+                ".claude/settings.local.json",
+                '"autonomy": true',
+            ),
+        ],
+    )
+    def test_init_repairs_marker_only_privacy_block_before_feature_enablement(
+        self,
+        tmp_path: Path,
+        provider: str,
+        extra_args: list[str],
+        marker: str,
+        required_line: str,
+        feature_path: str,
+        feature_marker: str,
+    ) -> None:
+        os.chdir(tmp_path)
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text(f"{marker}\n", encoding="utf-8")
+
+        with mock.patch("mapify_cli.configure_global_permissions"):
+            result = runner.invoke(
+                app,
+                [
+                    "init",
+                    ".",
+                    "--force",
+                    "--no-git",
+                    "--mcp",
+                    "none",
+                    "--provider",
+                    provider,
+                    *extra_args,
+                ],
+            )
+
+        assert result.exit_code == 0, result.stdout
+        ignore_lines = gitignore.read_text(encoding="utf-8").splitlines()
+        assert ignore_lines.count(marker) == 1
+        assert ignore_lines.count(required_line) == 1
+        assert feature_marker in (tmp_path / feature_path).read_text(encoding="utf-8")
+
+    def test_update_runtime_gitignore_replace_failure_preserves_file(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from mapify_cli.delivery.file_copier import merge_update_runtime_gitignore
+
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_bytes(b"user-rule/\n")
+        gitignore.chmod(0o640)
+
+        with (
+            mock.patch(
+                "mapify_cli.delivery.file_copier.os.replace",
+                side_effect=OSError("replace failed"),
+            ),
+            pytest.raises(OSError, match="replace failed"),
+        ):
+            merge_update_runtime_gitignore(tmp_path)
+
+        assert gitignore.read_bytes() == b"user-rule/\n"
+        assert stat.S_IMODE(gitignore.stat().st_mode) == 0o640
+        assert list(tmp_path.glob(".gitignore.*.tmp")) == []
+
+    def test_update_runtime_gitignore_supports_platform_without_fchmod(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from mapify_cli.delivery import file_copier
+
+        monkeypatch.delattr(file_copier.os, "fchmod", raising=False)
+
+        with mock.patch.object(file_copier.os, "chmod") as path_chmod:
+            changed = file_copier.merge_update_runtime_gitignore(tmp_path)
+
+        assert changed == 1
+        path_chmod.assert_not_called()
+        assert (
+            ".map/installer.lock"
+            in (tmp_path / ".gitignore").read_text(encoding="utf-8").splitlines()
+        )
+
+    def test_update_runtime_gitignore_closes_temp_before_replace(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from mapify_cli.delivery import file_copier
+
+        real_create_temporary = file_copier._create_gitignore_temporary
+        real_replace = file_copier.os.replace
+        captured_descriptor: dict[str, int] = {}
+
+        def tracking_create_temporary(
+            gitignore: Path,
+            directory_fd: int | None,
+        ) -> tuple[int, str | Path]:
+            descriptor, temporary_name = real_create_temporary(gitignore, directory_fd)
+            captured_descriptor["value"] = descriptor
+            return descriptor, temporary_name
+
+        def replace_after_close(
+            source: str | Path,
+            destination: str | Path,
+            *,
+            src_dir_fd: int | None = None,
+            dst_dir_fd: int | None = None,
+        ) -> None:
+            with pytest.raises(OSError):
+                os.fstat(captured_descriptor["value"])
+            if src_dir_fd is None and dst_dir_fd is None:
+                real_replace(source, destination)
+            else:
+                real_replace(
+                    source,
+                    destination,
+                    src_dir_fd=src_dir_fd,
+                    dst_dir_fd=dst_dir_fd,
+                )
+
+        monkeypatch.setattr(
+            file_copier,
+            "_create_gitignore_temporary",
+            tracking_create_temporary,
+        )
+        monkeypatch.setattr(file_copier.os, "replace", replace_after_close)
+
+        changed = file_copier.merge_update_runtime_gitignore(tmp_path)
+
+        assert changed == 1
+        assert (tmp_path / ".gitignore").is_file()
+
+    def test_init_auto_update_reenables_existing_project(self, tmp_path: Path) -> None:
+        os.chdir(tmp_path)
+        first = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--mcp",
+                "none",
+                "--no-auto-update",
+            ],
+        )
+        second = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--mcp",
+                "none",
+                "--auto-update",
+            ],
+        )
+        assert first.exit_code == second.exit_code == 0
+        assert "updates.auto: true" in (tmp_path / ".map" / "config.yaml").read_text()
+
+    @pytest.mark.parametrize("provider", ["claude", "codex"])
+    @pytest.mark.parametrize("enabled", [False, True], ids=["disabled", "enabled"])
+    def test_init_without_update_flag_preserves_existing_value(
+        self,
+        tmp_path: Path,
+        provider: str,
+        enabled: bool,
+    ) -> None:
+        os.chdir(tmp_path)
+        config_path = tmp_path / ".map" / "config.yaml"
+        config_path.parent.mkdir()
+        config_path.write_text(
+            f"updates.auto: {'true' if enabled else 'false'}\n",
+            encoding="utf-8",
+        )
+        result = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--mcp",
+                "none",
+                "--provider",
+                provider,
+            ],
+        )
+
+        assert result.exit_code == 0, result.stdout
+        assert config_path.read_text(encoding="utf-8") == (
+            f"updates.auto: {'true' if enabled else 'false'}\n"
+        )
+
+    @pytest.mark.parametrize("provider", ["claude", "codex"])
+    @pytest.mark.parametrize("enabled", [False, True], ids=["disabled", "enabled"])
+    def test_init_explicit_auto_update_override_must_be_verified(
+        self,
+        tmp_path: Path,
+        provider: str,
+        enabled: bool,
+    ) -> None:
+        os.chdir(tmp_path)
+        config_path = tmp_path / ".map" / "config.yaml"
+        config_path.parent.mkdir()
+        previous = not enabled
+        config_path.write_text(
+            f"updates.auto: {'true' if previous else 'false'}\n",
+            encoding="utf-8",
+        )
+
+        with mock.patch(
+            "mapify_cli.config.project_config.apply_auto_update_override",
+            return_value=None,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "init",
+                    ".",
+                    "--force",
+                    "--no-git",
+                    "--mcp",
+                    "none",
+                    "--provider",
+                    provider,
+                    "--auto-update" if enabled else "--no-auto-update",
+                ],
+            )
+
+        assert result.exit_code == 1
+        assert "Failed to persist requested automatic-update setting" in result.stdout
+        assert "Project ready" not in result.stdout
+        assert config_path.read_text(encoding="utf-8") == (
+            f"updates.auto: {'true' if previous else 'false'}\n"
+        )
+
+    @pytest.mark.parametrize("provider", ["claude", "codex"])
+    @pytest.mark.parametrize("enabled", [False, True], ids=["disabled", "enabled"])
+    def test_init_explicit_auto_update_write_failure_is_fatal(
+        self,
+        tmp_path: Path,
+        provider: str,
+        enabled: bool,
+    ) -> None:
+        os.chdir(tmp_path)
+
+        with mock.patch(
+            "mapify_cli.config.project_config.apply_auto_update_override",
+            side_effect=OSError("config is read-only"),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "init",
+                    ".",
+                    "--force",
+                    "--no-git",
+                    "--mcp",
+                    "none",
+                    "--provider",
+                    provider,
+                    "--auto-update" if enabled else "--no-auto-update",
+                ],
+            )
+
+        assert result.exit_code == 1
+        assert "Failed to persist requested automatic-update setting" in result.stdout
+        assert "config is read-only" in result.stdout
+        assert "Project ready" not in result.stdout
+
+    @pytest.mark.parametrize("provider", ["claude", "codex"])
+    @pytest.mark.parametrize(
+        ("failure_boundary", "patch_target", "extra_args"),
+        [
+            (
+                "default config",
+                "mapify_cli.config.project_config.write_default_config",
+                [],
+            ),
+            (
+                "compression override",
+                "mapify_cli.config.project_config.apply_compression_overrides",
+                ["--compression", "auto"],
+            ),
+        ],
+    )
+    def test_explicit_auto_update_pre_persistence_failure_is_fatal(
+        self,
+        tmp_path: Path,
+        provider: str,
+        failure_boundary: str,
+        patch_target: str,
+        extra_args: list[str],
+    ) -> None:
+        os.chdir(tmp_path)
+
+        with mock.patch(
+            patch_target,
+            side_effect=OSError(f"{failure_boundary} failed"),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "init",
+                    ".",
+                    "--force",
+                    "--no-git",
+                    "--mcp",
+                    "none",
+                    "--provider",
+                    provider,
+                    "--auto-update",
+                    *extra_args,
+                ],
+            )
+
+        assert result.exit_code == 1
+        assert "Failed to persist requested automatic-update setting" in result.stdout
+        assert f"{failure_boundary} failed" in " ".join(result.stdout.split())
+        assert "Project ready" not in result.stdout
+
+    def test_init_explicit_auto_update_rejects_malformed_persisted_config(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+        config_path = tmp_path / ".map" / "config.yaml"
+        config_path.parent.mkdir()
+        config_path.write_text(
+            "updates.auto: false\nbroken: [\n",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--mcp",
+                "none",
+                "--auto-update",
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "Failed to persist requested automatic-update setting" in result.stdout
+        assert "Project ready" not in result.stdout
+
+    @pytest.mark.parametrize("provider", ["claude", "codex"])
+    def test_explicit_auto_update_does_not_make_later_sofa_failure_fatal(
+        self,
+        tmp_path: Path,
+        provider: str,
+    ) -> None:
+        os.chdir(tmp_path)
+
+        with mock.patch(
+            "mapify_cli.config.project_config.apply_sofa_overrides",
+            side_effect=OSError("sofa config failed"),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "init",
+                    ".",
+                    "--force",
+                    "--no-git",
+                    "--mcp",
+                    "none",
+                    "--provider",
+                    provider,
+                    "--auto-update",
+                    "--sofa",
+                ],
+            )
+
+        assert result.exit_code == 0, result.stdout
+        assert "skipped: sofa config failed" in result.stdout
+        assert (
+            "Failed to persist requested automatic-update setting" not in result.stdout
+        )
+        assert "Project ready" in result.stdout
+        assert "updates.auto: true" in (tmp_path / ".map" / "config.yaml").read_text(
+            encoding="utf-8"
+        )
 
     def test_init_basic(self, tmp_path):
         """Test basic initialization without options.
@@ -354,9 +1408,6 @@ class TestInitCommand:
         assert "sequential-thinking" in mcp_config["mcp_servers"]
         assert "deepwiki" not in mcp_config["mcp_servers"]
 
-    @pytest.mark.skip(
-        reason="Test isolation issue: passes in isolation but fails in full suite after 332 tests due to stdin/stdout state. TODO: Investigate and fix test infrastructure issue."
-    )
     def test_init_defaults_to_all_mcp_servers(self, tmp_path, monkeypatch):
         """Test that init without --mcp flag defaults to installing all MCP servers.
 
@@ -471,15 +1522,17 @@ class TestInitCommand:
         os.chdir(tmp_path)
 
         # First init with --sofa
-        result1 = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none", "--sofa"])
+        result1 = runner.invoke(
+            app, ["init", ".", "--no-git", "--mcp", "none", "--sofa"]
+        )
         assert result1.exit_code == 0, f"init --sofa failed: {result1.stdout}"
 
         config_file = tmp_path / ".map" / "config.yaml"
         assert config_file.exists(), ".map/config.yaml was not created"
         content_after_sofa = config_file.read_text()
-        assert "sofa.enabled: true" in content_after_sofa, (
-            "sofa.enabled: true not written after --sofa"
-        )
+        assert (
+            "sofa.enabled: true" in content_after_sofa
+        ), "sofa.enabled: true not written after --sofa"
 
         # Second bare init (no --sofa) with --force to allow re-run in non-empty dir
         result2 = runner.invoke(
@@ -490,15 +1543,17 @@ class TestInitCommand:
         # write_default_config is skip-if-exists, so the config is unchanged;
         # and no apply_sofa_overrides call was made — value must still be true.
         content_after_bare = config_file.read_text()
-        assert "sofa.enabled: true" in content_after_bare, (
-            "bare re-run clobbered sofa.enabled: true"
-        )
+        assert (
+            "sofa.enabled: true" in content_after_bare
+        ), "bare re-run clobbered sofa.enabled: true"
 
     def test_vc1_init_sofa_flag_writes_config(self, tmp_path):
         """VC1 [AC-1]: mapify init --sofa writes sofa.enabled: true to .map/config.yaml."""
         os.chdir(tmp_path)
 
-        result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none", "--sofa"])
+        result = runner.invoke(
+            app, ["init", ".", "--no-git", "--mcp", "none", "--sofa"]
+        )
         assert result.exit_code == 0, f"init --sofa failed: {result.stdout}"
 
         config_file = tmp_path / ".map" / "config.yaml"
@@ -515,6 +1570,1429 @@ class TestInitCommand:
         config_file = tmp_path / ".map" / "config.yaml"
         assert config_file.exists()
         assert "sofa.enabled: true" not in config_file.read_text()
+
+
+class TestRefreshExistingInit:
+    """Hidden fresh-process refresh mode preserves project-owned choices."""
+
+    @pytest.fixture(autouse=True)
+    def _avoid_global_settings_writes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(mapify_cli, "configure_global_permissions", mock.Mock())
+
+    def test_refresh_existing_preserves_claude_mcp_selection_and_writes_dual_manifest(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+
+        first = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--mcp",
+                "none",
+                "--provider",
+                "claude",
+            ],
+        )
+        second = runner.invoke(
+            app,
+            ["init", ".", "--force", "--no-git", "--provider", "codex"],
+        )
+        refresh = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--provider",
+                "claude",
+                "--refresh-existing",
+            ],
+        )
+
+        assert first.exit_code == 0, first.stdout
+        assert second.exit_code == 0, second.stdout
+        assert refresh.exit_code == 0, refresh.stdout
+        assert not (tmp_path / ".mcp.json").exists()
+        manifest = read_manifest(tmp_path)
+        assert manifest is not None
+        assert manifest.providers == ["claude", "codex"]
+
+    def test_dual_provider_refresh_smoke_retains_both_skill_catalogs(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+
+        first = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--mcp",
+                "none",
+                "--provider",
+                "claude",
+            ],
+        )
+        second = runner.invoke(
+            app,
+            ["init", ".", "--force", "--no-git", "--provider", "codex"],
+        )
+        refresh = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--provider",
+                "claude",
+                "--refresh-existing",
+            ],
+        )
+
+        assert first.exit_code == 0, first.stdout
+        assert second.exit_code == 0, second.stdout
+        assert refresh.exit_code == 0, refresh.stdout
+        assert (tmp_path / ".claude" / "skills" / "map-upgrade" / "SKILL.md").is_file()
+        assert (tmp_path / ".agents" / "skills" / "map-upgrade" / "SKILL.md").is_file()
+        manifest = read_manifest(tmp_path)
+        assert manifest is not None
+        assert manifest.providers == ["claude", "codex"]
+
+    def test_refresh_existing_is_hidden_from_init_help(self) -> None:
+        result = runner.invoke(app, ["init", "--help"])
+
+        assert result.exit_code == 0
+        assert "--refresh-existing" not in result.stdout
+
+    def test_refresh_existing_strips_parent_lease_before_any_command_work(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+        observed: list[bool] = []
+
+        def inspect_environment(*_args: object, **_kwargs: object) -> bool:
+            observed.append(MAP_UPDATE_PARENT_LEASE_ENV in os.environ)
+            return False
+
+        with mock.patch.object(
+            update_state_module,
+            "validate_parent_update_lease",
+            side_effect=inspect_environment,
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "init",
+                    ".",
+                    "--force",
+                    "--no-git",
+                    "--provider",
+                    "claude",
+                    "--refresh-existing",
+                ],
+                env={MAP_UPDATE_PARENT_LEASE_ENV: "x" * 43},
+            )
+
+        assert result.exit_code == 1
+        assert observed == [False]
+
+    def test_refresh_existing_reports_busy_update_lock_without_mutation(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+        first = runner.invoke(
+            app, ["init", ".", "--force", "--no-git", "--mcp", "none"]
+        )
+        assert first.exit_code == 0, first.stdout
+        with project_update_lock(tmp_path, timeout_s=0.0):
+            before = _snapshot_tree(tmp_path)
+            refresh = runner.invoke(
+                app,
+                [
+                    "init",
+                    ".",
+                    "--force",
+                    "--no-git",
+                    "--provider",
+                    "claude",
+                    "--refresh-existing",
+                ],
+            )
+
+        assert refresh.exit_code == 1
+        assert "already running" in refresh.stdout
+        after = _snapshot_tree(tmp_path)
+        before.pop(".map/update.lock", None)
+        after.pop(".map/update.lock", None)
+        assert after == before
+
+    def test_refresh_existing_reports_unsafe_lock_path_clearly(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+        first = runner.invoke(
+            app, ["init", ".", "--force", "--no-git", "--mcp", "none"]
+        )
+        assert first.exit_code == 0, first.stdout
+        lock_target = tmp_path / ".map" / "unexpected-lock-target"
+        lock_target.write_text("not a MAP lock\n", encoding="utf-8")
+        (tmp_path / ".map" / "update.lock").symlink_to(lock_target)
+
+        refresh = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--provider",
+                "claude",
+                "--refresh-existing",
+            ],
+        )
+
+        assert refresh.exit_code == 1
+        assert "unsafe MAP update lock path" in refresh.stdout
+
+    def test_refresh_existing_rejects_forged_parent_lease(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        os.chdir(tmp_path)
+        first = runner.invoke(
+            app, ["init", ".", "--force", "--no-git", "--mcp", "none"]
+        )
+        assert first.exit_code == 0, first.stdout
+        write_update_state(
+            tmp_path,
+            UpdateState(
+                last_installed_version=mapify_cli.__version__,
+                pending_refresh=True,
+                pending_providers=("claude",),
+            ),
+        )
+        with project_update_lock(tmp_path, timeout_s=0.0) as lease:
+            before = _snapshot_tree(tmp_path)
+            monkeypatch.setattr(
+                update_state_module.os, "getppid", lambda: lease.owner_pid
+            )
+            refresh = runner.invoke(
+                app,
+                [
+                    "init",
+                    ".",
+                    "--force",
+                    "--no-git",
+                    "--provider",
+                    "claude",
+                    "--refresh-existing",
+                ],
+                env={MAP_UPDATE_PARENT_LEASE_ENV: "x" * 43},
+            )
+
+        assert refresh.exit_code == 1
+        assert "invalid parent update lease" in refresh.stdout
+        after = _snapshot_tree(tmp_path)
+        before.pop(".map/update.lock", None)
+        after.pop(".map/update.lock", None)
+        assert after == before
+
+    def test_refresh_existing_borrows_valid_parent_lease_without_deadlock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        os.chdir(tmp_path)
+        first = runner.invoke(
+            app, ["init", ".", "--force", "--no-git", "--mcp", "none"]
+        )
+        assert first.exit_code == 0, first.stdout
+        write_update_state(
+            tmp_path,
+            UpdateState(
+                last_installed_version=mapify_cli.__version__,
+                pending_refresh=True,
+                pending_providers=("claude",),
+            ),
+        )
+
+        with project_update_lock(tmp_path, timeout_s=0.0) as lease:
+            monkeypatch.setattr(
+                update_state_module.os, "getppid", lambda: lease.owner_pid
+            )
+            refresh = runner.invoke(
+                app,
+                [
+                    "init",
+                    ".",
+                    "--force",
+                    "--no-git",
+                    "--provider",
+                    "claude",
+                    "--refresh-existing",
+                ],
+                env={MAP_UPDATE_PARENT_LEASE_ENV: lease.token},
+            )
+
+        assert refresh.exit_code == 0, refresh.stdout
+        assert read_update_state(tmp_path).pending_refresh is False
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX executable-script smoke")
+    def test_real_provider_child_borrows_parent_lease_without_deadlock(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+        first = runner.invoke(
+            app, ["init", ".", "--force", "--no-git", "--mcp", "none"]
+        )
+        assert first.exit_code == 0, first.stdout
+        write_update_state(
+            tmp_path,
+            UpdateState(
+                last_installed_version=mapify_cli.__version__,
+                pending_refresh=True,
+                pending_providers=("claude",),
+            ),
+        )
+        executable = tmp_path / "mapify-child"
+        executable.write_text(
+            f"#!{sys.executable}\nfrom mapify_cli import app\napp()\n",
+            encoding="utf-8",
+        )
+        executable.chmod(0o700)
+
+        with project_update_lock(tmp_path, timeout_s=0.0):
+            refreshed = refresh_installed_providers(
+                tmp_path,
+                ("claude",),
+                mapify_executable=executable,
+            )
+
+        assert refreshed == ("claude",)
+        state = read_update_state(tmp_path)
+        assert state.pending_refresh is False
+        assert state.pending_providers == ()
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX executable-script smoke")
+    @pytest.mark.timeout(20)
+    def test_concurrent_standalone_dual_recovery_serializes_and_retries(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+        claude = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--mcp",
+                "none",
+                "--provider",
+                "claude",
+            ],
+        )
+        codex = runner.invoke(
+            app, ["init", ".", "--force", "--no-git", "--provider", "codex"]
+        )
+        assert claude.exit_code == codex.exit_code == 0
+        write_update_state(
+            tmp_path,
+            UpdateState(
+                last_installed_version=mapify_cli.__version__,
+                pending_refresh=True,
+                pending_providers=("claude", "codex"),
+            ),
+        )
+        executable = tmp_path / "mapify-child"
+        child_holds_lock = tmp_path / "provider-child-holds-update-lock"
+        release_child = tmp_path / "release-provider-child"
+        executable.write_text(
+            f"#!{sys.executable}\nfrom mapify_cli import app\napp()\n",
+            encoding="utf-8",
+        )
+        executable.chmod(0o700)
+        base = [
+            str(executable),
+            "init",
+            ".",
+            "--force",
+            "--no-git",
+            "--provider",
+        ]
+        environment = os.environ.copy()
+        environment.pop(MAP_UPDATE_PARENT_LEASE_ENV, None)
+        first = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                LOCKED_PROVIDER_REFRESH_PARENT,
+                str(tmp_path),
+                str(child_holds_lock),
+                str(release_child),
+                *base,
+                "claude",
+                "--refresh-existing",
+            ],
+            cwd=tmp_path,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            deadline = time.monotonic() + 5.0
+            while not child_holds_lock.exists():
+                if first.poll() is not None or time.monotonic() >= deadline:
+                    raise AssertionError(
+                        "provider child never started while update.lock was held"
+                    )
+                time.sleep(0.01)
+
+            with (
+                pytest.raises(UpdateLockBusy),
+                project_update_lock(tmp_path, timeout_s=0.0),
+            ):
+                raise AssertionError("provider child must still hold update.lock")
+
+            contender = subprocess.run(
+                [*base, "codex", "--refresh-existing"],
+                cwd=tmp_path,
+                env=environment,
+                timeout=5.0,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            release_child.write_text("release\n", encoding="utf-8")
+            first_stdout, first_stderr = first.communicate(timeout=10.0)
+        finally:
+            release_child.write_text("release\n", encoding="utf-8")
+            if first.poll() is None:
+                first.kill()
+                first.wait(timeout=5.0)
+
+        assert first.returncode == 0, first_stdout + first_stderr
+        assert contender.returncode == 1
+        assert "already running" in contender.stdout
+        narrowed = read_update_state(tmp_path)
+        assert narrowed.pending_refresh is True
+        assert narrowed.pending_providers == ("codex",)
+
+        retry = subprocess.run(
+            [*base, "codex", "--refresh-existing"],
+            cwd=tmp_path,
+            env=environment,
+            timeout=10.0,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        assert retry.returncode == 0, retry.stdout + retry.stderr
+        completed = read_update_state(tmp_path)
+        assert completed.pending_refresh is False
+        assert completed.pending_providers == ()
+
+    def test_refresh_existing_holds_both_locks_through_provider_mutation(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+        first = runner.invoke(
+            app, ["init", ".", "--force", "--no-git", "--mcp", "none"]
+        )
+        assert first.exit_code == 0, first.stdout
+
+        def guarded_install(
+            _provider: object,
+            project: Path,
+            *,
+            mcp_servers: list[str],
+        ) -> dict[str, int]:
+            del mcp_servers
+            with (
+                pytest.raises(UpdateLockBusy),
+                project_update_lock(project, timeout_s=0.0),
+            ):
+                raise AssertionError("update lock must cover provider mutation")
+            with (
+                pytest.raises(UpdateLockBusy),
+                provider_refresh_lock(project, timeout_s=0.0),
+            ):
+                raise AssertionError("refresh lock must cover provider mutation")
+            return {}
+
+        with mock.patch(
+            "mapify_cli.delivery.providers.ClaudeProvider.install",
+            new=guarded_install,
+        ):
+            refresh = runner.invoke(
+                app,
+                [
+                    "init",
+                    ".",
+                    "--force",
+                    "--no-git",
+                    "--provider",
+                    "claude",
+                    "--refresh-existing",
+                ],
+            )
+
+        assert refresh.exit_code == 0, refresh.stdout
+
+    def test_refresh_existing_rejects_uninitialized_project(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+
+        result = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--provider",
+                "claude",
+                "--refresh-existing",
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "initialized MAP project" in result.stdout
+        assert not (tmp_path / ".claude").exists()
+
+    def test_refresh_existing_does_not_create_uninitialized_named_project(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+        target = tmp_path / "not-initialized"
+
+        result = runner.invoke(
+            app,
+            [
+                "init",
+                target.name,
+                "--force",
+                "--no-git",
+                "--provider",
+                "claude",
+                "--refresh-existing",
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert not target.exists()
+
+    def test_refresh_existing_rejects_initialized_named_project_without_mutation(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+        target = tmp_path / "sibling"
+        first = runner.invoke(
+            app,
+            ["init", target.name, "--no-git", "--mcp", "none"],
+        )
+        assert first.exit_code == 0, first.stdout
+        before = _snapshot_tree(tmp_path)
+
+        refresh = runner.invoke(
+            app,
+            [
+                "init",
+                target.name,
+                "--force",
+                "--no-git",
+                "--provider",
+                "claude",
+                "--debug",
+                "--refresh-existing",
+            ],
+        )
+
+        assert refresh.exit_code == 1
+        assert "current directory" in refresh.stdout
+        assert _snapshot_tree(tmp_path) == before
+
+    @pytest.mark.parametrize(
+        ("installed_provider", "requested_provider"),
+        [("claude", "codex"), ("codex", "claude")],
+    )
+    def test_refresh_existing_rejects_uninstalled_provider_without_mutation(
+        self,
+        tmp_path: Path,
+        installed_provider: str,
+        requested_provider: str,
+    ) -> None:
+        os.chdir(tmp_path)
+        first = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--mcp",
+                "none",
+                "--provider",
+                installed_provider,
+            ],
+        )
+        assert first.exit_code == 0, first.stdout
+        before = _snapshot_tree(tmp_path)
+
+        refresh = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--provider",
+                requested_provider,
+                "--debug",
+                "--refresh-existing",
+            ],
+        )
+
+        assert refresh.exit_code == 1
+        assert "installed provider" in refresh.stdout
+        assert _snapshot_tree(tmp_path) == before
+
+    def test_refresh_existing_requires_config_and_complete_provider_layout(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+        (tmp_path / ".map").mkdir()
+        (tmp_path / ".map" / "config.yaml").write_text("", encoding="utf-8")
+        (tmp_path / ".claude").mkdir()
+
+        result = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--provider",
+                "claude",
+                "--refresh-existing",
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert not (tmp_path / ".claude" / "skills").exists()
+
+    def test_refresh_existing_does_not_claim_user_modified_mcp_server(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+        (tmp_path / ".map").mkdir()
+        (tmp_path / ".map" / "config.yaml").write_text(
+            "updates.auto: true\n", encoding="utf-8"
+        )
+        (tmp_path / ".claude" / "skills").mkdir(parents=True)
+        custom_server = {"command": "custom-sequential-thinking"}
+        (tmp_path / ".mcp.json").write_text(
+            json.dumps({"mcpServers": {"sequential-thinking": custom_server}}),
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--provider",
+                "claude",
+                "--refresh-existing",
+            ],
+        )
+
+        assert result.exit_code == 0, result.stdout
+        assert not (tmp_path / ".claude" / "mcp_config.json").exists()
+        mcp_data = json.loads((tmp_path / ".mcp.json").read_text())
+        assert mcp_data["mcpServers"]["sequential-thinking"] == custom_server
+        manifest = read_manifest(tmp_path)
+        assert manifest is not None
+        assert not any(
+            entry.key_path == "mcpServers.sequential-thinking"
+            for entry in manifest.config_entries
+        )
+
+    def test_refresh_existing_preserves_project_choices(self, tmp_path: Path) -> None:
+        from mapify_cli.config.project_config import load_map_config
+
+        os.chdir(tmp_path)
+        with mock.patch("mapify_cli.configure_global_permissions"):
+            first = runner.invoke(
+                app,
+                [
+                    "init",
+                    ".",
+                    "--force",
+                    "--no-git",
+                    "--mcp",
+                    "none",
+                    "--compression",
+                    "aggressive",
+                    "--compression-threshold",
+                    "250000",
+                    "--sofa",
+                    "--agent-memory",
+                    "local",
+                    "--no-auto-update",
+                    "--autonomy",
+                ],
+            )
+            refresh = runner.invoke(
+                app,
+                [
+                    "init",
+                    ".",
+                    "--force",
+                    "--no-git",
+                    "--provider",
+                    "claude",
+                    "--refresh-existing",
+                ],
+            )
+
+        assert first.exit_code == 0, first.stdout
+        assert refresh.exit_code == 0, refresh.stdout
+        config = load_map_config(tmp_path)
+        assert config.compression_policy == "aggressive"
+        assert config.compression_threshold_tokens == 250_000
+        assert config.sofa_enabled is True
+        assert config.claude_agents_persistent_memory == "local"
+        assert config.updates_auto is False
+        reflector = (tmp_path / ".claude" / "agents" / "reflector.md").read_text()
+        assert "memory: user_local" in reflector
+        settings = json.loads(
+            (tmp_path / ".claude" / "settings.local.json").read_text()
+        )
+        assert settings["mapify"]["autonomy"] is True
+
+    def test_refresh_existing_skips_global_permissions(self, tmp_path: Path) -> None:
+        os.chdir(tmp_path)
+        with mock.patch("mapify_cli.configure_global_permissions") as configure:
+            first = runner.invoke(
+                app,
+                ["init", ".", "--force", "--no-git", "--mcp", "none"],
+            )
+            assert first.exit_code == 0, first.stdout
+            configure.assert_called_once_with()
+            configure.reset_mock()
+
+            refresh = runner.invoke(
+                app,
+                [
+                    "init",
+                    ".",
+                    "--force",
+                    "--no-git",
+                    "--provider",
+                    "claude",
+                    "--refresh-existing",
+                ],
+            )
+
+        assert refresh.exit_code == 0, refresh.stdout
+        configure.assert_not_called()
+
+    def test_refresh_existing_configuration_failure_is_fatal_but_normal_init_warns(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+        first = runner.invoke(
+            app, ["init", ".", "--force", "--no-git", "--mcp", "none"]
+        )
+        assert first.exit_code == 0, first.stdout
+
+        with mock.patch(
+            "mapify_cli.config.project_config.write_default_config",
+            side_effect=OSError("config is read-only"),
+        ):
+            refresh = runner.invoke(
+                app,
+                [
+                    "init",
+                    ".",
+                    "--force",
+                    "--no-git",
+                    "--provider",
+                    "claude",
+                    "--refresh-existing",
+                ],
+            )
+            normal = runner.invoke(
+                app,
+                ["init", ".", "--force", "--no-git", "--mcp", "none"],
+            )
+
+        assert refresh.exit_code == 1
+        assert "config is read-only" in refresh.stdout
+        assert normal.exit_code == 0, normal.stdout
+
+    def test_refresh_existing_malformed_project_config_is_fatal_and_non_mutating(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+        first = runner.invoke(
+            app, ["init", ".", "--force", "--no-git", "--mcp", "none"]
+        )
+        assert first.exit_code == 0, first.stdout
+        malformed = "claude_agents.persistent_memory: [\n"
+        config_path = tmp_path / ".map" / "config.yaml"
+        config_path.write_text(malformed, encoding="utf-8")
+        reflector_path = tmp_path / ".claude" / "agents" / "reflector.md"
+        reflector_path.write_text("user sentinel\n", encoding="utf-8")
+
+        refresh = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--provider",
+                "claude",
+                "--refresh-existing",
+            ],
+        )
+
+        assert refresh.exit_code == 1
+        assert "existing project configuration" in refresh.stdout
+        assert config_path.read_text(encoding="utf-8") == malformed
+        assert reflector_path.read_text(encoding="utf-8") == "user sentinel\n"
+
+    def test_refresh_existing_malformed_mcp_config_is_fatal_and_non_mutating(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+        first = runner.invoke(
+            app, ["init", ".", "--force", "--no-git", "--mcp", "none"]
+        )
+        assert first.exit_code == 0, first.stdout
+        malformed = '{"mcpServers": {'
+        mcp_path = tmp_path / ".mcp.json"
+        mcp_path.write_text(malformed, encoding="utf-8")
+        reflector_path = tmp_path / ".claude" / "agents" / "reflector.md"
+        reflector_path.write_text("user sentinel\n", encoding="utf-8")
+
+        refresh = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--provider",
+                "claude",
+                "--refresh-existing",
+            ],
+        )
+
+        assert refresh.exit_code == 1
+        assert "existing Claude MCP configuration" in refresh.stdout
+        assert mcp_path.read_text(encoding="utf-8") == malformed
+        assert list(tmp_path.glob(".mcp.backup.*.json")) == []
+        assert reflector_path.read_text(encoding="utf-8") == "user sentinel\n"
+
+    @pytest.mark.parametrize(
+        "manifest_content",
+        [
+            "{malformed",
+            "[]\n",
+            json.dumps(
+                {
+                    "mapify_version": "3.25.0",
+                    "provider": "claude",
+                    "installed_at": "2026-08-13T00:00:00Z",
+                    "entries": {},
+                }
+            ),
+        ],
+        ids=["malformed", "non-object", "schema-invalid"],
+    )
+    def test_refresh_existing_invalid_manifest_is_fatal_and_non_mutating(
+        self, tmp_path: Path, manifest_content: str
+    ) -> None:
+        os.chdir(tmp_path)
+        first = runner.invoke(
+            app, ["init", ".", "--force", "--no-git", "--mcp", "none"]
+        )
+        assert first.exit_code == 0, first.stdout
+        manifest_path = tmp_path / ".map" / "mapify.lock.json"
+        manifest_path.write_text(manifest_content, encoding="utf-8")
+        before = _snapshot_tree(tmp_path)
+
+        refresh = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--provider",
+                "claude",
+                "--debug",
+                "--refresh-existing",
+            ],
+        )
+
+        assert refresh.exit_code == 1
+        assert "existing install manifest" in refresh.stdout
+        assert _snapshot_tree(tmp_path) == before
+
+    @pytest.mark.parametrize(
+        "manifest_content",
+        [
+            "{malformed",
+            "[]\n",
+            json.dumps(
+                {
+                    "mapify_version": "3.25.0",
+                    "provider": "claude",
+                    "installed_at": "2026-08-13T00:00:00Z",
+                    "entries": {},
+                }
+            ),
+        ],
+        ids=["malformed", "non-object", "schema-invalid"],
+    )
+    def test_pending_refresh_invalid_manifest_is_regenerated_under_parent_lock(
+        self,
+        tmp_path: Path,
+        manifest_content: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        os.chdir(tmp_path)
+        first = runner.invoke(
+            app, ["init", ".", "--force", "--no-git", "--mcp", "none"]
+        )
+        assert first.exit_code == 0, first.stdout
+        config_path = tmp_path / ".map" / "config.yaml"
+        config_before = config_path.read_bytes()
+        catalog_before = {
+            path.name
+            for path in (tmp_path / ".claude" / "skills").iterdir()
+            if path.is_dir()
+        }
+        manifest_path = tmp_path / ".map" / "mapify.lock.json"
+        manifest_path.write_text(manifest_content, encoding="utf-8")
+        write_update_state(
+            tmp_path,
+            UpdateState(
+                last_installed_version=mapify_cli.__version__,
+                pending_refresh=True,
+                pending_providers=("claude",),
+            ),
+        )
+
+        with project_update_lock(tmp_path, timeout_s=0.0) as lease:
+            monkeypatch.setattr(
+                update_state_module.os, "getppid", lambda: lease.owner_pid
+            )
+            refresh = runner.invoke(
+                app,
+                [
+                    "init",
+                    ".",
+                    "--force",
+                    "--no-git",
+                    "--provider",
+                    "claude",
+                    "--refresh-existing",
+                ],
+                env={MAP_UPDATE_PARENT_LEASE_ENV: lease.token},
+            )
+
+        assert refresh.exit_code == 0, refresh.stdout
+        assert config_path.read_bytes() == config_before
+        assert {
+            path.name
+            for path in (tmp_path / ".claude" / "skills").iterdir()
+            if path.is_dir()
+        } == catalog_before
+        raw_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert isinstance(raw_manifest, dict)
+        manifest = read_manifest(tmp_path)
+        assert manifest is not None
+        assert manifest.providers == ["claude"]
+        state = read_update_state(tmp_path)
+        assert state.last_installed_version == mapify_cli.__version__
+        assert state.pending_refresh is False
+        assert state.pending_providers == ()
+        assert list(manifest_path.parent.glob(f".{manifest_path.name}.*.tmp")) == []
+
+    def test_pending_refresh_does_not_bypass_unreadable_manifest(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        os.chdir(tmp_path)
+        first = runner.invoke(
+            app, ["init", ".", "--force", "--no-git", "--mcp", "none"]
+        )
+        assert first.exit_code == 0, first.stdout
+        manifest_path = tmp_path / ".map" / "mapify.lock.json"
+        manifest_before = manifest_path.read_bytes()
+        pending_state = UpdateState(
+            last_installed_version=mapify_cli.__version__,
+            pending_refresh=True,
+            pending_providers=("claude",),
+        )
+        write_update_state(tmp_path, pending_state)
+        original_read_text = Path.read_text
+
+        def deny_manifest_read(
+            path: Path,
+            encoding: str | None = None,
+            errors: str | None = None,
+        ) -> str:
+            if path == manifest_path:
+                raise PermissionError("manifest unreadable")
+            return original_read_text(path, encoding=encoding, errors=errors)
+
+        monkeypatch.setattr(Path, "read_text", deny_manifest_read)
+
+        refresh = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--provider",
+                "claude",
+                "--refresh-existing",
+            ],
+        )
+
+        assert refresh.exit_code == 1
+        assert "existing install manifest" in refresh.stdout
+        assert manifest_path.read_bytes() == manifest_before
+        assert read_update_state(tmp_path) == pending_state
+
+    def test_pending_dual_provider_refresh_narrows_then_clears_state(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+        claude = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--mcp",
+                "none",
+                "--provider",
+                "claude",
+            ],
+        )
+        codex = runner.invoke(
+            app,
+            ["init", ".", "--force", "--no-git", "--provider", "codex"],
+        )
+        assert claude.exit_code == 0, claude.stdout
+        assert codex.exit_code == 0, codex.stdout
+        config_path = tmp_path / ".map" / "config.yaml"
+        config_before = config_path.read_bytes()
+        claude_catalog = {
+            path.name
+            for path in (tmp_path / ".claude" / "skills").iterdir()
+            if path.is_dir()
+        }
+        codex_catalog = {
+            path.name
+            for path in (tmp_path / ".agents" / "skills").iterdir()
+            if path.is_dir()
+        }
+        manifest_path = tmp_path / ".map" / "mapify.lock.json"
+        manifest_path.write_text("{malformed", encoding="utf-8")
+        write_update_state(
+            tmp_path,
+            UpdateState(
+                last_installed_version=mapify_cli.__version__,
+                pending_refresh=True,
+                pending_providers=("claude", "codex"),
+            ),
+        )
+
+        first_refresh = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--provider",
+                "claude",
+                "--refresh-existing",
+            ],
+        )
+
+        assert first_refresh.exit_code == 0, first_refresh.stdout
+        first_state = read_update_state(tmp_path)
+        assert first_state.pending_refresh is True
+        assert first_state.pending_providers == ("codex",)
+        first_manifest = read_manifest(tmp_path)
+        assert first_manifest is not None
+        assert first_manifest.providers == ["claude", "codex"]
+
+        second_refresh = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--provider",
+                "codex",
+                "--refresh-existing",
+            ],
+        )
+
+        assert second_refresh.exit_code == 0, second_refresh.stdout
+        completed_state = read_update_state(tmp_path)
+        assert completed_state.pending_refresh is False
+        assert completed_state.pending_providers == ()
+        assert config_path.read_bytes() == config_before
+        assert {
+            path.name
+            for path in (tmp_path / ".claude" / "skills").iterdir()
+            if path.is_dir()
+        } == claude_catalog
+        assert {
+            path.name
+            for path in (tmp_path / ".agents" / "skills").iterdir()
+            if path.is_dir()
+        } == codex_catalog
+        completed_manifest = read_manifest(tmp_path)
+        assert completed_manifest is not None
+        assert completed_manifest.providers == ["claude", "codex"]
+
+    def test_standalone_dual_provider_refresh_migrates_providerless_v1_state(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+        claude = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--mcp",
+                "none",
+                "--provider",
+                "claude",
+            ],
+        )
+        codex = runner.invoke(
+            app,
+            ["init", ".", "--force", "--no-git", "--provider", "codex"],
+        )
+        assert claude.exit_code == 0, claude.stdout
+        assert codex.exit_code == 0, codex.stdout
+        state_path = tmp_path / ".map" / "update-state.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "last_attempt_at": None,
+                    "last_observed_version": mapify_cli.__version__,
+                    "last_installed_version": mapify_cli.__version__,
+                    "pending_refresh": True,
+                    "pending_providers": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        first_refresh = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--provider",
+                "claude",
+                "--refresh-existing",
+            ],
+        )
+
+        assert first_refresh.exit_code == 0, first_refresh.stdout
+        first_state = read_update_state(tmp_path)
+        assert first_state.schema_version == 2
+        assert first_state.pending_refresh is True
+        assert first_state.pending_providers == ("codex",)
+
+        second_refresh = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--provider",
+                "codex",
+                "--refresh-existing",
+            ],
+        )
+
+        assert second_refresh.exit_code == 0, second_refresh.stdout
+        completed_state = read_update_state(tmp_path)
+        assert completed_state.pending_refresh is False
+        assert completed_state.pending_providers == ()
+
+    def test_manual_recovery_action_rebuilds_corrupt_manifest_and_is_terminal(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+        first = runner.invoke(
+            app, ["init", ".", "--force", "--no-git", "--mcp", "none"]
+        )
+        assert first.exit_code == 0, first.stdout
+        manifest_path = tmp_path / ".map" / "mapify.lock.json"
+        manifest_path.write_text("{malformed", encoding="utf-8")
+        write_update_state(
+            tmp_path,
+            UpdateState(
+                last_installed_version=mapify_cli.__version__,
+                pending_refresh=True,
+                pending_providers=("claude",),
+            ),
+        )
+        refresh_error = ProjectRefreshError(
+            "refresh failed",
+            pending_providers=("claude",),
+        )
+        with (
+            mock.patch(
+                "mapify_cli.auto_update.detect_install_kind",
+                return_value=InstallKind.PIP,
+            ),
+            mock.patch(
+                "mapify_cli.auto_update.refresh_installed_providers",
+                side_effect=refresh_error,
+            ),
+        ):
+            update_result = check_and_update(
+                tmp_path,
+                mapify_cli.__version__,
+                UpdateMode.MANUAL,
+            )
+
+        assert update_result.status is UpdateStatus.ERROR
+        assert update_result.message is not None
+        action = update_result.message.splitlines()[-1]
+        assert action == (
+            "mapify init . --force --no-git --provider claude --refresh-existing"
+        )
+
+        command = shlex.split(action)
+        assert command[:2] == ["mapify", "init"]
+        recovery = runner.invoke(app, command[1:])
+
+        assert recovery.exit_code == 0, recovery.stdout
+        recovered_manifest = read_manifest(tmp_path)
+        assert recovered_manifest is not None
+        assert recovered_manifest.providers == ["claude"]
+        recovered_state = read_update_state(tmp_path)
+        assert recovered_state.pending_refresh is False
+        assert recovered_state.pending_providers == ()
+
+    def test_refresh_existing_unreadable_manifest_is_fatal_and_non_mutating(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        os.chdir(tmp_path)
+        first = runner.invoke(
+            app, ["init", ".", "--force", "--no-git", "--mcp", "none"]
+        )
+        assert first.exit_code == 0, first.stdout
+        manifest_path = tmp_path / ".map" / "mapify.lock.json"
+        before = _snapshot_tree(tmp_path)
+        original_read_text = Path.read_text
+
+        def deny_manifest_read(
+            path: Path,
+            encoding: str | None = None,
+            errors: str | None = None,
+        ) -> str:
+            if path == manifest_path:
+                raise PermissionError("manifest unreadable")
+            return original_read_text(path, encoding=encoding, errors=errors)
+
+        monkeypatch.setattr(Path, "read_text", deny_manifest_read)
+        refresh = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--provider",
+                "claude",
+                "--debug",
+                "--refresh-existing",
+            ],
+        )
+
+        assert refresh.exit_code == 1
+        assert "existing install manifest" in refresh.stdout
+        assert _snapshot_tree(tmp_path) == before
+
+    @pytest.mark.parametrize(
+        "mcp_content",
+        ['{"mcpServers": {', "[]\n"],
+        ids=["malformed", "non-object"],
+    )
+    def test_codex_refresh_invalid_mcp_is_fatal_and_non_mutating(
+        self, tmp_path: Path, mcp_content: str
+    ) -> None:
+        os.chdir(tmp_path)
+        claude = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--mcp",
+                "none",
+                "--provider",
+                "claude",
+            ],
+        )
+        codex = runner.invoke(
+            app,
+            ["init", ".", "--force", "--no-git", "--provider", "codex"],
+        )
+        assert claude.exit_code == 0, claude.stdout
+        assert codex.exit_code == 0, codex.stdout
+        mcp_path = tmp_path / ".mcp.json"
+        mcp_path.write_text(mcp_content, encoding="utf-8")
+        before = _snapshot_tree(tmp_path)
+
+        refresh = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--provider",
+                "codex",
+                "--debug",
+                "--refresh-existing",
+            ],
+        )
+
+        assert refresh.exit_code == 1
+        assert "existing Claude MCP configuration" in refresh.stdout
+        assert _snapshot_tree(tmp_path) == before
+        assert list(tmp_path.glob(".mcp.backup.*.json")) == []
+
+    def test_codex_refresh_unreadable_mcp_is_fatal_and_non_mutating(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        os.chdir(tmp_path)
+        claude = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--mcp",
+                "none",
+                "--provider",
+                "claude",
+            ],
+        )
+        codex = runner.invoke(
+            app,
+            ["init", ".", "--force", "--no-git", "--provider", "codex"],
+        )
+        assert claude.exit_code == 0, claude.stdout
+        assert codex.exit_code == 0, codex.stdout
+        mcp_path = tmp_path / ".mcp.json"
+        mcp_path.write_text('{"mcpServers": {}}\n', encoding="utf-8")
+        before = _snapshot_tree(tmp_path)
+        original_read_text = Path.read_text
+
+        def deny_mcp_read(
+            path: Path,
+            encoding: str | None = None,
+            errors: str | None = None,
+        ) -> str:
+            if path == mcp_path:
+                raise PermissionError("MCP config unreadable")
+            return original_read_text(path, encoding=encoding, errors=errors)
+
+        monkeypatch.setattr(Path, "read_text", deny_mcp_read)
+        refresh = runner.invoke(
+            app,
+            [
+                "init",
+                ".",
+                "--force",
+                "--no-git",
+                "--provider",
+                "codex",
+                "--debug",
+                "--refresh-existing",
+            ],
+        )
+
+        assert refresh.exit_code == 1
+        assert "existing Claude MCP configuration" in refresh.stdout
+        assert _snapshot_tree(tmp_path) == before
+        assert list(tmp_path.glob(".mcp.backup.*.json")) == []
+
+    def test_refresh_existing_manifest_failure_is_fatal_but_normal_init_warns(
+        self, tmp_path: Path
+    ) -> None:
+        os.chdir(tmp_path)
+        first = runner.invoke(
+            app, ["init", ".", "--force", "--no-git", "--mcp", "none"]
+        )
+        assert first.exit_code == 0, first.stdout
+
+        with mock.patch(
+            "mapify_cli.install_manifest.write_manifest",
+            side_effect=OSError("manifest is read-only"),
+        ):
+            refresh = runner.invoke(
+                app,
+                [
+                    "init",
+                    ".",
+                    "--force",
+                    "--no-git",
+                    "--provider",
+                    "claude",
+                    "--refresh-existing",
+                ],
+            )
+            normal = runner.invoke(
+                app,
+                ["init", ".", "--force", "--no-git", "--mcp", "none"],
+            )
+
+        assert refresh.exit_code == 1
+        assert "manifest is read-only" in refresh.stdout
+        assert normal.exit_code == 0, normal.stdout
 
 
 class TestSofaGitignoreMerge:
@@ -562,13 +3040,13 @@ class TestSofaGitignoreMerge:
         assert content.count("# map:sofa") == 1
         assert content.count(".sofa/") == 1
 
-    def test_vc4_no_gitignore_mutation_without_sofa_flag(self, tmp_path):
+    def test_vc4_no_sofa_gitignore_entry_without_sofa_flag(self, tmp_path):
         """VC4 [AC-2][INV-SOFA-1]: init without --sofa must NOT write sofa entries.
 
         Non-vacuous: a repo-root .gitignore is pre-created so the negative
-        assertions exercise a file that actually exists (init without --sofa
-        does not create one on its own), and its prior content must survive
-        byte-for-byte.
+        assertions exercise a file that actually exists. Automatic-update
+        runtime ignores are independently required, while prior user entries
+        must remain byte-for-byte at the start of the file.
         """
         os.chdir(tmp_path)
         gitignore = tmp_path / ".gitignore"
@@ -583,8 +3061,13 @@ class TestSofaGitignoreMerge:
         content = gitignore.read_text()
         assert "# map:sofa" not in content
         assert ".sofa/" not in content.splitlines()
-        # Existing user content untouched when SOFA is off.
-        assert content == original
+        assert content.startswith(original)
+        for path in (
+            ".map/update-state.json",
+            ".map/update.lock",
+            ".map/provider-refresh.lock",
+        ):
+            assert content.splitlines().count(path) == 1
 
     def test_vc4_init_with_sofa_flag_writes_marker(self, tmp_path):
         """VC4 [AC-2]: init WITH --sofa must write the sofa marker to root .gitignore."""
@@ -616,18 +3099,16 @@ class TestSofaGitignoreMerge:
             for line in config_text.splitlines()
             if line.strip().startswith("sofa.enabled:")
         ]
-        assert active_sofa == [], (
-            f"default config must not activate sofa.enabled: {active_sofa}"
-        )
+        assert (
+            active_sofa == []
+        ), f"default config must not activate sofa.enabled: {active_sofa}"
 
 
 class TestAutonomyPosture:
     """Tests for the opt-in --autonomy posture in settings.local.json."""
 
     def _read_local(self, tmp_path):
-        return json.loads(
-            (tmp_path / ".claude" / "settings.local.json").read_text()
-        )
+        return json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
 
     def test_autonomy_true_writes_broad_allow_deny_and_sentinel(self, tmp_path):
         from mapify_cli.config.settings import create_or_merge_project_settings_local
@@ -655,7 +3136,9 @@ class TestAutonomyPosture:
         assert ".claude/settings.local.json" in content.splitlines()
         assert "# map:settings-local" in content
 
-    def test_autonomy_none_leaves_no_sentinel(self, tmp_path):
+    def test_autonomy_none_leaves_no_sentinel_but_gitignores_local_settings(
+        self, tmp_path
+    ):
         from mapify_cli.config.settings import create_or_merge_project_settings_local
 
         create_or_merge_project_settings_local(tmp_path, autonomy=None)
@@ -663,8 +3146,11 @@ class TestAutonomyPosture:
         data = self._read_local(tmp_path)
         assert "mapify" not in data
         assert "Bash(*)" not in data["permissions"]["allow"]
-        # Default: settings.local.json is not auto-gitignored without --autonomy.
-        assert not (tmp_path / ".gitignore").exists()
+        gitignore = (tmp_path / ".gitignore").read_text(encoding="utf-8")
+        assert ".claude/settings.local.json" in gitignore.splitlines()
+        assert any(
+            line.startswith("# map:settings-local") for line in gitignore.splitlines()
+        )
 
     def test_autonomy_false_removes_posture(self, tmp_path):
         from mapify_cli.config.settings import create_or_merge_project_settings_local
@@ -700,14 +3186,13 @@ class TestAutonomyPosture:
         )
 
         assert result.exit_code == 0, f"init --autonomy failed: {result.stdout}"
-        data = json.loads(
-            (tmp_path / ".claude" / "settings.local.json").read_text()
-        )
+        data = json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
         assert data["mapify"]["autonomy"] is True
         assert "Bash(*)" in data["permissions"]["allow"]
-        assert ".claude/settings.local.json" in (
-            tmp_path / ".gitignore"
-        ).read_text().splitlines()
+        assert (
+            ".claude/settings.local.json"
+            in (tmp_path / ".gitignore").read_text().splitlines()
+        )
 
 
 class TestConfigureGlobalPermissions:
@@ -751,9 +3236,7 @@ class TestConfigureGlobalPermissions:
         settings_path = self._global_settings_path(tmp_path, monkeypatch)
         settings_path.parent.mkdir(parents=True, exist_ok=True)
         settings_path.write_text(
-            json.dumps(
-                {"permissions": {"allow": ["Glob(**)", "Glob(**)"], "deny": []}}
-            )
+            json.dumps({"permissions": {"allow": ["Glob(**)", "Glob(**)"], "deny": []}})
         )
 
         configure_global_permissions()
@@ -778,9 +3261,7 @@ class TestConfigureGlobalPermissions:
         result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none"])
 
         assert result.exit_code == 0, f"init failed: {result.stdout}"
-        data = json.loads(
-            (tmp_path / ".claude" / "settings.local.json").read_text()
-        )
+        data = json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
         assert "mapify" not in data
         assert "Bash(*)" not in data["permissions"]["allow"]
 
@@ -864,8 +3345,788 @@ class TestDoctorCommand:
         assert ".map/scripts" in result.stdout
 
 
+class TestInternalUpdateCommand:
+    """Test the hidden machine-readable project update adapter."""
+
+    @pytest.mark.parametrize(
+        ("mode", "expected_exit_code", "expected_payload"),
+        [
+            ("automatic", 0, None),
+            (
+                "manual",
+                1,
+                {
+                    "status": "error",
+                    "message": "MAP update failed: updater import failed",
+                },
+            ),
+        ],
+    )
+    def test_internal_update_import_failure_obeys_mode_boundary(
+        self,
+        tmp_path: Path,
+        mode: str,
+        expected_exit_code: int,
+        expected_payload: dict[str, str] | None,
+    ) -> None:
+        real_import = builtins.__import__
+
+        def fail_updater_import(
+            name: str,
+            globals: Mapping[str, object] | None = None,
+            locals: Mapping[str, object] | None = None,
+            fromlist: Sequence[str] | None = (),
+            level: int = 0,
+        ) -> object:
+            if name == "mapify_cli.auto_update":
+                print("incidental import stdout")
+                print("incidental import stderr", file=sys.stderr)
+                raise ImportError("updater import failed")
+            return real_import(name, globals, locals, fromlist, level)
+
+        with mock.patch("builtins.__import__", side_effect=fail_updater_import):
+            result = runner.invoke(
+                app,
+                ["_update", "--mode", mode, "--project", str(tmp_path)],
+            )
+
+        assert result.exit_code == expected_exit_code
+        assert result.stderr == ""
+        if expected_payload is None:
+            assert result.stdout_bytes == b""
+            assert result.output == ""
+        else:
+            assert result.stdout.count("\n") == 1
+            assert json.loads(result.stdout) == expected_payload
+            assert "incidental import" not in result.output
+            assert "Traceback" not in result.output
+
+    def test_internal_update_invalid_raw_mode_does_not_import_updater(
+        self, tmp_path: Path
+    ) -> None:
+        real_import = builtins.__import__
+
+        def reject_updater_import(
+            name: str,
+            globals: Mapping[str, object] | None = None,
+            locals: Mapping[str, object] | None = None,
+            fromlist: Sequence[str] | None = (),
+            level: int = 0,
+        ) -> object:
+            if name == "mapify_cli.auto_update":
+                raise AssertionError("invalid mode must be rejected before import")
+            return real_import(name, globals, locals, fromlist, level)
+
+        with mock.patch("builtins.__import__", side_effect=reject_updater_import):
+            result = runner.invoke(
+                app,
+                ["_update", "--mode", "scheduled", "--project", str(tmp_path)],
+            )
+
+        assert result.exit_code == 1
+        assert result.stderr == ""
+        assert json.loads(result.stdout) == {
+            "status": "error",
+            "message": "--mode must be automatic or manual",
+        }
+
+    @pytest.mark.parametrize("attack", ["symlink", "hardlink"])
+    @pytest.mark.parametrize("lock_name", ["update.lock", "provider-refresh.lock"])
+    @pytest.mark.parametrize("mode", ["automatic", "manual"])
+    def test_internal_update_unsafe_lock_path_obeys_mode_boundary(
+        self,
+        tmp_path: Path,
+        lock_name: str,
+        mode: str,
+        attack: str,
+    ) -> None:
+        if attack == "hardlink" and os.name == "nt":
+            pytest.skip("POSIX hardlink security contract")
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        target = map_dir / f"{lock_name}.target"
+        target.write_text("not a MAP lock\n", encoding="utf-8")
+        if attack == "symlink":
+            (map_dir / lock_name).symlink_to(target)
+        else:
+            try:
+                os.link(target, map_dir / lock_name)
+            except (NotImplementedError, OSError) as exc:
+                pytest.skip(f"hardlinks unavailable: {exc}")
+
+        with mock.patch(
+            "mapify_cli.auto_update.detect_install_kind",
+            return_value=InstallKind.PIP,
+        ):
+            result = runner.invoke(
+                app,
+                ["_update", "--mode", mode, "--project", str(tmp_path)],
+            )
+
+        assert result.stderr == ""
+        if mode == "automatic":
+            assert result.exit_code == 0
+            assert result.stdout == ""
+        else:
+            assert result.exit_code == 1
+            payload = json.loads(result.stdout)
+            assert payload["status"] == "error"
+            assert "unsafe MAP update lock path" in payload["message"]
+            assert lock_name in payload["message"]
+            assert "Remove the unsafe path" in payload["message"]
+        assert target.read_text(encoding="utf-8") == "not a MAP lock\n"
+
+    @pytest.mark.parametrize("mode", ["automatic", "manual"])
+    def test_internal_update_symlinked_map_ancestor_obeys_mode_boundary(
+        self,
+        tmp_path: Path,
+        mode: str,
+    ) -> None:
+        outside = tmp_path / "outside-map"
+        outside.mkdir()
+        sentinel = outside / "sentinel"
+        sentinel.write_bytes(b"outside-bytes")
+        (tmp_path / ".map").symlink_to(outside, target_is_directory=True)
+
+        with mock.patch(
+            "mapify_cli.auto_update.detect_install_kind",
+            return_value=InstallKind.PIP,
+        ):
+            result = runner.invoke(
+                app,
+                ["_update", "--mode", mode, "--project", str(tmp_path)],
+            )
+
+        if mode == "automatic":
+            assert result.exit_code == 0
+            assert result.stdout == ""
+        else:
+            assert result.exit_code == 1
+            payload = json.loads(result.stdout)
+            assert payload["status"] == "error"
+            assert "unsafe MAP update lock path" in payload["message"]
+            assert "update.lock" in payload["message"]
+        assert sentinel.read_bytes() == b"outside-bytes"
+        assert not (outside / "update.lock").exists()
+        assert not (outside / "provider-refresh.lock").exists()
+
+    @mock.patch("mapify_cli.auto_update.check_and_update")
+    def test_internal_update_automatic_error_is_silent_success(
+        self, mock_update: mock.Mock, tmp_path: Path
+    ) -> None:
+        mock_update.return_value = UpdateResult(
+            UpdateStatus.ERROR, "3.25.0", message="offline"
+        )
+
+        result = runner.invoke(
+            app,
+            ["_update", "--mode", "automatic", "--project", str(tmp_path)],
+        )
+
+        assert result.exit_code == 0
+        assert result.stdout == ""
+        assert result.stderr == ""
+        assert result.output == ""
+
+    def test_internal_update_automatic_lock_cleanup_failure_preserves_reload(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".claude" / "skills").mkdir(parents=True)
+
+        @contextlib.contextmanager
+        def failing_cleanup_lock(
+            project: Path,
+            *,
+            timeout_s: float,
+        ):
+            del project, timeout_s
+            yield
+            raise OSError("lock cleanup failed")
+
+        with (
+            mock.patch(
+                "mapify_cli.auto_update.detect_install_kind",
+                return_value=InstallKind.PIP,
+            ),
+            mock.patch(
+                "mapify_cli.auto_update.project_update_lock",
+                failing_cleanup_lock,
+            ),
+            mock.patch(
+                "mapify_cli.auto_update.fetch_version_targets",
+                return_value=VersionTargets(StableVersion(3, 26, 0), None),
+            ),
+            mock.patch("mapify_cli.auto_update.install_exact_version"),
+            mock.patch(
+                "mapify_cli.auto_update.installed_providers",
+                return_value=("claude",),
+            ),
+            mock.patch(
+                "mapify_cli.auto_update.refresh_installed_providers",
+                return_value=("claude",),
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                ["_update", "--mode", "automatic", "--project", str(tmp_path)],
+            )
+
+        assert result.exit_code == 0
+        assert result.stderr == ""
+        assert json.loads(result.stdout) == {
+            "status": "updated",
+            "current_version": "3.25.0",
+            "installed_version": "3.26.0",
+            "refreshed_providers": ["claude"],
+            "reload_current_skill": True,
+        }
+        assert "lock cleanup failed" not in result.output
+
+    def test_internal_update_automatic_final_state_failure_preserves_reload(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".claude" / "skills").mkdir(parents=True)
+        real_write_state = write_update_state
+
+        def fail_completed_state_write(project: Path, state: UpdateState) -> None:
+            if state.last_installed_version == "3.26.0" and not state.pending_refresh:
+                raise OSError("final state write failed")
+            real_write_state(project, state)
+
+        with (
+            mock.patch(
+                "mapify_cli.auto_update.detect_install_kind",
+                return_value=InstallKind.PIP,
+            ),
+            mock.patch(
+                "mapify_cli.auto_update.fetch_version_targets",
+                return_value=VersionTargets(StableVersion(3, 26, 0), None),
+            ),
+            mock.patch("mapify_cli.auto_update.install_exact_version"),
+            mock.patch(
+                "mapify_cli.auto_update.installed_providers",
+                return_value=("claude",),
+            ),
+            mock.patch(
+                "mapify_cli.auto_update.refresh_installed_providers",
+                return_value=("claude",),
+            ),
+            mock.patch(
+                "mapify_cli.auto_update.write_update_state",
+                side_effect=fail_completed_state_write,
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                ["_update", "--mode", "automatic", "--project", str(tmp_path)],
+            )
+
+        assert result.exit_code == 0
+        assert result.stderr == ""
+        assert json.loads(result.stdout) == {
+            "status": "updated",
+            "current_version": "3.25.0",
+            "installed_version": "3.26.0",
+            "refreshed_providers": ["claude"],
+            "reload_current_skill": True,
+        }
+        assert "final state write failed" not in result.output
+
+    @mock.patch("mapify_cli.auto_update.check_and_update")
+    def test_internal_update_automatic_partial_refresh_error_remains_silent(
+        self, mock_update: mock.Mock, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".claude" / "skills").mkdir(parents=True)
+        (tmp_path / ".codex").mkdir()
+        (tmp_path / ".codex" / "config.toml").write_text("", encoding="utf-8")
+        (tmp_path / ".agents" / "skills").mkdir(parents=True)
+        mock_update.return_value = UpdateResult(
+            UpdateStatus.ERROR,
+            "3.25.0",
+            installed_version="3.26.0",
+            message="codex refresh failed",
+            refreshed_providers=("claude",),
+            reload_current_skill=True,
+        )
+
+        result = runner.invoke(
+            app,
+            ["_update", "--mode", "automatic", "--project", str(tmp_path)],
+        )
+
+        assert result.exit_code == 0
+        assert result.stdout_bytes == b""
+        assert result.stderr == ""
+        assert result.output == ""
+
+    @mock.patch("mapify_cli.auto_update.check_and_update")
+    def test_internal_update_does_not_infer_completion_after_provider_marker_loss(
+        self, mock_update: mock.Mock, tmp_path: Path
+    ) -> None:
+        # The failed Codex child removed its layout marker after Claude completed.
+        # A post-error rescan therefore sees only Claude and cannot prove completion.
+        (tmp_path / ".claude" / "skills").mkdir(parents=True)
+        mock_update.return_value = UpdateResult(
+            UpdateStatus.ERROR,
+            "3.25.0",
+            installed_version="3.26.0",
+            message="codex refresh failed after marker removal",
+            refreshed_providers=("claude",),
+            reload_current_skill=True,
+            refresh_complete=False,
+        )
+
+        result = runner.invoke(
+            app,
+            ["_update", "--mode", "automatic", "--project", str(tmp_path)],
+        )
+
+        assert result.exit_code == 0
+        assert result.stdout_bytes == b""
+        assert result.stderr == ""
+
+    def test_internal_update_automatic_late_metadata_failure_emits_updated_json(
+        self, tmp_path: Path
+    ) -> None:
+        with (
+            mock.patch(
+                "mapify_cli.auto_update.detect_install_kind",
+                return_value=InstallKind.PIP,
+            ),
+            mock.patch(
+                "mapify_cli.auto_update.fetch_version_targets",
+                return_value=VersionTargets(
+                    StableVersion(3, 26, 0),
+                    StableVersion(4, 0, 0),
+                ),
+            ),
+            mock.patch("mapify_cli.auto_update.install_exact_version"),
+            mock.patch(
+                "mapify_cli.auto_update.installed_providers",
+                return_value=("claude", "codex"),
+            ),
+            mock.patch(
+                "mapify_cli.auto_update.refresh_installed_providers",
+                return_value=("claude", "codex"),
+            ),
+            mock.patch(
+                "mapify_cli.auto_update.fetch_release_highlights",
+                side_effect=OSError("GitHub offline"),
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                ["_update", "--mode", "automatic", "--project", str(tmp_path)],
+            )
+
+        assert result.exit_code == 0
+        assert result.stderr == ""
+        assert result.stdout.count("\n") == 1
+        assert json.loads(result.stdout) == {
+            "status": "updated",
+            "current_version": "3.25.0",
+            "installed_version": "3.26.0",
+            "refreshed_providers": ["claude", "codex"],
+            "reload_current_skill": True,
+        }
+
+    @mock.patch("mapify_cli.auto_update.check_and_update")
+    def test_internal_update_automatic_unexpected_exception_is_silent_success(
+        self, mock_update: mock.Mock, tmp_path: Path
+    ) -> None:
+        def raise_noisily(*_args: object, **_kwargs: object) -> UpdateResult:
+            print("incidental stdout")
+            print("incidental stderr", file=sys.stderr)
+            raise OSError("unexpected")
+
+        mock_update.side_effect = raise_noisily
+
+        result = runner.invoke(
+            app,
+            ["_update", "--mode", "automatic", "--project", str(tmp_path)],
+        )
+
+        assert result.exit_code == 0
+        assert result.stdout == ""
+        assert result.stderr == ""
+        assert result.output == ""
+
+    @mock.patch("mapify_cli.auto_update.check_and_update")
+    def test_internal_update_automatic_to_dict_failure_is_silent_success(
+        self, mock_update: mock.Mock, tmp_path: Path
+    ) -> None:
+        broken_result = mock.Mock(status=UpdateStatus.CURRENT)
+        broken_result.to_dict.side_effect = TypeError("cannot serialize result")
+        mock_update.return_value = broken_result
+
+        result = runner.invoke(
+            app,
+            ["_update", "--mode", "automatic", "--project", str(tmp_path)],
+        )
+
+        assert result.exit_code == 0
+        assert result.stdout == ""
+        assert result.stderr == ""
+        assert result.output == ""
+
+    @mock.patch("mapify_cli.auto_update.check_and_update")
+    @mock.patch(
+        "mapify_cli._write_internal_update_json",
+        side_effect=OSError("stdout closed"),
+    )
+    def test_internal_update_automatic_write_failure_is_silent_success(
+        self,
+        mock_write: mock.Mock,
+        mock_update: mock.Mock,
+        tmp_path: Path,
+    ) -> None:
+        mock_update.return_value = UpdateResult(UpdateStatus.CURRENT, "3.25.0")
+
+        result = runner.invoke(
+            app,
+            ["_update", "--mode", "automatic", "--project", str(tmp_path)],
+        )
+
+        assert result.exit_code == 0
+        assert result.stdout == ""
+        assert result.stderr == ""
+        assert result.output == ""
+        assert mock_write.call_count == 1
+
+    @mock.patch("mapify_cli.auto_update.check_and_update")
+    def test_internal_update_automatic_success_emits_one_clean_unicode_json_object(
+        self, mock_update: mock.Mock, tmp_path: Path
+    ) -> None:
+        expected = UpdateResult(
+            UpdateStatus.CURRENT,
+            "3.25.0",
+            message="Текущая версия 🎉",
+        )
+
+        def return_noisily(*_args: object, **_kwargs: object) -> UpdateResult:
+            print("incidental stdout")
+            print("incidental stderr", file=sys.stderr)
+            return expected
+
+        mock_update.side_effect = return_noisily
+
+        result = runner.invoke(
+            app,
+            ["_update", "--mode", "automatic", "--project", str(tmp_path)],
+        )
+
+        expected_output = (
+            '{"status": "current", "current_version": "3.25.0", '
+            '"message": "Текущая версия 🎉", "reload_current_skill": false}\n'
+        )
+        assert result.exit_code == 0
+        assert result.stdout == expected_output
+        assert result.stderr == ""
+        assert result.output == expected_output
+        assert result.stdout.count("\n") == 1
+
+    @mock.patch("mapify_cli.auto_update.check_and_update")
+    def test_internal_update_manual_error_is_json_failure(
+        self, mock_update: mock.Mock, tmp_path: Path
+    ) -> None:
+        mock_update.return_value = UpdateResult(
+            UpdateStatus.ERROR, "3.25.0", message="offline"
+        )
+
+        result = runner.invoke(
+            app,
+            ["_update", "--mode", "manual", "--project", str(tmp_path)],
+        )
+
+        assert result.exit_code == 1
+        assert result.stderr == ""
+        assert result.stdout.count("\n") == 1
+        assert json.loads(result.stdout) == {
+            "status": "error",
+            "current_version": "3.25.0",
+            "message": "offline",
+            "reload_current_skill": False,
+        }
+
+    @mock.patch("mapify_cli.auto_update.check_and_update")
+    def test_internal_update_manual_unexpected_exception_is_bounded_json_failure(
+        self, mock_update: mock.Mock, tmp_path: Path
+    ) -> None:
+        def raise_noisily(*_args: object, **_kwargs: object) -> UpdateResult:
+            print("incidental stdout")
+            print("incidental stderr", file=sys.stderr)
+            raise OSError("unexpected" + "🎉" * 3_000)
+
+        mock_update.side_effect = raise_noisily
+
+        result = runner.invoke(
+            app,
+            ["_update", "--mode", "manual", "--project", str(tmp_path)],
+        )
+
+        assert result.exit_code == 1
+        assert result.stderr == ""
+        assert result.stdout.count("\n") == 1
+        payload = json.loads(result.stdout)
+        assert payload["status"] == "error"
+        assert payload["message"].startswith("MAP update failed: unexpected")
+        assert len(payload["message"]) <= 2_000
+        assert len(result.stdout_bytes) <= 16 * 1_024
+
+    @mock.patch("mapify_cli.auto_update.check_and_update")
+    def test_internal_update_manual_service_error_is_bounded_valid_json(
+        self, mock_update: mock.Mock, tmp_path: Path
+    ) -> None:
+        original_message = "offline " + "🎉" * 20_000
+        mock_update.return_value = UpdateResult(
+            UpdateStatus.ERROR,
+            "3.25.0",
+            message=original_message,
+        )
+
+        result = runner.invoke(
+            app,
+            ["_update", "--mode", "manual", "--project", str(tmp_path)],
+        )
+
+        assert result.exit_code == 1
+        assert result.stderr == ""
+        assert result.stdout.count("\n") == 1
+        assert len(result.stdout_bytes) <= 16 * 1_024
+        payload = json.loads(result.stdout)
+        assert payload["status"] == "error"
+        assert payload["current_version"] == "3.25.0"
+        assert payload["message"].startswith("offline ")
+        assert len(payload["message"]) < len(original_message)
+
+    @mock.patch("mapify_cli.auto_update.check_and_update")
+    def test_internal_update_manual_to_dict_failure_is_one_json_failure(
+        self, mock_update: mock.Mock, tmp_path: Path
+    ) -> None:
+        broken_result = mock.Mock(status=UpdateStatus.CURRENT)
+        broken_result.to_dict.side_effect = TypeError("cannot serialize result")
+        mock_update.return_value = broken_result
+
+        result = runner.invoke(
+            app,
+            ["_update", "--mode", "manual", "--project", str(tmp_path)],
+        )
+
+        assert result.exit_code == 1
+        assert result.stderr == ""
+        assert result.stdout.count("\n") == 1
+        assert len(result.stdout_bytes) <= 16 * 1_024
+        payload = json.loads(result.stdout)
+        assert payload == {
+            "status": "error",
+            "message": "MAP update failed: cannot serialize result",
+        }
+        assert "Traceback" not in result.output
+
+    @mock.patch("mapify_cli.auto_update.check_and_update")
+    def test_internal_update_manual_write_failure_emits_one_fallback_json(
+        self, mock_update: mock.Mock, tmp_path: Path
+    ) -> None:
+        mock_update.return_value = UpdateResult(UpdateStatus.CURRENT, "3.25.0")
+        real_write = mapify_cli._write_internal_update_json
+        call_count = 0
+
+        def fail_first_write(payload: object) -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise OSError("stdout closed")
+            real_write(payload)
+
+        with mock.patch(
+            "mapify_cli._write_internal_update_json",
+            side_effect=fail_first_write,
+        ):
+            result = runner.invoke(
+                app,
+                ["_update", "--mode", "manual", "--project", str(tmp_path)],
+            )
+
+        assert result.exit_code == 1
+        assert result.stderr == ""
+        assert result.stdout.count("\n") == 1
+        assert json.loads(result.stdout) == {
+            "status": "error",
+            "message": "MAP update failed: stdout closed",
+        }
+        assert "Traceback" not in result.output
+
+    @mock.patch("mapify_cli.auto_update.check_and_update")
+    def test_internal_update_major_metadata_is_bounded_with_required_fields(
+        self, mock_update: mock.Mock, tmp_path: Path
+    ) -> None:
+        original_body = "🎉" * 20_000
+        mock_update.return_value = UpdateResult(
+            UpdateStatus.MAJOR_AVAILABLE,
+            "3.25.0",
+            major=ReleaseHighlights(
+                version=StableVersion(4, 0, 0),
+                title="MAP 4",
+                body=original_body,
+                url="https://github.com/azalio/map-framework/releases/tag/v4.0.0",
+            ),
+        )
+
+        result = runner.invoke(
+            app,
+            ["_update", "--mode", "manual", "--project", str(tmp_path)],
+        )
+
+        assert result.exit_code == 0
+        assert result.stderr == ""
+        assert result.stdout.count("\n") == 1
+        assert len(result.stdout_bytes) <= 16 * 1_024
+        payload = json.loads(result.stdout)
+        assert payload["status"] == "major_available"
+        assert payload["current_version"] == "3.25.0"
+        assert payload["major"]["version"] == "4.0.0"
+        assert payload["major"]["title"] == "MAP 4"
+        assert payload["major"]["url"].endswith("/v4.0.0")
+        assert len(payload["major"]["body"]) < len(original_body)
+
+    @mock.patch("mapify_cli.auto_update.check_and_update")
+    def test_internal_update_manual_success_emits_one_clean_unicode_json_object(
+        self, mock_update: mock.Mock, tmp_path: Path
+    ) -> None:
+        expected = UpdateResult(
+            UpdateStatus.UPDATED,
+            "3.25.0",
+            installed_version="3.26.0",
+            message="Обновлено 🎉",
+            refreshed_providers=("claude", "codex"),
+            reload_current_skill=True,
+        )
+
+        def return_noisily(*_args: object, **_kwargs: object) -> UpdateResult:
+            print("incidental stdout")
+            print("incidental stderr", file=sys.stderr)
+            return expected
+
+        mock_update.side_effect = return_noisily
+
+        result = runner.invoke(
+            app,
+            ["_update", "--mode", "manual", "--project", str(tmp_path)],
+        )
+
+        expected_output = (
+            '{"status": "updated", "current_version": "3.25.0", '
+            '"installed_version": "3.26.0", "message": "Обновлено 🎉", '
+            '"refreshed_providers": ["claude", "codex"], '
+            '"reload_current_skill": true}\n'
+        )
+        assert result.exit_code == 0
+        assert result.stdout == expected_output
+        assert result.stderr == ""
+        assert result.output == expected_output
+        assert result.stdout.count("\n") == 1
+
+    @mock.patch("mapify_cli.auto_update.check_and_update")
+    def test_internal_update_invalid_mode_is_one_clean_json_failure(
+        self, mock_update: mock.Mock, tmp_path: Path
+    ) -> None:
+        result = runner.invoke(
+            app,
+            ["_update", "--mode", "scheduled", "--project", str(tmp_path)],
+        )
+
+        expected_output = (
+            json.dumps(
+                {"status": "error", "message": "--mode must be automatic or manual"}
+            )
+            + "\n"
+        )
+        assert result.exit_code == 1
+        assert result.stdout == expected_output
+        assert result.stderr == ""
+        assert result.output == expected_output
+        mock_update.assert_not_called()
+
+    @mock.patch("mapify_cli.auto_update.check_and_update")
+    def test_internal_update_manual_forwards_approved_major(
+        self, mock_update: mock.Mock, tmp_path: Path
+    ) -> None:
+        mock_update.return_value = UpdateResult(UpdateStatus.CURRENT, "3.25.0")
+
+        result = runner.invoke(
+            app,
+            [
+                "_update",
+                "--mode",
+                "manual",
+                "--project",
+                str(tmp_path),
+                "--approve-major",
+                "4.0.0",
+            ],
+        )
+
+        assert result.exit_code == 0
+        mock_update.assert_called_once_with(
+            tmp_path.resolve(),
+            current_version=mapify_cli.__version__,
+            mode=UpdateMode.MANUAL,
+            approved_major="4.0.0",
+        )
+
+    @mock.patch("mapify_cli.auto_update.check_and_update")
+    def test_internal_update_automatic_approved_major_rejection_is_silent(
+        self, mock_update: mock.Mock, tmp_path: Path
+    ) -> None:
+        mock_update.return_value = UpdateResult(
+            UpdateStatus.ERROR,
+            "3.25.0",
+            message="A major version can be approved only in manual mode.",
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "_update",
+                "--mode",
+                "automatic",
+                "--project",
+                str(tmp_path),
+                "--approve-major",
+                "4.0.0",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert result.output == ""
+        mock_update.assert_called_once_with(
+            tmp_path.resolve(),
+            current_version=mapify_cli.__version__,
+            mode=UpdateMode.AUTOMATIC,
+            approved_major="4.0.0",
+        )
+
+    def test_internal_update_is_hidden_from_help(self) -> None:
+        result = runner.invoke(app, ["--help"])
+
+        assert result.exit_code == 0
+        assert "_update" not in result.stdout
+
+
 class TestUpgradeCommand:
     """Test the upgrade command."""
+
+    @mock.patch("mapify_cli.auto_update.check_and_update")
+    @mock.patch("mapify_cli.get_latest_release", return_value={"tag_name": "v0.0.1"})
+    def test_public_upgrade_does_not_use_auto_update_service(
+        self, mock_release: mock.Mock, mock_auto: mock.Mock
+    ) -> None:
+        del mock_release
+
+        result = runner.invoke(app, ["upgrade"])
+
+        assert result.exit_code == 0
+        mock_auto.assert_not_called()
 
     @mock.patch("mapify_cli._run_self_upgrade", return_value=0)
     @mock.patch(
@@ -1129,9 +4390,7 @@ class TestCommandCreation:
         commands_dir = tmp_path / ".claude" / "commands"
         assert commands_dir.exists()
         # After skills migration, commands/ has only README.md (no map-*.md)
-        command_files = [
-            p for p in commands_dir.glob("*.md") if p.name != "README.md"
-        ]
+        command_files = [p for p in commands_dir.glob("*.md") if p.name != "README.md"]
         assert len(command_files) == 0
 
 
@@ -1358,7 +4617,9 @@ class TestMcpJsonConfig:
         config = json.loads(mcp_file.read_text())
 
         assert "sequential-thinking" in config["mcpServers"]
-        assert "deepwiki" not in config["mcpServers"]  # removed → filtered like any unknown
+        assert (
+            "deepwiki" not in config["mcpServers"]
+        )  # removed → filtered like any unknown
         assert "unknown-server" not in config["mcpServers"]
 
     def test_init_creates_mcp_json(self, tmp_path):
@@ -1613,13 +4874,15 @@ class TestCodexProvider:
         # Either a real file with content or a symlink to CLAUDE.md
         assert agents_md.is_symlink() or len(content) > 0, "AGENTS.md must be non-empty"
         if not agents_md.is_symlink():
-            assert "$map-plan" in content, "Codex AGENTS.md must document skill invocation with $"
+            assert (
+                "$map-plan" in content
+            ), "Codex AGENTS.md must document skill invocation with $"
             assert (
                 "$map-efficient" in content
             ), "Codex AGENTS.md must document the execution skill"
-            assert "codex_hooks" not in content, (
-                "Codex AGENTS.md must not document deprecated codex_hooks"
-            )
+            assert (
+                "codex_hooks" not in content
+            ), "Codex AGENTS.md must not document deprecated codex_hooks"
 
     # ------------------------------------------------------------------ #
     # AC-5: config.toml, agents/*.toml, hooks/workflow-gate.py exist      #
@@ -1630,12 +4893,12 @@ class TestCodexProvider:
         codex_dir = codex_project / ".codex"
         assert (codex_dir / "config.toml").exists(), ".codex/config.toml must exist"
         config_text = (codex_dir / "config.toml").read_text(encoding="utf-8")
-        assert "hooks = true" in config_text, (
-            "Codex config must enable canonical hooks feature"
-        )
-        assert "codex_hooks" not in config_text, (
-            "Codex config must not use deprecated codex_hooks feature alias"
-        )
+        assert (
+            "hooks = true" in config_text
+        ), "Codex config must enable canonical hooks feature"
+        assert (
+            "codex_hooks" not in config_text
+        ), "Codex config must not use deprecated codex_hooks feature alias"
         toml_files = list((codex_dir / "agents").glob("*.toml"))
         assert (
             len(toml_files) > 0
@@ -1761,10 +5024,9 @@ class TestCodexProvider:
                     if pattern in content:
                         rel = file_path.relative_to(codex_project)
                         violations.append(f"{rel}: contains '{pattern}'")
-        assert (
-            not violations
-        ), "Claude-specific tool references found in Codex provider files:\n" + "\n".join(
-            violations
+        assert not violations, (
+            "Claude-specific tool references found in Codex provider files:\n"
+            + "\n".join(violations)
         )
 
     # ------------------------------------------------------------------ #
@@ -1855,9 +5117,9 @@ class TestCodexProvider:
 
         # Verify hook command uses quoted git-root-resolved path
         hooks_data = _json.loads(hooks_json_path.read_text())
-        assert set(hooks_data) == {"hooks"}, (
-            ".codex/hooks.json must not include MAP-only top-level metadata"
-        )
+        assert set(hooks_data) == {
+            "hooks"
+        }, ".codex/hooks.json must not include MAP-only top-level metadata"
         command = hooks_data["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
         assert (
             "$(git rev-parse --show-toplevel)" in command
@@ -2043,7 +5305,9 @@ class TestCodexProvider:
         assert "echo existing bash" in commands
         assert "python3 old/.codex/hooks/workflow-gate.py" not in commands
         workflow_gate_commands = [
-            command for command in commands if ".codex/hooks/workflow-gate.py" in command
+            command
+            for command in commands
+            if ".codex/hooks/workflow-gate.py" in command
         ]
         assert len(workflow_gate_commands) == 1
         assert any(
@@ -2097,7 +5361,9 @@ class TestCodexProvider:
         ), f".codex/agents/ must have at least 1 *.toml for agent discovery, found {toml_count}"
         assert not (
             codex_dir / "skills"
-        ).exists(), "Codex skills must be installed under .agents/skills, not .codex/skills"
+        ).exists(), (
+            "Codex skills must be installed under .agents/skills, not .codex/skills"
+        )
 
     # ------------------------------------------------------------------ #
     # AC-20: workflow-gate.py blocks file-modifying commands in RESEARCH  #
@@ -2172,9 +5438,7 @@ class TestCodexProvider:
 
     def test_ac22_map_efficient_state_machine_markers(self, codex_project):
         """AC-22: $map-efficient documents the required state-machine commands."""
-        skill_file = (
-            codex_project / ".agents" / "skills" / "map-efficient" / "SKILL.md"
-        )
+        skill_file = codex_project / ".agents" / "skills" / "map-efficient" / "SKILL.md"
         content = skill_file.read_text(encoding="utf-8")
         for marker in [
             "resume_from_plan",

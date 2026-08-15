@@ -25,6 +25,10 @@ Or install globally:
 
 __version__ = "3.26.0"
 
+import contextlib
+import functools
+import inspect
+import io
 import json
 import os
 import shutil
@@ -34,7 +38,7 @@ import sys
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import typer
@@ -132,6 +136,9 @@ from mapify_cli.delivery import (
     create_task_decomposer_content as create_task_decomposer_content,
 )
 
+if TYPE_CHECKING:
+    from mapify_cli.install_manifest import InstallManifest
+
 
 # Create secure SSL context with proper fallback
 def create_ssl_context():
@@ -143,7 +150,7 @@ def create_ssl_context():
             context.check_hostname = True
             context.verify_mode = ssl.CERT_REQUIRED
             return context
-    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
+    except Exception:  # noqa: BLE001, S110
         pass
 
     # Fallback to standard SSL context
@@ -167,6 +174,10 @@ MCP_SERVER_CHOICES = {
 INDIVIDUAL_MCP_SERVERS = {
     "sequential-thinking": "Chain-of-thought reasoning",
 }
+
+# Hidden update responses include bounded release notes and must remain small enough
+# for reliable agent-tool transport. The limit includes the trailing newline.
+INTERNAL_UPDATE_MAX_JSON_BYTES = 16 * 1024
 
 
 app = typer.Typer(
@@ -510,9 +521,7 @@ def get_branch_artifact_templates() -> dict[str, str]:
     }
 
 
-def initialize_branch_workspace(
-    project_path: Path, branch: str | None = None
-) -> Path:
+def initialize_branch_workspace(project_path: Path, branch: str | None = None) -> Path:
     """Create branch-scoped planning artifacts inside `.map/<branch>/`."""
     branch_name = sanitize_identifier(branch or get_current_branch_name())
     workspace_dir = get_branch_workspace_dir(project_path, branch_name)
@@ -709,12 +718,348 @@ def get_latest_release(owner: str, repo: str) -> dict[str, Any] | None:
             response = client.get(url)
             if response.status_code == 200:
                 return response.json()
-    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
+    except Exception:  # noqa: BLE001, S110
         pass
     return None
 
 
+def _load_refresh_agent_memory(project_path: Path) -> str:
+    """Strictly read the memory choice before refresh can mutate provider files."""
+    import yaml
+
+    from mapify_cli.config.project_config import VALID_AGENT_MEMORY_LEVELS
+
+    config_path = project_path / ".map" / "config.yaml"
+    try:
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise RuntimeError(
+            f"Could not read existing project configuration: {exc}"
+        ) from exc
+    if data is None:
+        return "off"
+    if not isinstance(data, Mapping):
+        raise RuntimeError(
+            "Could not read existing project configuration: expected a YAML mapping"
+        )
+
+    memory = data.get(
+        "claude_agents.persistent_memory",
+        data.get("claude_agents_persistent_memory", "off"),
+    )
+    # YAML 1.1 parses bare ``off`` as False; match load_map_config's established
+    # interpretation without accepting other non-string values.
+    if memory is False:
+        memory = "off"
+    if not isinstance(memory, str) or memory not in VALID_AGENT_MEMORY_LEVELS:
+        raise RuntimeError(
+            "Could not read existing project configuration: "
+            "claude_agents.persistent_memory must be off, local, or project"
+        )
+    return memory
+
+
+def _read_refresh_mcp_config(project_path: Path) -> dict[str, Any] | None:
+    """Strictly and non-destructively read an existing Claude MCP config."""
+    mcp_path = project_path / ".mcp.json"
+    if not mcp_path.exists():
+        return None
+    try:
+        data = json.loads(mcp_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"Could not read existing Claude MCP configuration: {exc}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(
+            "Could not read existing Claude MCP configuration: expected a JSON object"
+        )
+    servers = data.get("mcpServers", {})
+    if not isinstance(servers, dict):
+        raise RuntimeError(
+            "Could not read existing Claude MCP configuration: "
+            "mcpServers must be a JSON object"
+        )
+    return data
+
+
+class _InvalidRefreshManifest(RuntimeError):
+    """Existing manifest content does not match the generated schema."""
+
+
+def _read_refresh_manifest(project_path: Path) -> "InstallManifest | None":
+    """Strictly parse an existing install manifest before refresh mutations."""
+    from mapify_cli.install_manifest import (
+        MANIFEST_FILENAME,
+        ConfigEntry,
+        InstallManifest,
+        ManifestEntry,
+        normalize_providers,
+    )
+
+    manifest_path = project_path / ".map" / MANIFEST_FILENAME
+    if not manifest_path.exists():
+        return None
+    try:
+        raw_manifest = manifest_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"Could not read existing install manifest: {exc}") from exc
+    except UnicodeError as exc:
+        raise _InvalidRefreshManifest(
+            f"Could not read existing install manifest: {exc}"
+        ) from exc
+    try:
+        data = json.loads(raw_manifest)
+    except json.JSONDecodeError as exc:
+        raise _InvalidRefreshManifest(
+            f"Could not read existing install manifest: {exc}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise _InvalidRefreshManifest(
+            "Could not read existing install manifest: expected a JSON object"
+        )
+
+    def require_string(record: dict[str, Any], field: str, label: str) -> str:
+        value = record.get(field)
+        if not isinstance(value, str):
+            raise _InvalidRefreshManifest(
+                "Could not read existing install manifest: "
+                f"{label}.{field} must be a string"
+            )
+        return value
+
+    mapify_version = require_string(data, "mapify_version", "manifest")
+    legacy_provider = require_string(data, "provider", "manifest")
+    installed_at = require_string(data, "installed_at", "manifest")
+
+    raw_entries = data.get("entries")
+    if not isinstance(raw_entries, list):
+        raise _InvalidRefreshManifest(
+            "Could not read existing install manifest: entries must be a JSON array"
+        )
+    entry_fields = {
+        "dest",
+        "content_hash",
+        "template_hash",
+        "management_mode",
+        "committed",
+        "mapify_version",
+        "installed_at",
+    }
+    entries: list[ManifestEntry] = []
+    for index, raw_entry in enumerate(raw_entries):
+        label = f"entries[{index}]"
+        if not isinstance(raw_entry, dict) or set(raw_entry) != entry_fields:
+            raise _InvalidRefreshManifest(
+                "Could not read existing install manifest: "
+                f"{label} does not match the manifest-entry schema"
+            )
+        for field in entry_fields - {"committed"}:
+            require_string(raw_entry, field, label)
+        if not isinstance(raw_entry["committed"], bool):
+            raise _InvalidRefreshManifest(
+                "Could not read existing install manifest: "
+                f"{label}.committed must be a boolean"
+            )
+        if raw_entry["management_mode"] not in {"fenced", "full", "hooks-merge"}:
+            raise _InvalidRefreshManifest(
+                "Could not read existing install manifest: "
+                f"{label}.management_mode is invalid"
+            )
+        entries.append(ManifestEntry(**raw_entry))
+
+    raw_config_entries = data.get("config_entries", [])
+    if not isinstance(raw_config_entries, list):
+        raise _InvalidRefreshManifest(
+            "Could not read existing install manifest: "
+            "config_entries must be a JSON array"
+        )
+    config_fields = {"file", "key_path", "installed_at", "mapify_version"}
+    config_entries: list[ConfigEntry] = []
+    for index, raw_entry in enumerate(raw_config_entries):
+        label = f"config_entries[{index}]"
+        if not isinstance(raw_entry, dict) or set(raw_entry) != config_fields:
+            raise _InvalidRefreshManifest(
+                "Could not read existing install manifest: "
+                f"{label} does not match the config-entry schema"
+            )
+        for field in config_fields:
+            require_string(raw_entry, field, label)
+        config_entries.append(ConfigEntry(**raw_entry))
+
+    legacy_providers = legacy_provider.split("+")
+    normalized_legacy = normalize_providers(legacy_providers)
+    if not normalized_legacy or len(normalized_legacy) != len(legacy_providers):
+        raise _InvalidRefreshManifest(
+            "Could not read existing install manifest: provider is invalid"
+        )
+
+    raw_providers = data.get("providers")
+    if raw_providers is None:
+        providers = normalized_legacy
+    elif not isinstance(raw_providers, list) or not all(
+        isinstance(name, str) for name in raw_providers
+    ):
+        raise _InvalidRefreshManifest(
+            "Could not read existing install manifest: providers must be a JSON "
+            "array of strings"
+        )
+    else:
+        providers = normalize_providers(raw_providers)
+        if providers != raw_providers or providers != normalized_legacy:
+            raise _InvalidRefreshManifest(
+                "Could not read existing install manifest: providers are invalid"
+            )
+
+    return InstallManifest(
+        mapify_version=mapify_version,
+        provider=legacy_provider,
+        installed_at=installed_at,
+        entries=entries,
+        config_entries=config_entries,
+        providers=providers,
+    )
+
+
+def _refresh_mcp_selection(
+    manifest: "InstallManifest | None", mcp_data: dict[str, Any] | None
+) -> list[str]:
+    """Recover the existing MAP-owned Claude MCP selection for a refresh."""
+    standard_servers = build_standard_mcp_servers()
+    manifest_servers: set[str] = set()
+    if manifest is not None:
+        prefix = "mcpServers."
+        for entry in manifest.config_entries:
+            if entry.file != ".mcp.json" or not entry.key_path.startswith(prefix):
+                continue
+            server_name = entry.key_path.removeprefix(prefix)
+            if server_name in standard_servers:
+                manifest_servers.add(server_name)
+    if manifest_servers:
+        return [name for name in standard_servers if name in manifest_servers]
+
+    if mcp_data is None:
+        return []
+    existing_servers = mcp_data.get("mcpServers")
+    if not isinstance(existing_servers, dict):
+        return []
+    return [
+        name
+        for name, expected in standard_servers.items()
+        if existing_servers.get(name) == expected
+    ]
+
+
+def _apply_verified_auto_update_override(
+    config_path: Path,
+    enabled: bool,
+) -> None:
+    """Persist and reload one explicit automatic-update policy choice."""
+    import re
+
+    import yaml
+
+    from mapify_cli.config.project_config import apply_auto_update_override
+
+    apply_auto_update_override(config_path, enabled)
+    text = config_path.read_text(encoding="utf-8")
+    persisted_values = re.findall(
+        r"(?m)^updates\.auto\s*:\s*(true|false)\s*$",
+        text,
+    )
+    expected = "true" if enabled else "false"
+    try:
+        loaded = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise RuntimeError(f"could not reload persisted project config: {exc}") from exc
+    if (
+        persisted_values != [expected]
+        or not isinstance(loaded, Mapping)
+        or loaded.get("updates.auto") is not enabled
+    ):
+        raise RuntimeError(f"updates.auto was not persisted as {expected}")
+
+
+def _start_init_workflow_logger(
+    project_name: str | None, mcp: str, debug: bool
+) -> None:
+    """Start init diagnostics after refresh preflight has proved non-mutating."""
+    if not is_debug_enabled(debug):
+        return
+
+    from mapify_cli.workflow_logger import MapWorkflowLogger
+
+    workflow_logger = MapWorkflowLogger(Path.cwd(), enabled=True)
+    log_file = workflow_logger.start_session(
+        task_id=f"mapify_init_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
+    )
+    console.print(f"[dim]Debug logging enabled: {log_file}[/dim]")
+    workflow_logger.log_event(
+        "command_start",
+        f"mapify init {project_name or '.'}",
+        metadata={"debug": debug, "mcp": mcp},
+    )
+
+
+def _serialized_refresh_existing(command: Any) -> Any:
+    """Wrap hidden provider refreshes in their complete lock/lease session."""
+    signature = inspect.signature(command)
+
+    @functools.wraps(command)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        from mapify_cli.update_install import installed_providers
+        from mapify_cli.update_state import (
+            MAP_UPDATE_PARENT_LEASE_ENV,
+            UpdateLeaseRejected,
+            UpdateLockBusy,
+            UpdateLockSecurityError,
+            provider_refresh_session,
+        )
+
+        # Intent: Remove delegated authority before init can launch any command or
+        # extension; only this wrapper retains the in-memory copy for validation.
+        raw_parent_lease = os.environ.pop(MAP_UPDATE_PARENT_LEASE_ENV, None)
+        bound = signature.bind_partial(*args, **kwargs)
+        bound.apply_defaults()
+        if not bound.arguments.get("refresh_existing", False):
+            return command(*args, **kwargs)
+        if bound.arguments.get("project_name") != "." or bound.arguments.get(
+            "provider"
+        ) not in {"claude", "codex"}:
+            return command(*args, **kwargs)
+
+        project_path = Path.cwd().resolve()
+        try:
+            with provider_refresh_session(
+                project_path,
+                provider=str(bound.arguments["provider"]),
+                running_version=__version__,
+                raw_parent_lease=raw_parent_lease,
+                timeout_s=0.0,
+                detected_providers=installed_providers(project_path),
+            ):
+                return command(*args, **kwargs)
+        except UpdateLockBusy as exc:
+            console.print(
+                "[red]Error:[/red] Another MAP update or provider refresh is "
+                "already running for this project; retry when it finishes."
+            )
+            raise typer.Exit(1) from exc
+        except UpdateLeaseRejected as exc:
+            console.print(f"[red]Error:[/red] {exc}")
+            raise typer.Exit(1) from exc
+        except UpdateLockSecurityError as exc:
+            console.print(
+                "[red]Error:[/red] An unsafe MAP update lock path was rejected: "
+                f"{exc}. Remove the unsafe path and retry."
+            )
+            raise typer.Exit(1) from exc
+
+    return wrapped
+
+
 @app.command()
+@_serialized_refresh_existing
 def init(
     project_name: str | None = typer.Argument(
         None, help="Name for your new project directory (use '.' for current directory)"
@@ -782,6 +1127,19 @@ def init(
             "project (project-scoped, committed). See docs/USAGE.md."
         ),
     ),
+    auto_update: bool | None = typer.Option(
+        None,
+        "--auto-update/--no-auto-update",
+        help=(
+            "Enable or disable automatic stable MAP updates for this project. "
+            "Enabled by default; omit to preserve an existing project choice."
+        ),
+    ),
+    refresh_existing: bool = typer.Option(
+        False,
+        "--refresh-existing",
+        hidden=True,
+    ),
     autonomy: bool | None = typer.Option(
         None,
         "--autonomy/--no-autonomy",
@@ -817,21 +1175,9 @@ def init(
     # Show banner
     show_banner()
 
-    # Initialize workflow logger if debug mode is enabled
-    workflow_logger = None
-    if is_debug_enabled(debug):
-        from mapify_cli.workflow_logger import MapWorkflowLogger
-
-        workflow_logger = MapWorkflowLogger(Path.cwd(), enabled=True)
-        log_file = workflow_logger.start_session(
-            task_id=f"mapify_init_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
-        )
-        console.print(f"[dim]Debug logging enabled: {log_file}[/dim]")
-        workflow_logger.log_event(
-            "command_start",
-            f"mapify init {project_name or '.'}",
-            metadata={"debug": debug, "mcp": mcp},
-        )
+    requested_project_name = project_name
+    if not refresh_existing:
+        _start_init_workflow_logger(requested_project_name, mcp, debug)
 
     # Validate provider
     valid_providers = ("claude", "codex")
@@ -841,6 +1187,23 @@ def init(
             f"Valid providers: {', '.join(valid_providers)}"
         )
         raise typer.Exit(1)
+
+    if refresh_existing and project_name != ".":
+        console.print(
+            "[red]Error:[/red] --refresh-existing can only refresh the current "
+            "directory; the target must be exactly '.'."
+        )
+        raise typer.Exit(1)
+
+    # Refresh is an updater-owned replay of existing choices. Its internal
+    # process must not turn ordinary init defaults into configuration changes.
+    if refresh_existing:
+        compression = None
+        compression_threshold = None
+        sofa = False
+        agent_memory = "off"
+        auto_update = None
+        autonomy = None
 
     # Autonomy posture is delivered via .claude/settings.local.json + the Claude
     # safety-guardrails hook, neither of which the codex provider installs.
@@ -856,6 +1219,7 @@ def init(
     # policy set lives in ``token_budget`` so this validation cannot drift
     # from config-load validation or the budgeting logic.
     from mapify_cli.token_budget import VALID_POLICIES
+
     if compression is not None and compression not in VALID_POLICIES:
         console.print(
             f"[red]Error:[/red] Invalid compression policy '{compression}'. "
@@ -863,12 +1227,11 @@ def init(
         )
         raise typer.Exit(1)
     if compression_threshold is not None and compression_threshold <= 0:
-        console.print(
-            "[red]Error:[/red] --compression-threshold must be > 0"
-        )
+        console.print("[red]Error:[/red] --compression-threshold must be > 0")
         raise typer.Exit(1)
 
     from mapify_cli.config.project_config import VALID_AGENT_MEMORY_LEVELS
+
     if agent_memory not in VALID_AGENT_MEMORY_LEVELS:
         console.print(
             f"[red]Error:[/red] Invalid --agent-memory '{agent_memory}'. "
@@ -912,12 +1275,57 @@ def init(
             project_name is not None
         ), "project_name must be set in non-current-dir mode"
         project_path = Path(project_name).resolve()
-        if project_path.exists():
+        if project_path.exists() and not refresh_existing:
             console.print(
                 f"[red]Error:[/red] Directory '{project_name}' already exists"
             )
             raise typer.Exit(1)
-        project_path.mkdir(parents=True)
+        if not refresh_existing:
+            project_path.mkdir(parents=True)
+
+    effective_agent_memory = agent_memory
+    refresh_mcp_servers: list[str] | None = None
+    pending_update_refresh = False
+    if refresh_existing:
+        from mapify_cli.update_install import installed_providers
+        from mapify_cli.update_state import pending_refresh_state
+
+        existing_providers = installed_providers(project_path)
+        if (
+            not (project_path / ".map" / "config.yaml").is_file()
+            or not existing_providers
+        ):
+            console.print(
+                "[red]Error:[/red] --refresh-existing requires an initialized MAP "
+                "project with .map/config.yaml and an installed provider layout."
+            )
+            raise typer.Exit(1)
+        if provider not in existing_providers:
+            console.print(
+                f"[red]Error:[/red] Cannot refresh '{provider}': that provider is "
+                "not an installed provider in the current MAP project."
+            )
+            raise typer.Exit(1)
+        pending_update_refresh = (
+            pending_refresh_state(project_path, provider) is not None
+        )
+        try:
+            try:
+                refresh_manifest = _read_refresh_manifest(project_path)
+            except _InvalidRefreshManifest:
+                if not pending_update_refresh:
+                    raise
+                refresh_manifest = None
+            refresh_mcp_config = _read_refresh_mcp_config(project_path)
+            effective_agent_memory = _load_refresh_agent_memory(project_path)
+            if provider != "codex":
+                refresh_mcp_servers = _refresh_mcp_selection(
+                    refresh_manifest, refresh_mcp_config
+                )
+        except RuntimeError as exc:
+            console.print(f"[red]Error:[/red] {exc}")
+            raise typer.Exit(1) from exc
+        _start_init_workflow_logger(requested_project_name, mcp, debug)
 
     # Setup tracker
     tracker = StepTracker("Initialize MAP Framework Project")
@@ -957,7 +1365,9 @@ def init(
         tracker.add("mcp-select", "Select MCP servers")
         tracker.start("mcp-select")
 
-        if mcp == "all":
+        if refresh_existing:
+            selected_mcp_servers = refresh_mcp_servers or []
+        elif mcp == "all":
             selected_mcp_servers = list(INDIVIDUAL_MCP_SERVERS.keys())
         elif mcp == "essential":
             selected_mcp_servers = ["sequential-thinking"]
@@ -978,6 +1388,48 @@ def init(
 
         tracker.complete("mcp-select", f"{len(selected_mcp_servers)} servers")
 
+    # Validate and merge the root ignore file before provider installation or
+    # any opt-in feature can reach its older flag-specific .gitignore writer.
+    # This stays after the user's non-empty-directory confirmation, so a
+    # declined init remains mutation-free.
+    from mapify_cli.delivery.file_copier import (
+        UpdateRuntimeGitignoreSecurityError,
+        merge_update_runtime_gitignore,
+    )
+
+    try:
+        merge_update_runtime_gitignore(
+            project_path,
+            sofa=sofa,
+            agent_memory_local=(
+                provider != "codex" and effective_agent_memory == "local"
+            ),
+            settings_local=(provider != "codex"),
+        )
+    except UpdateRuntimeGitignoreSecurityError as exc:
+        console.print(
+            "[red]Error:[/red] unsafe project .gitignore was rejected. "
+            f"Remove the unsafe path and retry mapify init. Details: {exc}"
+        )
+        raise typer.Exit(1) from exc
+    except Exception as exc:
+        console.print(
+            "[red]Error:[/red] Failed to update the project .gitignore for "
+            f"automatic-update runtime files: {exc}"
+        )
+        raise typer.Exit(1) from exc
+
+    def require_feature_gitignore(merger: Any, feature: str) -> None:
+        """Revalidate a requested privacy block immediately before enablement."""
+        try:
+            merger(project_path)
+        except Exception as exc:
+            console.print(
+                f"[red]Error:[/red] Failed to secure {feature} in the project "
+                f".gitignore before enabling it: {exc}"
+            )
+            raise typer.Exit(1) from exc
+
     if provider == "codex":
         # Codex provider: install .agents/.codex files + .map/scripts/ (skip-if-exists)
         from mapify_cli.delivery.providers import CodexProvider
@@ -993,6 +1445,7 @@ def init(
         # policy is honoured by the orchestrator on Codex sessions too.
         tracker.add("map-config", "Create .map/config.yaml")
         tracker.start("map-config")
+        auto_update_persisted = auto_update is None
         try:
             from mapify_cli.config.project_config import (
                 apply_agent_memory_overrides,
@@ -1010,18 +1463,34 @@ def init(
                 apply_compression_overrides(
                     config_path, compression, compression_threshold
                 )
+            if auto_update is not None:
+                _apply_verified_auto_update_override(config_path, auto_update)
+                auto_update_persisted = True
             if sofa:
-                apply_sofa_overrides(config_path)
                 from mapify_cli.delivery.file_copier import merge_sofa_gitignore
 
-                merge_sofa_gitignore(project_path)
-            if agent_memory != "off":
-                apply_agent_memory_overrides(config_path, agent_memory)
-            tracker.complete(
-                "map-config", str(config_path.relative_to(project_path))
-            )
-        except Exception as e:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
+                require_feature_gitignore(merge_sofa_gitignore, "SOFA credentials")
+                apply_sofa_overrides(config_path)
+            if effective_agent_memory != "off":
+                apply_agent_memory_overrides(config_path, effective_agent_memory)
+            tracker.complete("map-config", str(config_path.relative_to(project_path)))
+        except typer.Exit:
+            raise
+        except Exception as e:
+            # Normal init remains resilient; updater refresh makes this boundary
+            # fatal below so it cannot report a partially configured success.
             tracker.error("map-config", f"skipped: {e}")
+            if refresh_existing:
+                console.print(
+                    f"[red]Error:[/red] Failed to refresh project configuration: {e}"
+                )
+                raise typer.Exit(1) from e
+            if not auto_update_persisted:
+                console.print(
+                    "[red]Error:[/red] Failed to persist requested "
+                    f"automatic-update setting: {e}"
+                )
+                raise typer.Exit(1) from e
     else:
         # Claude provider: use ClaudeProvider abstraction
         from mapify_cli.delivery.providers import ClaudeProvider
@@ -1050,6 +1519,7 @@ def init(
         # Create default .map/config.yaml (project-level settings)
         tracker.add("map-config", "Create .map/config.yaml")
         tracker.start("map-config")
+        auto_update_persisted = auto_update is None
         try:
             from mapify_cli.config.project_config import (
                 apply_agent_memory_overrides,
@@ -1067,24 +1537,45 @@ def init(
                 apply_compression_overrides(
                     config_path, compression, compression_threshold
                 )
+            if auto_update is not None:
+                _apply_verified_auto_update_override(config_path, auto_update)
+                auto_update_persisted = True
             if sofa:
-                apply_sofa_overrides(config_path)
                 from mapify_cli.delivery.file_copier import merge_sofa_gitignore
 
-                merge_sofa_gitignore(project_path)
-            if agent_memory != "off":
-                apply_agent_memory_overrides(config_path, agent_memory)
+                require_feature_gitignore(merge_sofa_gitignore, "SOFA credentials")
+                apply_sofa_overrides(config_path)
+            if effective_agent_memory != "off":
                 from mapify_cli.delivery.file_copier import (
                     apply_reflector_memory_field,
                     merge_agent_memory_gitignore,
                 )
 
-                apply_reflector_memory_field(project_path, agent_memory)
-                if agent_memory == "local":
-                    merge_agent_memory_gitignore(project_path)
+                if effective_agent_memory == "local":
+                    require_feature_gitignore(
+                        merge_agent_memory_gitignore,
+                        "user-local agent memory",
+                    )
+                apply_agent_memory_overrides(config_path, effective_agent_memory)
+                apply_reflector_memory_field(project_path, effective_agent_memory)
             tracker.complete("map-config", str(config_path.relative_to(project_path)))
-        except Exception as e:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
+        except typer.Exit:
+            raise
+        except Exception as e:
+            # Normal init remains resilient; updater refresh makes this boundary
+            # fatal below so it cannot report a partially configured success.
             tracker.error("map-config", f"skipped: {e}")
+            if refresh_existing:
+                console.print(
+                    f"[red]Error:[/red] Failed to refresh project configuration: {e}"
+                )
+                raise typer.Exit(1) from e
+            if not auto_update_persisted:
+                console.print(
+                    "[red]Error:[/red] Failed to persist requested "
+                    f"automatic-update setting: {e}"
+                )
+                raise typer.Exit(1) from e
 
         if selected_mcp_servers:
             # Create internal MCP config (for MAP Framework agent mappings)
@@ -1101,7 +1592,15 @@ def init(
 
         tracker.add("project-permissions", "Configure project approvals")
         tracker.start("project-permissions")
-        create_or_merge_project_settings_local(project_path, autonomy=autonomy)
+        try:
+            create_or_merge_project_settings_local(project_path, autonomy=autonomy)
+        except Exception as exc:
+            tracker.error("project-permissions", f"failed: {exc}")
+            console.print(
+                "[red]Error:[/red] Failed to configure project-local approvals "
+                f"safely: {exc}"
+            )
+            raise typer.Exit(1) from exc
         tracker.complete("project-permissions", ".claude/settings.local.json")
 
     # Initialize git (shared, provider-agnostic)
@@ -1123,20 +1622,45 @@ def init(
     try:
         from mapify_cli.install_manifest import build_manifest, write_manifest
 
-        manifest = build_manifest(project_path, provider, __version__)
+        manifest_providers: str | tuple[str, ...] = provider
+        if refresh_existing:
+            from mapify_cli.update_install import installed_providers
+
+            manifest_providers = installed_providers(project_path)
+        manifest = build_manifest(project_path, manifest_providers, __version__)
         manifest_path = write_manifest(project_path, manifest)
         tracker.complete(
             "manifest",
             f"{len(manifest.entries)} entries → {manifest_path.relative_to(project_path)}",
         )
-    except Exception as _manifest_exc:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
+    except Exception as _manifest_exc:
+        # Normal init remains resilient; updater refresh must leave a valid
+        # combined manifest before its parent process can report success.
         tracker.error("manifest", f"skipped: {_manifest_exc}")
+        if refresh_existing:
+            console.print(
+                f"[red]Error:[/red] Failed to write refreshed install manifest: "
+                f"{_manifest_exc}"
+            )
+            raise typer.Exit(1) from _manifest_exc
+
+    if pending_update_refresh:
+        try:
+            from mapify_cli.update_state import complete_pending_provider_refresh
+
+            complete_pending_provider_refresh(project_path, provider)
+        except Exception as _state_exc:
+            console.print(
+                "[red]Error:[/red] Failed to complete pending provider refresh "
+                f"state: {_state_exc}"
+            )
+            raise typer.Exit(1) from _state_exc
 
     tracker.add("finalize", "Finalize")
     tracker.complete("finalize", "project ready")
 
     # Configure global permissions for read-only commands (Claude only)
-    if provider != "codex":
+    if provider != "codex" and not refresh_existing:
         console.print()  # Add spacing
         configure_global_permissions()
 
@@ -1163,14 +1687,16 @@ def init(
         steps_lines.append(
             "   • [cyan]$map-plan[/]      decompose the task — you approve before any code"
         )
+        steps_lines.append("   • [cyan]$map-efficient[/] implement the approved plan")
         steps_lines.append(
-            "   • [cyan]$map-efficient[/] implement the approved plan"
+            "   • [cyan]$map-check[/]     quality gates against the plan"
         )
-        steps_lines.append("   • [cyan]$map-check[/]     quality gates against the plan")
         steps_lines.append(
             "   • [cyan]$map-review[/]    semantic review vs spec, tests & diff"
         )
-        steps_lines.append("   • [cyan]$map-learn[/]     save gotchas as project memory")
+        steps_lines.append(
+            "   • [cyan]$map-learn[/]     save gotchas as project memory"
+        )
         steps_lines.append(
             f"{step_num + 1}. Tiny edit? [cyan]$map-fast[/] skips full planning. Bug? [cyan]$map-debug[/]."
         )
@@ -1182,14 +1708,16 @@ def init(
         steps_lines.append(
             "   • [cyan]/map-plan[/]      decompose the task — you approve before any code"
         )
+        steps_lines.append("   • [cyan]/map-efficient[/] implement the approved plan")
         steps_lines.append(
-            "   • [cyan]/map-efficient[/] implement the approved plan"
+            "   • [cyan]/map-check[/]     quality gates against the plan"
         )
-        steps_lines.append("   • [cyan]/map-check[/]     quality gates against the plan")
         steps_lines.append(
             "   • [cyan]/map-review[/]    semantic review vs spec, tests & diff"
         )
-        steps_lines.append("   • [cyan]/map-learn[/]     save gotchas as project memory")
+        steps_lines.append(
+            "   • [cyan]/map-learn[/]     save gotchas as project memory"
+        )
         steps_lines.append(
             f"{step_num + 1}. Tiny edit? [cyan]/map-fast[/] skips full planning. Bug? [cyan]/map-debug[/]."
         )
@@ -1523,7 +2051,9 @@ def _render_minimality_report(report: Mapping[str, Any]) -> None:
                 console.print(f"  - {item}")
 
     if branch_rows:
-        table = Table(title="Branch Samples", show_header=True, header_style="bold cyan")
+        table = Table(
+            title="Branch Samples", show_header=True, header_style="bold cyan"
+        )
         table.add_column("Branch")
         table.add_column("Status")
         table.add_column("Minimality")
@@ -1575,6 +2105,151 @@ def minimality_report(
         console.print_json(data=report)
         return
     _render_minimality_report(report)
+
+
+def _truncate_internal_update_strings(
+    value: object,
+    max_string_bytes: int,
+    *,
+    preserve_status: bool = False,
+) -> object:
+    """Copy JSON-like data while UTF-8-safely bounding every string value."""
+    if isinstance(value, str):
+        encoded = value.encode("utf-8")
+        if len(encoded) <= max_string_bytes:
+            return value
+        return encoded[:max_string_bytes].decode("utf-8", errors="ignore")
+    if isinstance(value, dict):
+        return {
+            key: (
+                item
+                if preserve_status and key == "status"
+                else _truncate_internal_update_strings(item, max_string_bytes)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [
+            _truncate_internal_update_strings(item, max_string_bytes) for item in value
+        ]
+    return value
+
+
+def _internal_update_json_line(payload: object) -> str:
+    """Serialize one UTF-8 JSON line within the internal protocol byte bound."""
+
+    def serialize(candidate: object) -> tuple[str, int]:
+        line = json.dumps(candidate, ensure_ascii=False) + "\n"
+        return line, len(line.encode("utf-8"))
+
+    line, encoded_size = serialize(payload)
+    if encoded_size <= INTERNAL_UPDATE_MAX_JSON_BYTES:
+        return line
+
+    smallest = _truncate_internal_update_strings(payload, 0, preserve_status=True)
+    best_line, smallest_size = serialize(smallest)
+    if smallest_size > INTERNAL_UPDATE_MAX_JSON_BYTES:
+        raise ValueError("MAP update result structure exceeds the JSON response bound")
+
+    low = 1
+    high = INTERNAL_UPDATE_MAX_JSON_BYTES
+    while low <= high:
+        candidate_cap = (low + high) // 2
+        candidate = _truncate_internal_update_strings(
+            payload,
+            candidate_cap,
+            preserve_status=True,
+        )
+        candidate_line, candidate_size = serialize(candidate)
+        if candidate_size <= INTERNAL_UPDATE_MAX_JSON_BYTES:
+            best_line = candidate_line
+            low = candidate_cap + 1
+        else:
+            high = candidate_cap - 1
+    return best_line
+
+
+def _write_internal_update_json(payload: object) -> None:
+    """Serialize and write one bounded internal update response."""
+    sys.stdout.write(_internal_update_json_line(payload))
+
+
+def _write_internal_update_failure(exc: Exception) -> None:
+    """Best-effort manual failure presentation that never leaks an exception."""
+    try:
+        try:
+            details = str(exc)
+        except Exception:  # noqa: BLE001 -- hostile exception presentation boundary
+            details = type(exc).__name__
+        _write_internal_update_json(
+            {
+                "status": "error",
+                "message": f"MAP update failed: {details}"[:2_000],
+            }
+        )
+    except Exception:  # noqa: BLE001, S110 -- stdout may itself be unavailable
+        pass
+
+
+@app.command("_update", hidden=True)
+def internal_update(
+    mode: str = typer.Option(..., "--mode"),
+    project: Path = typer.Option(Path("."), "--project"),
+    approve_major: str | None = typer.Option(None, "--approve-major"),
+) -> None:
+    """Run the machine-readable project update protocol used by MAP skills."""
+    if mode not in {"automatic", "manual"}:
+        try:
+            _write_internal_update_json(
+                {
+                    "status": "error",
+                    "message": "--mode must be automatic or manual",
+                }
+            )
+        except Exception:  # noqa: BLE001, S110 -- final presentation boundary
+            pass
+        raise typer.Exit(1) from None
+
+    automatic = mode == "automatic"
+    try:
+        # The internal protocol owns presentation. Suppress incidental warnings,
+        # prints, and library diagnostics, then emit at most one JSON object.
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            from mapify_cli.auto_update import (
+                UpdateMode,
+                UpdateStatus,
+                check_and_update,
+            )
+
+            parsed_mode = UpdateMode(mode)
+            resolved_project = project.resolve()
+            result = check_and_update(
+                resolved_project,
+                current_version=__version__,
+                mode=parsed_mode,
+                approved_major=approve_major,
+            )
+            is_error = result.status is UpdateStatus.ERROR
+            if automatic and is_error:
+                if not result.refresh_complete:
+                    return
+                payload = result.to_dict()
+                payload["status"] = UpdateStatus.UPDATED.value
+                payload.pop("message", None)
+            else:
+                payload = result.to_dict()
+        _write_internal_update_json(payload)
+    except Exception as exc:  # noqa: BLE001 -- final presentation boundary
+        if automatic:
+            return
+        _write_internal_update_failure(exc)
+        raise typer.Exit(1) from None
+
+    if is_error and not automatic:
+        raise typer.Exit(1)
 
 
 def _mapify_install_kind() -> str:
@@ -1807,7 +2482,9 @@ def uninstall(
             f"[yellow]No install manifest found at "
             f"{target / '.map' / 'mapify.lock.json'}[/yellow]"
         )
-        console.print("[dim]Run [cyan]mapify init .[/cyan] to generate the manifest.[/dim]")
+        console.print(
+            "[dim]Run [cyan]mapify init .[/cyan] to generate the manifest.[/dim]"
+        )
         raise typer.Exit(2)
 
     if not manifest.config_entries:
@@ -1891,7 +2568,9 @@ def preset_list(
         if output_json:
             typer.echo(json.dumps({"presets": []}))
         else:
-            console.print("[dim]No presets installed. Use 'mapify preset add --from <path>' to install one.[/dim]")
+            console.print(
+                "[dim]No presets installed. Use 'mapify preset add --from <path>' to install one.[/dim]"
+            )
         return
 
     presets: list[dict[str, Any]] = []
@@ -1900,24 +2579,37 @@ def preset_list(
             continue
         manifest = _read_preset_manifest(entry)
         if manifest is None:
-            presets.append({"id": entry.name, "title": entry.name, "version": "?", "description": "(no manifest)"})
+            presets.append(
+                {
+                    "id": entry.name,
+                    "title": entry.name,
+                    "version": "?",
+                    "description": "(no manifest)",
+                }
+            )
         else:
-            presets.append({
-                "id": manifest.get("id", entry.name),
-                "title": manifest.get("title", entry.name),
-                "version": manifest.get("version", "?"),
-                "description": manifest.get("description", ""),
-            })
+            presets.append(
+                {
+                    "id": manifest.get("id", entry.name),
+                    "title": manifest.get("title", entry.name),
+                    "version": manifest.get("version", "?"),
+                    "description": manifest.get("description", ""),
+                }
+            )
 
     if output_json:
         typer.echo(json.dumps({"presets": presets}))
         return
 
     if not presets:
-        console.print("[dim]No presets installed. Use 'mapify preset add --from <path>' to install one.[/dim]")
+        console.print(
+            "[dim]No presets installed. Use 'mapify preset add --from <path>' to install one.[/dim]"
+        )
         return
 
-    table = Table(title="Installed MAP Presets", show_header=True, header_style="bold cyan")
+    table = Table(
+        title="Installed MAP Presets", show_header=True, header_style="bold cyan"
+    )
     table.add_column("ID", style="cyan", no_wrap=True)
     table.add_column("Title")
     table.add_column("Version", style="dim")
@@ -1939,7 +2631,9 @@ def preset_add(
         None,
         help="Project root directory (defaults to current directory).",
     ),
-    force: bool = typer.Option(False, "--force", "-f", help="Overwrite if already installed."),
+    force: bool = typer.Option(
+        False, "--force", "-f", help="Overwrite if already installed."
+    ),
 ) -> None:
     """Install a MAP preset from a local directory into .map/presets/.
 
@@ -2006,7 +2700,9 @@ def _read_preset_state(preset_dir: Path) -> dict[str, Any]:
 
 
 def _write_preset_state(preset_dir: Path, state: dict[str, Any]) -> None:
-    _preset_state_path(preset_dir).write_text(json.dumps(state, indent=2), encoding="utf-8")
+    _preset_state_path(preset_dir).write_text(
+        json.dumps(state, indent=2), encoding="utf-8"
+    )
 
 
 def _is_preset_enabled(preset_dir: Path) -> bool:
@@ -2088,7 +2784,9 @@ def preset_disable(
 
 @preset_app.command("resolve")
 def preset_resolve(
-    template_name: str = typer.Argument(..., help="Template name to resolve (e.g. 'map-efficient.md')."),
+    template_name: str = typer.Argument(
+        ..., help="Template name to resolve (e.g. 'map-efficient.md')."
+    ),
     project_path: Path | None = typer.Argument(
         None,
         help="Project root directory (defaults to current directory).",
@@ -2107,7 +2805,9 @@ def preset_resolve(
     # Tier 1: project overrides
     project_override = target / ".map" / "overrides" / template_name
     if project_override.is_file():
-        layers.append({"tier": "project-override", "path": str(project_override), "enabled": True})
+        layers.append(
+            {"tier": "project-override", "path": str(project_override), "enabled": True}
+        )
 
     # Tier 2: installed presets (sorted alphabetically for determinism)
     if presets_root.is_dir():
@@ -2118,21 +2818,25 @@ def preset_resolve(
             template_path = entry / "templates" / template_name
             if template_path.is_file():
                 manifest = _read_preset_manifest(entry)
-                strategy = (manifest or {}).get("strategies", {}).get(template_name, "append")
-                layers.append({
-                    "tier": "preset",
-                    "preset_id": entry.name,
-                    "path": str(template_path),
-                    "strategy": strategy,
-                    "enabled": enabled,
-                })
+                strategy = (
+                    (manifest or {}).get("strategies", {}).get(template_name, "append")
+                )
+                layers.append(
+                    {
+                        "tier": "preset",
+                        "preset_id": entry.name,
+                        "path": str(template_path),
+                        "strategy": strategy,
+                        "enabled": enabled,
+                    }
+                )
 
     # Tier 3: core template (shipped by mapify)
     try:
         core_path = get_templates_dir() / template_name
         if core_path.is_file():
             layers.append({"tier": "core", "path": str(core_path), "enabled": True})
-    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
+    except Exception:  # noqa: BLE001, S110
         pass
 
     if output_json:
@@ -2147,9 +2851,15 @@ def preset_resolve(
     for i, layer in enumerate(layers, 1):
         tier = layer["tier"]
         enabled_str = "" if layer.get("enabled", True) else " [dim](disabled)[/dim]"
-        strategy_str = f" strategy=[cyan]{layer['strategy']}[/cyan]" if "strategy" in layer else ""
-        preset_str = f" preset=[cyan]{layer['preset_id']}[/cyan]" if "preset_id" in layer else ""
-        console.print(f"  {i}. tier={tier}{preset_str}{strategy_str}{enabled_str} → {layer['path']}")
+        strategy_str = (
+            f" strategy=[cyan]{layer['strategy']}[/cyan]" if "strategy" in layer else ""
+        )
+        preset_str = (
+            f" preset=[cyan]{layer['preset_id']}[/cyan]" if "preset_id" in layer else ""
+        )
+        console.print(
+            f"  {i}. tier={tier}{preset_str}{strategy_str}{enabled_str} → {layer['path']}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2180,7 +2890,9 @@ def _compose_template(core_content: str, layer_content: str, strategy: str) -> s
     return core_content
 
 
-def _build_resolution_order(presets_root: Path, template_name: str) -> list[dict[str, Any]]:
+def _build_resolution_order(
+    presets_root: Path, template_name: str
+) -> list[dict[str, Any]]:
     """Return enabled preset layers for a template, sorted by priority descending."""
     layers: list[dict[str, Any]] = []
     if not presets_root.is_dir():
@@ -2193,25 +2905,33 @@ def _build_resolution_order(presets_root: Path, template_name: str) -> list[dict
             continue
         manifest = _read_preset_manifest(entry)
         strategy = (manifest or {}).get("strategies", {}).get(template_name, "append")
-        layers.append({
-            "preset_id": entry.name,
-            "path": template_path,
-            "strategy": strategy,
-            "priority": _preset_priority(entry),
-        })
+        layers.append(
+            {
+                "preset_id": entry.name,
+                "path": template_path,
+                "strategy": strategy,
+                "priority": _preset_priority(entry),
+            }
+        )
     layers.sort(key=lambda x: x["priority"], reverse=True)
     return layers
 
 
 @preset_app.command("render")
 def preset_render(
-    template_name: str = typer.Argument(..., help="Template name to render (e.g. 'map-efficient.md')."),
+    template_name: str = typer.Argument(
+        ..., help="Template name to render (e.g. 'map-efficient.md')."
+    ),
     project_path: Path | None = typer.Argument(
         None,
         help="Project root directory (defaults to current directory).",
     ),
-    output_json: bool = typer.Option(False, "--json", help="Output rendered content as JSON."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print composed content without writing to disk."),
+    output_json: bool = typer.Option(
+        False, "--json", help="Output rendered content as JSON."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print composed content without writing to disk."
+    ),
 ) -> None:
     """Compose a template by layering enabled presets over the core template.
 
@@ -2238,7 +2958,7 @@ def preset_render(
             else:
                 composed = ""
                 source = "core:(not found)"
-        except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
+        except Exception:  # noqa: BLE001 -- deliberate fallback boundary
             composed = ""
             source = "core:(error)"
 
@@ -2253,12 +2973,16 @@ def preset_render(
         applied.append(f"{layer['preset_id']}({strategy})")
 
     if output_json:
-        typer.echo(json.dumps({
-            "template": template_name,
-            "source": source,
-            "applied_layers": applied,
-            "content": composed,
-        }))
+        typer.echo(
+            json.dumps(
+                {
+                    "template": template_name,
+                    "source": source,
+                    "applied_layers": applied,
+                    "content": composed,
+                }
+            )
+        )
         return
 
     if True:
@@ -2266,7 +2990,9 @@ def preset_render(
         if applied:
             console.print(f"[dim]Layers applied:[/dim] {' → '.join(applied)}")
         else:
-            console.print("[dim]No preset layers matched; showing core/override content.[/dim]")
+            console.print(
+                "[dim]No preset layers matched; showing core/override content.[/dim]"
+            )
         console.print()
         console.print(composed)
 
@@ -2274,7 +3000,9 @@ def preset_render(
 @preset_app.command("set-priority")
 def preset_set_priority(
     preset_id: str = typer.Argument(..., help="ID of the preset to reprioritize."),
-    priority: int = typer.Argument(..., help="Priority value (higher = applied first). Default: 50."),
+    priority: int = typer.Argument(
+        ..., help="Priority value (higher = applied first). Default: 50."
+    ),
     project_path: Path | None = typer.Argument(
         None,
         help="Project root directory (defaults to current directory).",
@@ -2338,7 +3066,9 @@ def prompt_profile_list(
         help="Root of the target project (where .map/ lives).",
         resolve_path=True,
     ),
-    output_json: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
+    output_json: bool = typer.Option(
+        False, "--json", help="Emit JSON instead of a table."
+    ),
 ) -> None:
     """List installed MAP prompt profiles in a project's .map/prompt-profiles/ directory."""
     from rich.table import Table
@@ -2358,14 +3088,16 @@ def prompt_profile_list(
             missing = [k for k in _PROFILE_MANIFEST_KEYS if k not in manifest]
             if missing:
                 continue
-            profiles.append({
-                "id": manifest["id"],
-                "title": manifest["title"],
-                "version": manifest["version"],
-                "description": manifest.get("description", ""),
-                "targets": manifest.get("targets", []),
-                "active": manifest["id"] == active_id,
-            })
+            profiles.append(
+                {
+                    "id": manifest["id"],
+                    "title": manifest["title"],
+                    "version": manifest["version"],
+                    "description": manifest.get("description", ""),
+                    "targets": manifest.get("targets", []),
+                    "active": manifest["id"] == active_id,
+                }
+            )
 
     if output_json:
         console.print_json(json.dumps({"profiles": profiles, "active": active_id}))
@@ -2379,7 +3111,9 @@ def prompt_profile_list(
         )
         return
 
-    table = Table(title="Prompt Profiles", box=None, show_header=True, header_style="bold")
+    table = Table(
+        title="Prompt Profiles", box=None, show_header=True, header_style="bold"
+    )
     table.add_column("ID", style="cyan")
     table.add_column("Title")
     table.add_column("Version")
@@ -2473,7 +3207,9 @@ def research_eval_score(
     try:
         expected = load_expected_locations(expected_file)
     except (OSError, ValueError) as exc:
-        console.print(f"[bold red]Error:[/bold red] cannot load expected targets: {exc}")
+        console.print(
+            f"[bold red]Error:[/bold red] cannot load expected targets: {exc}"
+        )
         raise typer.Exit(2)
 
     root = repo_root.resolve() if repo_root else Path.cwd()
@@ -2643,7 +3379,9 @@ def skill_eval_run(
         None, "--eval-set", help="Path to eval-set JSON"
     ),
     dry_run: bool = typer.Option(
-        False, "--dry-run", help="Validate eval-set + print planned count; spend nothing"
+        False,
+        "--dry-run",
+        help="Validate eval-set + print planned count; spend nothing",
     ),
     resume: bool = typer.Option(
         False, "--resume", help="Resume a partial run, skipping completed cells"
@@ -2659,7 +3397,10 @@ def skill_eval_run(
         "accuracy across model tiers.",
     ),
     runs: int = typer.Option(
-        1, "--runs", min=1, help="Passes per prompt (default 1). Use >1 to average "
+        1,
+        "--runs",
+        min=1,
+        help="Passes per prompt (default 1). Use >1 to average "
         "out single-pass noise when comparing models.",
     ),
 ) -> None:
@@ -2679,9 +3420,7 @@ def skill_eval_run(
 
     # SC-2: --eval-set is required.
     if eval_set is None:
-        console.print(
-            "[bold red]Error:[/bold red] provide --eval-set PATH"
-        )
+        console.print("[bold red]Error:[/bold red] provide --eval-set PATH")
         raise typer.Exit(2)
 
     # SC-2: load and validate the eval-set; malformed/empty → Exit(2), NO invocations.
@@ -2713,8 +3452,12 @@ def skill_eval_run(
     root = Path.cwd()
     if resume:
         latest = _runner.latest_run_path(root, skill)
-        out_path = latest if latest is not None else _runner.default_run_path(
-            root, skill, datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        out_path = (
+            latest
+            if latest is not None
+            else _runner.default_run_path(
+                root, skill, datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            )
         )
     else:
         out_path = _runner.default_run_path(
@@ -2741,7 +3484,9 @@ def skill_eval_run(
             if not raw_line:
                 continue
             try:
-                records.append(EvalResultRecord.from_dict(__import__("json").loads(raw_line)))
+                records.append(
+                    EvalResultRecord.from_dict(__import__("json").loads(raw_line))
+                )
             except (ValueError, KeyError):
                 continue
 
@@ -2896,7 +3641,9 @@ def skill_eval_optimize(
         False, "--open", help="Open the HTML report in the default browser"
     ),
     dry_run: bool = typer.Option(
-        False, "--dry-run", help="Print planned call budget; spend nothing, no dispatcher"
+        False,
+        "--dry-run",
+        help="Print planned call budget; spend nothing, no dispatcher",
     ),
 ) -> None:
     """Optimise a skill's trigger description via repeated eval iterations.
@@ -2987,7 +3734,11 @@ def skill_eval_optimize(
     json_path.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
     render_to_path(result, html_path)
 
-    status_label = "no improvement" if result.no_improvement else f"iter {result.winning_iteration}"
+    status_label = (
+        "no improvement"
+        if result.no_improvement
+        else f"iter {result.winning_iteration}"
+    )
     winner_iter = next(
         (it for it in result.iterations if it.selected),
         None,
@@ -3071,9 +3822,7 @@ def skill_eval_view(
 
 @skill_eval_app.command("trajectory")
 def skill_eval_trajectory(
-    skill: str = typer.Argument(
-        ..., help="Skill under evaluation, e.g. map-task"
-    ),
+    skill: str = typer.Argument(..., help="Skill under evaluation, e.g. map-task"),
     fixture: Path | None = typer.Option(
         None,
         "--fixture",
@@ -3110,7 +3859,9 @@ def skill_eval_trajectory(
         help="Compare against a prior run: path to a .jsonl, or 'latest'.",
     ),
     out: Path | None = typer.Option(
-        None, "--out", help="Output .jsonl path (default .map/eval-runs/trajectory/...)."
+        None,
+        "--out",
+        help="Output .jsonl path (default .map/eval-runs/trajectory/...).",
     ),
     resume: bool = typer.Option(
         False, "--resume", help="Resume the latest run, skipping present run_ids."
@@ -3171,8 +3922,10 @@ def skill_eval_trajectory(
         out_path = out
     elif resume:
         latest = _trunner.latest_run_path(root, skill)
-        out_path = latest if latest is not None else _trunner.default_run_path(
-            root, skill, run_ts
+        out_path = (
+            latest
+            if latest is not None
+            else _trunner.default_run_path(root, skill, run_ts)
         )
     else:
         out_path = _trunner.default_run_path(root, skill, run_ts)
@@ -3217,16 +3970,10 @@ def skill_eval_trajectory(
     records = _trunner.read_records(out_path)
     agg = aggregate_repeated(records)
     fa = agg.fixture(str(manifest["fixture"]))
-    median_str = (
-        f"{fa.composite_median:.3f}" if fa else "n/a"
-    )
-    hp_str = (
-        f"{fa.hard_pass_count}/{fa.n}" if fa else "n/a"
-    )
+    median_str = f"{fa.composite_median:.3f}" if fa else "n/a"
+    hp_str = f"{fa.hard_pass_count}/{fa.n}" if fa else "n/a"
     flaky_str = (
-        f" flaky=[cyan]{'; '.join(fa.flaky_reasons)}[/cyan]"
-        if fa and fa.flaky
-        else ""
+        f" flaky=[cyan]{'; '.join(fa.flaky_reasons)}[/cyan]" if fa and fa.flaky else ""
     )
     console.print(
         f"\n[bold]Trajectory eval complete:[/bold] skill=[bold]{skill}[/bold] "
@@ -3240,9 +3987,7 @@ def skill_eval_trajectory(
     if anchor is not None:
         anchor_path = _resolve_anchor(anchor, root, skill)
         if anchor_path is None or not anchor_path.is_file():
-            console.print(
-                f"[bold red]Error:[/bold red] anchor run not found: {anchor}"
-            )
+            console.print(f"[bold red]Error:[/bold red] anchor run not found: {anchor}")
             raise typer.Exit(1)
         anchor_records = _trunner.read_records(anchor_path)
         report = build_report(
@@ -3255,8 +4000,7 @@ def skill_eval_trajectory(
         render_comparison_to_path(report, html_path)
         reg = report.n_regressions
         console.print(
-            f"  side-by-side: [cyan]{html_path}[/cyan] "
-            f"({reg} regression(s) vs anchor)"
+            f"  side-by-side: [cyan]{html_path}[/cyan] ({reg} regression(s) vs anchor)"
         )
         if open_html:
             _open_best_effort(html_path)
@@ -3273,8 +4017,10 @@ def _resolve_anchor(anchor: str, root: Path, skill: str) -> Path | None:
         # Exclude the candidate currently being written by picking the
         # previous-to-last when two exist; callers pass 'latest' meaning the
         # most recent PRIOR run.
-        return candidates[-2] if len(candidates) >= 2 else (
-            candidates[-1] if candidates else None
+        return (
+            candidates[-2]
+            if len(candidates) >= 2
+            else (candidates[-1] if candidates else None)
         )
     return Path(anchor)
 
@@ -3389,7 +4135,9 @@ def domain_skill_init(
         console.print(f"[red]Error:[/red] Path does not exist: {target}")
         raise typer.Exit(1)
 
-    skill_file, created = create_domain_skill(target, skill_name=name, overwrite=overwrite)
+    skill_file, created = create_domain_skill(
+        target, skill_name=name, overwrite=overwrite
+    )
 
     rel = skill_file.relative_to(target)
     if created:
