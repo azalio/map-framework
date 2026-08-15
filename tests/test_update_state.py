@@ -25,6 +25,7 @@ from mapify_cli.update_state import (
     automatic_check_due,
     project_update_lock,
     read_update_state,
+    refresh_retry_due,
     write_update_state,
 )
 
@@ -76,12 +77,13 @@ def test_state_write_replaces_the_previous_document(tmp_path: Path) -> None:
         "last_observed_version": "3.26.0",
         "pending_install_version": None,
         "pending_providers": ["claude"],
+        "last_refresh_failure_at": None,
         "pending_refresh": True,
-        "schema_version": 2,
+        "schema_version": 3,
     }
 
 
-def test_schema_v1_idle_state_migrates_strictly_to_v2(tmp_path: Path) -> None:
+def test_schema_v1_idle_state_migrates_strictly_to_v3(tmp_path: Path) -> None:
     state_path = tmp_path / ".map" / "update-state.json"
     state_path.parent.mkdir(parents=True)
     state_path.write_text(
@@ -99,7 +101,7 @@ def test_schema_v1_idle_state_migrates_strictly_to_v2(tmp_path: Path) -> None:
     )
 
     assert read_update_state(tmp_path) == UpdateState(
-        schema_version=2,
+        schema_version=3,
         last_attempt_at="2026-08-13T11:00:00Z",
         last_observed_version="3.26.0",
         last_installed_version="3.25.1",
@@ -107,10 +109,10 @@ def test_schema_v1_idle_state_migrates_strictly_to_v2(tmp_path: Path) -> None:
         pending_refresh=False,
         pending_providers=(),
     )
-    assert STATE_SCHEMA_VERSION == 2
+    assert STATE_SCHEMA_VERSION == 3
 
 
-def test_schema_v1_refresh_state_migrates_strictly_to_v2(tmp_path: Path) -> None:
+def test_schema_v1_refresh_state_migrates_strictly_to_v3(tmp_path: Path) -> None:
     state_path = tmp_path / ".map" / "update-state.json"
     state_path.parent.mkdir(parents=True)
     state_path.write_text(
@@ -128,12 +130,53 @@ def test_schema_v1_refresh_state_migrates_strictly_to_v2(tmp_path: Path) -> None
     )
 
     assert read_update_state(tmp_path) == UpdateState(
-        schema_version=2,
+        schema_version=3,
         last_observed_version="3.26.0",
         last_installed_version="3.26.0",
         pending_refresh=True,
         pending_providers=("claude", "codex"),
     )
+
+
+def test_schema_v2_state_migrates_to_v3_and_retries_refresh_promptly(
+    tmp_path: Path,
+) -> None:
+    """The upgrade path every currently-installed project takes.
+
+    A v2 document has no `last_refresh_failure_at`; it must default to None so an
+    already-pending refresh is retried on the next preflight rather than sitting
+    out a backoff window it never actually earned.
+    """
+    state_path = tmp_path / ".map" / "update-state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "last_attempt_at": "2026-08-13T11:00:00Z",
+                "last_observed_version": "3.26.0",
+                "last_installed_version": "3.26.0",
+                "pending_install_version": None,
+                "pending_refresh": True,
+                "pending_providers": ["claude"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    migrated = read_update_state(tmp_path)
+
+    assert migrated == UpdateState(
+        schema_version=3,
+        last_attempt_at="2026-08-13T11:00:00Z",
+        last_observed_version="3.26.0",
+        last_installed_version="3.26.0",
+        pending_refresh=True,
+        pending_providers=("claude",),
+        last_refresh_failure_at=None,
+    )
+    assert migrated is not None
+    assert refresh_retry_due(migrated, NOW) is True
 
 
 def test_schema_v1_refresh_without_providers_remains_transitional_for_discovery(
@@ -156,7 +199,7 @@ def test_schema_v1_refresh_without_providers_remains_transitional_for_discovery(
     )
 
     assert read_update_state(tmp_path) == UpdateState(
-        schema_version=2,
+        schema_version=3,
         last_attempt_at="2026-08-13T11:00:00Z",
         last_observed_version="3.26.0",
         last_installed_version="3.26.0",

@@ -25,10 +25,19 @@ else:
     import fcntl
 
 
-STATE_SCHEMA_VERSION = 2
+STATE_SCHEMA_VERSION = 3
 STATE_RELATIVE_PATH = Path(".map/update-state.json")
 MAP_UPDATE_PARENT_LEASE_ENV = "MAP_UPDATE_PARENT_LEASE"
 UPDATE_INTERVAL = timedelta(hours=24)
+# Intent: A pending refresh is unfinished work from a COMPLETED install, so the
+# first retry deliberately bypasses UPDATE_INTERVAL (see
+# test_pending_refresh_retries_before_throttle_and_requests_reload) -- waiting a
+# full day would leave provider surfaces stale after a successful upgrade. But a
+# refresh that keeps FAILING must back off: the recovery path runs on every
+# automatic preflight, i.e. on every skill invocation, and each attempt spawns a
+# real `mapify init --refresh-existing` child bounded by COMMAND_TIMEOUT_SECONDS.
+# This shorter interval throttles only the retry-after-failure case.
+REFRESH_RETRY_INTERVAL = timedelta(minutes=15)
 _STABLE_VERSION_RE = re.compile(
     r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 )
@@ -44,6 +53,8 @@ _V1_KEYS = frozenset(
     }
 )
 _V2_KEYS = _V1_KEYS | {"pending_install_version"}
+_V3_KEYS = _V2_KEYS | {"last_refresh_failure_at"}
+_SCHEMA_KEYS = {1: _V1_KEYS, 2: _V2_KEYS, 3: _V3_KEYS}
 _LEASE_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{43}")
 _LOCK_RECORD_KEYS = frozenset(
     {"schema_version", "lease_digest", "owner_pid", "project"}
@@ -85,6 +96,9 @@ class UpdateState:
     pending_install_version: str | None = None
     pending_refresh: bool = False
     pending_providers: tuple[str, ...] = ()
+    # Intent: Stamped only when a pending-refresh retry FAILS, so the recovery
+    # path can back off without throttling the first (post-install) attempt.
+    last_refresh_failure_at: str | None = None
 
 
 def _state_from_payload(payload: Any) -> UpdateState | None:
@@ -93,14 +107,15 @@ def _state_from_payload(payload: Any) -> UpdateState | None:
     if type(payload.get("schema_version")) is not int:
         return None
     schema_version = payload["schema_version"]
-    expected_keys = _V1_KEYS if schema_version == 1 else _V2_KEYS
-    if schema_version not in {1, STATE_SCHEMA_VERSION} or set(payload) != expected_keys:
+    expected_keys = _SCHEMA_KEYS.get(schema_version)
+    if expected_keys is None or set(payload) != expected_keys:
         return None
 
     for field_name in (
         "last_attempt_at",
         "last_observed_version",
         "last_installed_version",
+        "last_refresh_failure_at",
     ):
         value = payload.get(field_name)
         if value is not None and not isinstance(value, str):
@@ -131,6 +146,7 @@ def _state_from_payload(payload: Any) -> UpdateState | None:
         pending_install_version=pending_install_version,
         pending_refresh=pending_refresh,
         pending_providers=tuple(pending_providers),
+        last_refresh_failure_at=payload.get("last_refresh_failure_at"),
     )
     if _valid_state(state):
         return state
@@ -209,6 +225,7 @@ def write_update_state(project_path: Path, state: UpdateState) -> None:
                     "pending_install_version": state.pending_install_version,
                     "pending_refresh": state.pending_refresh,
                     "pending_providers": list(state.pending_providers),
+                    "last_refresh_failure_at": state.last_refresh_failure_at,
                 },
                 temp_file,
                 sort_keys=True,
@@ -265,16 +282,33 @@ def complete_pending_provider_refresh(
     return completed
 
 
-def automatic_check_due(state: UpdateState, now: datetime) -> bool:
-    previous_raw = state.last_attempt_at
-    if previous_raw is None or not previous_raw.endswith("Z"):
-        return True
+def _elapsed_since(stamp: str | None, now: datetime) -> timedelta | None:
+    if stamp is None or not stamp.endswith("Z"):
+        return None
     try:
-        previous = datetime.fromisoformat(f"{previous_raw[:-1]}+00:00")
-        elapsed = now - previous
+        return now - datetime.fromisoformat(f"{stamp[:-1]}+00:00")
     except (TypeError, ValueError):
+        return None
+
+
+def automatic_check_due(state: UpdateState, now: datetime) -> bool:
+    elapsed = _elapsed_since(state.last_attempt_at, now)
+    if elapsed is None:
         return True
     return elapsed >= UPDATE_INTERVAL
+
+
+def refresh_retry_due(state: UpdateState, now: datetime) -> bool:
+    """Whether a pending-refresh recovery retry may run now.
+
+    Returns True when no prior retry has failed (the first attempt after a
+    completed install is never throttled) and once REFRESH_RETRY_INTERVAL has
+    elapsed since the last recorded failure.
+    """
+    elapsed = _elapsed_since(state.last_refresh_failure_at, now)
+    if elapsed is None:
+        return True
+    return elapsed >= REFRESH_RETRY_INTERVAL
 
 
 if os.name == "nt":

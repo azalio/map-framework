@@ -14,6 +14,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `y` on stdin. The new flag skips the prompt; `/map-release` Phase 3 (and the rollback
   examples) now invoke `./scripts/bump-version.sh --yes`, since the workflow already
   gates the bump behind an explicit `AskUserQuestion` confirmation.
+- **A failed provider refresh no longer retries on every skill invocation.**
+  `check_and_update()`'s pending-refresh recovery branch ran with no throttle at
+  all, unlike the sibling pending-install branch. Because the recovery path runs
+  on every automatic preflight — i.e. every skill invocation — a single failing
+  refresh re-spawned a `mapify init --refresh-existing` child (bounded at 300 s)
+  forever, with no backoff and no user-visible output. The first retry after a
+  completed install is still deliberately un-throttled (waiting a day would leave
+  provider surfaces stale), but a retry that *fails* now stamps
+  `last_refresh_failure_at` (update-state schema v3) and backs off for
+  `REFRESH_RETRY_INTERVAL` (15 min). Manual mode always retries, so
+  `mapify _update --mode manual` remains a usable escape hatch.
+- **Three `TestInternalUpdateCommand` tests were pinned to a stale version.**
+  They mocked the discovered upgrade target as `3.26.0` without pinning the
+  running `__version__` below it. When 3.26.0 shipped, target == current, so
+  `_validate_targets` correctly rejected the target, the update never ran, and
+  automatic mode correctly printed nothing — leaving the late-failure contract
+  they exist to cover untested. Both sides of the comparison are now pinned.
+- **Skill active-body line budgets.** The 6-line update-preflight block pushed
+  `map-efficient` (519 > 515) and `map-review` (645 > 639) past their caps. Both
+  budgets were raised deliberately with justification. The `map-review` overrun
+  had been invisible: the budget assertion ran inside a loop with a bare
+  per-skill `assert`, so it failed on the first offender and masked the rest. It
+  now collects every violation and reports them together.
+
+### Added
+- **Automatic MAP updates.** `mapify` can now keep itself and the installed
+  provider surfaces current. Every shipped `/map-*` (Claude) and `$map-*` (Codex)
+  skill runs a `mapify _update --mode automatic --project .` preflight as its
+  first step; throttled stable-version discovery, exact-version package
+  installation, durable update state, and crash recovery live in the new
+  `auto_update`, `update_install`, `update_state`, and `update_versions` modules.
+  **This is on by default** (`updates.auto`, `MapConfig.updates_auto`): after
+  upgrading, existing projects begin checking for updates automatically, at most
+  once per 24 h. Set `updates.auto: false` in `.map/config.yaml` to opt out.
+  Same-major upgrades apply automatically; a major-version jump is never applied
+  without explicit consent via `mapify _update --mode manual --approve-major
+  <version>`, re-validated against a freshly fetched target. Automatic-mode
+  failures stay silent by design so a broken update never blocks a workflow —
+  use manual mode to see the error. See `docs/USAGE.md` § Automatic and Manual
+  Framework Updates.
+- **`/map-upgrade`** manual upgrade workflow, plus hardened install manifests,
+  provider-refresh locking, and rollback behavior.
 
 ## [3.26.0] - 2026-08-15
 

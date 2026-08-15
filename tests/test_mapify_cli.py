@@ -55,6 +55,7 @@ from mapify_cli.update_install import (
 )
 from mapify_cli.update_state import (
     MAP_UPDATE_PARENT_LEASE_ENV,
+    STATE_SCHEMA_VERSION,
     UpdateLockBusy,
     UpdateState,
     project_update_lock,
@@ -2733,7 +2734,7 @@ class TestRefreshExistingInit:
 
         assert first_refresh.exit_code == 0, first_refresh.stdout
         first_state = read_update_state(tmp_path)
-        assert first_state.schema_version == 2
+        assert first_state.schema_version == STATE_SCHEMA_VERSION
         assert first_state.pending_refresh is True
         assert first_state.pending_providers == ("codex",)
 
@@ -3544,6 +3545,13 @@ class TestInternalUpdateCommand:
             raise OSError("lock cleanup failed")
 
         with (
+            # Intent: pin BOTH sides of the version comparison. These tests
+            # mock the discovered target as 3.26.0; without pinning the running
+            # version below it, a release bump to that same number makes
+            # _validate_targets reject the target as 'not newer', the update
+            # never runs, and automatic mode correctly prints nothing -- so the
+            # late-failure contract under test is never exercised.
+            mock.patch.object(mapify_cli, "__version__", "3.25.0"),
             mock.patch(
                 "mapify_cli.auto_update.detect_install_kind",
                 return_value=InstallKind.PIP,
@@ -3594,6 +3602,13 @@ class TestInternalUpdateCommand:
             real_write_state(project, state)
 
         with (
+            # Intent: pin BOTH sides of the version comparison. These tests
+            # mock the discovered target as 3.26.0; without pinning the running
+            # version below it, a release bump to that same number makes
+            # _validate_targets reject the target as 'not newer', the update
+            # never runs, and automatic mode correctly prints nothing -- so the
+            # late-failure contract under test is never exercised.
+            mock.patch.object(mapify_cli, "__version__", "3.25.0"),
             mock.patch(
                 "mapify_cli.auto_update.detect_install_kind",
                 return_value=InstallKind.PIP,
@@ -3689,6 +3704,13 @@ class TestInternalUpdateCommand:
         self, tmp_path: Path
     ) -> None:
         with (
+            # Intent: pin BOTH sides of the version comparison. These tests
+            # mock the discovered target as 3.26.0; without pinning the running
+            # version below it, a release bump to that same number makes
+            # _validate_targets reject the target as 'not newer', the update
+            # never runs, and automatic mode correctly prints nothing -- so the
+            # late-failure contract under test is never exercised.
+            mock.patch.object(mapify_cli, "__version__", "3.25.0"),
             mock.patch(
                 "mapify_cli.auto_update.detect_install_kind",
                 return_value=InstallKind.PIP,

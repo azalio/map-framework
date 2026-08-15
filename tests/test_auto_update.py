@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import time
 from collections.abc import Callable, Generator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Self
 from unittest.mock import Mock
@@ -26,6 +26,7 @@ from mapify_cli.update_install import (
     ProjectRefreshError,
 )
 from mapify_cli.update_state import (
+    REFRESH_RETRY_INTERVAL,
     UpdateLockBusy,
     UpdateLockSecurityError,
     UpdateState,
@@ -182,6 +183,121 @@ def test_pending_refresh_retries_before_throttle_and_requests_reload(
     assert result.reload_current_skill is True
     assert read_update_state(tmp_path).pending_refresh is False
     fetch.assert_not_called()
+
+
+def test_failed_pending_refresh_is_not_retried_within_the_backoff_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refresh that keeps failing must not respawn a child on every preflight.
+
+    The recovery branch runs on every automatic invocation -- i.e. every skill's
+    mandated preflight -- so an unthrottled retry turns one failed refresh into a
+    permanent subprocess storm the user never sees (automatic mode is silent).
+    """
+    write_update_state(
+        tmp_path,
+        UpdateState(
+            last_attempt_at="2026-08-13T11:00:00Z",
+            last_installed_version="3.26.0",
+            pending_refresh=True,
+            pending_providers=("codex",),
+        ),
+    )
+    refresh = Mock(
+        side_effect=ProjectRefreshError(
+            "refresh failed",
+            refreshed_providers=(),
+            pending_providers=("codex",),
+        )
+    )
+    monkeypatch.setattr(auto_update, "refresh_installed_providers", refresh)
+    monkeypatch.setattr(
+        auto_update,
+        "fetch_version_targets",
+        Mock(side_effect=AssertionError("pending refresh must not fetch")),
+    )
+
+    # First attempt is never throttled: it runs and fails, stamping the failure.
+    first = check_and_update(tmp_path, "3.26.0", UpdateMode.AUTOMATIC, now=NOW)
+    assert first.status is UpdateStatus.ERROR
+    assert refresh.call_count == 1
+    assert read_update_state(tmp_path).last_refresh_failure_at == "2026-08-13T12:00:00Z"
+
+    # Subsequent preflights inside the window must NOT respawn the child.
+    for minutes in (1, 5, 14):
+        again = check_and_update(
+            tmp_path,
+            "3.26.0",
+            UpdateMode.AUTOMATIC,
+            now=NOW + timedelta(minutes=minutes),
+        )
+        assert again.status is UpdateStatus.SKIPPED
+        assert refresh.call_count == 1, f"retried after only {minutes} minutes"
+
+    # Once the window elapses the recovery retries again.
+    after = check_and_update(
+        tmp_path,
+        "3.26.0",
+        UpdateMode.AUTOMATIC,
+        now=NOW + REFRESH_RETRY_INTERVAL,
+    )
+    assert after.status is UpdateStatus.ERROR
+    assert refresh.call_count == 2
+
+
+def test_manual_mode_retries_a_failed_pending_refresh_inside_the_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The backoff must not disarm the manual escape hatch."""
+    write_update_state(
+        tmp_path,
+        UpdateState(
+            last_installed_version="3.26.0",
+            pending_refresh=True,
+            pending_providers=("codex",),
+            last_refresh_failure_at="2026-08-13T11:59:00Z",
+        ),
+    )
+    refresh = Mock(return_value=("codex",))
+    monkeypatch.setattr(auto_update, "refresh_installed_providers", refresh)
+    monkeypatch.setattr(
+        auto_update, "fetch_version_targets", Mock(return_value=VersionTargets(None, None))
+    )
+
+    check_and_update(tmp_path, "3.26.0", UpdateMode.MANUAL, now=NOW)
+
+    assert refresh.call_count == 1
+    state = read_update_state(tmp_path)
+    assert state.pending_refresh is False
+    assert state.last_refresh_failure_at is None
+
+
+def test_successful_pending_refresh_clears_the_failure_stamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stale failure stamp must not outlive the recovery it throttled."""
+    write_update_state(
+        tmp_path,
+        UpdateState(
+            last_installed_version="3.26.0",
+            pending_refresh=True,
+            pending_providers=("codex",),
+            last_refresh_failure_at="2026-08-13T11:00:00Z",
+        ),
+    )
+    monkeypatch.setattr(
+        auto_update, "refresh_installed_providers", Mock(return_value=("codex",))
+    )
+    monkeypatch.setattr(
+        auto_update,
+        "fetch_version_targets",
+        Mock(side_effect=AssertionError("pending refresh must not fetch")),
+    )
+
+    result = check_and_update(tmp_path, "3.26.0", UpdateMode.AUTOMATIC, now=NOW)
+
+    assert result.status is UpdateStatus.UPDATED
+    assert read_update_state(tmp_path).last_refresh_failure_at is None
 
 
 def test_legacy_pending_refresh_discovers_and_persists_providers_before_refresh(

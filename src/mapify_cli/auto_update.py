@@ -29,6 +29,7 @@ from mapify_cli.update_state import (
     project_update_lock,
     provider_refresh_lock,
     read_update_state,
+    refresh_retry_due,
     write_update_state,
 )
 from mapify_cli.update_versions import (
@@ -400,6 +401,16 @@ def _check_locked(
                 progress.state = cleared
 
         if progress.state.pending_refresh:
+            if mode is UpdateMode.AUTOMATIC and not refresh_retry_due(
+                progress.state,
+                effective_now,
+            ):
+                # Intent: The first retry after a completed install is never
+                # throttled, but a refresh that keeps failing must not re-spawn a
+                # provider-refresh child on every skill preflight. Manual mode
+                # always retries so `mapify _update --mode manual` stays a usable
+                # escape hatch while the automatic backoff window is open.
+                return UpdateResult(UpdateStatus.SKIPPED, current_version)
             progress.installed_version = progress.state.last_installed_version
             providers = progress.state.pending_providers or installed_providers(
                 project_path
@@ -430,6 +441,10 @@ def _check_locked(
                     progress.state,
                     pending_refresh=True,
                     pending_providers=exc.pending_providers,
+                    # Intent: Records that a retry was attempted and failed, so
+                    # refresh_retry_due() can back the recovery path off instead
+                    # of re-spawning a child on every subsequent preflight.
+                    last_refresh_failure_at=_timestamp(effective_now),
                 )
                 write_update_state(project_path, progress.state)
                 raise
@@ -444,6 +459,9 @@ def _check_locked(
                 pending_install_version=None,
                 pending_refresh=False,
                 pending_providers=(),
+                # Intent: Recovery succeeded, so the backoff window must not
+                # outlive it and delay a future pending refresh.
+                last_refresh_failure_at=None,
             )
             write_update_state(project_path, progress.state)
             if mode is UpdateMode.AUTOMATIC:

@@ -123,7 +123,13 @@ HIGH_TRAFFIC_COMPACT_SKILL_REFS = {
 # the model pick one. The status table, the objection channels, the
 # self-attestation rationale and the MAP_REVIEW_LEDGER_ENFORCE hatch all live in
 # review-reference.md § Verdict Ledger and are NOT counted here.
-_DEFAULT_SKILL_BODY_BUDGET = 515
+# Budget bumped from 515 → 519: the automatic-update preflight adds a 6-line
+# `## MAP update preflight` block to every skill body. It is the FIRST step of
+# every workflow and branches on the updater's JSON status (`updated` re-reads
+# the skill, `major_available` asks consent), so it is active control flow that
+# cannot move to a reference file — an agent that deferred it would run the rest
+# of the workflow against instructions the updater has already replaced.
+_DEFAULT_SKILL_BODY_BUDGET = 519
 HIGH_TRAFFIC_SKILL_BODY_BUDGETS = {
     # Budget bumped 630 → 639 (#426): Step A.1 now resolves the review base from
     # the default branch and diffs `merge-base..HEAD`. `git diff HEAD` is empty on
@@ -134,7 +140,12 @@ HIGH_TRAFFIC_SKILL_BODY_BUDGETS = {
     # snapshot_code_state resolves, and the explicit RANGE branch exists because
     # a `"${BASE:-HEAD}"...HEAD` shorthand degenerates to the always-empty
     # `HEAD...HEAD` and silently re-creates the bug.
-    "map-review": 639,
+    # Budget bumped 639 → 645: the same 6-line automatic-update preflight block
+    # was added to this body too. This overrun was MASKED — the assertion loop
+    # uses a bare per-skill `assert`, so it raised on map-efficient (an earlier
+    # dict entry) and never reached map-review. Both caps must move together or
+    # fixing one just surfaces the other on the next CI run.
+    "map-review": 645,
     # map-tdd carries Iron Law enforcement (rationalization table, Red Flags,
     # RED-GREEN-REFACTOR cycle), spec compliance reviewer dispatch, and code
     # quality reviewer dispatch — all irreducible active control flow (#285).
@@ -757,6 +768,12 @@ class TestSkillStructure:
         self, skills_dir, template_skills_dir
     ):
         """Common workflows should keep invoked bodies lean and navigate to references."""
+        # Intent: collect EVERY overrun before failing. A bare per-skill assert
+        # inside this loop reports only the first offender and silently masks the
+        # rest, so a change that pushes several bodies over their caps (e.g. a
+        # block injected into every skill) looks like a single-skill problem and
+        # each remaining violation only surfaces on a later CI run.
+        oversized: list[str] = []
         for base_dir in (skills_dir, template_skills_dir):
             for skill_name, reference_name in HIGH_TRAFFIC_COMPACT_SKILL_REFS.items():
                 skill_file = base_dir / skill_name / "SKILL.md"
@@ -781,11 +798,9 @@ class TestSkillStructure:
                 budget = HIGH_TRAFFIC_SKILL_BODY_BUDGETS.get(
                     skill_name, _DEFAULT_SKILL_BODY_BUDGET
                 )
-                assert len(content.splitlines()) <= budget, (
-                    f"{skill_file} should keep the active workflow path compact "
-                    f"(budget {budget} lines); move examples, rationale, and "
-                    "troubleshooting into supporting files."
-                )
+                line_count = len(content.splitlines())
+                if line_count > budget:
+                    oversized.append(f"{skill_file}: {line_count} lines (budget {budget})")
                 assert (
                     f"[{reference_name}]({reference_name})" in content
                 ), f"{skill_file} should point to its bundled supporting reference."
@@ -799,6 +814,12 @@ class TestSkillStructure:
                 reference = reference_file.read_text(encoding="utf-8")
                 assert "## Examples" in reference
                 assert "## Troubleshooting" in reference
+
+        assert not oversized, (
+            "Skill body/bodies exceed their active-body line budget; move examples, "
+            "rationale, and troubleshooting into supporting files, or bump the budget "
+            "deliberately with a justification comment:\n  " + "\n  ".join(oversized)
+        )
 
     def test_every_non_high_traffic_skill_body_within_default_budget(
         self, skill_rules, skills_dir, template_skills_dir
