@@ -177,7 +177,7 @@ def _path_is_hook(dest_path: Path) -> bool:
             for i in range(len(parts) - 1):
                 if parts[i] == parent_name and parts[i + 1] == child_name:
                     return True
-    except Exception:  # noqa: BLE001, S110 - resilience boundary
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
     return False
 
@@ -242,7 +242,7 @@ def _atomic_write_file(src: Path, dest: Path) -> None:
     except Exception:
         try:
             tmp_path.unlink(missing_ok=True)
-        except Exception:  # noqa: BLE001, S110 - best-effort cleanup
+        except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
             pass  # best-effort cleanup
         raise
 

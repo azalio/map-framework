@@ -162,7 +162,7 @@ def _request(
         try:
             raw = exc.read()
             status = exc.code
-        except Exception:  # noqa: BLE001 -- deliberate fallback boundary
+        except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
             raw = b""
             status = exc.code
         try:

@@ -8,58 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- **An unrelated `!` rule no longer makes MAP re-append its whole `.gitignore`
-  block.** The `.gitignore` mergers treated *any* later negation line as
-  revoking a MAP-owned path, so a user rule such as `!docs/generated/index.md`
-  made the next merge duplicate every MAP entry. `mapify init` merges this file
-  on every run — including the automatic provider refresh — so the file grew by
-  a full block each time the user added a negation. Negations are now matched
-  against the path with a segment-wise wildmatch approximation: `!.sofa/`,
-  `!.map/**`, and `!.claude/settings.*` still count, unrelated rules do not.
-- **Trailing whitespace in `.gitignore` no longer hides an existing rule.** Git
-  ignores unescaped trailing spaces and tabs, so `.sofa/ ` *is* `.sofa/`, but
-  the byte-exact comparison did not recognise it and appended a duplicate.
-  Escaped (`.sofa/\ `) and leading whitespace remain significant, as in git.
-- **The shared `.gitignore` writer lock moved out of `/tmp`.** It now lives at
-  `.map/gitignore.lock`, beside the other MAP runtime locks. The hardcoded
-  `/tmp` path ignored `TMPDIR`, is absent on some minimal images, and let any
-  local user squat the path — identity validation then fail-closed every
-  `mapify init` on a multi-user machine. Windows still uses a named mutex.
-- **The credential rollback copy is always owner-only.** `.sofa/.credentials
-  .json.rollback.*.tmp` holds real API keys and can survive a failed restore,
-  but it inherited the mode of the previous `credentials.json` — a manually
-  widened `0640` file produced a group-readable copy of the secret in exactly
-  the recovery path. It is now created `0600`, matching what a successful write
-  installs, and the error message names the file left behind.
 - **`bump-version.sh` supports non-interactive runs via `-y`/`--yes`.** The script's
   30-second `read -t 30` confirmation prompt timed out and cancelled the bump whenever
   it ran without a TTY answer — the v3.26.0 release had to work around it by piping
   `y` on stdin. The new flag skips the prompt; `/map-release` Phase 3 (and the rollback
   examples) now invoke `./scripts/bump-version.sh --yes`, since the workflow already
   gates the bump behind an explicit `AskUserQuestion` confirmation.
-- **A failed provider refresh no longer retries on every skill invocation.**
-  `check_and_update()`'s pending-refresh recovery branch ran with no throttle at
-  all, unlike the sibling pending-install branch. Because the recovery path runs
-  on every automatic preflight — i.e. every skill invocation — a single failing
-  refresh re-spawned a `mapify init --refresh-existing` child (bounded at 300 s)
-  forever, with no backoff and no user-visible output. The first retry after a
-  completed install is still deliberately un-throttled (waiting a day would leave
-  provider surfaces stale), but a retry that *fails* now stamps
-  `last_refresh_failure_at` (update-state schema v3) and backs off for
-  `REFRESH_RETRY_INTERVAL` (15 min). Manual mode always retries, so
-  `mapify _update --mode manual` remains a usable escape hatch.
-- **Three `TestInternalUpdateCommand` tests were pinned to a stale version.**
-  They mocked the discovered upgrade target as `3.26.0` without pinning the
-  running `__version__` below it. When 3.26.0 shipped, target == current, so
-  `_validate_targets` correctly rejected the target, the update never ran, and
-  automatic mode correctly printed nothing — leaving the late-failure contract
-  they exist to cover untested. Both sides of the comparison are now pinned.
-- **Skill active-body line budgets.** The 6-line update-preflight block pushed
-  `map-efficient` (519 > 515) and `map-review` (645 > 639) past their caps. Both
-  budgets were raised deliberately with justification. The `map-review` overrun
-  had been invisible: the budget assertion ran inside a loop with a bare
-  per-skill `assert`, so it failed on the first offender and masked the rest. It
-  now collects every violation and reports them together.
 
 ### Added
 - **Exact declined major offers are remembered per project.** When a user rejects
@@ -81,10 +35,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without explicit consent via `mapify _update --mode manual --approve-major
   <version>`, re-validated against a freshly fetched target. Automatic-mode
   failures stay silent by design so a broken update never blocks a workflow —
-  use manual mode to see the error. See `docs/USAGE.md` § Automatic and Manual
-  Framework Updates.
+  use manual mode to see the error. A provider refresh that keeps failing backs
+  off for `REFRESH_RETRY_INTERVAL` (15 min) instead of re-spawning a
+  `mapify init --refresh-existing` child on every preflight; the first retry
+  after a completed install stays un-throttled so provider surfaces are not left
+  stale for a day. See `docs/USAGE.md` § Automatic and Manual Framework Updates.
 - **`/map-upgrade`** manual upgrade workflow, plus hardened install manifests,
   provider-refresh locking, and rollback behavior.
+- **Concurrency-safe, link-safe `.gitignore` merging.** Every MAP-owned ignore
+  entry (`.sofa/`, `.claude/settings.local.json`, `.claude/agent-memory-local/`,
+  and the new `.map/*.lock` / `.map/update-state.json` runtime files) is merged
+  under one project-local writer lock at `.map/gitignore.lock`, shared by the
+  CLI and the standalone `.map/scripts/sofa_client.py`, with atomic replacement
+  and symlink/hard-link rejection. Merging is idempotent: an entry is re-added
+  only when a later negation can actually target it (`!.sofa/`, `!.map/**`,
+  `!.claude/settings.*`), and git's own trailing-whitespace rules are honoured,
+  so unrelated `!` lines and `.sofa/ ` no longer produce duplicate entries.
+- **Transactional SOFA credential storage.** `.sofa/credentials.json` is written
+  atomically behind `.sofa/credentials.lock`, always after the `.gitignore`
+  entry is in place, and always `0600`. A failed restore leaves an owner-only
+  recovery copy and names it in the error instead of discarding the previous
+  keys.
 
 ## [3.26.0] - 2026-08-15
 

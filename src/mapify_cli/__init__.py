@@ -150,7 +150,7 @@ def create_ssl_context():
             context.check_hostname = True
             context.verify_mode = ssl.CERT_REQUIRED
             return context
-    except Exception:  # noqa: BLE001, S110
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
 
     # Fallback to standard SSL context
@@ -521,7 +521,9 @@ def get_branch_artifact_templates() -> dict[str, str]:
     }
 
 
-def initialize_branch_workspace(project_path: Path, branch: str | None = None) -> Path:
+def initialize_branch_workspace(
+    project_path: Path, branch: str | None = None
+) -> Path:
     """Create branch-scoped planning artifacts inside `.map/<branch>/`."""
     branch_name = sanitize_identifier(branch or get_current_branch_name())
     workspace_dir = get_branch_workspace_dir(project_path, branch_name)
@@ -718,7 +720,7 @@ def get_latest_release(owner: str, repo: str) -> dict[str, Any] | None:
             response = client.get(url)
             if response.status_code == 200:
                 return response.json()
-    except Exception:  # noqa: BLE001, S110
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
     return None
 
@@ -2051,9 +2053,7 @@ def _render_minimality_report(report: Mapping[str, Any]) -> None:
                 console.print(f"  - {item}")
 
     if branch_rows:
-        table = Table(
-            title="Branch Samples", show_header=True, header_style="bold cyan"
-        )
+        table = Table(title="Branch Samples", show_header=True, header_style="bold cyan")
         table.add_column("Branch")
         table.add_column("Status")
         table.add_column("Minimality")
@@ -2502,9 +2502,7 @@ def uninstall(
             f"[yellow]No install manifest found at "
             f"{target / '.map' / 'mapify.lock.json'}[/yellow]"
         )
-        console.print(
-            "[dim]Run [cyan]mapify init .[/cyan] to generate the manifest.[/dim]"
-        )
+        console.print("[dim]Run [cyan]mapify init .[/cyan] to generate the manifest.[/dim]")
         raise typer.Exit(2)
 
     if not manifest.config_entries:
@@ -2588,9 +2586,7 @@ def preset_list(
         if output_json:
             typer.echo(json.dumps({"presets": []}))
         else:
-            console.print(
-                "[dim]No presets installed. Use 'mapify preset add --from <path>' to install one.[/dim]"
-            )
+            console.print("[dim]No presets installed. Use 'mapify preset add --from <path>' to install one.[/dim]")
         return
 
     presets: list[dict[str, Any]] = []
@@ -2599,37 +2595,24 @@ def preset_list(
             continue
         manifest = _read_preset_manifest(entry)
         if manifest is None:
-            presets.append(
-                {
-                    "id": entry.name,
-                    "title": entry.name,
-                    "version": "?",
-                    "description": "(no manifest)",
-                }
-            )
+            presets.append({"id": entry.name, "title": entry.name, "version": "?", "description": "(no manifest)"})
         else:
-            presets.append(
-                {
-                    "id": manifest.get("id", entry.name),
-                    "title": manifest.get("title", entry.name),
-                    "version": manifest.get("version", "?"),
-                    "description": manifest.get("description", ""),
-                }
-            )
+            presets.append({
+                "id": manifest.get("id", entry.name),
+                "title": manifest.get("title", entry.name),
+                "version": manifest.get("version", "?"),
+                "description": manifest.get("description", ""),
+            })
 
     if output_json:
         typer.echo(json.dumps({"presets": presets}))
         return
 
     if not presets:
-        console.print(
-            "[dim]No presets installed. Use 'mapify preset add --from <path>' to install one.[/dim]"
-        )
+        console.print("[dim]No presets installed. Use 'mapify preset add --from <path>' to install one.[/dim]")
         return
 
-    table = Table(
-        title="Installed MAP Presets", show_header=True, header_style="bold cyan"
-    )
+    table = Table(title="Installed MAP Presets", show_header=True, header_style="bold cyan")
     table.add_column("ID", style="cyan", no_wrap=True)
     table.add_column("Title")
     table.add_column("Version", style="dim")
@@ -2651,9 +2634,7 @@ def preset_add(
         None,
         help="Project root directory (defaults to current directory).",
     ),
-    force: bool = typer.Option(
-        False, "--force", "-f", help="Overwrite if already installed."
-    ),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite if already installed."),
 ) -> None:
     """Install a MAP preset from a local directory into .map/presets/.
 
@@ -2720,9 +2701,7 @@ def _read_preset_state(preset_dir: Path) -> dict[str, Any]:
 
 
 def _write_preset_state(preset_dir: Path, state: dict[str, Any]) -> None:
-    _preset_state_path(preset_dir).write_text(
-        json.dumps(state, indent=2), encoding="utf-8"
-    )
+    _preset_state_path(preset_dir).write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
 def _is_preset_enabled(preset_dir: Path) -> bool:
@@ -2804,9 +2783,7 @@ def preset_disable(
 
 @preset_app.command("resolve")
 def preset_resolve(
-    template_name: str = typer.Argument(
-        ..., help="Template name to resolve (e.g. 'map-efficient.md')."
-    ),
+    template_name: str = typer.Argument(..., help="Template name to resolve (e.g. 'map-efficient.md')."),
     project_path: Path | None = typer.Argument(
         None,
         help="Project root directory (defaults to current directory).",
@@ -2825,9 +2802,7 @@ def preset_resolve(
     # Tier 1: project overrides
     project_override = target / ".map" / "overrides" / template_name
     if project_override.is_file():
-        layers.append(
-            {"tier": "project-override", "path": str(project_override), "enabled": True}
-        )
+        layers.append({"tier": "project-override", "path": str(project_override), "enabled": True})
 
     # Tier 2: installed presets (sorted alphabetically for determinism)
     if presets_root.is_dir():
@@ -2838,25 +2813,21 @@ def preset_resolve(
             template_path = entry / "templates" / template_name
             if template_path.is_file():
                 manifest = _read_preset_manifest(entry)
-                strategy = (
-                    (manifest or {}).get("strategies", {}).get(template_name, "append")
-                )
-                layers.append(
-                    {
-                        "tier": "preset",
-                        "preset_id": entry.name,
-                        "path": str(template_path),
-                        "strategy": strategy,
-                        "enabled": enabled,
-                    }
-                )
+                strategy = (manifest or {}).get("strategies", {}).get(template_name, "append")
+                layers.append({
+                    "tier": "preset",
+                    "preset_id": entry.name,
+                    "path": str(template_path),
+                    "strategy": strategy,
+                    "enabled": enabled,
+                })
 
     # Tier 3: core template (shipped by mapify)
     try:
         core_path = get_templates_dir() / template_name
         if core_path.is_file():
             layers.append({"tier": "core", "path": str(core_path), "enabled": True})
-    except Exception:  # noqa: BLE001, S110
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
 
     if output_json:
@@ -2871,15 +2842,9 @@ def preset_resolve(
     for i, layer in enumerate(layers, 1):
         tier = layer["tier"]
         enabled_str = "" if layer.get("enabled", True) else " [dim](disabled)[/dim]"
-        strategy_str = (
-            f" strategy=[cyan]{layer['strategy']}[/cyan]" if "strategy" in layer else ""
-        )
-        preset_str = (
-            f" preset=[cyan]{layer['preset_id']}[/cyan]" if "preset_id" in layer else ""
-        )
-        console.print(
-            f"  {i}. tier={tier}{preset_str}{strategy_str}{enabled_str} → {layer['path']}"
-        )
+        strategy_str = f" strategy=[cyan]{layer['strategy']}[/cyan]" if "strategy" in layer else ""
+        preset_str = f" preset=[cyan]{layer['preset_id']}[/cyan]" if "preset_id" in layer else ""
+        console.print(f"  {i}. tier={tier}{preset_str}{strategy_str}{enabled_str} → {layer['path']}")
 
 
 # ---------------------------------------------------------------------------
@@ -2910,9 +2875,7 @@ def _compose_template(core_content: str, layer_content: str, strategy: str) -> s
     return core_content
 
 
-def _build_resolution_order(
-    presets_root: Path, template_name: str
-) -> list[dict[str, Any]]:
+def _build_resolution_order(presets_root: Path, template_name: str) -> list[dict[str, Any]]:
     """Return enabled preset layers for a template, sorted by priority descending."""
     layers: list[dict[str, Any]] = []
     if not presets_root.is_dir():
@@ -2925,33 +2888,25 @@ def _build_resolution_order(
             continue
         manifest = _read_preset_manifest(entry)
         strategy = (manifest or {}).get("strategies", {}).get(template_name, "append")
-        layers.append(
-            {
-                "preset_id": entry.name,
-                "path": template_path,
-                "strategy": strategy,
-                "priority": _preset_priority(entry),
-            }
-        )
+        layers.append({
+            "preset_id": entry.name,
+            "path": template_path,
+            "strategy": strategy,
+            "priority": _preset_priority(entry),
+        })
     layers.sort(key=lambda x: x["priority"], reverse=True)
     return layers
 
 
 @preset_app.command("render")
 def preset_render(
-    template_name: str = typer.Argument(
-        ..., help="Template name to render (e.g. 'map-efficient.md')."
-    ),
+    template_name: str = typer.Argument(..., help="Template name to render (e.g. 'map-efficient.md')."),
     project_path: Path | None = typer.Argument(
         None,
         help="Project root directory (defaults to current directory).",
     ),
-    output_json: bool = typer.Option(
-        False, "--json", help="Output rendered content as JSON."
-    ),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help="Print composed content without writing to disk."
-    ),
+    output_json: bool = typer.Option(False, "--json", help="Output rendered content as JSON."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print composed content without writing to disk."),
 ) -> None:
     """Compose a template by layering enabled presets over the core template.
 
@@ -2978,7 +2933,7 @@ def preset_render(
             else:
                 composed = ""
                 source = "core:(not found)"
-        except Exception:  # noqa: BLE001 -- deliberate fallback boundary
+        except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
             composed = ""
             source = "core:(error)"
 
@@ -2993,16 +2948,12 @@ def preset_render(
         applied.append(f"{layer['preset_id']}({strategy})")
 
     if output_json:
-        typer.echo(
-            json.dumps(
-                {
-                    "template": template_name,
-                    "source": source,
-                    "applied_layers": applied,
-                    "content": composed,
-                }
-            )
-        )
+        typer.echo(json.dumps({
+            "template": template_name,
+            "source": source,
+            "applied_layers": applied,
+            "content": composed,
+        }))
         return
 
     if True:
@@ -3010,9 +2961,7 @@ def preset_render(
         if applied:
             console.print(f"[dim]Layers applied:[/dim] {' → '.join(applied)}")
         else:
-            console.print(
-                "[dim]No preset layers matched; showing core/override content.[/dim]"
-            )
+            console.print("[dim]No preset layers matched; showing core/override content.[/dim]")
         console.print()
         console.print(composed)
 
@@ -3020,9 +2969,7 @@ def preset_render(
 @preset_app.command("set-priority")
 def preset_set_priority(
     preset_id: str = typer.Argument(..., help="ID of the preset to reprioritize."),
-    priority: int = typer.Argument(
-        ..., help="Priority value (higher = applied first). Default: 50."
-    ),
+    priority: int = typer.Argument(..., help="Priority value (higher = applied first). Default: 50."),
     project_path: Path | None = typer.Argument(
         None,
         help="Project root directory (defaults to current directory).",
@@ -3086,9 +3033,7 @@ def prompt_profile_list(
         help="Root of the target project (where .map/ lives).",
         resolve_path=True,
     ),
-    output_json: bool = typer.Option(
-        False, "--json", help="Emit JSON instead of a table."
-    ),
+    output_json: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
 ) -> None:
     """List installed MAP prompt profiles in a project's .map/prompt-profiles/ directory."""
     from rich.table import Table
@@ -3108,16 +3053,14 @@ def prompt_profile_list(
             missing = [k for k in _PROFILE_MANIFEST_KEYS if k not in manifest]
             if missing:
                 continue
-            profiles.append(
-                {
-                    "id": manifest["id"],
-                    "title": manifest["title"],
-                    "version": manifest["version"],
-                    "description": manifest.get("description", ""),
-                    "targets": manifest.get("targets", []),
-                    "active": manifest["id"] == active_id,
-                }
-            )
+            profiles.append({
+                "id": manifest["id"],
+                "title": manifest["title"],
+                "version": manifest["version"],
+                "description": manifest.get("description", ""),
+                "targets": manifest.get("targets", []),
+                "active": manifest["id"] == active_id,
+            })
 
     if output_json:
         console.print_json(json.dumps({"profiles": profiles, "active": active_id}))
@@ -3131,9 +3074,7 @@ def prompt_profile_list(
         )
         return
 
-    table = Table(
-        title="Prompt Profiles", box=None, show_header=True, header_style="bold"
-    )
+    table = Table(title="Prompt Profiles", box=None, show_header=True, header_style="bold")
     table.add_column("ID", style="cyan")
     table.add_column("Title")
     table.add_column("Version")
@@ -3227,9 +3168,7 @@ def research_eval_score(
     try:
         expected = load_expected_locations(expected_file)
     except (OSError, ValueError) as exc:
-        console.print(
-            f"[bold red]Error:[/bold red] cannot load expected targets: {exc}"
-        )
+        console.print(f"[bold red]Error:[/bold red] cannot load expected targets: {exc}")
         raise typer.Exit(2)
 
     root = repo_root.resolve() if repo_root else Path.cwd()
@@ -3399,9 +3338,7 @@ def skill_eval_run(
         None, "--eval-set", help="Path to eval-set JSON"
     ),
     dry_run: bool = typer.Option(
-        False,
-        "--dry-run",
-        help="Validate eval-set + print planned count; spend nothing",
+        False, "--dry-run", help="Validate eval-set + print planned count; spend nothing"
     ),
     resume: bool = typer.Option(
         False, "--resume", help="Resume a partial run, skipping completed cells"
@@ -3417,10 +3354,7 @@ def skill_eval_run(
         "accuracy across model tiers.",
     ),
     runs: int = typer.Option(
-        1,
-        "--runs",
-        min=1,
-        help="Passes per prompt (default 1). Use >1 to average "
+        1, "--runs", min=1, help="Passes per prompt (default 1). Use >1 to average "
         "out single-pass noise when comparing models.",
     ),
 ) -> None:
@@ -3440,7 +3374,9 @@ def skill_eval_run(
 
     # SC-2: --eval-set is required.
     if eval_set is None:
-        console.print("[bold red]Error:[/bold red] provide --eval-set PATH")
+        console.print(
+            "[bold red]Error:[/bold red] provide --eval-set PATH"
+        )
         raise typer.Exit(2)
 
     # SC-2: load and validate the eval-set; malformed/empty → Exit(2), NO invocations.
@@ -3472,12 +3408,8 @@ def skill_eval_run(
     root = Path.cwd()
     if resume:
         latest = _runner.latest_run_path(root, skill)
-        out_path = (
-            latest
-            if latest is not None
-            else _runner.default_run_path(
-                root, skill, datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-            )
+        out_path = latest if latest is not None else _runner.default_run_path(
+            root, skill, datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         )
     else:
         out_path = _runner.default_run_path(
@@ -3504,9 +3436,7 @@ def skill_eval_run(
             if not raw_line:
                 continue
             try:
-                records.append(
-                    EvalResultRecord.from_dict(__import__("json").loads(raw_line))
-                )
+                records.append(EvalResultRecord.from_dict(__import__("json").loads(raw_line)))
             except (ValueError, KeyError):
                 continue
 
@@ -3613,7 +3543,7 @@ def _open_best_effort(path: Path) -> None:
 
     try:
         webbrowser.open(path.as_uri())
-    except Exception:  # noqa: BLE001, S110
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass  # SC-2: never errors the run
 
 
@@ -3634,7 +3564,7 @@ def _read_skill_description(root: Path, skill: str) -> str:
         frontmatter_text = text[4:close]
         parsed = parse_frontmatter(frontmatter_text)
         return str(parsed.get("description", ""))
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
         return ""
 
 
@@ -3661,9 +3591,7 @@ def skill_eval_optimize(
         False, "--open", help="Open the HTML report in the default browser"
     ),
     dry_run: bool = typer.Option(
-        False,
-        "--dry-run",
-        help="Print planned call budget; spend nothing, no dispatcher",
+        False, "--dry-run", help="Print planned call budget; spend nothing, no dispatcher"
     ),
 ) -> None:
     """Optimise a skill's trigger description via repeated eval iterations.
@@ -3754,11 +3682,7 @@ def skill_eval_optimize(
     json_path.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
     render_to_path(result, html_path)
 
-    status_label = (
-        "no improvement"
-        if result.no_improvement
-        else f"iter {result.winning_iteration}"
-    )
+    status_label = "no improvement" if result.no_improvement else f"iter {result.winning_iteration}"
     winner_iter = next(
         (it for it in result.iterations if it.selected),
         None,
@@ -3842,7 +3766,9 @@ def skill_eval_view(
 
 @skill_eval_app.command("trajectory")
 def skill_eval_trajectory(
-    skill: str = typer.Argument(..., help="Skill under evaluation, e.g. map-task"),
+    skill: str = typer.Argument(
+        ..., help="Skill under evaluation, e.g. map-task"
+    ),
     fixture: Path | None = typer.Option(
         None,
         "--fixture",
@@ -3879,9 +3805,7 @@ def skill_eval_trajectory(
         help="Compare against a prior run: path to a .jsonl, or 'latest'.",
     ),
     out: Path | None = typer.Option(
-        None,
-        "--out",
-        help="Output .jsonl path (default .map/eval-runs/trajectory/...).",
+        None, "--out", help="Output .jsonl path (default .map/eval-runs/trajectory/...)."
     ),
     resume: bool = typer.Option(
         False, "--resume", help="Resume the latest run, skipping present run_ids."
@@ -3942,10 +3866,8 @@ def skill_eval_trajectory(
         out_path = out
     elif resume:
         latest = _trunner.latest_run_path(root, skill)
-        out_path = (
-            latest
-            if latest is not None
-            else _trunner.default_run_path(root, skill, run_ts)
+        out_path = latest if latest is not None else _trunner.default_run_path(
+            root, skill, run_ts
         )
     else:
         out_path = _trunner.default_run_path(root, skill, run_ts)
@@ -3990,10 +3912,16 @@ def skill_eval_trajectory(
     records = _trunner.read_records(out_path)
     agg = aggregate_repeated(records)
     fa = agg.fixture(str(manifest["fixture"]))
-    median_str = f"{fa.composite_median:.3f}" if fa else "n/a"
-    hp_str = f"{fa.hard_pass_count}/{fa.n}" if fa else "n/a"
+    median_str = (
+        f"{fa.composite_median:.3f}" if fa else "n/a"
+    )
+    hp_str = (
+        f"{fa.hard_pass_count}/{fa.n}" if fa else "n/a"
+    )
     flaky_str = (
-        f" flaky=[cyan]{'; '.join(fa.flaky_reasons)}[/cyan]" if fa and fa.flaky else ""
+        f" flaky=[cyan]{'; '.join(fa.flaky_reasons)}[/cyan]"
+        if fa and fa.flaky
+        else ""
     )
     console.print(
         f"\n[bold]Trajectory eval complete:[/bold] skill=[bold]{skill}[/bold] "
@@ -4007,7 +3935,9 @@ def skill_eval_trajectory(
     if anchor is not None:
         anchor_path = _resolve_anchor(anchor, root, skill)
         if anchor_path is None or not anchor_path.is_file():
-            console.print(f"[bold red]Error:[/bold red] anchor run not found: {anchor}")
+            console.print(
+                f"[bold red]Error:[/bold red] anchor run not found: {anchor}"
+            )
             raise typer.Exit(1)
         anchor_records = _trunner.read_records(anchor_path)
         report = build_report(
@@ -4020,7 +3950,8 @@ def skill_eval_trajectory(
         render_comparison_to_path(report, html_path)
         reg = report.n_regressions
         console.print(
-            f"  side-by-side: [cyan]{html_path}[/cyan] ({reg} regression(s) vs anchor)"
+            f"  side-by-side: [cyan]{html_path}[/cyan] "
+            f"({reg} regression(s) vs anchor)"
         )
         if open_html:
             _open_best_effort(html_path)
@@ -4037,10 +3968,8 @@ def _resolve_anchor(anchor: str, root: Path, skill: str) -> Path | None:
         # Exclude the candidate currently being written by picking the
         # previous-to-last when two exist; callers pass 'latest' meaning the
         # most recent PRIOR run.
-        return (
-            candidates[-2]
-            if len(candidates) >= 2
-            else (candidates[-1] if candidates else None)
+        return candidates[-2] if len(candidates) >= 2 else (
+            candidates[-1] if candidates else None
         )
     return Path(anchor)
 
@@ -4155,9 +4084,7 @@ def domain_skill_init(
         console.print(f"[red]Error:[/red] Path does not exist: {target}")
         raise typer.Exit(1)
 
-    skill_file, created = create_domain_skill(
-        target, skill_name=name, overwrite=overwrite
-    )
+    skill_file, created = create_domain_skill(target, skill_name=name, overwrite=overwrite)
 
     rel = skill_file.relative_to(target)
     if created:

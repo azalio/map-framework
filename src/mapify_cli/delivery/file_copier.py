@@ -208,7 +208,7 @@ def get_templates_dir() -> Path:
         # Python 3.11+ with importlib.resources.files
         if hasattr(importlib.resources, "files"):
             return Path(str(importlib.resources.files("mapify_cli") / "templates"))
-    except Exception:  # noqa: BLE001, S110
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
 
     # Fallback to module directory
