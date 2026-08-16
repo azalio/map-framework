@@ -4566,6 +4566,15 @@ class TestWriteStageGate:
         assert result["status"] == "success"
         assert (other_dir / "plan-gate.json").exists()
 
+    def test_write_stage_gate_no_tmp_residue(self, branch_workspace):
+        """Regression #432 Bug 1: write_stage_gate must use an atomic
+        tmp→replace write so no .tmp file remains after a successful call."""
+        result = map_step_runner.write_stage_gate("plan", "ready")
+
+        assert result["status"] == "success"
+        tmp_files = list(branch_workspace.glob("*.tmp"))
+        assert tmp_files == [], f"Stale .tmp files after write_stage_gate: {tmp_files}"
+
 
 # ---------------------------------------------------------------------------
 # ensure_active_issues_file — focused unit tests
@@ -8010,6 +8019,35 @@ class TestDetectAlreadyDone:
         assert report["status"] == "unclear"
         assert "never_made.py" in report["missing_or_no_commits"]
 
+    def test_probe_oserror_returns_error_not_exception(
+        self, branch_workspace, monkeypatch
+    ):
+        """Regression #432 Bug 4: OSError from the initial ref-probe subprocess.run
+        must be caught and returned as status='error', not propagate as an exception.
+        """
+        repo = branch_workspace.parents[1]
+        self._init_git(repo, [])
+        bp = {"subtasks": [{"id": "ST-007", "affected_files": ["a.py"]}]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        (repo / "a.py").write_text("x")
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+
+        import subprocess as real_subprocess
+
+        original_run = real_subprocess.run
+        call_count: list[int] = [0]
+
+        def _raise_on_first(*args: object, **kwargs: object) -> object:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise OSError("git: No such file or directory")
+            return original_run(*args, **kwargs)
+
+        monkeypatch.setattr(map_step_runner.subprocess, "run", _raise_on_first)
+        report = map_step_runner.detect_already_done("test-branch", "ST-007")
+        assert report["status"] == "error", report
+        assert "git" in report["message"].lower()
+
 
 class TestBuildContextBlockInlinesResearch:
     """build_context_block now auto-loads load_research for the current
@@ -9835,6 +9873,18 @@ class TestCreateReviewBundle:
                 f"Role '{role}': required_keys {required_keys - skeleton_keys} "
                 f"not present in skeleton"
             )
+
+    def test_create_review_bundle_no_tmp_residue(self, branch_workspace):
+        """Regression #432 Bugs 2+3: create_review_bundle must use atomic
+        tmp→replace writes so no .tmp files remain for the JSON or markdown
+        bundle after a successful call."""
+        result = map_step_runner.create_review_bundle()
+
+        assert result["status"] == "success"
+        tmp_files = list(branch_workspace.glob("*.tmp"))
+        assert tmp_files == [], (
+            f"Stale .tmp files after create_review_bundle: {tmp_files}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -17128,3 +17178,79 @@ def test_write_prd_review_rejects_non_array_blocking_questions(
     assert result["status"] == "error"
     assert "blocking_questions must be a JSON array" in result["message"]
     assert not (branch_workspace / "prd-review.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# _write_text_file — unit tests (issue #432)
+# ---------------------------------------------------------------------------
+
+
+class TestWriteTextFile:
+    """Unit tests for the _write_text_file atomic-write helper (issue #432)."""
+
+    def test_writes_content_to_path(self, tmp_path):
+        """Content is written correctly to the destination path."""
+        dest = tmp_path / "output.md"
+        map_step_runner._write_text_file(dest, "# Hello\n")
+        assert dest.read_text(encoding="utf-8") == "# Hello\n"
+
+    def test_no_tmp_residue_on_success(self, tmp_path):
+        """Regression #432: no .tmp file remains after a successful atomic write."""
+        dest = tmp_path / "output.md"
+        map_step_runner._write_text_file(dest, "content")
+        tmp_files = list(tmp_path.glob("*.tmp"))
+        assert tmp_files == [], f"Stale .tmp file after _write_text_file: {tmp_files}"
+
+    def test_creates_parent_directories(self, tmp_path):
+        """Parent directories are created if they do not exist."""
+        dest = tmp_path / "nested" / "deep" / "file.md"
+        map_step_runner._write_text_file(dest, "data")
+        assert dest.exists()
+        assert dest.read_text(encoding="utf-8") == "data"
+
+
+# ---------------------------------------------------------------------------
+# _resolve_subtask_diff_base OSError handling (issue #432, Bugs 5a/5b)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveSubtaskDiffBase:
+    """Unit tests for _resolve_subtask_diff_base internal error handling (issue #432)."""
+
+    def test_parent_probe_oserror_returns_base_ref_not_raises(
+        self, tmp_path, monkeypatch
+    ):
+        """Regression #432 Bug 5a: OSError from the parent-commit probe
+        subprocess.run must be caught; the function returns base_ref, not raises."""
+        fake_sha = "abc123def456abc123def456abc123def456abc123"
+        state_dir = tmp_path / ".map" / "test-branch"
+        state_dir.mkdir(parents=True)
+        (state_dir / "step_state.json").write_text(json.dumps({
+            "last_subtask_commit_sha": fake_sha,
+            "subtask_results": {"ST-001": {"commit_sha": fake_sha}},
+        }))
+
+        def _always_raise(*args: object, **kwargs: object) -> object:
+            del args, kwargs
+            raise OSError("git: No such file or directory")
+
+        monkeypatch.setattr(map_step_runner.subprocess, "run", _always_raise)
+        result = map_step_runner._resolve_subtask_diff_base(
+            "test-branch", "ST-001", tmp_path
+        )
+        assert result == fake_sha
+
+    def test_head_probe_oserror_returns_none_not_raises(
+        self, tmp_path, monkeypatch
+    ):
+        """Regression #432 Bug 5b: OSError from the HEAD probe subprocess.run
+        must be caught; the function returns None, not raises."""
+        def _always_raise(*args: object, **kwargs: object) -> object:
+            del args, kwargs
+            raise OSError("git: No such file or directory")
+
+        monkeypatch.setattr(map_step_runner.subprocess, "run", _always_raise)
+        result = map_step_runner._resolve_subtask_diff_base(
+            "test-branch", "ST-001", tmp_path
+        )
+        assert result is None
