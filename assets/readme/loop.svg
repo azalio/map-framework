@@ -56,13 +56,14 @@
   </g>
 
   <!-- right caption -->
-  <g transform="translate(870 70)" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,PingFang SC,sans-serif">
-    <rect x="0" y="0" width="266" height="160" rx="14" fill="#161B22" stroke="#30363D"/>
-    <circle cx="28" cy="34" r="6" fill="#F0B429"/>
-    <text x="46" y="40" font-size="18" font-weight="700" fill="#E6EDF3">plan moves judgment earlier</text>
-    <text x="24" y="74" font-size="15.5" fill="#8B949E">Write the behavior down.</text>
-    <text x="24" y="96" font-size="15.5" fill="#8B949E">Split into small contracts.</text>
-    <text x="24" y="118" font-size="15.5" fill="#8B949E">Verify, review, remember.</text>
-    <text x="24" y="142" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="14" fill="#3FB950">fast wrong answers → slow right ones</text>
+  <g transform="translate(850 62)" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,PingFang SC,sans-serif">
+    <rect x="0" y="0" width="286" height="176" rx="14" fill="#161B22" stroke="#30363D"/>
+    <circle cx="26" cy="33" r="6" fill="#F0B429"/>
+    <text x="42" y="39" font-size="17" font-weight="700" fill="#E6EDF3">plan moves judgment earlier</text>
+    <text x="24" y="72" font-size="15.5" fill="#8B949E">Write the behavior down.</text>
+    <text x="24" y="94" font-size="15.5" fill="#8B949E">Split into small contracts.</text>
+    <text x="24" y="116" font-size="15.5" fill="#8B949E">Verify, review, remember.</text>
+    <text x="24" y="142" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="13.5" fill="#3FB950">fast wrong answers</text>
+    <text x="24" y="160" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="13.5" fill="#3FB950">→ slow right ones</text>
   </g>
 </svg>
