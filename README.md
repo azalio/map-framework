@@ -1,5 +1,3 @@
-# MAP Framework
-
 <p align="center">
   <img src="./assets/readme/hero.svg" width="100%" alt="MAP Framework — Plan-then-build AI coding. You approve the plan before the model writes a line of code.">
 </p>
