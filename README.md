@@ -84,6 +84,26 @@ That's the whole golden path.
 
 > Codex CLI users invoke the same skills with `$`: `$map-plan`, `$map-efficient`, `$map-check`. See the [Usage Guide](docs/USAGE.md#codex-cli-provider).
 
+**Framework updates.** Automatic stable updates are enabled by default. Normal
+MAP skills check at most once per project every 24 hours, apply eligible patch
+and minor releases, and ask before a major release after showing its official
+feature highlights. Rejecting a major offer is remembered per project for that
+exact version, so it is not offered again; any different patch, minor, or major
+version is offered normally. Use these project controls and provider-specific
+manual skills when needed:
+
+```text
+mapify init . --no-auto-update   # persist updates.auto: false
+mapify init . --auto-update      # re-enable automatic checks
+/map-upgrade                     # Claude manual check/upgrade
+$map-upgrade                     # Codex manual check/upgrade
+```
+
+Automatic failures stay silent so they do not block the requested workflow;
+manual checks report errors explicitly. The public `mapify upgrade` command is
+separate and unchanged: it upgrades only the CLI and does not refresh project
+files. See [Automatic and manual framework updates](docs/USAGE.md#automatic-and-manual-framework-updates).
+
 ## Case Study: 90 days → 7 days
 
 The DevOpsConf 2026 case study applies this process to a production Kubernetes Project Operator:

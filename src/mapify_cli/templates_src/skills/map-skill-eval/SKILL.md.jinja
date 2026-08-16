@@ -6,6 +6,7 @@ effort: medium
 disable-model-invocation: true
 argument-hint: "[skill] [--eval-set PATH]"
 ---
+[% include "_partials/auto-update-preflight.md.jinja" %]
 # /map-skill-eval — Skill Trigger Accuracy & Cost Evaluation
 
 Purpose: measure whether a `/map-*` skill fires on the right prompts and what it costs in tokens and time. Do not plan or implement from this skill.

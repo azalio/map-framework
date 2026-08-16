@@ -15,6 +15,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   examples) now invoke `./scripts/bump-version.sh --yes`, since the workflow already
   gates the bump behind an explicit `AskUserQuestion` confirmation.
 
+### Added
+- **Exact declined major offers are remembered per project.** When a user rejects
+  a `major_available` proposal, generated Claude and Codex skills silently persist
+  that exact stable version in update-state schema v4. Automatic and manual checks
+  suppress only the matching release before highlight retrieval; `4.0.1`, `4.1.0`,
+  or `5.0.0` are still offered after rejecting `4.0.0`. Rejection-persistence
+  failures remain silent and never block the invoked workflow.
+- **Automatic MAP updates.** `mapify` can now keep itself and the installed
+  provider surfaces current. Every shipped `/map-*` (Claude) and `$map-*` (Codex)
+  skill runs a `mapify _update --mode automatic --project .` preflight as its
+  first step; throttled stable-version discovery, exact-version package
+  installation, durable update state, and crash recovery live in the new
+  `auto_update`, `update_install`, `update_state`, and `update_versions` modules.
+  **This is on by default** (`updates.auto`, `MapConfig.updates_auto`): after
+  upgrading, existing projects begin checking for updates automatically, at most
+  once per 24 h. Set `updates.auto: false` in `.map/config.yaml` to opt out.
+  Same-major upgrades apply automatically; a major-version jump is never applied
+  without explicit consent via `mapify _update --mode manual --approve-major
+  <version>`, re-validated against a freshly fetched target. Automatic-mode
+  failures stay silent by design so a broken update never blocks a workflow —
+  use manual mode to see the error. A provider refresh that keeps failing backs
+  off for `REFRESH_RETRY_INTERVAL` (15 min) instead of re-spawning a
+  `mapify init --refresh-existing` child on every preflight; the first retry
+  after a completed install stays un-throttled so provider surfaces are not left
+  stale for a day. See `docs/USAGE.md` § Automatic and Manual Framework Updates.
+- **`/map-upgrade`** manual upgrade workflow, plus hardened install manifests,
+  provider-refresh locking, and rollback behavior.
+- **Concurrency-safe, link-safe `.gitignore` merging.** Every MAP-owned ignore
+  entry (`.sofa/`, `.claude/settings.local.json`, `.claude/agent-memory-local/`,
+  and the new `.map/*.lock` / `.map/update-state.json` runtime files) is merged
+  under one project-local writer lock at `.map/gitignore.lock`, shared by the
+  CLI and the standalone `.map/scripts/sofa_client.py`, with atomic replacement
+  and symlink/hard-link rejection. Merging is idempotent: an entry is re-added
+  only when a later negation can actually target it (`!.sofa/`, `!.map/**`,
+  `!.claude/settings.*`), and git's own trailing-whitespace rules are honoured,
+  so unrelated `!` lines and `.sofa/ ` no longer produce duplicate entries.
+- **Transactional SOFA credential storage.** `.sofa/credentials.json` is written
+  atomically behind `.sofa/credentials.lock`, always after the `.gitignore`
+  entry is in place, and always `0600`. A failed restore leaves an owner-only
+  recovery copy and names it in the error instead of discarding the previous
+  keys.
+
 ## [3.26.0] - 2026-08-15
 
 ### Fixed

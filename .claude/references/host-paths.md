@@ -10,13 +10,14 @@
 
 ## (b) Reserved Variables
 
-These three variables are reserved by the MAP orchestration layer. Do not repurpose or shadow them.
+These four variables are reserved by MAP runtime layers. Do not repurpose or shadow them.
 
 | Variable | Semantics |
 |---|---|
 | `MAP_INVOKED_BY` | Identity of the invoking agent or surface (e.g., `map-efficient`, `map-task`). |
 | `MAP_BRANCH` | Git branch name of the active MAP session; used to scope `.map/<branch>/` state. |
 | `MAP_SUBTASK_ID` | ID of the currently executing subtask (e.g., `ST-002`); set by the orchestrator. |
+| `MAP_UPDATE_PARENT_LEASE` | Ephemeral updater-to-provider-child credential. It is not user configuration; see §Update Refresh Lease below. |
 
 ## (c) Registry of Existing MAP_* Variables
 
@@ -34,14 +35,52 @@ These three variables are reserved by the MAP orchestration layer. Do not repurp
 
 ## (e) Host-Path Layout
 
-MAP uses two root directories:
+MAP uses the following host and project paths:
 
-- **`.map/<branch>/`** — per-branch workflow state (subtask plans, step state, findings). Lives inside the project repo, committed or gitignored per project convention.
+- **`.map/`** — project-local MAP state. `.map/<branch>/` holds per-branch workflow artifacts. The automatic updater owns the gitignored `.map/update-state.json`, `.map/update.lock`, `.map/installer.lock`, and `.map/provider-refresh.lock` files.
+- **`.sofa/`** — opt-in SOFA credentials. `.sofa/credentials.lock` serializes private credential-file reads and writes and is ignored with the rest of `.sofa/`.
 - **`~/.map/`** — host-scoped shared state. Two subdirectories matter:
   - `~/.map/locks/` — advisory lock files acquired by the orchestrator to prevent concurrent MAP sessions on the same branch.
   - `~/.map/hooks/` — host-level hook scripts invoked by the MAP hook harness before/after workflow phases.
 
-These are the only two MAP roots. No other directories are created by the MAP runtime.
+Root `.gitignore` mutation uses one cross-process lock keyed by the SHA-256 of
+the project directory's filesystem identity (`st_dev:st_ino`). POSIX hosts place
+the persistent lock at `/tmp/mapify-gitignore-<digest>.lock`, independently of
+`TMPDIR`; Windows uses the machine-wide named mutex
+`Global\MapifyGitignore-<digest>`, so it creates no project file. Neither form
+introduces another MAP state directory.
+
+### Update Refresh Lease
+
+`MAP_UPDATE_PARENT_LEASE` is a cryptorandom, single-process handoff from an updater
+that holds `.map/update.lock` to its direct `mapify init --refresh-existing` child.
+It is an ephemeral credential, not a configurable runtime option:
+
+- the updater passes it only in that provider child's environment;
+- the child removes it before init executes any command or extension;
+- it is never placed in command arguments or inherited by a package manager;
+- the raw value is never persisted—the lock record stores only its SHA-256 digest,
+  the parent PID, and resolved project identity; and
+- it cannot be reused without active update-lock contention plus matching direct
+  parent PID, project, provider, running version, and pending update phase.
+
+Package mutation is serialized by `.map/installer.lock`, which is acquired by an
+isolated installer controller before it signals `READY`. The updater writes durable
+install intent only after `READY`, then sends `GO`. Parent death before `GO` closes
+the control pipe without starting pip/uv; parent death after `GO` leaves the child
+holding the installer barrier until pip/uv exits. The controller uses the current
+interpreter's isolated mode plus the resolved trusted MAP package root, so project
+files and `PYTHONPATH` cannot shadow its `mapify_cli` import. No lease or handshake
+secret is placed in argv. Pip also runs in interpreter isolated mode while keeping
+the project as its working directory, so neither the project nor `PYTHONPATH` can
+shadow pip's module entry point.
+
+Provider mutation is separately serialized by `.map/provider-refresh.lock` so a
+child that outlives its updater parent cannot race a replacement update. The
+enforced global order is `.map/update.lock`, then `.map/installer.lock`, then
+`.map/provider-refresh.lock`. The updater's installer child owns only the installer
+barrier; a validated provider child already covered by its parent's update lock
+acquires only the provider barrier after installation completes.
 
 ## (f) State Markers (Closed Enum)
 

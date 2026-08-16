@@ -6,6 +6,7 @@ disable-model-invocation: true
 argument-hint: "[chart \"loose idea\" | work <slug> [ticket] | handoff <slug>]"
 effort: medium
 ---
+[% include "_partials/auto-update-preflight.md.jinja" %]
 # /map-wayfind — Decision-Frontier Wayfinding
 
 Purpose: for a large or foggy effort, resolve the key design decisions ONE AT A TIME on a durable map before any planning. If the scope is already clear enough to specify, skip this and run `/map-plan` directly.

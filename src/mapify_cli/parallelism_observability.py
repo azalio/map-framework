@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TypedDict
 
 # ---------------------------------------------------------------------------
 # Canonical reason-code constants
@@ -93,9 +94,6 @@ ALL_DISPATCH_OUTCOMES: frozenset[str] = frozenset(
 # ---------------------------------------------------------------------------
 # Defined once here (TypedDict per the contract-first learned rule).
 # Slice 5 imports this type to populate and write the report.
-
-from typing import TypedDict
-
 
 class ColorGroupDecision(TypedDict):
     """Per color-group (wave sub-group) dispatch decision record."""

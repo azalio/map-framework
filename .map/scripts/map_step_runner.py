@@ -10236,7 +10236,7 @@ For each finding, include concrete evidence:
         "description": "Spec compliance and acceptance review",
         "task": """Review the git diff against the specification and requirements. You have access to the diff, spec, plan, and all project artifacts. Your job is to verify every requirement is implemented and flag gaps.
 
-Take an adversarial stance toward COMPLACENCY, not the developer: "Has every stated requirement actually been met? Is there implemented code that serves no spec requirement?" 
+Take an adversarial stance toward COMPLACENCY, not the developer: "Has every stated requirement actually been met? Is there implemented code that serves no spec requirement?"
 
 IMPORTANT: If all requirements are met, explicitly state that with reasoning. A clean review is signal.""",
         "instructions": """Verify:

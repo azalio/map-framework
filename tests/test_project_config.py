@@ -22,6 +22,7 @@ from pathlib import Path
 
 from mapify_cli.config.project_config import (
     MapConfig,
+    apply_auto_update_override,
     clamp_max_actors,
     clamp_max_wave_retries,
     generate_default_config,
@@ -34,6 +35,25 @@ _TEMPLATES_SRC = Path(__file__).parent.parent / "src" / "mapify_cli" / "template
 def _write_config(tmp_path: Path, body: str) -> None:
     (tmp_path / ".map").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".map" / "config.yaml").write_text(body, encoding="utf-8")
+
+
+class TestAutoUpdates:
+    def test_updates_auto_defaults_true(self, tmp_path: Path) -> None:
+        assert load_map_config(tmp_path).updates_auto is True
+
+    def test_updates_auto_dotted_key_false(self, tmp_path: Path) -> None:
+        _write_config(tmp_path, "updates.auto: false\n")
+        assert load_map_config(tmp_path).updates_auto is False
+
+    def test_updates_auto_wrong_type_uses_true_default(self, tmp_path: Path) -> None:
+        _write_config(tmp_path, 'updates.auto: "no"\n')
+        assert load_map_config(tmp_path).updates_auto is True
+
+    def test_apply_auto_update_override_replaces_placeholder(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.yaml"
+        config.write_text("# updates.auto: true\n", encoding="utf-8")
+        apply_auto_update_override(config, False)
+        assert config.read_text(encoding="utf-8") == "updates.auto: false\n"
 
 
 class TestVc1MaxActorsAndRetryDegraded:
