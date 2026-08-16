@@ -28,16 +28,8 @@
   <text x="66" y="198" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,PingFang SC,sans-serif" font-size="26" fill="#C9D1D9" font-weight="500">Plan-then-build AI coding.</text>
   <text x="66" y="232" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,PingFang SC,sans-serif" font-size="26" fill="#8B949E" font-weight="500">You approve the plan before the model writes a line of code.</text>
 
-  <!-- providers -->
-  <g font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="19" fill="#8B949E">
-    <text x="66" y="292">claude code</text>
-    <text x="182" y="292" fill="#3A4451">/</text>
-    <text x="198" y="292">codex cli</text>
-    <text x="288" y="292" fill="#3A4451">/</text>
-    <text x="304" y="292">python 3.11+</text>
-    <text x="432" y="292" fill="#3A4451">/</text>
-    <text x="448" y="292">v3.23.0</text>
-  </g>
+  <!-- providers (single flowing text: no hard-coded x offsets, so it can never collide) -->
+  <text x="66" y="292" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="19" fill="#8B949E">claude code<tspan fill="#3A4451"> &#183; </tspan>codex cli<tspan fill="#3A4451"> &#183; </tspan>python 3.11+</text>
 
   <!-- divider -->
   <line x1="836" y1="56" x2="836" y2="304" stroke="#232A33" stroke-width="1"/>
