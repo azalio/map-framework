@@ -615,7 +615,6 @@ def test_vc3_gitignore_ensured_before_key_write_idempotent():
         "# map:sofa\n",
         "# map:sofa\n.sofa/\n!.sofa/\n",
         "# map:sofa\n.sofa/\n!.sofa/**\n",
-        "# map:sofa\n.sofa/\n!unrelated/**\n",
         "user-rule/\n  .sofa/\n",
     ],
 )
@@ -645,6 +644,54 @@ def test_vc3_repairs_marker_only_leading_space_and_later_negations(
 
     assert sofa.ensure_sofa_gitignore(tmp_path) is False
     assert gitignore.read_text(encoding="utf-8") == repaired
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
+        # An unrelated negation cannot re-include .sofa/, so repeating the rule
+        # only grows the user's .gitignore. Regression for the duplicate-block
+        # defect: `mapify init` merges this file on every run (including the
+        # automatic provider refresh), so one stray `!` line used to re-append
+        # the whole MAP block each time the user added a new negation.
+        "# map:sofa\n.sofa/\n!unrelated/**\n",
+        "# map:sofa\n.sofa/\n!docs/generated/index.md\n",
+        # Git ignores unescaped trailing whitespace, so these ARE `.sofa/`.
+        "# map:sofa\n.sofa/ \n",
+        "# map:sofa\n.sofa/\t\n",
+    ],
+)
+def test_vc3_keeps_effective_ignore_without_duplicating(
+    tmp_path: Path,
+    original: str,
+) -> None:
+    gitignore = tmp_path / ".gitignore"
+    gitignore.write_text(original, encoding="utf-8")
+
+    assert sofa.ensure_sofa_gitignore(tmp_path) is False
+    assert gitignore.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
+        # A backslash-escaped trailing space is significant to git, so this is
+        # a different rule and the canonical path still has to be added.
+        "# map:sofa\n.sofa/\\ \n",
+        # Leading whitespace is significant to git too.
+        "# map:sofa\n  .sofa/\n",
+    ],
+)
+def test_vc3_non_canonical_variants_still_add_the_exact_rule(
+    tmp_path: Path,
+    original: str,
+) -> None:
+    gitignore = tmp_path / ".gitignore"
+    gitignore.write_text(original, encoding="utf-8")
+
+    assert sofa.ensure_sofa_gitignore(tmp_path) is True
+    assert gitignore.read_text(encoding="utf-8").splitlines()[-1] == ".sofa/"
+    assert sofa.ensure_sofa_gitignore(tmp_path) is False
 
 
 def test_vc3_secure_merge_preserves_readonly_mode_and_content(tmp_path: Path) -> None:
@@ -723,6 +770,73 @@ def test_vc3_cli_and_standalone_share_windows_mutex_identity(tmp_path: Path) -> 
     name = sofa._windows_gitignore_mutex_name(project_stat)
     assert name == file_copier._windows_gitignore_mutex_name(project_stat)
     assert name.startswith("Global\\MapifyGitignore-")
+
+
+# `.map/scripts/sofa_client.py` is a standalone script installed into user
+# projects: it cannot import mapify_cli, so the .gitignore locking helpers are
+# duplicated on purpose. Both copies then mutate the SAME file under the SAME
+# lock, so a silent divergence in one copy is a real concurrency defect. Only
+# the names below may differ; every shared helper body must stay equivalent.
+_PARITY_NAME_ALIASES = {
+    "_unsafe_project_gitignore": "_unsafe_gitignore",
+    "UpdateRuntimeGitignoreSecurityError": "SofaGitignoreSecurityError",
+}
+
+
+def _parity_normalized_helpers(source_path: Path) -> dict[str, str]:
+    """Return module-level defs as alias-normalized, docstring-free AST text."""
+    import ast
+
+    class _Rename(ast.NodeTransformer):
+        def visit_Name(self, node: ast.Name) -> ast.Name:
+            node.id = _PARITY_NAME_ALIASES.get(node.id, node.id)
+            return node
+
+        def visit_Attribute(self, node: ast.Attribute) -> ast.Attribute:
+            self.generic_visit(node)
+            node.attr = _PARITY_NAME_ALIASES.get(node.attr, node.attr)
+            return node
+
+    module = ast.parse(source_path.read_text(encoding="utf-8"))
+    helpers: dict[str, str] = {}
+    for node in module.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        clone = _Rename().visit(ast.parse(ast.unparse(node)).body[0])
+        assert isinstance(clone, (ast.FunctionDef, ast.AsyncFunctionDef))
+        if (
+            clone.body
+            and isinstance(clone.body[0], ast.Expr)
+            and isinstance(clone.body[0].value, ast.Constant)
+            and isinstance(clone.body[0].value.value, str)
+        ):
+            clone.body = clone.body[1:] or [ast.Pass()]
+        helpers[node.name] = ast.unparse(ast.fix_missing_locations(clone))
+    return helpers
+
+
+def test_vc3_duplicated_gitignore_helpers_do_not_drift() -> None:
+    repo_root = Path(__file__).resolve().parent.parent
+    standalone = _parity_normalized_helpers(
+        repo_root / ".map" / "scripts" / "sofa_client.py"
+    )
+    library = _parity_normalized_helpers(
+        repo_root / "src" / "mapify_cli" / "delivery" / "file_copier.py"
+    )
+
+    shared = sorted(set(standalone) & set(library))
+    # Guard against a vacuous pass if either file is renamed or restructured.
+    assert len(shared) >= 20, f"unexpectedly few shared helpers: {shared}"
+    assert "_atomic_replace_gitignore" in shared
+    assert "_has_effective_gitignore_path" in shared
+
+    drifted = [name for name in shared if standalone[name] != library[name]]
+    assert not drifted, (
+        "duplicated .gitignore helpers diverged between "
+        f".map/scripts/sofa_client.py and file_copier.py: {drifted}. "
+        "Edit templates_src/map/scripts/sofa_client.py.jinja and file_copier.py "
+        "together, then re-run `make render-templates`."
+    )
 
 
 @pytest.mark.parametrize(
@@ -1506,7 +1620,10 @@ def test_vc3_root_swap_during_credential_replace_rolls_back_secret(
     moved_credentials = moved_project / ".sofa" / "credentials.json"
     if existing_credentials:
         assert moved_credentials.read_bytes() == prior_content
-        assert stat.S_IMODE(moved_credentials.stat().st_mode) == 0o640
+        # The restore path reinstates the previous bytes at 0600, matching
+        # the mode a successful write installs. Inheriting a wider mode
+        # would widen access to the secret only in the recovery path.
+        assert stat.S_IMODE(moved_credentials.stat().st_mode) == 0o600
         assert (
             list(moved_credentials.parent.glob(".credentials.json.rollback.*.tmp"))
             == []
@@ -1569,7 +1686,8 @@ def test_vc3_failed_restore_removes_newly_installed_secret(
     assert secret not in json.dumps(result)
     restored = moved_project / ".sofa" / "credentials.json"
     assert restored.read_bytes() == prior_content
-    assert stat.S_IMODE(restored.stat().st_mode) == 0o640
+    # Restored credentials are owner-only, like a successful write.
+    assert stat.S_IMODE(restored.stat().st_mode) == 0o600
     assert list(restored.parent.glob(".credentials.json.rollback.*.tmp")) == []
     for root in (project, moved_project):
         for candidate in root.rglob("*"):
@@ -1637,7 +1755,8 @@ def test_vc3_failed_restore_and_fallback_retains_only_recovery_copy(
     )
     assert len(recoveries) == 1
     assert recoveries[0].read_bytes() == prior_content
-    assert stat.S_IMODE(recoveries[0].stat().st_mode) == 0o640
+    # The surviving recovery copy holds real API keys: always owner-only.
+    assert stat.S_IMODE(recoveries[0].stat().st_mode) == 0o600
     for root in (project, moved_project):
         for candidate in root.rglob("*"):
             if candidate.is_file() and candidate not in recoveries:

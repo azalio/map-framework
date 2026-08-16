@@ -17,6 +17,7 @@ import tempfile
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -509,6 +510,7 @@ _UPDATE_RUNTIME_GITIGNORE_PATHS = (
     ".map/update.lock",
     ".map/provider-refresh.lock",
     ".map/installer.lock",
+    ".map/gitignore.lock",
 )
 _WINDOWS_GITIGNORE_MUTEX_TIMEOUT_MS = 30_000
 
@@ -564,6 +566,7 @@ def _replace_supports_directory_fds() -> bool:
 
 _CAN_USE_PROJECT_DIRECTORY_FD = (
     os.open in os.supports_dir_fd
+    and os.mkdir in os.supports_dir_fd
     and os.stat in os.supports_dir_fd
     and os.unlink in os.supports_dir_fd
     and _replace_supports_directory_fds()
@@ -581,16 +584,16 @@ def _gitignore_lock_path_for_stat(
     """Return the shared lock path used by every MAP .gitignore writer.
 
     The lock is persistent by design: unlinking it after release would create
-    an inode race between a waiter and a new caller. POSIX uses a fixed system
-    temp root so differing TMPDIR environments cannot split the lock identity;
-    Windows uses a named mutex and never calls this file-path helper.
+    an inode race between a waiter and a new caller. It lives beside the other
+    MAP runtime locks inside the project (``.map/``) rather than in a shared
+    temp root: a project-local path is unambiguous regardless of TMPDIR, exists
+    on images without ``/tmp``, and cannot be squatted by another local user —
+    a foreign-owned lock file fails identity validation and would otherwise
+    fail-close every ``mapify init`` on a multi-user machine. Windows uses a
+    named mutex and never calls this file-path helper.
     """
-    del project_root
-    identity = f"{project_stat.st_dev}:{project_stat.st_ino}".encode("ascii")
-    digest = hashlib.sha256(identity).hexdigest()
-    # A fixed POSIX root makes independent processes agree even when TMPDIR,
-    # TMP, or TEMP differ. The lock file itself is private and identity-checked.
-    return Path("/tmp") / f"mapify-gitignore-{digest}.lock"
+    del project_stat
+    return project_root / ".map" / "gitignore.lock"
 
 
 def _windows_gitignore_mutex_name(project_stat: os.stat_result) -> str:
@@ -803,8 +806,24 @@ def _required_lock_stat(lock_path: Path) -> os.stat_result:
     return current
 
 
+def _prepare_gitignore_lock_directory(lock_path: Path) -> None:
+    """Create and validate the project-local directory that holds the lock."""
+    lock_dir = lock_path.parent
+    try:
+        lock_dir.mkdir(mode=0o700, exist_ok=True)
+    except OSError as exc:
+        _unsafe_gitignore_lock(lock_path, f"could not create {lock_dir} ({exc})")
+    try:
+        current = os.lstat(lock_dir)
+    except OSError as exc:
+        _unsafe_gitignore_lock(lock_path, f"could not validate {lock_dir} ({exc})")
+    if stat.S_ISLNK(current.st_mode) or not stat.S_ISDIR(current.st_mode):
+        _unsafe_gitignore_lock(lock_path, f"{lock_dir} must be a direct directory")
+
+
 def _open_gitignore_lock(lock_path: Path) -> int:
     """Open a private persistent lock without following or accepting links."""
+    _prepare_gitignore_lock_directory(lock_path)
     try:
         initial = os.lstat(lock_path)
     except FileNotFoundError:
@@ -1071,22 +1090,84 @@ def _atomic_replace_gitignore(
             pass
 
 
+def _canonical_gitignore_line(line: bytes) -> bytes:
+    """Drop the trailing whitespace git itself ignores.
+
+    Git treats trailing spaces and tabs as insignificant unless they are
+    escaped with a backslash, so ``.sofa/ `` and ``.sofa/`` are one rule.
+    Leading whitespace IS significant to git and is deliberately left alone.
+    """
+    stripped = line.rstrip(b" \t")
+    if len(stripped) != len(line) and stripped.endswith(b"\\"):
+        return line
+    return stripped
+
+
+def _gitignore_pattern_matches(pattern: bytes, path: bytes) -> bool:
+    """Approximate git's wildmatch for one canonical project-relative path.
+
+    Segment-by-segment so ``*`` never crosses a ``/``, with ``**`` spanning any
+    number of segments.  Deliberately an approximation: it only has to decide
+    whether a negation *could* target a MAP-owned path.
+    """
+    pattern_parts = pattern.strip(b"/").split(b"/")
+    path_parts = path.strip(b"/").split(b"/")
+
+    def match(pattern_index: int, path_index: int) -> bool:
+        if pattern_index == len(pattern_parts):
+            return path_index == len(path_parts)
+        part = pattern_parts[pattern_index]
+        if part == b"**":
+            return any(
+                match(pattern_index + 1, candidate)
+                for candidate in range(path_index, len(path_parts) + 1)
+            )
+        if path_index == len(path_parts):
+            return False
+        if not fnmatchcase(
+            path_parts[path_index].decode("utf-8", "surrogateescape"),
+            part.decode("utf-8", "surrogateescape"),
+        ):
+            return False
+        return match(pattern_index + 1, path_index + 1)
+
+    return match(0, 0)
+
+
+def _negation_targets_path(negation: bytes, required: bytes) -> bool:
+    """Return whether a later ``!`` rule can plausibly re-include *required*.
+
+    A negation counts when its pattern matches the required path (``!.sofa/``,
+    ``!.map/**``, ``!.claude/settings.*``) or names one of its parent
+    directories.  An unrelated negation such as ``!docs/generated/index.md``
+    cannot revoke ``.sofa/``; treating every ``!`` line as a revocation made
+    each merge re-append the whole MAP block.
+    """
+    pattern = _canonical_gitignore_line(negation[1:])
+    if not pattern:
+        return False
+    base = required.rstrip(b"/")
+    if _gitignore_pattern_matches(pattern, base):
+        return True
+    pattern_base = pattern.rstrip(b"/")
+    return pattern.endswith(b"/") and base.startswith(pattern_base + b"/")
+
+
 def _has_effective_gitignore_path(lines: list[bytes], required_path: str) -> bool:
     """Return whether an exact path remains authoritative after later rules.
 
-    Git evaluates ignore rules in order.  MAP deliberately uses a conservative
-    rule here instead of attempting to reproduce git's wildmatch semantics: an
-    exact canonical path is effective only when no later unescaped negation
-    rule follows it.  Leading-space and otherwise non-canonical variants do not
-    count as the required path.
+    Git evaluates ignore rules in order, so the required path is effective only
+    when no later unescaped negation targets it.  Leading-space and otherwise
+    non-canonical variants do not count as the required path.
     """
     required = required_path.encode()
     last_exact = -1
     for index, line in enumerate(lines):
-        if line == required:
+        if _canonical_gitignore_line(line) == required:
             last_exact = index
     return last_exact >= 0 and not any(
-        line.startswith(b"!") for line in lines[last_exact + 1 :]
+        line.startswith(b"!") and _negation_targets_path(line, required)
+        for line in lines[last_exact + 1 :]
     )
 
 

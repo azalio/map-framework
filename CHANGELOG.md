@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **An unrelated `!` rule no longer makes MAP re-append its whole `.gitignore`
+  block.** The `.gitignore` mergers treated *any* later negation line as
+  revoking a MAP-owned path, so a user rule such as `!docs/generated/index.md`
+  made the next merge duplicate every MAP entry. `mapify init` merges this file
+  on every run — including the automatic provider refresh — so the file grew by
+  a full block each time the user added a negation. Negations are now matched
+  against the path with a segment-wise wildmatch approximation: `!.sofa/`,
+  `!.map/**`, and `!.claude/settings.*` still count, unrelated rules do not.
+- **Trailing whitespace in `.gitignore` no longer hides an existing rule.** Git
+  ignores unescaped trailing spaces and tabs, so `.sofa/ ` *is* `.sofa/`, but
+  the byte-exact comparison did not recognise it and appended a duplicate.
+  Escaped (`.sofa/\ `) and leading whitespace remain significant, as in git.
+- **The shared `.gitignore` writer lock moved out of `/tmp`.** It now lives at
+  `.map/gitignore.lock`, beside the other MAP runtime locks. The hardcoded
+  `/tmp` path ignored `TMPDIR`, is absent on some minimal images, and let any
+  local user squat the path — identity validation then fail-closed every
+  `mapify init` on a multi-user machine. Windows still uses a named mutex.
+- **The credential rollback copy is always owner-only.** `.sofa/.credentials
+  .json.rollback.*.tmp` holds real API keys and can survive a failed restore,
+  but it inherited the mode of the previous `credentials.json` — a manually
+  widened `0640` file produced a group-readable copy of the secret in exactly
+  the recovery path. It is now created `0600`, matching what a successful write
+  installs, and the error message names the file left behind.
 - **`bump-version.sh` supports non-interactive runs via `-y`/`--yes`.** The script's
   30-second `read -t 30` confirmation prompt timed out and cancelled the bump whenever
   it ran without a TTY answer — the v3.26.0 release had to work around it by piping

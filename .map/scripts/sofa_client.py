@@ -29,6 +29,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Iterator
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -220,6 +221,10 @@ def _unsafe_gitignore(gitignore: Path, reason: str) -> NoReturn:
     raise SofaGitignoreSecurityError(f"unsafe project .gitignore: {reason}")
 
 
+def _uses_windows_gitignore_mutex() -> bool:
+    return os.name == "nt"
+
+
 def _validated_project_root_stat(project_root: Path) -> os.stat_result:
     """Return the direct directory identity used to key and guard the lock."""
     try:
@@ -271,11 +276,19 @@ def _gitignore_lock_path_for_stat(
     project_root: Path,
     project_stat: os.stat_result,
 ) -> Path:
-    """Return the shared lock path used by every MAP .gitignore writer."""
-    del project_root
-    identity = f"{project_stat.st_dev}:{project_stat.st_ino}".encode("ascii")
-    digest = hashlib.sha256(identity).hexdigest()
-    return Path("/tmp") / f"mapify-gitignore-{digest}.lock"
+    """Return the shared lock path used by every MAP .gitignore writer.
+
+    The lock is persistent by design: unlinking it after release would create
+    an inode race between a waiter and a new caller. It lives beside the other
+    MAP runtime locks inside the project (``.map/``) rather than in a shared
+    temp root: a project-local path is unambiguous regardless of TMPDIR, exists
+    on images without ``/tmp``, and cannot be squatted by another local user —
+    a foreign-owned lock file fails identity validation and would otherwise
+    fail-close every ``mapify init`` on a multi-user machine. Windows uses a
+    named mutex and never calls this file-path helper.
+    """
+    del project_stat
+    return project_root / ".map" / "gitignore.lock"
 
 
 def _windows_gitignore_mutex_name(project_stat: os.stat_result) -> str:
@@ -485,8 +498,24 @@ def _required_lock_stat(lock_path: Path) -> os.stat_result:
     return current
 
 
-def _open_private_lock(lock_path: Path) -> int:
+def _prepare_gitignore_lock_directory(lock_path: Path) -> None:
+    """Create and validate the project-local directory that holds the lock."""
+    lock_dir = lock_path.parent
+    try:
+        lock_dir.mkdir(mode=0o700, exist_ok=True)
+    except OSError as exc:
+        _unsafe_gitignore_lock(lock_path, f"could not create {lock_dir} ({exc})")
+    try:
+        current = os.lstat(lock_dir)
+    except OSError as exc:
+        _unsafe_gitignore_lock(lock_path, f"could not validate {lock_dir} ({exc})")
+    if stat.S_ISLNK(current.st_mode) or not stat.S_ISDIR(current.st_mode):
+        _unsafe_gitignore_lock(lock_path, f"{lock_dir} must be a direct directory")
+
+
+def _open_gitignore_lock(lock_path: Path) -> int:
     """Open a private persistent lock without following or accepting links."""
+    _prepare_gitignore_lock_directory(lock_path)
     try:
         initial = os.lstat(lock_path)
     except FileNotFoundError:
@@ -564,14 +593,14 @@ def _project_gitignore_lock(
     """Serialize the complete root .gitignore read/merge/replace transaction."""
     project_original = _validated_project_root_stat(project_root)
     with _pinned_project_root(project_root, project_original) as directory_fd:
-        if os.name == "nt":
+        if _uses_windows_gitignore_mutex():
             with _windows_project_gitignore_mutex(project_original):
                 _validate_project_root_unchanged(project_root, project_original)
                 yield directory_fd, project_original
                 _validate_project_root_unchanged(project_root, project_original)
             return
         lock_path = _gitignore_lock_path_for_stat(project_root, project_original)
-        descriptor = _open_private_lock(lock_path)
+        descriptor = _open_gitignore_lock(lock_path)
         locked = False
         try:
             _lock_descriptor(descriptor)
@@ -746,14 +775,89 @@ def _atomic_replace_gitignore(
             pass
 
 
-def _has_effective_sofa_ignore(lines: list[bytes]) -> bool:
+def _canonical_gitignore_line(line: bytes) -> bytes:
+    """Drop the trailing whitespace git itself ignores.
+
+    Git treats trailing spaces and tabs as insignificant unless they are
+    escaped with a backslash, so ``.sofa/ `` and ``.sofa/`` are one rule.
+    Leading whitespace IS significant to git and is deliberately left alone.
+    """
+    stripped = line.rstrip(b" \t")
+    if len(stripped) != len(line) and stripped.endswith(b"\\"):
+        return line
+    return stripped
+
+
+def _gitignore_pattern_matches(pattern: bytes, path: bytes) -> bool:
+    """Approximate git's wildmatch for one canonical project-relative path.
+
+    Segment-by-segment so ``*`` never crosses a ``/``, with ``**`` spanning any
+    number of segments.  Deliberately an approximation: it only has to decide
+    whether a negation *could* target a MAP-owned path.
+    """
+    pattern_parts = pattern.strip(b"/").split(b"/")
+    path_parts = path.strip(b"/").split(b"/")
+
+    def match(pattern_index: int, path_index: int) -> bool:
+        if pattern_index == len(pattern_parts):
+            return path_index == len(path_parts)
+        part = pattern_parts[pattern_index]
+        if part == b"**":
+            return any(
+                match(pattern_index + 1, candidate)
+                for candidate in range(path_index, len(path_parts) + 1)
+            )
+        if path_index == len(path_parts):
+            return False
+        if not fnmatchcase(
+            path_parts[path_index].decode("utf-8", "surrogateescape"),
+            part.decode("utf-8", "surrogateescape"),
+        ):
+            return False
+        return match(pattern_index + 1, path_index + 1)
+
+    return match(0, 0)
+
+
+def _negation_targets_path(negation: bytes, required: bytes) -> bool:
+    """Return whether a later ``!`` rule can plausibly re-include *required*.
+
+    A negation counts when its pattern matches the required path (``!.sofa/``,
+    ``!.map/**``, ``!.claude/settings.*``) or names one of its parent
+    directories.  An unrelated negation such as ``!docs/generated/index.md``
+    cannot revoke ``.sofa/``; treating every ``!`` line as a revocation made
+    each merge re-append the whole MAP block.
+    """
+    pattern = _canonical_gitignore_line(negation[1:])
+    if not pattern:
+        return False
+    base = required.rstrip(b"/")
+    if _gitignore_pattern_matches(pattern, base):
+        return True
+    pattern_base = pattern.rstrip(b"/")
+    return pattern.endswith(b"/") and base.startswith(pattern_base + b"/")
+
+
+def _has_effective_gitignore_path(lines: list[bytes], required_path: str) -> bool:
+    """Return whether an exact path remains authoritative after later rules.
+
+    Git evaluates ignore rules in order, so the required path is effective only
+    when no later unescaped negation targets it.  Leading-space and otherwise
+    non-canonical variants do not count as the required path.
+    """
+    required = required_path.encode()
     last_exact = -1
     for index, line in enumerate(lines):
-        if line == b".sofa/":
+        if _canonical_gitignore_line(line) == required:
             last_exact = index
     return last_exact >= 0 and not any(
-        line.startswith(b"!") for line in lines[last_exact + 1 :]
+        line.startswith(b"!") and _negation_targets_path(line, required)
+        for line in lines[last_exact + 1 :]
     )
+
+
+def _has_effective_sofa_ignore(lines: list[bytes]) -> bool:
+    return _has_effective_gitignore_path(lines, ".sofa/")
 
 
 def _has_sofa_marker(lines: list[bytes]) -> bool:
@@ -828,6 +932,19 @@ _CAN_USE_DIRECTORY_FD = (
     and os.unlink in os.supports_dir_fd
     and _replace_supports_directory_fds()
 )
+
+
+def _preserved_rollback_notice(
+    sofa_dir: Path,
+    rollback_file: str | Path | None,
+) -> str:
+    """Name the recovery copy left on disk so the operator can act on it."""
+    if rollback_file is None:
+        return ""
+    return (
+        "; the previous credentials were left in "
+        f"{sofa_dir / Path(rollback_file).name} (owner-only) - restore or delete it"
+    )
 
 
 def _unsafe_credentials(reason: str) -> NoReturn:
@@ -1209,9 +1326,15 @@ def _installed_credentials_stat(
 def _create_credentials_rollback_file(
     sofa_dir: Path,
     previous_content: bytes,
-    previous_mode: int,
     directory_fd: int | None,
 ) -> tuple[str | Path, os.stat_result]:
+    """Stage the previous credential bytes for a possible restore.
+
+    The copy holds real API keys, so it is always owner-only (0600) even when
+    the installed credentials.json carried a wider mode: this file can survive
+    a failed restore, and inheriting a group- or world-readable mode would
+    widen access to the secret exactly in the recovery path.
+    """
     descriptor = -1
     temporary: str | Path = ""
     try:
@@ -1236,7 +1359,7 @@ def _create_credentials_rollback_file(
                     descriptor = os.open(
                         candidate,
                         flags,
-                        previous_mode,
+                        0o600,
                         dir_fd=directory_fd,
                     )
                 except FileExistsError:
@@ -1246,11 +1369,11 @@ def _create_credentials_rollback_file(
             if descriptor < 0:
                 raise FileExistsError("could not allocate a credential rollback file")
         if hasattr(os, "fchmod"):
-            os.fchmod(descriptor, previous_mode)
-        elif not _descriptor_mode_matches(descriptor, previous_mode):
+            os.fchmod(descriptor, 0o600)
+        elif not _descriptor_mode_matches(descriptor, 0o600):
             _unsafe_credentials(
-                "cannot preserve the credential rollback mode without descriptor "
-                "chmod support"
+                "cannot enforce the private credential rollback mode without "
+                "descriptor chmod support"
             )
         with os.fdopen(descriptor, "wb") as stream:
             descriptor = -1
@@ -1490,7 +1613,6 @@ def _atomic_write_credentials(
                 rollback_file, rollback_prepared = _create_credentials_rollback_file(
                     sofa_dir,
                     previous_content,
-                    stat.S_IMODE(original.st_mode),
                     directory_fd,
                 )
             os.replace(
@@ -1527,9 +1649,13 @@ def _atomic_write_credentials(
                         if removal_failed
                         else ""
                     )
+                    notice = _preserved_rollback_notice(
+                        sofa_dir,
+                        rollback_file if preserve_rollback else None,
+                    )
                     _unsafe_credentials(
                         "credential rollback failed after the project root changed"
-                        f"{suffix}"
+                        f"{suffix}{notice}"
                     )
                 rollback_file = None
                 rollback_prepared = None
@@ -1587,7 +1713,6 @@ def _atomic_write_credentials(
             rollback_file, rollback_prepared = _create_credentials_rollback_file(
                 sofa_dir,
                 previous_content,
-                stat.S_IMODE(original.st_mode),
                 directory_fd,
             )
         # Windows cannot atomically replace a file while this descriptor is
@@ -1623,9 +1748,13 @@ def _atomic_write_credentials(
                     if removal_failed
                     else ""
                 )
+                notice = _preserved_rollback_notice(
+                    sofa_dir,
+                    rollback_file if preserve_rollback else None,
+                )
                 _unsafe_credentials(
                     "credential rollback failed after the project root changed"
-                    f"{suffix}"
+                    f"{suffix}{notice}"
                 )
             rollback_file = None
             rollback_prepared = None

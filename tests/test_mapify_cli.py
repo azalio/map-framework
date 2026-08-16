@@ -346,7 +346,7 @@ class TestInitCommand:
             ".map/installer.lock",
         ],
     )
-    @pytest.mark.parametrize("negation_kind", ["exact", "wildcard", "unrelated"])
+    @pytest.mark.parametrize("negation_kind", ["exact", "wildcard"])
     def test_update_runtime_gitignore_repairs_paths_before_later_negations(
         self,
         tmp_path: Path,
@@ -379,6 +379,47 @@ class TestInitCommand:
 
         assert merge_update_runtime_gitignore(tmp_path) == 0
         assert gitignore.read_text(encoding="utf-8") == repaired
+
+    @pytest.mark.parametrize(
+        "required_line",
+        [
+            ".map/update-state.json",
+            ".map/update.lock",
+            ".map/provider-refresh.lock",
+            ".map/installer.lock",
+        ],
+    )
+    def test_update_runtime_gitignore_ignores_unrelated_later_negations(
+        self,
+        tmp_path: Path,
+        required_line: str,
+    ) -> None:
+        """An unrelated `!` rule must not re-append the whole runtime block.
+
+        `mapify init` merges this file on every run, including the automatic
+        provider refresh, so treating any later negation as a revocation grew
+        the user's .gitignore by a full block each time they added one.
+        """
+        from mapify_cli.delivery.file_copier import merge_update_runtime_gitignore
+
+        original = (
+            "user-rule/\n"
+            "# map:update-runtime\n"
+            ".map/update-state.json\n"
+            ".map/update.lock\n"
+            ".map/provider-refresh.lock\n"
+            ".map/installer.lock\n"
+            ".map/gitignore.lock\n"
+            "!docs/generated/index.md\n"
+        )
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text(original, encoding="utf-8")
+
+        assert merge_update_runtime_gitignore(tmp_path) == 0
+        assert gitignore.read_text(encoding="utf-8") == original
+        assert gitignore.read_text(encoding="utf-8").splitlines().count(
+            required_line
+        ) == 1
 
     def test_update_runtime_gitignore_noop_rejects_post_read_swap(
         self,
@@ -741,7 +782,7 @@ class TestInitCommand:
             ),
         ],
     )
-    @pytest.mark.parametrize("negation_kind", ["exact", "wildcard", "unrelated"])
+    @pytest.mark.parametrize("negation_kind", ["exact", "wildcard"])
     def test_feature_gitignore_mergers_repair_paths_before_later_negations(
         self,
         tmp_path: Path,
@@ -765,7 +806,6 @@ class TestInitCommand:
         negation = {
             "exact": f"!{required_line}",
             "wildcard": wildcard_negation,
-            "unrelated": "!unrelated/**",
         }[negation_kind]
         original = f"user-rule/\n{marker}\n{required_line}\n{negation}\n"
         gitignore = tmp_path / ".gitignore"
@@ -785,6 +825,42 @@ class TestInitCommand:
 
         assert merge(tmp_path) == 0
         assert gitignore.read_text(encoding="utf-8") == repaired
+
+    @pytest.mark.parametrize(
+        ("feature", "marker", "required_line"),
+        [
+            ("sofa", "# map:sofa", ".sofa/"),
+            ("agent-memory", "# map:agent-memory-local", ".claude/agent-memory-local/"),
+            ("settings-local", "# map:settings-local", ".claude/settings.local.json"),
+        ],
+    )
+    def test_feature_gitignore_mergers_ignore_unrelated_later_negations(
+        self,
+        tmp_path: Path,
+        feature: str,
+        marker: str,
+        required_line: str,
+    ) -> None:
+        """A `!` rule that cannot target the path must leave the file alone."""
+        if feature == "sofa":
+            from mapify_cli.delivery.file_copier import merge_sofa_gitignore as merge
+        elif feature == "agent-memory":
+            from mapify_cli.delivery.file_copier import (
+                merge_agent_memory_gitignore as merge,
+            )
+        else:
+            from mapify_cli.config.settings import (
+                ensure_settings_local_gitignored as merge,
+            )
+
+        original = (
+            f"user-rule/\n{marker}\n{required_line}\n!docs/generated/index.md\n"
+        )
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text(original, encoding="utf-8")
+
+        assert merge(tmp_path) == 0
+        assert gitignore.read_text(encoding="utf-8") == original
 
     def test_feature_gitignore_merger_does_not_accept_leading_space_path(
         self,
