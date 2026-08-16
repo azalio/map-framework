@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.27.0] - 2026-08-16
+
 ### Fixed
 - **`bump-version.sh` supports non-interactive runs via `-y`/`--yes`.** The script's
   30-second `read -t 30` confirmation prompt timed out and cancelled the bump whenever
