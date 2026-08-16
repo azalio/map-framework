@@ -635,6 +635,14 @@ def _write_json_file(path: Path, payload: dict | list) -> None:
     tmp_file.replace(path)
 
 
+def _write_text_file(path: Path, content: str) -> None:
+    """Atomically write text content to disk."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_file = path.parent / (path.name + ".tmp")
+    tmp_file.write_text(content, encoding="utf-8")
+    tmp_file.replace(path)
+
+
 def _read_json_file(path: Path) -> dict[str, object] | None:
     """Read a JSON object from disk, returning None on invalid or missing files."""
     if not path.exists():
@@ -8664,9 +8672,7 @@ def write_stage_gate(
         "updated_at": datetime.now(UTC).isoformat(),
         "notes": notes or "",
     }
-    gate_file.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
-    )
+    _write_json_file(gate_file, payload)
     return {
         "status": "success",
         "path": str(gate_file),
@@ -9662,16 +9668,10 @@ def create_review_bundle(branch: str | None = None) -> dict:
         pass
 
     # Write JSON bundle (ensure_ascii=True for jq-safe output per INV-8)
-    bundle_json_path.write_text(
-        json.dumps(result, indent=2, ensure_ascii=True) + "\n",
-        encoding="utf-8",
-    )
+    _write_json_file(bundle_json_path, result)
 
     # Write human-readable Markdown bundle
-    bundle_md_path.write_text(
-        _render_bundle_markdown(result),
-        encoding="utf-8",
-    )
+    _write_text_file(bundle_md_path, _render_bundle_markdown(result))
 
     # --- Manifest integration (AC-4 / INV-5) ---
     # Both bundle files are written; now record them in artifact_manifest.json.
@@ -14211,15 +14211,22 @@ def detect_already_done(
     requested_ref = since_ref or "HEAD~50"
     # Probe the requested ref; if it can't be resolved (e.g., HEAD~50 in a
     # repo with only 3 commits), fall back to the entire reachable history.
-    probe = subprocess.run(
-        ["git", "rev-parse", "--verify", requested_ref],
-        cwd=project_dir,
-        capture_output=True,
-        text=True,
-        timeout=5,
-        check=False,
-    )
-    window_ref: str | None = requested_ref if probe.returncode == 0 else None
+    try:
+        probe = subprocess.run(
+            ["git", "rev-parse", "--verify", requested_ref],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        window_ref: str | None = requested_ref if probe.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "status": "error",
+            "subtask_id": subtask_id,
+            "message": f"git rev-parse failed: {exc}",
+        }
     evidence: list[dict] = []
     missing: list[str] = []
     have_commit: list[str] = []
@@ -15441,14 +15448,17 @@ def _resolve_subtask_diff_base(
         except (json.JSONDecodeError, OSError):
             pass
     if base_ref and recorded and base_ref == recorded:
-        parent_probe = subprocess.run(
-            ["git", "rev-parse", "--verify", f"{recorded}^"],
-            cwd=project_dir,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
+        try:
+            parent_probe = subprocess.run(
+                ["git", "rev-parse", "--verify", f"{recorded}^"],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return base_ref
         if parent_probe.returncode == 0:
             return f"{recorded}^"
         # Root commit (no parent): no usable parent to re-base onto. Keep the
@@ -15461,14 +15471,17 @@ def _resolve_subtask_diff_base(
     # No recorded subtask commit — probe HEAD before using it; `git rev-parse
     # HEAD` fails in a fresh repo with no commits, and we want porcelain-only
     # rather than a confusing "ambiguous HEAD".
-    head_probe = subprocess.run(
-        ["git", "rev-parse", "--verify", "HEAD"],
-        cwd=project_dir,
-        capture_output=True,
-        text=True,
-        timeout=5,
-        check=False,
-    )
+    try:
+        head_probe = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
     if head_probe.returncode == 0:
         return "HEAD"
     return None
