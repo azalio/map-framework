@@ -28,6 +28,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`end-of-turn.sh` auto-fix layer is fully silent.** `ruff check --fix`
   diagnostics were written to stdout and leaked into the hook output; stdout is
   now redirected as well as stderr.
+- **`end-of-turn.sh` respects `checks.go.goos` / `checks.go.build` for
+  Linux-only Go projects.** The hook ran `go build ./...` with the host GOOS,
+  producing a false critical on every turn for projects whose only valid build
+  target is Linux (cgroups, eBPF, netlink) while developed on macOS. A new
+  `_read_map_config_value` helper reads flat dotted keys from `.map/config.yaml`
+  (stdlib regex, no PyYAML dependency): `checks.go.goos: linux` forwards that
+  GOOS to `go build` (an explicit `GOOS` env var still wins), and
+  `checks.go.build: false` disables the Go build check entirely for projects
+  that cross-compile externally. Closes azalio/map-framework#435.
+- **`test_vc4_store_does_not_clobber_unreadable_credentials` no longer fails
+  under a root pytest run.** `chmod 0o000` does not make a file unreadable for
+  root on Linux, so the test is now skipped for root alongside the existing
+  Windows skip.
 
 ## [3.27.0] - 2026-08-16
 
