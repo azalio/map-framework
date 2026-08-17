@@ -21,7 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   init-created file as changed, so per-language checks fired on every turn —
   including docs-only turns. The hook now keeps a per-repo untracked snapshot
   under `.git/mapify-end-of-turn/` and, in commit-less repos, gates only files
-  that are new or were modified since the previous hook run. Closes
+  that are new (absent from the snapshot) or were modified since the previous
+  hook run. The very first run has no baseline and treats all untracked files
+  as changed, so the gate stays useful from turn one. Closes
   azalio/map-framework#438.
 - **`end-of-turn.sh` auto-fix layer is fully silent.** `ruff check --fix`
   diagnostics were written to stdout and leaked into the hook output; stdout is

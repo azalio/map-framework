@@ -2144,6 +2144,10 @@ Only files the current turn changed are checked; full linting is moved to
 4. **Python syntax:** fast `ast.parse` check on changed `.py` files
 5. **Go build:** runs `go build ./...` when a Go module is present and any changed `.go` file exists
 
+**Blocking:** secrets, `.env` staged, Python syntax errors, and Go build errors
+are critical and block with exit 2; lint/format issues are auto-fixed silently
+and never block.
+
 **Livelock protection (Stop-hook contract):**
 - Honors `stop_hook_active` from the hook input: a re-invocation after a block
   exits 0 immediately, so the turn can always end
@@ -2156,6 +2160,9 @@ Only files the current turn changed are checked; full linting is moved to
 - Before the first commit every file is untracked, so the hook keeps a per-repo
   snapshot under `.git/mapify-end-of-turn/` and gates only files the current
   turn actually wrote — a docs-only turn is not gated on unrelated sources
+- The very first run has no baseline and treats all untracked files as changed;
+  later runs gate only files that are new (absent from the snapshot) or were
+  modified since the previous run (mtime newer than the snapshot file)
 
 **Exit codes:**
 - `0` = No issues
@@ -2263,21 +2270,26 @@ Checks return `skipped` when they cannot run due to missing prerequisites:
 
 ### Hooks Contract: When Hooks Block
 
-**Critical:** Hooks only return exit code 2 (blocking) for **security-critical issues**:
+**Critical:** Stop hooks block with exit code 2; PreToolUse hooks block with a
+JSON `permissionDecision: deny`. Both stop Claude and feed the reason back:
 
-| Blocking (Exit 2) | Non-Blocking (Exit 0-1) |
-|-------------------|-------------------------|
-| Hardcoded secrets in staged files | Linting failures |
-| `.env` file staged for commit | Type errors |
-| Dangerous commands (rm -rf /, force push main) | Formatting issues |
-| Access to credential files | Test failures |
+| Blocking (exit 2 / JSON deny) | Non-Blocking (exit 0-1) |
+|------------------------------|-------------------------|
+| Hardcoded secrets in staged files (exit 2) | Linting failures |
+| `.env` file staged for commit (exit 2) | Type errors |
+| Python syntax errors in changed files (exit 2) | Formatting issues |
+| Go build errors with changed `.go` files (exit 2) | Test failures |
+| Dangerous commands (rm -rf /, force push main) | |
+| Access to credential files | |
 
 **Why this matters:**
-- Exit 2 stops Claude and feeds stderr back for correction
+- Exit 2 (or JSON deny) stops Claude and feeds the reason back for correction
 - Exit 1 shows warning but continues
 - Exit 0 passes silently
 
-**Design principle:** Quality checks (linting, types) should inform, not block. Only security violations warrant blocking.
+**Design principle:** Quality checks (linting, types) should inform, not block.
+Only critical issues — security violations, or code that cannot compile
+(Python syntax errors, Go build failures) — warrant blocking.
 
 ### Early Termination with `won't_do` Status
 

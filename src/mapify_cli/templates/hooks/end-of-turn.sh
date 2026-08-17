@@ -59,7 +59,13 @@ add_critical() {
 # turn (human decision, upstream fix, action outside the agent's authority)
 # livelocks the session: the turn tries to end, the hook blocks again, forever.
 if [[ ! -t 0 ]]; then
-    HOOK_INPUT="$(cat 2>/dev/null || true)"
+    # Bound the read: a harness that leaves stdin open without writing must
+    # not hang the hook ('timeout' is not portable to stock macOS, so use the
+    # bash builtin read -t instead of 'timeout cat').
+    HOOK_INPUT=""
+    while IFS= read -r -t 2 hook_line; do
+        HOOK_INPUT="$HOOK_INPUT$hook_line"$'\n'
+    done || true
     if printf '%s' "$HOOK_INPUT" | grep -qE '"stop_hook_active"[[:space:]]*:[[:space:]]*"*true'; then
         log "stop_hook_active=true, letting the turn end"
         echo '{}'
@@ -132,9 +138,12 @@ else
     UNTRACKED=""
     CURRENT_UNTRACKED=$(git ls-files --others --exclude-standard 2>/dev/null || true)
     if [[ -f "$SNAPSHOT_FILE" ]]; then
+        SNAPSHOT_SET="$(cat "$SNAPSHOT_FILE" 2>/dev/null || true)"
         while IFS= read -r file; do
             [[ -z "$file" ]] && continue
-            if find "$file" -newer "$SNAPSHOT_FILE" -print 2>/dev/null | grep -q .; then
+            # Changed this turn = new (absent from the snapshot) or modified
+            # since the previous run (mtime newer than the snapshot file).
+            if ! grep -qxF "$file" <<< "$SNAPSHOT_SET" || find "$file" -newer "$SNAPSHOT_FILE" -print 2>/dev/null | grep -q .; then
                 UNTRACKED="$UNTRACKED"$'\n'"$file"
             fi
         done <<< "$CURRENT_UNTRACKED"
