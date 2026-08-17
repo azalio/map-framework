@@ -2080,7 +2080,7 @@ PreToolUse and Stop hooks that run before/after tool execution:
 |------|------|---------|
 | `block-secrets.py` | PreToolUse | Blocks access to .env, credentials, private keys |
 | `block-dangerous.sh` | PreToolUse | Blocks rm -rf, force push to main, git reset --hard |
-| `end-of-turn.sh` | Stop | Lints code, scans for secrets in staging |
+| `end-of-turn.sh` | Stop | Gates changed files only (syntax/secrets/.env); honors `stop_hook_active` |
 
 **Enforcement:** Hard (deterministic exit codes)
 
@@ -2133,21 +2133,40 @@ Blocks dangerous Bash commands:
 
 #### end-of-turn.sh (Stop)
 
-Quality gate that runs after Claude finishes responding:
+Lightweight quality gate that runs when Claude finishes responding (Stop event).
+Only files the current turn changed are checked; full linting is moved to
+`/map-check`.
 
-**Checks performed:**
-1. **Language-specific linting:**
-   - Python: runs `ruff` if available
-   - Node.js: runs `npm run lint` if available
-   - Go: runs `go vet` and `staticcheck`
-   - Rust: runs `cargo clippy`
+**Checks performed (changed files only):**
+1. **Auto-fix (silent):** `ruff check --fix` on changed `.py` files, `gofmt -w` on changed `.go` files
+2. **Secret scanning:** detects hardcoded secrets in staged files
+3. **.env guard:** blocks staging of `.env` files
+4. **Python syntax:** fast `ast.parse` check on changed `.py` files
+5. **Go build:** runs `go build ./...` when a Go module is present and any changed `.go` file exists
 
-2. **Secret scanning:** Detects hardcoded secrets in staged files
-3. **.env check:** Warns if .env files are staged for commit
+**Blocking:** secrets, `.env` staged, Python syntax errors, and Go build errors
+are critical and block with exit 2; lint/format issues are auto-fixed silently
+and never block.
+
+**Livelock protection (Stop-hook contract):**
+- Honors `stop_hook_active` from the hook input: a re-invocation after a block
+  exits 0 immediately, so the turn can always end
+- Self-caps repeated findings: the same critical finding blocks at most
+  `MAPIFY_END_OF_TURN_BLOCK_CAP` (default 3) consecutive turns, then downgrades
+  to a non-blocking warning so a finding the agent cannot resolve inside the
+  turn (human decision, upstream fix) never livelocks the session
+
+**Greenfield repos (no commits yet):**
+- Before the first commit every file is untracked, so the hook keeps a per-repo
+  snapshot under `.git/mapify-end-of-turn/` and gates only files the current
+  turn actually wrote — a docs-only turn is not gated on unrelated sources
+- The very first run has no baseline and treats all untracked files as changed;
+  later runs gate only files that are new (absent from the snapshot) or were
+  modified since the previous run (mtime newer than the snapshot file)
 
 **Exit codes:**
 - `0` = No issues
-- `1` = Warnings (non-blocking)
+- `1` = Warnings (non-blocking; also the self-capped repeat-finding downgrade)
 - `2` = Critical issues (blocks and feeds to Claude)
 
 ### Customizing Security
@@ -2251,21 +2270,26 @@ Checks return `skipped` when they cannot run due to missing prerequisites:
 
 ### Hooks Contract: When Hooks Block
 
-**Critical:** Hooks only return exit code 2 (blocking) for **security-critical issues**:
+**Critical:** Stop hooks block with exit code 2; PreToolUse hooks block with a
+JSON `permissionDecision: deny`. Both stop Claude and feed the reason back:
 
-| Blocking (Exit 2) | Non-Blocking (Exit 0-1) |
-|-------------------|-------------------------|
-| Hardcoded secrets in staged files | Linting failures |
-| `.env` file staged for commit | Type errors |
-| Dangerous commands (rm -rf /, force push main) | Formatting issues |
-| Access to credential files | Test failures |
+| Blocking (exit 2 / JSON deny) | Non-Blocking (exit 0-1) |
+|------------------------------|-------------------------|
+| Hardcoded secrets in staged files (exit 2) | Linting failures |
+| `.env` file staged for commit (exit 2) | Type errors |
+| Python syntax errors in changed files (exit 2) | Formatting issues |
+| Go build errors with changed `.go` files (exit 2) | Test failures |
+| Dangerous commands (rm -rf /, force push main) | |
+| Access to credential files | |
 
 **Why this matters:**
-- Exit 2 stops Claude and feeds stderr back for correction
+- Exit 2 (or JSON deny) stops Claude and feeds the reason back for correction
 - Exit 1 shows warning but continues
 - Exit 0 passes silently
 
-**Design principle:** Quality checks (linting, types) should inform, not block. Only security violations warrant blocking.
+**Design principle:** Quality checks (linting, types) should inform, not block.
+Only critical issues — security violations, or code that cannot compile
+(Python syntax errors, Go build failures) — warrant blocking.
 
 ### Early Termination with `won't_do` Status
 
@@ -2544,7 +2568,7 @@ MAP Framework includes additional hooks for security and quality:
 | `improve-prompt.py` | UserPromptSubmit | Prompt clarification and enhancement |
 | `block-secrets.py` | PreToolUse | Block access to sensitive files |
 | `block-dangerous.sh` | PreToolUse | Block dangerous shell commands |
-| `end-of-turn.sh` | Stop | Quality gates (linting, secret scanning) |
+| `end-of-turn.sh` | Stop | Quality gates on changed files (syntax, secrets, .env) |
 
 **Configuration:** See `.claude/settings.json` for hook configuration (or manage via `/hooks`).
 

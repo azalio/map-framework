@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`end-of-turn.sh` Stop hook no longer livelocks the session.** The hook now
+  honors `stop_hook_active` from the hook input (exits 0 on re-entry so the
+  turn can always end) and self-caps repeated findings: the same critical
+  finding blocks at most `MAPIFY_END_OF_TURN_BLOCK_CAP` (default 3) consecutive
+  turns, then downgrades to a non-blocking warning. A finding the agent cannot
+  resolve inside the turn (human decision, upstream fix, out-of-authority
+  action) no longer blocks the end of every subsequent turn forever. Closes
+  azalio/map-framework#437.
+- **`end-of-turn.sh` gates only files the current turn actually wrote before
+  the first commit.** With no commits, `git status --porcelain` reports every
+  init-created file as changed, so per-language checks fired on every turn —
+  including docs-only turns. The hook now keeps a per-repo untracked snapshot
+  under `.git/mapify-end-of-turn/` and, in commit-less repos, gates only files
+  that are new (absent from the snapshot) or were modified since the previous
+  hook run. The very first run has no baseline and treats all untracked files
+  as changed, so the gate stays useful from turn one. Closes
+  azalio/map-framework#438.
+- **`end-of-turn.sh` auto-fix layer is fully silent.** `ruff check --fix`
+  diagnostics were written to stdout and leaked into the hook output; stdout is
+  now redirected as well as stderr.
+
 ## [3.27.0] - 2026-08-16
 
 ### Fixed
