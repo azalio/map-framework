@@ -7,23 +7,40 @@ Tests the lightweight version that:
 - Auto-fixes what it can
 - Only reports critical issues (secrets, .env files, syntax errors)
 """
+
+import json
 import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 # Path to the hook script
 HOOK_PATH = Path(__file__).parent.parent.parent / ".claude" / "hooks" / "end-of-turn.sh"
 
 
-def run_hook(cwd: str | None = None, env: dict | None = None) -> tuple[int, str, str]:
-    """Execute the hook in given directory."""
+def run_hook(
+    cwd: str | None = None,
+    env: dict | None = None,
+    input_text: str = "",
+) -> tuple[int, str, str]:
+    """Execute the hook in given directory.
+
+    ``input_text`` is piped to the hook's stdin (Claude Code passes the hook
+    input JSON there, e.g. with ``stop_hook_active``); empty by default so the
+    hook never blocks on an inherited terminal.
+    """
     run_env = os.environ.copy()
     if env:
         run_env.update(env)
     result = subprocess.run(
-        ["bash", str(HOOK_PATH)], capture_output=True, text=True, cwd=cwd, env=run_env,
+        ["bash", str(HOOK_PATH)],
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+        env=run_env,
         check=False,
+        input=input_text,
     )
     return result.returncode, result.stdout, result.stderr
 
@@ -73,7 +90,9 @@ class TestEarlyExit:
         """Should exit 0 if git repo has no changes."""
         with tempfile.TemporaryDirectory() as tmpdir:
             # Init git repo with a commit
-            subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True, check=False)
+            subprocess.run(
+                ["git", "init"], cwd=tmpdir, capture_output=True, check=False
+            )
             subprocess.run(
                 ["git", "config", "user.email", "test@test.com"],
                 cwd=tmpdir,
@@ -81,14 +100,20 @@ class TestEarlyExit:
                 check=False,
             )
             subprocess.run(
-                ["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True,
+                ["git", "config", "user.name", "Test"],
+                cwd=tmpdir,
+                capture_output=True,
                 check=False,
             )
             # Create and commit a file
             (Path(tmpdir) / "file.txt").write_text("content\n")
-            subprocess.run(["git", "add", "."], cwd=tmpdir, capture_output=True, check=False)
             subprocess.run(
-                ["git", "commit", "-m", "initial"], cwd=tmpdir, capture_output=True,
+                ["git", "add", "."], cwd=tmpdir, capture_output=True, check=False
+            )
+            subprocess.run(
+                ["git", "commit", "-m", "initial"],
+                cwd=tmpdir,
+                capture_output=True,
                 check=False,
             )
 
@@ -110,7 +135,9 @@ class TestSecretDetection:
         """VC3: Secret scanning finds 'API_KEY=abc123' pattern."""
         with tempfile.TemporaryDirectory() as tmpdir:
             # Initialize git repo
-            subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True, check=False)
+            subprocess.run(
+                ["git", "init"], cwd=tmpdir, capture_output=True, check=False
+            )
             subprocess.run(
                 ["git", "config", "user.email", "test@test.com"],
                 cwd=tmpdir,
@@ -118,7 +145,9 @@ class TestSecretDetection:
                 check=False,
             )
             subprocess.run(
-                ["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True,
+                ["git", "config", "user.name", "Test"],
+                cwd=tmpdir,
+                capture_output=True,
                 check=False,
             )
 
@@ -127,7 +156,12 @@ class TestSecretDetection:
             secret_file.write_text('API_KEY = "sk_live_1234567890abcdef"\n')
 
             # Stage it
-            subprocess.run(["git", "add", "config.py"], cwd=tmpdir, capture_output=True, check=False)
+            subprocess.run(
+                ["git", "add", "config.py"],
+                cwd=tmpdir,
+                capture_output=True,
+                check=False,
+            )
 
             # Run hook
             exit_code, _, stderr = run_hook(cwd=tmpdir)
@@ -139,7 +173,9 @@ class TestSecretDetection:
     def test_no_secret_in_clean_file(self):
         """No false positives for clean files."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True, check=False)
+            subprocess.run(
+                ["git", "init"], cwd=tmpdir, capture_output=True, check=False
+            )
             subprocess.run(
                 ["git", "config", "user.email", "test@test.com"],
                 cwd=tmpdir,
@@ -147,14 +183,18 @@ class TestSecretDetection:
                 check=False,
             )
             subprocess.run(
-                ["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True,
+                ["git", "config", "user.name", "Test"],
+                cwd=tmpdir,
+                capture_output=True,
                 check=False,
             )
 
             clean_file = Path(tmpdir) / "clean.py"
             clean_file.write_text('print("Hello")\n')
 
-            subprocess.run(["git", "add", "clean.py"], cwd=tmpdir, capture_output=True, check=False)
+            subprocess.run(
+                ["git", "add", "clean.py"], cwd=tmpdir, capture_output=True, check=False
+            )
 
             exit_code, _, _ = run_hook(cwd=tmpdir)
             assert exit_code == 0, "Should exit 0 for clean file"
@@ -171,7 +211,9 @@ class TestEnvFileDetection:
     def test_detect_env_staged(self):
         """VC4: Warns if .env file is in git staging area."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True, check=False)
+            subprocess.run(
+                ["git", "init"], cwd=tmpdir, capture_output=True, check=False
+            )
             subprocess.run(
                 ["git", "config", "user.email", "test@test.com"],
                 cwd=tmpdir,
@@ -179,14 +221,18 @@ class TestEnvFileDetection:
                 check=False,
             )
             subprocess.run(
-                ["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True,
+                ["git", "config", "user.name", "Test"],
+                cwd=tmpdir,
+                capture_output=True,
                 check=False,
             )
 
             env_file = Path(tmpdir) / ".env"
             env_file.write_text("DATABASE_URL=postgres://localhost\n")
 
-            subprocess.run(["git", "add", ".env"], cwd=tmpdir, capture_output=True, check=False)
+            subprocess.run(
+                ["git", "add", ".env"], cwd=tmpdir, capture_output=True, check=False
+            )
 
             exit_code, _, stderr = run_hook(cwd=tmpdir)
 
@@ -221,7 +267,9 @@ class TestVerboseMode:
         """CLAUDE_HOOK_VERBOSE=true enables logging when changes exist."""
         with tempfile.TemporaryDirectory() as tmpdir:
             # Init repo with uncommitted file
-            subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True, check=False)
+            subprocess.run(
+                ["git", "init"], cwd=tmpdir, capture_output=True, check=False
+            )
             subprocess.run(
                 ["git", "config", "user.email", "test@test.com"],
                 cwd=tmpdir,
@@ -229,11 +277,15 @@ class TestVerboseMode:
                 check=False,
             )
             subprocess.run(
-                ["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True,
+                ["git", "config", "user.name", "Test"],
+                cwd=tmpdir,
+                capture_output=True,
                 check=False,
             )
             (Path(tmpdir) / "file.txt").write_text("content\n")
-            subprocess.run(["git", "add", "file.txt"], cwd=tmpdir, capture_output=True, check=False)
+            subprocess.run(
+                ["git", "add", "file.txt"], cwd=tmpdir, capture_output=True, check=False
+            )
 
             exit_code, _, stderr = run_hook(
                 cwd=tmpdir, env={"CLAUDE_HOOK_VERBOSE": "true"}
@@ -286,17 +338,25 @@ class TestSyntaxCheckHygiene:
             tmp = Path(tmpdir)
             subprocess.run(["git", "init"], cwd=tmp, capture_output=True, check=False)
             subprocess.run(
-                ["git", "config", "user.email", "t@t.com"], cwd=tmp, capture_output=True,
+                ["git", "config", "user.email", "t@t.com"],
+                cwd=tmp,
+                capture_output=True,
                 check=False,
             )
             subprocess.run(
-                ["git", "config", "user.name", "t"], cwd=tmp, capture_output=True,
+                ["git", "config", "user.name", "t"],
+                cwd=tmp,
+                capture_output=True,
                 check=False,
             )
             (tmp / "seed.txt").write_text("seed\n")
-            subprocess.run(["git", "add", "."], cwd=tmp, capture_output=True, check=False)
             subprocess.run(
-                ["git", "commit", "-m", "init"], cwd=tmp, capture_output=True,
+                ["git", "add", "."], cwd=tmp, capture_output=True, check=False
+            )
+            subprocess.run(
+                ["git", "commit", "-m", "init"],
+                cwd=tmp,
+                capture_output=True,
                 check=False,
             )
 
@@ -304,7 +364,9 @@ class TestSyntaxCheckHygiene:
             # syntax-check loop.
             py_file = tmp / "module_under_check.py"
             py_file.write_text("x = 1\n")
-            subprocess.run(["git", "add", "."], cwd=tmp, capture_output=True, check=False)
+            subprocess.run(
+                ["git", "add", "."], cwd=tmp, capture_output=True, check=False
+            )
 
             exit_code, _, _ = run_hook(cwd=str(tmp))
             assert exit_code == 0, "syntax-check must pass for valid .py"
@@ -315,34 +377,146 @@ class TestSyntaxCheckHygiene:
                 f"hook must not create __pycache__ next to changed files; "
                 f"found: {pycache_dirs}"
             )
-            assert not pyc_files, (
-                f"hook must not create .pyc files; found: {pyc_files}"
-            )
+            assert not pyc_files, f"hook must not create .pyc files; found: {pyc_files}"
 
     def test_hook_still_catches_syntax_errors(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             subprocess.run(["git", "init"], cwd=tmp, capture_output=True, check=False)
             subprocess.run(
-                ["git", "config", "user.email", "t@t.com"], cwd=tmp, capture_output=True,
+                ["git", "config", "user.email", "t@t.com"],
+                cwd=tmp,
+                capture_output=True,
                 check=False,
             )
             subprocess.run(
-                ["git", "config", "user.name", "t"], cwd=tmp, capture_output=True,
+                ["git", "config", "user.name", "t"],
+                cwd=tmp,
+                capture_output=True,
                 check=False,
             )
             (tmp / "seed.txt").write_text("seed\n")
-            subprocess.run(["git", "add", "."], cwd=tmp, capture_output=True, check=False)
             subprocess.run(
-                ["git", "commit", "-m", "init"], cwd=tmp, capture_output=True,
+                ["git", "add", "."], cwd=tmp, capture_output=True, check=False
+            )
+            subprocess.run(
+                ["git", "commit", "-m", "init"],
+                cwd=tmp,
+                capture_output=True,
                 check=False,
             )
 
             (tmp / "broken.py").write_text("def f(:\n    pass\n")
-            subprocess.run(["git", "add", "."], cwd=tmp, capture_output=True, check=False)
+            subprocess.run(
+                ["git", "add", "."], cwd=tmp, capture_output=True, check=False
+            )
 
             exit_code, _, stderr = run_hook(cwd=str(tmp))
-            assert exit_code == 2, (
-                "broken Python must trigger critical-issue blocking exit"
-            )
+            assert (
+                exit_code == 2
+            ), "broken Python must trigger critical-issue blocking exit"
             assert "Python syntax error" in stderr, stderr
+
+
+def _init_git(tmp: Path) -> None:
+    """Init a git repo with identity configured (no commits made)."""
+    subprocess.run(["git", "init"], cwd=tmp, capture_output=True, check=False)
+    subprocess.run(
+        ["git", "config", "user.email", "t@t.com"],
+        cwd=tmp,
+        capture_output=True,
+        check=False,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "t"],
+        cwd=tmp,
+        capture_output=True,
+        check=False,
+    )
+
+
+class TestRegressionStopHookAndNoCommit:
+    """Regression tests for the Stop-hook livelock (#437) and the no-commit
+    changed-file false positives (#438)."""
+
+    def test_stop_hook_active_lets_turn_end(self):
+        """A blocked Stop hook is re-invoked with stop_hook_active=true; the
+        hook must exit 0 so the turn can end instead of livelocking (#437)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            _init_git(tmp)
+            (tmp / "broken.py").write_text("def f(:\n    pass\n")
+
+            # Without the flag the finding blocks.
+            code, _, stderr = run_hook(cwd=str(tmp))
+            assert code == 2, stderr
+
+            # With stop_hook_active=true the hook lets the turn end.
+            payload = json.dumps({"session_id": "s1", "stop_hook_active": True})
+            code, stdout, _ = run_hook(cwd=str(tmp), input_text=payload)
+            assert code == 0, "stop_hook_active=true must exit 0"
+            assert stdout.strip() == "{}"
+
+    def test_self_cap_stops_blocking_persistent_finding(self):
+        """A finding that persists across turns must stop blocking after the
+        cap (default 3), downgrading to a non-blocking warning (#437)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            _init_git(tmp)
+            broken = tmp / "broken.py"
+            broken.write_text("def f(:\n    pass\n")
+
+            # The no-commit snapshot (#438) stops re-gating untouched files, so
+            # simulate the real re-fire scenario (the file is touched again each
+            # turn while the error persists) by bumping the mtime.
+            for _ in range(3):
+                os.utime(broken, (time.time() + 60, time.time() + 60))
+                code, _, stderr = run_hook(cwd=str(tmp))
+                assert code == 2, stderr
+
+            os.utime(broken, (time.time() + 60, time.time() + 60))
+            code, _, stderr = run_hook(cwd=str(tmp))
+            assert code == 1, f"expected downgraded warning, got {code}: {stderr}"
+            assert "self-capped" in stderr
+
+    def test_self_cap_resets_when_finding_changes(self):
+        """The cap counts consecutive identical findings only; a different
+        finding starts a fresh count and blocks again (#437)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            _init_git(tmp)
+            broken = tmp / "broken.py"
+            broken.write_text("def f(:\n    pass\n")
+
+            for _ in range(3):
+                os.utime(broken, (time.time() + 60, time.time() + 60))
+                code, _, _ = run_hook(cwd=str(tmp))
+                assert code == 2
+
+            # Different finding: fix broken.py and break another file.
+            broken.write_text("x = 1\n")
+            broken2 = tmp / "broken2.py"
+            broken2.write_text("def g(:\n    pass\n")
+            os.utime(broken, (time.time() + 60, time.time() + 60))
+            os.utime(broken2, (time.time() + 60, time.time() + 60))
+
+            code, _, stderr = run_hook(cwd=str(tmp))
+            assert code == 2, f"new finding must block again: {stderr}"
+
+    def test_no_commit_repo_gates_only_current_turn_files(self):
+        """#438: before the first commit every file is untracked; the
+        per-language gates must not re-fire on files from previous turns, so a
+        docs-only turn is not gated on unrelated sources."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            _init_git(tmp)
+            (tmp / "broken.py").write_text("def f(:\n    pass\n")
+
+            # Turn 1: broken.py is new -> the gate blocks.
+            code, _, stderr = run_hook(cwd=str(tmp))
+            assert code == 2, stderr
+
+            # Turn 2: only docs touched; broken.py unchanged -> no block.
+            (tmp / "README.md").write_text("# Docs\n")
+            code, _, stderr = run_hook(cwd=str(tmp))
+            assert code == 0, f"docs-only turn must pass: {stderr}"
