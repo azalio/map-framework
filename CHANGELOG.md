@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.27.1] - 2026-08-17
+
 ### Fixed
 - **`end-of-turn.sh` Stop hook no longer livelocks the session.** The hook now
   honors `stop_hook_active` from the hook input (exits 0 on re-entry so the
