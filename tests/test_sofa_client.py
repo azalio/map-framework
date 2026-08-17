@@ -2128,8 +2128,8 @@ def test_vc4_store_does_not_clobber_invalid_existing_credentials(
 
 
 def test_vc4_store_does_not_clobber_unreadable_credentials(tmp_path: Path) -> None:
-    if os.name == "nt":
-        pytest.skip("POSIX unreadable-file contract")
+    if os.name == "nt" or (os.name == "posix" and os.getuid() == 0):
+        pytest.skip("POSIX unreadable-file contract does not apply to root or Windows")
     sofa_dir = tmp_path / ".sofa"
     sofa_dir.mkdir()
     credentials_file = sofa_dir / "credentials.json"

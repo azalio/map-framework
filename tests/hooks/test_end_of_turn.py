@@ -8,6 +8,7 @@ Tests the lightweight version that:
 - Only reports critical issues (secrets, .env files, syntax errors)
 """
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -268,6 +269,148 @@ class TestOutputFormat:
             exit_code, stdout, _ = run_hook(cwd=tmpdir)
             assert exit_code == 0
             assert stdout.strip() == "{}"
+
+
+def _setup_git_repo(tmp: Path) -> None:
+    """Initialise a bare git repo with one commit in *tmp*."""
+    subprocess.run(["git", "init"], cwd=tmp, capture_output=True, check=False)
+    subprocess.run(
+        ["git", "config", "user.email", "t@t.com"], cwd=tmp, capture_output=True, check=False,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "t"], cwd=tmp, capture_output=True, check=False,
+    )
+    (tmp / "seed.txt").write_text("seed\n")
+    subprocess.run(["git", "add", "."], cwd=tmp, capture_output=True, check=False)
+    subprocess.run(
+        ["git", "commit", "-m", "init"], cwd=tmp, capture_output=True, check=False,
+    )
+
+
+# =============================================================================
+# Go Build Config Tests
+# =============================================================================
+
+GO_AVAILABLE = shutil.which("go") is not None
+
+
+class TestGoCheckConfig:
+    """Tests for .map/config.yaml checks.go.* knobs (issue #435)."""
+
+    def _make_go_project(self, tmp: Path) -> None:
+        """Write a minimal Go project with a compile error into *tmp*."""
+        (tmp / "go.mod").write_text("module example.com/hook_test\n\ngo 1.21\n")
+        # This file references an undefined symbol so 'go build ./...' fails.
+        (tmp / "main.go").write_text(
+            "package main\n\nfunc main() { undefinedSymbolThatDoesNotExist() }\n"
+        )
+
+    def _make_map_config(self, tmp: Path, content: str) -> None:
+        map_dir = tmp / ".map"
+        map_dir.mkdir(exist_ok=True)
+        (map_dir / "config.yaml").write_text(content)
+
+    def test_read_map_config_value_no_file(self):
+        """Helper returns default when .map/config.yaml is absent."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            _setup_git_repo(tmp)
+            # No .map/config.yaml — write a trivial untracked file to keep
+            # the hook from exiting early on 'no changes'.
+            (tmp / "touch.txt").write_text("x\n")
+            subprocess.run(["git", "add", "."], cwd=tmp, capture_output=True, check=False)
+            # Hook must still pass (no go.mod present).
+            exit_code, _, _ = run_hook(cwd=str(tmp))
+            assert exit_code == 0
+
+    def test_go_build_disabled_via_config(self):
+        """checks.go.build: false skips the Go build check entirely."""
+        if not GO_AVAILABLE:
+            import pytest
+            pytest.skip("go not in PATH")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            _setup_git_repo(tmp)
+            self._make_go_project(tmp)
+            self._make_map_config(tmp, "checks.go.build: false\n")
+            subprocess.run(["git", "add", "."], cwd=tmp, capture_output=True, check=False)
+            exit_code, _, stderr = run_hook(cwd=str(tmp))
+            assert exit_code == 0, (
+                f"build check disabled via config but hook still failed; stderr: {stderr}"
+            )
+            assert "Go build errors" not in stderr
+
+    def test_go_build_enabled_by_default_catches_errors(self):
+        """Without config, a broken Go project is still caught."""
+        if not GO_AVAILABLE:
+            import pytest
+            pytest.skip("go not in PATH")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            _setup_git_repo(tmp)
+            self._make_go_project(tmp)
+            # No .map/config.yaml — default behaviour must report the error.
+            subprocess.run(["git", "add", "."], cwd=tmp, capture_output=True, check=False)
+            exit_code, _, stderr = run_hook(cwd=str(tmp))
+            assert exit_code == 2, (
+                f"broken Go project should exit 2 by default; stderr: {stderr}"
+            )
+            assert "Go build errors" in stderr
+
+    def test_go_goos_from_env_respected(self):
+        """GOOS env var is forwarded to go build (existing behaviour preserved)."""
+        if not GO_AVAILABLE:
+            import pytest
+            pytest.skip("go not in PATH")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            _setup_git_repo(tmp)
+            # A valid, portable Go project.
+            (tmp / "go.mod").write_text("module example.com/hook_env_test\n\ngo 1.21\n")
+            (tmp / "main.go").write_text("package main\n\nfunc main() {}\n")
+            subprocess.run(["git", "add", "."], cwd=tmp, capture_output=True, check=False)
+            # Should succeed with an explicit GOOS that matches the current platform.
+            import platform
+            host_os = platform.system().lower()
+            exit_code, _, stderr = run_hook(cwd=str(tmp), env={"GOOS": host_os})
+            assert exit_code == 0, f"valid Go project should pass; stderr: {stderr}"
+
+    def test_go_goos_from_config(self):
+        """checks.go.goos in config sets the GOOS used by go build."""
+        if not GO_AVAILABLE:
+            import pytest
+            pytest.skip("go not in PATH")
+        import platform
+        host_os = platform.system().lower()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            _setup_git_repo(tmp)
+            (tmp / "go.mod").write_text("module example.com/hook_cfg_test\n\ngo 1.21\n")
+            (tmp / "main.go").write_text("package main\n\nfunc main() {}\n")
+            # Set checks.go.goos to the host OS so the build succeeds.
+            self._make_map_config(tmp, f"checks.go.goos: {host_os}\n")
+            subprocess.run(["git", "add", "."], cwd=tmp, capture_output=True, check=False)
+            exit_code, _, stderr = run_hook(cwd=str(tmp))
+            assert exit_code == 0, (
+                f"valid project with matching checks.go.goos should pass; stderr: {stderr}"
+            )
+
+    def test_go_build_disabled_case_insensitive(self):
+        """checks.go.build accepts False/No/Off/0 spellings."""
+        if not GO_AVAILABLE:
+            import pytest
+            pytest.skip("go not in PATH")
+        for value in ("False", "No", "Off", "0"):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp = Path(tmpdir)
+                _setup_git_repo(tmp)
+                self._make_go_project(tmp)
+                self._make_map_config(tmp, f"checks.go.build: {value}\n")
+                subprocess.run(["git", "add", "."], cwd=tmp, capture_output=True, check=False)
+                exit_code, _, stderr = run_hook(cwd=str(tmp))
+                assert exit_code == 0, (
+                    f"checks.go.build: {value!r} should disable check; stderr: {stderr}"
+                )
 
 
 class TestSyntaxCheckHygiene:

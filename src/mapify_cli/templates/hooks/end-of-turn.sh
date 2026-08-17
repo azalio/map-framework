@@ -45,6 +45,28 @@ add_critical() {
     CRITICAL_ISSUES+=("$1")
 }
 
+# Read a flat dotted key from .map/config.yaml using minimal stdlib Python.
+# Falls back to $2 when the file is absent, the key is missing, or python3
+# is unavailable.  Never raises: all errors are silently swallowed so the
+# hook degrades gracefully to host defaults.
+_read_map_config_value() {
+    local key="$1" default="$2"
+    if [[ ! -f ".map/config.yaml" ]] || ! command -v python3 &>/dev/null; then
+        printf '%s' "$default"
+        return
+    fi
+    python3 -B -c "
+import re, sys
+key, default = sys.argv[1], sys.argv[2]
+try:
+    text = open('.map/config.yaml', encoding='utf-8').read()
+    m = re.search(r'^\s*' + re.escape(key) + r'\s*:\s*(\S+)', text, re.MULTILINE)
+    print(m.group(1).strip() if m else default)
+except Exception:
+    print(default)
+" "$key" "$default" 2>/dev/null || printf '%s' "$default"
+}
+
 # -----------------------------------------------------------------------------
 # Early Exit: Check for Dirty State
 # -----------------------------------------------------------------------------
@@ -163,18 +185,40 @@ fi
 
 # Go: Check for compile errors only (fast, critical)
 if command -v go &>/dev/null && [[ -f "go.mod" ]]; then
-    GO_FILES=""
-    for file in $CHANGED_FILES; do
-        if [[ "$file" == *.go ]] && [[ -f "$file" ]]; then
-            GO_FILES="$GO_FILES $file"
-        fi
-    done
-    if [[ -n "$GO_FILES" ]]; then
-        # Quick syntax check via go build with no output
-        if ! go build -o /dev/null ./... 2>/dev/null; then
-            add_critical "Go build errors detected (run 'go build ./...' for details)"
-        fi
-    fi
+    # Allow disabling this check entirely via .map/config.yaml:
+    #   checks.go.build: false
+    _go_build_cfg=$(_read_map_config_value "checks.go.build" "true")
+    case "$_go_build_cfg" in
+        false|False|no|No|off|Off|0)
+            log "Go build check disabled via checks.go.build config"
+            ;;
+        *)
+            GO_FILES=""
+            for file in $CHANGED_FILES; do
+                if [[ "$file" == *.go ]] && [[ -f "$file" ]]; then
+                    GO_FILES="$GO_FILES $file"
+                fi
+            done
+            if [[ -n "$GO_FILES" ]]; then
+                # Determine effective GOOS: env var takes precedence, then
+                # .map/config.yaml checks.go.goos, then host default.
+                # This prevents false criticals for Linux-only projects
+                # developed on macOS (e.g. projects using cgroups/eBPF/netlink).
+                #   Example config:  checks.go.goos: linux
+                _go_goos="${GOOS:-$(_read_map_config_value 'checks.go.goos' '')}"
+                _go_build_ok=true
+                if [[ -n "$_go_goos" ]]; then
+                    GOOS="$_go_goos" go build -o /dev/null ./... 2>/dev/null \
+                        || _go_build_ok=false
+                else
+                    go build -o /dev/null ./... 2>/dev/null || _go_build_ok=false
+                fi
+                if [[ "$_go_build_ok" == "false" ]]; then
+                    add_critical "Go build errors detected (run 'go build ./...' for details)"
+                fi
+            fi
+            ;;
+    esac
 fi
 
 # -----------------------------------------------------------------------------
