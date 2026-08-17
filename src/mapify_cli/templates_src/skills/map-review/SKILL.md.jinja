@@ -1,7 +1,7 @@
 ---
 name: map-review
 description: |
-  Interactive 4-section code review using Monitor, Predictor, and Evaluator agents on current changes. Use when reviewing a diff, PR, or staged work before merge. Do NOT use to plan or implement; use map-plan or map-efficient.
+  Interactive 4-section code review using Monitor, Predictor, and Evaluator agents plus the user and maintainer role reviewers on current changes. Use when reviewing a diff, PR, or staged work before merge. Do NOT use to plan or implement; use map-plan or map-efficient.
 effort: high
 disable-model-invocation: true
 argument-hint: "[review focus] [--detached] [--ci] [--reverse-sections] [--shuffle-sections] [--seed <int>] [--compare-orderings] [--adversarial] [--quick] [--show-raw-findings] [--cross-ai <runtime>]"
@@ -9,7 +9,7 @@ argument-hint: "[review focus] [--detached] [--ci] [--reverse-sections] [--shuff
 [% include "_partials/auto-update-preflight.md.jinja" %]
 # MAP Review Workflow
 
-Interactive, structured code review of current changes using Monitor, Predictor, and Evaluator agents.
+Interactive, structured code review of current changes using Monitor, Predictor, and Evaluator agents, plus two role reviewers — `user_experience` (did the already-shipped path get worse?) and `maintainer` (what rot survives the merge?).
 
 Task: `$ARGUMENTS`
 
@@ -23,7 +23,7 @@ parallel_tool_policy: single_review_fanout
 ```
 
 - Use deeper reasoning for verdicts, risk ranking, section tradeoffs, and contradictory reviewer evidence.
-- Use exactly one parallel reviewer fan-out after bundle preparation: Monitor, Predictor, Evaluator, and the optional complexity lens may run together because they inspect the same review input independently.
+- Use exactly one parallel reviewer fan-out after bundle preparation: Monitor, Predictor, Evaluator, the two role reviewers, and the optional complexity lens may run together because they inspect the same review input independently.
 - Wait for all reviewer agents before section presentation. Do not parallelize interactive decisions, ordering comparisons that share state, or review-bundle writes.
 
 ## Flags
@@ -34,8 +34,8 @@ parallel_tool_policy: single_review_fanout
 - `--shuffle-sections`: randomize section order with a branch+commit derived seed.
 - `--seed <int>`: override shuffle seed with a non-negative integer.
 - `--compare-orderings`: run default and reverse ordering reviews, then aggregate drift. Cannot be combined with `--shuffle-sections` (EC-1/EC-17).
-- `--adversarial`: run three independent adversarial reviewers (Blind Hunter, Edge Case Hunter, Acceptance Auditor) in parallel, then aggregate with deduplication and convergence analysis. Each reviewer operates in an isolated context with only its permitted inputs.
-- `--quick`: used with `--adversarial` to skip the Edge Case Hunter (Blind + Acceptance only). Reduces token cost for routine changes.
+- `--adversarial`: run five independent reviewers (Blind Hunter, Edge Case Hunter, Acceptance Auditor, plus the `user_experience` and `maintainer` roles) in parallel, then aggregate with deduplication and convergence analysis. Each reviewer operates in an isolated context with only its permitted inputs.
+- `--quick`: used with `--adversarial` to skip the Edge Case Hunter (Blind + Acceptance + both roles). Reduces token cost for routine changes.
 - `--show-raw-findings`: used with `--adversarial` to include raw reviewer outputs in the report. Useful for debugging or verifying aggregation.
 - `--cross-ai <runtime>`: dispatch the review to an INDEPENDENT external AI CLI (`claude`, `codex`, `gemini`, `opencode`) for a true second opinion. Off by default and **double-consent** (the flag AND `review.cross_ai.enabled: true`) — your diff/code leaves the machine. Runtime optional (configured default used). See the Cross-AI phase below and [review-reference.md](review-reference.md#cross-ai).
 
@@ -53,7 +53,8 @@ parallel_tool_policy: single_review_fanout
 4. Build the review bundle before launching reviewer agents.
 5. Build bounded review prompts before launching reviewer agents.
 6. Launch reviewer agents exactly once per review run: full mode runs
-   monitor + predictor + evaluator; lightweight mode runs monitor only.
+   monitor + predictor + evaluator + the two role reviewers
+   (`user_experience`, `maintainer`); lightweight mode runs monitor only.
 7. **Monitor `valid=false` requires verification, not immediate
    publication** — Step A.3 verifies each finding has evidence and is
    bug-introduced-here BEFORE Phase B. Bare claims without evidence are
@@ -104,6 +105,16 @@ Predictor:
   static-analysis line, or grep showing the unreachable path is
   actually reachable. Soft narrative ("this might break someday")
   without evidence is rejected during Step A.3.
+
+Role reviewers (`user_experience`, `maintainer`) — isolated context (diff +
+bundle only), one JSON envelope each:
+- `reviewer`, `all_clear` (+ `all_clear_rationale` when true), `checks_performed`.
+- `findings[]`: severity, category, file_path, line_range, symbol, evidence, and
+  the **five-part output contract** — `problem` (one line + file:line),
+  `current_code` (verbatim), `proposed_code` (applicable as a patch),
+  `why_better` (measurable delta, no bare "cleaner"), `cost` (downside, or
+  "none"). A finding missing any part is tombstoned as `contract_incomplete`:
+  it never gates the change, and it is named in the ledger's `not_verified`.
 
 Evaluator:
 - evidence: array of {file_path, line_range, quote, relevance}; populate this before scores.
@@ -326,6 +337,8 @@ PREDICTOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,
 EVALUATOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["evaluator"]["prompt"])')
 COMPLEXITY_LENS_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("prompts",{}).get("complexity_lens",{}).get("prompt", ""))')
 COMPLEXITY_LENS_ENABLED=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); print("true" if data.get("prompts",{}).get("complexity_lens") else "false")')
+USER_EXPERIENCE_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["user_experience"]["prompt"])')
+MAINTAINER_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["maintainer"]["prompt"])')
 ```
 
 Use the extracted prompt variables as the Task prompts. Keep reviewer task calls below the bundle and prompt-builder commands.
@@ -334,8 +347,16 @@ Use the extracted prompt variables as the Task prompts. Keep reviewer task calls
 Task(subagent_type="monitor", description="Review diff for correctness", prompt=MONITOR_PROMPT)
 Task(subagent_type="predictor", description="Predict integration risk", prompt=PREDICTOR_PROMPT)
 Task(subagent_type="evaluator", description="Score review quality", prompt=EVALUATOR_PROMPT)
+Task(subagent_type="general-purpose", description="User-perspective regression review", prompt=USER_EXPERIENCE_PROMPT)
+Task(subagent_type="general-purpose", description="Maintainer-perspective rot review", prompt=MAINTAINER_PROMPT)
 If COMPLEXITY_LENS_ENABLED=true: Task(subagent_type="evaluator", description="Find deletable complexity", prompt=COMPLEXITY_LENS_PROMPT)
 ```
+
+The role reviewers run in the SAME fan-out but with isolated context: they see
+the diff and the bundle, never the other reviewers' output. They read the repo
+(including `git show <default-branch>:<file>` for the pre-change surface) — the
+user role to check the old path, the maintainer role for the whole-base grep
+that classes B/C/H need.
 
 Reviewer prompts reference `review-bundle.json`, `review-bundle.md`, the raw diff as secondary context, and the expected output schema.
 
@@ -356,14 +377,16 @@ Role → `--agent` kind for the truncation check:
   evidence/valid/summary/verdict/issues/passed_checks/failed_checks)
 - predictor reviewer → `--agent predictor`
 - evaluator reviewer → `--agent evaluator`
+- role reviewers → `--agent user_experience` / `--agent maintainer`
 
 The optional complexity lens returns plain text, not JSON. Do not run the JSON truncation gate on it; if it is empty or visibly cut off, rerun only that lens prompt once.
 
 ### Step A.2c: Capture reviewer envelopes (MANDATORY — the ledger reads these)
 
 Once a reviewer clears the truncation gate, write its JSON envelope verbatim to
-`.map/<branch>/review-agent-<role>.json` (`monitor`, `predictor`, `evaluator`;
-plus `adversarial` in adversarial/compare-orderings mode). The verdict ledger is
+`.map/<branch>/review-agent-<role>.json` (`monitor`, `predictor`, `evaluator`,
+`user_experience`, `maintainer`; plus `adversarial` in
+adversarial/compare-orderings mode). The verdict ledger is
 computed from these files — a role whose file is missing is recorded as an
 unobserved review, not as a clean one.
 
@@ -379,10 +402,11 @@ MONITOR_EOF
 ```
 
 The quoted heredoc marker (`<<'MONITOR_EOF'`, quotes included) is what stops the
-shell expanding anything inside the payload. Repeat for `predictor` and
-`evaluator`. In adversarial or compare-orderings mode write the aggregated
-findings array to `review-agent-adversarial.json` instead — that array is what
-the ledger reads for those modes.
+shell expanding anything inside the payload. Repeat for `predictor`,
+`evaluator`, `user_experience` and `maintainer`. In adversarial or
+compare-orderings mode write the aggregated findings array to
+`review-agent-adversarial.json` instead — that array is what the ledger reads
+for those modes.
 
 ### Step A.3: Verification gate (MANDATORY before any presentation)
 
@@ -402,6 +426,11 @@ walkthrough item:
 4. **Precheck duplication check.** If the finding matches a precheck
    error line, cite the precheck and stop — do NOT raise a second
    instance.
+4b. **Role contract check.** A `user_experience` / `maintainer` finding is
+   published only with all five contract parts filled (`problem`,
+   `current_code`, `proposed_code`, `why_better`, `cost`). An incomplete
+   one is not softened into an advisory: the ledger tombstones it as
+   `contract_incomplete` and names it in `not_verified`.
 5. **Reachability check** (defensive branches): `if !ContainsFinalizer
    { return }`-style guard branches usually exist by convention and
    their absence of tests is not a "missing test" finding unless the
@@ -458,15 +487,16 @@ status (`unparsed`/`secret_blocked`/`disabled`/`unavailable`/`timeout`/`error`) 
 announce `reason` (own-status, never fenced) and fall through the same way.
 
 ## Phase B: Adversarial Review (--adversarial only)
-When `--adversarial` is set (and `--cross-ai` is not), skip the Monitor/Predictor/Evaluator fan-out and the 4-section interactive walkthrough. Instead run three independent adversarial reviewers with isolated contexts, then aggregate. See [adversarial-reference.md](adversarial-reference.md) for the detailed step-by-step commands.
+When `--adversarial` is set (and `--cross-ai` is not), skip the Monitor/Predictor/Evaluator fan-out and the 4-section interactive walkthrough. Instead run the five independent reviewers with isolated contexts, then aggregate. See [adversarial-reference.md](adversarial-reference.md) for the detailed step-by-step commands.
 
 ### Quick reference
 
 ```text
 1. Build prompts:  python3 .map/scripts/map_step_runner.py build_adversarial_review_prompts [--quick]
-2. Fan-out:        Task(subagent_type="general", ...) for blind, edge_case, acceptance — parallel, then wait for all
+2. Fan-out:        Task(subagent_type="general-purpose", ...) for blind, edge_case, acceptance,
+                   user_experience, maintainer — parallel, then wait for all (--quick drops edge_case)
 3. Validate:       Each must return valid JSON per adversarial finding schema; retry ONCE on failure
-4. Aggregate:      python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings --blind <path> --edge-case <path> --acceptance <path>
+4. Aggregate:      python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings --blind <path> --edge-case <path> --acceptance <path> --user-experience <path> --maintainer <path>
 5. Present:        Unified report: CRITICAL/IMPORTANT/MINOR, convergence section, all-clear statements (--show-raw-findings for debug)
 6. Feed ledger:    write the aggregated findings array to "$BRANCH_DIR/review-agent-adversarial.json"
                    and set REVIEW_MODE_LABEL=adversarial (compare-orderings: compare_orderings)
@@ -507,6 +537,16 @@ Focus on changed behavior, failure modes, fixtures, and whether tests prove the 
 
 Focus only on plausible measurable impact, hot paths, accidental N+1 behavior, large artifacts, or prompt/context blowups.
 
+### Step B.5: Role Reviews (after the four sections)
+
+Present the surviving `user_experience` and `maintainer` findings as two
+groups, in the same A/B/C option protocol. Show each finding as the reviewer
+delivered it — `problem`, `current_code`, `proposed_code`, `why_better`, `cost`
+— and never paraphrase `proposed_code`: it is meant to be applied as a patch.
+When a role returned `all_clear`, print its rationale; that is the review
+result, not an empty section. List dropped `contract_incomplete` findings under
+the group so an unfinished remark stays visible without gating the change.
+
 ## Final Verdict
 
 The verdict is COMPUTED from the finding registry by the closed decision table
@@ -539,6 +579,11 @@ LEDGER_ARGS=()
 for ROLE in monitor predictor evaluator adversarial; do
   [ -f "$BRANCH_DIR/review-agent-$ROLE.json" ] && \
     LEDGER_ARGS+=(--"$ROLE"-file "$BRANCH_DIR/review-agent-$ROLE.json")
+done
+# Role reviewers: the artifact name keeps the underscore, the flag uses dashes.
+for ROLE in user_experience maintainer; do
+  [ -f "$BRANCH_DIR/review-agent-$ROLE.json" ] && \
+    LEDGER_ARGS+=(--"${ROLE//_/-}"-file "$BRANCH_DIR/review-agent-$ROLE.json")
 done
 
 LEDGER=$(python3 .map/scripts/map_step_runner.py write_review_verdict_ledger \

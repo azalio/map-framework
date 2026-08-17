@@ -145,7 +145,16 @@ HIGH_TRAFFIC_SKILL_BODY_BUDGETS = {
     # uses a bare per-skill `assert`, so it raised on map-efficient (an earlier
     # dict entry) and never reached map-review. Both caps must move together or
     # fixing one just surfaces the other on the next CI run.
-    "map-review": 645,
+    # Budget bumped 645 → 690: the two role reviewers (user_experience,
+    # maintainer) run in the DEFAULT fan-out, so their prompt extraction, their
+    # two dispatch lines, their truncation kinds, their envelope names and their
+    # ledger flags are all active control flow in this body — a body that
+    # described them without dispatching them would ship two reviewers nobody
+    # runs. The Step B.5 presentation block and the 4b contract check are the
+    # minimum that keeps their findings from being paraphrased away; what each
+    # role actually hunts (the A–I checklist, the five-part contract table)
+    # lives in review-reference.md and is NOT counted here.
+    "map-review": 690,
     # map-tdd carries Iron Law enforcement (rationalization table, Red Flags,
     # RED-GREEN-REFACTOR cycle), spec compliance reviewer dispatch, and code
     # quality reviewer dispatch — all irreducible active control flow (#285).
@@ -261,7 +270,7 @@ RENDERED_AUTO_UPDATE_SKILL_ROOTS = [
 
 def _assert_rendered_preflight_placement(content: str, label: str) -> None:
     """Assert that a rendered normal skill starts with exactly one preflight."""
-    _frontmatter, separator, body = content.partition("\n---\n")
+    _, separator, body = content.partition("\n---\n")
     assert separator, f"{label} has no closing frontmatter"
     assert body.startswith("## MAP update preflight\n"), (
         f"{label} must render the update preflight immediately after "
@@ -343,7 +352,7 @@ class TestProviderUpdateSkills:
         for skill_name, source in sources.items():
             content = source.read_text(encoding="utf-8")
             assert content.count(AUTO_UPDATE_PREFLIGHT_INCLUDE) == 1, skill_name
-            _frontmatter, separator, body = content.partition("\n---\n")
+            _, separator, body = content.partition("\n---\n")
             assert separator, f"{source} has no closing frontmatter"
             assert body.startswith(f"{AUTO_UPDATE_PREFLIGHT_INCLUDE}\n"), (
                 f"{source} must include the update preflight immediately after "

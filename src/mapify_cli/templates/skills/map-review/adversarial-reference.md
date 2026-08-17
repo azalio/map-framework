@@ -4,15 +4,22 @@ Detailed workflow for `map-review --adversarial`. See [SKILL.md](SKILL.md) for c
 
 ## Overview
 
-Three reviewers run in parallel, each with only its permitted inputs:
+Five reviewers run in parallel, each with only its permitted inputs:
 
 | Reviewer | Context | Finds |
 |----------|---------|-------|
 | **Blind Hunter** | diff only | Typos, dead code, logic errors visible in isolation |
 | **Edge Case Hunter** | diff + repo read access | Null handling, boundary conditions, error paths, codebase consistency |
 | **Acceptance Auditor** | diff + spec + plan + artifacts | Missed requirements, spec violations, AC gaps, extra/unplanned work |
+| **User (`user_experience`)** | diff + repo read access | Regressions in the already-shipped path: extra mandatory steps, confusable flags, an explicit value silently overridden |
+| **Maintainer (`maintainer`)** | diff + repo read access | Branch-scoped litter in comments, implementation leaking into user-facing text, copy-paste, split sources of truth, version predicates by number, embedded foreign-language code |
 
-With `--quick`: skip Edge Case Hunter (Blind + Acceptance only).
+With `--quick`: skip Edge Case Hunter (Blind + Acceptance + both roles).
+
+The two role reviewers answer to the five-part output contract (`problem`,
+`current_code`, `proposed_code`, `why_better`, `cost`). A finding that cannot
+fill all five is dropped by `aggregate_adversarial_findings` into
+`contract_incomplete` — reported, never counted.
 
 ## Step B.adversarial.0: Build adversarial review prompts
 
@@ -32,20 +39,30 @@ EDGE_DESC=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=jso
 
 ACCEPTANCE_PROMPT=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("acceptance",{}).get("prompt",""))')
 ACCEPTANCE_DESC=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("acceptance",{}).get("description",""))')
+
+USER_EXPERIENCE_PROMPT=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("user_experience",{}).get("prompt",""))')
+USER_EXPERIENCE_DESC=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("user_experience",{}).get("description",""))')
+
+MAINTAINER_PROMPT=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("maintainer",{}).get("prompt",""))')
+MAINTAINER_DESC=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("maintainer",{}).get("description",""))')
 ```
 
-## Step B.adversarial.1: Launch all three in parallel (fan-out)
+## Step B.adversarial.1: Launch all five in parallel (fan-out)
 
 ```text
-# Launch all three adversarial reviewers in parallel — they are fully independent
+# Launch all five reviewers in parallel — they are fully independent
 # with no shared context. Wait for all to complete before aggregation.
 
-Task(subagent_type="general", description=BLIND_DESC, prompt=BLIND_PROMPT)
+Task(subagent_type="general-purpose", description=BLIND_DESC, prompt=BLIND_PROMPT)
 # Save output as BLIND_OUTPUT
-Task(subagent_type="general", description=EDGE_DESC, prompt=EDGE_PROMPT)
+Task(subagent_type="general-purpose", description=EDGE_DESC, prompt=EDGE_PROMPT)
 # Save output as EDGE_OUTPUT  (skip if --quick)
-Task(subagent_type="general", description=ACCEPTANCE_DESC, prompt=ACCEPTANCE_PROMPT)
+Task(subagent_type="general-purpose", description=ACCEPTANCE_DESC, prompt=ACCEPTANCE_PROMPT)
 # Save output as ACCEPTANCE_OUTPUT
+Task(subagent_type="general-purpose", description=USER_EXPERIENCE_DESC, prompt=USER_EXPERIENCE_PROMPT)
+# Save output as USER_EXPERIENCE_OUTPUT
+Task(subagent_type="general-purpose", description=MAINTAINER_DESC, prompt=MAINTAINER_PROMPT)
+# Save output as MAINTAINER_OUTPUT
 ```
 
 ## Step B.adversarial.2: Validate reviewer outputs
@@ -63,22 +80,28 @@ Write each reviewer's raw JSON output to a temp file, then aggregate:
 printf '%s' "$BLIND_OUTPUT" > .map/$BRANCH/adversarial-blind.json
 printf '%s' "$EDGE_OUTPUT" > .map/$BRANCH/adversarial-edge.json
 printf '%s' "$ACCEPTANCE_OUTPUT" > .map/$BRANCH/adversarial-acceptance.json
+printf '%s' "$USER_EXPERIENCE_OUTPUT" > .map/$BRANCH/adversarial-user-experience.json
+printf '%s' "$MAINTAINER_OUTPUT" > .map/$BRANCH/adversarial-maintainer.json
 
-BLIND_ARG=""
-EDGE_ARG=""
-ACCEPTANCE_ARG=""
+ADV_ARGS=""
 if [ -f .map/$BRANCH/adversarial-blind.json ]; then
-  BLIND_ARG="--blind .map/$BRANCH/adversarial-blind.json"
+  ADV_ARGS="$ADV_ARGS --blind .map/$BRANCH/adversarial-blind.json"
 fi
 if [ -f .map/$BRANCH/adversarial-edge.json ]; then
-  EDGE_ARG="--edge-case .map/$BRANCH/adversarial-edge.json"
+  ADV_ARGS="$ADV_ARGS --edge-case .map/$BRANCH/adversarial-edge.json"
 fi
 if [ -f .map/$BRANCH/adversarial-acceptance.json ]; then
-  ACCEPTANCE_ARG="--acceptance .map/$BRANCH/adversarial-acceptance.json"
+  ADV_ARGS="$ADV_ARGS --acceptance .map/$BRANCH/adversarial-acceptance.json"
+fi
+if [ -f .map/$BRANCH/adversarial-user-experience.json ]; then
+  ADV_ARGS="$ADV_ARGS --user-experience .map/$BRANCH/adversarial-user-experience.json"
+fi
+if [ -f .map/$BRANCH/adversarial-maintainer.json ]; then
+  ADV_ARGS="$ADV_ARGS --maintainer .map/$BRANCH/adversarial-maintainer.json"
 fi
 
 ADV_AGGREGATED=$(python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings \
-  $BLIND_ARG $EDGE_ARG $ACCEPTANCE_ARG)
+  $ADV_ARGS)
 ```
 
 ## Step B.adversarial.4: Present unified adversarial report
@@ -91,8 +114,9 @@ Parse the aggregated JSON and present the report in this structure:
 ## Summary
 - Total findings: N (C CRITICAL, I IMPORTANT, M MINOR)
 - Corroborated (found by 2+ reviewers): K — highest confidence
-- Per-reviewer: Blind: B, Edge Case: E, Acceptance: A
+- Per-reviewer: Blind: B, Edge Case: E, Acceptance: A, User: U, Maintainer: M
 - All-clear: [reviewers who reported all_clear=true]
+- Dropped for an incomplete output contract: [contract_incomplete entries]
 
 ## CRITICAL
 [per finding: severity, category, file:line, failure_mode, evidence, reported_by, corroborated flag]
@@ -139,7 +163,7 @@ See [review-reference.md](review-reference.md#examples) for adversarial examples
 
 Re-invoke that specific reviewer ONCE. If still invalid, record `parse_error` and continue — two valid reviewers are better than zero.
 
-### All three reviewers fail
+### All reviewers fail
 
 Stop with CLARIFICATION_NEEDED. The diff may be too large or the context too complex for adversarial review.
 

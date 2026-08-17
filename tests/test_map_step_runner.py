@@ -9708,10 +9708,11 @@ class TestCreateReviewBundle:
         """Budget diagnostics must not block prompt generation on I/O errors."""
         del branch_workspace
 
-        # Pin minimality off so the prompt set is the 3 reviewers regardless of
-        # the global default — the complexity_lens add is covered by its own test.
-        # (Phase 3 (#183) flipped the keyless default to lite, which would add a
-        # 4th prompt and make this write-error test's assertion non-deterministic.)
+        # Pin minimality off so the prompt set is the 3 core reviewers plus the
+        # two unconditional role reviewers, regardless of the global default —
+        # the complexity_lens add is covered by its own test. (Phase 3 (#183)
+        # flipped the keyless default to lite, which would add one more prompt
+        # and make this write-error test's assertion non-deterministic.)
         Path(".map").mkdir(exist_ok=True)
         (Path(".map") / "config.yaml").write_text("minimality: off\n", encoding="utf-8")
 
@@ -9728,7 +9729,12 @@ class TestCreateReviewBundle:
         )
 
         assert result["status"] == "success"
-        assert set(result["prompts"]) == {"monitor", "predictor", "evaluator"}
+        assert set(result["prompts"]) == {
+            "monitor",
+            "predictor",
+            "evaluator",
+            *map_step_runner.ROLE_REVIEWER_IDS,
+        }
 
     def test_build_review_prompts_adds_complexity_lens_when_minimality_enabled(
         self, branch_workspace
@@ -17254,3 +17260,133 @@ class TestResolveSubtaskDiffBase:
             "test-branch", "ST-001", tmp_path
         )
         assert result is None
+
+
+class TestRoleReviewers:
+    """Role reviewers (user_experience / maintainer) in both review paths."""
+
+    @staticmethod
+    def _complete_finding(**overrides) -> dict:
+        finding = {
+            "id": "F-U-01",
+            "reviewer": "user_experience",
+            "severity": "IMPORTANT",
+            "category": "ux",
+            "file_path": "cmd/root.go",
+            "problem": "--from-release is confusable with --release at cmd/root.go:31",
+            "current_code": 'flags.String("from-release", "", "...")',
+            "proposed_code": 'flags.String("upgrade-from", "", "...")',
+            "why_better": "2 confusable flags -> 1 distinguishable pair",
+            "cost": "rename is a breaking flag change; needs an alias for one release",
+            "evidence": "grep -n 'from-release' cmd/",
+        }
+        finding.update(overrides)
+        return finding
+
+    def test_both_roles_are_in_the_default_normal_fan_out(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result = map_step_runner.build_review_prompts(
+            branch="test-branch",
+            review_bundle_text="BUNDLE",
+            git_diff_text="diff --git a/x b/x",
+        )
+        prompts = result["prompts"]
+        assert {"monitor", "predictor", "evaluator"} <= set(prompts)
+        for role in map_step_runner.ROLE_REVIEWER_IDS:
+            assert role in prompts, f"{role} must run in the default fan-out"
+            assert prompts[role]["prompt"], f"{role} prompt must not be empty"
+
+    def test_both_roles_are_in_the_default_adversarial_fan_out(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result = map_step_runner.build_adversarial_review_prompts(
+            branch="test-branch", git_diff_text="diff", spec_text="spec"
+        )
+        assert set(result["prompts"]) == {
+            "blind",
+            "edge_case",
+            "acceptance",
+            "user_experience",
+            "maintainer",
+        }
+
+    def test_role_prompt_carries_the_contract_and_pins_the_reviewer_id(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        prompts = map_step_runner.build_role_review_prompts(
+            branch="test-branch",
+            git_diff_text="diff --git a/x b/x",
+            repo_context_text="BUNDLE",
+        )["prompts"]
+
+        maintainer = prompts["maintainer"]["prompt"]
+        for part in map_step_runner.ROLE_FINDING_CONTRACT_KEYS:
+            assert part in maintainer, f"contract part {part} missing from the prompt"
+        assert "Set reviewer to 'maintainer'" in maintainer
+        # The role reviewer sees the diff and the bundle, never another
+        # reviewer's output.
+        assert "BUNDLE" in maintainer
+        assert "diff --git a/x b/x" in maintainer
+
+    def test_role_prompt_schema_comes_from_agent_output_schemas(self, tmp_path, monkeypatch):
+        """One schema object — the prompt, the truncation gate and the retry
+        prompt must not be able to disagree."""
+        monkeypatch.chdir(tmp_path)
+        for role in map_step_runner.ROLE_REVIEWER_IDS:
+            assert (
+                map_step_runner.AGENT_OUTPUT_SCHEMAS[role]["skeleton"]
+                is map_step_runner.ROLE_FINDING_SCHEMA
+            )
+
+    def test_truncation_gate_accepts_a_valid_role_envelope(self):
+        envelope = json.dumps(
+            {
+                "reviewer": "maintainer",
+                "all_clear": True,
+                "all_clear_rationale": "no rot found",
+                "findings": [],
+                "checks_performed": ["A1"],
+            }
+        )
+        report = map_step_runner.detect_truncated_agent_output(
+            envelope, agent_kind="maintainer"
+        )
+        assert report["truncated"] is False, report
+
+    def test_truncation_gate_flags_a_role_envelope_missing_all_clear(self):
+        envelope = json.dumps({"reviewer": "maintainer", "findings": []})
+        report = map_step_runner.detect_truncated_agent_output(
+            envelope, agent_kind="maintainer"
+        )
+        assert report["truncated"] is True
+
+    def test_aggregation_drops_incomplete_findings_into_contract_incomplete(self):
+        envelope = json.dumps(
+            {
+                "reviewer": "user_experience",
+                "all_clear": False,
+                "findings": [
+                    self._complete_finding(),
+                    self._complete_finding(id="F-U-02", why_better="", cost=""),
+                ],
+                "checks_performed": ["old path"],
+            }
+        )
+        result = map_step_runner.aggregate_adversarial_findings(
+            user_experience_json=envelope
+        )
+        assert result["summary"]["per_reviewer_counts"]["user_experience"] == 1
+        assert result["summary"]["contract_incomplete"] == 1
+        dropped = result["contract_incomplete"][0]
+        assert dropped["id"] == "F-U-02"
+        assert dropped["contract_gaps"] == ["why_better", "cost"]
+        # The surviving finding is reportable through the shared report shape.
+        merged = result["findings"][0]
+        assert merged["failure_mode"] == self._complete_finding()["problem"]
+        assert merged["recommendation"] == self._complete_finding()["proposed_code"]
+
+    def test_quick_mode_keeps_both_roles_and_drops_only_edge_case(self):
+        """--quick is a cost switch, not a way to lose a perspective."""
+        script = SCRIPTS_PATH / "map_step_runner.py"
+        source = script.read_text(encoding="utf-8")
+        assert 'reviewer_ids = ["blind", "acceptance", *ROLE_REVIEWER_IDS]' in source

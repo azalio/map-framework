@@ -1247,20 +1247,21 @@ print("Run /map-learn now, or later from the generated handoff")
 - Root cause analysis
 - Regression debugging
 
-#### 4. `/map-review` - Interactive Code Review (3 Agents)
+#### 4. `/map-review` - Interactive Code Review (5 Agents)
 
-**Agent Sequence:** git diff → [Monitor + Predictor + Evaluator] (all 3 parallel) → Interactive 4-section presentation → Verdict
+**Agent Sequence:** git diff → [Monitor + Predictor + Evaluator + user_experience + maintainer] (all 5 parallel) → Interactive 4-section presentation + role review → Verdict
 
 **Review-Specific Features:**
 
 1. **No TaskDecomposer** - Reviews current branch changes as-is
-2. **Parallel Agent Launch** - 3 agents launched in a single message
+2. **Parallel Agent Launch** - 5 agents launched in a single message
 3. **Interactive 4-Section Presentation:**
    - **Architecture** (primary: Predictor — breaking changes, affected components)
    - **Code Quality** (primary: Monitor — correctness, maintainability issues)
    - **Tests** (primary: Monitor — testability, coverage gaps)
    - **Performance** (primary: Monitor — performance issues, cross-ref Predictor risk)
 4. **Review Section Protocol** — each section presents top N issues (BIG=4, SMALL=1) with options and tradeoffs, user picks resolution via AskUserQuestion
+4b. **Role Reviews** (Step B.5, after the four sections) — `user_experience` and `maintainer` findings presented as two groups under the same option protocol, each shown with its full five-part contract
 5. **BIG/SMALL mode** — user selects review depth at start
 6. **CI/Auto mode** (`--ci`/`--auto` flag) — batch report with no interaction, auto-selects recommended options
 7. **Verdict Logic:**
@@ -1272,6 +1273,10 @@ print("Run /map-learn now, or later from the generated handoff")
 **Review Order Bias Hardening:** Long-context LLM reviewers exhibit anchoring effects: sections presented early in a review session receive disproportionate attention and can skew the final verdict. `/map-review` exposes three operational modes to probe verdict stability: canonical order (Architecture → Code Quality → Tests → Performance, the default), reverse order (`--reverse-sections`), and seeded random order (`--shuffle-sections [--seed N]`). Compare mode (`--compare-orderings`) runs both default and reverse passes, then aggregates using strict-wins (BLOCK > REVISE > PROCEED — never downgrade). The `ordering` top-level object in `.map/<branch>/review-bundle.json` records mode, seed, per-run verdicts, and drift detection result. INV-10 ensures `create_review_bundle` is the sole manifest writer for the `review` stage; ordering data is staged via a module-level pending dict and consumed in a single atomic write. INV-7 guarantees default behavior is unchanged when no flags are passed. Design rationale follows two TRIZ principles: **Principle 22** ("convert harm into a probe" / "blessing in disguise") — section-ordering sensitivity, instead of being hidden, becomes a first-class diagnostic signal for verdict stability; **Principle 35** ("parameter changes") — varying only the presentation order (a low-cost parameter change) while holding section content constant isolates order as the single varying parameter and yields high-signal drift output.
 
 **Review-Bundle-First Context:** `/map-review` persists the durable review bundle (`.map/<branch>/review-bundle.json` / `.map/<branch>/review-bundle.md`) via `create_review_bundle()` before launching reviewer agents. It then calls `build_review_prompts` to create separate bounded Monitor, Predictor, and Evaluator prompts under `MAP_REVIEW_PROMPT_BUDGET_TOKENS` (default 12,000 estimated tokens). The helper keeps the bundle as primary context — containing spec, task plan, test contracts, verification summary, code-review history, acceptance-tag coverage, and prior-stage consumption status — preserves reviewer instructions and expected output schemas, and clips lower-priority raw diff context first with a `Review Prompt Budget` diagnostic note. When `minimality` is not `off`, the helper also emits an advisory complexity-only what-to-delete lens (`delete`/`stdlib`/`native`/`yagni`/`shrink` plus `net: -N`) that is never used as a verdict gate or Actor retry input. When detached preparation is unavailable, the review still proceeds from the persisted bundle. Bundle generation always updates `artifact_manifest.json["stages"]["review"]`.
+
+**Role Reviewers (`user_experience`, `maintainer`):** two perspective roles run in the DEFAULT fan-out (and in `--adversarial`, where the reviewer set is five). They exist because the three core reviewers all read the change as code: nobody is asked whether the ALREADY SHIPPED path got worse, or what rot the next maintainer inherits. `ROLE_REVIEWER_SPECS` in `map_step_runner.py` holds their prompts; both run with isolated context (diff + review bundle, never another reviewer's output) plus repo read access — the user role to diff the pre-change surface (`git show <default-branch>:<file>`), the maintainer role for the whole-base grep that copy-paste, single-source and version-predicate classes require. `user_experience` checks convenience regressions on the old path, confusable flags/options, and explicitly-supplied values that are silently overridden instead of rejected, judged from two sub-roles (human in a terminal, CI script). `maintainer` checks branch-scoped litter in comments, implementation vocabulary leaking into user-facing text, copy-paste, split sources of truth, overcomplication, logic order, dead work, extensibility cost (exact N places), version/capability predicates (one module, named by capability not release number, one comparison style), and foreign-language code embedded in string literals.
+
+Their output is governed by a **five-part contract** — `problem` (one line + `file:line`), `current_code` (verbatim), `proposed_code` (applicable as a patch), `why_better` (measurable delta; bare "cleaner" is rejected), `cost` (downside or `none`) — declared once as `ROLE_FINDING_SCHEMA` and reused as the `AGENT_OUTPUT_SCHEMAS` skeleton for both roles, so the rendered prompt, the truncation gate (`--agent user_experience` / `--agent maintainer`) and the JSON retry prompt cannot disagree. `role_finding_contract_gaps()` is the single enforcement point: a finding missing any part is tombstoned by the ledger with `transition_reason: contract_incomplete` and named in `not_verified` — it never gates the change, and it never silently disappears either. That asymmetry is deliberate: an unfinished remark must not block a merge, but a reviewer that stopped halfway must not read as "nothing found".
 
 **Acceptance Coverage Reporting:** `write_verification_summary()` and `create_review_bundle()` derive coverage from `blueprint.json` `coverage_map` keys and bracketed tags such as `[AC-1]` or `[INV-1]`. A tag is reported as covered only when it appears in downstream verification, QA, test-contract, handoff, PR draft, or review artifacts; missing tags remain visible as `missing_evidence` in both the human Markdown and machine-readable `acceptance_coverage` payload.
 

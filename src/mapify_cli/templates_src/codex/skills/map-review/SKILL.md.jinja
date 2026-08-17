@@ -1,13 +1,15 @@
 ---
 name: map-review
-description: "Interactive 4-section code review using monitor, predictor, and evaluator agents on current changes. Use when reviewing a diff, PR, or staged work before merge. Do NOT use to plan or implement; use map-plan or map-efficient."
+description: "Interactive 4-section code review using monitor, predictor, and evaluator agents plus the user and maintainer role reviewers on current changes. Use when reviewing a diff, PR, or staged work before merge. Do NOT use to plan or implement; use map-plan or map-efficient."
 ---
 [% include "_partials/auto-update-preflight.md.jinja" %]
 
 # $map-review - MAP Review Workflow
 
 Interactive, structured code review of current changes using monitor,
-predictor, and evaluator agents. This skill is the Codex counterpart to
+predictor, and evaluator agents, plus two role reviewers — `user_experience`
+(did the already-shipped path get worse?) and `maintainer` (what rot survives
+the merge?). This skill is the Codex counterpart to
 Claude `/map-review`: it uses Codex-native dispatch (`spawn_agent`) for
 independent reviewer passes, and the current Codex session drives bundle
 setup, verification gates, and presentation.
@@ -61,8 +63,9 @@ These constraints apply before any write-capable step:
 4. Build the review bundle before launching reviewer agents.
 5. Build bounded review prompts before launching reviewer agents.
 6. Launch each reviewer agent once per fan-out (full mode: monitor +
-   predictor + evaluator; lightweight mode: monitor only) — the single
-   truncation retry in Step A.2b is the only exception.
+   predictor + evaluator + the `user_experience` and `maintainer` role
+   reviewers; lightweight mode: monitor only) — the single truncation
+   retry in Step A.2b is the only exception.
 7. Monitor `valid=false` requires verification, not immediate publication —
    every finding needs evidence and must be introduced by this change
    before it reaches presentation.
@@ -157,7 +160,7 @@ Extract each role's prompt from `REVIEW_PROMPTS_JSON`, then dispatch with
 `spawn_agent(agent_type=...)` — see
 [review-reference.md](review-reference.md#dispatch) for the exact prompt
 extraction shell one-liners. Full mode runs monitor + predictor +
-evaluator; lightweight mode runs monitor only. When
+evaluator + both role reviewers; lightweight mode runs monitor only. When
 `COMPLEXITY_LENS_ENABLED=true` (i.e. `.map/config.yaml` sets `minimality`
 to `lite`/`full`/`ultra`), also dispatch the complexity lens using the
 `evaluator` agent type with the `complexity_lens` prompt.
@@ -177,12 +180,31 @@ spawn_agent(
   agent_type="evaluator",
   message=EVALUATOR_PROMPT
 )
+# Full mode only — role reviewers run with isolated context (diff + bundle).
+# They reuse the `evaluator` agent type the same way the complexity lens does:
+# the configured Codex agents are decomposer/monitor/researcher/predictor/
+# evaluator, and what the pass does is defined by its prompt, not by the type.
+spawn_agent(
+  agent_type="evaluator",
+  message=USER_EXPERIENCE_PROMPT
+)
+spawn_agent(
+  agent_type="evaluator",
+  message=MAINTAINER_PROMPT
+)
 # When COMPLEXITY_LENS_ENABLED=true only:
 spawn_agent(
   agent_type="evaluator",
   message=COMPLEXITY_LENS_PROMPT
 )
 ```
+
+The role reviewers read the repository (including `git show
+<default-branch>:<file>` for the pre-change surface) and answer to the
+five-part output contract — `problem`, `current_code`, `proposed_code`,
+`why_better`, `cost`. A finding missing any part is tombstoned as
+`contract_incomplete`: it never gates the change and it is named in the
+ledger's `not_verified`.
 
 When enabled, the complexity lens is advisory only. It lists
 over-engineering as `delete:`, `stdlib:`, `native:`, `yagni:`, or `shrink:`
@@ -200,7 +222,8 @@ printf '%s' "$MONITOR_RESPONSE" | \
   python3 .map/scripts/map_step_runner.py detect_truncated_agent_output --agent review-monitor
 ```
 
-Use `--agent predictor` / `--agent evaluator` for the other roles. On
+Use `--agent predictor` / `--agent evaluator` / `--agent user_experience` /
+`--agent maintainer` for the other roles. On
 truncation, log the failure and re-invoke that reviewer once using the
 retry prompt built from the same stdin-piped pattern; if still malformed,
 stop with CLARIFICATION_NEEDED. See

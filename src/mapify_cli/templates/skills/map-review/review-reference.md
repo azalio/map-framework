@@ -39,6 +39,67 @@ Lean already. Ship.
 
 Boundaries: complexity only. Correctness, security, and performance findings stay in the normal Monitor/Evaluator pass. A single smoke test or assert-based self-check is the minimum and must not be flagged for deletion. The lens samples and verifies `map:simplification:` marker claims; the marker is evidence, not an exemption. `net: -N` is post-hoc and advisory only: do not feed it into Actor retry context, do not use it for PROCEED/REVISE/BLOCK, and do not let it incentivize deleting necessary code.
 
+## Role Reviewers
+
+Two perspective roles run in BOTH review paths — the normal fan-out and
+`--adversarial`. They are not a lens on the code the other reviewers already
+read: they answer questions nobody else in the fan-out is asked.
+
+**`user_experience` — the person or script that CALLS this.** One question: did
+the change make the ALREADY SHIPPED functionality harder or less convenient?
+
+- Convenience regression: do the pre-diff scenarios still take the same number
+  of steps? Did the old path gain a mandatory flag, field, or ordering rule?
+- Distinguishability: two confusable flags/options/fields (`--release` vs
+  `--from-release`)? Does the name alone say what it does?
+- Explicit input beats a default: an explicitly supplied value that is
+  incompatible with the new mode must be REJECTED with a clear error, never
+  silently overridden.
+- The current flag set is not a given — propose the ideal one when it confuses.
+- Judged from two sub-roles: a human in a terminal, and a CI script.
+
+**`maintainer` — the person extending this a quarter from now.** Checks:
+
+| Class | What it hunts |
+|---|---|
+| A1 | Branch-scoped litter in comments (plan/tracker IDs, `.map/` paths, "step N") — it rots after merge |
+| A2 | Implementation vocabulary leaking into help/error/log/doc text |
+| B | Copy-paste: near-identical logic in 2+ places that must change in sync |
+| C | Single source of truth: one decision computed in more than one place |
+| D | Overcomplication: twisted booleans, deep nesting, mixed responsibilities |
+| E | Order of logic: validation / defaults / execution readable top to bottom |
+| F | Dead or idle work: built-but-unused structures, duplicated guards |
+| G | Extensibility: how many places the next similar case touches — exact N |
+| H | Version/capability predicates: one module (H1), named by capability not number (H2), one comparison style (H3) — found by whole-base grep, not in the diff |
+| I | Embedded shell/YAML/SQL/HCL inside string literals — unreviewable, untestable |
+
+For B, C and H one site is not a finding: the finding is the number of sites and
+the point where they collapse.
+
+### The output contract
+
+Every role finding carries five parts, or it is not reported:
+
+| Part | Requirement |
+|---|---|
+| `problem` | one line + exact `file:line` |
+| `current_code` | the lines as they are, copied verbatim |
+| `proposed_code` | applicable as a patch — the helper itself, not "extract a helper" |
+| `why_better` | measurable delta ("3 edit sites -> 1", "-1 responsibility"); bare "cleaner" is rejected |
+| `cost` | the downside of the fix, or `none` |
+
+A finding missing any part is NOT softened into an advisory: the aggregator
+lists it under `contract_incomplete`, the ledger tombstones it with
+`transition_reason: contract_incomplete`, and `not_verified` names it. It cannot
+gate the change, and it cannot disappear either.
+
+Standalone prompt build (the normal fan-out builds these automatically):
+
+```bash
+python3 .map/scripts/map_step_runner.py build_role_review_prompts \
+  [--roles user_experience,maintainer]
+```
+
 ## Cross-AI
 
 `--cross-ai <runtime>` dispatches the review to an INDEPENDENT external AI CLI
@@ -137,9 +198,13 @@ cat > "$BRANCH_DIR/review-agent-monitor.json" <<'MONITOR_EOF'
 MONITOR_EOF
 ```
 
-Repeat for `review-agent-predictor.json` and `review-agent-evaluator.json`. In
+Repeat for `review-agent-predictor.json`, `review-agent-evaluator.json`,
+`review-agent-user_experience.json` and `review-agent-maintainer.json`. In
 adversarial or compare-orderings mode also write the aggregated findings array to
 `review-agent-adversarial.json`.
+
+The role envelopes are handed over whole — the ledger unwraps `findings` itself,
+so nothing has to be pre-flattened.
 
 ### What the table counts
 
@@ -153,6 +218,7 @@ excluded, and a finding may be tombstoned only when its severity is `minor`.
 | Severity ≥ MEDIUM with no `reach_evidence` | `downgraded` | `needs_investigation` | counted → at least REVISE |
 | `was_present_before_pr=true`, above `minor` | `downgraded` | `needs_investigation` | counted → at least REVISE, listed in `not_verified` |
 | `was_present_before_pr=true`, `minor` | `tombstoned` | as reported | excluded |
+| Role finding missing an output-contract part | `tombstoned` | as reported | excluded, listed in `not_verified` |
 | Reviewer payload missing or malformed | `active` | `important` | counted → at least REVISE |
 
 A pre-existing claim is self-attested by the reviewer that raised the finding, so
@@ -228,6 +294,11 @@ LEDGER_ARGS=()
 for ROLE in monitor predictor evaluator adversarial; do
   [ -f "$BRANCH_DIR/review-agent-$ROLE.json" ] && \
     LEDGER_ARGS+=(--"$ROLE"-file "$BRANCH_DIR/review-agent-$ROLE.json")
+done
+# Role reviewers: the artifact name keeps the underscore, the flag uses dashes.
+for ROLE in user_experience maintainer; do
+  [ -f "$BRANCH_DIR/review-agent-$ROLE.json" ] && \
+    LEDGER_ARGS+=(--"${ROLE//_/-}"-file "$BRANCH_DIR/review-agent-$ROLE.json")
 done
 
 python3 .map/scripts/map_step_runner.py write_review_verdict_ledger \

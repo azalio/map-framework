@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`/map-review` gains two role reviewers: `user_experience` and
+  `maintainer`.** They run in the DEFAULT fan-out (Monitor + Predictor +
+  Evaluator + both roles) and in `--adversarial`, where the reviewer set is now
+  five (`--quick` drops only the Edge Case Hunter). Both run with isolated
+  context — diff + review bundle, never another reviewer's output — plus repo
+  read access. `user_experience` asks whether the ALREADY SHIPPED path got
+  worse: new mandatory steps on the old path, confusable flags (`--release` vs
+  `--from-release`), an explicitly-supplied value silently overridden instead of
+  rejected — judged as a human in a terminal AND as a CI script. `maintainer`
+  asks what rot survives the merge: branch-scoped plan/tracker IDs in comments,
+  implementation vocabulary in user-facing text, copy-paste, a decision computed
+  twice, version predicates named by release number instead of capability,
+  foreign-language code embedded in string literals.
+- **Five-part output contract for role findings.** Every role finding must carry
+  `problem` (one line + `file:line`), `current_code` (verbatim), `proposed_code`
+  (applicable as a patch), `why_better` (measurable delta — bare "cleaner" is
+  rejected) and `cost` (downside, or `none`). The contract is declared once as
+  `ROLE_FINDING_SCHEMA` and reused as the `AGENT_OUTPUT_SCHEMAS` skeleton, so
+  the rendered prompt, the truncation gate (`--agent user_experience` /
+  `--agent maintainer`) and the JSON retry prompt cannot drift apart. A finding
+  missing any part is tombstoned by the verdict ledger with
+  `transition_reason: contract_incomplete` and named in `not_verified` — an
+  unfinished remark neither gates the change nor disappears.
+- New runner surfaces: `build_role_review_prompts`
+  (`--roles user_experience,maintainer`), `--user-experience` / `--maintainer`
+  inputs for `aggregate_adversarial_findings` (with a `contract_incomplete`
+  report), and `--user-experience-file` / `--maintainer-file` for
+  `write_review_verdict_ledger`.
+
+### Fixed
+- **Adversarial reviewers dispatched to a non-existent agent type.**
+  `ADVERSARIAL_REVIEWER_SPECS` and the shipped `--adversarial` docs used
+  `subagent_type="general"`, which is not a registered agent type — the correct
+  built-in is `general-purpose`. Corrected in the specs and in every dispatch
+  example.
+
 ## [3.27.1] - 2026-08-17
 
 ### Fixed
