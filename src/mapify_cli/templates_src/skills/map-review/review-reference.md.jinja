@@ -88,10 +88,17 @@ Every role finding carries five parts, or it is not reported:
 | `why_better` | measurable delta ("3 edit sites -> 1", "-1 responsibility"); bare "cleaner" is rejected |
 | `cost` | the downside of the fix, or `none` |
 
-A finding missing any part is NOT softened into an advisory: the aggregator
-lists it under `contract_incomplete`, the ledger tombstones it with
-`transition_reason: contract_incomplete`, and `not_verified` names it. It cannot
-gate the change, and it cannot disappear either.
+A finding missing any part is NOT softened into an advisory, but where it lands
+depends on the path that ran:
+
+- Normal fan-out: the role envelope reaches the ledger, which tombstones the
+  finding with `transition_reason: contract_incomplete` and names it in
+  `not_verified`.
+- `--adversarial`: `aggregate_adversarial_findings` removes it before the
+  aggregated array is written, so it appears only under `contract_incomplete`
+  in the report — present it from there, because the ledger never sees it.
+
+Either way it cannot gate the change, and it cannot disappear either.
 
 Standalone prompt build (the normal fan-out builds these automatically):
 
@@ -291,12 +298,8 @@ aggregated array to `review-agent-adversarial.json`, so both pass
 
 ```bash
 LEDGER_ARGS=()
-for ROLE in monitor predictor evaluator adversarial; do
-  [ -f "$BRANCH_DIR/review-agent-$ROLE.json" ] && \
-    LEDGER_ARGS+=(--"$ROLE"-file "$BRANCH_DIR/review-agent-$ROLE.json")
-done
-# Role reviewers: the artifact name keeps the underscore, the flag uses dashes.
-for ROLE in user_experience maintainer; do
+# The artifact name keeps the underscore; the ledger flag uses dashes.
+for ROLE in monitor predictor evaluator adversarial user_experience maintainer; do
   [ -f "$BRANCH_DIR/review-agent-$ROLE.json" ] && \
     LEDGER_ARGS+=(--"${ROLE//_/-}"-file "$BRANCH_DIR/review-agent-$ROLE.json")
 done

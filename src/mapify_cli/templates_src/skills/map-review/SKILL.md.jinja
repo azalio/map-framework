@@ -576,12 +576,8 @@ not exist is a read error, and read errors are findings.
 
 ```bash
 LEDGER_ARGS=()
-for ROLE in monitor predictor evaluator adversarial; do
-  [ -f "$BRANCH_DIR/review-agent-$ROLE.json" ] && \
-    LEDGER_ARGS+=(--"$ROLE"-file "$BRANCH_DIR/review-agent-$ROLE.json")
-done
-# Role reviewers: the artifact name keeps the underscore, the flag uses dashes.
-for ROLE in user_experience maintainer; do
+# The artifact name keeps the underscore; the ledger flag uses dashes.
+for ROLE in monitor predictor evaluator adversarial user_experience maintainer; do
   [ -f "$BRANCH_DIR/review-agent-$ROLE.json" ] && \
     LEDGER_ARGS+=(--"${ROLE//_/-}"-file "$BRANCH_DIR/review-agent-$ROLE.json")
 done

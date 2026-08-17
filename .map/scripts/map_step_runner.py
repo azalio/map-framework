@@ -7872,7 +7872,7 @@ def normalize_review_verdict(
     evaluator_result: dict[str, Any] | None = None,
     *,
     adversarial_findings: list[dict[str, Any]] | None = None,
-    role_findings: list[dict[str, Any]] | None = None,
+    role_findings: list[Any] | None = None,
     review_mode: str = "normal",
     previous_verdict: str | None = None,
     input_errors: list[str] | None = None,
@@ -8122,17 +8122,19 @@ def normalize_review_verdict(
 
     # --- Ingest role-reviewer findings (user_experience / maintainer) ---
     for role_finding in (role_findings or []):
-        if not isinstance(role_finding, dict):
-            continue
-        raw_role_sev = str(role_finding.get("severity") or "").lower()
+        # A non-object entry is not skipped: role_finding_contract_gaps reports
+        # it as a finding with every part missing, so it lands in the registry
+        # as contract_incomplete instead of vanishing. Dropping it here would
+        # contradict that helper's own single-source-of-truth contract and
+        # diverge from the aggregator, which does report it.
+        gaps = role_finding_contract_gaps(role_finding)
+        entry = role_finding if isinstance(role_finding, dict) else {}
+        raw_role_sev = str(entry.get("severity") or "").lower()
         role_sev = {"critical": "critical", "important": "important", "minor": "minor"}.get(
             raw_role_sev, "needs_investigation"
         )
-        reviewer = str(role_finding.get("reviewer") or "role")
-        role_claim = str(
-            role_finding.get("problem") or role_finding.get("claim") or ""
-        )
-        gaps = role_finding_contract_gaps(role_finding)
+        reviewer = str(entry.get("reviewer") or "role")
+        role_claim = str(entry.get("problem") or "")
 
         if gaps:
             # The role contract is explicit: an incomplete finding is not a
@@ -8142,7 +8144,7 @@ def normalize_review_verdict(
             findings_registry.append({
                 "id": _next_id(),
                 "source_agent": "role",
-                "category": _normalize_category(str(role_finding.get("category") or "")),
+                "category": _normalize_category(str(entry.get("category") or "")),
                 "severity": role_sev,
                 "claim": f"[{reviewer}] {role_claim}",
                 "evidence": [],
@@ -8163,14 +8165,14 @@ def normalize_review_verdict(
         # applicable fix, the measurable delta and its cost.
         role_evidence: list[dict[str, Any]] = []
         for part in ("evidence", *ROLE_FINDING_CONTRACT_KEYS):
-            part_value = str(role_finding.get(part) or "").strip()
+            part_value = str(entry.get(part) or "").strip()
             if part_value:
                 role_evidence.append({"source": part, "quote": part_value})
 
         findings_registry.append({
             "id": _next_id(),
             "source_agent": "role",
-            "category": _normalize_category(str(role_finding.get("category") or "")),
+            "category": _normalize_category(str(entry.get("category") or "")),
             "severity": role_sev,
             "claim": f"[{reviewer}] {role_claim}",
             "evidence": role_evidence,
@@ -8203,12 +8205,15 @@ def normalize_review_verdict(
 
     # Only when nothing arrived AND nothing failed to parse — a parse failure is
     # already reported above, and reporting it twice inflates the registry.
-    if (
-        not input_errors
-        and not any((monitor_data, predictor_data, evaluator_data))
-        and not (adversarial_findings or [])
-        and not (role_findings or [])
-    ):
+    supplied_by_source = {
+        "monitor": bool(monitor_data),
+        "predictor": bool(predictor_data),
+        "evaluator": bool(evaluator_data),
+        "adversarial": bool(adversarial_findings),
+        "role": bool(role_findings),
+    }
+    if not input_errors and not any(supplied_by_source.values()):
+        expected_sources = "/".join(supplied_by_source)
         findings_registry.append({
             "id": _next_id(),
             "source_agent": "operator",
@@ -8222,13 +8227,13 @@ def normalize_review_verdict(
             "status": "active",
             "transition_reason": "input_integrity",
             "transition_evidence": (
-                "monitor/predictor/evaluator/adversarial inputs were all empty — "
+                f"{expected_sources} inputs were all empty — "
                 "check that the reviewer envelopes were captured and passed in"
             ),
             "was_present_before_pr": None,
         })
         not_verified.append(
-            "The entire review: no Monitor, Predictor, Evaluator or adversarial output was supplied."
+            f"The entire review: no output was supplied by any of {expected_sources}."
         )
         escalation_reasons.append(
             "The ledger ran with no reviewer input at all — the verdict describes the "
@@ -8488,14 +8493,12 @@ def write_review_verdict_ledger(
     evaluator_json: str = "",
     *,
     adversarial_json: str = "",
-    user_experience_json: str = "",
-    maintainer_json: str = "",
+    role_json: Mapping[str, str] | None = None,
     monitor_file: str = "",
     predictor_file: str = "",
     evaluator_file: str = "",
     adversarial_file: str = "",
-    user_experience_file: str = "",
-    maintainer_file: str = "",
+    role_files: Mapping[str, str] | None = None,
     review_mode: str = "normal",
     previous_verdict: str = "",
     destination: str = "unknown",
@@ -8515,16 +8518,17 @@ def write_review_verdict_ledger(
         predictor_json:     JSON string of Predictor agent output (may be empty).
         evaluator_json:     JSON string of Evaluator agent output (may be empty).
         adversarial_json:   JSON array of pre-normalized adversarial findings (may be empty).
-        user_experience_json: JSON envelope of the user-perspective role reviewer.
-        maintainer_json:    JSON envelope of the maintainer-perspective role reviewer.
+        role_json:          Role-reviewer envelopes keyed by role id
+                            (ROLE_REVIEWER_IDS); an absent key means "not supplied".
         monitor_file:       Path to the Monitor envelope on disk. Takes precedence over
                             monitor_json — preferred for real reviewer output, which is
                             too large and too quote-heavy to survive a shell variable.
         predictor_file:     Path to the Predictor envelope on disk.
         evaluator_file:     Path to the Evaluator envelope on disk.
         adversarial_file:   Path to the adversarial findings array on disk.
-        user_experience_file: Path to the user_experience reviewer envelope on disk.
-        maintainer_file:    Path to the maintainer reviewer envelope on disk.
+        role_files:         Paths to those envelopes on disk, same keys. A path
+                            wins over the matching role_json entry, exactly like
+                            monitor_file over monitor_json.
         review_mode:        One of normal|adversarial|cross_ai|compare_orderings.
         previous_verdict:   Prior PROCEED|REVISE|BLOCK verdict string. When empty, it is
                             recovered from the ledger already written for this branch.
@@ -8588,12 +8592,16 @@ def write_review_verdict_ledger(
 
     # Role reviewers hand over their envelope verbatim, exactly like Monitor —
     # the ledger owns the unwrap so no caller has to pre-flatten a findings array.
-    role_findings: list[dict[str, Any]] = []
-    for role_id, role_raw, role_path in (
-        ("user_experience", user_experience_json, user_experience_file),
-        ("maintainer", maintainer_json, maintainer_file),
-    ):
-        role_envelope = _safe_parse(_read_source(role_raw, role_path, role_id), role_id)
+    role_findings: list[Any] = []
+    for role_id in ROLE_REVIEWER_IDS:
+        role_envelope = _safe_parse(
+            _read_source(
+                (role_json or {}).get(role_id, ""),
+                (role_files or {}).get(role_id, ""),
+                role_id,
+            ),
+            role_id,
+        )
         if not role_envelope:
             continue
         role_entries = role_envelope.get("findings")
@@ -8601,8 +8609,11 @@ def write_review_verdict_ledger(
             input_errors.append(f"{role_id}: expected a 'findings' array")
             continue
         for entry in role_entries:
-            if isinstance(entry, dict):
-                role_findings.append({**entry, "reviewer": entry.get("reviewer") or role_id})
+            role_findings.append(
+                {**entry, "reviewer": entry.get("reviewer") or role_id}
+                if isinstance(entry, dict)
+                else entry
+            )
 
     # Journal continuity: when the caller does not supply the prior verdict,
     # recover it from the ledger already on disk. A journal whose previous
@@ -9845,7 +9856,82 @@ def create_review_bundle(branch: str | None = None) -> dict:
 # finding — the ledger tombstones it as `contract_incomplete` rather than let a
 # half-researched remark reach the verdict table.
 # ---------------------------------------------------------------------------
-ROLE_REVIEWER_IDS: tuple[str, ...] = ("user_experience", "maintainer")
+ROLE_REVIEWER_SPECS: dict[str, dict[str, str]] = {
+    "user_experience": {
+        "subagent_type": "general-purpose",
+        "description": "User-perspective regression review",
+        "task": """Review this change as the USER of the functionality it touches — the person or the script that CALLS it.
+
+Your one question: did this change make the ALREADY SHIPPED functionality harder or less convenient to use than it was before the diff?
+
+You are not auditing the new feature's internals. You are checking what the change did to the path users already had.
+
+IMPORTANT: If the old path still works exactly as before and the new surface is unambiguous, state that explicitly with reasoning. A clean review is signal, not absence of output.""",
+        "instructions": """Check:
+- Convenience regression: take the scenarios that worked BEFORE the diff (read the pre-change surface with `git show <default-branch>:<file>`). Do they still work with the same number of steps? Did the old path gain a mandatory new flag, field, argument or ordering constraint?
+- Interface distinguishability: are there two similar flags/options/fields that are easy to confuse (`--release` vs `--from-release`)? Does the name alone say what it does, without reading the source?
+- Explicit input beats a default: when the user EXPLICITLY passes a value that is incompatible with the new mode, is it rejected with a clear error — or silently overridden? Silently overriding an explicitly supplied value is always a finding.
+- Do not accept the current flag/option set as given. If it confuses, propose the ideal set for the real goal, even when that means renaming or splitting existing flags.
+- Judge from BOTH sub-roles: a human typing in a terminal, and a CI script that nobody watches.
+
+Every finding carries the full five-part output contract from the schema: `problem` (one line + file:line), `current_code` (verbatim), `proposed_code` (concrete, applicable as a patch), `why_better` (measurable delta — "2 flags -> 1", "-1 mandatory step for the old path"), `cost` (downside of the fix, or "none").
+
+A finding that cannot fill all five parts is not reported: research it further or withdraw it. No "direction", "if there is time", "could be considered" — soft wording means an under-researched finding.""",
+        "context_access": "diff_plus_repo_read",
+    },
+    "maintainer": {
+        "subagent_type": "general-purpose",
+        "description": "Maintainer-perspective rot review",
+        "task": """Review this change as the MAINTAINER who will extend this code a quarter from now — without re-reading every line, and without inheriting rot that survives the merge.
+
+OUTPUT CONTRACT — mandatory for EVERY finding, no exceptions:
+1. Problem — one line + the exact location (file:line).
+2. Current code — the lines as they stand, copied verbatim, never paraphrased.
+3. Proposed solution — concrete applicable code: signatures, names, body. Not "extract a helper" but the helper itself. Not "simplify the condition" but the final expression. Not "reword the comment" but the new text in full. The reader must apply it as a patch without inventing anything.
+4. Why better — the delta against the current code in MEASURABLE terms: "N edit sites -> 1", "-1 responsibility for this function", "predicate is testable without a filesystem", "-1 branch". Absolutes ("cleaner", "more readable", "better") without a metric are banned.
+5. Cost — the risk or downside of the fix (perf, an extra type, migration, diff noise), or "none" when it has none.
+
+If the contract is incomplete, do NOT emit it as a finding: research it further, or withdraw it.""",
+        "instructions": """WHAT TO CHECK — every finding formatted per the output contract:
+
+A. Comments and any text are a contract, not the author's scratchpad.
+   A1. Branch-scoped litter in comments. Grep the changed files for plan/tracker markers: ST-<N>, HC-<N>, AC-<N>, VC<N>, "(ST-00x)", "step N of the plan", `.map/` paths, workflow task names, tracker issue keys. References to planning/tracker artifacts do not belong in CODE — they rot after the merge and leave dangling links. Their place is the PR description or the plan itself. Proposed solution = a comment that explains WHY through substance, with no ID.
+   A2. Implementation leaking into user-facing text. For every short/long help string, flag help, outward-facing error text, log line and doc sentence ask: "would somebody who has NOT read the source understand this?" Banned implementation vocabulary in user-facing text: embedded, uncommented, seed, reconcile, cache-dir, materialize, embed directives, internal type names, internal step names, "the controller will ...". The text describes WHAT the command/field does and the observable behavior in the user's language; HOW it works inside is neither their business nor their words. Proposed solution = the rewritten text.
+
+B. Copy-paste. Identical or near-identical logic in 2+ places that must be changed in sync. Proposed solution = the shared helper/type plus EVERY site converted to it. Why better = number of sites that must change together -> 1.
+
+C. Single source of truth. One field/decision assigned or computed in more than one place ("set twice"). Proposed solution = one computation site; every other place reads it.
+
+D. Not overcomplicated. Twisted boolean conditions -> a named predicate; deep nesting -> early return; functions with mixed responsibilities (validation + defaults + IO in one) -> name where to cut. Proposed solution = the split signatures. Why better = number of responsibilities, or testability without an environment.
+
+E. Order of logic. Is it predictable where validation happens, where defaults are applied, where execution happens? Does the flow read top to bottom without jumps?
+
+F. Dead or idle work. Structures/maps/variables that are built but unused on some branches; duplicated defensive checks. Proposed solution = lazy construction, or one helper.
+
+G. Extensibility. To add the next similar case (a new version, mode, backend, kind), must you touch N scattered places or one? Name the exact N now and the N after your fix.
+
+H. Domain predicates (versions, feature gates, thresholds, modes). This is NOT found in the diff — make a pass over the WHOLE codebase (grep for semver comparisons, version constants, equality against a version literal) and collect ALL predicates on one topic together. Check three things:
+   H1. One module. Every version/capability check lives in one package, not smeared across installer / creator / cmd. Proposed solution = the list of all sites + the single package they move into.
+   H2. Named by CAPABILITY, not by number. `supportsProxyURL()` / `requiresBareImagesPullerKey()` — "is feature X available". Names and inline checks like `isRelease261()`, `== "26.2.1"`, "is this an old release" are banned. Calling code must not know release numbers, only capabilities.
+   H3. One comparison style. Either semver everywhere or strings everywhere, never a mix. A raw string comparison against a version inside control flow is ALWAYS a finding — replace it with a named predicate or with data (a map).
+   Why better = number of places holding version logic now -> 1 module; number of callers that know a release number -> 0.
+
+I. Embedded code in another language. Multi-line string literals holding shell / YAML / SQL / nftables / HCL / heredocs inside the host language (especially assembled with format-string interpolation) are a FINDING, not "a direction for the future": they cannot be reviewed and cannot be tested as strings. Proposed solution = move them into a separate file loaded through the language's embed mechanism + render through a template engine + a golden test. Extra weight when it is a security surface (firewall, proxy, ACL). Presenting this as an optional "if there is time" is not allowed.
+
+HOW TO REVIEW:
+- Read the main entrypoint file line by line, in full — do not scan the diff. A2, D and F are only caught by slow reading.
+- Before judging, run `git show <default-branch>:<file>` to tell new code from inherited code, so you do not charge this diff for somebody else's litter.
+- As a separate FIRST step, grep for the A1 triggers. It is mechanical — do not skip it.
+- For classes B (copy-paste), C (single source) and H (versions): a single site is not yet a finding. Grep the WHOLE codebase for the topic and collect every site; the finding IS their number and the point where they collapse.
+- No "direction", "if there is time", "could be considered". Every finding ships with a ready solution or is withdrawn. Soft wording = an under-researched finding.
+- Do not praise or scold in the abstract: every "why better" is measurable.""",
+        "context_access": "diff_plus_repo_read",
+    },
+}
+
+# The roster IS the spec keys: one declaration, so a role cannot exist for the
+# prompt builder while staying invisible to the ledger, the aggregator and the CLI.
+ROLE_REVIEWER_IDS: tuple[str, ...] = tuple(ROLE_REVIEWER_SPECS)
 
 # The five parts every role finding must carry. Presence is checked
 # mechanically here; wording quality is the reviewer prompt's job.
@@ -9858,12 +9944,13 @@ ROLE_FINDING_CONTRACT_KEYS: tuple[str, ...] = (
 )
 
 ROLE_FINDING_SCHEMA: dict[str, object] = {
-    "reviewer": "<'user_experience' | 'maintainer'>",
+    # Derived from the roster: a new role needs no edit here either.
+    "reviewer": "<one of: " + " | ".join(ROLE_REVIEWER_IDS) + ">",
     "all_clear": "<boolean — true if NO finding survived the output contract>",
     "all_clear_rationale": "<string — required when all_clear=true: what you checked and why it is clean>",
     "findings": [
         {
-            "id": "<F-U-<NN> for user_experience, F-M-<NN> for maintainer>",
+            "id": "<unique finding id; prefix it per role — F-U-01, F-M-01>",
             "severity": "<'CRITICAL' | 'IMPORTANT' | 'MINOR'>",
             "category": "<string — e.g. 'ux', 'usability', 'duplication', 'maintainability', 'extensibility', 'security'>",
             "file_path": "<string | null>",
@@ -10031,19 +10118,6 @@ AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
             ],
         },
     },
-    # Role reviewers share ONE schema object with ROLE_FINDING_SCHEMA — the
-    # rendered prompt, the truncation gate and the JSON retry prompt all read
-    # the same dict, so the contract cannot drift between them. `all_clear` is
-    # required (an empty findings array must be an explicit clean statement,
-    # never an absence); `all_clear_rationale` is conditional on it.
-    "user_experience": {
-        "required_keys": ("reviewer", "all_clear", "findings", "checks_performed"),
-        "skeleton": ROLE_FINDING_SCHEMA,
-    },
-    "maintainer": {
-        "required_keys": ("reviewer", "all_clear", "findings", "checks_performed"),
-        "skeleton": ROLE_FINDING_SCHEMA,
-    },
     # Actor is not a review-prompt role (it has no REVIEW_PROMPT_SPECS entry),
     # but its output schema lives here so build_json_retry_prompt and
     # detect_truncated_agent_output can serve the map-efficient Actor
@@ -10063,6 +10137,21 @@ AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
         },
     },
 }
+
+# Role reviewers are derived from the roster, not listed again: every role in
+# ROLE_REVIEWER_SPECS gets its output schema here, so a new role cannot ship
+# without one. All of them share ONE schema object with ROLE_FINDING_SCHEMA —
+# the rendered prompt, the truncation gate and the JSON retry prompt read the
+# same dict, so the contract cannot drift between them. `all_clear` is required
+# (an empty findings array must be an explicit clean statement, never an
+# absence); `all_clear_rationale` is conditional on it.
+AGENT_OUTPUT_SCHEMAS.update({
+    role_id: AgentOutputSchema(
+        required_keys=("reviewer", "all_clear", "findings", "checks_performed"),
+        skeleton=ROLE_FINDING_SCHEMA,
+    )
+    for role_id in ROLE_REVIEWER_IDS
+})
 
 REVIEW_PROMPT_SPECS: dict[str, dict[str, str]] = {
     "monitor": {
@@ -10150,20 +10239,58 @@ def _read_review_bundle_markdown(branch_name: str) -> str:
 
 
 def _read_git_diff_for_review() -> str:
-    try:
-        result = subprocess.run(
-            ["git", "diff", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
+    """Return the diff every reviewer prompt carries: the branch's review target.
+
+    Same rule as snapshot_code_state (#426): the target is the merge-base with
+    the default branch, NOT ``HEAD``. Reading ``git diff HEAD`` here shipped a
+    "[no git diff output]" placeholder to every reviewer on a fully-committed
+    branch — the normal /map-check -> /map-review state — so the review ran
+    clean against nothing while the branch carried the entire diff.
+
+    Falls back to the uncommitted diff when no default-branch ref resolves
+    (fresh repo, no remote) or when the branch is level with its base and the
+    only changes are in the working tree.
+    """
+
+    def _git(args: list[str]) -> tuple[int, str, str]:
+        try:
+            result = subprocess.run(
+                ["git", *args],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except Exception as exc:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
+            return 1, "", str(exc)
+        return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+    def _quiet(args: list[str]) -> str:
+        code, out, _ = _git(args)
+        return out if code == 0 else ""
+
+    base_sha, base_ref = _resolve_review_base(_quiet)
+    committed = ""
+    if base_sha:
+        code, out, _ = _git(["diff", f"{base_sha}..HEAD"])
+        if code == 0:
+            committed = out
+
+    code, uncommitted, err = _git(["diff", "HEAD"])
+    if code != 0 and not committed:
+        return f"[git diff unavailable: {err or 'git diff exited non-zero'}]"
+    if code != 0:
+        uncommitted = ""
+
+    if committed and uncommitted:
+        # Both exist: the reviewer needs the committed target AND the work still
+        # in the tree. Dropping either half hides real review scope, so they are
+        # concatenated under explicit labels rather than one silently winning.
+        return (
+            f"=== committed review target ({base_ref}...HEAD) ===\n{committed}\n\n"
+            f"=== uncommitted working tree (git diff HEAD) ===\n{uncommitted}"
         )
-    except Exception as exc:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
-        return f"[git diff unavailable: {exc}]"
-    if result.returncode != 0:
-        reason = result.stderr.strip() or "git diff exited non-zero"
-        return f"[git diff unavailable: {reason}]"
-    return result.stdout.strip() or "[no git diff output]"
+    return committed or uncommitted or "[no git diff output]"
 
 
 def _layer_prompt_sections(
@@ -10351,17 +10478,12 @@ def build_review_prompts(
     # inherits rot. They run isolated (diff + bundle only) and emit the role
     # finding contract, so they cannot be answered from the same context the
     # others already share.
-    for role_id, role_spec in ROLE_REVIEWER_SPECS.items():
+    for role_id in ROLE_REVIEWER_IDS:
+        role_entry = _role_prompt_entry(role_id, git_diff, review_bundle, layering)
+        if role_entry is None:
+            continue
         prompts[role_id] = {
-            "subagent_type": role_spec["subagent_type"],
-            "description": role_spec["description"],
-            "prompt": _render_role_reviewer_prompt(
-                role_spec,
-                role_id,
-                git_diff=git_diff,
-                repo_context=review_bundle,
-                layering=layering,
-            ),
+            **role_entry,
             "estimated_tokens": 0,
             "budget_tokens": budget,
             "truncated": False,
@@ -10459,79 +10581,6 @@ For each gap, cite:
 - The file:line of the missing or incorrect implementation
 - The concrete failure scenario""",
         "context_access": "diff_plus_spec_plus_artifacts",
-    },
-}
-
-ROLE_REVIEWER_SPECS: dict[str, dict[str, str]] = {
-    "user_experience": {
-        "subagent_type": "general-purpose",
-        "description": "User-perspective regression review",
-        "task": """Review this change as the USER of the functionality it touches — the person or the script that CALLS it.
-
-Your one question: did this change make the ALREADY SHIPPED functionality harder or less convenient to use than it was before the diff?
-
-You are not auditing the new feature's internals. You are checking what the change did to the path users already had.
-
-IMPORTANT: If the old path still works exactly as before and the new surface is unambiguous, state that explicitly with reasoning. A clean review is signal, not absence of output.""",
-        "instructions": """Check:
-- Convenience regression: take the scenarios that worked BEFORE the diff (read the pre-change surface with `git show <default-branch>:<file>`). Do they still work with the same number of steps? Did the old path gain a mandatory new flag, field, argument or ordering constraint?
-- Interface distinguishability: are there two similar flags/options/fields that are easy to confuse (`--release` vs `--from-release`)? Does the name alone say what it does, without reading the source?
-- Explicit input beats a default: when the user EXPLICITLY passes a value that is incompatible with the new mode, is it rejected with a clear error — or silently overridden? Silently overriding an explicitly supplied value is always a finding.
-- Do not accept the current flag/option set as given. If it confuses, propose the ideal set for the real goal, even when that means renaming or splitting existing flags.
-- Judge from BOTH sub-roles: a human typing in a terminal, and a CI script that nobody watches.
-
-Every finding carries the full five-part output contract from the schema: `problem` (one line + file:line), `current_code` (verbatim), `proposed_code` (concrete, applicable as a patch), `why_better` (measurable delta — "2 flags -> 1", "-1 mandatory step for the old path"), `cost` (downside of the fix, or "none").
-
-A finding that cannot fill all five parts is not reported: research it further or withdraw it. No "direction", "if there is time", "could be considered" — soft wording means an under-researched finding.""",
-        "context_access": "diff_plus_repo_read",
-    },
-    "maintainer": {
-        "subagent_type": "general-purpose",
-        "description": "Maintainer-perspective rot review",
-        "task": """Review this change as the MAINTAINER who will extend this code a quarter from now — without re-reading every line, and without inheriting rot that survives the merge.
-
-OUTPUT CONTRACT — mandatory for EVERY finding, no exceptions:
-1. Problem — one line + the exact location (file:line).
-2. Current code — the lines as they stand, copied verbatim, never paraphrased.
-3. Proposed solution — concrete applicable code: signatures, names, body. Not "extract a helper" but the helper itself. Not "simplify the condition" but the final expression. Not "reword the comment" but the new text in full. The reader must apply it as a patch without inventing anything.
-4. Why better — the delta against the current code in MEASURABLE terms: "N edit sites -> 1", "-1 responsibility for this function", "predicate is testable without a filesystem", "-1 branch". Absolutes ("cleaner", "more readable", "better") without a metric are banned.
-5. Cost — the risk or downside of the fix (perf, an extra type, migration, diff noise), or "none" when it has none.
-
-If the contract is incomplete, do NOT emit it as a finding: research it further, or withdraw it.""",
-        "instructions": """WHAT TO CHECK — every finding formatted per the output contract:
-
-A. Comments and any text are a contract, not the author's scratchpad.
-   A1. Branch-scoped litter in comments. Grep the changed files for plan/tracker markers: ST-<N>, HC-<N>, AC-<N>, VC<N>, "(ST-00x)", "step N of the plan", `.map/` paths, workflow task names, tracker issue keys. References to planning/tracker artifacts do not belong in CODE — they rot after the merge and leave dangling links. Their place is the PR description or the plan itself. Proposed solution = a comment that explains WHY through substance, with no ID.
-   A2. Implementation leaking into user-facing text. For every short/long help string, flag help, outward-facing error text, log line and doc sentence ask: "would somebody who has NOT read the source understand this?" Banned implementation vocabulary in user-facing text: embedded, uncommented, seed, reconcile, cache-dir, materialize, embed directives, internal type names, internal step names, "the controller will ...". The text describes WHAT the command/field does and the observable behavior in the user's language; HOW it works inside is neither their business nor their words. Proposed solution = the rewritten text.
-
-B. Copy-paste. Identical or near-identical logic in 2+ places that must be changed in sync. Proposed solution = the shared helper/type plus EVERY site converted to it. Why better = number of sites that must change together -> 1.
-
-C. Single source of truth. One field/decision assigned or computed in more than one place ("set twice"). Proposed solution = one computation site; every other place reads it.
-
-D. Not overcomplicated. Twisted boolean conditions -> a named predicate; deep nesting -> early return; functions with mixed responsibilities (validation + defaults + IO in one) -> name where to cut. Proposed solution = the split signatures. Why better = number of responsibilities, or testability without an environment.
-
-E. Order of logic. Is it predictable where validation happens, where defaults are applied, where execution happens? Does the flow read top to bottom without jumps?
-
-F. Dead or idle work. Structures/maps/variables that are built but unused on some branches; duplicated defensive checks. Proposed solution = lazy construction, or one helper.
-
-G. Extensibility. To add the next similar case (a new version, mode, backend, kind), must you touch N scattered places or one? Name the exact N now and the N after your fix.
-
-H. Domain predicates (versions, feature gates, thresholds, modes). This is NOT found in the diff — make a pass over the WHOLE codebase (grep for semver comparisons, version constants, equality against a version literal) and collect ALL predicates on one topic together. Check three things:
-   H1. One module. Every version/capability check lives in one package, not smeared across installer / creator / cmd. Proposed solution = the list of all sites + the single package they move into.
-   H2. Named by CAPABILITY, not by number. `supportsProxyURL()` / `requiresBareImagesPullerKey()` — "is feature X available". Names and inline checks like `isRelease261()`, `== "26.2.1"`, "is this an old release" are banned. Calling code must not know release numbers, only capabilities.
-   H3. One comparison style. Either semver everywhere or strings everywhere, never a mix. A raw string comparison against a version inside control flow is ALWAYS a finding — replace it with a named predicate or with data (a map).
-   Why better = number of places holding version logic now -> 1 module; number of callers that know a release number -> 0.
-
-I. Embedded code in another language. Multi-line string literals holding shell / YAML / SQL / nftables / HCL / heredocs inside the host language (especially assembled with format-string interpolation) are a FINDING, not "a direction for the future": they cannot be reviewed and cannot be tested as strings. Proposed solution = move them into a separate file loaded through the language's embed mechanism + render through a template engine + a golden test. Extra weight when it is a security surface (firewall, proxy, ACL). Presenting this as an optional "if there is time" is not allowed.
-
-HOW TO REVIEW:
-- Read the main entrypoint file line by line, in full — do not scan the diff. A2, D and F are only caught by slow reading.
-- Before judging, run `git show <default-branch>:<file>` to tell new code from inherited code, so you do not charge this diff for somebody else's litter.
-- As a separate FIRST step, grep for the A1 triggers. It is mechanical — do not skip it.
-- For classes B (copy-paste), C (single source) and H (versions): a single site is not yet a finding. Grep the WHOLE codebase for the topic and collect every site; the finding IS their number and the point where they collapse.
-- No "direction", "if there is time", "could be considered". Every finding ships with a ready solution or is withdrawn. Soft wording = an under-researched finding.
-- Do not praise or scold in the abstract: every "why better" is measurable.""",
-        "context_access": "diff_plus_repo_read",
     },
 }
 
@@ -10718,6 +10767,58 @@ def _render_role_reviewer_prompt(
     return _layer_prompt_sections(documents_section, stable_sections, layering)
 
 
+def _parse_reviewer_ids(raw: str, valid_ids: tuple[str, ...]) -> list[str] | None:
+    """Parse a comma-separated reviewer/role list, or print an error and return None.
+
+    Two failure modes this closes, both of which used to exit 0 with an empty
+    prompt set — a caller error that silently skipped the review:
+      * a typo'd id, which the prompt builders skip with a bare `continue`;
+      * the dashed spelling (`user-experience`), which every FLAG in this
+        workflow uses while the ids themselves are underscored.
+    """
+    ids = [r.strip().replace("-", "_") for r in raw.split(",") if r.strip()]
+    unknown = [r for r in ids if r not in valid_ids]
+    if unknown or not ids:
+        print(json.dumps({
+            "status": "error",
+            "reason": (
+                f"unknown reviewer id(s): {', '.join(unknown) or '(empty list)'}; "
+                f"valid ids: {', '.join(valid_ids)}"
+            ),
+        }))
+        return None
+    return ids
+
+
+def _role_prompt_entry(
+    role_id: str,
+    git_diff: str,
+    repo_context: str,
+    layering: str,
+) -> dict[str, object] | None:
+    """Build the fan-out entry for one role reviewer, or None for an unknown id.
+
+    The ONLY construction site for a role prompt entry: the normal fan-out, the
+    adversarial fan-out and the standalone builder all go through it, so adding
+    a key to the entry is one edit rather than three.
+    """
+    spec = ROLE_REVIEWER_SPECS.get(role_id)
+    if spec is None:
+        return None
+    return {
+        "subagent_type": spec["subagent_type"],
+        "description": spec["description"],
+        "prompt": _render_role_reviewer_prompt(
+            spec,
+            role_id,
+            git_diff=git_diff,
+            repo_context=repo_context,
+            layering=layering,
+        ),
+        "context_access": spec["context_access"],
+    }
+
+
 def build_role_review_prompts(
     branch: str | None = None,
     roles: list[str] | None = None,
@@ -10748,21 +10849,9 @@ def build_role_review_prompts(
 
     prompts: dict[str, dict[str, object]] = {}
     for role_id in role_ids:
-        spec_entry = ROLE_REVIEWER_SPECS.get(role_id)
-        if spec_entry is None:
-            continue
-        prompts[role_id] = {
-            "subagent_type": spec_entry["subagent_type"],
-            "description": spec_entry["description"],
-            "prompt": _render_role_reviewer_prompt(
-                spec_entry,
-                role_id,
-                git_diff=git_diff,
-                repo_context=repo_context,
-                layering=layering,
-            ),
-            "context_access": spec_entry["context_access"],
-        }
+        role_entry = _role_prompt_entry(role_id, git_diff, repo_context, layering)
+        if role_entry is not None:
+            prompts[role_id] = role_entry
 
     return {
         "status": "success",
@@ -10805,20 +10894,9 @@ def build_adversarial_review_prompts(
         # Role reviewers run in this phase too, but they carry their own output
         # contract — dispatch them through their own renderer rather than
         # flattening both schemas into one.
-        role_spec = ROLE_REVIEWER_SPECS.get(reviewer_id)
-        if role_spec is not None:
-            prompts[reviewer_id] = {
-                "subagent_type": role_spec["subagent_type"],
-                "description": role_spec["description"],
-                "prompt": _render_role_reviewer_prompt(
-                    role_spec,
-                    reviewer_id,
-                    git_diff=git_diff,
-                    repo_context=repo_context,
-                    layering=layering,
-                ),
-                "context_access": role_spec["context_access"],
-            }
+        role_entry = _role_prompt_entry(reviewer_id, git_diff, repo_context, layering)
+        if role_entry is not None:
+            prompts[reviewer_id] = role_entry
             continue
 
         spec_entry = ADVERSARIAL_REVIEWER_SPECS.get(reviewer_id)
@@ -10988,8 +11066,7 @@ def aggregate_adversarial_findings(
     blind_json: str | None = None,
     edge_case_json: str | None = None,
     acceptance_json: str | None = None,
-    user_experience_json: str | None = None,
-    maintainer_json: str | None = None,
+    role_json: Mapping[str, str | None] | None = None,
 ) -> dict:
     """Aggregate, deduplicate, and classify findings from all review reviewers.
 
@@ -10997,8 +11074,7 @@ def aggregate_adversarial_findings(
         blind_json: Raw JSON output from Blind Hunter reviewer.
         edge_case_json: Raw JSON output from Edge Case Hunter reviewer.
         acceptance_json: Raw JSON output from Acceptance Auditor reviewer.
-        user_experience_json: Raw JSON output from the user-perspective role reviewer.
-        maintainer_json: Raw JSON output from the maintainer-perspective role reviewer.
+        role_json: Raw JSON output of each role reviewer, keyed by role id.
 
     Returns dict with unified report.
     """
@@ -11010,8 +11086,7 @@ def aggregate_adversarial_findings(
         ("blind", blind_json),
         ("edge_case", edge_case_json),
         ("acceptance", acceptance_json),
-        ("user_experience", user_experience_json),
-        ("maintainer", maintainer_json),
+        *((role_id, (role_json or {}).get(role_id)) for role_id in ROLE_REVIEWER_IDS),
     ]
 
     parse_errors: list[str] = []
@@ -21715,13 +21790,25 @@ if __name__ == "__main__":
         _p.add_argument(
             "--reviewers",
             default=None,
-            help="Comma-separated: blind,edge_case,acceptance,user_experience,maintainer",
+            help="Comma-separated: blind,edge_case,acceptance," + ",".join(ROLE_REVIEWER_IDS),
         )
-        _p.add_argument("--quick", action="store_true", default=False, help="Skip edge_case reviewer")
+        _p.add_argument(
+            "--quick",
+            action="store_true",
+            default=False,
+            help=(
+                "Cheaper set: drop the Edge Case Hunter. Runs blind, acceptance, "
+                + ", ".join(ROLE_REVIEWER_IDS)
+            ),
+        )
         _args = _p.parse_args(sys.argv[2:])
         reviewer_ids = None
         if _args.reviewers:
-            reviewer_ids = [r.strip() for r in _args.reviewers.split(",") if r.strip()]
+            reviewer_ids = _parse_reviewer_ids(
+                _args.reviewers, ("blind", "edge_case", "acceptance", *ROLE_REVIEWER_IDS)
+            )
+            if reviewer_ids is None:
+                sys.exit(1)
         elif _args.quick:
             # --quick drops the Edge Case Hunter only. The role reviewers stay:
             # they are the perspectives nobody else in the fan-out covers.
@@ -21740,12 +21827,17 @@ if __name__ == "__main__":
         _p.add_argument(
             "--roles",
             default=None,
-            help="Comma-separated: user_experience,maintainer (default: both)",
+            help=(
+                "Comma-separated: " + ",".join(ROLE_REVIEWER_IDS)
+                + " (dashed spelling accepted; default: all)"
+            ),
         )
         _args = _p.parse_args(sys.argv[2:])
         role_ids = None
         if _args.roles:
-            role_ids = [r.strip() for r in _args.roles.split(",") if r.strip()]
+            role_ids = _parse_reviewer_ids(_args.roles, ROLE_REVIEWER_IDS)
+            if role_ids is None:
+                sys.exit(1)
         result = build_role_review_prompts(branch=_args.branch, roles=role_ids)
         print(json.dumps(result, indent=2, ensure_ascii=True))
 
@@ -21756,28 +21848,19 @@ if __name__ == "__main__":
         _p.add_argument("--blind", default=None, help="Path to blind reviewer JSON output")
         _p.add_argument("--edge-case", default=None, help="Path to edge_case reviewer JSON output")
         _p.add_argument("--acceptance", default=None, help="Path to acceptance reviewer JSON output")
-        _p.add_argument(
-            "--user-experience", default=None, help="Path to user_experience role reviewer JSON output"
-        )
-        _p.add_argument(
-            "--maintainer", default=None, help="Path to maintainer role reviewer JSON output"
-        )
+        for _role_id in ROLE_REVIEWER_IDS:
+            _p.add_argument(
+                f"--{_role_id.replace('_', '-')}",
+                dest=_role_id,
+                default=None,
+                help=f"Path to the {_role_id} role reviewer JSON output",
+            )
         _args = _p.parse_args(sys.argv[2:])
 
-        reviewer_payloads: dict[str, str | None] = {
-            "blind": None,
-            "edge_case": None,
-            "acceptance": None,
-            "user_experience": None,
-            "maintainer": None,
-        }
-        for arg_path, key in [
-            (_args.blind, "blind"),
-            (_args.edge_case, "edge_case"),
-            (_args.acceptance, "acceptance"),
-            (_args.user_experience, "user_experience"),
-            (_args.maintainer, "maintainer"),
-        ]:
+        reviewer_payloads: dict[str, str | None] = {}
+        for key in ("blind", "edge_case", "acceptance", *ROLE_REVIEWER_IDS):
+            arg_path = getattr(_args, key, None)
+            reviewer_payloads[key] = None
             if arg_path:
                 try:
                     reviewer_payloads[key] = Path(arg_path).read_text(encoding="utf-8")
@@ -21789,8 +21872,7 @@ if __name__ == "__main__":
             blind_json=reviewer_payloads["blind"],
             edge_case_json=reviewer_payloads["edge_case"],
             acceptance_json=reviewer_payloads["acceptance"],
-            user_experience_json=reviewer_payloads["user_experience"],
-            maintainer_json=reviewer_payloads["maintainer"],
+            role_json={r: reviewer_payloads[r] for r in ROLE_REVIEWER_IDS},
         )
         print(json.dumps(result, indent=2, ensure_ascii=True))
 
@@ -23301,10 +23383,11 @@ if __name__ == "__main__":
         #        [--predictor-json '<JSON>']
         #        [--evaluator-json '<JSON>']
         #        [--adversarial-json '<JSON array>']
-        #        [--user-experience-json '<JSON>'] [--maintainer-json '<JSON>']
+        #        [--<role>-json '<JSON>'] for every role in ROLE_REVIEWER_IDS
+        #          (underscores become dashes in the flag)
         #        [--monitor-file <path>] [--predictor-file <path>]
         #        [--evaluator-file <path>] [--adversarial-file <path>]
-        #        [--user-experience-file <path>] [--maintainer-file <path>]
+        #        [--<role>-file <path>] for every role in ROLE_REVIEWER_IDS
         #          (file flags win over the matching --*-json flag; prefer them for
         #           real reviewer envelopes, which are too large for a shell variable)
         #        [--review-mode normal|adversarial|cross_ai|compare_orderings]
@@ -23324,14 +23407,16 @@ if __name__ == "__main__":
             predictor_json=_rvl_flag("predictor-json", ""),
             evaluator_json=_rvl_flag("evaluator-json", ""),
             adversarial_json=_rvl_flag("adversarial-json", ""),
-            user_experience_json=_rvl_flag("user-experience-json", ""),
-            maintainer_json=_rvl_flag("maintainer-json", ""),
+            role_json={
+                r: _rvl_flag(f"{r.replace('_', '-')}-json", "") for r in ROLE_REVIEWER_IDS
+            },
             monitor_file=_rvl_flag("monitor-file", ""),
             predictor_file=_rvl_flag("predictor-file", ""),
             evaluator_file=_rvl_flag("evaluator-file", ""),
             adversarial_file=_rvl_flag("adversarial-file", ""),
-            user_experience_file=_rvl_flag("user-experience-file", ""),
-            maintainer_file=_rvl_flag("maintainer-file", ""),
+            role_files={
+                r: _rvl_flag(f"{r.replace('_', '-')}-file", "") for r in ROLE_REVIEWER_IDS
+            },
             destination=_rvl_flag("destination", "unknown"),
             executor_class=_rvl_flag("executor-class", "unknown"),
             review_mode=_rvl_flag("review-mode", "normal"),

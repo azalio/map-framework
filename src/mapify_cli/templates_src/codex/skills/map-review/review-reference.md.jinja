@@ -327,10 +327,12 @@ Every role finding carries five parts, or it is not reported:
 | `why_better` | measurable delta ("3 edit sites -> 1", "-1 responsibility"); bare "cleaner" is rejected |
 | `cost` | the downside of the fix, or `none` |
 
-A finding missing any part is NOT softened into an advisory: the aggregator
-lists it under `contract_incomplete` and the ledger tombstones it with
-`transition_reason: contract_incomplete`. It cannot gate the change, and it
-cannot disappear either.
+A finding missing any part is NOT softened into an advisory, but where it
+lands depends on the path that ran: on the normal fan-out the ledger
+tombstones it with `transition_reason: contract_incomplete`; under
+`--adversarial` the aggregator removes it first, so it appears only under
+`contract_incomplete` in the report and the ledger never sees it. Either way
+it cannot gate the change, and it cannot disappear either.
 
 Standalone prompt build (the normal fan-out builds these automatically):
 

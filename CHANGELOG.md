@@ -37,7 +37,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   report), and `--user-experience-file` / `--maintainer-file` for
   `write_review_verdict_ledger`.
 
+- **Adding a role reviewer is one edit.** `ROLE_REVIEWER_SPECS` is the single
+  declaration: `ROLE_REVIEWER_IDS`, the `AGENT_OUTPUT_SCHEMAS` entries, the
+  prompt builders, the adversarial default set, `aggregate_adversarial_findings`
+  and `write_review_verdict_ledger` all derive from it. The ledger and the
+  aggregator take role payloads as roster-keyed mappings (`role_json` /
+  `role_files`) instead of one keyword parameter per role, and the CLI builds
+  `--<role>-file` / `--<role>-json` in a loop, so a role cannot exist for one
+  consumer and be invisible to another.
+
 ### Fixed
+- **Reviewer prompts carried an empty diff on a fully-committed branch.**
+  `build_review_prompts` read `git diff HEAD`, which is empty in the normal
+  `/map-check` → `/map-review` state, so every reviewer received
+  `[no git diff output]` while the branch carried the whole change. It now
+  resolves the merge-base with the default branch (the same rule
+  `snapshot_code_state` already used for #426) and, when both exist, ships the
+  committed review target AND the uncommitted working tree under explicit
+  labels rather than letting one half silently win.
+- **The verdict ledger violated its own JSON Schema.** `source_agent: "role"`
+  and `transition_reason: "contract_incomplete"` were emitted without being
+  added to the closed enums in `REVIEW_VERDICT_LEDGER_SCHEMA`; a ledger holding
+  any role finding failed `jsonschema.validate`. Both enums are extended and a
+  test now validates a ledger carrying an active and a tombstoned role row.
+- **`build_role_review_prompts --roles <unknown>` exited 0 with no prompts.** A
+  typo — or the dashed spelling every flag in this workflow uses
+  (`user-experience`) — silently produced an empty prompt set, so an unattended
+  run dropped the role review with no error. Role and reviewer ids are now
+  parsed fail-closed: the dashed spelling resolves, an unknown id exits 1
+  naming the valid ids.
 - **Adversarial reviewers dispatched to a non-existent agent type.**
   `ADVERSARIAL_REVIEWER_SPECS` and the shipped `--adversarial` docs used
   `subagent_type="general"`, which is not a registered agent type — the correct

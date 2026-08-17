@@ -17373,7 +17373,7 @@ class TestRoleReviewers:
             }
         )
         result = map_step_runner.aggregate_adversarial_findings(
-            user_experience_json=envelope
+            role_json={"user_experience": envelope}
         )
         assert result["summary"]["per_reviewer_counts"]["user_experience"] == 1
         assert result["summary"]["contract_incomplete"] == 1
@@ -17385,8 +17385,93 @@ class TestRoleReviewers:
         assert merged["failure_mode"] == self._complete_finding()["problem"]
         assert merged["recommendation"] == self._complete_finding()["proposed_code"]
 
-    def test_quick_mode_keeps_both_roles_and_drops_only_edge_case(self):
+    def test_quick_mode_keeps_both_roles_and_drops_only_edge_case(self, tmp_path, monkeypatch):
         """--quick is a cost switch, not a way to lose a perspective."""
-        script = SCRIPTS_PATH / "map_step_runner.py"
-        source = script.read_text(encoding="utf-8")
-        assert 'reviewer_ids = ["blind", "acceptance", *ROLE_REVIEWER_IDS]' in source
+        monkeypatch.chdir(tmp_path)
+        quick = map_step_runner.build_adversarial_review_prompts(
+            branch="test-branch",
+            reviewers=["blind", "acceptance", *map_step_runner.ROLE_REVIEWER_IDS],
+            git_diff_text="diff",
+            spec_text="spec",
+        )
+        assert set(quick["prompts"]) == {
+            "blind",
+            "acceptance",
+            *map_step_runner.ROLE_REVIEWER_IDS,
+        }
+
+    def test_roster_is_derived_from_the_specs(self):
+        """One declaration: a role in SPECS is a role everywhere."""
+        assert map_step_runner.ROLE_REVIEWER_IDS == tuple(map_step_runner.ROLE_REVIEWER_SPECS)
+        for role_id in map_step_runner.ROLE_REVIEWER_IDS:
+            assert role_id in map_step_runner.AGENT_OUTPUT_SCHEMAS
+
+
+class TestReviewDiffSource:
+    """The diff shipped to reviewers must be the branch's review target (#426)."""
+
+    @staticmethod
+    def _init_repo(root: Path) -> None:
+        def git(*args: str) -> None:
+            subprocess.run(
+                ["git", *args], cwd=root, check=True, capture_output=True, text=True
+            )
+
+        git("init", "-b", "main")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "T")
+        (root / "app.py").write_text("value = 1\n", encoding="utf-8")
+        git("add", "app.py")
+        git("commit", "-m", "base")
+
+    def test_committed_branch_diff_is_not_empty(self, tmp_path, monkeypatch):
+        """A fully-committed feature branch must not ship '[no git diff output]'."""
+        self._init_repo(tmp_path)
+        subprocess.run(
+            ["git", "checkout", "-b", "feature"], cwd=tmp_path, check=True, capture_output=True
+        )
+        (tmp_path / "app.py").write_text("value = 2  # changed\n", encoding="utf-8")
+        subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "feature work"], cwd=tmp_path, check=True, capture_output=True
+        )
+        monkeypatch.chdir(tmp_path)
+
+        # Precondition: this is exactly the state where `git diff HEAD` is empty.
+        head_diff = subprocess.run(
+            ["git", "diff", "HEAD"], cwd=tmp_path, capture_output=True, text=True, check=True
+        ).stdout.strip()
+        assert head_diff == ""
+
+        diff = map_step_runner._read_git_diff_for_review()
+        assert "value = 2" in diff, diff
+        assert "no git diff output" not in diff
+
+    def test_uncommitted_work_is_used_when_branch_is_level_with_base(
+        self, tmp_path, monkeypatch
+    ):
+        self._init_repo(tmp_path)
+        (tmp_path / "app.py").write_text("value = 3  # wip\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+
+        diff = map_step_runner._read_git_diff_for_review()
+        assert "value = 3" in diff, diff
+
+    def test_committed_and_uncommitted_work_are_both_shipped(self, tmp_path, monkeypatch):
+        """Neither half of the review scope may silently win over the other."""
+        self._init_repo(tmp_path)
+        subprocess.run(
+            ["git", "checkout", "-b", "feature"], cwd=tmp_path, check=True, capture_output=True
+        )
+        (tmp_path / "app.py").write_text("value = 2  # committed\n", encoding="utf-8")
+        subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "feature work"], cwd=tmp_path, check=True, capture_output=True
+        )
+        (tmp_path / "app.py").write_text("value = 4  # still in the tree\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+
+        diff = map_step_runner._read_git_diff_for_review()
+        assert "committed review target" in diff, diff
+        assert "uncommitted working tree" in diff, diff
+        assert "value = 2" in diff and "value = 4" in diff

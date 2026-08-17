@@ -1349,8 +1349,10 @@ def test_role_envelopes_reach_the_ledger_from_disk(branch_workspace):
     )
 
     result = map_step_runner.write_review_verdict_ledger(
-        maintainer_file=str(workspace / "review-agent-maintainer.json"),
-        user_experience_file=str(workspace / "review-agent-user_experience.json"),
+        role_files={
+            "maintainer": str(workspace / "review-agent-maintainer.json"),
+            "user_experience": str(workspace / "review-agent-user_experience.json"),
+        },
         review_mode="normal",
     )
 
@@ -1366,8 +1368,48 @@ def test_unreadable_role_envelope_is_a_finding_not_a_clean_pass(branch_workspace
     """A missing role envelope must not read as 'that reviewer found nothing'."""
     workspace = branch_workspace
     result = map_step_runner.write_review_verdict_ledger(
-        maintainer_file=str(workspace / "does-not-exist.json"),
+        role_files={"maintainer": str(workspace / "does-not-exist.json")},
         review_mode="normal",
     )
     assert result["computed_verdict"] in {"REVISE", "BLOCK"}
     assert any("maintainer" in err for err in result["input_errors"])
+
+
+def test_ledger_with_role_findings_validates_against_its_declared_schema(branch_workspace):
+    """Role rows must satisfy the declared schema, not just the writer.
+
+    The registry's `source_agent` and `transition_reason` are CLOSED enums; a
+    role reviewer emits `role` and `contract_incomplete`, so a ledger carrying
+    either value is the exact drift this schema exists to catch.
+    """
+    jsonschema = pytest.importorskip("jsonschema")
+    from mapify_cli.schemas import REVIEW_VERDICT_LEDGER_SCHEMA
+
+    workspace = branch_workspace
+    (workspace / "review-agent-maintainer.json").write_text(
+        json.dumps(
+            {
+                "reviewer": "maintainer",
+                "all_clear": False,
+                "checks_performed": ["A1"],
+                "findings": [
+                    _complete_role_finding(),
+                    _complete_role_finding(id="F-M-99", proposed_code="", cost=""),
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    map_step_runner.write_review_verdict_ledger(
+        role_files={"maintainer": str(workspace / "review-agent-maintainer.json")},
+        review_mode="normal",
+    )
+
+    payload = json.loads((workspace / "review-verdict-ledger.json").read_text(encoding="utf-8"))
+    statuses = {f["status"] for f in payload["findings_registry"]}
+    assert statuses == {"active", "tombstoned"}, "both role branches must be exercised"
+    assert any(
+        f["transition_reason"] == "contract_incomplete" for f in payload["findings_registry"]
+    )
+    jsonschema.validate(payload, REVIEW_VERDICT_LEDGER_SCHEMA)
