@@ -7873,6 +7873,7 @@ def normalize_review_verdict(
     *,
     adversarial_findings: list[dict[str, Any]] | None = None,
     role_findings: list[Any] | None = None,
+    role_inputs_supplied: bool = False,
     review_mode: str = "normal",
     previous_verdict: str | None = None,
     input_errors: list[str] | None = None,
@@ -7907,6 +7908,12 @@ def normalize_review_verdict(
                              tombstoned as `contract_incomplete` and named in
                              not_verified — half-researched remarks must neither
                              gate the change nor disappear silently.
+        role_inputs_supplied: True when at least one role envelope was parsed,
+                             independent of how many findings it carried. A role
+                             reviewer reporting `all_clear` supplies a valid
+                             envelope with zero findings; counting findings here
+                             would report that observed, clean review as
+                             "no reviewer output reached the ledger".
         adversarial_findings: Pre-normalized finding dicts from adversarial/
                              compare-ordering mode. When provided, they are
                              appended to the registry alongside normal reviewer
@@ -8159,6 +8166,17 @@ def normalize_review_verdict(
                 f"{reviewer} finding ({role_claim[:80]}) was dropped: the output "
                 f"contract is incomplete ({', '.join(gaps)})."
             )
+            # The retention floor still applies. Tombstoning keeps an unfinished
+            # remark out of the table, but above `minor` it must not buy a clean
+            # pass: a reviewer that omits one part (say `cost`) would otherwise
+            # erase its own CRITICAL claim from the gate. Escalating puts the
+            # decision in a human's hands instead of the reviewer's typo.
+            if role_sev in _NON_TOMBSTONABLE_SEVERITIES:
+                escalation_reasons.append(
+                    f"A {role_sev} {reviewer} finding was excluded from the table "
+                    f"because its output contract is incomplete ({', '.join(gaps)}) "
+                    "— a human must decide whether it blocks."
+                )
             continue
 
         # The contract parts ARE the evidence: the verbatim current code, the
@@ -8210,7 +8228,10 @@ def normalize_review_verdict(
         "predictor": bool(predictor_data),
         "evaluator": bool(evaluator_data),
         "adversarial": bool(adversarial_findings),
-        "role": bool(role_findings),
+        # Envelope presence, not finding count: every other source uses
+        # truthiness of the parsed payload, and an `all_clear` role envelope
+        # carries zero findings while still being a review that ran.
+        "role": bool(role_findings) or role_inputs_supplied,
     }
     if not input_errors and not any(supplied_by_source.values()):
         expected_sources = "/".join(supplied_by_source)
@@ -8593,6 +8614,7 @@ def write_review_verdict_ledger(
     # Role reviewers hand over their envelope verbatim, exactly like Monitor —
     # the ledger owns the unwrap so no caller has to pre-flatten a findings array.
     role_findings: list[Any] = []
+    role_inputs_supplied = False
     for role_id in ROLE_REVIEWER_IDS:
         role_envelope = _safe_parse(
             _read_source(
@@ -8604,6 +8626,10 @@ def write_review_verdict_ledger(
         )
         if not role_envelope:
             continue
+        # An envelope arrived and parsed. Whether it carried findings is a
+        # separate question the ledger answers below; this only records that
+        # the reviewer was observed.
+        role_inputs_supplied = True
         role_entries = role_envelope.get("findings")
         if not isinstance(role_entries, list):
             input_errors.append(f"{role_id}: expected a 'findings' array")
@@ -8633,6 +8659,7 @@ def write_review_verdict_ledger(
         evaluator_result=evaluator_result,
         adversarial_findings=adversarial_findings,
         role_findings=role_findings,
+        role_inputs_supplied=role_inputs_supplied,
         review_mode=review_mode,
         previous_verdict=previous_verdict or None,
         input_errors=input_errors,
@@ -10475,9 +10502,10 @@ def build_review_prompts(
     # Role reviewers are part of the default fan-out, not an opt-in extra: the
     # three core reviewers all read the change as code, so nobody asks whether
     # the old user-facing path still works or whether the next maintainer
-    # inherits rot. They run isolated (diff + bundle only) and emit the role
-    # finding contract, so they cannot be answered from the same context the
-    # others already share.
+    # inherits rot. Isolation here means no access to any other reviewer's
+    # output — the diff and the bundle are their given context, and read-only
+    # repo access is granted (`diff_plus_repo_read`) because both roles must
+    # run `git show <default-branch>:<file>` and grep the whole base.
     for role_id in ROLE_REVIEWER_IDS:
         role_entry = _role_prompt_entry(role_id, git_diff, review_bundle, layering)
         if role_entry is None:

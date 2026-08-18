@@ -32,7 +32,8 @@ with open(f".map/{branch}/review-mode.json", "w") as f:
 ```
 
 Mode semantics:
-- **`full`** (default): three reviewer fan-out, all four sections.
+- **`full`** (default): five reviewer fan-out (monitor, predictor, evaluator,
+  `user_experience`, `maintainer`), all four sections.
 - **`lightweight`**: monitor only, diff-only, two sections (Code Quality +
   Tests), every finding must carry `reach_evidence`. Bundle is empty so
   reviewers have nothing to synthesize from — staying minimal prevents
@@ -115,7 +116,9 @@ spawn_agent(agent_type="monitor", message=MONITOR_PROMPT)
 spawn_agent(agent_type="predictor", message=PREDICTOR_PROMPT)
 # Full mode only — skip in lightweight mode (monitor-only):
 spawn_agent(agent_type="evaluator", message=EVALUATOR_PROMPT)
-# Full mode only — role reviewers, isolated context (diff + bundle):
+# Full mode only — role reviewers. Isolated means: no other reviewer's
+# output. They DO get read-only repo access on top of diff + bundle —
+# both roles must run `git show <default-branch>:<file>` and grep the base.
 spawn_agent(agent_type="evaluator", message=USER_EXPERIENCE_PROMPT)
 spawn_agent(agent_type="evaluator", message=MAINTAINER_PROMPT)
 # When COMPLEXITY_LENS_ENABLED=true only:
@@ -185,7 +188,8 @@ walkthrough item:
    published only with all five contract parts filled (`problem`,
    `current_code`, `proposed_code`, `why_better`, `cost`). An incomplete
    one is not softened into an advisory: the ledger tombstones it as
-   `contract_incomplete` and names it in `not_verified`.
+   `contract_incomplete` and names it in `not_verified` — and above `minor`
+   it escalates, so PROCEED is unavailable until a human rules on it.
 5. **Reachability check** (defensive branches): guard-branch patterns
    usually exist by convention and their absence of tests is not a
    "missing test" finding unless the surrounding logic actually depends
@@ -329,10 +333,13 @@ Every role finding carries five parts, or it is not reported:
 
 A finding missing any part is NOT softened into an advisory, but where it
 lands depends on the path that ran: on the normal fan-out the ledger
-tombstones it with `transition_reason: contract_incomplete`; under
-`--adversarial` the aggregator removes it first, so it appears only under
-`contract_incomplete` in the report and the ledger never sees it. Either way
-it cannot gate the change, and it cannot disappear either.
+tombstones it with `transition_reason: contract_incomplete` — at ANY
+severity, and when that severity is above `minor` it also sets
+`escalation_required`, so a CRITICAL dropped for a missing `cost` costs the
+run its PROCEED instead of vanishing; under `--adversarial` the aggregator
+removes it first, so it appears only under `contract_incomplete` in the
+report and the ledger never sees it. Either way it cannot gate the change,
+and it cannot disappear either.
 
 Standalone prompt build (the normal fan-out builds these automatically):
 
@@ -441,7 +448,8 @@ $map-review --compare-orderings
 - Detached prep unavailable: continue from the in-place review bundle; do
   not mutate the source branch.
 - Missing bundle: rerun `create_review_bundle` before agents.
-- Prompt clipping: inspect `.map/<branch>/token_budget.json`, then raise
-  `MAP_REVIEW_PROMPT_BUDGET_TOKENS` only when the bundle evidence is
-  actually missing.
+- Oversized reviewer prompt: nothing is clipped and no `token_budget.json`
+  entry is written for review — `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is
+  reported, not enforced. Reduce the input yourself (compact the session,
+  or split the change); raising the variable changes nothing.
 - Monitor invalid: treat as hard stop and record `REVISE` or `BLOCK`.

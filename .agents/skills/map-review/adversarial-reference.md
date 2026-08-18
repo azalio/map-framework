@@ -19,7 +19,7 @@ registered Codex agent types.
 (one outside the five above) is an UNVERIFIED ASSUMPTION carried over from
 discovery, not a proven platform limitation.** This file deliberately does
 NOT resolve that assumption — it picks the simpler, verifiably-correct
-option instead: run the three reviewer passes sequentially in the current
+option instead: run the five reviewer passes sequentially in the current
 Codex session, with the session itself switching context/persona between
 passes, rather than betting on an unconfirmed dispatch capability.
 
@@ -94,15 +94,16 @@ MAINTAINER_PROMPT=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sy
 port calls — payload flows out via stdout JSON only, never via argv, per
 the stdin-safe piping convention used throughout this skill.
 
-## Step B.adversarial.1: Run all three passes sequentially, in-session
+## Step B.adversarial.1: Run all five passes sequentially, in-session
 
 ```text
-# Run the three adversarial reviewer passes ONE AFTER ANOTHER in the
+# Run the five adversarial reviewer passes ONE AFTER ANOTHER in the
 # current Codex session. Do NOT call spawn_agent() for these passes and do
 # NOT invent a new agent-dispatch primitive — see "Design note" above for
 # why. Each pass consumes only its permitted context (BLIND_PROMPT /
-# EDGE_PROMPT / ACCEPTANCE_PROMPT) and produces its own JSON finding
-# report before the next pass begins.
+# EDGE_PROMPT / ACCEPTANCE_PROMPT / USER_EXPERIENCE_PROMPT /
+# MAINTAINER_PROMPT) and produces its own JSON finding report before the
+# next pass begins.
 
 Pass 1 (Blind Hunter):      execute BLIND_PROMPT in-session -> BLIND_OUTPUT
 Pass 2 (Edge Case Hunter):  execute EDGE_PROMPT in-session -> EDGE_OUTPUT   (skip if --quick)
@@ -134,10 +135,19 @@ Write each pass's raw JSON output to a temp file, then aggregate:
 
 ```bash
 printf '%s' "$BLIND_OUTPUT" > .map/$BRANCH/adversarial-blind.json
-printf '%s' "$EDGE_OUTPUT" > .map/$BRANCH/adversarial-edge.json
 printf '%s' "$ACCEPTANCE_OUTPUT" > .map/$BRANCH/adversarial-acceptance.json
 printf '%s' "$USER_EXPERIENCE_OUTPUT" > .map/$BRANCH/adversarial-user-experience.json
 printf '%s' "$MAINTAINER_OUTPUT" > .map/$BRANCH/adversarial-maintainer.json
+
+# The Edge Case Hunter pass did not run under --quick. Writing its file
+# anyway would leave an EMPTY payload (or a stale one from an earlier full
+# run) that the `-f` test below happily forwards; the aggregator then
+# reports edge_case as parse_error, or folds in findings from another
+# review. Remove it, then write it only when the pass actually ran.
+rm -f .map/$BRANCH/adversarial-edge.json
+if [ "$QUICK_FLAG" != "true" ]; then
+  printf '%s' "$EDGE_OUTPUT" > .map/$BRANCH/adversarial-edge.json
+fi
 
 ADV_ARGS=""
 if [ -f .map/$BRANCH/adversarial-blind.json ]; then

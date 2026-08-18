@@ -1308,7 +1308,7 @@ def test_complete_role_finding_is_counted_by_the_table():
 def test_incomplete_role_finding_is_tombstoned_not_counted():
     """An unfinished remark must neither gate the change nor vanish."""
     incomplete = _complete_role_finding(
-        id="F-M-02", severity="CRITICAL", proposed_code="", why_better="", cost=""
+        id="F-M-02", severity="MINOR", proposed_code="", why_better="", cost=""
     )
     ledger = map_step_runner.normalize_review_verdict(
         role_findings=[incomplete], branch="test-branch"
@@ -1318,8 +1318,68 @@ def test_incomplete_role_finding_is_tombstoned_not_counted():
     assert row["transition_reason"] == "contract_incomplete"
     assert "proposed_code" in row["transition_evidence"]
     assert any("contract is incomplete" in nv for nv in ledger["not_verified"])
-    # A CRITICAL that never met the contract must not BLOCK on its own.
+    # A minor claim that never met the contract must not gate on its own.
     assert ledger["computed_verdict"] == "PROCEED"
+    assert ledger["escalation_required"] is False
+
+
+@pytest.mark.parametrize("severity", ["CRITICAL", "IMPORTANT"])
+def test_dropped_high_severity_role_finding_escalates_instead_of_proceeding(severity):
+    """A missing `cost` must not let a reviewer erase its own CRITICAL from the gate.
+
+    Tombstoning keeps the row out of the decision table — a reviewer that
+    stopped halfway does not gate the change. But above `minor` the claim is
+    too expensive to lose silently, so the ledger escalates and PROCEED
+    becomes unavailable until a human rules on it.
+    """
+    incomplete = _complete_role_finding(id="F-M-03", severity=severity, cost="")
+    ledger = map_step_runner.normalize_review_verdict(
+        role_findings=[incomplete], branch="test-branch"
+    )
+    row = next(f for f in ledger["findings_registry"] if f["source_agent"] == "role")
+    assert row["status"] == "tombstoned", "the row still leaves the table"
+    assert row["transition_reason"] == "contract_incomplete"
+
+    assert ledger["escalation_required"] is True
+    assert any(
+        "output contract is incomplete" in reason and "cost" in reason
+        for reason in ledger["escalation_reasons"]
+    ), ledger["escalation_reasons"]
+    assert ledger["computed_verdict"] == "REVISE", (
+        "PROCEED must be unavailable while a high-severity claim is unresolved"
+    )
+
+
+@pytest.mark.parametrize("severity", ["CRITICAL", "IMPORTANT"])
+def test_adversarial_mode_reports_incomplete_role_finding_without_gating(severity):
+    """The adversarial path removes the finding BEFORE the ledger.
+
+    `aggregate_adversarial_findings` is the enforcement point there, so the
+    row is listed under `contract_incomplete` in the report and never becomes
+    a ledger row at all — the mirror image of the normal fan-out.
+    """
+    report = map_step_runner.aggregate_adversarial_findings(
+        role_json={
+            "maintainer": json.dumps(
+                {
+                    "reviewer": "maintainer",
+                    "all_clear": False,
+                    "checks_performed": ["B"],
+                    "findings": [
+                        _complete_role_finding(id="F-M-04", severity=severity, cost="")
+                    ],
+                }
+            )
+        }
+    )
+    assert report["summary"]["contract_incomplete"] == 1
+    dropped = report["contract_incomplete"][0]
+    assert dropped["reviewer"] == "maintainer"
+    assert dropped["id"] == "F-M-04"
+    assert dropped["contract_gaps"] == ["cost"]
+    assert report["findings"] == [], (
+        "an incomplete finding must not reach the aggregated finding list"
+    )
 
 
 def test_role_envelopes_reach_the_ledger_from_disk(branch_workspace):
@@ -1362,6 +1422,67 @@ def test_role_envelopes_reach_the_ledger_from_disk(branch_workspace):
     role_rows = [f for f in payload["findings_registry"] if f["source_agent"] == "role"]
     assert len(role_rows) == 1, "an all_clear role reviewer contributes no findings"
     assert role_rows[0]["claim"].startswith("[maintainer] ")
+
+
+def test_all_clear_role_envelope_counts_as_supplied_input(branch_workspace):
+    """A review that ran and found nothing is not "no review reached the ledger".
+
+    Every other source keys `supplied_by_source` off envelope truthiness. If
+    `role` keyed off finding COUNT instead, a role reviewer reporting
+    `all_clear` with `findings: []` would contribute nothing, and a role-only
+    run would report the absence of a review, escalate, and compute REVISE for
+    an observed clean pass.
+    """
+    workspace = branch_workspace
+    (workspace / "review-agent-user_experience.json").write_text(
+        json.dumps(
+            {
+                "reviewer": "user_experience",
+                "all_clear": True,
+                "all_clear_rationale": "old path unchanged; no new mandatory flag",
+                "findings": [],
+                "checks_performed": ["old path", "flag names"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.write_review_verdict_ledger(
+        role_files={"user_experience": str(workspace / "review-agent-user_experience.json")},
+        review_mode="normal",
+    )
+
+    assert result["input_errors"] == []
+    payload = json.loads((workspace / "review-verdict-ledger.json").read_text(encoding="utf-8"))
+    assert payload["findings_registry"] == [], (
+        "an observed, clean role review must not manufacture an integrity finding"
+    )
+    assert not any(
+        "no output was supplied" in nv for nv in payload["not_verified"]
+    ), payload["not_verified"]
+    assert payload["escalation_required"] is False
+    assert result["computed_verdict"] == "PROCEED"
+
+
+def test_no_role_envelope_at_all_is_still_reported_as_no_input(branch_workspace):
+    """The negative half: nothing supplied must still fail closed."""
+    del branch_workspace
+    ledger = map_step_runner.normalize_review_verdict(branch="test-branch")
+    assert any(
+        "No reviewer output reached the ledger" in str(f.get("claim") or "")
+        for f in ledger["findings_registry"]
+    )
+    assert ledger["escalation_required"] is True
+    assert ledger["computed_verdict"] == "REVISE"
+
+    # ...and the flag alone is enough: an envelope that parsed but carried no
+    # findings is supplied input, even with `role_findings` empty.
+    supplied = map_step_runner.normalize_review_verdict(
+        role_inputs_supplied=True, branch="test-branch"
+    )
+    assert supplied["findings_registry"] == []
+    assert supplied["escalation_required"] is False
+    assert supplied["computed_verdict"] == "PROCEED"
 
 
 def test_unreadable_role_envelope_is_a_finding_not_a_clean_pass(branch_workspace):

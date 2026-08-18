@@ -202,9 +202,12 @@ spawn_agent(
 The role reviewers read the repository (including `git show
 <default-branch>:<file>` for the pre-change surface) and answer to the
 five-part output contract — `problem`, `current_code`, `proposed_code`,
-`why_better`, `cost`. A finding missing any part is tombstoned as
-`contract_incomplete`: it never gates the change and it is named in the
-ledger's `not_verified`.
+`why_better`, `cost`. A finding missing any part never gates the change and
+never disappears: on the normal fan-out the ledger tombstones it as
+`contract_incomplete` and names it in `not_verified`, and above `minor` it
+also sets `escalation_required` so PROCEED is unavailable; under
+`--adversarial` the aggregator drops it before the ledger and lists it under
+`contract_incomplete` in the report.
 
 When enabled, the complexity lens is advisory only. It lists
 over-engineering as `delete:`, `stdlib:`, `native:`, `yagni:`, or `shrink:`
@@ -393,5 +396,5 @@ detached, shuffle, and compare-ordering examples.
 ## Troubleshooting
 
 See [review-reference.md](review-reference.md#troubleshooting) for
-unavailable detached worktrees, missing review bundles, review prompt
-clipping, and ordering drift.
+unavailable detached worktrees, missing review bundles, oversized reviewer
+prompts, and ordering drift.

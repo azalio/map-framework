@@ -106,15 +106,17 @@ Predictor:
   actually reachable. Soft narrative ("this might break someday")
   without evidence is rejected during Step A.3.
 
-Role reviewers (`user_experience`, `maintainer`) — isolated context (diff +
-bundle only), one JSON envelope each:
+Role reviewers (`user_experience`, `maintainer`) — isolated from every other
+reviewer's output; diff + bundle + READ-ONLY repo access (both must run
+`git show <default-branch>:<file>` and grep the base). One JSON envelope each:
 - `reviewer`, `all_clear` (+ `all_clear_rationale` when true), `checks_performed`.
 - `findings[]`: severity, category, file_path, line_range, symbol, evidence, and
   the **five-part output contract** — `problem` (one line + file:line),
   `current_code` (verbatim), `proposed_code` (applicable as a patch),
   `why_better` (measurable delta, no bare "cleaner"), `cost` (downside, or
-  "none"). A finding missing any part is tombstoned as `contract_incomplete`:
-  it never gates the change, and it is named in the ledger's `not_verified`.
+  "none"). A finding missing any part is dropped as `contract_incomplete`:
+  tombstoned + escalated by the ledger (normal fan-out), or removed by the
+  aggregator (`--adversarial`). It never gates the change, never disappears.
 
 Evaluator:
 - evidence: array of {file_path, line_range, quote, relevance}; populate this before scores.
@@ -263,7 +265,7 @@ echo "{\"mode\":\"$REVIEW_MODE\",\"sibling_hint\":\"$SIBLING_HINT\"}" \
 ```
 
 Mode semantics:
-- **`full`** (default): three reviewer fan-out, all four sections.
+- **`full`** (default): five reviewer fan-out (+ both role reviewers), all four sections.
 - **`lightweight`**: Monitor only, diff-only, two sections (Code Quality
   + Tests), every finding must carry `reach_evidence`. Bundle is empty
   so reviewers have nothing to synthesize from — staying minimal
@@ -326,7 +328,7 @@ When compare mode is active, run two review collections with `ordering_label='de
 
 ### Step A.2: Launch all parallel calls
 
-Before launching agents, build bounded reviewer prompts. `build_review_prompts` uses `MAP_REVIEW_PROMPT_BUDGET_TOKENS`, emits a Review Prompt Budget note, and clips lower-priority raw diff before review-bundle context.
+Before launching agents, build the reviewer prompts with `build_review_prompts`. Prompts are NOT truncated: each reviewer receives the whole bundle, the review preferences and the full diff. `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is reported in the output for reference only — it clips nothing. If a prompt outgrows the context window, that is an operator decision (`/compact`), not a silent drop.
 
 ```bash
 REVIEW_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_review_prompts \
@@ -678,4 +680,4 @@ See [review-reference.md](review-reference.md#examples) for normal, CI, detached
 
 ## Troubleshooting
 
-See [review-reference.md](review-reference.md#troubleshooting) for unavailable detached worktrees, missing review bundles, review prompt clipping, and ordering drift.
+See [review-reference.md](review-reference.md#troubleshooting) for unavailable detached worktrees, missing review bundles, oversized reviewer prompts, and ordering drift.

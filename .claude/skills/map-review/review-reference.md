@@ -217,7 +217,9 @@ so nothing has to be pre-flattened.
 
 `computed_verdict` (`PROCEED`/`REVISE`/`BLOCK`) is derived from every finding
 whose status is `active` **or** `downgraded`. Only `tombstoned` findings are
-excluded, and a finding may be tombstoned only when its severity is `minor`.
+excluded, and above `minor` nothing leaves the table for free: a row is either
+downgraded (still counted) or, in the one exception below, tombstoned **and**
+escalated so PROCEED is unavailable.
 
 | Situation | Status | Severity | Effect on the verdict |
 |---|---|---|---|
@@ -225,13 +227,23 @@ excluded, and a finding may be tombstoned only when its severity is `minor`.
 | Severity ≥ MEDIUM with no `reach_evidence` | `downgraded` | `needs_investigation` | counted → at least REVISE |
 | `was_present_before_pr=true`, above `minor` | `downgraded` | `needs_investigation` | counted → at least REVISE, listed in `not_verified` |
 | `was_present_before_pr=true`, `minor` | `tombstoned` | as reported | excluded |
-| Role finding missing an output-contract part | `tombstoned` | as reported | excluded, listed in `not_verified` |
+| Role finding missing an output-contract part, `minor` | `tombstoned` | as reported | excluded, listed in `not_verified` |
+| Role finding missing an output-contract part, above `minor` | `tombstoned` | as reported | excluded from the table, listed in `not_verified`, `escalation_required` set → PROCEED unavailable |
 | Reviewer payload missing or malformed | `active` | `important` | counted → at least REVISE |
 
 A pre-existing claim is self-attested by the reviewer that raised the finding, so
 it is not treated as independent evidence: it lowers severity, it does not erase
 the row. When a CRITICAL is neutralised this way the ledger sets
 `escalation_required` and names the reason.
+
+An incomplete role finding is the one row tombstoned at **any** severity — a
+reviewer that stopped halfway must not gate the change on its own unfinished
+work. That is why the escalation is attached: the row leaves the table, but a
+CRITICAL or IMPORTANT claim dropped for a missing `cost` or `proposed_code`
+still costs the run its PROCEED, and a human decides. This is the NORMAL
+fan-out path. Under `--adversarial` the finding never reaches the ledger at
+all: `aggregate_adversarial_findings` drops it first and lists it under
+`contract_incomplete` in the report.
 
 ### Contesting a finding
 
@@ -315,5 +327,5 @@ large and quote-heavy; prefer the file flags written in Step A.2c.
 
 - Detached prep unavailable: continue from the in-place review bundle; do not mutate the source branch.
 - Missing bundle: rerun `create_review_bundle` before agents.
-- Prompt clipping: inspect `.map/<branch>/token_budget.json`, then raise `MAP_REVIEW_PROMPT_BUDGET_TOKENS` only when the bundle evidence is actually missing.
+- Oversized reviewer prompt: nothing is clipped and no `token_budget.json` entry is written for review — `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is reported, not enforced. Reduce the input yourself (`/compact`, or split the change); raising the variable changes nothing.
 - Monitor invalid: treat as hard stop and record `REVISE` or `BLOCK`.

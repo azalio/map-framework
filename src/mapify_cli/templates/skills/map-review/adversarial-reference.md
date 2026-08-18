@@ -78,10 +78,19 @@ Write each reviewer's raw JSON output to a temp file, then aggregate:
 
 ```bash
 printf '%s' "$BLIND_OUTPUT" > .map/$BRANCH/adversarial-blind.json
-printf '%s' "$EDGE_OUTPUT" > .map/$BRANCH/adversarial-edge.json
 printf '%s' "$ACCEPTANCE_OUTPUT" > .map/$BRANCH/adversarial-acceptance.json
 printf '%s' "$USER_EXPERIENCE_OUTPUT" > .map/$BRANCH/adversarial-user-experience.json
 printf '%s' "$MAINTAINER_OUTPUT" > .map/$BRANCH/adversarial-maintainer.json
+
+# The Edge Case Hunter did not run under --quick. Writing its file anyway
+# would leave an EMPTY payload (or a stale one from an earlier full run)
+# that the `-f` test below happily forwards; the aggregator then reports
+# edge_case as parse_error, or folds in findings from another review.
+# Remove it, then write it only when the pass actually ran.
+rm -f .map/$BRANCH/adversarial-edge.json
+if [ "$QUICK_FLAG" != "true" ]; then
+  printf '%s' "$EDGE_OUTPUT" > .map/$BRANCH/adversarial-edge.json
+fi
 
 ADV_ARGS=""
 if [ -f .map/$BRANCH/adversarial-blind.json ]; then

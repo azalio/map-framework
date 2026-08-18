@@ -71,6 +71,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `subagent_type="general"`, which is not a registered agent type — the correct
   built-in is `general-purpose`. Corrected in the specs and in every dispatch
   example.
+- **A CRITICAL role finding with an incomplete contract could still yield
+  PROCEED.** Tombstoning an incomplete finding keeps it out of the decision
+  table, but that third removal site — unlike the two that already existed —
+  never recorded an escalation, so a reviewer that omitted one part (say
+  `cost`) erased its own CRITICAL claim from the gate. The row is still
+  tombstoned, but above `minor` the ledger now appends an escalation reason and
+  sets `escalation_required`: PROCEED is unavailable and a human rules on it.
+- **A clean role review was reported as "no reviewer output reached the
+  ledger".** `supplied_by_source["role"]` was derived from the finding COUNT
+  while every other source uses envelope truthiness, so a role reviewer
+  returning `all_clear: true` with `findings: []` contributed nothing. A
+  role-only run therefore raised an `important` workflow finding, escalated and
+  computed REVISE for a review that actually ran and found nothing.
+  `write_review_verdict_ledger` now forwards an explicit `role_inputs_supplied`
+  flag set when an envelope parses.
+- **`--quick` handed the aggregator a stale or empty Edge Case Hunter file.**
+  The adversarial scripts wrote `adversarial-edge.json` unconditionally, so
+  under `--quick` — where that pass never runs — the following `-f` test
+  forwarded an empty payload (reported as `parse_error`) or a file left over
+  from an earlier full run (folding another review's findings in). Both the
+  Claude and Codex flows now remove it first and write it only when the pass
+  actually ran.
+
+### Changed
+- **Docs corrected to match the removed review-prompt truncation.**
+  `docs/USAGE.md`, `docs/ARCHITECTURE.md`, both `map-review` SKILL bodies, both
+  `review-reference.md` troubleshooting sections and `references/host-paths.md`
+  still promised a 12,000-token cap, raw-diff clipping, a `Review Prompt
+  Budget` diagnostic and a `token_budget.json` entry for review — none of which
+  the code does since truncation was removed. `MAP_REVIEW_PROMPT_BUDGET_TOKENS`
+  is now documented as reported-only.
+- Stale three-reviewer counts updated to five (`full` mode semantics in both
+  trees, the Codex sequential-pass headings and design note), and the role
+  reviewers' isolation is now stated correctly everywhere: isolated from other
+  reviewers' OUTPUT, with read-only repo access — both roles must run
+  `git show <default-branch>:<file>` and grep the whole base, which the
+  previous "diff + bundle only" wording forbade.
+- The `contract_incomplete` documentation now names the mode split explicitly:
+  the normal fan-out tombstones (and escalates above `minor`) via the ledger;
+  `--adversarial` drops the finding in the aggregator before the ledger sees
+  it, reporting it under `contract_incomplete`.
 
 ## [3.27.1] - 2026-08-17
 

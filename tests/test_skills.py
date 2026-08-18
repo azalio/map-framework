@@ -2255,11 +2255,11 @@ class TestMapReviewSkillBundleWiring:
             f"(bundle at {bundle_pos}, first Task( at {task_pos})"
         )
 
-    def test_map_review_skill_builds_budgeted_prompts_before_agents(self, skill_md):
-        """Review fan-out must use budgeted prompts before launching Task calls."""
+    def test_map_review_skill_builds_prompts_before_agents(self, skill_md):
+        """Review fan-out must build its prompts before launching Task calls."""
         assert (
             "build_review_prompts" in skill_md
-        ), "map-review/SKILL.md must build bounded reviewer prompts"
+        ), "map-review/SKILL.md must build the reviewer prompts"
         prompt_pos = skill_md.index("build_review_prompts")
         task_pos = skill_md.index("Task(")
         assert prompt_pos < task_pos, (
@@ -2267,8 +2267,22 @@ class TestMapReviewSkillBundleWiring:
             f"(prompt builder at {prompt_pos}, first Task( at {task_pos})"
         )
         assert "MAP_REVIEW_PROMPT_BUDGET_TOKENS" in skill_md
-        assert "Review Prompt Budget" in skill_md
-        assert "clips lower-priority raw diff" in skill_md
+
+    def test_map_review_skill_does_not_promise_prompt_clipping(self, skill_md):
+        """Truncation was removed; the skill must not document a clipping it never does.
+
+        `_budget_review_prompt` returns the full prompt with `truncated=False`
+        and an empty `clipped_sections`. A skill body that still promises a
+        `Review Prompt Budget` diagnostic sends operators tuning an env var
+        that changes nothing about what the reviewer sees.
+        """
+        for stale in ("Review Prompt Budget", "clips lower-priority raw diff"):
+            assert stale not in skill_md, (
+                f"map-review/SKILL.md still promises removed truncation behavior: {stale!r}"
+            )
+        assert "NOT truncated" in skill_md, (
+            "map-review/SKILL.md must state that reviewer prompts are not truncated"
+        )
 
     def test_map_review_skill_references_bundle_artifacts_in_agent_prompts(
         self, skill_md
