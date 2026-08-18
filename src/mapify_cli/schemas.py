@@ -832,6 +832,7 @@ ARTIFACT_MANIFEST_SCHEMA = {
                 "wayfind_handoff": ARTIFACT_STAGE_SCHEMA,
                 "review_verdict_ledger": ARTIFACT_STAGE_SCHEMA,
                 "prd_review": ARTIFACT_STAGE_SCHEMA,
+                "workflow_snapshot": ARTIFACT_STAGE_SCHEMA,
             },
             "required": [
                 "workflow_fit",
@@ -2246,4 +2247,79 @@ AUTO_ROUTE_SCHEMA: dict[str, Any] = {
         "route_history",
     ],
     "additionalProperties": True,
+}
+
+# ---------------------------------------------------------------------------
+# Workflow snapshot schema (issue #415)
+# Stored at .map/<branch>/snapshots/<run-id>/manifest.json
+# ---------------------------------------------------------------------------
+
+WORKFLOW_SNAPSHOT_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "WorkflowSnapshot",
+    "description": "Content-addressed identity manifest for a MAP workflow run snapshot.",
+    "type": "object",
+    "properties": {
+        "schema_version": {"type": "string", "const": "1"},
+        "run_id": {"type": "string", "description": "Unique run identifier (e.g. UTC timestamp)."},
+        "workflow_id": {"type": "string", "description": "Skill/workflow name, e.g. map-efficient."},
+        "provider": {"type": "string", "description": "Provider name, e.g. claude or codex."},
+        "branch": {"type": "string", "description": "MAP branch name."},
+        "map_version": {"type": ["string", "null"], "description": "mapify-cli package version."},
+        "content_hash": {
+            "type": "string",
+            "description": "SHA-256 hex digest over workflow_id|provider|map_version|skill_hash|config_hash.",
+        },
+        "captured_at": {"type": "string", "description": "ISO-8601 UTC timestamp."},
+        "sources": {
+            "type": "object",
+            "description": "Per-source hash and presence information.",
+            "properties": {
+                "skill_md": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": ["string", "null"]},
+                        "sha256": {"type": ["string", "null"]},
+                        "present": {"type": "boolean"},
+                    },
+                    "required": ["path", "sha256", "present"],
+                },
+                "resolved_config": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "sha256": {"type": "string"},
+                        "present": {"type": "boolean"},
+                    },
+                    "required": ["path", "sha256", "present"],
+                },
+            },
+            "required": ["skill_md", "resolved_config"],
+        },
+        "extra_sources": {
+            "type": "object",
+            "description": "Optional additional captured files, keyed by filename.",
+            "additionalProperties": {
+                "type": "object",
+                "properties": {
+                    "sha256": {"type": ["string", "null"]},
+                    "present": {"type": "boolean"},
+                },
+                "required": ["sha256", "present"],
+            },
+        },
+    },
+    "required": [
+        "schema_version",
+        "run_id",
+        "workflow_id",
+        "provider",
+        "branch",
+        "map_version",
+        "content_hash",
+        "captured_at",
+        "sources",
+        "extra_sources",
+    ],
+    "additionalProperties": False,
 }

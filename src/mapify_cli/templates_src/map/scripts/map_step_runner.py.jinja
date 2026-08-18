@@ -263,6 +263,7 @@ ARTIFACT_STAGE_NAMES = (
     "wayfind_handoff",
     "review_verdict_ledger",
     "prd_review",
+    "workflow_snapshot",
 )
 RUN_HEALTH_TERMINAL_STATUSES = {
     "pending",
@@ -3306,6 +3307,239 @@ def write_prd_review(
         "message": verdict_messages.get(verdict, verdict),
     }
     return result
+
+
+# ---------------------------------------------------------------------------
+# Workflow snapshot (issue #415): content-addressed capture of the prompt/
+# config surface that drove a MAP run, written atomically to a timestamped
+# snapshot directory so post-hoc debugging can reconstruct what was in effect.
+# ---------------------------------------------------------------------------
+
+WORKFLOW_SNAPSHOT_SCHEMA_VERSION = "1"
+
+
+def _snapshot_dir(branch_name: str, run_id: str) -> Path:
+    """Return the directory for one snapshot run."""
+    return get_branch_dir(branch_name) / "snapshots" / run_id
+
+
+def _sha256_of_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _sha256_of_file(path: Path) -> str | None:
+    """Return hex SHA-256 of a file, or None if it does not exist."""
+    if not path.exists():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _resolve_map_config(project_root: Path) -> dict[str, object]:
+    """Read .map/config.yaml into a plain dict; return {} on any error."""
+    try:
+        import yaml  # type: ignore[import-untyped]
+
+        cfg_path = project_root / ".map" / "config.yaml"
+        if not cfg_path.exists():
+            return {}
+        raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+        return dict(raw) if isinstance(raw, dict) else {}
+    except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
+        return {}
+
+
+def _find_project_root() -> Path:
+    """Walk up from cwd to find the repo root (contains .git or .map)."""
+    p = Path.cwd()
+    for parent in [p, *p.parents]:
+        if (parent / ".git").exists() or (parent / ".map").exists():
+            return parent
+    return p
+
+
+def create_workflow_snapshot(
+    workflow_id: str,
+    provider: str = "claude",
+    branch: str | None = None,
+    *,
+    run_id: str | None = None,
+    extra_sources: list[str] | None = None,
+) -> dict[str, object]:
+    """Capture a content-addressed snapshot of the MAP workflow surface.
+
+    Writes:
+      .map/<branch>/snapshots/<run-id>/manifest.json  — identity + hashes
+      .map/<branch>/snapshots/<run-id>/skill.md        — skill body (if found)
+      .map/<branch>/snapshots/<run-id>/resolved-config.json — active config
+
+    The snapshot directory is written atomically via a temp-dir rename.
+    Returns a result dict with status, run_id, snapshot_path, and content_hash.
+
+    Arguments:
+      workflow_id   — skill/workflow name, e.g. "map-efficient"
+      provider      — provider name, e.g. "claude" or "codex"
+      branch        — MAP branch; defaults to git HEAD branch
+      run_id        — unique run identifier; defaults to UTC timestamp
+      extra_sources — additional file paths (str) to capture verbatim
+    """
+    branch_name = branch or get_branch_name()
+    project_root = _find_project_root()
+
+    # Stable run_id: prefer caller-supplied, fall back to UTC timestamp
+    effective_run_id: str = run_id or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+    # --- Gather sources ---
+    # 1. Skill body
+    skill_body: str | None = None
+    skill_path: Path | None = None
+    for candidate in [
+        project_root / ".claude" / "skills" / workflow_id / "SKILL.md",
+        project_root / ".agents" / "skills" / workflow_id / "SKILL.md",
+        project_root / ".codex" / "agents" / f"{workflow_id}.md",
+    ]:
+        if candidate.exists():
+            skill_body = candidate.read_text(encoding="utf-8")
+            skill_path = candidate
+            break
+
+    # 2. Resolved config
+    resolved_config = _resolve_map_config(project_root)
+
+    # 3. MAP package version (best-effort)
+    map_version: str | None = None
+    try:
+        from importlib.metadata import version as _pkg_version
+
+        map_version = _pkg_version("mapify-cli")
+    except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
+        pass
+
+    # 4. Extra sources
+    captured_extras: dict[str, str | None] = {}
+    for src_path_str in extra_sources or []:
+        src_path = Path(src_path_str)
+        key = src_path.name
+        captured_extras[key] = src_path.read_text(encoding="utf-8") if src_path.exists() else None
+
+    # --- Build manifest ---
+    skill_hash = _sha256_of_text(skill_body) if skill_body is not None else None
+    config_text = json.dumps(resolved_config, sort_keys=True)
+    config_hash = _sha256_of_text(config_text)
+
+    # content_hash covers all captured inputs so it is stable across retries
+    combined = f"{workflow_id}|{provider}|{map_version or ''}|{skill_hash or ''}|{config_hash}"
+    content_hash = hashlib.sha256(combined.encode()).hexdigest()
+
+    manifest_payload: dict[str, object] = {
+        "schema_version": WORKFLOW_SNAPSHOT_SCHEMA_VERSION,
+        "run_id": effective_run_id,
+        "workflow_id": workflow_id,
+        "provider": provider,
+        "branch": branch_name,
+        "map_version": map_version,
+        "content_hash": content_hash,
+        "captured_at": _utc_timestamp(),
+        "sources": {
+            "skill_md": {
+                "path": str(skill_path.relative_to(project_root)) if skill_path else None,
+                "sha256": skill_hash,
+                "present": skill_body is not None,
+            },
+            "resolved_config": {
+                "path": ".map/config.yaml",
+                "sha256": config_hash,
+                "present": True,
+            },
+        },
+        "extra_sources": {
+            key: {"sha256": _sha256_of_text(body) if body is not None else None, "present": body is not None}
+            for key, body in captured_extras.items()
+        },
+    }
+
+    # --- Atomic write via temp dir rename ---
+    snapshot_dir = _snapshot_dir(branch_name, effective_run_id)
+    if snapshot_dir.exists():
+        # Idempotency: verify existing manifest matches; return existing if so
+        existing_manifest_path = snapshot_dir / "manifest.json"
+        try:
+            existing = json.loads(existing_manifest_path.read_text(encoding="utf-8"))
+            if existing.get("content_hash") == content_hash:
+                return {
+                    "status": "existing",
+                    "run_id": effective_run_id,
+                    "snapshot_path": str(snapshot_dir),
+                    "content_hash": content_hash,
+                    "message": "Reusing existing snapshot with matching content_hash.",
+                }
+            return {
+                "status": "error",
+                "run_id": effective_run_id,
+                "snapshot_path": str(snapshot_dir),
+                "content_hash": content_hash,
+                "message": (
+                    f"Snapshot directory {snapshot_dir} already exists but content_hash "
+                    f"differs ({existing.get('content_hash')} != {content_hash}). "
+                    "Use a distinct run_id to avoid collision."
+                ),
+            }
+        except Exception as exc:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
+            return {
+                "status": "error",
+                "run_id": effective_run_id,
+                "snapshot_path": str(snapshot_dir),
+                "content_hash": content_hash,
+                "message": f"Snapshot directory exists but manifest is unreadable: {exc}",
+            }
+
+    parent_dir = snapshot_dir.parent
+    parent_dir.mkdir(parents=True, exist_ok=True)
+
+    import tempfile as _tempfile
+
+    with _tempfile.TemporaryDirectory(dir=parent_dir, prefix=".tmp-snap-") as tmp_str:
+        tmp_dir = Path(tmp_str)
+        # Write files into tmp dir
+        (tmp_dir / "manifest.json").write_text(
+            json.dumps(manifest_payload, indent=2), encoding="utf-8"
+        )
+        (tmp_dir / "resolved-config.json").write_text(
+            json.dumps(resolved_config, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        if skill_body is not None:
+            (tmp_dir / "skill.md").write_text(skill_body, encoding="utf-8")
+        for key, body in captured_extras.items():
+            if body is not None:
+                (tmp_dir / key).write_text(body, encoding="utf-8")
+
+        # Atomic rename out of temp dir context so TemporaryDirectory cleanup
+        # doesn't delete it; rename before __exit__ runs.
+        tmp_dir.rename(snapshot_dir)
+
+    # --- Update artifact manifest ---
+    artifact_manifest = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        artifact_manifest,
+        "workflow_snapshot",
+        "ready",
+        artifacts=[_artifact_ref(snapshot_dir / "manifest.json", "workflow-snapshot-manifest")],
+        metadata={
+            "run_id": effective_run_id,
+            "workflow_id": workflow_id,
+            "provider": provider,
+            "content_hash": content_hash,
+        },
+    )
+    manifest_result = save_artifact_manifest(artifact_manifest, branch_name)
+
+    return {
+        "status": "success",
+        "run_id": effective_run_id,
+        "snapshot_path": str(snapshot_dir),
+        "content_hash": content_hash,
+        "manifest_path": manifest_result["path"],
+        "message": f"Workflow snapshot created: {snapshot_dir}",
+    }
 
 
 def record_plan_artifacts(branch: str | None = None) -> dict[str, object]:
@@ -23554,6 +23788,38 @@ if __name__ == "__main__":
         _refs = [ref.strip() for ref in _a.evidence_refs.split(",") if ref.strip()]
         _r = record_auto_phase(
             _a.phase, _a.status, branch=_a.branch, evidence_refs=_refs, reason=_a.reason
+        )
+        print(json.dumps(_r, indent=2))
+        if _r.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "create_workflow_snapshot":
+        # CLI: create_workflow_snapshot <workflow_id>
+        #        [--provider claude|codex]
+        #        [--branch <branch>]
+        #        [--run-id <id>]
+        #        [--extra-sources path1,path2,...]
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py create_workflow_snapshot")
+        _p.add_argument("workflow_id", help="Skill/workflow name, e.g. map-efficient")
+        _p.add_argument("--provider", default="claude", help="Provider name (default: claude)")
+        _p.add_argument("--branch", default=None, help="Branch name (default: current branch)")
+        _p.add_argument("--run-id", dest="run_id", default=None, help="Unique run identifier")
+        _p.add_argument(
+            "--extra-sources",
+            dest="extra_sources",
+            default="",
+            help="Comma-separated list of extra file paths to capture",
+        )
+        _a = _p.parse_args(sys.argv[2:])
+        _extra = [s.strip() for s in _a.extra_sources.split(",") if s.strip()] if _a.extra_sources else []
+        _r = create_workflow_snapshot(
+            _a.workflow_id,
+            provider=_a.provider,
+            branch=_a.branch,
+            run_id=_a.run_id,
+            extra_sources=_extra,
         )
         print(json.dumps(_r, indent=2))
         if _r.get("status") == "error":
