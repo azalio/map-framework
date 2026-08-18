@@ -304,3 +304,15 @@
        canonical source and the blueprint spec text get reconciled to agree with
        each other, not just with this one port -->
   ```
+
+- **AskUserQuestion Options Requiring a Free-Text Value Return Only the Label — Split Choice From Value Collection** (2026-08-18): When an AskUserQuestion option represents a parameterized action (an explicit version number, a custom path, a numeric count) rather than a fixed choice, selecting it returns only the option's label string (e.g. `EXPLICIT X.Y.Z`) with no mechanism to attach the accompanying value in the same interaction. This makes such an option structurally different from the other choices in the same question: a plain choice (PATCH/MINOR/MAJOR) fully resolves the decision in one round-trip, but the value-bearing option requires a guaranteed SECOND round-trip to collect the actual value, and a misclick on it cannot be undone without that extra turn. During the v3.28.0 release the user misclicked `EXPLICIT X.Y.Z` with no number attached, and the version had to be supplied out-of-band in the next message. Design implication: either avoid mixing parameterized and fixed-choice options in one AskUserQuestion, or state the follow-up in the option label itself so the two-step nature is expected rather than surprising. [workflow: map-release]
+  ```text
+  WRONG — parameterized option mixed with fixed choices, no signal that a 2nd round-trip follows
+    options: [PATCH, MINOR, MAJOR, "EXPLICIT X.Y.Z"]
+    selecting EXPLICIT returns only "EXPLICIT X.Y.Z" — no value, forces a follow-up prompt
+    and gives a misclick no undo path
+
+  CORRECT — label signals the follow-up explicitly
+    options: [PATCH, MINOR, MAJOR, "EXPLICIT (you'll be asked for the exact version next)"]
+    on EXPLICIT selection, immediately issue a dedicated free-text prompt for the version
+  ```

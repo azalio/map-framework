@@ -182,3 +182,20 @@
   # the end pattern or printed; f=0 clears on the FIRST subsequent '## [' heading,
   # also excluded from output ('f' block only prints when flag is already 1).
   ```
+
+- **Post-Publish Availability Probe Must Query the Same Index the Real Consumer Resolves Against** (2026-08-18): When a release/deploy script verifies that a published artifact is live before running an install/consume smoke test, do not treat a 200 from a human-facing page (PyPI project page, npm package page, a registry's web UI) as proof the artifact is resolvable — that page and the machine-facing index the real client queries (PEP 503 simple index for pip, npm registry API, OCI manifest endpoint) are fronted by independent CDN caches and become consistent at different times. The v3.28.0 release hit this: `curl -f -s https://pypi.org/project/mapify-cli/3.28.0/` succeeded on the first attempt (~90 s after publish), but the immediately following `pip install mapify-cli==3.28.0` failed with the version absent from pip's resolvable list — the simple index lagged the project page by roughly another 60–90 s. Fix: either probe the same index the consumer resolves against (`curl https://pypi.org/simple/<pkg>/` and grep for the version, or `pip index versions <pkg>`), or skip the cheap probe entirely and wrap the REAL consume step (the actual `pip install` / `npm install` / `docker pull`) in the retry/backoff loop, since that is the only check whose success is equivalent to "a real user can install this right now". [workflow: map-release]
+  ```bash
+  # WRONG — retries the cheap HTML probe, then single-shots the authoritative check
+  for i in 1 2 3 4 5; do
+    curl -f -s "https://pypi.org/project/$PKG/$VERSION/" > /dev/null && break
+    sleep 30
+  done
+  pip install --no-cache-dir "$PKG==$VERSION"   # can still fail here: simple index lags
+
+  # CORRECT — wrap the actual consume step (the only authoritative check) in the retry loop
+  for i in 1 2 3 4 5; do
+    rm -rf /tmp/venv-rel-test && python3 -m venv /tmp/venv-rel-test
+    /tmp/venv-rel-test/bin/pip install -q --no-cache-dir "$PKG==$VERSION" && break
+    sleep 45
+  done
+  ```
