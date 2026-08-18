@@ -8,6 +8,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`create_workflow_snapshot` — content-addressed capture of the prompt/config
+  surface that drove a MAP run** (issue #415, slice 1). Writes
+  `.map/<branch>/snapshots/<run-id>/` atomically (temp-dir rename) with
+  `manifest.json` (identity + hashes), `skill.md` and `resolved-config.json`,
+  registers a `workflow_snapshot` artifact-manifest stage, and exposes
+  `map_step_runner.py create_workflow_snapshot <workflow_id> [--provider ...]
+  [--branch ...] [--run-id ...] [--extra-sources ...]`. Re-running with the same
+  `run_id` and the same inputs reuses the snapshot; different inputs are a
+  reported collision, never a silent overwrite.
+  - Snapshots are durable, reviewer-visible artifacts, so secrets stay out:
+    `extra_sources` refuses credential-shaped paths (`.env*`, `*.pem`, `*_key`,
+    `id_rsa*`, `*credential*`, `*secret*`, `.netrc`, …) BEFORE reading them,
+    refuses any file whose content trips `_scan_outbound_secrets` (reporting
+    the pattern name, never the value), and `resolved-config.json` redacts
+    secret-shaped config VALUES while keeping their keys — the key is part of
+    the surface being reconstructed, the value is not.
+  - `run_id` and `branch` are validated as path segments (the same rule
+    `_research_path` and `record_token_event` already apply), so neither can
+    escape `.map/<branch>/snapshots/`. `extra_sources` are confined to the
+    project root, keyed by relative path (not basename, which let
+    `a/config.yaml` and `b/config.yaml` overwrite each other), and may not
+    claim `manifest.json`, `resolved-config.json` or `skill.md`.
+  - `content_hash` covers every captured input — workflow, provider, branch,
+    MAP identity, skill body, config, config state and each extra source — so a
+    rerun under the same `run_id` with changed inputs cannot report `existing`
+    while holding the old files. Reuse additionally re-hashes the stored files,
+    so a half-deleted or truncated snapshot fails loudly instead of passing as
+    valid.
+  - The manifest distinguishes `absent` / `unreadable` / `present` config
+    states rather than reporting `present: true` unconditionally, and always
+    carries a MAP identity: `map_version` when the package is installed,
+    otherwise `map_source_sha256` (the runner's own digest), enforced by an
+    `anyOf` in `WORKFLOW_SNAPSHOT_SCHEMA`.
 - **`/map-review` gains two role reviewers: `user_experience` and
   `maintainer`.** They run in the DEFAULT fan-out (Monitor + Predictor +
   Evaluator + both roles) and in `--adversarial`, where the reviewer set is now

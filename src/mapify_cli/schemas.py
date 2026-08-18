@@ -2266,9 +2266,20 @@ WORKFLOW_SNAPSHOT_SCHEMA: dict[str, Any] = {
         "provider": {"type": "string", "description": "Provider name, e.g. claude or codex."},
         "branch": {"type": "string", "description": "MAP branch name."},
         "map_version": {"type": ["string", "null"], "description": "mapify-cli package version."},
+        "map_source_sha256": {
+            "type": ["string", "null"],
+            "description": (
+                "SHA-256 of the map_step_runner source that produced this snapshot. "
+                "Fallback MAP identity when map_version is unavailable (editable "
+                "or source checkout)."
+            ),
+        },
         "content_hash": {
             "type": "string",
-            "description": "SHA-256 hex digest over workflow_id|provider|map_version|skill_hash|config_hash.",
+            "description": (
+                "SHA-256 hex digest over workflow_id|provider|branch|map_version|"
+                "map_source_sha256|skill_hash|config_hash|config_state|extra_sources."
+            ),
         },
         "captured_at": {"type": "string", "description": "ISO-8601 UTC timestamp."},
         "sources": {
@@ -2290,8 +2301,16 @@ WORKFLOW_SNAPSHOT_SCHEMA: dict[str, Any] = {
                         "path": {"type": "string"},
                         "sha256": {"type": "string"},
                         "present": {"type": "boolean"},
+                        "state": {
+                            "type": "string",
+                            "enum": ["present", "absent", "unreadable"],
+                            "description": (
+                                "Why the config is or is not captured. `absent` and "
+                                "`unreadable` are distinct states and must not hash alike."
+                            ),
+                        },
                     },
-                    "required": ["path", "sha256", "present"],
+                    "required": ["path", "sha256", "present", "state"],
                 },
             },
             "required": ["skill_md", "resolved_config"],
@@ -2316,10 +2335,21 @@ WORKFLOW_SNAPSHOT_SCHEMA: dict[str, Any] = {
         "provider",
         "branch",
         "map_version",
+        "map_source_sha256",
         "content_hash",
         "captured_at",
         "sources",
         "extra_sources",
+    ],
+    # A manifest carrying NEITHER identity cannot reconstruct the MAP surface
+    # that drove the run, which is the artifact's whole purpose. `map_version`
+    # is absent in an editable checkout, so requiring it alone would reject
+    # every source install; requiring at least one of the two always holds.
+    "anyOf": [
+        {"properties": {"map_version": {"type": "string", "minLength": 1}},
+         "required": ["map_version"]},
+        {"properties": {"map_source_sha256": {"type": "string", "minLength": 1}},
+         "required": ["map_source_sha256"]},
     ],
     "additionalProperties": False,
 }

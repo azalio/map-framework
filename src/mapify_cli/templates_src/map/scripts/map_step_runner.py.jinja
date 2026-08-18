@@ -3317,10 +3317,95 @@ def write_prd_review(
 
 WORKFLOW_SNAPSHOT_SCHEMA_VERSION = "1"
 
+# `run_id` becomes a path segment under .map/<branch>/snapshots/, so it is
+# subject to the same traversal rule `_research_path` already enforces for
+# `subtask_id`: an unsanitized "../../tmp/x" would escape the .map tree and
+# write files wherever the caller points. Same pattern, same reason.
+_SNAPSHOT_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+# Files the snapshot writes itself. An extra source may not claim these names,
+# or it would silently overwrite the snapshot's own identity record.
+_SNAPSHOT_RESERVED_NAMES = frozenset(
+    {"manifest.json", "resolved-config.json", "skill.md"}
+)
+
+# Path shapes that must never be copied into a durable, reviewer-visible
+# artifact. Checked on the NAME before the file is read, so a credential is
+# refused rather than read-then-discarded.
+_SNAPSHOT_DENIED_PATH_PATTERNS: tuple[str, ...] = (
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    "*_key",
+    "*.p12",
+    "*.pfx",
+    "id_rsa*",
+    "id_dsa*",
+    "id_ecdsa*",
+    "id_ed25519*",
+    "*credential*",
+    "*secret*",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
+    "*.keystore",
+)
+
+# Config keys whose VALUE is redacted before `resolved-config.json` is written.
+# The key itself is kept: the snapshot exists to reconstruct the configuration
+# surface, and "this key was set" is part of that surface — its value is not.
+_SNAPSHOT_SECRET_KEY_RE = re.compile(
+    r"(token|secret|password|passwd|api[_-]?key|credential|private[_-]?key|auth)",
+    re.IGNORECASE,
+)
+_SNAPSHOT_REDACTED = "[REDACTED]"
+
 
 def _snapshot_dir(branch_name: str, run_id: str) -> Path:
-    """Return the directory for one snapshot run."""
+    """Return the directory for one snapshot run.
+
+    Raises ValueError when ``run_id`` is not a safe single path segment;
+    ``create_workflow_snapshot`` converts that into its error result so the
+    CLI keeps its JSON contract.
+    """
+    if not _SNAPSHOT_RUN_ID_RE.match(run_id) or ".." in run_id:
+        raise ValueError(
+            f"Invalid run_id for workflow snapshot: {run_id!r}. "
+            "Must match [A-Za-z0-9][A-Za-z0-9_.-]{0,63}."
+        )
     return get_branch_dir(branch_name) / "snapshots" / run_id
+
+
+def _snapshot_path_is_denied(path: Path) -> bool:
+    """True when any component of ``path`` looks like a credential file."""
+    return any(
+        fnmatch.fnmatch(part.lower(), pattern)
+        for part in path.parts
+        for pattern in _SNAPSHOT_DENIED_PATH_PATTERNS
+    )
+
+
+def _redact_config_values(value: object) -> object:
+    """Recursively replace secret-shaped config VALUES with a marker.
+
+    Structure is preserved on purpose. Dropping the keys would defeat the
+    snapshot's reason to exist (reconstructing what configuration was in
+    effect); keeping the values would persist tokens in a durable artifact
+    that review bundles are meant to reference.
+    """
+    if isinstance(value, Mapping):
+        return {
+            str(k): (
+                _SNAPSHOT_REDACTED
+                if _SNAPSHOT_SECRET_KEY_RE.search(str(k))
+                else _redact_config_values(v)
+            )
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_config_values(v) for v in value]
+    return value
 
 
 def _sha256_of_text(text: str) -> str:
@@ -3334,18 +3419,74 @@ def _sha256_of_file(path: Path) -> str | None:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _resolve_map_config(project_root: Path) -> dict[str, object]:
-    """Read .map/config.yaml into a plain dict; return {} on any error."""
+def _resolve_map_config(project_root: Path) -> tuple[dict[str, object], str]:
+    """Read .map/config.yaml, redacting secret-shaped values.
+
+    Returns ``(config, state)`` where state is ``present``, ``absent`` or
+    ``unreadable``. Collapsing all three to a bare ``{}`` made the manifest
+    claim the config was captured when it was not, and made an absent config
+    hash identical to an unreadable one — a silent identity error in an
+    artifact whose whole purpose is post-hoc reconstruction.
+    """
     try:
         import yaml  # type: ignore[import-untyped]
 
         cfg_path = project_root / ".map" / "config.yaml"
         if not cfg_path.exists():
-            return {}
+            return {}, "absent"
         raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
-        return dict(raw) if isinstance(raw, dict) else {}
+        if not isinstance(raw, dict):
+            # An empty file parses to None; anything non-mapping is not a
+            # config we can reconstruct from.
+            return {}, "absent" if raw is None else "unreadable"
+        return cast(dict[str, object], _redact_config_values(raw)), "present"
     except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
-        return {}
+        # Missing PyYAML, malformed YAML, unreadable file — all genuinely
+        # "we could not capture it", never "there was nothing to capture".
+        return {}, "unreadable"
+
+
+def _verify_snapshot_files(snapshot_dir: Path, manifest: Mapping[str, object]) -> list[str]:
+    """Return the snapshot files that are missing or no longer match the manifest.
+
+    Reuse must verify the stored FILES, not just the recorded identity. The
+    manifest is the claim; this is the check.
+    """
+    damaged: list[str] = []
+
+    def _check(rel_name: str, expected: object, present: object) -> None:
+        if not isinstance(expected, str) or not expected:
+            # Nothing was recorded for this file — the manifest asserts it was
+            # never captured, so its absence is correct, not damage.
+            if present is True:
+                damaged.append(f"{rel_name} (manifest claims present, no digest)")
+            return
+        actual = _sha256_of_file(snapshot_dir / rel_name)
+        if actual is None:
+            damaged.append(f"{rel_name} (missing)")
+        elif actual != expected:
+            damaged.append(f"{rel_name} (digest mismatch)")
+
+    sources = manifest.get("sources")
+    if isinstance(sources, Mapping):
+        skill_md = sources.get("skill_md")
+        if isinstance(skill_md, Mapping):
+            _check("skill.md", skill_md.get("sha256"), skill_md.get("present"))
+
+    # resolved-config.json is always written, so it is always checkable —
+    # its digest lives in sources.resolved_config.sha256 but is taken over the
+    # canonical json.dumps(..., sort_keys=True) form, not the indented file,
+    # so verify existence rather than re-hashing a differently-formatted body.
+    if not (snapshot_dir / "resolved-config.json").exists():
+        damaged.append("resolved-config.json (missing)")
+
+    extra_sources = manifest.get("extra_sources")
+    if isinstance(extra_sources, Mapping):
+        for key, entry in extra_sources.items():
+            if isinstance(entry, Mapping):
+                _check(str(key), entry.get("sha256"), entry.get("present"))
+
+    return damaged
 
 
 def _find_project_root() -> Path:
@@ -3382,11 +3523,21 @@ def create_workflow_snapshot(
       run_id        — unique run identifier; defaults to UTC timestamp
       extra_sources — additional file paths (str) to capture verbatim
     """
-    branch_name = branch or get_branch_name()
+    # `branch` becomes a path segment, exactly like every other branch-taking
+    # writer in this file (record_token_event, create_review_bundle).
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
     project_root = _find_project_root()
 
     # Stable run_id: prefer caller-supplied, fall back to UTC timestamp
     effective_run_id: str = run_id or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+    def _error(message: str, **extra: object) -> dict[str, object]:
+        return {
+            "status": "error",
+            "run_id": effective_run_id,
+            "message": message,
+            **extra,
+        }
 
     # --- Gather sources ---
     # 1. Skill body
@@ -3398,14 +3549,22 @@ def create_workflow_snapshot(
         project_root / ".codex" / "agents" / f"{workflow_id}.md",
     ]:
         if candidate.exists():
-            skill_body = candidate.read_text(encoding="utf-8")
+            try:
+                skill_body = candidate.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                return _error(f"Cannot read skill body {candidate}: {exc}")
             skill_path = candidate
             break
 
     # 2. Resolved config
-    resolved_config = _resolve_map_config(project_root)
+    resolved_config, config_state = _resolve_map_config(project_root)
 
-    # 3. MAP package version (best-effort)
+    # 3. MAP identity (best-effort version, ALWAYS a source digest)
+    #
+    # `map_version` is unavailable in an editable/source checkout, and a
+    # manifest carrying neither value cannot reconstruct the MAP surface that
+    # drove the run. The runner's own digest is always obtainable, so the
+    # manifest is guaranteed at least one identity anchor.
     map_version: str | None = None
     try:
         from importlib.metadata import version as _pkg_version
@@ -3413,21 +3572,77 @@ def create_workflow_snapshot(
         map_version = _pkg_version("mapify-cli")
     except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
+    map_source_sha = _sha256_of_file(Path(__file__).resolve())
 
     # 4. Extra sources
+    #
+    # Every constraint here exists because this loop turns a caller-supplied
+    # string into a file INSIDE a durable, reviewer-visible artifact:
+    #   - keyed by relative path, not basename, so a/x.yaml and b/x.yaml do
+    #     not overwrite each other in the snapshot and in the manifest;
+    #   - confined to project_root, so the key cannot walk out of the
+    #     snapshot directory when it is used as a write target;
+    #   - credential-shaped names refused before the read, so a secret is
+    #     never loaded into memory, let alone persisted;
+    #   - content scanned for high-confidence secrets, so a token pasted into
+    #     an otherwise innocent file is refused too.
     captured_extras: dict[str, str | None] = {}
     for src_path_str in extra_sources or []:
         src_path = Path(src_path_str)
-        key = src_path.name
-        captured_extras[key] = src_path.read_text(encoding="utf-8") if src_path.exists() else None
+        if _snapshot_path_is_denied(src_path):
+            return _error(
+                f"Refusing to capture credential-shaped path: {src_path_str}. "
+                "Snapshots are durable artifacts; secrets must not enter them."
+            )
+        try:
+            resolved_src = (
+                src_path if src_path.is_absolute() else (project_root / src_path)
+            ).resolve()
+            key = str(resolved_src.relative_to(project_root.resolve()))
+        except (OSError, ValueError):
+            return _error(
+                f"Extra source is outside the project root: {src_path_str}. "
+                "Only files under the project may be captured."
+            )
+        if PurePosixPath(key).name in _SNAPSHOT_RESERVED_NAMES or key in captured_extras:
+            return _error(
+                f"Extra source key {key!r} is reserved or duplicated; "
+                "it would overwrite another file in the snapshot."
+            )
+        if not resolved_src.exists():
+            captured_extras[key] = None
+            continue
+        try:
+            body = resolved_src.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            return _error(f"Cannot read extra source {src_path_str}: {exc}")
+        leaked = _scan_outbound_secrets(body)
+        if leaked:
+            return _error(
+                f"Refusing to capture {src_path_str}: it contains "
+                f"high-confidence secret(s) ({', '.join(leaked)})."
+            )
+        captured_extras[key] = body
 
     # --- Build manifest ---
     skill_hash = _sha256_of_text(skill_body) if skill_body is not None else None
     config_text = json.dumps(resolved_config, sort_keys=True)
     config_hash = _sha256_of_text(config_text)
 
-    # content_hash covers all captured inputs so it is stable across retries
-    combined = f"{workflow_id}|{provider}|{map_version or ''}|{skill_hash or ''}|{config_hash}"
+    # content_hash must cover EVERY captured input, or a rerun under the same
+    # run_id returns "existing" while the stored files no longer match what
+    # was actually captured. `branch` and `config_state` are part of the
+    # identity too: the snapshot lives under the branch, and an absent config
+    # must not hash equal to an unreadable one.
+    extras_fingerprint = "|".join(
+        f"{key}:{_sha256_of_text(body) if body is not None else ''}"
+        for key, body in sorted(captured_extras.items())
+    )
+    combined = (
+        f"{workflow_id}|{provider}|{branch_name}|{map_version or ''}|"
+        f"{map_source_sha or ''}|{skill_hash or ''}|{config_hash}|{config_state}|"
+        f"{extras_fingerprint}"
+    )
     content_hash = hashlib.sha256(combined.encode()).hexdigest()
 
     manifest_payload: dict[str, object] = {
@@ -3437,6 +3652,7 @@ def create_workflow_snapshot(
         "provider": provider,
         "branch": branch_name,
         "map_version": map_version,
+        "map_source_sha256": map_source_sha,
         "content_hash": content_hash,
         "captured_at": _utc_timestamp(),
         "sources": {
@@ -3448,7 +3664,11 @@ def create_workflow_snapshot(
             "resolved_config": {
                 "path": ".map/config.yaml",
                 "sha256": config_hash,
-                "present": True,
+                # As honest as the skill_md entry directly above: a reviewer
+                # must be able to tell "empty config" from "no config file"
+                # and from "config could not be parsed".
+                "present": config_state == "present",
+                "state": config_state,
             },
         },
         "extra_sources": {
@@ -3458,13 +3678,30 @@ def create_workflow_snapshot(
     }
 
     # --- Atomic write via temp dir rename ---
-    snapshot_dir = _snapshot_dir(branch_name, effective_run_id)
+    try:
+        snapshot_dir = _snapshot_dir(branch_name, effective_run_id)
+    except ValueError as exc:
+        return _error(str(exc))
+
     if snapshot_dir.exists():
         # Idempotency: verify existing manifest matches; return existing if so
         existing_manifest_path = snapshot_dir / "manifest.json"
         try:
             existing = json.loads(existing_manifest_path.read_text(encoding="utf-8"))
             if existing.get("content_hash") == content_hash:
+                # A matching content_hash proves the INPUTS were identical. It
+                # says nothing about whether the stored files still are: a
+                # half-deleted or truncated snapshot keeps its manifest intact
+                # and would be reused as valid, handing a later reader an
+                # incomplete instruction surface. Re-hash what was recorded.
+                damaged = _verify_snapshot_files(snapshot_dir, existing)
+                if damaged:
+                    return _error(
+                        f"Snapshot manifest matches but stored files are missing or "
+                        f"altered: {', '.join(damaged)}. Use a distinct run_id.",
+                        snapshot_path=str(snapshot_dir),
+                        content_hash=content_hash,
+                    )
                 return {
                     "status": "existing",
                     "run_id": effective_run_id,
@@ -3509,12 +3746,32 @@ def create_workflow_snapshot(
         if skill_body is not None:
             (tmp_dir / "skill.md").write_text(skill_body, encoding="utf-8")
         for key, body in captured_extras.items():
-            if body is not None:
-                (tmp_dir / key).write_text(body, encoding="utf-8")
+            if body is None:
+                continue
+            # `key` is a project-relative path (validated above), so it may
+            # carry directories that do not exist in the temp dir yet.
+            extra_dest = tmp_dir / key
+            extra_dest.parent.mkdir(parents=True, exist_ok=True)
+            extra_dest.write_text(body, encoding="utf-8")
 
         # Atomic rename out of temp dir context so TemporaryDirectory cleanup
         # doesn't delete it; rename before __exit__ runs.
-        tmp_dir.rename(snapshot_dir)
+        #
+        # The exists() check above and this rename are not one operation, and
+        # the concurrent-dispatch path in this same file runs actors as
+        # separate OS processes. Two of them sharing a run_id both pass the
+        # check; the loser's rename hits a non-empty directory and raises
+        # (ENOTEMPTY on POSIX, FileExistsError on Windows). Uncaught, that
+        # reaches the CLI as a traceback instead of the documented JSON.
+        try:
+            tmp_dir.rename(snapshot_dir)
+        except OSError as exc:
+            return _error(
+                f"Another process published {snapshot_dir} first ({exc}). "
+                "Use a distinct run_id.",
+                snapshot_path=str(snapshot_dir),
+                content_hash=content_hash,
+            )
 
     # --- Update artifact manifest ---
     artifact_manifest = load_artifact_manifest(branch_name)
