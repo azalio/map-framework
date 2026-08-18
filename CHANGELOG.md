@@ -41,6 +41,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     carries a MAP identity: `map_version` when the package is installed,
     otherwise `map_source_sha256` (the runner's own digest), enforced by an
     `anyOf` in `WORKFLOW_SNAPSHOT_SCHEMA`.
+  - `workflow_id` is validated as a path segment too — unvalidated it let the
+    runner probe outside the project (`../../../../home/user/.ssh`) and persist
+    whatever it found as `skill.md`. The credential deny-list is re-checked
+    after symlink resolution, and config values are scanned for secrets by
+    content as well as by key name, so a token under an innocuous key
+    (`ca_bundle`) is redacted too.
+  - Every hashed payload is written with `write_bytes`, so the recorded digest
+    describes the bytes actually on disk — `write_text` newline translation
+    would otherwise make every reuse check report a false mismatch on Windows.
+    `resolved-config.json` now hashes and writes ONE canonical serialization,
+    so reuse re-hashes it instead of merely checking that it exists.
+  - The artifact-manifest stage is registered by the reuse path as well as the
+    create path (a reused snapshot still needs its reference for that run), and
+    the registration is best-effort: the snapshot is already durable when it
+    runs, so a manifest failure is reported as `manifest_error` on the result
+    instead of raising past a published artifact.
+  - Documented in `README.md`, `docs/USAGE.md` and `docs/ARCHITECTURE.md`.
 - **`/map-review` gains two role reviewers: `user_experience` and
   `maintainer`.** They run in the DEFAULT fan-out (Monitor + Predictor +
   Evaluator + both roles) and in `--adversarial`, where the reviewer set is now

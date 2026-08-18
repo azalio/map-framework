@@ -531,6 +531,31 @@ class TestWorkflowSnapshotPathSafety:
         assert set(manifest["extra_sources"]) == {"a/config.yaml", "b/config.yaml"}
 
     @pytest.mark.parametrize(
+        "bad_workflow_id",
+        ["../../../../etc", "..", "a/b", "../.ssh"],
+    )
+    def test_unsafe_workflow_id_is_refused(
+        self, tmp_path: Path, bad_workflow_id: str
+    ) -> None:
+        """`workflow_id` is interpolated into the skill candidate paths.
+
+        Unvalidated it lets the runner probe OUTSIDE the project and persist
+        whatever it finds as `skill.md`. `Path.relative_to` is lexical, so the
+        recorded path would keep the `..` segments rather than fail.
+        """
+        _setup_branch_dir(tmp_path, "main")
+        result = _run_in(
+            tmp_path,
+            create_workflow_snapshot,
+            bad_workflow_id,
+            branch="main",
+            run_id="20260101T000064Z",
+        )
+        assert result["status"] == "error"
+        assert "workflow_id" in result["message"]
+        assert list((tmp_path / ".map" / "main").glob("snapshots/*")) == []
+
+    @pytest.mark.parametrize(
         "reserved", ["manifest.json", "resolved-config.json", "skill.md"]
     )
     def test_extra_source_may_not_claim_a_reserved_name(
@@ -595,6 +620,51 @@ class TestWorkflowSnapshotSecrets:
         assert "aws_access_key_id" in result["message"]
         # The pattern NAME is reported, never the value.
         assert "AKIAIOSFODNN7EXAMPLE" not in result["message"]
+
+    def test_symlink_to_a_credential_file_is_refused(self, tmp_path: Path) -> None:
+        """The deny-list must see the RESOLVED target, not the caller's spelling."""
+        _setup_branch_dir(tmp_path, "main")
+        (tmp_path / ".env").write_text("API_TOKEN=hunter2\n", encoding="utf-8")
+        link = tmp_path / "notes.md"
+        try:
+            link.symlink_to(tmp_path / ".env")
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks unavailable on this platform")
+
+        result = _run_in(
+            tmp_path,
+            create_workflow_snapshot,
+            "map-efficient",
+            branch="main",
+            run_id="20260101T000073Z",
+            extra_sources=["notes.md"],
+        )
+        assert result["status"] == "error"
+        assert "credential-shaped" in result["message"]
+        assert list((tmp_path / ".map" / "main").glob("snapshots/*")) == []
+
+    def test_secret_value_under_an_innocuous_config_key_is_redacted(
+        self, tmp_path: Path
+    ) -> None:
+        """Key-name redaction alone leaves a token under `ca_bundle` in the clear."""
+        _setup_branch_dir(tmp_path, "main")
+        (tmp_path / ".map" / "config.yaml").write_text(
+            "ca_bundle: ghp_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+            "harmless: just a string\n",
+            encoding="utf-8",
+        )
+        result = _run_in(
+            tmp_path,
+            create_workflow_snapshot,
+            "map-efficient",
+            branch="main",
+            run_id="20260101T000074Z",
+        )
+        assert result["status"] == "success"
+        body = (Path(result["snapshot_path"]) / "resolved-config.json").read_text()
+        assert "ghp_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" not in body
+        assert "[REDACTED]" in body
+        assert "just a string" in body, "non-secret values must survive untouched"
 
     def test_secret_shaped_config_values_are_redacted_but_keys_kept(
         self, tmp_path: Path
@@ -709,6 +779,55 @@ class TestWorkflowSnapshotConfigState:
         assert _validate_snapshot_schema(manifest), (
             "a manifest carrying neither map_version nor map_source_sha256 must be rejected"
         )
+
+
+class TestWorkflowSnapshotManifestRegistration:
+    """The stage reference is what a follow-up slice resolves the snapshot by."""
+
+    def test_reuse_path_also_registers_the_stage(self, tmp_path: Path) -> None:
+        """A reused snapshot still needs its manifest entry for THAT run.
+
+        Returning `existing` before the registration left `artifact_manifest.json`
+        with no snapshot reference, so downstream consumers could not resolve the
+        path or content_hash at all.
+        """
+        _setup_branch_dir(tmp_path, "main")
+        kwargs = {"branch": "main", "run_id": "20260101T000090Z"}
+        first = _run_in(tmp_path, create_workflow_snapshot, "map-efficient", **kwargs)
+        assert first["status"] == "success"
+
+        # Drop the manifest so only the reuse path could restore the reference.
+        manifest_path = tmp_path / ".map" / "main" / "artifact_manifest.json"
+        manifest_path.unlink()
+
+        second = _run_in(tmp_path, create_workflow_snapshot, "map-efficient", **kwargs)
+        assert second["status"] == "existing"
+        assert "manifest_error" not in second, second.get("manifest_error")
+        stage = json.loads(manifest_path.read_text())["stages"]["workflow_snapshot"]
+        assert stage["metadata"]["content_hash"] == second["content_hash"]
+        assert stage["metadata"]["run_id"] == "20260101T000090Z"
+
+    def test_manifest_failure_degrades_instead_of_raising(self, tmp_path: Path) -> None:
+        """The snapshot is already durable; a manifest error must not erase it.
+
+        An unguarded write raised out of `create_workflow_snapshot`, so the CLI
+        got a traceback while the snapshot directory existed on disk — and a
+        rerun then took the reuse branch, so the stage was never registered.
+        """
+        _setup_branch_dir(tmp_path, "main")
+        # A directory where the manifest file must go makes the write fail.
+        (tmp_path / ".map" / "main" / "artifact_manifest.json").mkdir()
+
+        result = _run_in(
+            tmp_path,
+            create_workflow_snapshot,
+            "map-efficient",
+            branch="main",
+            run_id="20260101T000091Z",
+        )
+        assert result["status"] == "success", "the snapshot itself still succeeded"
+        assert "manifest_error" in result, "the degradation must be reported, not hidden"
+        assert (Path(result["snapshot_path"]) / "manifest.json").exists()
 
 
 class TestWorkflowSnapshotCLI:

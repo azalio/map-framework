@@ -152,6 +152,7 @@ The DevOpsConf 2026 case study applies this process to a production Kubernetes P
 - **Reviewable diffs** — `/map-plan` and `/map-efficient` require per-subtask size, concern, and constraint metadata, then validate `blueprint.json` *before* implementation, so oversized or mixed-concern plans fail early.
 - **Gates that check the plan, not vibes** — `/map-check` and `/map-review` validate against the spec, tests, and diff instead of asking whether code "looks fine".
 - **Clean-room review** — `/map-review` auto-bundles spec, plan, tests, verification, and coverage evidence into a single durable input (`.map/<branch>/review-bundle.json`); `--detached` opens a read-only worktree for inspection without touching your branch.
+- **Reproducible runs** — `create_workflow_snapshot` captures the skill body, resolved config and MAP identity that drove a run into a content-addressed `.map/<branch>/snapshots/<run-id>/`, so a later debugging session reconstructs what was actually in effect instead of guessing from the current tree. Reuse re-hashes the stored files, and credential-shaped paths and secret-shaped config values never enter the artifact.
 - **Project memory** — `/map-learn` turns hard-won fixes and gotchas into reusable context, so the next session doesn't relearn them.
 
 <details>

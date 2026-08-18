@@ -3317,11 +3317,13 @@ def write_prd_review(
 
 WORKFLOW_SNAPSHOT_SCHEMA_VERSION = "1"
 
-# `run_id` becomes a path segment under .map/<branch>/snapshots/, so it is
-# subject to the same traversal rule `_research_path` already enforces for
-# `subtask_id`: an unsanitized "../../tmp/x" would escape the .map tree and
-# write files wherever the caller points. Same pattern, same reason.
-_SNAPSHOT_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+# Both `run_id` and `workflow_id` become path segments — `run_id` under
+# .map/<branch>/snapshots/, `workflow_id` under .claude/skills/, .agents/skills/
+# and .codex/agents/ — so both are subject to the traversal rule `_research_path`
+# already enforces for `subtask_id`. An unsanitized "../../tmp/x" escapes the
+# tree and writes (or, for workflow_id, READS and then persists) wherever the
+# caller points. One pattern, both call sites.
+_SNAPSHOT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
 # Files the snapshot writes itself. An extra source may not claim these names,
 # or it would silently overwrite the snapshot's own identity record.
@@ -3369,7 +3371,7 @@ def _snapshot_dir(branch_name: str, run_id: str) -> Path:
     ``create_workflow_snapshot`` converts that into its error result so the
     CLI keeps its JSON contract.
     """
-    if not _SNAPSHOT_RUN_ID_RE.match(run_id) or ".." in run_id:
+    if not _SNAPSHOT_ID_RE.match(run_id) or ".." in run_id:
         raise ValueError(
             f"Invalid run_id for workflow snapshot: {run_id!r}. "
             "Must match [A-Za-z0-9][A-Za-z0-9_.-]{0,63}."
@@ -3405,6 +3407,12 @@ def _redact_config_values(value: object) -> object:
         }
     if isinstance(value, list):
         return [_redact_config_values(v) for v in value]
+    if isinstance(value, str) and _scan_outbound_secrets(value):
+        # The key-name pass above cannot see a token stored under an innocuous
+        # key (`ca_bundle`, `deploy.pat`, a PEM block). The value itself is
+        # high-confidence evidence, so scan it with the same helper the
+        # extra-source path uses.
+        return _SNAPSHOT_REDACTED
     return value
 
 
@@ -3472,13 +3480,18 @@ def _verify_snapshot_files(snapshot_dir: Path, manifest: Mapping[str, object]) -
         skill_md = sources.get("skill_md")
         if isinstance(skill_md, Mapping):
             _check("skill.md", skill_md.get("sha256"), skill_md.get("present"))
-
-    # resolved-config.json is always written, so it is always checkable —
-    # its digest lives in sources.resolved_config.sha256 but is taken over the
-    # canonical json.dumps(..., sort_keys=True) form, not the indented file,
-    # so verify existence rather than re-hashing a differently-formatted body.
-    if not (snapshot_dir / "resolved-config.json").exists():
-        damaged.append("resolved-config.json (missing)")
+        # resolved-config.json is always written, and its recorded digest is
+        # taken over the same canonical bytes that were written, so it is fully
+        # re-hashable — an existence check alone would accept a truncated file.
+        resolved_config = sources.get("resolved_config")
+        if isinstance(resolved_config, Mapping):
+            _check(
+                "resolved-config.json",
+                resolved_config.get("sha256"),
+                # Always written regardless of whether a config was FOUND, so
+                # the file must be present even when state is absent/unreadable.
+                True,
+            )
 
     extra_sources = manifest.get("extra_sources")
     if isinstance(extra_sources, Mapping):
@@ -3538,6 +3551,57 @@ def create_workflow_snapshot(
             "message": message,
             **extra,
         }
+
+    def _register_stage(
+        result: dict[str, object], snapshot_dir: Path, content_hash: str
+    ) -> dict[str, object]:
+        """Record the snapshot in artifact_manifest.json, best-effort.
+
+        Called from BOTH the success and the reuse path: a run that reuses a
+        snapshot still needs the stage reference, or downstream consumers
+        (review bundles, run-health inventory) cannot resolve the snapshot for
+        that run at all.
+
+        The snapshot itself is already durable on disk by the time this runs,
+        so a manifest failure must not turn it into a traceback — the CLI
+        expects a dict to serialize. Report the degradation on the result, the
+        way `record_plan_artifacts` already does.
+        """
+        try:
+            artifact_manifest = load_artifact_manifest(branch_name)
+            _set_manifest_stage(
+                artifact_manifest,
+                "workflow_snapshot",
+                "ready",
+                artifacts=[
+                    _artifact_ref(
+                        snapshot_dir / "manifest.json", "workflow-snapshot-manifest"
+                    )
+                ],
+                metadata={
+                    "run_id": effective_run_id,
+                    "workflow_id": workflow_id,
+                    "provider": provider,
+                    "content_hash": content_hash,
+                },
+            )
+            result["manifest_path"] = save_artifact_manifest(
+                artifact_manifest, branch_name
+            )["path"]
+        except Exception as exc:  # noqa: BLE001 -- snapshot is already published; never raise past it
+            result["manifest_error"] = str(exc)
+        return result
+
+    # `workflow_id` is interpolated into the three skill candidate paths below.
+    # Unvalidated, "../../../../home/user/.ssh" makes the runner probe outside
+    # the project and persist whatever it finds verbatim as `skill.md` — and
+    # `Path.relative_to` is purely lexical, so the recorded path would keep the
+    # `..` segments rather than fail. Same rule as run_id, checked before use.
+    if not _SNAPSHOT_ID_RE.match(workflow_id) or ".." in workflow_id:
+        return _error(
+            f"Invalid workflow_id for workflow snapshot: {workflow_id!r}. "
+            "Must match [A-Za-z0-9][A-Za-z0-9_.-]{0,63}."
+        )
 
     # --- Gather sources ---
     # 1. Skill body
@@ -3604,6 +3668,20 @@ def create_workflow_snapshot(
                 f"Extra source is outside the project root: {src_path_str}. "
                 "Only files under the project may be captured."
             )
+        # Re-check AFTER resolution: the first check saw the caller's spelling,
+        # this one sees the real target. A symlink named `notes.md` pointing at
+        # `.env` passes the first and must not pass the second.
+        #
+        # Checked on `key` (project-relative), NOT on the absolute resolved
+        # path: the components above project_root belong to the machine, not
+        # the caller, and matching them produces false refusals (a pytest tmp
+        # dir named `test_..._secret_in_0` is not a credential).
+        if _snapshot_path_is_denied(Path(key)):
+            return _error(
+                f"Refusing to capture {src_path_str}: it resolves to a "
+                f"credential-shaped path ({key}). Snapshots are durable "
+                "artifacts; secrets must not enter them."
+            )
         if PurePosixPath(key).name in _SNAPSHOT_RESERVED_NAMES or key in captured_extras:
             return _error(
                 f"Extra source key {key!r} is reserved or duplicated; "
@@ -3626,7 +3704,11 @@ def create_workflow_snapshot(
 
     # --- Build manifest ---
     skill_hash = _sha256_of_text(skill_body) if skill_body is not None else None
-    config_text = json.dumps(resolved_config, sort_keys=True)
+    # ONE canonical serialization: this exact string is both hashed and written,
+    # so `_verify_snapshot_files` can re-hash the stored file and get the
+    # recorded digest back. Hashing a compact form while writing an indented
+    # one made the config digest unverifiable by construction.
+    config_text = json.dumps(resolved_config, indent=2, sort_keys=True)
     config_hash = _sha256_of_text(config_text)
 
     # content_hash must cover EVERY captured input, or a rerun under the same
@@ -3702,13 +3784,17 @@ def create_workflow_snapshot(
                         snapshot_path=str(snapshot_dir),
                         content_hash=content_hash,
                     )
-                return {
-                    "status": "existing",
-                    "run_id": effective_run_id,
-                    "snapshot_path": str(snapshot_dir),
-                    "content_hash": content_hash,
-                    "message": "Reusing existing snapshot with matching content_hash.",
-                }
+                return _register_stage(
+                    {
+                        "status": "existing",
+                        "run_id": effective_run_id,
+                        "snapshot_path": str(snapshot_dir),
+                        "content_hash": content_hash,
+                        "message": "Reusing existing snapshot with matching content_hash.",
+                    },
+                    snapshot_dir,
+                    content_hash,
+                )
             return {
                 "status": "error",
                 "run_id": effective_run_id,
@@ -3740,11 +3826,13 @@ def create_workflow_snapshot(
         (tmp_dir / "manifest.json").write_text(
             json.dumps(manifest_payload, indent=2), encoding="utf-8"
         )
-        (tmp_dir / "resolved-config.json").write_text(
-            json.dumps(resolved_config, indent=2, sort_keys=True), encoding="utf-8"
-        )
+        # write_bytes, not write_text, for every hashed payload: write_text
+        # applies platform newline translation, so on Windows the bytes on disk
+        # would differ from the bytes that were hashed and every reuse check
+        # would report a false `digest mismatch`.
+        (tmp_dir / "resolved-config.json").write_bytes(config_text.encode("utf-8"))
         if skill_body is not None:
-            (tmp_dir / "skill.md").write_text(skill_body, encoding="utf-8")
+            (tmp_dir / "skill.md").write_bytes(skill_body.encode("utf-8"))
         for key, body in captured_extras.items():
             if body is None:
                 continue
@@ -3752,7 +3840,7 @@ def create_workflow_snapshot(
             # carry directories that do not exist in the temp dir yet.
             extra_dest = tmp_dir / key
             extra_dest.parent.mkdir(parents=True, exist_ok=True)
-            extra_dest.write_text(body, encoding="utf-8")
+            extra_dest.write_bytes(body.encode("utf-8"))
 
         # Atomic rename out of temp dir context so TemporaryDirectory cleanup
         # doesn't delete it; rename before __exit__ runs.
@@ -3773,30 +3861,18 @@ def create_workflow_snapshot(
                 content_hash=content_hash,
             )
 
-    # --- Update artifact manifest ---
-    artifact_manifest = load_artifact_manifest(branch_name)
-    _set_manifest_stage(
-        artifact_manifest,
-        "workflow_snapshot",
-        "ready",
-        artifacts=[_artifact_ref(snapshot_dir / "manifest.json", "workflow-snapshot-manifest")],
-        metadata={
+    # --- Update artifact manifest (same helper the reuse path uses) ---
+    return _register_stage(
+        {
+            "status": "success",
             "run_id": effective_run_id,
-            "workflow_id": workflow_id,
-            "provider": provider,
+            "snapshot_path": str(snapshot_dir),
             "content_hash": content_hash,
+            "message": f"Workflow snapshot created: {snapshot_dir}",
         },
+        snapshot_dir,
+        content_hash,
     )
-    manifest_result = save_artifact_manifest(artifact_manifest, branch_name)
-
-    return {
-        "status": "success",
-        "run_id": effective_run_id,
-        "snapshot_path": str(snapshot_dir),
-        "content_hash": content_hash,
-        "manifest_path": manifest_result["path"],
-        "message": f"Workflow snapshot created: {snapshot_dir}",
-    }
 
 
 def record_plan_artifacts(branch: str | None = None) -> dict[str, object]:

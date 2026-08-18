@@ -155,6 +155,24 @@ Two additional structural checks run unconditionally: an **entry-point existence
 
 Implementation note: `/map-learn` is now maintained skill-first. The canonical slash surface lives in `.claude/skills/map-learn/SKILL.md`; MAP no longer ships a duplicate `.claude/commands/map-learn.md`, so there is only one place to update the learning workflow. The slash surface now advertises an optional `[workflow-summary]` argument, but zero-argument mode still auto-loads `.map/<branch>/learning-handoff.md` when present.
 
+## Workflow Run Snapshots
+
+`create_workflow_snapshot` captures the prompt/config surface that drove a MAP run, so a later debugging session can reconstruct what was actually in effect rather than guessing from the current tree:
+
+```bash
+python3 .map/scripts/map_step_runner.py create_workflow_snapshot map-efficient \
+  [--provider claude|codex] [--branch <branch>] [--run-id <id>] \
+  [--extra-sources path1,path2]
+```
+
+It writes `.map/<branch>/snapshots/<run-id>/` atomically (temp-dir rename) containing `manifest.json` (identity and per-source SHA-256), `skill.md` (the skill body that ran) and `resolved-config.json`, then registers a `workflow_snapshot` stage in `artifact_manifest.json`. Output is a JSON dict with `status`, `run_id`, `snapshot_path` and `content_hash`; `status="error"` exits 1.
+
+`content_hash` covers every captured input — workflow, provider, branch, MAP identity, skill body, config, config state and each extra source. Re-running with the same `--run-id` and unchanged inputs returns `status="existing"` and reuses the snapshot **after re-hashing the stored files**, so a half-deleted or truncated snapshot fails loudly instead of passing as valid. Changed inputs under the same `--run-id` are a reported collision (`status="error"`), never a silent overwrite — pass a distinct `--run-id`.
+
+**Snapshots are durable, reviewer-visible artifacts, so secrets stay out of them.** `--extra-sources` refuses credential-shaped paths (`.env*`, `*.pem`, `*_key`, `id_rsa*`, `*credential*`, `*secret*`, `.netrc`, …) before reading them — including via a symlink, which is re-checked after resolution — refuses any file whose content trips the high-confidence secret scanner (reporting the pattern name, never the value), and accepts only paths under the project root. `resolved-config.json` redacts secret-shaped config values while keeping their keys: that a key was set is part of the surface being reconstructed; its value is not. `run_id`, `workflow_id` and `branch` are validated as single path segments, so none of them can walk outside the snapshot tree.
+
+The manifest always carries a MAP identity: `map_version` when the package is installed, otherwise `map_source_sha256` (the runner's own digest, which an editable checkout always has). It also distinguishes `absent` / `unreadable` / `present` config states, so "no config file" and "config could not be parsed" are not reported as a captured empty config.
+
 ## Review Workflow: Context Persistence and Detached Mode
 
 `/map-review` auto-generates `.map/<branch>/review-bundle.json` (machine-readable) and `.map/<branch>/review-bundle.md` (human-readable) before launching reviewer agents. The bundle consolidates spec, task plan, test contracts, verification summary, QA results, latest code review artifacts, prior-stage consumption status, and `coverage_map` acceptance-tag evidence into a single durable input contract. This decouples review from implementer session context — reviewer agents read the bundle first; raw diff is used only to confirm or expand bundle findings. When an artifact is absent, the bundle records an explicit `present: false` entry so generation always succeeds regardless of workflow stage.
