@@ -136,7 +136,7 @@ The GitHub Release is created automatically by the workflow (no manual step).
 
 ## Phase 6: Post-Release Verification
 
-Wait ~120 s for PyPI processing, then verify with retry + exponential backoff (up to 5 attempts). Install in a clean venv and test `mapify --version` and `mapify --help`. See [release-reference.md § Phase 6](release-reference.md#phase-6-post-release-verification) for full scripts.
+Wait ~120 s for PyPI processing, then run the clean-venv install test with retry + backoff (5 attempts / 45 s) and check `mapify --version` and `mapify --help`. The retry must wrap `pip install` itself: a 200 from the PyPI project page does NOT mean the simple index pip resolves against has caught up. See [release-reference.md § Phase 6](release-reference.md#phase-6-post-release-verification) for full scripts.
 
 ## Phase 7: Final Summary and Cleanup
 

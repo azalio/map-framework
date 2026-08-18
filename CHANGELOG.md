@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`/map-release` Phase 6 verified the wrong thing and failed a healthy
+  release.** The availability gate retried `curl` against the PyPI *project
+  page* and then ran the clean-venv `pip install` exactly once after it. The
+  project page and the PEP 503 simple index pip resolves against sit behind
+  independent CDN caches, so on the v3.28.0 release the page returned 200
+  ~90 s after publish while `pip install mapify-cli==3.28.0` still reported
+  "no matching distribution" — the last phase of an otherwise-clean release
+  hard-failed on a transient index lag. The retry loop (5 attempts / 45 s) now
+  wraps the install itself, which is the only check equivalent to "a user can
+  install this right now"; the failure message points at a simple-index probe,
+  and rollback Scenario 5 waits on that index instead of the project page.
+
 ## [3.28.0] - 2026-08-18
 
 ### Added

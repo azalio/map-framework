@@ -348,24 +348,38 @@ sleep 120
 TAG_VERSION="${LAST_TAG#v}"
 PYPI_URL="https://pypi.org/project/mapify-cli/$TAG_VERSION/"
 
-MAX_RETRIES=5; RETRY_COUNT=0; WAIT_TIME=30
+# The retry MUST wrap the install itself, not a cheap HTML probe. The
+# human-facing project page (pypi.org/project/...) and the PEP 503 simple
+# index pip resolves against sit behind independent CDN caches: the page can
+# return 200 while `pip install` still reports "no matching distribution"
+# (observed on v3.28.0 — the index lagged the page by ~60-90 s). A successful
+# install is the only check equivalent to "a user can install this now".
+MAX_RETRIES=5; RETRY_COUNT=0; WAIT_TIME=45; INSTALL_OK=0
 while [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; do
-  if curl -f -s "$PYPI_URL" > /dev/null; then
-    echo "✅ Package available: $PYPI_URL"
+  rm -rf .venv-release-test
+  python3 -m venv .venv-release-test
+  if .venv-release-test/bin/pip install -q --no-cache-dir "mapify-cli==$TAG_VERSION"; then
+    INSTALL_OK=1
     break
   fi
   RETRY_COUNT=$((RETRY_COUNT + 1))
-  [[ $RETRY_COUNT -lt $MAX_RETRIES ]] && echo "⚠️  Attempt $RETRY_COUNT/$MAX_RETRIES; waiting ${WAIT_TIME}s..." && sleep $WAIT_TIME && WAIT_TIME=$((WAIT_TIME * 2)) || { echo "❌ Not on PyPI after $MAX_RETRIES attempts"; exit 1; }
+  [[ $RETRY_COUNT -lt $MAX_RETRIES ]] \
+    && echo "⚠️  Not resolvable yet (attempt $RETRY_COUNT/$MAX_RETRIES); waiting ${WAIT_TIME}s..." \
+    && sleep $WAIT_TIME
 done
 
-# Installation test in clean venv
-python3 -m venv .venv-release-test
-source .venv-release-test/bin/activate
-pip install --no-cache-dir "mapify-cli==$TAG_VERSION"
-mapify --version
-mapify --help > /dev/null && echo "✅ --help OK"
-mapify validate --help > /dev/null && echo "✅ validate --help OK"
-deactivate
+if [[ $INSTALL_OK -ne 1 ]]; then
+  echo "❌ mapify-cli==$TAG_VERSION not installable after $MAX_RETRIES attempts"
+  echo "   Project page: $PYPI_URL"
+  echo "   Index probe:  curl -s https://pypi.org/simple/mapify-cli/ | grep mapify_cli-$TAG_VERSION"
+  rm -rf .venv-release-test
+  exit 1
+fi
+
+echo "✅ Package installable: $PYPI_URL"
+.venv-release-test/bin/mapify --version
+.venv-release-test/bin/mapify --help > /dev/null && echo "✅ --help OK"
+.venv-release-test/bin/mapify validate --help > /dev/null && echo "✅ validate --help OK"
 rm -rf .venv-release-test
 echo "✅ Installation test passed"
 ```
@@ -426,10 +440,11 @@ You CANNOT delete packages from PyPI. Only option is yank.
 ```bash
 gh run view $RUN_ID --log | grep -A 10 "pypi-publish"
 # Check https://status.python.org/
-# Wait up to 15 minutes with retry loop:
+# Wait up to 15 minutes, probing the simple index pip resolves against —
+# NOT the project page, which goes live earlier (see Phase 6):
 while true; do
-  curl -f "https://pypi.org/project/mapify-cli/$TAG_VERSION/" && break
-  echo "Still waiting..."; sleep 300
+  curl -s "https://pypi.org/simple/mapify-cli/" | grep -q "mapify_cli-$TAG_VERSION" && break
+  echo "Still waiting for the simple index..."; sleep 300
 done
 ```
 
