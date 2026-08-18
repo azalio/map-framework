@@ -1,6 +1,6 @@
 [project]
 name = "mapify-cli"
-version = "3.27.1"
+version = "3.28.0"
 description = "MAP Framework installer - Modular Agentic Planner for Claude Code"
 authors = [{ name = "MAP Framework Contributors" }]
 readme = "README.md"

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.28.0] - 2026-08-18
+
 ### Added
 - **`/map-review` gains two role reviewers: `user_experience` and
   `maintainer`.** They run in the DEFAULT fan-out (Monitor + Predictor +

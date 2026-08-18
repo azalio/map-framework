@@ -23,7 +23,7 @@ Or install globally:
     mapify check
 """
 
-__version__ = "3.27.1"
+__version__ = "3.28.0"
 
 import contextlib
 import functools
