@@ -9708,10 +9708,11 @@ class TestCreateReviewBundle:
         """Budget diagnostics must not block prompt generation on I/O errors."""
         del branch_workspace
 
-        # Pin minimality off so the prompt set is the 3 reviewers regardless of
-        # the global default — the complexity_lens add is covered by its own test.
-        # (Phase 3 (#183) flipped the keyless default to lite, which would add a
-        # 4th prompt and make this write-error test's assertion non-deterministic.)
+        # Pin minimality off so the prompt set is the 3 core reviewers plus the
+        # two unconditional role reviewers, regardless of the global default —
+        # the complexity_lens add is covered by its own test. (Phase 3 (#183)
+        # flipped the keyless default to lite, which would add one more prompt
+        # and make this write-error test's assertion non-deterministic.)
         Path(".map").mkdir(exist_ok=True)
         (Path(".map") / "config.yaml").write_text("minimality: off\n", encoding="utf-8")
 
@@ -9728,7 +9729,12 @@ class TestCreateReviewBundle:
         )
 
         assert result["status"] == "success"
-        assert set(result["prompts"]) == {"monitor", "predictor", "evaluator"}
+        assert set(result["prompts"]) == {
+            "monitor",
+            "predictor",
+            "evaluator",
+            *map_step_runner.ROLE_REVIEWER_IDS,
+        }
 
     def test_build_review_prompts_adds_complexity_lens_when_minimality_enabled(
         self, branch_workspace
@@ -17254,3 +17260,218 @@ class TestResolveSubtaskDiffBase:
             "test-branch", "ST-001", tmp_path
         )
         assert result is None
+
+
+class TestRoleReviewers:
+    """Role reviewers (user_experience / maintainer) in both review paths."""
+
+    @staticmethod
+    def _complete_finding(**overrides) -> dict:
+        finding = {
+            "id": "F-U-01",
+            "reviewer": "user_experience",
+            "severity": "IMPORTANT",
+            "category": "ux",
+            "file_path": "cmd/root.go",
+            "problem": "--from-release is confusable with --release at cmd/root.go:31",
+            "current_code": 'flags.String("from-release", "", "...")',
+            "proposed_code": 'flags.String("upgrade-from", "", "...")',
+            "why_better": "2 confusable flags -> 1 distinguishable pair",
+            "cost": "rename is a breaking flag change; needs an alias for one release",
+            "evidence": "grep -n 'from-release' cmd/",
+        }
+        finding.update(overrides)
+        return finding
+
+    def test_both_roles_are_in_the_default_normal_fan_out(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result = map_step_runner.build_review_prompts(
+            branch="test-branch",
+            review_bundle_text="BUNDLE",
+            git_diff_text="diff --git a/x b/x",
+        )
+        prompts = result["prompts"]
+        assert {"monitor", "predictor", "evaluator"} <= set(prompts)
+        for role in map_step_runner.ROLE_REVIEWER_IDS:
+            assert role in prompts, f"{role} must run in the default fan-out"
+            assert prompts[role]["prompt"], f"{role} prompt must not be empty"
+
+    def test_both_roles_are_in_the_default_adversarial_fan_out(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result = map_step_runner.build_adversarial_review_prompts(
+            branch="test-branch", git_diff_text="diff", spec_text="spec"
+        )
+        assert set(result["prompts"]) == {
+            "blind",
+            "edge_case",
+            "acceptance",
+            "user_experience",
+            "maintainer",
+        }
+
+    def test_role_prompt_carries_the_contract_and_pins_the_reviewer_id(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        prompts = map_step_runner.build_role_review_prompts(
+            branch="test-branch",
+            git_diff_text="diff --git a/x b/x",
+            repo_context_text="BUNDLE",
+        )["prompts"]
+
+        maintainer = prompts["maintainer"]["prompt"]
+        for part in map_step_runner.ROLE_FINDING_CONTRACT_KEYS:
+            assert part in maintainer, f"contract part {part} missing from the prompt"
+        assert "Set reviewer to 'maintainer'" in maintainer
+        # The role reviewer sees the diff and the bundle, never another
+        # reviewer's output.
+        assert "BUNDLE" in maintainer
+        assert "diff --git a/x b/x" in maintainer
+
+    def test_role_prompt_schema_comes_from_agent_output_schemas(self, tmp_path, monkeypatch):
+        """One schema object — the prompt, the truncation gate and the retry
+        prompt must not be able to disagree."""
+        monkeypatch.chdir(tmp_path)
+        for role in map_step_runner.ROLE_REVIEWER_IDS:
+            assert (
+                map_step_runner.AGENT_OUTPUT_SCHEMAS[role]["skeleton"]
+                is map_step_runner.ROLE_FINDING_SCHEMA
+            )
+
+    def test_truncation_gate_accepts_a_valid_role_envelope(self):
+        envelope = json.dumps(
+            {
+                "reviewer": "maintainer",
+                "all_clear": True,
+                "all_clear_rationale": "no rot found",
+                "findings": [],
+                "checks_performed": ["A1"],
+            }
+        )
+        report = map_step_runner.detect_truncated_agent_output(
+            envelope, agent_kind="maintainer"
+        )
+        assert report["truncated"] is False, report
+
+    def test_truncation_gate_flags_a_role_envelope_missing_all_clear(self):
+        envelope = json.dumps({"reviewer": "maintainer", "findings": []})
+        report = map_step_runner.detect_truncated_agent_output(
+            envelope, agent_kind="maintainer"
+        )
+        assert report["truncated"] is True
+
+    def test_aggregation_drops_incomplete_findings_into_contract_incomplete(self):
+        envelope = json.dumps(
+            {
+                "reviewer": "user_experience",
+                "all_clear": False,
+                "findings": [
+                    self._complete_finding(),
+                    self._complete_finding(id="F-U-02", why_better="", cost=""),
+                ],
+                "checks_performed": ["old path"],
+            }
+        )
+        result = map_step_runner.aggregate_adversarial_findings(
+            role_json={"user_experience": envelope}
+        )
+        assert result["summary"]["per_reviewer_counts"]["user_experience"] == 1
+        assert result["summary"]["contract_incomplete"] == 1
+        dropped = result["contract_incomplete"][0]
+        assert dropped["id"] == "F-U-02"
+        assert dropped["contract_gaps"] == ["why_better", "cost"]
+        # The surviving finding is reportable through the shared report shape.
+        merged = result["findings"][0]
+        assert merged["failure_mode"] == self._complete_finding()["problem"]
+        assert merged["recommendation"] == self._complete_finding()["proposed_code"]
+
+    def test_quick_mode_keeps_both_roles_and_drops_only_edge_case(self, tmp_path, monkeypatch):
+        """--quick is a cost switch, not a way to lose a perspective."""
+        monkeypatch.chdir(tmp_path)
+        quick = map_step_runner.build_adversarial_review_prompts(
+            branch="test-branch",
+            reviewers=["blind", "acceptance", *map_step_runner.ROLE_REVIEWER_IDS],
+            git_diff_text="diff",
+            spec_text="spec",
+        )
+        assert set(quick["prompts"]) == {
+            "blind",
+            "acceptance",
+            *map_step_runner.ROLE_REVIEWER_IDS,
+        }
+
+    def test_roster_is_derived_from_the_specs(self):
+        """One declaration: a role in SPECS is a role everywhere."""
+        assert map_step_runner.ROLE_REVIEWER_IDS == tuple(map_step_runner.ROLE_REVIEWER_SPECS)
+        for role_id in map_step_runner.ROLE_REVIEWER_IDS:
+            assert role_id in map_step_runner.AGENT_OUTPUT_SCHEMAS
+
+
+class TestReviewDiffSource:
+    """The diff shipped to reviewers must be the branch's review target (#426)."""
+
+    @staticmethod
+    def _init_repo(root: Path) -> None:
+        def git(*args: str) -> None:
+            subprocess.run(
+                ["git", *args], cwd=root, check=True, capture_output=True, text=True
+            )
+
+        git("init", "-b", "main")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "T")
+        (root / "app.py").write_text("value = 1\n", encoding="utf-8")
+        git("add", "app.py")
+        git("commit", "-m", "base")
+
+    def test_committed_branch_diff_is_not_empty(self, tmp_path, monkeypatch):
+        """A fully-committed feature branch must not ship '[no git diff output]'."""
+        self._init_repo(tmp_path)
+        subprocess.run(
+            ["git", "checkout", "-b", "feature"], cwd=tmp_path, check=True, capture_output=True
+        )
+        (tmp_path / "app.py").write_text("value = 2  # changed\n", encoding="utf-8")
+        subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "feature work"], cwd=tmp_path, check=True, capture_output=True
+        )
+        monkeypatch.chdir(tmp_path)
+
+        # Precondition: this is exactly the state where `git diff HEAD` is empty.
+        head_diff = subprocess.run(
+            ["git", "diff", "HEAD"], cwd=tmp_path, capture_output=True, text=True, check=True
+        ).stdout.strip()
+        assert head_diff == ""
+
+        diff = map_step_runner._read_git_diff_for_review()
+        assert "value = 2" in diff, diff
+        assert "no git diff output" not in diff
+
+    def test_uncommitted_work_is_used_when_branch_is_level_with_base(
+        self, tmp_path, monkeypatch
+    ):
+        self._init_repo(tmp_path)
+        (tmp_path / "app.py").write_text("value = 3  # wip\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+
+        diff = map_step_runner._read_git_diff_for_review()
+        assert "value = 3" in diff, diff
+
+    def test_committed_and_uncommitted_work_are_both_shipped(self, tmp_path, monkeypatch):
+        """Neither half of the review scope may silently win over the other."""
+        self._init_repo(tmp_path)
+        subprocess.run(
+            ["git", "checkout", "-b", "feature"], cwd=tmp_path, check=True, capture_output=True
+        )
+        (tmp_path / "app.py").write_text("value = 2  # committed\n", encoding="utf-8")
+        subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "feature work"], cwd=tmp_path, check=True, capture_output=True
+        )
+        (tmp_path / "app.py").write_text("value = 4  # still in the tree\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+
+        diff = map_step_runner._read_git_diff_for_review()
+        assert "committed review target" in diff, diff
+        assert "uncommitted working tree" in diff, diff
+        assert "value = 2" in diff and "value = 4" in diff

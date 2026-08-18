@@ -26,7 +26,7 @@ These four variables are reserved by MAP runtime layers. Do not repurpose or sha
 | `MAP_DEBUG` | live | `src/mapify_cli/__init__.py:207` | Enables verbose debug logging across MAP CLI internals when set to a truthy value. |
 | `MAP_MONITOR_HOTFIX` | live | `src/mapify_cli/templates/codex/hooks/workflow-gate.py:68` | Bypasses the monitor gate for emergency hotfix flows; must not be set in normal workflows. |
 | `MAP_STRICT_SCOPE` | live | `src/mapify_cli/templates/map/scripts/map_step_runner.py:7137` | Enforces strict mutation-boundary validation; rejects Actor edits outside `affected_files`. |
-| `MAP_REVIEW_PROMPT_BUDGET_TOKENS` | live | `src/mapify_cli/templates/map/scripts/map_step_runner.py:147,4577` | Token budget for review prompts; consumed via `REVIEW_PROMPT_BUDGET_ENV`. |
+| `MAP_REVIEW_PROMPT_BUDGET_TOKENS` | reported-only | `src/mapify_cli/templates/map/scripts/map_step_runner.py:147,4577` | Read via `REVIEW_PROMPT_BUDGET_ENV` and echoed as `budget_tokens`, but it clips nothing — review-prompt truncation was removed. Setting it has no effect on prompt contents. |
 | `MAP_CONTEXT_BLOCK_BUDGET_TOKENS` | provisional | `docs/USAGE.md:54,64` | provisional — documented in docs/USAGE.md but no runtime consumer found as of this PR; do not rely on it without re-verifying |
 
 ## (d) Legacy / Frozen Variables

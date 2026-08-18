@@ -39,6 +39,74 @@ Lean already. Ship.
 
 Boundaries: complexity only. Correctness, security, and performance findings stay in the normal Monitor/Evaluator pass. A single smoke test or assert-based self-check is the minimum and must not be flagged for deletion. The lens samples and verifies `map:simplification:` marker claims; the marker is evidence, not an exemption. `net: -N` is post-hoc and advisory only: do not feed it into Actor retry context, do not use it for PROCEED/REVISE/BLOCK, and do not let it incentivize deleting necessary code.
 
+## Role Reviewers
+
+Two perspective roles run in BOTH review paths — the normal fan-out and
+`--adversarial`. They are not a lens on the code the other reviewers already
+read: they answer questions nobody else in the fan-out is asked.
+
+**`user_experience` — the person or script that CALLS this.** One question: did
+the change make the ALREADY SHIPPED functionality harder or less convenient?
+
+- Convenience regression: do the pre-diff scenarios still take the same number
+  of steps? Did the old path gain a mandatory flag, field, or ordering rule?
+- Distinguishability: two confusable flags/options/fields (`--release` vs
+  `--from-release`)? Does the name alone say what it does?
+- Explicit input beats a default: an explicitly supplied value that is
+  incompatible with the new mode must be REJECTED with a clear error, never
+  silently overridden.
+- The current flag set is not a given — propose the ideal one when it confuses.
+- Judged from two sub-roles: a human in a terminal, and a CI script.
+
+**`maintainer` — the person extending this a quarter from now.** Checks:
+
+| Class | What it hunts |
+|---|---|
+| A1 | Branch-scoped litter in comments (plan/tracker IDs, `.map/` paths, "step N") — it rots after merge |
+| A2 | Implementation vocabulary leaking into help/error/log/doc text |
+| B | Copy-paste: near-identical logic in 2+ places that must change in sync |
+| C | Single source of truth: one decision computed in more than one place |
+| D | Overcomplication: twisted booleans, deep nesting, mixed responsibilities |
+| E | Order of logic: validation / defaults / execution readable top to bottom |
+| F | Dead or idle work: built-but-unused structures, duplicated guards |
+| G | Extensibility: how many places the next similar case touches — exact N |
+| H | Version/capability predicates: one module (H1), named by capability not number (H2), one comparison style (H3) — found by whole-base grep, not in the diff |
+| I | Embedded shell/YAML/SQL/HCL inside string literals — unreviewable, untestable |
+
+For B, C and H one site is not a finding: the finding is the number of sites and
+the point where they collapse.
+
+### The output contract
+
+Every role finding carries five parts, or it is not reported:
+
+| Part | Requirement |
+|---|---|
+| `problem` | one line + exact `file:line` |
+| `current_code` | the lines as they are, copied verbatim |
+| `proposed_code` | applicable as a patch — the helper itself, not "extract a helper" |
+| `why_better` | measurable delta ("3 edit sites -> 1", "-1 responsibility"); bare "cleaner" is rejected |
+| `cost` | the downside of the fix, or `none` |
+
+A finding missing any part is NOT softened into an advisory, but where it lands
+depends on the path that ran:
+
+- Normal fan-out: the role envelope reaches the ledger, which tombstones the
+  finding with `transition_reason: contract_incomplete` and names it in
+  `not_verified`.
+- `--adversarial`: `aggregate_adversarial_findings` removes it before the
+  aggregated array is written, so it appears only under `contract_incomplete`
+  in the report — present it from there, because the ledger never sees it.
+
+Either way it cannot gate the change, and it cannot disappear either.
+
+Standalone prompt build (the normal fan-out builds these automatically):
+
+```bash
+python3 .map/scripts/map_step_runner.py build_role_review_prompts \
+  [--roles user_experience,maintainer]
+```
+
 ## Cross-AI
 
 `--cross-ai <runtime>` dispatches the review to an INDEPENDENT external AI CLI
@@ -137,15 +205,36 @@ cat > "$BRANCH_DIR/review-agent-monitor.json" <<'MONITOR_EOF'
 MONITOR_EOF
 ```
 
-Repeat for `review-agent-predictor.json` and `review-agent-evaluator.json`. In
-adversarial or compare-orderings mode also write the aggregated findings array to
-`review-agent-adversarial.json`.
+Repeat for `review-agent-predictor.json`, `review-agent-evaluator.json`,
+`review-agent-user_experience.json` and `review-agent-maintainer.json`. In
+adversarial or compare-orderings mode also write the aggregator's
+`ledger_findings` array to `review-agent-adversarial.json`.
+
+Use `ledger_findings`, never `findings`. The report array holds only the
+findings that survived the contract, which keeps the printed counts honest;
+`ledger_findings` is that array PLUS the `contract_incomplete` entries. Feeding
+the ledger `findings` alone drops an incomplete role finding entirely — no
+tombstone row, no `not_verified` line, no escalation — so an incomplete
+CRITICAL would leave PROCEED available, which is precisely what the normal
+fan-out refuses to do.
+
+The role envelopes are handed over whole — the ledger unwraps `findings` itself,
+so nothing has to be pre-flattened.
+
+A partial role roster is an error, not a quiet omission: supplying
+`user_experience` without `maintainer` (or the reverse) records an
+input-integrity finding per missing role, because a reviewer that was
+dispatched and never came back is a dropped review. Supplying NEITHER is not
+flagged — `lightweight` mode legitimately runs Monitor alone under the same
+`review_mode="normal"` label.
 
 ### What the table counts
 
 `computed_verdict` (`PROCEED`/`REVISE`/`BLOCK`) is derived from every finding
 whose status is `active` **or** `downgraded`. Only `tombstoned` findings are
-excluded, and a finding may be tombstoned only when its severity is `minor`.
+excluded, and above `minor` nothing leaves the table for free: a row is either
+downgraded (still counted) or, in the one exception below, tombstoned **and**
+escalated so PROCEED is unavailable.
 
 | Situation | Status | Severity | Effect on the verdict |
 |---|---|---|---|
@@ -153,12 +242,23 @@ excluded, and a finding may be tombstoned only when its severity is `minor`.
 | Severity ≥ MEDIUM with no `reach_evidence` | `downgraded` | `needs_investigation` | counted → at least REVISE |
 | `was_present_before_pr=true`, above `minor` | `downgraded` | `needs_investigation` | counted → at least REVISE, listed in `not_verified` |
 | `was_present_before_pr=true`, `minor` | `tombstoned` | as reported | excluded |
+| Role finding missing an output-contract part, `minor` | `tombstoned` | as reported | excluded, listed in `not_verified` |
+| Role finding missing an output-contract part, above `minor` | `tombstoned` | as reported | excluded from the table, listed in `not_verified`, `escalation_required` set → PROCEED unavailable |
 | Reviewer payload missing or malformed | `active` | `important` | counted → at least REVISE |
 
 A pre-existing claim is self-attested by the reviewer that raised the finding, so
 it is not treated as independent evidence: it lowers severity, it does not erase
 the row. When a CRITICAL is neutralised this way the ledger sets
 `escalation_required` and names the reason.
+
+An incomplete role finding is the one row tombstoned at **any** severity — a
+reviewer that stopped halfway must not gate the change on its own unfinished
+work. That is why the escalation is attached: the row leaves the table, but a
+CRITICAL or IMPORTANT claim dropped for a missing `cost` or `proposed_code`
+still costs the run its PROCEED, and a human decides. This is the NORMAL
+fan-out path. Under `--adversarial` the finding never reaches the ledger at
+all: `aggregate_adversarial_findings` drops it first and lists it under
+`contract_incomplete` in the report.
 
 ### Contesting a finding
 
@@ -220,14 +320,15 @@ otherwise.
 `compare_orderings`, and must name the phase that actually ran. Pass only the
 envelopes that phase produced: a file that does not exist is a read error, and
 read errors are findings. Both `adversarial` and `compare_orderings` write their
-aggregated array to `review-agent-adversarial.json`, so both pass
+`ledger_findings` array to `review-agent-adversarial.json`, so both pass
 `--adversarial-file`.
 
 ```bash
 LEDGER_ARGS=()
-for ROLE in monitor predictor evaluator adversarial; do
+# The artifact name keeps the underscore; the ledger flag uses dashes.
+for ROLE in monitor predictor evaluator adversarial user_experience maintainer; do
   [ -f "$BRANCH_DIR/review-agent-$ROLE.json" ] && \
-    LEDGER_ARGS+=(--"$ROLE"-file "$BRANCH_DIR/review-agent-$ROLE.json")
+    LEDGER_ARGS+=(--"${ROLE//_/-}"-file "$BRANCH_DIR/review-agent-$ROLE.json")
 done
 
 python3 .map/scripts/map_step_runner.py write_review_verdict_ledger \
@@ -241,5 +342,5 @@ large and quote-heavy; prefer the file flags written in Step A.2c.
 
 - Detached prep unavailable: continue from the in-place review bundle; do not mutate the source branch.
 - Missing bundle: rerun `create_review_bundle` before agents.
-- Prompt clipping: inspect `.map/<branch>/token_budget.json`, then raise `MAP_REVIEW_PROMPT_BUDGET_TOKENS` only when the bundle evidence is actually missing.
+- Oversized reviewer prompt: nothing is clipped and no `token_budget.json` entry is written for review — `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is reported, not enforced. Reduce the input yourself (`/compact`, or split the change); raising the variable changes nothing.
 - Monitor invalid: treat as hard stop and record `REVISE` or `BLOCK`.

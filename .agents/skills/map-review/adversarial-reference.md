@@ -2,7 +2,7 @@
 
 Detailed workflow for `$map-review --adversarial`. See [SKILL.md](SKILL.md)
 for context and integration points. This is the Codex counterpart to Claude
-`--adversarial`: the same three-reviewer contract, run as three SEQUENTIAL
+`--adversarial`: the same five-reviewer contract, run as SEQUENTIAL
 IN-SESSION passes by the current Codex session instead of a parallel agent
 fan-out.
 
@@ -19,7 +19,7 @@ registered Codex agent types.
 (one outside the five above) is an UNVERIFIED ASSUMPTION carried over from
 discovery, not a proven platform limitation.** This file deliberately does
 NOT resolve that assumption — it picks the simpler, verifiably-correct
-option instead: run the three reviewer passes sequentially in the current
+option instead: run the five reviewer passes sequentially in the current
 Codex session, with the session itself switching context/persona between
 passes, rather than betting on an unconfirmed dispatch capability.
 
@@ -40,7 +40,7 @@ works today.
 
 ## Overview
 
-Three reviewer passes, each with only its permitted inputs, run ONE AFTER
+Five reviewer passes, each with only its permitted inputs, run ONE AFTER
 ANOTHER in the current session (never in parallel, never via a new
 agent-dispatch primitive):
 
@@ -49,12 +49,22 @@ agent-dispatch primitive):
 | **Blind Hunter** | diff only | Typos, dead code, logic errors visible in isolation |
 | **Edge Case Hunter** | diff + repo read access | Null handling, boundary conditions, error paths, codebase consistency |
 | **Acceptance Auditor** | diff + spec + plan + artifacts | Missed requirements, spec violations, AC gaps, extra/unplanned work |
+| **User (`user_experience`)** | diff + repo read access | Regressions in the already-shipped path: extra mandatory steps, confusable flags, an explicit value silently overridden |
+| **Maintainer (`maintainer`)** | diff + repo read access | Branch-scoped litter in comments, implementation leaking into user-facing text, copy-paste, split sources of truth, version predicates by number, embedded foreign-language code |
 
-With `--quick`: skip the Edge Case Hunter pass (Blind + Acceptance only).
+With `--quick`: skip the Edge Case Hunter pass (Blind + Acceptance + both
+role passes).
+
+The two role passes answer to the five-part output contract (`problem`,
+`current_code`, `proposed_code`, `why_better`, `cost`); a finding that
+cannot fill all five is dropped into `contract_incomplete` by the
+aggregator — reported, never counted. See
+[review-reference.md](review-reference.md#role-reviewers) for what each role
+checks.
 
 Between passes, deliberately narrow the session's working context to match
 the pass's permitted inputs (e.g. do not consult the spec while running the
-Blind Hunter pass) so the three passes stay as independent as a sequential,
+Blind Hunter pass) so the passes stay as independent as a sequential,
 single-session execution allows.
 
 ## Step B.adversarial.0: Build adversarial review prompts
@@ -75,25 +85,31 @@ EDGE_DESC=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=jso
 
 ACCEPTANCE_PROMPT=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("acceptance",{}).get("prompt",""))')
 ACCEPTANCE_DESC=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("acceptance",{}).get("description",""))')
+
+USER_EXPERIENCE_PROMPT=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("user_experience",{}).get("prompt",""))')
+MAINTAINER_PROMPT=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("maintainer",{}).get("prompt",""))')
 ```
 
 `build_adversarial_review_prompts` is the exact same CLI verb the Claude
 port calls — payload flows out via stdout JSON only, never via argv, per
 the stdin-safe piping convention used throughout this skill.
 
-## Step B.adversarial.1: Run all three passes sequentially, in-session
+## Step B.adversarial.1: Run all five passes sequentially, in-session
 
 ```text
-# Run the three adversarial reviewer passes ONE AFTER ANOTHER in the
+# Run the five adversarial reviewer passes ONE AFTER ANOTHER in the
 # current Codex session. Do NOT call spawn_agent() for these passes and do
 # NOT invent a new agent-dispatch primitive — see "Design note" above for
 # why. Each pass consumes only its permitted context (BLIND_PROMPT /
-# EDGE_PROMPT / ACCEPTANCE_PROMPT) and produces its own JSON finding
-# report before the next pass begins.
+# EDGE_PROMPT / ACCEPTANCE_PROMPT / USER_EXPERIENCE_PROMPT /
+# MAINTAINER_PROMPT) and produces its own JSON finding report before the
+# next pass begins.
 
 Pass 1 (Blind Hunter):      execute BLIND_PROMPT in-session -> BLIND_OUTPUT
 Pass 2 (Edge Case Hunter):  execute EDGE_PROMPT in-session -> EDGE_OUTPUT   (skip if --quick)
 Pass 3 (Acceptance Auditor): execute ACCEPTANCE_PROMPT in-session -> ACCEPTANCE_OUTPUT
+Pass 4 (User):               execute USER_EXPERIENCE_PROMPT in-session -> USER_EXPERIENCE_OUTPUT
+Pass 5 (Maintainer):         execute MAINTAINER_PROMPT in-session -> MAINTAINER_OUTPUT
 ```
 
 ## Step B.adversarial.2: Validate reviewer outputs
@@ -119,24 +135,39 @@ Write each pass's raw JSON output to a temp file, then aggregate:
 
 ```bash
 printf '%s' "$BLIND_OUTPUT" > .map/$BRANCH/adversarial-blind.json
-printf '%s' "$EDGE_OUTPUT" > .map/$BRANCH/adversarial-edge.json
 printf '%s' "$ACCEPTANCE_OUTPUT" > .map/$BRANCH/adversarial-acceptance.json
+printf '%s' "$USER_EXPERIENCE_OUTPUT" > .map/$BRANCH/adversarial-user-experience.json
+printf '%s' "$MAINTAINER_OUTPUT" > .map/$BRANCH/adversarial-maintainer.json
 
-BLIND_ARG=""
-EDGE_ARG=""
-ACCEPTANCE_ARG=""
+# The Edge Case Hunter pass did not run under --quick. Writing its file
+# anyway would leave an EMPTY payload (or a stale one from an earlier full
+# run) that the `-f` test below happily forwards; the aggregator then
+# reports edge_case as parse_error, or folds in findings from another
+# review. Remove it, then write it only when the pass actually ran.
+rm -f .map/$BRANCH/adversarial-edge.json
+if [ "$QUICK_FLAG" != "true" ]; then
+  printf '%s' "$EDGE_OUTPUT" > .map/$BRANCH/adversarial-edge.json
+fi
+
+ADV_ARGS=""
 if [ -f .map/$BRANCH/adversarial-blind.json ]; then
-  BLIND_ARG="--blind .map/$BRANCH/adversarial-blind.json"
+  ADV_ARGS="$ADV_ARGS --blind .map/$BRANCH/adversarial-blind.json"
 fi
 if [ -f .map/$BRANCH/adversarial-edge.json ]; then
-  EDGE_ARG="--edge-case .map/$BRANCH/adversarial-edge.json"
+  ADV_ARGS="$ADV_ARGS --edge-case .map/$BRANCH/adversarial-edge.json"
 fi
 if [ -f .map/$BRANCH/adversarial-acceptance.json ]; then
-  ACCEPTANCE_ARG="--acceptance .map/$BRANCH/adversarial-acceptance.json"
+  ADV_ARGS="$ADV_ARGS --acceptance .map/$BRANCH/adversarial-acceptance.json"
+fi
+if [ -f .map/$BRANCH/adversarial-user-experience.json ]; then
+  ADV_ARGS="$ADV_ARGS --user-experience .map/$BRANCH/adversarial-user-experience.json"
+fi
+if [ -f .map/$BRANCH/adversarial-maintainer.json ]; then
+  ADV_ARGS="$ADV_ARGS --maintainer .map/$BRANCH/adversarial-maintainer.json"
 fi
 
 ADV_AGGREGATED=$(python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings \
-  $BLIND_ARG $EDGE_ARG $ACCEPTANCE_ARG)
+  $ADV_ARGS)
 ```
 
 `aggregate_adversarial_findings` is the exact same CLI verb the Claude port
@@ -153,8 +184,9 @@ Parse the aggregated JSON and present the report in this structure:
 ## Summary
 - Total findings: N (C CRITICAL, I IMPORTANT, M MINOR)
 - Corroborated (found by 2+ passes): K — highest confidence
-- Per-pass: Blind: B, Edge Case: E, Acceptance: A
+- Per-pass: Blind: B, Edge Case: E, Acceptance: A, User: U, Maintainer: M
 - All-clear: [passes that reported all_clear=true]
+- Dropped for an incomplete output contract: [contract_incomplete entries]
 
 ## CRITICAL
 [per finding: severity, category, file:line, failure_mode, evidence, reported_by, corroborated flag]
@@ -190,8 +222,8 @@ Artifacts.
 ## Flow summary for adversarial
 
 When `ADVERSARIAL_FLAG=true`, the workflow is:
-Phase A (all steps) → Phase B: Adversarial Review (3 sequential in-session
-passes) → Final Verdict → Handoff Artifacts. Do NOT run the normal
+Phase A (all steps) → Phase B: Adversarial Review (5 sequential in-session
+passes, 4 with `--quick`) → Final Verdict → Handoff Artifacts. Do NOT run the normal
 Monitor/Predictor/Evaluator fan-out or the 4-section walkthrough.
 
 ## Examples
@@ -205,7 +237,7 @@ See [review-reference.md](review-reference.md#examples) for adversarial examples
 Re-run that specific pass ONCE. If still invalid, record `parse_error` and
 continue — two valid passes are better than zero.
 
-### All three passes fail
+### All passes fail
 
 Stop with CLARIFICATION_NEEDED. The diff may be too large or the context
 too complex for adversarial review.

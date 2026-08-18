@@ -145,7 +145,16 @@ HIGH_TRAFFIC_SKILL_BODY_BUDGETS = {
     # uses a bare per-skill `assert`, so it raised on map-efficient (an earlier
     # dict entry) and never reached map-review. Both caps must move together or
     # fixing one just surfaces the other on the next CI run.
-    "map-review": 645,
+    # Budget bumped 645 → 690: the two role reviewers (user_experience,
+    # maintainer) run in the DEFAULT fan-out, so their prompt extraction, their
+    # two dispatch lines, their truncation kinds, their envelope names and their
+    # ledger flags are all active control flow in this body — a body that
+    # described them without dispatching them would ship two reviewers nobody
+    # runs. The Step B.5 presentation block and the 4b contract check are the
+    # minimum that keeps their findings from being paraphrased away; what each
+    # role actually hunts (the A–I checklist, the five-part contract table)
+    # lives in review-reference.md and is NOT counted here.
+    "map-review": 690,
     # map-tdd carries Iron Law enforcement (rationalization table, Red Flags,
     # RED-GREEN-REFACTOR cycle), spec compliance reviewer dispatch, and code
     # quality reviewer dispatch — all irreducible active control flow (#285).
@@ -261,7 +270,7 @@ RENDERED_AUTO_UPDATE_SKILL_ROOTS = [
 
 def _assert_rendered_preflight_placement(content: str, label: str) -> None:
     """Assert that a rendered normal skill starts with exactly one preflight."""
-    _frontmatter, separator, body = content.partition("\n---\n")
+    _, separator, body = content.partition("\n---\n")
     assert separator, f"{label} has no closing frontmatter"
     assert body.startswith("## MAP update preflight\n"), (
         f"{label} must render the update preflight immediately after "
@@ -343,7 +352,7 @@ class TestProviderUpdateSkills:
         for skill_name, source in sources.items():
             content = source.read_text(encoding="utf-8")
             assert content.count(AUTO_UPDATE_PREFLIGHT_INCLUDE) == 1, skill_name
-            _frontmatter, separator, body = content.partition("\n---\n")
+            _, separator, body = content.partition("\n---\n")
             assert separator, f"{source} has no closing frontmatter"
             assert body.startswith(f"{AUTO_UPDATE_PREFLIGHT_INCLUDE}\n"), (
                 f"{source} must include the update preflight immediately after "
@@ -2246,11 +2255,11 @@ class TestMapReviewSkillBundleWiring:
             f"(bundle at {bundle_pos}, first Task( at {task_pos})"
         )
 
-    def test_map_review_skill_builds_budgeted_prompts_before_agents(self, skill_md):
-        """Review fan-out must use budgeted prompts before launching Task calls."""
+    def test_map_review_skill_builds_prompts_before_agents(self, skill_md):
+        """Review fan-out must build its prompts before launching Task calls."""
         assert (
             "build_review_prompts" in skill_md
-        ), "map-review/SKILL.md must build bounded reviewer prompts"
+        ), "map-review/SKILL.md must build the reviewer prompts"
         prompt_pos = skill_md.index("build_review_prompts")
         task_pos = skill_md.index("Task(")
         assert prompt_pos < task_pos, (
@@ -2258,8 +2267,22 @@ class TestMapReviewSkillBundleWiring:
             f"(prompt builder at {prompt_pos}, first Task( at {task_pos})"
         )
         assert "MAP_REVIEW_PROMPT_BUDGET_TOKENS" in skill_md
-        assert "Review Prompt Budget" in skill_md
-        assert "clips lower-priority raw diff" in skill_md
+
+    def test_map_review_skill_does_not_promise_prompt_clipping(self, skill_md):
+        """Truncation was removed; the skill must not document a clipping it never does.
+
+        `_budget_review_prompt` returns the full prompt with `truncated=False`
+        and an empty `clipped_sections`. A skill body that still promises a
+        `Review Prompt Budget` diagnostic sends operators tuning an env var
+        that changes nothing about what the reviewer sees.
+        """
+        for stale in ("Review Prompt Budget", "clips lower-priority raw diff"):
+            assert stale not in skill_md, (
+                f"map-review/SKILL.md still promises removed truncation behavior: {stale!r}"
+            )
+        assert "NOT truncated" in skill_md, (
+            "map-review/SKILL.md must state that reviewer prompts are not truncated"
+        )
 
     def test_map_review_skill_references_bundle_artifacts_in_agent_prompts(
         self, skill_md

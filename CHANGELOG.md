@@ -7,6 +7,129 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`/map-review` gains two role reviewers: `user_experience` and
+  `maintainer`.** They run in the DEFAULT fan-out (Monitor + Predictor +
+  Evaluator + both roles) and in `--adversarial`, where the reviewer set is now
+  five (`--quick` drops only the Edge Case Hunter). Both run with isolated
+  context — diff + review bundle, never another reviewer's output — plus repo
+  read access. `user_experience` asks whether the ALREADY SHIPPED path got
+  worse: new mandatory steps on the old path, confusable flags (`--release` vs
+  `--from-release`), an explicitly-supplied value silently overridden instead of
+  rejected — judged as a human in a terminal AND as a CI script. `maintainer`
+  asks what rot survives the merge: branch-scoped plan/tracker IDs in comments,
+  implementation vocabulary in user-facing text, copy-paste, a decision computed
+  twice, version predicates named by release number instead of capability,
+  foreign-language code embedded in string literals.
+- **Five-part output contract for role findings.** Every role finding must carry
+  `problem` (one line + `file:line`), `current_code` (verbatim), `proposed_code`
+  (applicable as a patch), `why_better` (measurable delta — bare "cleaner" is
+  rejected) and `cost` (downside, or `none`). The contract is declared once as
+  `ROLE_FINDING_SCHEMA` and reused as the `AGENT_OUTPUT_SCHEMAS` skeleton, so
+  the rendered prompt, the truncation gate (`--agent user_experience` /
+  `--agent maintainer`) and the JSON retry prompt cannot drift apart. A finding
+  missing any part is tombstoned by the verdict ledger with
+  `transition_reason: contract_incomplete` and named in `not_verified` — an
+  unfinished remark neither gates the change nor disappears.
+- New runner surfaces: `build_role_review_prompts`
+  (`--roles user_experience,maintainer`), `--user-experience` / `--maintainer`
+  inputs for `aggregate_adversarial_findings` (with a `contract_incomplete`
+  report), and `--user-experience-file` / `--maintainer-file` for
+  `write_review_verdict_ledger`.
+
+- **Adding a role reviewer is one edit.** `ROLE_REVIEWER_SPECS` is the single
+  declaration: `ROLE_REVIEWER_IDS`, the `AGENT_OUTPUT_SCHEMAS` entries, the
+  prompt builders, the adversarial default set, `aggregate_adversarial_findings`
+  and `write_review_verdict_ledger` all derive from it. The ledger and the
+  aggregator take role payloads as roster-keyed mappings (`role_json` /
+  `role_files`) instead of one keyword parameter per role, and the CLI builds
+  `--<role>-file` / `--<role>-json` in a loop, so a role cannot exist for one
+  consumer and be invisible to another.
+
+### Fixed
+- **Reviewer prompts carried an empty diff on a fully-committed branch.**
+  `build_review_prompts` read `git diff HEAD`, which is empty in the normal
+  `/map-check` → `/map-review` state, so every reviewer received
+  `[no git diff output]` while the branch carried the whole change. It now
+  resolves the merge-base with the default branch (the same rule
+  `snapshot_code_state` already used for #426) and, when both exist, ships the
+  committed review target AND the uncommitted working tree under explicit
+  labels rather than letting one half silently win.
+- **The verdict ledger violated its own JSON Schema.** `source_agent: "role"`
+  and `transition_reason: "contract_incomplete"` were emitted without being
+  added to the closed enums in `REVIEW_VERDICT_LEDGER_SCHEMA`; a ledger holding
+  any role finding failed `jsonschema.validate`. Both enums are extended and a
+  test now validates a ledger carrying an active and a tombstoned role row.
+- **`build_role_review_prompts --roles <unknown>` exited 0 with no prompts.** A
+  typo — or the dashed spelling every flag in this workflow uses
+  (`user-experience`) — silently produced an empty prompt set, so an unattended
+  run dropped the role review with no error. Role and reviewer ids are now
+  parsed fail-closed: the dashed spelling resolves, an unknown id exits 1
+  naming the valid ids.
+- **Adversarial reviewers dispatched to a non-existent agent type.**
+  `ADVERSARIAL_REVIEWER_SPECS` and the shipped `--adversarial` docs used
+  `subagent_type="general"`, which is not a registered agent type — the correct
+  built-in is `general-purpose`. Corrected in the specs and in every dispatch
+  example.
+- **A CRITICAL role finding with an incomplete contract could still yield
+  PROCEED.** Tombstoning an incomplete finding keeps it out of the decision
+  table, but that third removal site — unlike the two that already existed —
+  never recorded an escalation, so a reviewer that omitted one part (say
+  `cost`) erased its own CRITICAL claim from the gate. The row is still
+  tombstoned, but above `minor` the ledger now appends an escalation reason and
+  sets `escalation_required`: PROCEED is unavailable and a human rules on it.
+- **A clean role review was reported as "no reviewer output reached the
+  ledger".** `supplied_by_source["role"]` was derived from the finding COUNT
+  while every other source uses envelope truthiness, so a role reviewer
+  returning `all_clear: true` with `findings: []` contributed nothing. A
+  role-only run therefore raised an `important` workflow finding, escalated and
+  computed REVISE for a review that actually ran and found nothing.
+  `write_review_verdict_ledger` now forwards an explicit `role_inputs_supplied`
+  flag set when an envelope parses.
+- **Under `--adversarial` an incomplete role finding vanished before the
+  ledger.** `aggregate_adversarial_findings` returned it only under
+  `contract_incomplete`, while the workflow fed the ledger the `findings`
+  array — so the adversarial path produced no tombstone, no `not_verified`
+  entry and no escalation, and an incomplete CRITICAL left PROCEED available.
+  The aggregator now also returns `ledger_findings` (report findings PLUS the
+  dropped ones, marked with `contract_gaps`), the ledger routes that marker
+  through the SAME tombstone/escalate policy the normal fan-out uses, and the
+  skill hands over `ledger_findings` instead of `findings`.
+- **A partial role roster read as a complete review.** Supplying a
+  `user_experience` envelope without `maintainer` (or the reverse) counted as
+  "the roles ran" — a reviewer that was dispatched and never came back was
+  invisible. Each missing role is now an input-integrity finding. Supplying
+  NEITHER stays unflagged on purpose: `lightweight` mode legitimately runs
+  Monitor alone under the same `review_mode="normal"` label, so demanding the
+  full roster there would hard-fail every Monitor-only review.
+- **`--quick` handed the aggregator a stale or empty Edge Case Hunter file.**
+  The adversarial scripts wrote `adversarial-edge.json` unconditionally, so
+  under `--quick` — where that pass never runs — the following `-f` test
+  forwarded an empty payload (reported as `parse_error`) or a file left over
+  from an earlier full run (folding another review's findings in). Both the
+  Claude and Codex flows now remove it first and write it only when the pass
+  actually ran.
+
+### Changed
+- **Docs corrected to match the removed review-prompt truncation.**
+  `docs/USAGE.md`, `docs/ARCHITECTURE.md`, both `map-review` SKILL bodies, both
+  `review-reference.md` troubleshooting sections and `references/host-paths.md`
+  still promised a 12,000-token cap, raw-diff clipping, a `Review Prompt
+  Budget` diagnostic and a `token_budget.json` entry for review — none of which
+  the code does since truncation was removed. `MAP_REVIEW_PROMPT_BUDGET_TOKENS`
+  is now documented as reported-only, and the `token_budget.json` description
+  is scoped to the `/map-efficient` Actor path that still writes it.
+- Stale three-reviewer counts updated to five (`full` mode semantics in both
+  trees, the Codex sequential-pass headings and design note), and the role
+  reviewers' isolation is now stated correctly everywhere: isolated from other
+  reviewers' OUTPUT, with read-only repo access — both roles must run
+  `git show <default-branch>:<file>` and grep the whole base, which the
+  previous "diff + bundle only" wording forbade.
+- The `contract_incomplete` documentation now names the mode split explicitly:
+  the normal fan-out tombstones (and escalates above `minor`) via the ledger;
+  `--adversarial` drops the finding in the aggregator before the ledger sees
+  it, reporting it under `contract_incomplete`.
+
 ## [3.27.1] - 2026-08-17
 
 ### Fixed

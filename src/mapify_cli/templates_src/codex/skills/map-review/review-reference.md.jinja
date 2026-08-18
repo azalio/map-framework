@@ -32,7 +32,9 @@ with open(f".map/{branch}/review-mode.json", "w") as f:
 ```
 
 Mode semantics:
-- **`full`** (default): three reviewer fan-out, all four sections.
+- **`full`** (default): five-reviewer fan-out in total — monitor, predictor,
+  evaluator + the two role passes (`user_experience`, `maintainer`), all four
+  sections. The complexity lens is advisory and extra.
 - **`lightweight`**: monitor only, diff-only, two sections (Code Quality +
   Tests), every finding must carry `reach_evidence`. Bundle is empty so
   reviewers have nothing to synthesize from — staying minimal prevents
@@ -105,6 +107,8 @@ PREDICTOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,
 EVALUATOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["evaluator"]["prompt"])')
 COMPLEXITY_LENS_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("prompts",{}).get("complexity_lens",{}).get("prompt", ""))')
 COMPLEXITY_LENS_ENABLED=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); print("true" if data.get("prompts",{}).get("complexity_lens") else "false")')
+USER_EXPERIENCE_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["user_experience"]["prompt"])')
+MAINTAINER_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["maintainer"]["prompt"])')
 ```
 
 ```text
@@ -113,12 +117,20 @@ spawn_agent(agent_type="monitor", message=MONITOR_PROMPT)
 spawn_agent(agent_type="predictor", message=PREDICTOR_PROMPT)
 # Full mode only — skip in lightweight mode (monitor-only):
 spawn_agent(agent_type="evaluator", message=EVALUATOR_PROMPT)
+# Full mode only — role reviewers. Isolated means: no other reviewer's
+# output. They DO get read-only repo access on top of diff + bundle —
+# both roles must run `git show <default-branch>:<file>` and grep the base.
+spawn_agent(agent_type="evaluator", message=USER_EXPERIENCE_PROMPT)
+spawn_agent(agent_type="evaluator", message=MAINTAINER_PROMPT)
 # When COMPLEXITY_LENS_ENABLED=true only:
 spawn_agent(agent_type="evaluator", message=COMPLEXITY_LENS_PROMPT)
 ```
 
-Full mode runs monitor + predictor + evaluator; lightweight mode runs
-monitor only. Reviewer prompts reference `review-bundle.json`,
+Full mode runs monitor + predictor + evaluator + both role reviewers;
+lightweight mode runs monitor only. The role reviewers reuse the
+`evaluator` agent type exactly as the complexity lens does — the
+configured Codex agents are decomposer/monitor/researcher/predictor/
+evaluator, and what a pass does is defined by its prompt, not by the type. Reviewer prompts reference `review-bundle.json`,
 `review-bundle.md`, the raw diff as secondary context, and the expected
 output schema (Monitor evidence/valid/verdict/issues,
 Predictor evidence/risk_assessment/landmine_evidence, Evaluator
@@ -140,6 +152,10 @@ printf '%s' "$PREDICTOR_RESPONSE" | \
   python3 .map/scripts/map_step_runner.py detect_truncated_agent_output --agent predictor
 printf '%s' "$EVALUATOR_RESPONSE" | \
   python3 .map/scripts/map_step_runner.py detect_truncated_agent_output --agent evaluator
+printf '%s' "$USER_EXPERIENCE_RESPONSE" | \
+  python3 .map/scripts/map_step_runner.py detect_truncated_agent_output --agent user_experience
+printf '%s' "$MAINTAINER_RESPONSE" | \
+  python3 .map/scripts/map_step_runner.py detect_truncated_agent_output --agent maintainer
 ```
 
 On truncation: log via
@@ -169,6 +185,12 @@ walkthrough item:
    the twin.
 4. **Precheck duplication check.** If the finding matches a precheck error
    line, cite the precheck and stop — do NOT raise a second instance.
+4b. **Role contract check.** A `user_experience` / `maintainer` finding is
+   published only with all five contract parts filled (`problem`,
+   `current_code`, `proposed_code`, `why_better`, `cost`). An incomplete
+   one is not softened into an advisory: the ledger tombstones it as
+   `contract_incomplete` and names it in `not_verified` — and above `minor`
+   it escalates, so PROCEED is unavailable until a human rules on it.
 5. **Reachability check** (defensive branches): guard-branch patterns
    usually exist by convention and their absence of tests is not a
    "missing test" finding unless the surrounding logic actually depends
@@ -260,6 +282,72 @@ When `--compare-orderings` is set, collect one run with
 `ordering_label='default'`, collect one with `ordering_label='reverse'`,
 aggregate with `compare-review-runs`, then persist with
 `record-review-ordering`. Treat verdict drift as review evidence.
+
+## Role Reviewers
+
+Two perspective roles run in BOTH review paths — the normal fan-out and
+`--adversarial`. They answer questions nobody else in the fan-out is asked.
+
+**`user_experience` — the person or script that CALLS this.** One question:
+did the change make the ALREADY SHIPPED functionality harder or less
+convenient?
+
+- Convenience regression: do the pre-diff scenarios still take the same
+  number of steps? Did the old path gain a mandatory flag or ordering rule?
+- Distinguishability: two confusable flags/options/fields (`--release` vs
+  `--from-release`)? Does the name alone say what it does?
+- Explicit input beats a default: an explicitly supplied value that is
+  incompatible with the new mode must be REJECTED with a clear error, never
+  silently overridden.
+- The current flag set is not a given — propose the ideal one when it confuses.
+- Judged from two sub-roles: a human in a terminal, and a CI script.
+
+**`maintainer` — the person extending this a quarter from now.** Checks:
+
+| Class | What it hunts |
+|---|---|
+| A1 | Branch-scoped litter in comments (plan/tracker IDs, `.map/` paths, "step N") |
+| A2 | Implementation vocabulary leaking into help/error/log/doc text |
+| B | Copy-paste: near-identical logic in 2+ places that must change in sync |
+| C | Single source of truth: one decision computed in more than one place |
+| D | Overcomplication: twisted booleans, deep nesting, mixed responsibilities |
+| E | Order of logic: validation / defaults / execution readable top to bottom |
+| F | Dead or idle work: built-but-unused structures, duplicated guards |
+| G | Extensibility: how many places the next similar case touches — exact N |
+| H | Version/capability predicates: one module, named by capability not number, one comparison style — found by whole-base grep, not in the diff |
+| I | Embedded shell/YAML/SQL/HCL inside string literals — unreviewable, untestable |
+
+For B, C and H one site is not a finding: the finding is the number of sites
+and the point where they collapse.
+
+### The output contract
+
+Every role finding carries five parts, or it is not reported:
+
+| Part | Requirement |
+|---|---|
+| `problem` | one line + exact `file:line` |
+| `current_code` | the lines as they are, copied verbatim |
+| `proposed_code` | applicable as a patch — the helper itself, not "extract a helper" |
+| `why_better` | measurable delta ("3 edit sites -> 1", "-1 responsibility"); bare "cleaner" is rejected |
+| `cost` | the downside of the fix, or `none` |
+
+A finding missing any part is NOT softened into an advisory, but where it
+lands depends on the path that ran: on the normal fan-out the ledger
+tombstones it with `transition_reason: contract_incomplete` — at ANY
+severity, and when that severity is above `minor` it also sets
+`escalation_required`, so a CRITICAL dropped for a missing `cost` costs the
+run its PROCEED instead of vanishing; under `--adversarial` the aggregator
+removes it first, so it appears only under `contract_incomplete` in the
+report and the ledger never sees it. Either way it cannot gate the change,
+and it cannot disappear either.
+
+Standalone prompt build (the normal fan-out builds these automatically):
+
+```bash
+python3 .map/scripts/map_step_runner.py build_role_review_prompts \
+  [--roles user_experience,maintainer]
+```
 
 ## Cross-AI
 
@@ -361,7 +449,8 @@ $map-review --compare-orderings
 - Detached prep unavailable: continue from the in-place review bundle; do
   not mutate the source branch.
 - Missing bundle: rerun `create_review_bundle` before agents.
-- Prompt clipping: inspect `.map/<branch>/token_budget.json`, then raise
-  `MAP_REVIEW_PROMPT_BUDGET_TOKENS` only when the bundle evidence is
-  actually missing.
+- Oversized reviewer prompt: nothing is clipped and no `token_budget.json`
+  entry is written for review — `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is
+  reported, not enforced. Reduce the input yourself (compact the session,
+  or split the change); raising the variable changes nothing.
 - Monitor invalid: treat as hard stop and record `REVISE` or `BLOCK`.

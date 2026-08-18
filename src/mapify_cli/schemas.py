@@ -1942,9 +1942,15 @@ REVIEW_VERDICT_LEDGER_SCHEMA: dict[str, Any] = {
                     "id": {"type": "string"},
                     "source_agent": {
                         "type": "string",
+                        # Keep in sync with _LEDGER_SOURCE_AGENTS in
+                        # map_step_runner.py — the runner maps every
+                        # caller-supplied source through that frozenset, so a
+                        # value it accepts must be declared here or the ledger
+                        # fails its own schema. "role" covers the
+                        # user_experience / maintainer reviewers.
                         "enum": [
                             "monitor", "predictor", "evaluator",
-                            "adversarial", "ordering", "operator",
+                            "adversarial", "ordering", "operator", "role",
                         ],
                     },
                     "category": {
@@ -1981,7 +1987,10 @@ REVIEW_VERDICT_LEDGER_SCHEMA: dict[str, Any] = {
                             "new_evidence", "quote_absent", "wrong_category",
                             "different_version", "pre_existing_backlog",
                             "human_escalation", "pressure_without_new_fact",
-                            "input_integrity", "not_applicable", None,
+                            "input_integrity", "not_applicable",
+                            # A role finding that did not fill all five output
+                            # contract parts: tombstoned, never counted.
+                            "contract_incomplete", None,
                         ],
                     },
                     "transition_evidence": {"type": ["string", "null"]},
