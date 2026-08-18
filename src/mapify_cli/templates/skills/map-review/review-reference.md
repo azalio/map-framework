@@ -207,11 +207,26 @@ MONITOR_EOF
 
 Repeat for `review-agent-predictor.json`, `review-agent-evaluator.json`,
 `review-agent-user_experience.json` and `review-agent-maintainer.json`. In
-adversarial or compare-orderings mode also write the aggregated findings array to
-`review-agent-adversarial.json`.
+adversarial or compare-orderings mode also write the aggregator's
+`ledger_findings` array to `review-agent-adversarial.json`.
+
+Use `ledger_findings`, never `findings`. The report array holds only the
+findings that survived the contract, which keeps the printed counts honest;
+`ledger_findings` is that array PLUS the `contract_incomplete` entries. Feeding
+the ledger `findings` alone drops an incomplete role finding entirely — no
+tombstone row, no `not_verified` line, no escalation — so an incomplete
+CRITICAL would leave PROCEED available, which is precisely what the normal
+fan-out refuses to do.
 
 The role envelopes are handed over whole — the ledger unwraps `findings` itself,
 so nothing has to be pre-flattened.
+
+A partial role roster is an error, not a quiet omission: supplying
+`user_experience` without `maintainer` (or the reverse) records an
+input-integrity finding per missing role, because a reviewer that was
+dispatched and never came back is a dropped review. Supplying NEITHER is not
+flagged — `lightweight` mode legitimately runs Monitor alone under the same
+`review_mode="normal"` label.
 
 ### What the table counts
 
@@ -305,7 +320,7 @@ otherwise.
 `compare_orderings`, and must name the phase that actually ran. Pass only the
 envelopes that phase produced: a file that does not exist is a read error, and
 read errors are findings. Both `adversarial` and `compare_orderings` write their
-aggregated array to `review-agent-adversarial.json`, so both pass
+`ledger_findings` array to `review-agent-adversarial.json`, so both pass
 `--adversarial-file`.
 
 ```bash

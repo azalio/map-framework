@@ -86,6 +86,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   computed REVISE for a review that actually ran and found nothing.
   `write_review_verdict_ledger` now forwards an explicit `role_inputs_supplied`
   flag set when an envelope parses.
+- **Under `--adversarial` an incomplete role finding vanished before the
+  ledger.** `aggregate_adversarial_findings` returned it only under
+  `contract_incomplete`, while the workflow fed the ledger the `findings`
+  array — so the adversarial path produced no tombstone, no `not_verified`
+  entry and no escalation, and an incomplete CRITICAL left PROCEED available.
+  The aggregator now also returns `ledger_findings` (report findings PLUS the
+  dropped ones, marked with `contract_gaps`), the ledger routes that marker
+  through the SAME tombstone/escalate policy the normal fan-out uses, and the
+  skill hands over `ledger_findings` instead of `findings`.
+- **A partial role roster read as a complete review.** Supplying a
+  `user_experience` envelope without `maintainer` (or the reverse) counted as
+  "the roles ran" — a reviewer that was dispatched and never came back was
+  invisible. Each missing role is now an input-integrity finding. Supplying
+  NEITHER stays unflagged on purpose: `lightweight` mode legitimately runs
+  Monitor alone under the same `review_mode="normal"` label, so demanding the
+  full roster there would hard-fail every Monitor-only review.
 - **`--quick` handed the aggregator a stale or empty Edge Case Hunter file.**
   The adversarial scripts wrote `adversarial-edge.json` unconditionally, so
   under `--quick` — where that pass never runs — the following `-f` test
@@ -101,7 +117,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still promised a 12,000-token cap, raw-diff clipping, a `Review Prompt
   Budget` diagnostic and a `token_budget.json` entry for review — none of which
   the code does since truncation was removed. `MAP_REVIEW_PROMPT_BUDGET_TOKENS`
-  is now documented as reported-only.
+  is now documented as reported-only, and the `token_budget.json` description
+  is scoped to the `/map-efficient` Actor path that still writes it.
 - Stale three-reviewer counts updated to five (`full` mode semantics in both
   trees, the Codex sequential-pass headings and design note), and the role
   reviewers' isolation is now stated correctly everywhere: isolated from other

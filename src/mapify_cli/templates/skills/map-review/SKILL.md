@@ -270,7 +270,7 @@ echo "{\"mode\":\"$REVIEW_MODE\",\"sibling_hint\":\"$SIBLING_HINT\"}" \
 ```
 
 Mode semantics:
-- **`full`** (default): five reviewer fan-out (+ both role reviewers), all four sections.
+- **`full`** (default): five reviewers TOTAL — Monitor, Predictor, Evaluator + both roles (`complexity_lens` is advisory, extra), all four sections.
 - **`lightweight`**: Monitor only, diff-only, two sections (Code Quality
   + Tests), every finding must carry `reach_evidence`. Bundle is empty
   so reviewers have nothing to synthesize from — staying minimal
@@ -411,9 +411,9 @@ MONITOR_EOF
 The quoted heredoc marker (`<<'MONITOR_EOF'`, quotes included) is what stops the
 shell expanding anything inside the payload. Repeat for `predictor`,
 `evaluator`, `user_experience` and `maintainer`. In adversarial or
-compare-orderings mode write the aggregated findings array to
-`review-agent-adversarial.json` instead — that array is what the ledger reads
-for those modes.
+compare-orderings mode write the aggregator's **`ledger_findings`** array to
+`review-agent-adversarial.json` instead — that array, NOT `findings`, since it
+also carries `contract_incomplete` (see review-reference.md § Verdict Ledger).
 
 ### Step A.3: Verification gate (MANDATORY before any presentation)
 
@@ -505,7 +505,7 @@ When `--adversarial` is set (and `--cross-ai` is not), skip the Monitor/Predicto
 3. Validate:       Each must return valid JSON per adversarial finding schema; retry ONCE on failure
 4. Aggregate:      python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings --blind <path> --edge-case <path> --acceptance <path> --user-experience <path> --maintainer <path>
 5. Present:        Unified report: CRITICAL/IMPORTANT/MINOR, convergence section, all-clear statements (--show-raw-findings for debug)
-6. Feed ledger:    write the aggregated findings array to "$BRANCH_DIR/review-agent-adversarial.json"
+6. Feed ledger:    write ledger_findings (NOT findings) to "$BRANCH_DIR/review-agent-adversarial.json"
                    and set REVIEW_MODE_LABEL=adversarial (compare-orderings: compare_orderings)
 7. Skip to:        Final Verdict → Handoff Artifacts; do NOT run normal 4-section walkthrough
                    The verdict is computed by the ledger from those findings — this phase

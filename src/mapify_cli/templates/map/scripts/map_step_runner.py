@@ -8104,6 +8104,45 @@ def normalize_review_verdict(
                     "Monitor findings are authoritative per decision table."
                 )
 
+    def _record_contract_incomplete(
+        entry: dict[str, Any], gaps: list[str], severity: str, reviewer: str
+    ) -> None:
+        """Tombstone one incomplete role finding — the SINGLE policy for both paths.
+
+        The normal fan-out reaches this through `role_findings`; `--adversarial`
+        reaches it through the aggregator's `ledger_findings`. Both must land on
+        the same three outcomes, or the same unfinished remark would be handled
+        one way per mode:
+          1. tombstoned, so a reviewer that stopped halfway cannot gate the change
+             on its own unfinished work;
+          2. named in `not_verified`, so it cannot silently disappear;
+          3. above `minor`, escalated — a reviewer that omits one part (say
+             `cost`) must not thereby erase its own CRITICAL from the gate.
+        """
+        claim = str(entry.get("problem") or entry.get("claim") or "")
+        findings_registry.append({
+            "id": _next_id(),
+            "source_agent": "role",
+            "category": _normalize_category(str(entry.get("category") or "")),
+            "severity": severity,
+            "claim": f"[{reviewer}] {claim}",
+            "evidence": [],
+            "status": "tombstoned",
+            "transition_reason": "contract_incomplete",
+            "transition_evidence": "missing output-contract parts: " + ", ".join(gaps),
+            "was_present_before_pr": None,
+        })
+        not_verified.append(
+            f"{reviewer} finding ({claim[:80]}) was dropped: the output "
+            f"contract is incomplete ({', '.join(gaps)})."
+        )
+        if severity in _NON_TOMBSTONABLE_SEVERITIES:
+            escalation_reasons.append(
+                f"A {severity} {reviewer} finding was excluded from the table "
+                f"because its output contract is incomplete ({', '.join(gaps)}) "
+                "— a human must decide whether it blocks."
+            )
+
     # --- Ingest adversarial / compare-ordering findings (pre-normalized) ---
     for ext_finding in (adversarial_findings or []):
         if not isinstance(ext_finding, dict):
@@ -8112,6 +8151,21 @@ def normalize_review_verdict(
         sev = {"critical": "critical", "important": "important", "minor": "minor"}.get(
             raw_sev, "needs_investigation"
         )
+        # `aggregate_adversarial_findings` marks a role finding that failed the
+        # five-part contract with `contract_gaps`. Without this branch the
+        # adversarial path would drop it entirely — no tombstone, no
+        # not_verified entry, no escalation — so an incomplete CRITICAL would
+        # be invisible to the ledger and PROCEED would stay available. That is
+        # the exact asymmetry the normal path is guarded against.
+        ext_gaps = ext_finding.get("contract_gaps")
+        if isinstance(ext_gaps, list) and ext_gaps:
+            _record_contract_incomplete(
+                ext_finding,
+                [str(g) for g in ext_gaps],
+                sev,
+                str(ext_finding.get("reviewer") or "role"),
+            )
+            continue
         raw_source = str(ext_finding.get("source_agent") or "adversarial")
         raw_source = _LEDGER_SOURCE_ALIASES.get(raw_source, raw_source)
         findings_registry.append({
@@ -8144,39 +8198,7 @@ def normalize_review_verdict(
         role_claim = str(entry.get("problem") or "")
 
         if gaps:
-            # The role contract is explicit: an incomplete finding is not a
-            # finding. Tombstoning it keeps it out of the table — a reviewer
-            # that stopped halfway must not gate the change on its own
-            # unfinished work — while not_verified keeps it visible.
-            findings_registry.append({
-                "id": _next_id(),
-                "source_agent": "role",
-                "category": _normalize_category(str(entry.get("category") or "")),
-                "severity": role_sev,
-                "claim": f"[{reviewer}] {role_claim}",
-                "evidence": [],
-                "status": "tombstoned",
-                "transition_reason": "contract_incomplete",
-                "transition_evidence": (
-                    "missing output-contract parts: " + ", ".join(gaps)
-                ),
-                "was_present_before_pr": None,
-            })
-            not_verified.append(
-                f"{reviewer} finding ({role_claim[:80]}) was dropped: the output "
-                f"contract is incomplete ({', '.join(gaps)})."
-            )
-            # The retention floor still applies. Tombstoning keeps an unfinished
-            # remark out of the table, but above `minor` it must not buy a clean
-            # pass: a reviewer that omits one part (say `cost`) would otherwise
-            # erase its own CRITICAL claim from the gate. Escalating puts the
-            # decision in a human's hands instead of the reviewer's typo.
-            if role_sev in _NON_TOMBSTONABLE_SEVERITIES:
-                escalation_reasons.append(
-                    f"A {role_sev} {reviewer} finding was excluded from the table "
-                    f"because its output contract is incomplete ({', '.join(gaps)}) "
-                    "— a human must decide whether it blocks."
-                )
+            _record_contract_incomplete(entry, gaps, role_sev, reviewer)
             continue
 
         # The contract parts ARE the evidence: the verbatim current code, the
@@ -8615,6 +8637,7 @@ def write_review_verdict_ledger(
     # the ledger owns the unwrap so no caller has to pre-flatten a findings array.
     role_findings: list[Any] = []
     role_inputs_supplied = False
+    roles_seen: list[str] = []
     for role_id in ROLE_REVIEWER_IDS:
         role_envelope = _safe_parse(
             _read_source(
@@ -8630,6 +8653,7 @@ def write_review_verdict_ledger(
         # separate question the ledger answers below; this only records that
         # the reviewer was observed.
         role_inputs_supplied = True
+        roles_seen.append(role_id)
         role_entries = role_envelope.get("findings")
         if not isinstance(role_entries, list):
             input_errors.append(f"{role_id}: expected a 'findings' array")
@@ -8640,6 +8664,24 @@ def write_review_verdict_ledger(
                 if isinstance(entry, dict)
                 else entry
             )
+
+    # A PARTIAL roster means a reviewer was dispatched and its envelope never
+    # made it back — that is a dropped review, not a clean one, so it becomes an
+    # input-integrity finding like any other unreadable envelope.
+    #
+    # The check deliberately triggers on partial supply only. Zero role
+    # envelopes is ambiguous by design: `lightweight` mode runs Monitor alone
+    # and still labels itself `review_mode="normal"`, and the adversarial /
+    # cross-AI paths feed the ledger through other channels. Demanding the full
+    # roster whenever `review_mode == "normal"` would hard-fail every
+    # legitimate Monitor-only review. One-of-two cannot be explained that way.
+    if roles_seen and len(roles_seen) < len(ROLE_REVIEWER_IDS):
+        for missing_role in ROLE_REVIEWER_IDS:
+            if missing_role not in roles_seen:
+                input_errors.append(
+                    f"{missing_role}: no envelope supplied while "
+                    f"{'/'.join(roles_seen)} was — the role fan-out is incomplete"
+                )
 
     # Journal continuity: when the caller does not supply the prior verdict,
     # recover it from the ledger already on disk. A journal whose previous
@@ -11072,6 +11114,9 @@ def _normalize_role_findings(
     for finding in findings:
         gaps = role_finding_contract_gaps(finding)
         if not isinstance(finding, dict):
+            # No severity to read — the ledger maps the absence to
+            # `needs_investigation`, which escalates. Fail-closed is correct
+            # here: a payload this malformed is not evidence of a clean pass.
             incomplete.append({"reviewer": reviewer_id, "contract_gaps": gaps})
             continue
         if gaps:
@@ -11079,6 +11124,11 @@ def _normalize_role_findings(
                 "reviewer": reviewer_id,
                 "id": finding.get("id"),
                 "problem": finding.get("problem"),
+                # Carried so the ledger can apply the same severity gate the
+                # normal fan-out applies; without it every dropped adversarial
+                # role finding would look equally harmless.
+                "severity": finding.get("severity"),
+                "category": finding.get("category"),
                 "contract_gaps": gaps,
             })
             continue
@@ -11228,6 +11278,14 @@ def aggregate_adversarial_findings(
             "contract_incomplete": len(contract_incomplete),
         },
         "findings": merged_findings,
+        # What to hand `write_review_verdict_ledger` — NOT `findings`. The
+        # report array deliberately excludes incomplete role findings so the
+        # counts above stay honest, but the ledger still has to see them:
+        # feeding it `findings` alone loses the tombstone, the `not_verified`
+        # entry and the escalation, so an incomplete CRITICAL would vanish and
+        # leave PROCEED available. `contract_gaps` is the marker the ledger
+        # routes on.
+        "ledger_findings": [*merged_findings, *contract_incomplete],
         "reviewer_status": reviewer_data,
         "parse_errors": parse_errors,
         # Role findings that failed the five-part output contract. Reported, not

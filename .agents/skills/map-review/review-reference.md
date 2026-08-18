@@ -32,8 +32,9 @@ with open(f".map/{branch}/review-mode.json", "w") as f:
 ```
 
 Mode semantics:
-- **`full`** (default): five reviewer fan-out (monitor, predictor, evaluator,
-  `user_experience`, `maintainer`), all four sections.
+- **`full`** (default): five-reviewer fan-out in total — monitor, predictor,
+  evaluator + the two role passes (`user_experience`, `maintainer`), all four
+  sections. The complexity lens is advisory and extra.
 - **`lightweight`**: monitor only, diff-only, two sections (Code Quality +
   Tests), every finding must carry `reach_evidence`. Bundle is empty so
   reviewers have nothing to synthesize from — staying minimal prevents

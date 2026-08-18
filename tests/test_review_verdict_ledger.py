@@ -1380,6 +1380,91 @@ def test_adversarial_mode_reports_incomplete_role_finding_without_gating(severit
     assert report["findings"] == [], (
         "an incomplete finding must not reach the aggregated finding list"
     )
+    # ...but it MUST reach the ledger, which is a different array.
+    assert report["ledger_findings"] == report["contract_incomplete"]
+
+
+@pytest.mark.parametrize("severity", ["CRITICAL", "IMPORTANT"])
+def test_adversarial_ledger_findings_carry_incomplete_role_findings_to_the_ledger(
+    severity,
+):
+    """The adversarial path must not lose the claim between aggregator and ledger.
+
+    `findings` deliberately excludes incomplete role findings so the report
+    counts stay honest. Handing the ledger that array alone drops the claim
+    entirely — no tombstone, no `not_verified`, no escalation — and PROCEED
+    stays available. `ledger_findings` is the array that closes the gap.
+    """
+    report = map_step_runner.aggregate_adversarial_findings(
+        role_json={
+            "maintainer": json.dumps(
+                {
+                    "reviewer": "maintainer",
+                    "all_clear": False,
+                    "checks_performed": ["B"],
+                    "findings": [
+                        _complete_role_finding(id="F-M-05", severity=severity, cost="")
+                    ],
+                }
+            )
+        }
+    )
+
+    # What the OLD handoff passed: the report array. The claim is gone —
+    # no role row, no tombstone, nothing named in not_verified.
+    lost = map_step_runner.normalize_review_verdict(
+        adversarial_findings=report["findings"],
+        review_mode="adversarial",
+        branch="test-branch",
+    )
+    assert not any(f["source_agent"] == "role" for f in lost["findings_registry"])
+    assert not any(
+        f["transition_reason"] == "contract_incomplete" for f in lost["findings_registry"]
+    )
+    assert not any("contract is incomplete" in nv for nv in lost["not_verified"])
+
+    # What the fixed handoff passes: same three outcomes as the normal path.
+    kept = map_step_runner.normalize_review_verdict(
+        adversarial_findings=report["ledger_findings"],
+        review_mode="adversarial",
+        branch="test-branch",
+    )
+    row = next(f for f in kept["findings_registry"] if f["source_agent"] == "role")
+    assert row["status"] == "tombstoned"
+    assert row["transition_reason"] == "contract_incomplete"
+    assert row["claim"].startswith("[maintainer] ")
+    assert any("contract is incomplete" in nv for nv in kept["not_verified"])
+    assert kept["escalation_required"] is True
+    assert kept["computed_verdict"] == "REVISE", (
+        "an incomplete high-severity role finding must cost the adversarial run "
+        "its PROCEED, exactly as it does on the normal fan-out"
+    )
+
+
+def test_adversarial_complete_role_finding_is_not_double_counted():
+    """`ledger_findings` must add the dropped rows, not duplicate the kept ones."""
+    report = map_step_runner.aggregate_adversarial_findings(
+        role_json={
+            "maintainer": json.dumps(
+                {
+                    "reviewer": "maintainer",
+                    "all_clear": False,
+                    "checks_performed": ["B"],
+                    "findings": [_complete_role_finding(id="F-M-06")],
+                }
+            )
+        }
+    )
+    assert report["contract_incomplete"] == []
+    assert report["ledger_findings"] == report["findings"]
+
+    ledger = map_step_runner.normalize_review_verdict(
+        adversarial_findings=report["ledger_findings"],
+        review_mode="adversarial",
+        branch="test-branch",
+    )
+    assert len(ledger["findings_registry"]) == 1
+    assert ledger["findings_registry"][0]["status"] == "active"
 
 
 def test_role_envelopes_reach_the_ledger_from_disk(branch_workspace):
@@ -1434,22 +1519,25 @@ def test_all_clear_role_envelope_counts_as_supplied_input(branch_workspace):
     an observed clean pass.
     """
     workspace = branch_workspace
-    (workspace / "review-agent-user_experience.json").write_text(
-        json.dumps(
-            {
-                "reviewer": "user_experience",
-                "all_clear": True,
-                "all_clear_rationale": "old path unchanged; no new mandatory flag",
-                "findings": [],
-                "checks_performed": ["old path", "flag names"],
-            }
-        ),
-        encoding="utf-8",
-    )
+    role_files = {}
+    for role_id in ("user_experience", "maintainer"):
+        path = workspace / f"review-agent-{role_id}.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "reviewer": role_id,
+                    "all_clear": True,
+                    "all_clear_rationale": "old path unchanged; no new mandatory flag",
+                    "findings": [],
+                    "checks_performed": ["old path", "flag names"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        role_files[role_id] = str(path)
 
     result = map_step_runner.write_review_verdict_ledger(
-        role_files={"user_experience": str(workspace / "review-agent-user_experience.json")},
-        review_mode="normal",
+        role_files=role_files, review_mode="normal"
     )
 
     assert result["input_errors"] == []
@@ -1483,6 +1571,67 @@ def test_no_role_envelope_at_all_is_still_reported_as_no_input(branch_workspace)
     assert supplied["findings_registry"] == []
     assert supplied["escalation_required"] is False
     assert supplied["computed_verdict"] == "PROCEED"
+
+
+def test_partial_role_roster_is_an_integrity_finding(branch_workspace):
+    """One role back, the other silent = a dropped reviewer, not a clean review.
+
+    `all_clear` from `user_experience` alone must not read as "the role fan-out
+    ran". The ledger cannot demand the full roster whenever
+    `review_mode="normal"` — `lightweight` mode legitimately runs Monitor alone
+    under that same label — but one-of-two has no such innocent explanation.
+    """
+    workspace = branch_workspace
+    (workspace / "review-agent-user_experience.json").write_text(
+        json.dumps(
+            {
+                "reviewer": "user_experience",
+                "all_clear": True,
+                "all_clear_rationale": "old path unchanged",
+                "findings": [],
+                "checks_performed": ["old path"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.write_review_verdict_ledger(
+        role_files={
+            "user_experience": str(workspace / "review-agent-user_experience.json")
+        },
+        review_mode="normal",
+    )
+
+    assert any(
+        "maintainer" in err and "fan-out is incomplete" in err
+        for err in result["input_errors"]
+    ), result["input_errors"]
+    assert result["computed_verdict"] != "PROCEED"
+
+
+def test_no_role_envelopes_at_all_is_not_flagged_as_a_partial_roster(branch_workspace):
+    """The negative half: Monitor-only lightweight review must stay clean.
+
+    Guards the fix above from over-firing. `lightweight` runs Monitor alone and
+    still labels itself `review_mode="normal"`; demanding the role roster there
+    would hard-fail every legitimate Monitor-only review.
+    """
+    workspace = branch_workspace
+    (workspace / "review-agent-monitor.json").write_text(
+        json.dumps({"valid": True, "verdict": "approved", "issues": []}),
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.write_review_verdict_ledger(
+        monitor_file=str(workspace / "review-agent-monitor.json"),
+        review_mode="normal",
+    )
+
+    assert result["input_errors"] == []
+    assert not any(
+        "fan-out is incomplete" in nv for nv in result.get("not_verified", [])
+    )
+    assert result["computed_verdict"] == "PROCEED"
 
 
 def test_unreadable_role_envelope_is_a_finding_not_a_clean_pass(branch_workspace):
