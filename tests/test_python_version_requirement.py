@@ -13,6 +13,8 @@ Three halves of one contract:
 from __future__ import annotations
 
 import ast
+import json
+import os
 import re
 import subprocess
 import sys
@@ -36,6 +38,15 @@ from mapify_cli.python_runtime import (
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SHEBANG = "#!/usr/bin/env python3"
 GUARD_CONDITION = f"sys.version_info < ({MINIMUM_PYTHON[0]}, {MINIMUM_PYTHON[1]})"
+TEMPLATES_SRC = REPO_ROOT / "src" / "mapify_cli" / "templates_src"
+GUARD_PARTIAL = "_partials/python-version-guard.py.jinja"
+DENY_SELECTOR = 'guard_mode = "deny"'
+
+# The blocking PreToolUse gates (FORBID_GUARD): a hook whose only job is to refuse
+# unsafe tool calls must fail CLOSED when it cannot run, or the guardrail silently
+# turns into "allow". Every other shipped executable fails open. Keyed by basename
+# because each of these is rendered into two or more trees.
+FAIL_CLOSED_BASENAMES = frozenset({"safety-guardrails.py", "workflow-gate.py"})
 
 # Every tree that ships or serves executable Python: the jinja sources, the dev
 # working set, and both installer payloads.
@@ -168,35 +179,99 @@ def test_guard_precedes_the_utc_import(relpath: str) -> None:
     assert text.index(GUARD_CONDITION) < utc_import.start()
 
 
-def test_guard_reports_version_and_exits_nonzero_under_old_python(
-    tmp_path: Path,
-) -> None:
-    """End-to-end: the guard runs standalone on an old interpreter.
+def _render_guard(guard_mode: str | None = None) -> str:
+    """Render the guard partial the way the renderer does, in one of its two modes."""
+    from mapify_cli.delivery.template_renderer import get_environment
 
-    The guard body is executed by an interpreter that reports 3.9 through a stub
-    ``sys`` module, so the assertion holds on any host Python.
-    """
-    guard = (
-        REPO_ROOT
-        / "src"
-        / "mapify_cli"
-        / "templates_src"
-        / "_partials"
-        / "python-version-guard.py.jinja"
-    ).read_text(encoding="utf-8")
+    env = get_environment(TEMPLATES_SRC)
+    context = {} if guard_mode is None else {"guard_mode": guard_mode}
+    return env.get_template(GUARD_PARTIAL).render(**context)
+
+
+def _run_guard(tmp_path: Path, body: str) -> subprocess.CompletedProcess[str]:
+    """Execute a rendered guard under an interpreter that reports 3.9."""
     script = tmp_path / "guard_probe.py"
     script.write_text(
         "import sys\n"
         "sys.version_info = (3, 9, 6)\n"  # simulate the stock macOS interpreter
-        + guard,
+        + body,
         encoding="utf-8",
     )
-    proc = subprocess.run(
+    return subprocess.run(
         [sys.executable, str(script)], capture_output=True, text=True, check=False
     )
+
+
+def _guard_block(text: str) -> str:
+    """Return just the guard's ``if`` block from a rendered file.
+
+    Slices from the guard condition to the first dedented line, so a match inside
+    the block cannot be confused with the hook's own ``deny()`` further down.
+    """
+    lines = text[text.index(GUARD_CONDITION) :].splitlines()
+    block = [lines[0]]
+    for line in lines[1:]:
+        if line and not line.startswith((" ", "\t")):
+            break
+        block.append(line)
+    return "\n".join(block)
+
+
+def test_fail_open_guard_reports_version_and_exits_nonzero_under_old_python(
+    tmp_path: Path,
+) -> None:
+    """Default mode: name the version, exit 1 (non-blocking), decide nothing."""
+    proc = _run_guard(tmp_path, _render_guard())
     assert proc.returncode == 1
     assert "Python 3.11 or newer" in proc.stderr
     assert "Python 3.9" in proc.stderr
+    assert proc.stdout == "", "a fail-open guard must not emit a hook decision"
+
+
+def test_fail_closed_guard_denies_the_tool_call_under_old_python(
+    tmp_path: Path,
+) -> None:
+    """``guard_mode="deny"``: a gate that cannot run blocks instead of allowing.
+
+    Exit 0 + a structured ``permissionDecision`` is how a PreToolUse hook blocks;
+    exiting 1 here would let the tool call through with the guardrail absent.
+    """
+    proc = _run_guard(tmp_path, _render_guard("deny"))
+    assert proc.returncode == 0
+    assert "Python 3.11 or newer" in proc.stderr
+    payload = json.loads(proc.stdout)["hookSpecificOutput"]
+    assert payload["hookEventName"] == "PreToolUse"
+    assert payload["permissionDecision"] == "deny"
+    reason = payload["permissionDecisionReason"]
+    assert "Python 3.11 or newer" in reason
+    assert "Python 3.9" in reason
+
+
+@pytest.mark.parametrize("path", _shebang_files(), ids=lambda p: str(p.name))
+def test_guard_mode_matches_the_hook_class(path: Path) -> None:
+    """Only the FORBID_GUARD gates fail closed -- in every tree they render into."""
+    text = path.read_text(encoding="utf-8")
+    fail_closed = path.name.removesuffix(".jinja") in FAIL_CLOSED_BASENAMES
+
+    if path.suffix == ".jinja":
+        assert (DENY_SELECTOR in text) is fail_closed, (
+            f"{path}: {DENY_SELECTOR!r} must be set for blocking PreToolUse gates "
+            "and for nothing else"
+        )
+        return
+
+    block = _guard_block(text)
+    if fail_closed:
+        assert '"permissionDecision": "deny"' in block, (
+            f"{path} is a blocking gate but its version guard fails open -- an old "
+            "python3 would let the tool call through unguarded"
+        )
+        assert "sys.exit(0)" in block and "sys.exit(1)" not in block
+    else:
+        assert "sys.exit(1)" in block, f"{path} lost the fail-open guard exit"
+        assert "permissionDecision" not in block, (
+            f"{path} is not a blocking gate; it must not emit a deny decision"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -297,6 +372,64 @@ def test_own_environment_bin_is_excluded_only_for_virtualenvs(
     assert python_runtime._own_environment_bin_dirs() != set()
 
 
+def _fake_python(directory: Path, version: str = "3.9.6") -> Path:
+    """A minimal executable that answers the version probe like a real python3."""
+    directory.mkdir(parents=True, exist_ok=True)
+    fake = directory / "python3"
+    fake.write_text(
+        f'#!/bin/sh\nif [ "$1" = "-c" ]; then printf "{version}"; fi\n',
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    return fake
+
+
+def test_empty_path_entry_is_preserved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty PATH entry means "the current directory" -- to execvp and to us.
+
+    Dropping it would make the check approve a *later* entry's interpreter while
+    the installed hooks keep resolving the ``./python3`` sitting next to them.
+    """
+    from mapify_cli import python_runtime
+
+    cwd = tmp_path / "cwd"
+    _fake_python(cwd)
+    venv_bin = tmp_path / "venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr(python_runtime.sys, "prefix", str(tmp_path / "venv"))
+    monkeypatch.setattr(python_runtime.sys, "base_prefix", str(tmp_path))
+    monkeypatch.setattr(python_runtime.sys, "executable", str(venv_bin / "python3"))
+
+    kept = python_runtime._path_outside_own_environment(f"{os.pathsep}{venv_bin}")
+    assert kept.split(os.pathsep)[0] == "", "the empty (current-directory) entry"
+    assert str(venv_bin) not in kept, "our own venv bin must still be dropped"
+
+    monkeypatch.setenv("PATH", f"{os.pathsep}{venv_bin}")
+    info = python_runtime.detect_hook_interpreter()
+    assert info.version == (3, 9, 6), "the ./python3 the hooks would run is the verdict"
+    assert info.satisfies_minimum is False
+
+
+def test_empty_path_entry_is_dropped_when_it_is_our_own_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No-op side: cwd == our own venv bin, so the empty entry is ours to skip."""
+    from mapify_cli import python_runtime
+
+    venv_bin = tmp_path / "venv" / "bin"
+    _fake_python(venv_bin)
+    monkeypatch.chdir(venv_bin)
+    monkeypatch.setattr(python_runtime.sys, "prefix", str(tmp_path / "venv"))
+    monkeypatch.setattr(python_runtime.sys, "base_prefix", str(tmp_path))
+    monkeypatch.setattr(python_runtime.sys, "executable", str(venv_bin / "python3"))
+
+    kept = python_runtime._path_outside_own_environment(f"{os.pathsep}/usr/bin")
+    assert kept.split(os.pathsep) == ["/usr/bin"]
+
+
 def test_skip_env_var_bypasses_detection(monkeypatch: pytest.MonkeyPatch) -> None:
     def _fail(*_args: object, **_kwargs: object) -> None:  # pragma: no cover
         raise AssertionError("detection must not run when the skip flag is set")
@@ -361,6 +494,54 @@ def test_init_proceeds_with_skip_flag(
     )
     assert result.exit_code == 0, result.output
     assert (target / ".claude" / "hooks").is_dir()
+
+
+def test_rejected_init_writes_no_workflow_log_even_with_debug(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The preflight runs before diagnostics: a refused init leaves nothing behind.
+
+    ``--debug`` starts the workflow logger in ``Path.cwd()/.map/logs``, which is the
+    one thing that could still write after the gate said no.
+    """
+    monkeypatch.delenv(SKIP_ENV_VAR, raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "mapify_cli.python_runtime.detect_hook_interpreter",
+        lambda *_a, **_k: InterpreterInfo(
+            executable="/usr/bin/python3", version=(3, 9, 6)
+        ),
+    )
+    target = tmp_path / "project"
+    result = CliRunner().invoke(
+        app, ["init", str(target), "--no-git", "--mcp", "none", "--debug"]
+    )
+    assert result.exit_code == 1
+    assert not target.exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == [], (
+        "a rejected init must not create .map/logs/ in the current directory"
+    )
+
+
+def test_accepted_init_with_debug_still_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Positive path: once the preflight passes, --debug logging is unchanged."""
+    monkeypatch.delenv(SKIP_ENV_VAR, raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "mapify_cli.python_runtime.detect_hook_interpreter",
+        lambda *_a, **_k: InterpreterInfo(
+            executable="/usr/bin/python3", version=(3, 12, 1)
+        ),
+    )
+    target = tmp_path / "project"
+    result = CliRunner().invoke(
+        app, ["init", str(target), "--no-git", "--mcp", "none", "--debug"]
+    )
+    assert result.exit_code == 0, result.output
+    logs = sorted((tmp_path / ".map" / "logs").glob("workflow_*.log"))
+    assert logs, "an accepted init --debug must still write its workflow log"
 
 
 def test_check_reports_the_hook_interpreter(

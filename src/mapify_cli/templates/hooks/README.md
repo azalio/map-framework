@@ -12,8 +12,8 @@ treated as a **non-blocking error** — Claude logs a warning and proceeds.
 
 This means:
 
-- **Never use `sys.exit(1)` to block.** It silently fails closed (the
-  blocked tool runs anyway).
+- **Never use `sys.exit(1)` to block.** It silently fails *open* — the
+  tool you meant to block runs anyway.
 - To block: emit a JSON `permissionDecision: "deny"` via stdout AND/OR
   use `sys.exit(2)`. The current MAP hooks (`safety-guardrails.py`,
   `workflow-gate.py`) use the JSON approach exclusively — follow that
@@ -25,6 +25,25 @@ This means:
 Audited 2026-04-28: every existing hook in this directory exits 0 and
 delegates blocking decisions to stdout JSON. No `sys.exit(1)` blocks
 anywhere. Keep it that way.
+
+### The one `sys.exit(1)`: the Python version guard
+
+Every hook opens with the version guard rendered from
+`templates_src/_partials/python-version-guard.py.jinja` (MAP needs Python
+3.11+, and a hook runs under PATH's `python3`, not under the interpreter
+that installed MAP). It is the single place a hook may exit non-zero, and
+it does not contradict the rule above, because it never tries to *block*
+with exit 1 — it reports a broken interpreter and steps aside:
+
+- Informational hooks **fail open**: stderr + `sys.exit(1)`, a
+  non-blocking error, so the reason reaches the user and the session
+  continues.
+- FORBID_GUARD hooks (`safety-guardrails.py`, `workflow-gate.py`) **fail
+  closed**: their `.jinja` source sets `guard_mode = "deny"` before the
+  include, so the guard emits the same `permissionDecision: "deny"` JSON
+  the hook's own `deny()` uses and exits 0. A gate that cannot run must
+  not degrade into "allow"; edits and Bash stay denied until
+  `python3 --version` reports 3.11+.
 
 ## Special case: `WorktreeCreate`
 

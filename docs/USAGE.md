@@ -24,7 +24,7 @@ Three checks cover this:
 
 - `mapify init` resolves the interpreter an independent shell would get (skipping its own virtualenv/uvx `bin`) and **stops before writing anything** when it is older than 3.11, naming the version, the path, and the fix. Bypass with `--skip-python-check` or `MAPIFY_SKIP_PYTHON_CHECK=1` — the install completes, the hooks stay non-functional.
 - `mapify check` and `mapify doctor` report the same interpreter line (`python3 on PATH (>= 3.11)`) at any time.
-- Each shipped executable carries its own version guard: on an old interpreter it writes `MAP requires Python 3.11 or newer, but <path> is Python 3.9` to stderr and exits 1 (a non-blocking hook error), instead of raising `ImportError: cannot import name 'UTC' from 'datetime'`.
+- Each shipped executable carries its own version guard: on an old interpreter it writes `MAP requires Python 3.11 or newer, but <path> is Python 3.9` to stderr, instead of raising `ImportError: cannot import name 'UTC' from 'datetime'`. Context and observability hooks then exit 1 — a non-blocking hook error, so the reason surfaces and the session continues. The blocking PreToolUse gates (`safety-guardrails.py`, `workflow-gate.py`, and its Codex twin) instead **deny** the tool call with that reason: a guard that cannot run must not silently become "allow". Editing and Bash therefore stay blocked until `python3 --version` reports 3.11+, so fix the interpreter from another terminal.
 
 ```bash
 python3 --version          # 3.11+ required

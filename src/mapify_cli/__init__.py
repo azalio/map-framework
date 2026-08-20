@@ -1223,8 +1223,6 @@ def init(
     show_banner()
 
     requested_project_name = project_name
-    if not refresh_existing:
-        _start_init_workflow_logger(requested_project_name, mcp, debug)
 
     # Validate provider
     valid_providers = ("claude", "codex")
@@ -1242,6 +1240,12 @@ def init(
         skip=skip_python_check, warn_only=refresh_existing
     ):
         raise typer.Exit(1)
+
+    # Only now start diagnostics: a rejected init must not leave a workflow log
+    # behind in the current directory (the gate above writes nothing, and
+    # --debug must not be the one exception).
+    if not refresh_existing:
+        _start_init_workflow_logger(requested_project_name, mcp, debug)
 
     if refresh_existing and project_name != ".":
         console.print(

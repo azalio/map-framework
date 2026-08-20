@@ -32,7 +32,7 @@ many repos this hook ships into.
 Exit code 0 always (fail-open on errors).
 """
 
-[% include "_partials/python-version-guard.py.jinja" %]
+[% set guard_mode = "deny" %][% include "_partials/python-version-guard.py.jinja" %]
 import json
 import os
 import re

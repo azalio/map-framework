@@ -174,13 +174,20 @@ def _own_environment_bin_dirs() -> set[Path]:
 
 
 def _path_outside_own_environment(raw_path: str | None = None) -> str:
-    """Return PATH with the running environment's bin directories removed."""
+    """Return PATH with the running environment's bin directories removed.
+
+    Empty entries are preserved: POSIX ``execvp`` (and therefore
+    ``#!/usr/bin/env python3``) reads an empty ``PATH`` entry as the current
+    directory, and :func:`shutil.which` follows the same rule. Dropping them
+    would let this check approve a *later* interpreter while the installed hooks
+    keep resolving the ``./python3`` next to them. An empty entry is filtered
+    only when the current directory *is* one of our own environment bin
+    directories, which is what :func:`_resolve_path` reports for it.
+    """
     source = os.environ.get("PATH", os.defpath) if raw_path is None else raw_path
     own = _own_environment_bin_dirs()
     kept = [
-        entry
-        for entry in source.split(os.pathsep)
-        if entry and _resolve_path(entry) not in own
+        entry for entry in source.split(os.pathsep) if _resolve_path(entry) not in own
     ]
     return os.pathsep.join(kept)
 

@@ -40,17 +40,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and the `map_step_runner` / `map_orchestrator` / `validate_spec_citations`
     runners) now open with a version guard rendered from a single partial: on an old
     interpreter they write `MAP requires Python 3.11 or newer, but <path> is Python
-    3.9` to stderr and exit 1 (non-blocking for hooks) instead of raising
-    `ImportError`. This removes the latent failure in the four `datetime.UTC` hooks
-    (`pre-compact-save-transcript`, `ralph-iteration-logger`, `ralph-context-pruner`,
-    `workflow-context-injector`), which previously happened to exit early on empty
-    stdin rather than being safe.
+    3.9` to stderr instead of raising `ImportError`. This removes the latent failure
+    in the four `datetime.UTC` hooks (`pre-compact-save-transcript`,
+    `ralph-iteration-logger`, `ralph-context-pruner`, `workflow-context-injector`),
+    which previously happened to exit early on empty stdin rather than being safe.
+  - The guard has two modes, chosen by what the file is for. Context and
+    observability hooks **fail open** (exit 1, a non-blocking hook error) — a broken
+    interpreter is not a policy decision. The three blocking PreToolUse gates
+    (`safety-guardrails.py`, `workflow-gate.py`, and its Codex twin) **fail closed**:
+    they emit the structured `permissionDecision: "deny"` response, so a guard that
+    cannot run denies the tool call instead of silently allowing it. Previously an
+    old `python3` disabled the sensitive-file/dangerous-command blocklist and the
+    Actor-phase edit gate with nothing left to report it. Editing and Bash stay
+    denied until `python3 --version` reports 3.11+.
   - `mapify_cli/_python_guard.py` runs before the package's own 3.11-only imports, so
     `python3 -m mapify_cli` from a clone (or an `--ignore-requires-python` install)
     also reports the version instead of an `ImportError`.
   - `tests/test_python_version_requirement.py` fails if any shebang file loses the
-    guard or if `MINIMUM_PYTHON`, `requires-python`, the CLI guard, and the rendered
-    partial drift apart.
+    guard, if a blocking gate silently switches to the fail-open mode (or a
+    non-gate to the fail-closed one), or if `MINIMUM_PYTHON`, `requires-python`, the
+    CLI guard, and the rendered partial drift apart.
+  - The interpreter check keeps empty `PATH` entries, which `execvp` (and therefore
+    every shebang) reads as the current directory; dropping them could approve a
+    later entry's interpreter while the installed hooks kept resolving a nearer
+    `./python3`.
+  - `mapify init --debug` starts its workflow logger only after the interpreter
+    preflight passes, so a refused install no longer leaves `.map/logs/` behind in
+    the current directory.
 
 ## [3.28.0] - 2026-08-18
 

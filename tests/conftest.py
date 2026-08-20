@@ -31,7 +31,6 @@ if _REPO_SRC.is_dir():
     os.environ["PYTHONPATH"] = os.pathsep.join([_src_str, *_pp_parts])
 
 
-
 # `mapify init` gates on the `python3` a shebang would resolve (see
 # mapify_cli/python_runtime.py). That verdict depends on the developer's PATH, not
 # on the code under test: a machine whose first non-venv python3 is macOS 3.9 would
