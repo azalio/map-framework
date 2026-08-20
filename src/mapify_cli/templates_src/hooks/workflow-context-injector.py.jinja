@@ -16,6 +16,7 @@ Trigger: Edit|Write|Bash
 Exit codes: Always 0 (non-blocking, just adds context)
 """
 
+[% include "_partials/python-version-guard.py.jinja" %]
 import json
 import os
 import re

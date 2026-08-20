@@ -27,6 +27,7 @@ work is only small bounded reads (stdin JSON + one ``.git/HEAD`` + one small
 """
 from __future__ import annotations
 
+[% include "_partials/python-version-guard.py.jinja" %]
 import json
 import os
 import re

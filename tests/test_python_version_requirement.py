@@ -1,0 +1,378 @@
+"""The Python 3.11 floor is declared, checked at install time, and self-reporting.
+
+Three halves of one contract:
+
+1. ``pyproject.toml`` declares ``requires-python >= 3.11`` (installer-level).
+2. ``mapify init`` refuses to install when the ``python3`` a shebang resolves is
+   older than that, and says so by version (:mod:`mapify_cli.python_runtime`).
+3. Every shipped file with a ``#!/usr/bin/env python3`` shebang carries the
+   version guard, so an old interpreter reports the version instead of raising
+   ``ImportError: cannot import name 'UTC' from 'datetime'``.
+"""
+
+from __future__ import annotations
+
+import ast
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+from typer.testing import CliRunner
+
+from mapify_cli import app
+from mapify_cli.python_runtime import (
+    MINIMUM_PYTHON,
+    SKIP_ENV_VAR,
+    InterpreterInfo,
+    check_hook_python,
+    detect_hook_interpreter,
+    format_problem,
+    minimum_python_str,
+    skip_requested,
+)
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SHEBANG = "#!/usr/bin/env python3"
+GUARD_CONDITION = f"sys.version_info < ({MINIMUM_PYTHON[0]}, {MINIMUM_PYTHON[1]})"
+
+# Every tree that ships or serves executable Python: the jinja sources, the dev
+# working set, and both installer payloads.
+SHEBANG_ROOTS = (
+    REPO_ROOT / "src" / "mapify_cli" / "templates_src",
+    REPO_ROOT / "src" / "mapify_cli" / "templates",
+    REPO_ROOT / ".claude",
+    REPO_ROOT / ".codex",
+    REPO_ROOT / ".map",
+)
+
+
+def _shebang_files() -> list[Path]:
+    found: list[Path] = []
+    for root in SHEBANG_ROOTS:
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*.py*")):
+            if path.suffix not in {".py", ".jinja"}:
+                continue
+            if "__pycache__" in path.parts:
+                continue
+            try:
+                first = path.read_text(encoding="utf-8").split("\n", 1)[0]
+            except (OSError, UnicodeDecodeError):  # pragma: no cover - defensive
+                continue
+            if first.strip() == SHEBANG:
+                found.append(path)
+    return found
+
+
+# --------------------------------------------------------------------------- #
+# 1. Declared floor, single source of truth
+# --------------------------------------------------------------------------- #
+def test_pyproject_declares_the_same_floor() -> None:
+    """``requires-python`` must not drift from :data:`MINIMUM_PYTHON`."""
+    text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'^requires-python\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    assert match, "pyproject.toml must declare requires-python"
+    assert match.group(1) == f">={minimum_python_str()}"
+
+
+def test_cli_import_guard_agrees_on_the_floor() -> None:
+    """``_python_guard`` runs before the 3.11-only imports and uses the same tuple."""
+    guard = (REPO_ROOT / "src" / "mapify_cli" / "_python_guard.py").read_text(
+        encoding="utf-8"
+    )
+    assert GUARD_CONDITION in guard
+
+    init_source = (REPO_ROOT / "src" / "mapify_cli" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(init_source)
+    imports = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        and node.col_offset == 0
+    ]
+    guard_index = next(
+        i
+        for i, node in enumerate(imports)
+        if isinstance(node, ast.ImportFrom)
+        and any(alias.name == "_python_guard" for alias in node.names)
+    )
+    datetime_index = next(
+        i
+        for i, node in enumerate(imports)
+        if isinstance(node, ast.ImportFrom) and node.module == "datetime"
+    )
+    assert guard_index < datetime_index, (
+        "_python_guard must be imported before `from datetime import UTC`, "
+        "otherwise the ImportError wins and the version is never named."
+    )
+
+
+def test_partial_guard_agrees_on_the_floor() -> None:
+    partial = (
+        REPO_ROOT
+        / "src"
+        / "mapify_cli"
+        / "templates_src"
+        / "_partials"
+        / "python-version-guard.py.jinja"
+    ).read_text(encoding="utf-8")
+    assert GUARD_CONDITION in partial
+
+
+# --------------------------------------------------------------------------- #
+# 2. Every shipped executable self-reports the version
+# --------------------------------------------------------------------------- #
+def test_shebang_files_are_discovered() -> None:
+    """Guard against a silently empty scan making the checks below vacuous."""
+    files = _shebang_files()
+    assert len(files) >= 60, f"expected the shebang scan to find files, got {files}"
+
+
+@pytest.mark.parametrize("path", _shebang_files(), ids=lambda p: str(p.name))
+def test_every_shebang_file_carries_the_version_guard(path: Path) -> None:
+    """A ``#!/usr/bin/env python3`` file must name the version floor itself."""
+    text = path.read_text(encoding="utf-8")
+    if path.suffix == ".jinja":
+        assert "_partials/python-version-guard.py.jinja" in text, (
+            f"{path} ships a python3 shebang but does not include the version "
+            "guard partial"
+        )
+        return
+    assert GUARD_CONDITION in text, (
+        f"{path} ships a python3 shebang without the version guard — an old "
+        "python3 would fail with an ImportError that never mentions the version. "
+        "Add the include to its .jinja source and run `make render-templates`."
+    )
+
+
+@pytest.mark.parametrize(
+    "relpath",
+    [
+        ".claude/hooks/pre-compact-save-transcript.py",
+        ".claude/hooks/ralph-iteration-logger.py",
+        ".claude/hooks/ralph-context-pruner.py",
+        ".claude/hooks/workflow-context-injector.py",
+    ],
+)
+def test_guard_precedes_the_utc_import(relpath: str) -> None:
+    """The four ``datetime.UTC`` hooks guard BEFORE the import that would fail."""
+    text = (REPO_ROOT / relpath).read_text(encoding="utf-8")
+    # Anchor at line start: the guard's own comment mentions the import by name.
+    utc_import = re.search(r"^from datetime import UTC", text, re.MULTILINE)
+    assert utc_import, f"{relpath} no longer imports UTC"
+    assert text.index(GUARD_CONDITION) < utc_import.start()
+
+
+def test_guard_reports_version_and_exits_nonzero_under_old_python(
+    tmp_path: Path,
+) -> None:
+    """End-to-end: the guard runs standalone on an old interpreter.
+
+    The guard body is executed by an interpreter that reports 3.9 through a stub
+    ``sys`` module, so the assertion holds on any host Python.
+    """
+    guard = (
+        REPO_ROOT
+        / "src"
+        / "mapify_cli"
+        / "templates_src"
+        / "_partials"
+        / "python-version-guard.py.jinja"
+    ).read_text(encoding="utf-8")
+    script = tmp_path / "guard_probe.py"
+    script.write_text(
+        "import sys\n"
+        "sys.version_info = (3, 9, 6)\n"  # simulate the stock macOS interpreter
+        + guard,
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [sys.executable, str(script)], capture_output=True, text=True, check=False
+    )
+    assert proc.returncode == 1
+    assert "Python 3.11 or newer" in proc.stderr
+    assert "Python 3.9" in proc.stderr
+
+
+# --------------------------------------------------------------------------- #
+# 3. Interpreter detection
+# --------------------------------------------------------------------------- #
+def test_detects_the_running_interpreter_without_a_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "mapify_cli.python_runtime.shutil.which", lambda *_a, **_k: sys.executable
+    )
+
+    def _fail(*_args: object, **_kwargs: object) -> None:  # pragma: no cover
+        raise AssertionError("must not spawn a subprocess for our own interpreter")
+
+    monkeypatch.setattr("mapify_cli.python_runtime.subprocess.run", _fail)
+    info = detect_hook_interpreter()
+    assert info.version == sys.version_info[:3]
+    assert info.satisfies_minimum is True
+    assert format_problem(info) is None
+
+
+def test_missing_python3_is_a_problem(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "mapify_cli.python_runtime.shutil.which", lambda *_a, **_k: None
+    )
+    info = detect_hook_interpreter()
+    assert info.found is False
+    assert info.satisfies_minimum is False
+    problem = format_problem(info)
+    assert problem is not None
+    assert "not found on PATH" in problem
+
+
+def test_real_old_interpreter_is_probed_and_rejected(tmp_path: Path) -> None:
+    """A stub ``python3`` that reports 3.9 must be read via subprocess and fail."""
+    fake = tmp_path / "python3"
+    fake.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "-c" ]; then printf "3.9.6"; fi\n',
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    info = detect_hook_interpreter(str(fake))
+    assert info.version == (3, 9, 6)
+    assert info.satisfies_minimum is False
+    problem = format_problem(info)
+    assert problem is not None
+    assert "3.9.6" in problem
+    assert "Python 3.11 or newer" in problem
+    assert "--skip-python-check" in problem
+
+
+def test_unknown_version_never_counts_as_satisfying() -> None:
+    info = InterpreterInfo(
+        executable="/usr/bin/python3", detection_error="probe exploded"
+    )
+    assert info.satisfies_minimum is False
+    assert info.version_str == "unknown"
+    problem = format_problem(info)
+    assert problem is not None
+    assert "probe exploded" in problem
+
+
+def test_probe_failure_is_reported_not_raised(tmp_path: Path) -> None:
+    fake = tmp_path / "python3"
+    fake.write_text("#!/bin/sh\nexit 9\n", encoding="utf-8")
+    fake.chmod(0o755)
+    info = detect_hook_interpreter(str(fake))
+    assert info.version is None
+    assert info.detection_error is not None
+    assert "failed the version probe" in info.detection_error
+
+
+def test_shadowed_env_interpreter_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`uvx` prepends its ephemeral bin to PATH; the message must say it was skipped."""
+    info = InterpreterInfo(
+        executable="/usr/bin/python3",
+        version=(3, 9, 6),
+        shadowed="/tmp/uv-cache/bin/python3",
+    )
+    problem = format_problem(info)
+    assert problem is not None
+    assert "/tmp/uv-cache/bin/python3 was skipped" in problem
+
+
+def test_own_environment_bin_is_excluded_only_for_virtualenvs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mapify_cli import python_runtime
+
+    monkeypatch.setattr(python_runtime.sys, "prefix", "/env")
+    monkeypatch.setattr(python_runtime.sys, "base_prefix", "/env")
+    assert python_runtime._own_environment_bin_dirs() == set()
+
+    monkeypatch.setattr(python_runtime.sys, "prefix", "/env/.venv")
+    monkeypatch.setattr(python_runtime.sys, "base_prefix", "/usr")
+    assert python_runtime._own_environment_bin_dirs() != set()
+
+
+def test_skip_env_var_bypasses_detection(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _fail(*_args: object, **_kwargs: object) -> None:  # pragma: no cover
+        raise AssertionError("detection must not run when the skip flag is set")
+
+    monkeypatch.setattr("mapify_cli.python_runtime.shutil.which", _fail)
+    monkeypatch.setenv(SKIP_ENV_VAR, "1")
+    assert skip_requested() is True
+    assert check_hook_python() is None
+    assert check_hook_python(skip=True) is None
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("1", True), ("true", True), ("YES", True), ("on", True), ("0", False), ("", False)],
+)
+def test_skip_env_var_parsing(
+    monkeypatch: pytest.MonkeyPatch, value: str, expected: bool
+) -> None:
+    monkeypatch.setenv(SKIP_ENV_VAR, value)
+    assert skip_requested() is expected
+
+
+# --------------------------------------------------------------------------- #
+# 4. `mapify init` / `mapify check` behaviour
+# --------------------------------------------------------------------------- #
+def test_init_refuses_and_writes_nothing_when_python3_is_too_old(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(SKIP_ENV_VAR, raising=False)
+    monkeypatch.setattr(
+        "mapify_cli.python_runtime.detect_hook_interpreter",
+        lambda *_a, **_k: InterpreterInfo(
+            executable="/usr/bin/python3", version=(3, 9, 6)
+        ),
+    )
+    target = tmp_path / "project"
+    result = CliRunner().invoke(
+        app, ["init", str(target), "--no-git", "--mcp", "none"]
+    )
+    # rich hard-wraps to the terminal width, so compare on collapsed whitespace.
+    output = " ".join(result.output.split())
+    assert result.exit_code == 1
+    assert "3.9.6" in output
+    assert "Python 3.11 or newer" in output
+    assert not target.exists(), "init must not touch the filesystem before the gate"
+
+
+def test_init_proceeds_with_skip_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(SKIP_ENV_VAR, raising=False)
+    monkeypatch.setattr(
+        "mapify_cli.python_runtime.detect_hook_interpreter",
+        lambda *_a, **_k: InterpreterInfo(
+            executable="/usr/bin/python3", version=(3, 9, 6)
+        ),
+    )
+    target = tmp_path / "project"
+    result = CliRunner().invoke(
+        app,
+        ["init", str(target), "--no-git", "--mcp", "none", "--skip-python-check"],
+    )
+    assert result.exit_code == 0, result.output
+    assert (target / ".claude" / "hooks").is_dir()
+
+
+def test_check_reports_the_hook_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "mapify_cli.python_runtime.detect_hook_interpreter",
+        lambda *_a, **_k: InterpreterInfo(
+            executable="/usr/bin/python3", version=(3, 9, 6)
+        ),
+    )
+    result = CliRunner().invoke(app, ["check"])
+    assert "python3 on PATH" in result.output
+    assert "Upgrade python3" in result.output

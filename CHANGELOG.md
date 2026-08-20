@@ -19,6 +19,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wraps the install itself, which is the only check equivalent to "a user can
   install this right now"; the failure message points at a simple-index probe,
   and rollback Scenario 5 waits on that index instead of the project page.
+- **The Python 3.11 requirement is now checked where it actually applies: the
+  `python3` on PATH.** Every shipped hook (`.claude/hooks/`, `.codex/hooks/`) and
+  workflow runner (`.map/scripts/`) is an executable starting with
+  `#!/usr/bin/env python3`, so it runs under the user's PATH interpreter — not the
+  uv-managed one that ran `mapify`. `pyproject.toml` declared
+  `requires-python = ">=3.11"`, but nothing verified the interpreter the hooks would
+  pick up, so on a stock macOS PATH (`/usr/bin/python3`, 3.9) every hook failed with
+  `ImportError: cannot import name 'UTC' from 'datetime'` — a message that says
+  nothing about Python versions. Now:
+  - `mapify init` resolves that interpreter before writing anything and stops with
+    the version, the resolved path, and the fix. It deliberately skips its own
+    virtualenv/`uvx` `bin` (which `uvx` prepends to PATH and which disappears when
+    the command exits) so the verdict describes what Claude Code will really launch.
+    `--skip-python-check` / `MAPIFY_SKIP_PYTHON_CHECK=1` installs anyway; a
+    `--refresh-existing` update warns instead of blocking.
+  - `mapify check` and `mapify doctor` report the hook interpreter as a first-class
+    readiness line with remediation commands.
+  - All 20 shipped `#!/usr/bin/env python3` files (16 hooks, the Codex workflow gate,
+    and the `map_step_runner` / `map_orchestrator` / `validate_spec_citations`
+    runners) now open with a version guard rendered from a single partial: on an old
+    interpreter they write `MAP requires Python 3.11 or newer, but <path> is Python
+    3.9` to stderr and exit 1 (non-blocking for hooks) instead of raising
+    `ImportError`. This removes the latent failure in the four `datetime.UTC` hooks
+    (`pre-compact-save-transcript`, `ralph-iteration-logger`, `ralph-context-pruner`,
+    `workflow-context-injector`), which previously happened to exit early on empty
+    stdin rather than being safe.
+  - `mapify_cli/_python_guard.py` runs before the package's own 3.11-only imports, so
+    `python3 -m mapify_cli` from a clone (or an `--ignore-requires-python` install)
+    also reports the version instead of an `ImportError`.
+  - `tests/test_python_version_requirement.py` fails if any shebang file loses the
+    guard or if `MINIMUM_PYTHON`, `requires-python`, the CLI guard, and the rendered
+    partial drift apart.
 
 ## [3.28.0] - 2026-08-18
 

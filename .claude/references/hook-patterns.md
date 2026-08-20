@@ -160,3 +160,43 @@ subprocess.Popen(
 The detached child sets `MAP_INVOKED_BY` in its own environment so that any
 hooks it triggers honor the REQUIRE_GUARD early-exit above. Until Phase E
 lands, treat this section as design intent, not implemented behavior.
+
+## Python version guard (every `#!/usr/bin/env python3` file)
+
+Hooks are executables, so the harness runs them through their shebang: the
+`python3` resolved from the user's `PATH`, never the interpreter that installed
+MAP. MAP needs Python 3.11+ (`datetime.UTC`, PEP 604 unions in evaluated
+annotations); on a stock macOS `python3` is `/usr/bin/python3` (3.9), where a hook
+dies at import with `ImportError: cannot import name 'UTC' from 'datetime'` — a
+message that never mentions the version.
+
+Every shipped file with that shebang therefore opens with a version guard, rendered
+from one source (`templates_src/_partials/python-version-guard.py.jinja`) so the
+copies cannot drift:
+
+```python
+import sys
+
+if sys.version_info < (3, 11):  # noqa: UP036
+    sys.stderr.write(
+        f"MAP requires Python 3.11 or newer, but {sys.executable} is "
+        f"Python {sys.version_info[0]}.{sys.version_info[1]}.\n"
+        ...
+    )
+    sys.exit(1)
+```
+
+Rules when editing these files:
+
+- The guard must precede every 3.11-only import. The one thing allowed above it is
+  `from __future__ import annotations`, which must stay the first statement after
+  the docstring (otherwise `SyntaxError`).
+- Exit code is 1 — a non-blocking hook error, so the reason reaches the user and
+  the session continues. Only exit 2 blocks a tool call, and a broken interpreter
+  is not a policy decision.
+- It sits at module scope and never interferes with the `MAP_INVOKED_BY`
+  recursion-guard position rule (INV-A2), which is checked inside `main()`.
+- The floor lives in `mapify_cli.python_runtime.MINIMUM_PYTHON`, mirrored by
+  `pyproject.toml`'s `requires-python`; `mapify init` gates on the same value.
+  `tests/test_python_version_requirement.py` fails if any copy drifts or any
+  shebang file lacks the guard.

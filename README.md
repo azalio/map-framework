@@ -42,6 +42,11 @@ uv tool install mapify-cli
 pip install mapify-cli
 ```
 
+Requires Python 3.11+, and `python3` on your `PATH` must be that interpreter — the
+installed hooks and `.map/scripts/` runners execute through a `#!/usr/bin/env
+python3` shebang, not through the interpreter that ran `mapify`. `mapify init`
+checks it up front and tells you what to fix ([details](docs/INSTALL.md#why-python3-on-path-matters)).
+
 **2. Initialize your project**
 
 Claude Code is the default provider:
@@ -256,6 +261,8 @@ mapify init . --no-autonomy     # remove the autonomy posture
 ## Trouble?
 
 - **Command not found** → Run `mapify init` in your project first.
+- **`init` stops on a Python version** → `python3` on your `PATH` is older than 3.11; the hooks run under it. Install 3.11+ (`brew install python@3.12` / `uv python install 3.12`), then `mapify check`. Bypass with `--skip-python-check` if you accept non-functional hooks.
+- **A hook printed "MAP requires Python 3.11 or newer"** → same cause, detected at run time; the message names the interpreter it ran under.
 - **Agent errors** → Check `.claude/agents/` has all shipped agent `.md` files, or run `mapify doctor`.
 - **Poor output on a complex task** → Start with `/map-plan` and feed `/map-efficient` the approved plan instead of asking it to infer the architecture.
 - [More help →](docs/INSTALL.md#troubleshooting)

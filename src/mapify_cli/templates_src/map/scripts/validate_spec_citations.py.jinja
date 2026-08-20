@@ -18,6 +18,7 @@ like a URL or starts with `http`/`/Users/` are skipped (out of repo scope).
 
 from __future__ import annotations
 
+[% include "_partials/python-version-guard.py.jinja" %]
 import argparse
 import json
 import re
