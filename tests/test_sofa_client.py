@@ -905,11 +905,17 @@ def test_vc3_project_root_swap_cannot_mutate_replacement_or_outside(
 
     if writer == "cli":
         module = file_copier
-        operation = lambda: file_copier.merge_update_runtime_gitignore(project)
+
+        def operation():
+            return file_copier.merge_update_runtime_gitignore(project)
+
         error = file_copier.UpdateRuntimeGitignoreSecurityError
     else:
         module = sofa
-        operation = lambda: sofa.ensure_sofa_gitignore(project)
+
+        def operation():  # type: ignore[misc]
+            return sofa.ensure_sofa_gitignore(project)
+
         error = sofa.SofaGitignoreSecurityError
 
     real_read = module._read_safe_gitignore
@@ -944,11 +950,17 @@ def test_vc3_platform_without_project_dir_fd_fails_closed(
 
     if writer == "cli":
         monkeypatch.setattr(file_copier, "_CAN_USE_PROJECT_DIRECTORY_FD", False)
-        operation = lambda: file_copier.merge_update_runtime_gitignore(tmp_path)
+
+        def operation():
+            return file_copier.merge_update_runtime_gitignore(tmp_path)
+
         error = file_copier.UpdateRuntimeGitignoreSecurityError
     else:
         monkeypatch.setattr(sofa, "_CAN_USE_PROJECT_DIRECTORY_FD", False)
-        operation = lambda: sofa.ensure_sofa_gitignore(tmp_path)
+
+        def operation():  # type: ignore[misc]
+            return sofa.ensure_sofa_gitignore(tmp_path)
+
         error = sofa.SofaGitignoreSecurityError
 
     with pytest.raises(error, match="cannot pin project-relative"):
@@ -1297,7 +1309,10 @@ def test_vc3_gitignore_writer_rejects_unsafe_shared_lock(
             "_gitignore_lock_path_for_stat",
             lambda _root, _stat: lock_path,
         )
-        operation = lambda: file_copier.merge_update_runtime_gitignore(tmp_path)
+
+        def operation():
+            return file_copier.merge_update_runtime_gitignore(tmp_path)
+
         error = file_copier.UpdateRuntimeGitignoreSecurityError
     else:
         monkeypatch.setattr(
@@ -1305,7 +1320,10 @@ def test_vc3_gitignore_writer_rejects_unsafe_shared_lock(
             "_gitignore_lock_path_for_stat",
             lambda _root, _stat: lock_path,
         )
-        operation = lambda: sofa.ensure_sofa_gitignore(tmp_path)
+
+        def operation():  # type: ignore[misc]
+            return sofa.ensure_sofa_gitignore(tmp_path)
+
         error = sofa.SofaGitignoreSecurityError
 
     with pytest.raises(error):
@@ -1377,7 +1395,10 @@ def test_vc3_no_fchmod_lock_swap_cannot_chmod_outside_file(
             lambda _root, _stat: lock_path,
         )
         monkeypatch.setattr(file_copier.os, "chmod", swap_then_chmod)
-        operation = lambda: file_copier.merge_update_runtime_gitignore(tmp_path)
+
+        def operation():
+            return file_copier.merge_update_runtime_gitignore(tmp_path)
+
         error = file_copier.UpdateRuntimeGitignoreSecurityError
     else:
         monkeypatch.delattr(sofa.os, "fchmod", raising=False)
@@ -1387,7 +1408,10 @@ def test_vc3_no_fchmod_lock_swap_cannot_chmod_outside_file(
             lambda _root, _stat: lock_path,
         )
         monkeypatch.setattr(sofa.os, "chmod", swap_then_chmod)
-        operation = lambda: sofa.ensure_sofa_gitignore(tmp_path)
+
+        def operation():  # type: ignore[misc]
+            return sofa.ensure_sofa_gitignore(tmp_path)
+
         error = sofa.SofaGitignoreSecurityError
 
     with pytest.raises(error):
@@ -1431,7 +1455,10 @@ def test_vc3_no_fchmod_gitignore_temp_swap_fails_closed(
             lambda _root, _stat: lock_path,
         )
         monkeypatch.setattr(file_copier.os, "chmod", swap_temp_then_chmod)
-        operation = lambda: file_copier.merge_update_runtime_gitignore(tmp_path)
+
+        def operation():
+            return file_copier.merge_update_runtime_gitignore(tmp_path)
+
         error = file_copier.UpdateRuntimeGitignoreSecurityError
     else:
         monkeypatch.delattr(sofa.os, "fchmod", raising=False)
@@ -1441,7 +1468,10 @@ def test_vc3_no_fchmod_gitignore_temp_swap_fails_closed(
             lambda _root, _stat: lock_path,
         )
         monkeypatch.setattr(sofa.os, "chmod", swap_temp_then_chmod)
-        operation = lambda: sofa.ensure_sofa_gitignore(tmp_path)
+
+        def operation():  # type: ignore[misc]
+            return sofa.ensure_sofa_gitignore(tmp_path)
+
         error = sofa.SofaGitignoreSecurityError
 
     with pytest.raises(error):
