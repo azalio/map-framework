@@ -1178,7 +1178,9 @@ def init(
         help=(
             "Install even when the `python3` on PATH is older than 3.11. Shipped "
             "hooks and .map/scripts/ runners use that interpreter via their "
-            "shebang, so they stay broken until it is upgraded. Equivalent to "
+            "shebang: context hooks stay broken, and the blocking PreToolUse "
+            "gates (safety-guardrails.py, workflow-gate.py) deny every matched "
+            "tool call until it is upgraded. Equivalent to "
             "MAPIFY_SKIP_PYTHON_CHECK=1."
         ),
     ),

@@ -58,6 +58,24 @@ SHEBANG_ROOTS = (
     REPO_ROOT / ".map",
 )
 
+# Gitignored local state that nests a full checkout or a virtualenv inside the
+# roots above: this repo's own worktree-isolation and detached-review features
+# write whole checkouts under `.claude/worktrees/` and `.map/<branch>/`, each
+# potentially carrying a pre-guard snapshot of every hook plus a `.venv` full of
+# third-party shebang files. None of it is shipped surface; sweeping it in makes
+# the scan fail on any dogfooding machine while CI stays green.
+EXCLUDED_PARTS = frozenset(
+    {
+        "__pycache__",
+        "worktrees",
+        "detached-review",
+        ".venv",
+        "venv",
+        "site-packages",
+        "node_modules",
+    }
+)
+
 
 def _shebang_files() -> list[Path]:
     found: list[Path] = []
@@ -67,7 +85,7 @@ def _shebang_files() -> list[Path]:
         for path in sorted(root.rglob("*.py*")):
             if path.suffix not in {".py", ".jinja"}:
                 continue
-            if "__pycache__" in path.parts:
+            if EXCLUDED_PARTS.intersection(path.parts):
                 continue
             try:
                 first = path.read_text(encoding="utf-8").split("\n", 1)[0]
@@ -142,6 +160,34 @@ def test_shebang_files_are_discovered() -> None:
     """Guard against a silently empty scan making the checks below vacuous."""
     files = _shebang_files()
     assert len(files) >= 60, f"expected the shebang scan to find files, got {files}"
+
+
+def test_shebang_scan_skips_nested_worktrees_and_venvs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gitignored nested checkouts and venvs must not leak into the scan.
+
+    `.claude/worktrees/<name>/` (worktree isolation) and `.map/<branch>/`
+    detached-review copies hold pre-guard snapshots of every hook plus whole
+    virtualenvs; asserting the guard against those fails on any machine that
+    has ever run the worktree features, while a fresh CI clone stays green.
+    """
+    root = tmp_path / "tree"
+    (root / "hooks").mkdir(parents=True)
+    shipped = root / "hooks" / "shipped.py"
+    shipped.write_text(f"{SHEBANG}\n", encoding="utf-8")
+    for stray in (
+        "worktrees/old-checkout/hooks/stale-hook.py",
+        ".venv/lib/python3.11/site-packages/mypy/stubgen.py",
+        "detached-review/hooks/copy.py",
+        "node_modules/pkg/cli.py",
+    ):
+        stray_path = root / stray
+        stray_path.parent.mkdir(parents=True)
+        stray_path.write_text(f"{SHEBANG}\n", encoding="utf-8")
+
+    monkeypatch.setitem(globals(), "SHEBANG_ROOTS", (root,))
+    assert _shebang_files() == [shipped]
 
 
 @pytest.mark.parametrize("path", _shebang_files(), ids=lambda p: str(p.name))
@@ -346,7 +392,7 @@ def test_probe_failure_is_reported_not_raised(tmp_path: Path) -> None:
     assert "failed the version probe" in info.detection_error
 
 
-def test_shadowed_env_interpreter_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_shadowed_env_interpreter_is_reported() -> None:
     """`uvx` prepends its ephemeral bin to PATH; the message must say it was skipped."""
     info = InterpreterInfo(
         executable="/usr/bin/python3",

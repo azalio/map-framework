@@ -356,7 +356,9 @@ def format_problem(info: InterpreterInfo) -> str | None:
         "",
         (
             f"To install anyway, pass --skip-python-check or set {SKIP_ENV_VAR}=1; "
-            "hooks and .map/scripts/ will stay broken until python3 is upgraded."
+            "context hooks will stay broken and the blocking PreToolUse gates "
+            "(safety-guardrails.py, workflow-gate.py) will deny every matched "
+            "tool call until python3 is upgraded."
         ),
     ]
     return "\n".join(lines)
