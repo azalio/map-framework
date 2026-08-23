@@ -49,13 +49,16 @@ DENY_SELECTOR = 'guard_mode = "deny"'
 FAIL_CLOSED_BASENAMES = frozenset({"safety-guardrails.py", "workflow-gate.py"})
 
 # Every tree that ships or serves executable Python: the jinja sources, the dev
-# working set, and both installer payloads.
+# working set, and both installer payloads. `.map` is scanned only at its
+# shipped subtree — the runners in `.map/scripts/` — because `.map/<branch>/`
+# holds per-branch workflow state (including whole detached-review checkouts)
+# that is local, gitignored, and never installed.
 SHEBANG_ROOTS = (
     REPO_ROOT / "src" / "mapify_cli" / "templates_src",
     REPO_ROOT / "src" / "mapify_cli" / "templates",
     REPO_ROOT / ".claude",
     REPO_ROOT / ".codex",
-    REPO_ROOT / ".map",
+    REPO_ROOT / ".map" / "scripts",
 )
 
 # Gitignored local state that nests a full checkout or a virtualenv inside the
