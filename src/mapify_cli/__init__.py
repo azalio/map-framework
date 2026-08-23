@@ -25,6 +25,10 @@ Or install globally:
 
 __version__ = "3.28.0"
 
+# MUST stay the first import: it turns "this interpreter is older than 3.11" into
+# a message that says so, instead of the ImportError raised by `from datetime
+# import UTC` a few lines below. See mapify_cli/_python_guard.py.
+from . import _python_guard  # noqa: F401, I001  (import order is load-order here)
 import contextlib
 import functools
 import inspect
@@ -288,6 +292,37 @@ def check_tool(tool: str) -> bool:
 def check_mcp_server(server: str) -> bool:
     """Check if an MCP server is recognized by this installation."""
     return server in build_standard_mcp_servers()
+
+
+def check_hook_python_version(*, skip: bool = False, warn_only: bool = False) -> bool:
+    """Gate on the ``python3`` that shipped hooks and .map/scripts runners will use.
+
+    Every installed hook and runner carries a ``#!/usr/bin/env python3`` shebang, so
+    they execute under PATH's ``python3`` -- not under the interpreter running
+    ``mapify`` (typically a uv-managed 3.12/3.13). On a stock macOS PATH that is
+    Python 3.9, where every one of them fails at import. Surfacing it here is the
+    difference between a named cause and an ``ImportError`` an hour later.
+
+    Args:
+        skip: Bypass the check (``--skip-python-check``). ``MAPIFY_SKIP_PYTHON_CHECK``
+            has the same effect.
+        warn_only: Print the problem but return True, so an updater-driven refresh
+            of an already-installed project is never blocked by it.
+
+    Returns:
+        True when installation may proceed.
+    """
+    from mapify_cli.python_runtime import check_hook_python
+
+    problem = check_hook_python(skip=skip)
+    if problem is None:
+        return True
+
+    label = "Warning" if warn_only else "Error"
+    color = "yellow" if warn_only else "red"
+    console.print(f"[{color}]{label}:[/{color}] {problem}")
+    console.print()
+    return warn_only
 
 
 def is_debug_enabled(debug_flag: bool | None = None) -> bool:
@@ -1137,6 +1172,18 @@ def init(
             "Enabled by default; omit to preserve an existing project choice."
         ),
     ),
+    skip_python_check: bool = typer.Option(
+        False,
+        "--skip-python-check",
+        help=(
+            "Install even when the `python3` on PATH is older than 3.11. Shipped "
+            "hooks and .map/scripts/ runners use that interpreter via their "
+            "shebang: context hooks stay broken, and the blocking PreToolUse "
+            "gates (safety-guardrails.py, workflow-gate.py) deny every matched "
+            "tool call until it is upgraded. Equivalent to "
+            "MAPIFY_SKIP_PYTHON_CHECK=1."
+        ),
+    ),
     refresh_existing: bool = typer.Option(
         False,
         "--refresh-existing",
@@ -1178,8 +1225,6 @@ def init(
     show_banner()
 
     requested_project_name = project_name
-    if not refresh_existing:
-        _start_init_workflow_logger(requested_project_name, mcp, debug)
 
     # Validate provider
     valid_providers = ("claude", "codex")
@@ -1189,6 +1234,20 @@ def init(
             f"Valid providers: {', '.join(valid_providers)}"
         )
         raise typer.Exit(1)
+
+    # Gate on PATH's python3 before writing anything: it is what runs the hooks and
+    # .map/scripts/ runners we are about to install. A refresh is an updater-owned
+    # replay of an existing install, so there it warns instead of hard-stopping.
+    if not check_hook_python_version(
+        skip=skip_python_check, warn_only=refresh_existing
+    ):
+        raise typer.Exit(1)
+
+    # Only now start diagnostics: a rejected init must not leave a workflow log
+    # behind in the current directory (the gate above writes nothing, and
+    # --debug must not be the one exception).
+    if not refresh_existing:
+        _start_init_workflow_logger(requested_project_name, mcp, debug)
 
     if refresh_existing and project_name != ".":
         console.print(
@@ -1777,6 +1836,22 @@ def check(debug: bool = typer.Option(False, "--debug", help="Enable debug loggin
             tracker.error(tool, "not found")
             results[tool] = False
 
+    # PATH's python3 executes every shipped hook and .map/scripts/ runner via their
+    # shebang, so its version belongs in the readiness check next to git/claude.
+    from mapify_cli.python_runtime import (
+        detect_hook_interpreter,
+        minimum_python_str,
+        remediation_lines,
+    )
+
+    tracker.add("python", f"python3 on PATH (>= {minimum_python_str()})")
+    interpreter = detect_hook_interpreter()
+    results["python"] = interpreter.satisfies_minimum
+    if interpreter.satisfies_minimum:
+        tracker.complete("python", interpreter.summary)
+    else:
+        tracker.error("python", interpreter.summary)
+
     health = get_project_health(Path.cwd())
 
     tracker.add("project", "Detect MAP project")
@@ -1808,6 +1883,13 @@ def check(debug: bool = typer.Option(False, "--debug", help="Enable debug loggin
         )
     else:
         console.print("[yellow]MAP environment needs attention:[/yellow]")
+        if not results.get("python"):
+            console.print(
+                f"  • Upgrade python3 to {minimum_python_str()}+ — every shipped "
+                "hook and .map/scripts/ runner executes under it:"
+            )
+            for line in remediation_lines():
+                console.print(f"  {line}")
         if not results.get("git"):
             console.print("  • Install git: https://git-scm.com/downloads")
         if detected == "codex" and not results.get("codex"):
@@ -1854,6 +1936,15 @@ def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug loggi
             tracker.complete(tool_name, "available")
         else:
             tracker.error(tool_name, "not found")
+
+    from mapify_cli.python_runtime import detect_hook_interpreter, minimum_python_str
+
+    interpreter = detect_hook_interpreter()
+    tracker.add("python", f"python3 on PATH (>= {minimum_python_str()})")
+    if interpreter.satisfies_minimum:
+        tracker.complete("python", interpreter.summary)
+    else:
+        tracker.error("python", interpreter.summary)
 
     tracker.add("project", "MAP project structure")
     if detected == "codex":
@@ -1915,6 +2006,15 @@ def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug loggi
     details.add_column("Check")
     details.add_column("Status")
     details.add_column("Details")
+    details.add_row(
+        "Hook interpreter",
+        (
+            f"Python {interpreter.version_str}"
+            if interpreter.satisfies_minimum
+            else f"needs >= {minimum_python_str()}"
+        ),
+        f"{interpreter.summary} runs every hook and .map/scripts/ runner",
+    )
     details.add_row(
         "Project",
         "OK" if health["initialized"] else "Needs init",

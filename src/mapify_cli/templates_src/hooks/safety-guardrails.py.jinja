@@ -15,6 +15,7 @@ Exit codes:
   0 + permissionDecision=deny - Block (preferred)
 """
 
+[% set guard_mode = "deny" %][% include "_partials/python-version-guard.py.jinja" %]
 import json
 import os
 import sys

@@ -160,3 +160,79 @@ subprocess.Popen(
 The detached child sets `MAP_INVOKED_BY` in its own environment so that any
 hooks it triggers honor the REQUIRE_GUARD early-exit above. Until Phase E
 lands, treat this section as design intent, not implemented behavior.
+
+## Python version guard (every `#!/usr/bin/env python3` file)
+
+Hooks are executables, so the harness runs them through their shebang: the
+`python3` resolved from the user's `PATH`, never the interpreter that installed
+MAP. MAP needs Python 3.11+ (`datetime.UTC`, PEP 604 unions in evaluated
+annotations); on a stock macOS `python3` is `/usr/bin/python3` (3.9), where a hook
+dies at import with `ImportError: cannot import name 'UTC' from 'datetime'` — a
+message that never mentions the version.
+
+Every shipped file with that shebang therefore opens with a version guard, rendered
+from one source (`templates_src/_partials/python-version-guard.py.jinja`) so the
+copies cannot drift. The partial has **two modes**, because the right answer to "my
+interpreter cannot run" depends on what the file is for.
+
+**Fail open (default)** — context, observability, and statusline hooks. Report and
+step aside:
+
+```python
+import sys
+
+if sys.version_info < (3, 11):  # noqa: UP036
+    _MAP_PYTHON_PROBLEM = (
+        f"MAP requires Python 3.11 or newer, but {sys.executable} is "
+        f"Python {sys.version_info[0]}.{sys.version_info[1]}.\n"
+        ...
+    )
+    sys.stderr.write(_MAP_PYTHON_PROBLEM)
+    sys.exit(1)
+```
+
+**Fail closed** — the FORBID_GUARD PreToolUse gates (`safety-guardrails.py`,
+`workflow-gate.py`, and its Codex twin). A gate whose only job is to refuse unsafe
+tool calls must not degrade into "allow" when it cannot run, so it emits the
+structured deny decision instead. Select it by setting `guard_mode = "deny"` in a
+Jinja `set` tag immediately before the `include` tag in that file's `.jinja` source
+(the three gates above are the only files that do). It renders the same message
+plus:
+
+```python
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": (
+                        "Blocked: this MAP guard hook cannot run, so the tool "
+                        "call is denied instead of proceeding unguarded.\n"
+                        + _MAP_PYTHON_PROBLEM
+                    ),
+                }
+            }
+        )
+    )
+    sys.exit(0)
+```
+
+Rules when editing these files:
+
+- The guard must precede every 3.11-only import. The one thing allowed above it is
+  `from __future__ import annotations`, which must stay the first statement after
+  the docstring (otherwise `SyntaxError`).
+- Pick the mode from the hook's class, not from taste. FORBID_GUARD (a hook that
+  can deny a tool call) → `guard_mode = "deny"`, fail closed. Everything else →
+  the default, fail open: exit 1 is a non-blocking hook error, so the reason
+  reaches the user and the session continues, and a broken interpreter is not a
+  policy decision for a hook that has no policy.
+- Fail-closed uses exit 0 + a JSON deny, never `sys.exit(2)` — the same decision
+  channel the gate's own `deny()` uses, so the reason reaches the operator.
+- It sits at module scope and never interferes with the `MAP_INVOKED_BY`
+  recursion-guard position rule (INV-A2), which is checked inside `main()`.
+- The floor lives in `mapify_cli.python_runtime.MINIMUM_PYTHON`, mirrored by
+  `pyproject.toml`'s `requires-python`; `mapify init` gates on the same value.
+  `tests/test_python_version_requirement.py` fails if any copy drifts or any
+  shebang file lacks the guard.

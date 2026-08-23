@@ -31,6 +31,54 @@ many repos this hook ships into.
 
 Exit code 0 always (fail-open on errors).
 """
+
+import sys
+
+# MAP requires Python 3.11+, and this file runs under the `python3` resolved from
+# PATH (see the shebang above) -- not under the interpreter that installed MAP.
+# On a stock macOS that is /usr/bin/python3 (3.9), where every 3.11-only
+# construct further down (`from datetime import UTC`, PEP 604 unions in
+# evaluated annotations) fails with a message that never mentions the version.
+# Name the real cause instead. Kept in sync with
+# mapify_cli/python_runtime.MINIMUM_PYTHON.
+# UP036 is suppressed on purpose: the project targets 3.11, but the interpreter
+# executing this shipped file is the user's `python3`, not the project's.
+#
+# FAIL-CLOSED mode. This file is a blocking PreToolUse gate whose only job is to
+# refuse unsafe tool calls, so an interpreter it cannot run on must not degrade
+# into "allow": that would drop the guardrail silently, exactly when nothing is
+# left to report it. Emit the structured deny decision instead (exit 0 + JSON is
+# how a PreToolUse hook blocks), so the call stops and the reason -- version,
+# interpreter, fix -- reaches the operator. Fix python3 in another terminal;
+# tool calls stay blocked until `python3 --version` reports 3.11+.
+if sys.version_info < (3, 11):  # noqa: UP036
+    _MAP_PYTHON_PROBLEM = (
+        f"MAP requires Python 3.11 or newer, but {sys.executable} is "
+        f"Python {sys.version_info[0]}.{sys.version_info[1]}.\n"
+        "This file runs under the `python3` on your PATH. Install Python 3.11+\n"
+        "(brew install python@3.12, uv python install 3.12, or pyenv install),\n"
+        "make sure `python3 --version` reports it, then re-run `mapify check`.\n"
+    )
+    sys.stderr.write(_MAP_PYTHON_PROBLEM)
+    import json
+
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": (
+                        "Blocked: this MAP guard hook cannot run, so the tool "
+                        "call is denied instead of proceeding unguarded.\n"
+                        + _MAP_PYTHON_PROBLEM
+                    ),
+                }
+            }
+        )
+    )
+    sys.exit(0)
+
 import json
 import os
 import re

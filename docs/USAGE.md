@@ -16,6 +16,22 @@ Once a plan reaches `ready` (task_plan + blueprint both present, the Step 7 boun
 
 When a MAP run enters a merge/rebase conflict, the PreToolUse workflow-context hook adds a conflict-resolution discipline block to `additionalContext`. It fires before `git merge` / `git rebase` and whenever git reports unmerged paths via `git diff --name-only --diff-filter=U`. The protocol is deliberately manual and intent-preserving: list conflicted files, resolve one file or small batch at a time, preserve both sides' intended behavior, check for conflict markers, run the project's test gate after each batch, stage only resolved files, and continue the merge/rebase only after no unmerged files remain. Final verification is: branch current with `origin/main`, no conflict markers, and tests green. The hook never mutates the worktree and never auto-runs tests.
 
+## Python interpreter requirement (`python3` on PATH)
+
+MAP's runtime surfaces — every hook in `.claude/hooks/` and `.codex/hooks/`, and every runner in `.map/scripts/` — are executables that start with `#!/usr/bin/env python3`. They therefore run under the `python3` your shell resolves, **not** under the interpreter that ran `mapify` (with `uvx`/`uv tool run` that is a temporary environment whose `bin` is prepended to `PATH` only for the duration of the command). They require Python 3.11+; on a stock macOS `python3` is `/usr/bin/python3` (3.9), where they all fail at import.
+
+Three checks cover this:
+
+- `mapify init` resolves the interpreter an independent shell would get (skipping its own virtualenv/uvx `bin`) and **stops before writing anything** when it is older than 3.11, naming the version, the path, and the fix. Bypass with `--skip-python-check` or `MAPIFY_SKIP_PYTHON_CHECK=1` — the install completes, the hooks stay non-functional.
+- `mapify check` and `mapify doctor` report the same interpreter line (`python3 on PATH (>= 3.11)`) at any time.
+- Each shipped executable carries its own version guard: on an old interpreter it writes `MAP requires Python 3.11 or newer, but <path> is Python 3.9` to stderr, instead of raising `ImportError: cannot import name 'UTC' from 'datetime'`. Context and observability hooks then exit 1 — a non-blocking hook error, so the reason surfaces and the session continues. The blocking PreToolUse gates (`safety-guardrails.py`, `workflow-gate.py`, and its Codex twin) instead **deny** the tool call with that reason: a guard that cannot run must not silently become "allow". Editing and Bash therefore stay blocked until `python3 --version` reports 3.11+, so fix the interpreter from another terminal.
+
+```bash
+python3 --version          # 3.11+ required
+brew install python@3.12   # macOS; or: uv python install 3.12 / pyenv install 3.12
+mapify check               # confirms the hook interpreter
+```
+
 ## Decision-frontier wayfinding (`/map-wayfind`)
 
 For a large or foggy effort where `/map-plan` would force premature decomposition, `/map-wayfind` resolves the open design decisions **before** planning. It is a Claude-only, manually-invoked skill; if the scope is already clear enough to specify, skip it and run `/map-plan` directly.

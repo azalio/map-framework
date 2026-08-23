@@ -9,6 +9,8 @@ OBSERVABILITY ONLY - does not block.
 Exit codes:
   0 - Always (PostToolUse hooks don't block)
 """
+
+[% include "_partials/python-version-guard.py.jinja" %]
 import json
 import os
 import re

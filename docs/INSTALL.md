@@ -4,9 +4,32 @@ The MAP Framework can be installed in any project to provide powerful AI-driven 
 
 ## Prerequisites
 
-- Python 3.11 or higher
+- Python 3.11 or higher — **and `python3` on your `PATH` must be that interpreter**
 - Git (optional, for repository initialization)
 - Claude Code CLI
+
+### Why `python3` on PATH matters
+
+Every installed hook (`.claude/hooks/`, `.codex/hooks/`) and workflow runner
+(`.map/scripts/`) starts with `#!/usr/bin/env python3`, so they run under whatever
+`python3` your shell resolves — **not** under the interpreter that ran `mapify`
+(with `uvx` that is a temporary uv environment that disappears afterwards). On a
+stock macOS, `python3` is `/usr/bin/python3` (3.9), where all of them fail.
+
+`mapify init` therefore checks that interpreter before writing anything and stops
+with the version, the resolved path, and how to fix it. `mapify check` and
+`mapify doctor` report the same line at any time:
+
+```bash
+python3 --version                     # must be 3.11+
+brew install python@3.12              # macOS; or: uv python install 3.12
+mapify check                          # confirms the hook interpreter
+```
+
+To install before fixing PATH, pass `--skip-python-check` (or set
+`MAPIFY_SKIP_PYTHON_CHECK=1`). Hooks and `.map/scripts/` stay non-functional until
+`python3` is upgraded, but they now say exactly that instead of raising
+`ImportError: cannot import name 'UTC' from 'datetime'`.
 
 ## Quick Install
 

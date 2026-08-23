@@ -10,6 +10,8 @@ This preserves the full context for later review.
 Exit codes:
   0 - Always (PreCompact hooks don't block)
 """
+
+[% include "_partials/python-version-guard.py.jinja" %]
 import json
 import os
 import re

@@ -87,6 +87,7 @@ TESTING:
   # → {"step_id": "1.5", "phase": "INIT_PLAN", "instruction": "..."}
 """
 
+[% include "_partials/python-version-guard.py.jinja" %]
 import argparse
 import json
 import os

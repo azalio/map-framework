@@ -27,6 +27,7 @@ TESTING:
     update_step_state('ST-001', 'actor', 'ACTOR_CALLED')"
 """
 
+[% include "_partials/python-version-guard.py.jinja" %]
 import ast
 import fnmatch
 import hashlib

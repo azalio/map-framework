@@ -10,6 +10,8 @@ Also reads restore_point.json if available (from ralph-context-pruner).
 Exit codes:
   0 - Always
 """
+
+[% include "_partials/python-version-guard.py.jinja" %]
 import json
 import os
 import re
