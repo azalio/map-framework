@@ -257,6 +257,7 @@ CODEX_AUTO_UPDATE_SKILLS = {
     "map-explain",
     "map-fast",
     "map-plan",
+    "map-prd-review",
     "map-review",
     "map-understand",
 }
@@ -3596,3 +3597,78 @@ class TestMapReviewWalkthroughHardening:
             f"{skill_path}: lightweight mode must drop Predictor / Evaluator "
             "to keep speculation off an empty bundle."
         )
+
+
+class TestMapPrdReviewReadinessWorkflow:
+    """Contract tests for the scored PRD review and optional planning handoff."""
+
+    _REVIEW_SKILLS = (
+        Path(".claude/skills/map-prd-review/SKILL.md"),
+        Path(".agents/skills/map-prd-review/SKILL.md"),
+        Path("src/mapify_cli/templates/skills/map-prd-review/SKILL.md"),
+        Path("src/mapify_cli/templates/codex/skills/map-prd-review/SKILL.md"),
+    )
+    _PLAN_SKILLS = (
+        Path(".claude/skills/map-plan/SKILL.md"),
+        Path(".agents/skills/map-plan/SKILL.md"),
+        Path("src/mapify_cli/templates/skills/map-plan/SKILL.md"),
+        Path("src/mapify_cli/templates/codex/skills/map-plan/SKILL.md"),
+    )
+
+    def test_prd_review_ships_on_both_provider_surfaces(self) -> None:
+        missing = [str(path) for path in self._REVIEW_SKILLS if not path.exists()]
+        assert not missing, f"Missing map-prd-review provider surfaces: {missing}"
+
+    @pytest.mark.parametrize("skill_path", _REVIEW_SKILLS)
+    def test_prd_review_declares_the_scored_structured_contract(
+        self, skill_path: Path
+    ) -> None:
+        assert skill_path.exists(), f"Missing map-prd-review skill: {skill_path}"
+        content = skill_path.read_text(encoding="utf-8")
+        frontmatter = yaml.safe_load(content.split("---", 2)[1])
+        assert frontmatter["description"].startswith("Use when")
+        for required_contract in (
+            "13 dimensions",
+            "0-10",
+            "--dimension-scores",
+            "--strengths",
+            "--uncovered-edge-cases",
+            "## Strengths",
+            "## Weaknesses / Risks",
+            "## Uncovered Edge Cases",
+        ):
+            assert required_contract in content, (
+                f"{skill_path} is missing PRD review contract {required_contract!r}"
+            )
+
+    @pytest.mark.parametrize("skill_path", _PLAN_SKILLS)
+    def test_map_plan_offers_review_and_records_the_user_override(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        for required_flow in (
+            "PRD-quality preflight (optional)",
+            "ready_for_plan",
+            "proceed_anyway",
+            "stop_for_revision",
+            "record_prd_review_decision",
+        ):
+            assert required_flow in content, (
+                f"{skill_path} is missing optional PRD review flow {required_flow!r}"
+            )
+
+        resume_position = content.index("Pre-flight: Resume Detection")
+        prd_position = content.index("Pre-flight: PRD-quality preflight (optional)")
+        assert resume_position < prd_position, (
+            f"{skill_path} must detect a matching resumed plan before offering "
+            "a PRD review that could overwrite its persisted decision"
+        )
+        flat_content = " ".join(content.split())
+        assert "skip the PRD-quality preflight" in flat_content
+        assert "SKILL.md" in content and "in full" in content
+        expected_review_path = (
+            ".agents/skills/map-prd-review/SKILL.md"
+            if ".agents/" in str(skill_path) or "/codex/" in str(skill_path)
+            else ".claude/skills/map-prd-review/SKILL.md"
+        )
+        assert expected_review_path in content

@@ -2080,15 +2080,36 @@ REVIEW_VERDICT_LEDGER_SCHEMA: dict[str, Any] = {
     "additionalProperties": True,
 }
 
+_PRD_REVIEW_DIMENSIONS = [
+    "problem_user_value",
+    "outcomes_success_metrics",
+    "scope_priorities_non_goals",
+    "requirements_clarity_consistency",
+    "acceptance_criteria_testability",
+    "non_functional_requirements",
+    "interaction_failure_states_accessibility",
+    "data_lifecycle_privacy",
+    "security_trust_compliance",
+    "dependencies_feasibility_risks",
+    "edge_cases_recovery",
+    "rollout_operations_observability",
+    "downstream_usability_traceability",
+]
+
 PRD_REVIEW_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "prd-review.json",
     "type": "object",
     "description": "PRD/requirements-quality review artifact written by write_prd_review.",
     "properties": {
-        "schema_version": {"type": "string"},
-        "branch": {"type": "string"},
+        "schema_version": {"const": "2.0"},
+        "branch": {"type": "string", "minLength": 1},
         "generated_at": {"type": "string", "description": "ISO-8601 UTC timestamp"},
-        "prd_source": {"type": "string", "description": "Path or label of the reviewed PRD"},
+        "prd_source": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Path or label of the reviewed PRD",
+        },
         "verdict": {
             "type": "string",
             "enum": [
@@ -2098,20 +2119,78 @@ PRD_REVIEW_SCHEMA: dict[str, Any] = {
                 "route_to_wayfind",
             ],
         },
+        "ready_for_plan": {"type": "boolean"},
+        "readiness_score": {"type": "number", "minimum": 0, "maximum": 10},
+        "dimension_scores": {
+            "type": "object",
+            "properties": {
+                dimension: {
+                    "type": ["number", "null"],
+                    "minimum": 0,
+                    "maximum": 10,
+                }
+                for dimension in _PRD_REVIEW_DIMENSIONS
+            },
+            "required": _PRD_REVIEW_DIMENSIONS,
+            "additionalProperties": False,
+        },
+        "strengths": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "dimension": {
+                        "type": "string",
+                        "enum": _PRD_REVIEW_DIMENSIONS,
+                    },
+                    "description": {"type": "string", "minLength": 1},
+                    "evidence": {"type": "string", "minLength": 1},
+                },
+                "required": ["dimension", "description", "evidence"],
+                "additionalProperties": False,
+            },
+        },
         "findings": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "dimension": {"type": "string"},
+                    "dimension": {
+                        "type": "string",
+                        "enum": _PRD_REVIEW_DIMENSIONS,
+                    },
                     "severity": {
                         "type": "string",
                         "enum": ["critical", "major", "minor", "info"],
                     },
-                    "description": {"type": "string"},
-                    "suggested_revision": {"type": "string"},
+                    "description": {"type": "string", "minLength": 1},
+                    "suggested_revision": {"type": "string", "minLength": 1},
                 },
                 "required": ["dimension", "severity", "description"],
+                "additionalProperties": False,
+            },
+        },
+        "uncovered_edge_cases": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "category": {"type": "string", "minLength": 1},
+                    "scenario": {"type": "string", "minLength": 1},
+                    "impact": {"type": "string", "minLength": 1},
+                    "priority": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low"],
+                    },
+                    "suggested_handling": {"type": "string", "minLength": 1},
+                },
+                "required": [
+                    "category",
+                    "scenario",
+                    "impact",
+                    "priority",
+                    "suggested_handling",
+                ],
                 "additionalProperties": False,
             },
         },
@@ -2120,8 +2199,11 @@ PRD_REVIEW_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "question": {"type": "string"},
-                    "category": {"type": "string"},
+                    "question": {"type": "string", "minLength": 1},
+                    "category": {
+                        "type": "string",
+                        "enum": _PRD_REVIEW_DIMENSIONS,
+                    },
                 },
                 "required": ["question", "category"],
                 "additionalProperties": False,
@@ -2129,22 +2211,84 @@ PRD_REVIEW_SCHEMA: dict[str, Any] = {
         },
         "suggested_revisions": {
             "type": "array",
-            "items": {"type": "string"},
+            "items": {"type": "string", "minLength": 1},
         },
-        "route_recommendation": {"type": "string"},
-        "summary": {"type": "string"},
+        "route_recommendation": {"type": "string", "minLength": 1},
+        "summary": {"type": "string", "minLength": 1},
+        "planning_decision": {
+            "type": "object",
+            "properties": {
+                "decision": {
+                    "type": "string",
+                    "enum": ["proceed_anyway", "stop_for_revision"],
+                },
+                "recorded_at": {"type": "string"},
+                "rationale": {"type": "string", "minLength": 1},
+            },
+            "required": ["decision", "recorded_at", "rationale"],
+            "additionalProperties": False,
+        },
     },
     "required": [
         "schema_version",
         "branch",
         "generated_at",
         "verdict",
+        "ready_for_plan",
+        "readiness_score",
+        "dimension_scores",
+        "strengths",
         "findings",
+        "uncovered_edge_cases",
         "blocking_questions",
         "suggested_revisions",
         "summary",
     ],
-    "additionalProperties": True,
+    "allOf": [
+        {
+            "if": {
+                "properties": {"verdict": {"const": "ready_for_plan"}},
+                "required": ["verdict"],
+            },
+            "then": {
+                "properties": {
+                    "ready_for_plan": {"const": True},
+                    "readiness_score": {"minimum": 8},
+                    "blocking_questions": {"maxItems": 0},
+                    "findings": {
+                        "not": {
+                            "contains": {
+                                "type": "object",
+                                "properties": {
+                                    "severity": {"enum": ["critical", "major"]}
+                                },
+                                "required": ["severity"],
+                            }
+                        }
+                    },
+                },
+                "not": {"required": ["planning_decision"]},
+            },
+            "else": {
+                "properties": {"ready_for_plan": {"const": False}},
+                "anyOf": [
+                    {"properties": {"findings": {"minItems": 1}}},
+                    {"properties": {"uncovered_edge_cases": {"minItems": 1}}},
+                    {"properties": {"blocking_questions": {"minItems": 1}}},
+                    {"properties": {"suggested_revisions": {"minItems": 1}}},
+                    {"required": ["route_recommendation"]},
+                ],
+            },
+        },
+        {
+            "if": {
+                "properties": {"verdict": {"const": "needs_user_decision"}},
+                "required": ["verdict"],
+            },
+            "then": {"properties": {"blocking_questions": {"minItems": 1}}},
+        },
+    ],
+    "additionalProperties": False,
 }
 
 AUTO_ROUTE_SCHEMA: dict[str, Any] = {

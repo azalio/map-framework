@@ -4,6 +4,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 SCHEMAS_PATH = Path(__file__).resolve().parents[1] / "src" / "mapify_cli" / "schemas.py"
 SPEC = importlib.util.spec_from_file_location("artifact_schemas", SCHEMAS_PATH)
 assert SPEC is not None and SPEC.loader is not None
@@ -152,6 +154,95 @@ def test_validate_artifact_manifest_schema_accepts_legacy_without_run_health():
         artifact, MODULE.ARTIFACT_MANIFEST_SCHEMA
     )
     assert is_valid, f"Errors: {errors}"
+
+
+def _minimal_prd_review() -> dict:
+    return {
+        "schema_version": "2.0",
+        "branch": "test-branch",
+        "generated_at": "2026-08-27T10:00:00Z",
+        "prd_source": "docs/checkout-prd.md",
+        "verdict": "needs_prd_revision",
+        "ready_for_plan": False,
+        "readiness_score": 6.5,
+        "dimension_scores": {
+            dimension: 6.5 for dimension in map_step_runner.PRD_REVIEW_DIMENSIONS
+        },
+        "strengths": [
+            {
+                "dimension": "scope_priorities_non_goals",
+                "description": "The release boundary is explicit.",
+                "evidence": "Scope > Out of scope",
+            }
+        ],
+        "findings": [],
+        "uncovered_edge_cases": [
+            {
+                "category": "concurrency",
+                "scenario": "Two approvals race.",
+                "impact": "Conflicting decisions could be applied.",
+                "priority": "high",
+                "suggested_handling": "Define single-winner semantics.",
+            }
+        ],
+        "blocking_questions": [],
+        "suggested_revisions": [],
+        "summary": "The PRD needs bounded revisions.",
+        "planning_decision": {
+            "decision": "proceed_anyway",
+            "recorded_at": "2026-08-27T10:05:00Z",
+            "rationale": "User accepted the documented uncertainty for planning.",
+        },
+    }
+
+
+def test_prd_review_schema_accepts_scored_review_and_planning_decision():
+    artifact = _minimal_prd_review()
+
+    is_valid, errors = MODULE.validate_artifact(artifact, MODULE.PRD_REVIEW_SCHEMA)
+
+    assert is_valid, f"Errors: {errors}"
+
+
+def test_prd_review_schema_requires_every_dimension_score():
+    artifact = _minimal_prd_review()
+    del artifact["dimension_scores"]["security_trust_compliance"]
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.PRD_REVIEW_SCHEMA)[0]
+
+    assert not is_valid
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda artifact: artifact.update(schema_version="1.0"),
+        lambda artifact: artifact.update(ready_for_plan=True),
+        lambda artifact: artifact.update(verdict="ready_for_plan"),
+    ],
+)
+def test_prd_review_schema_rejects_contradictory_v2_semantics(mutation):
+    artifact = _minimal_prd_review()
+    mutation(artifact)
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.PRD_REVIEW_SCHEMA)[0]
+
+    assert not is_valid
+
+
+def test_prd_review_schema_rejects_planning_decision_on_ready_review():
+    artifact = _minimal_prd_review()
+    artifact.update(
+        verdict="ready_for_plan",
+        ready_for_plan=True,
+        readiness_score=8.0,
+        blocking_questions=[],
+        findings=[],
+    )
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.PRD_REVIEW_SCHEMA)[0]
+
+    assert not is_valid
 
 
 def _minimal_blueprint_with_requiredness() -> dict:

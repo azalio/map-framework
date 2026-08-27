@@ -77,6 +77,37 @@ User Request -> API boundary -> Service -> Store
 
 `/map-plan` exists to make scope and correctness reviewable before code is generated. The most important artifact is not prose; it is an executable contract that downstream Actor, Monitor, final-verifier, and reviewers can check.
 
+## PRD-quality Preflight
+
+Offer `/map-prd-review` only for a clear PRD/requirements artifact, not an ordinary task
+description. If accepted, follow that skill with the original input. A non-ready review
+must show its readiness score, top strengths, critical/major weaknesses, and
+high-priority uncovered edge cases before asking whether to proceed or revise.
+
+For **continue planning anyway**, persist the explicit user override:
+
+```bash
+python3 .map/scripts/map_step_runner.py record_prd_review_decision proceed_anyway \
+  --rationale "User explicitly chose to continue planning with the reported PRD score and verdict."
+```
+
+Then carry every finding, blocking question, uncovered edge case, suggested revision,
+and route recommendation into the spec's Open Questions / Risks as stable `PRD-GAP-N`
+entries. Deduplicate overlapping items without dropping their evidence or suggested
+handling. For each dependent subtask, put `Provisional — blocked on PRD-GAP-N` in both
+its description and validation criteria until the gap is resolved; do not invent an
+unsupported blueprint field.
+
+For **stop and revise**, persist the choice and stop planning:
+
+```bash
+python3 .map/scripts/map_step_runner.py record_prd_review_decision stop_for_revision \
+  --rationale "User chose to stop planning and revise the PRD."
+```
+
+The artifact keeps `ready_for_plan: false`; `planning_decision: proceed_anyway` records
+accepted uncertainty, not retroactive readiness.
+
 ## Examples
 
 Authentication plan result:

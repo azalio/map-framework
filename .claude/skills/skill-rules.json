@@ -454,7 +454,7 @@
       "skillClass": "task",
       "enforcement": "manual",
       "priority": "medium",
-      "description": "PRD/requirements-quality review before /map-plan: reviews a product brief across 11 dimensions and returns ready_for_plan, needs_prd_revision, needs_user_decision, or route_to_wayfind.",
+      "description": "PRD/requirements-quality review before /map-plan: calculates an evidence-backed 0-10 readiness score across 13 dimensions and reports strengths, weaknesses/risks, uncovered edge cases, and a planning verdict.",
       "promptTriggers": {
         "keywords": [
           "map-prd-review",
