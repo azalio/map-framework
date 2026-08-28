@@ -3672,3 +3672,25 @@ class TestMapPrdReviewReadinessWorkflow:
             else ".claude/skills/map-prd-review/SKILL.md"
         )
         assert expected_review_path in content
+
+    @pytest.mark.parametrize("skill_path", _PLAN_SKILLS)
+    def test_map_plan_reuses_an_existing_review_without_rerunning_it(
+        self, skill_path: Path
+    ) -> None:
+        """An existing prd-review.json short-circuits the preflight re-offer.
+
+        A non-ready review whose planning_decision was never recorded must still
+        force the proceed/stop question, and an edited document at the same path
+        counts as a changed source (no stale-review reuse).
+        """
+        content = skill_path.read_text(encoding="utf-8")
+        flat_content = " ".join(content.split())
+        assert "prd-review.json" in content, (
+            f"{skill_path} never consults the existing review artifact"
+        )
+        assert "no recorded `planning_decision`" in flat_content, (
+            f"{skill_path} is missing the undecided-review reuse state"
+        )
+        assert "an edited document at the same path is a changed source" in (
+            flat_content
+        ), f"{skill_path} allows a stale review to stand in for a revised PRD"

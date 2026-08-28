@@ -86,10 +86,22 @@ high-priority uncovered edge cases before asking whether to proceed or revise.
 
 **Existing review short-circuit:** when `.map/<branch>/prd-review.json` already exists
 for the same PRD source (its `prd_source` matches the current input), do NOT re-offer
-the preflight. Surface the recorded verdict, readiness score, and any
-`planning_decision`, then continue according to that decision. Re-offer only when the
-PRD source changed since the recorded review — a stale review must not silently stand
-in for a revised document.
+the preflight. Surface the recorded verdict and readiness score, then follow the
+matching reuse state:
+
+- `ready_for_plan` — continue planning.
+- `planning_decision: proceed_anyway` — continue planning and carry the recorded gaps
+  as `PRD-GAP-N` entries, as if the decision had just been made.
+- `planning_decision: stop_for_revision` — stop planning; the operator asked for a
+  revised PRD first.
+- non-ready review with **no** recorded `planning_decision` (the operator never
+  answered) — summarize the stored review and ask the required proceed/stop decision
+  WITHOUT re-running the review.
+
+Re-offer the preflight only when the PRD source changed since the recorded review.
+"Changed" means content, not just the path: an edited document at the same
+`prd_source` path is a changed source — a stale review must not silently stand in for
+a revised document.
 
 For **continue planning anyway**, persist the explicit user override:
 
