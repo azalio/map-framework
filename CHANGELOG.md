@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.0] - 2026-08-28
+
 ### Added
 - **`/map-prd-review` now produces a scored readiness verdict.** The review scores
   13 PRD dimensions from 0-10 — the overall score is the equal-weight mean of the
