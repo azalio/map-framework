@@ -21,7 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verdict never auto-stops: `/map-plan` shows the score and the gaps, then asks the
   user and records the answer with the new
   `map_step_runner.py record_prd_review_decision <proceed_anyway|stop_for_revision>`
-  subcommand. `proceed_anyway` carries every gap into the spec as `PRD-GAP-N` and
+  subcommand. Both decisions require an explicit `--rationale`; the recorder never
+  fabricates one. `proceed_anyway` carries every gap into the spec as `PRD-GAP-N` and
   marks dependent subtasks provisional; it does not flip `ready_for_plan` to true.
 
 ### Changed
@@ -33,7 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--dimension-scores` is now mandatory on `write_prd_review`. Nothing reads an
   existing 1.0 artifact at runtime, so no upgrade step is forced — but re-run
   `/map-prd-review` to regenerate one, because the old dimension keys are now
-  rejected at write time.
+  rejected at write time and `record_prd_review_decision` rejects a leftover 1.0
+  artifact with an explicit error instead of splicing into it.
 
 ### Fixed
 - **A PRD scoring below the rubric's own bar could be accepted as `ready_for_plan`.**

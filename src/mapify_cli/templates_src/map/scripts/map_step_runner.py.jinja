@@ -637,6 +637,49 @@ def _is_non_negative_int(value: object) -> bool:
     return type(value) is int and value >= 0
 
 
+def _parse_json_array(
+    raw_json: str, field_name: str
+) -> tuple[list[Any], dict[str, object] | None]:
+    """Parse a CLI JSON-array argument; return (items, None) or ([], error dict)."""
+    try:
+        parsed = json.loads(raw_json or "[]")
+    except json.JSONDecodeError as exc:
+        return [], {"status": "error", "message": f"Invalid {field_name} JSON: {exc}"}
+    if not isinstance(parsed, list):
+        return [], {"status": "error", "message": f"{field_name} must be a JSON array"}
+    return parsed, None
+
+
+def _validate_exact_string_fields(
+    item: object, index: int, field_name: str, required_keys: set[str]
+) -> tuple[dict[str, str] | None, dict[str, object] | None]:
+    """Validate one list item: an object with exactly required_keys, all non-empty strings.
+
+    Returns (stripped item, None) on success or (None, CLI error dict).
+    """
+    if not isinstance(item, dict):
+        return None, {
+            "status": "error",
+            "message": f"{field_name}[{index}] must be an object",
+        }
+    if set(item) != required_keys:
+        return None, {
+            "status": "error",
+            "message": (
+                f"{field_name}[{index}] fields must be exactly {sorted(required_keys)}"
+            ),
+        }
+    if any(
+        not isinstance(item[key], str) or not item[key].strip()
+        for key in required_keys
+    ):
+        return None, {
+            "status": "error",
+            "message": f"{field_name}[{index}] fields must be non-empty strings",
+        }
+    return {key: item[key].strip() for key in sorted(required_keys)}, None
+
+
 def _write_json_file(path: Path, payload: dict | list) -> None:
     """Atomically write JSON payload to disk."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -2867,19 +2910,16 @@ def write_implementer_readiness_review(
             ),
         }
 
-    try:
-        parsed_blocking_questions = json.loads(blocking_questions_json or "[]")
-    except json.JSONDecodeError as exc:
-        return {"status": "error", "message": f"Invalid blocking_questions JSON: {exc}"}
-    if not isinstance(parsed_blocking_questions, list):
-        return {"status": "error", "message": "blocking_questions must be a JSON array"}
-
-    try:
-        parsed_non_blocking_risks = json.loads(non_blocking_risks_json or "[]")
-    except json.JSONDecodeError as exc:
-        return {"status": "error", "message": f"Invalid non_blocking_risks JSON: {exc}"}
-    if not isinstance(parsed_non_blocking_risks, list):
-        return {"status": "error", "message": "non_blocking_risks must be a JSON array"}
+    parsed_blocking_questions, parse_error = _parse_json_array(
+        blocking_questions_json, "blocking_questions"
+    )
+    if parse_error is not None:
+        return parse_error
+    parsed_non_blocking_risks, parse_error = _parse_json_array(
+        non_blocking_risks_json, "non_blocking_risks"
+    )
+    if parse_error is not None:
+        return parse_error
 
     # Validate question structure
     blocking_questions: list[dict[str, str]] = []
@@ -3252,6 +3292,18 @@ def _render_prd_review_markdown(payload: Mapping[str, Any]) -> str:
             "",
         ]
 
+    planning_decision = payload.get("planning_decision")
+    if isinstance(planning_decision, Mapping):
+        decision_label = str(planning_decision["decision"]).replace("_", " ").upper()
+        md_lines += [
+            "## Planning Decision",
+            "",
+            f"**Decision:** {decision_label}",
+            f"**Rationale:** {planning_decision['rationale']}",
+            f"**Recorded:** {planning_decision['recorded_at']}",
+            "",
+        ]
+
     return "\n".join(md_lines)
 
 
@@ -3308,6 +3360,7 @@ def write_prd_review(
                 f"Must be one of: {sorted(PRD_REVIEW_VERDICTS)}"
             ),
         }
+    is_ready = verdict == "ready_for_plan"
 
     # An omitted --dimension-scores is a caller error, not a malformed rubric:
     # answer it by naming the flag and its value contract, not by listing 13 bare
@@ -3337,7 +3390,7 @@ def write_prd_review(
     readiness_score = round(exact_readiness_score, 1)
     # Gate on the exact mean. Gating on `readiness_score` would admit every mean
     # in [7.95, 8.0) because it rounds up to a displayed 8.0.
-    if verdict == "ready_for_plan" and exact_readiness_score < 8.0:
+    if is_ready and exact_readiness_score < 8.0:
         return {
             "status": "error",
             "message": (
@@ -3347,31 +3400,21 @@ def write_prd_review(
             ),
         }
 
-    try:
-        parsed_strengths = json.loads(strengths_json or "[]")
-    except json.JSONDecodeError as exc:
-        return {"status": "error", "message": f"Invalid strengths JSON: {exc}"}
-    if not isinstance(parsed_strengths, list):
-        return {"status": "error", "message": "strengths must be a JSON array"}
+    parsed_strengths, parse_error = _parse_json_array(strengths_json, "strengths")
+    if parse_error is not None:
+        return parse_error
     strengths: list[dict[str, str]] = []
     strength_keys = {"dimension", "description", "evidence"}
     for i, strength in enumerate(parsed_strengths):
-        if not isinstance(strength, dict):
-            return {"status": "error", "message": f"strengths[{i}] must be an object"}
-        if set(strength) != strength_keys:
-            return {
+        normalized_strength, item_error = _validate_exact_string_fields(
+            strength, i, "strengths", strength_keys
+        )
+        if normalized_strength is None:
+            return item_error if item_error is not None else {
                 "status": "error",
-                "message": f"strengths[{i}] fields must be exactly {sorted(strength_keys)}",
+                "message": f"strengths[{i}] is invalid",
             }
-        if any(
-            not isinstance(strength[key], str) or not strength[key].strip()
-            for key in strength_keys
-        ):
-            return {
-                "status": "error",
-                "message": f"strengths[{i}] fields must be non-empty strings",
-            }
-        dimension = strength["dimension"].strip()
+        dimension = normalized_strength["dimension"]
         if dimension not in PRD_REVIEW_DIMENSIONS:
             return {
                 "status": "error",
@@ -3380,21 +3423,17 @@ def write_prd_review(
                     f"Must be one of: {sorted(PRD_REVIEW_DIMENSIONS)}"
                 ),
             }
-        strengths.append({key: strength[key].strip() for key in sorted(strength_keys)})
+        strengths.append(normalized_strength)
 
-    try:
-        parsed_findings = json.loads(findings_json or "[]")
-    except json.JSONDecodeError as exc:
-        return {"status": "error", "message": f"Invalid findings JSON: {exc}"}
-    if not isinstance(parsed_findings, list):
-        return {"status": "error", "message": "findings must be a JSON array"}
+    parsed_findings, parse_error = _parse_json_array(findings_json, "findings")
+    if parse_error is not None:
+        return parse_error
 
-    try:
-        parsed_uncovered_edge_cases = json.loads(uncovered_edge_cases_json or "[]")
-    except json.JSONDecodeError as exc:
-        return {"status": "error", "message": f"Invalid uncovered_edge_cases JSON: {exc}"}
-    if not isinstance(parsed_uncovered_edge_cases, list):
-        return {"status": "error", "message": "uncovered_edge_cases must be a JSON array"}
+    parsed_uncovered_edge_cases, parse_error = _parse_json_array(
+        uncovered_edge_cases_json, "uncovered_edge_cases"
+    )
+    if parse_error is not None:
+        return parse_error
     uncovered_edge_cases: list[dict[str, str]] = []
     edge_case_keys = {
         "category",
@@ -3404,28 +3443,15 @@ def write_prd_review(
         "suggested_handling",
     }
     for i, edge_case in enumerate(parsed_uncovered_edge_cases):
-        if not isinstance(edge_case, dict):
-            return {
+        normalized_edge_case, item_error = _validate_exact_string_fields(
+            edge_case, i, "uncovered_edge_cases", edge_case_keys
+        )
+        if normalized_edge_case is None:
+            return item_error if item_error is not None else {
                 "status": "error",
-                "message": f"uncovered_edge_cases[{i}] must be an object",
+                "message": f"uncovered_edge_cases[{i}] is invalid",
             }
-        if set(edge_case) != edge_case_keys:
-            return {
-                "status": "error",
-                "message": (
-                    "uncovered_edge_cases"
-                    f"[{i}] fields must be exactly {sorted(edge_case_keys)}"
-                ),
-            }
-        if any(
-            not isinstance(edge_case[key], str) or not edge_case[key].strip()
-            for key in edge_case_keys
-        ):
-            return {
-                "status": "error",
-                "message": f"uncovered_edge_cases[{i}] fields must be non-empty strings",
-            }
-        priority = edge_case["priority"].strip().lower()
+        priority = normalized_edge_case["priority"].lower()
         if priority not in PRD_REVIEW_EDGE_PRIORITIES:
             return {
                 "status": "error",
@@ -3434,26 +3460,20 @@ def write_prd_review(
                     f"Must be one of: {sorted(PRD_REVIEW_EDGE_PRIORITIES)}"
                 ),
             }
-        normalized_edge_case = {
-            key: edge_case[key].strip()
-            for key in sorted(edge_case_keys)
-        }
         normalized_edge_case["priority"] = priority
         uncovered_edge_cases.append(normalized_edge_case)
 
-    try:
-        parsed_blocking_questions = json.loads(blocking_questions_json or "[]")
-    except json.JSONDecodeError as exc:
-        return {"status": "error", "message": f"Invalid blocking_questions JSON: {exc}"}
-    if not isinstance(parsed_blocking_questions, list):
-        return {"status": "error", "message": "blocking_questions must be a JSON array"}
+    parsed_blocking_questions, parse_error = _parse_json_array(
+        blocking_questions_json, "blocking_questions"
+    )
+    if parse_error is not None:
+        return parse_error
 
-    try:
-        parsed_suggested_revisions = json.loads(suggested_revisions_json or "[]")
-    except json.JSONDecodeError as exc:
-        return {"status": "error", "message": f"Invalid suggested_revisions JSON: {exc}"}
-    if not isinstance(parsed_suggested_revisions, list):
-        return {"status": "error", "message": "suggested_revisions must be a JSON array"}
+    parsed_suggested_revisions, parse_error = _parse_json_array(
+        suggested_revisions_json, "suggested_revisions"
+    )
+    if parse_error is not None:
+        return parse_error
 
     # Validate findings structure
     allowed_finding_keys = {"dimension", "severity", "description", "suggested_revision"}
@@ -3526,7 +3546,7 @@ def write_prd_review(
             normalized_finding["suggested_revision"] = suggested.strip()
         findings.append(normalized_finding)
 
-    if verdict == "ready_for_plan" and any(
+    if is_ready and any(
         finding["severity"] in {"critical", "major"}
         for finding in findings
     ):
@@ -3595,7 +3615,7 @@ def write_prd_review(
                 "must be answered before planning can proceed."
             ),
         }
-    if verdict == "ready_for_plan" and blocking_questions:
+    if is_ready and blocking_questions:
         return {
             "status": "error",
             "message": "ready_for_plan cannot include unresolved blocking questions",
@@ -3608,7 +3628,7 @@ def write_prd_review(
         + len(suggested_revisions)
         + (1 if route_recommendation else 0)
     )
-    if verdict != "ready_for_plan" and carryable_gap_count == 0:
+    if not is_ready and carryable_gap_count == 0:
         return {
             "status": "error",
             "message": (
@@ -3626,7 +3646,7 @@ def write_prd_review(
         "branch": branch_name,
         "generated_at": _utc_timestamp(),
         "verdict": verdict,
-        "ready_for_plan": verdict == "ready_for_plan",
+        "ready_for_plan": is_ready,
         "readiness_score": readiness_score,
         "dimension_scores": parsed_dimension_scores,
         "strengths": strengths,
@@ -3659,7 +3679,7 @@ def write_prd_review(
         ],
         metadata={
             "verdict": verdict,
-            "ready_for_plan": verdict == "ready_for_plan",
+            "ready_for_plan": is_ready,
             "readiness_score": readiness_score,
             "strengths_count": len(strengths),
             "findings_count": len(findings),
@@ -3689,9 +3709,9 @@ def write_prd_review(
     result: dict[str, object] = {
         "status": "success",
         "verdict": verdict,
-        "ready_for_plan": verdict == "ready_for_plan",
+        "ready_for_plan": is_ready,
         "readiness_score": readiness_score,
-        "proceed": verdict == "ready_for_plan",
+        "proceed": is_ready,
         "json_path": str(json_path),
         "md_path": str(md_path),
         "manifest_path": manifest_result["path"],
@@ -3728,10 +3748,10 @@ def record_prd_review_decision(
                 f"Must be one of: {sorted(PRD_REVIEW_PLANNING_DECISIONS)}"
             ),
         }
-    if normalized_decision == "proceed_anyway" and not rationale.strip():
+    if not rationale.strip():
         return {
             "status": "error",
-            "message": "proceed_anyway requires a non-empty rationale",
+            "message": f"{normalized_decision} requires a non-empty rationale",
         }
 
     branch_dir = get_branch_dir(branch_name)
@@ -3742,6 +3762,14 @@ def record_prd_review_decision(
         return {
             "status": "error",
             "message": f"PRD review artifact not found: {json_path}",
+        }
+    if payload.get("schema_version") != "2.0":
+        return {
+            "status": "error",
+            "message": (
+                "prd-review.json uses an older schema; re-run write_prd_review "
+                "before recording a planning decision"
+            ),
         }
     if payload.get("verdict") == "ready_for_plan":
         return {
@@ -3757,26 +3785,13 @@ def record_prd_review_decision(
     planning_decision = {
         "decision": normalized_decision,
         "recorded_at": _utc_timestamp(),
-        "rationale": rationale.strip() or "User chose to revise before planning.",
+        "rationale": rationale.strip(),
     }
     payload["planning_decision"] = planning_decision
     _write_json_file(json_path, payload)
-
-    marker = "\n## Planning Decision\n"
-    existing_markdown = md_path.read_text(encoding="utf-8")
-    report_body = existing_markdown.partition(marker)[0].rstrip()
-    decision_label = normalized_decision.replace("_", " ").upper()
-    decision_lines = [
-        report_body,
-        "",
-        "## Planning Decision",
-        "",
-        f"**Decision:** {decision_label}",
-        f"**Rationale:** {planning_decision['rationale']}",
-        f"**Recorded:** {planning_decision['recorded_at']}",
-        "",
-    ]
-    _write_text_file(md_path, "\n".join(decision_lines))
+    # prd-review.md stays a pure function of prd-review.json: re-render the whole
+    # report instead of string-splicing around a heading marker.
+    _write_text_file(md_path, _render_prd_review_markdown(payload))
 
     manifest = load_artifact_manifest(branch_name)
     stages = manifest.get("stages")

@@ -8037,7 +8037,7 @@ class TestDetectAlreadyDone:
         original_run = real_subprocess.run
         call_count: list[int] = [0]
 
-        def _raise_on_first(*args: object, **kwargs: object) -> object:
+        def _raise_on_first(*args: Any, **kwargs: Any) -> Any:
             call_count[0] += 1
             if call_count[0] == 1:
                 raise OSError("git: No such file or directory")
@@ -16889,13 +16889,7 @@ def test_calculate_prd_readiness_score_averages_applicable_dimensions():
         "rollout_operations_observability": None,
         "downstream_usability_traceability": 10,
     }
-    calculator = getattr(
-        map_step_runner,
-        "calculate_prd_readiness_score",
-        lambda _scores: -1.0,
-    )
-
-    assert calculator(scores) == 5.4
+    assert map_step_runner.calculate_prd_readiness_score(scores) == 5.4
 
 
 def test_calculate_prd_readiness_score_requires_the_complete_rubric():
@@ -17361,13 +17355,7 @@ def test_record_prd_review_decision_persists_proceed_anyway_override(
         summary="The PRD has known gaps.",
     )
     assert review["status"] == "success"
-    recorder = getattr(
-        map_step_runner,
-        "record_prd_review_decision",
-        lambda *_args, **_kwargs: {"status": "missing"},
-    )
-
-    result = recorder(
+    result = map_step_runner.record_prd_review_decision(
         "proceed_anyway",
         rationale="User accepted the documented PRD risks for planning.",
     )
@@ -17406,6 +17394,54 @@ def test_record_prd_review_decision_requires_an_existing_review(branch_workspace
     assert result["status"] == "error"
     assert "artifact not found" in result["message"]
     assert not (branch_workspace / "prd-review.json").exists()
+
+
+@pytest.mark.parametrize("decision", ["proceed_anyway", "stop_for_revision"])
+def test_record_prd_review_decision_requires_a_rationale_for_both_choices(
+    branch_workspace, decision
+):
+    """No decision may fabricate a rationale the user never supplied."""
+    review = map_step_runner.write_prd_review(
+        verdict="needs_prd_revision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
+        suggested_revisions_json=json.dumps(["Clarify the rollout plan."]),
+        summary="The PRD has known gaps.",
+    )
+    assert review["status"] == "success"
+
+    result = map_step_runner.record_prd_review_decision(decision, rationale="   ")
+
+    assert result["status"] == "error"
+    assert f"{decision} requires a non-empty rationale" in result["message"]
+    payload = json.loads(
+        (branch_workspace / "prd-review.json").read_text(encoding="utf-8")
+    )
+    assert "planning_decision" not in payload
+
+
+def test_record_prd_review_decision_rejects_a_legacy_schema_artifact(
+    branch_workspace,
+):
+    """A 1.0-era prd-review.json lacks the fields the renderer draws from."""
+    legacy_payload = {
+        "schema_version": "1.0",
+        "branch": "test-branch",
+        "verdict": "needs_prd_revision",
+    }
+    (branch_workspace / "prd-review.json").write_text(
+        json.dumps(legacy_payload), encoding="utf-8"
+    )
+    (branch_workspace / "prd-review.md").write_text(
+        "# PRD / Requirements-Quality Review\n", encoding="utf-8"
+    )
+
+    result = map_step_runner.record_prd_review_decision(
+        "proceed_anyway",
+        rationale="User accepted the documented gaps.",
+    )
+
+    assert result["status"] == "error"
+    assert "older schema" in result["message"]
 
 
 def test_record_prd_review_decision_is_idempotent_across_a_changed_mind(
@@ -17512,6 +17548,7 @@ def test_record_prd_review_decision_requires_markdown_sidecar(branch_workspace):
 
 
 def test_record_prd_review_decision_cli_records_stop_choice(branch_workspace):
+    del branch_workspace  # fixture used for workspace side effect only
     review = map_step_runner.write_prd_review(
         verdict="needs_prd_revision",
         dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),

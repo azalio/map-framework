@@ -84,6 +84,13 @@ description. If accepted, follow that skill with the original input. A non-ready
 must show its readiness score, top strengths, critical/major weaknesses, and
 high-priority uncovered edge cases before asking whether to proceed or revise.
 
+**Existing review short-circuit:** when `.map/<branch>/prd-review.json` already exists
+for the same PRD source (its `prd_source` matches the current input), do NOT re-offer
+the preflight. Surface the recorded verdict, readiness score, and any
+`planning_decision`, then continue according to that decision. Re-offer only when the
+PRD source changed since the recorded review — a stale review must not silently stand
+in for a revised document.
+
 For **continue planning anyway**, persist the explicit user override:
 
 ```bash

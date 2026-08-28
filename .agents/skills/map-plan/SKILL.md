@@ -74,12 +74,16 @@ This reports the existing artifacts (`plan__discovery` or legacy `findings`/`spe
 
 Run this only after Resume Detection returns `no_plan` (or after resolving a
 `goal_mismatch` and re-checking to get `no_plan`). On `resume`, skip the PRD-quality
-preflight and preserve the existing review and `planning_decision`.
+preflight and preserve the existing review and `planning_decision`. If
+`.map/<branch>/prd-review.json` already exists for this same PRD source, do NOT
+re-offer: surface its recorded verdict, score, and any `planning_decision`, and
+continue accordingly (re-offer only if the PRD source changed since that review).
 
 For a fresh plan, decide whether the remaining input is clearly a PRD or requirements
 artifact: for example, an existing Markdown document or substantive pasted text labeled
 `PRD`, `Product Brief`, `Feature Brief`, or `Requirements` that describes a problem,
-scope, and requirements. Do not offer this preflight for an ordinary task description.
+scope, and requirements. Do not offer this preflight for an ordinary task description,
+and never in `--light` mode.
 
 For a clear PRD input, offer once before planning:
 
