@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Prior-stage consumption gate no longer demands `test_contract_*.md` in
+  batch/full-workflow mode.** `build_prior_stage_consumption_report` required the
+  TDD contract unconditionally, while `/map-tdd` explicitly forbids creating it
+  when `$SUBTASK_ID` is empty — every batch-mode run therefore reported a
+  false-positive `blocked` status at implementation/review closeout. The contract
+  is now required only when `mark_contract_ready` actually recorded a handoff in
+  `step_state.json` (`contract_ready_subtasks` non-empty); the report renders the
+  absent-by-design entry as `not-required` instead of `missing`.
+
 ## [3.29.0] - 2026-08-28
 
 ### Added

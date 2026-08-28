@@ -3434,6 +3434,16 @@ def test_build_prior_stage_consumption_report_accepts_complete_inputs(branch_wor
     (branch_workspace / f"task_plan_{branch}.md").write_text("# Plan\n", encoding="utf-8")
     (branch_workspace / "blueprint.json").write_text('{"subtasks":[]}', encoding="utf-8")
     (branch_workspace / "test_contract_ST-001.md").write_text("# Contract\n", encoding="utf-8")
+    (branch_workspace / "step_state.json").write_text(
+        json.dumps(
+            {
+                "contract_ready_subtasks": {
+                    "ST-001": {"contract_path": "test_contract_ST-001.md"}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     code_state = {
         "status": "success",
         "files_changed": ["src/app.py"],
@@ -3447,6 +3457,84 @@ def test_build_prior_stage_consumption_report_accepts_complete_inputs(branch_wor
     assert result["valid"] is True
     assert result["status"] == "ready"
     assert result["summary"] == {"required": 5, "consumed": 5, "missing": 0}
+
+
+def test_build_prior_stage_consumption_report_batch_mode_contract_not_required(
+    branch_workspace,
+):
+    """Batch/full-workflow mode never writes test_contract_*.md by design.
+
+    /map-tdd forbids creating the contract when SUBTASK_ID is empty, so the
+    gate must not demand it unless mark_contract_ready recorded a handoff.
+    """
+    branch = "test-branch"
+    (branch_workspace / f"spec_{branch}.md").write_text("# Spec\n", encoding="utf-8")
+    (branch_workspace / f"task_plan_{branch}.md").write_text("# Plan\n", encoding="utf-8")
+    (branch_workspace / "blueprint.json").write_text('{"subtasks":[]}', encoding="utf-8")
+    (branch_workspace / "step_state.json").write_text(
+        json.dumps({"contract_ready_subtasks": {}}), encoding="utf-8"
+    )
+    code_state = {
+        "status": "success",
+        "files_changed": ["src/app.py"],
+        "diff_stat": "src/app.py | 1 +",
+    }
+
+    result = map_step_runner.build_prior_stage_consumption_report(
+        "implementation", code_state=code_state
+    )
+
+    assert result["valid"] is True
+    assert result["status"] == "ready"
+    assert result["summary"] == {"required": 4, "consumed": 4, "missing": 0}
+    contract_entry = next(
+        item
+        for item in result["required_artifacts"]
+        if item["key"] == "test_contract"
+    )
+    assert contract_entry["required"] is False
+    assert "optional artifact absent" in contract_entry["reason"]
+
+    # Same verdict when step_state.json does not exist at all (e.g. /map-plan
+    # stopped before INIT_STATE): the contract stays not-required.
+    (branch_workspace / "step_state.json").unlink()
+    result = map_step_runner.build_prior_stage_consumption_report(
+        "implementation", code_state=code_state
+    )
+    assert result["valid"] is True
+    assert result["summary"]["required"] == 4
+
+
+def test_build_prior_stage_consumption_report_blocks_when_recorded_contract_missing(
+    branch_workspace,
+):
+    branch = "test-branch"
+    (branch_workspace / f"spec_{branch}.md").write_text("# Spec\n", encoding="utf-8")
+    (branch_workspace / f"task_plan_{branch}.md").write_text("# Plan\n", encoding="utf-8")
+    (branch_workspace / "blueprint.json").write_text('{"subtasks":[]}', encoding="utf-8")
+    (branch_workspace / "step_state.json").write_text(
+        json.dumps(
+            {
+                "contract_ready_subtasks": {
+                    "ST-001": {"contract_path": "test_contract_ST-001.md"}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    code_state = {
+        "status": "success",
+        "files_changed": ["src/app.py"],
+        "diff_stat": "src/app.py | 1 +",
+    }
+
+    result = map_step_runner.build_prior_stage_consumption_report(
+        "implementation", code_state=code_state
+    )
+
+    assert result["valid"] is False
+    assert result["status"] == "blocked"
+    assert any("test_contract_*.md" in err for err in result["errors"])
 
 
 def test_validate_prior_stage_consumption_cli_exits_nonzero_on_missing(tmp_path):
