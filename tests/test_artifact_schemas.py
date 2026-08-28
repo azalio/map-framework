@@ -1,6 +1,7 @@
 """Focused tests for new artifact schemas without importing package extras."""
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -243,6 +244,50 @@ def test_prd_review_schema_rejects_planning_decision_on_ready_review():
     is_valid = MODULE.validate_artifact(artifact, MODULE.PRD_REVIEW_SCHEMA)[0]
 
     assert not is_valid
+
+
+# ---------------------------------------------------------------------------
+# The 13 PRD dimension keys exist in three places: schemas.py, the runner, and
+# the map-prd-review SKILL.md table the agent actually reads. The first two are
+# coupled by _minimal_prd_review() above (it builds dimension_scores from the
+# runner and validates against the schema, which is `required` +
+# additionalProperties:false). The table was coupled to NOTHING -- so renaming a
+# dimension in both Python copies kept the suite green while the prompt went
+# stale, and the drift surfaced only as a runtime rejection in front of a user.
+# See architecture-patterns: Single-Source Schema Dict with Derived Consumer Lists.
+# ---------------------------------------------------------------------------
+
+_PRD_REVIEW_SKILL_PATHS = (
+    Path(".claude/skills/map-prd-review/SKILL.md"),
+    Path(".agents/skills/map-prd-review/SKILL.md"),
+    Path("src/mapify_cli/templates/skills/map-prd-review/SKILL.md"),
+    Path("src/mapify_cli/templates/codex/skills/map-prd-review/SKILL.md"),
+)
+
+
+def test_prd_review_schema_dimensions_match_runner_dimension_enum():
+    """Make the schemas.py <-> runner coupling explicit, not a fixture accident."""
+    schema_dimensions = MODULE.PRD_REVIEW_SCHEMA["properties"]["dimension_scores"][
+        "required"
+    ]
+
+    assert tuple(schema_dimensions) == map_step_runner.PRD_REVIEW_DIMENSIONS
+    assert tuple(MODULE._PRD_REVIEW_DIMENSIONS) == map_step_runner.PRD_REVIEW_DIMENSIONS
+
+
+@pytest.mark.parametrize("skill_path", _PRD_REVIEW_SKILL_PATHS)
+def test_prd_review_skill_table_matches_runner_dimension_enum(skill_path):
+    """The SKILL.md rubric is the agent's only dimension reference -- pin it."""
+    repo_root = Path(__file__).resolve().parents[1]
+    content = (repo_root / skill_path).read_text(encoding="utf-8")
+    table = content.split("## 13 Dimensions", 1)[1].split("\n##", 1)[0]
+    documented = tuple(re.findall(r"^\| `([a-z_]+)` \|", table, re.MULTILINE))
+
+    assert documented == map_step_runner.PRD_REVIEW_DIMENSIONS, (
+        f"{skill_path}: the 13 Dimensions table drifted from "
+        f"PRD_REVIEW_DIMENSIONS: "
+        f"{sorted(set(documented) ^ set(map_step_runner.PRD_REVIEW_DIMENSIONS))}"
+    )
 
 
 def _minimal_blueprint_with_requiredness() -> dict:

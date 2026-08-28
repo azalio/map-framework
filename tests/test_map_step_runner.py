@@ -17082,6 +17082,93 @@ def test_write_prd_review_rejects_ready_verdict_below_threshold(
     assert not (branch_workspace / "prd-review.json").exists()
 
 
+@pytest.mark.parametrize(
+    ("scores", "exact_mean"),
+    [
+        ([8.0] * 11 + [7.6, 7.85], "7.9577"),
+        ([8.0] * 12 + [7.4], "7.9538"),
+    ],
+)
+def test_write_prd_review_rejects_ready_verdict_that_only_rounds_up_to_eight(
+    branch_workspace, scores, exact_mean
+):
+    """A mean in [7.95, 8.0) displays as 8.0 -- the gate must see the exact value.
+
+    The uniform-7.9 case above cannot catch this: every dimension has to be equal
+    for it, so it never lands inside the rounding band. Only a mixed set does.
+    """
+    dimension_scores = dict(
+        zip(map_step_runner.PRD_REVIEW_DIMENSIONS, scores, strict=True)
+    )
+    assert map_step_runner.calculate_prd_readiness_score(dimension_scores) == 8.0
+
+    result = map_step_runner.write_prd_review(
+        verdict="ready_for_plan",
+        dimension_scores_json=json.dumps(dimension_scores),
+        summary="The displayed score rounds up but the rubric mean is below 8.0.",
+    )
+
+    assert result["status"] == "error"
+    assert exact_mean in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+def test_calculate_prd_readiness_score_exact_is_unrounded():
+    dimension_scores = dict(
+        zip(
+            map_step_runner.PRD_REVIEW_DIMENSIONS,
+            [8.0] * 11 + [7.6, 7.85],
+            strict=True,
+        )
+    )
+
+    exact = map_step_runner.calculate_prd_readiness_score_exact(dimension_scores)
+
+    assert exact < 8.0
+    assert round(exact, 1) == map_step_runner.calculate_prd_readiness_score(
+        dimension_scores
+    )
+
+
+def test_calculate_prd_readiness_score_requires_one_applicable_dimension():
+    all_null = {
+        dimension: None for dimension in map_step_runner.PRD_REVIEW_DIMENSIONS
+    }
+
+    with pytest.raises(ValueError, match="at least one PRD review dimension"):
+        map_step_runner.calculate_prd_readiness_score(all_null)
+
+
+def test_write_prd_review_rejects_an_entirely_inapplicable_rubric(branch_workspace):
+    result = map_step_runner.write_prd_review(
+        verdict="needs_prd_revision",
+        dimension_scores_json=json.dumps(
+            {dimension: None for dimension in map_step_runner.PRD_REVIEW_DIMENSIONS}
+        ),
+        suggested_revisions_json=json.dumps(["Describe the product."]),
+        summary="Every dimension was marked inapplicable.",
+    )
+
+    assert result["status"] == "error"
+    assert "at least one PRD review dimension" in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+def test_write_prd_review_names_the_flag_when_dimension_scores_are_omitted(
+    branch_workspace,
+):
+    """An omitted flag is a caller error: answer with the flag, not a constant."""
+    result = map_step_runner.write_prd_review(
+        verdict="ready_for_plan",
+        summary="No rubric was supplied.",
+    )
+
+    assert result["status"] == "error"
+    assert "--dimension-scores" in result["message"]
+    assert "0 to 10" in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
 def test_write_prd_review_rejects_ready_verdict_with_blocking_findings(
     branch_workspace,
 ):
@@ -17307,6 +17394,89 @@ def test_record_prd_review_decision_persists_proceed_anyway_override(
         manifest["stages"]["prd_review"]["metadata"]["planning_decision"]
         == "proceed_anyway"
     )
+
+
+def test_record_prd_review_decision_requires_an_existing_review(branch_workspace):
+    """Calling the recorder before any review exists must not fabricate one."""
+    result = map_step_runner.record_prd_review_decision(
+        "proceed_anyway",
+        rationale="There is nothing to override yet.",
+    )
+
+    assert result["status"] == "error"
+    assert "artifact not found" in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+def test_record_prd_review_decision_is_idempotent_across_a_changed_mind(
+    branch_workspace,
+):
+    """Re-recording replaces the section instead of stacking duplicates."""
+    review = map_step_runner.write_prd_review(
+        verdict="needs_prd_revision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
+        suggested_revisions_json=json.dumps(["Clarify the rollout plan."]),
+        summary="The PRD has known gaps.",
+    )
+    assert review["status"] == "success"
+
+    map_step_runner.record_prd_review_decision(
+        "proceed_anyway", rationale="First choice: accept the gaps."
+    )
+    second = map_step_runner.record_prd_review_decision(
+        "stop_for_revision", rationale="Changed mind: revise the PRD first."
+    )
+
+    assert second["status"] == "success"
+    markdown = (branch_workspace / "prd-review.md").read_text(encoding="utf-8")
+    assert markdown.count("## Planning Decision") == 1
+    assert "STOP FOR REVISION" in markdown
+    assert "PROCEED ANYWAY" not in markdown
+    assert "## Suggested Revisions" in markdown, "the report body must survive"
+
+    payload = json.loads(
+        (branch_workspace / "prd-review.json").read_text(encoding="utf-8")
+    )
+    assert payload["planning_decision"]["decision"] == "stop_for_revision"
+    is_valid, errors = auto_route_schemas_module.validate_artifact(
+        payload,
+        auto_route_schemas_module.PRD_REVIEW_SCHEMA,
+    )
+    assert is_valid, f"Re-recorded decision produced a schema-invalid review: {errors}"
+
+
+def test_record_prd_review_decision_stop_choice_updates_the_manifest(
+    branch_workspace,
+):
+    review = map_step_runner.write_prd_review(
+        verdict="needs_user_decision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
+        blocking_questions_json=json.dumps(
+            [
+                {
+                    "question": "Who may approve another user's request?",
+                    "category": "security_trust_compliance",
+                }
+            ]
+        ),
+        summary="A product decision is unresolved.",
+    )
+    assert review["status"] == "success"
+
+    result = map_step_runner.record_prd_review_decision(
+        "stop_for_revision", rationale="Resolve the approval model first."
+    )
+
+    assert result["status"] == "success"
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    stage = manifest["stages"]["prd_review"]
+    assert stage["metadata"]["planning_decision"] == "stop_for_revision"
+    # The stage status records that the artifact was produced; the verdict and the
+    # planning decision live in metadata (same convention as
+    # write_implementer_readiness_review).
+    assert stage["status"] == "ready"
+    assert stage["metadata"]["verdict"] == "needs_user_decision"
+    assert stage["metadata"]["ready_for_plan"] is False
 
 
 def test_record_prd_review_decision_requires_markdown_sidecar(branch_workspace):

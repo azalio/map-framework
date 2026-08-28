@@ -90,7 +90,7 @@ Per-artifact resume rules (only when `verdict` is `resume`):
 
 Run only after Resume Detection returns `no_plan` (including after a resolved
 `goal_mismatch`). On `resume`, skip the PRD-quality preflight and preserve its existing
-review and `planning_decision`. For clear PRD/requirements input, offer once:
+review and `planning_decision`. Offer once ONLY for a document or substantive pasted text labeled PRD/Product Brief/Feature Brief/Requirements that states a problem, scope, and requirements — never for an ordinary task description and never in `--light` mode:
 
 > This looks like a PRD. Assess its readiness before planning? (optional)
 

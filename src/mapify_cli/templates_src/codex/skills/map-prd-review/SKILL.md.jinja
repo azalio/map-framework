@@ -39,6 +39,17 @@ Every review must contain:
 Persist the result to `.map/<branch>/prd-review.json` and
 `.map/<branch>/prd-review.md` through the runner. Do not merely print a review.
 
+## Effort and Parallelism Policy
+
+```yaml
+thinking_policy: low/direct
+parallel_tool_policy: sequential_by_default
+```
+
+- Run a single focused review; do not spawn sub-reviewers unless the PRD is
+  multi-component.
+- Do not write code, start planning, or modify files outside `.map/<branch>/`.
+
 ## 13 Dimensions
 
 Score every dimension from 0 to 10, or use JSON `null` only when genuinely
@@ -108,12 +119,12 @@ conditional rather than presenting the assumption as settled.
 
 ## Verdict Rules
 
-| Verdict | Condition |
-|---------|-----------|
-| `ready_for_plan` | Score is at least 8.0, with no critical/major findings and no unresolved blocking decision. |
-| `needs_user_decision` | A human must choose among materially different product, policy, design, or risk options. Include a blocking question. |
-| `needs_prd_revision` | The direction is reviewable, but fixable gaps or score below 8.0 make it not ready. |
-| `route_to_wayfind` | The input is too diffuse to identify a coherent feature and review it as a PRD. |
+| Verdict | Condition | Next step to report |
+|---------|-----------|---------------------|
+| `ready_for_plan` | Score is at least 8.0, with no critical/major findings and no unresolved blocking decision. | Run `$map-plan`. |
+| `needs_user_decision` | A human must choose among materially different product, policy, design, or risk options. Include a blocking question. | Answer the blocking questions, then re-run `$map-prd-review`. |
+| `needs_prd_revision` | The direction is reviewable, but fixable gaps or score below 8.0 make it not ready. | Apply the suggested revisions, then re-run `$map-prd-review`. |
+| `route_to_wayfind` | The input is too diffuse to identify a coherent feature and review it as a PRD. | Run `$map-wayfind` first, then return to `$map-plan`. |
 
 Precedence is `route_to_wayfind`, `needs_user_decision`, `needs_prd_revision`, then
 `ready_for_plan`. A high score never overrides a critical or major finding.
@@ -134,7 +145,8 @@ blocking question, uncovered edge case, suggested revision, or route recommendat
 4. Record severity-ranked weaknesses/risks, questions, and revisions.
 5. Derive and prioritize uncovered edge cases.
 6. Apply the verdict rules.
-7. Persist the review and report score, verdict, and artifact paths.
+7. Persist the review, then report the score, verdict, artifact paths, and
+   the verdict's next step from the table above.
 
 Supply all 13 dimension keys exactly once:
 
