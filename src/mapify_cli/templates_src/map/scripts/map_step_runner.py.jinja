@@ -1974,7 +1974,15 @@ def _prior_stage_glob_entry(
         "present": present,
         "consumed": present,
         "count": len(paths),
-        "reason": "" if present else f"missing required artifact matching: {branch_dir / pattern}",
+        "reason": (
+            ""
+            if present
+            else (
+                f"missing required artifact matching: {branch_dir / pattern}"
+                if required
+                else f"optional artifact absent: {branch_dir / pattern}"
+            )
+        ),
     }
 
 
@@ -2031,6 +2039,16 @@ def build_prior_stage_consumption_report(
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
     current_code_state = code_state or snapshot_code_state(branch_name)
+    # test_contract_*.md exists only when /map-tdd ran in single-subtask mode:
+    # mark_contract_ready records the contract+handoff pair in step_state.json's
+    # contract_ready_subtasks. In batch/full-workflow mode the skill forbids
+    # creating the contract, so requiring it unconditionally false-blocks every
+    # batch run. Require it only when a contract handoff was actually recorded.
+    step_state = _read_json_file(branch_dir / "step_state.json")
+    contract_ready_subtasks = (
+        step_state.get("contract_ready_subtasks") if isinstance(step_state, dict) else None
+    )
+    contract_required = bool(contract_ready_subtasks)
     required_artifacts = [
         _prior_stage_file_entry(
             "spec", "specification", branch_dir / f"spec_{branch_name}.md"
@@ -2040,7 +2058,11 @@ def build_prior_stage_consumption_report(
         ),
         _prior_stage_file_entry("blueprint", "blueprint", branch_dir / "blueprint.json"),
         _prior_stage_glob_entry(
-            "test_contract", "test contract", branch_dir, "test_contract_*.md"
+            "test_contract",
+            "test contract",
+            branch_dir,
+            "test_contract_*.md",
+            required=contract_required,
         ),
         _prior_stage_diff_entry(current_code_state),
     ]
@@ -2093,7 +2115,12 @@ def _render_prior_stage_consumption_markdown(report: Mapping[str, object]) -> st
     for item in required_artifacts if isinstance(required_artifacts, list) else []:
         if not isinstance(item, Mapping):
             continue
-        status = "consumed" if item.get("consumed") else "missing"
+        if item.get("consumed"):
+            status = "consumed"
+        elif item.get("required"):
+            status = "missing"
+        else:
+            status = "not-required"
         label = item.get("label") or item.get("key") or "artifact"
         path = item.get("path") or ""
         count = item.get("count", 0)
