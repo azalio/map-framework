@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.1] - 2026-08-29
+
 ### Fixed
 - **Prior-stage consumption gate no longer demands `test_contract_*.md` in
   batch/full-workflow mode.** `build_prior_stage_consumption_report` required the
