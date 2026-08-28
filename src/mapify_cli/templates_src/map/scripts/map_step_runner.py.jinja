@@ -32,6 +32,7 @@ import ast
 import fnmatch
 import hashlib
 import json
+import math
 import os
 import random
 import re
@@ -602,6 +603,16 @@ PATH_HINT_RE = re.compile(
 TOKEN_RE = re.compile(r"[a-z0-9]{4,}")
 
 
+def _cli_flag(name: str, default: str = "") -> str:
+    """Return the value following ``--name`` in ``sys.argv``, else ``default``."""
+    flag = f"--{name}"
+    if flag in sys.argv:
+        idx = sys.argv.index(flag)
+        if idx + 1 < len(sys.argv):
+            return sys.argv[idx + 1]
+    return default
+
+
 def _utc_timestamp() -> str:
     """Return an unambiguous RFC3339 UTC timestamp."""
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -624,6 +635,49 @@ def _shorten_retry_text(text: str, max_chars: int = 1_200) -> str:
 
 def _is_non_negative_int(value: object) -> bool:
     return type(value) is int and value >= 0
+
+
+def _parse_json_array(
+    raw_json: str, field_name: str
+) -> tuple[list[Any], dict[str, object] | None]:
+    """Parse a CLI JSON-array argument; return (items, None) or ([], error dict)."""
+    try:
+        parsed = json.loads(raw_json or "[]")
+    except json.JSONDecodeError as exc:
+        return [], {"status": "error", "message": f"Invalid {field_name} JSON: {exc}"}
+    if not isinstance(parsed, list):
+        return [], {"status": "error", "message": f"{field_name} must be a JSON array"}
+    return parsed, None
+
+
+def _validate_exact_string_fields(
+    item: object, index: int, field_name: str, required_keys: set[str]
+) -> tuple[dict[str, str] | None, dict[str, object] | None]:
+    """Validate one list item: an object with exactly required_keys, all non-empty strings.
+
+    Returns (stripped item, None) on success or (None, CLI error dict).
+    """
+    if not isinstance(item, dict):
+        return None, {
+            "status": "error",
+            "message": f"{field_name}[{index}] must be an object",
+        }
+    if set(item) != required_keys:
+        return None, {
+            "status": "error",
+            "message": (
+                f"{field_name}[{index}] fields must be exactly {sorted(required_keys)}"
+            ),
+        }
+    if any(
+        not isinstance(item[key], str) or not item[key].strip()
+        for key in required_keys
+    ):
+        return None, {
+            "status": "error",
+            "message": f"{field_name}[{index}] fields must be non-empty strings",
+        }
+    return {key: item[key].strip() for key in sorted(required_keys)}, None
 
 
 def _write_json_file(path: Path, payload: dict | list) -> None:
@@ -2856,19 +2910,16 @@ def write_implementer_readiness_review(
             ),
         }
 
-    try:
-        parsed_blocking_questions = json.loads(blocking_questions_json or "[]")
-    except json.JSONDecodeError as exc:
-        return {"status": "error", "message": f"Invalid blocking_questions JSON: {exc}"}
-    if not isinstance(parsed_blocking_questions, list):
-        return {"status": "error", "message": "blocking_questions must be a JSON array"}
-
-    try:
-        parsed_non_blocking_risks = json.loads(non_blocking_risks_json or "[]")
-    except json.JSONDecodeError as exc:
-        return {"status": "error", "message": f"Invalid non_blocking_risks JSON: {exc}"}
-    if not isinstance(parsed_non_blocking_risks, list):
-        return {"status": "error", "message": "non_blocking_risks must be a JSON array"}
+    parsed_blocking_questions, parse_error = _parse_json_array(
+        blocking_questions_json, "blocking_questions"
+    )
+    if parse_error is not None:
+        return parse_error
+    parsed_non_blocking_risks, parse_error = _parse_json_array(
+        non_blocking_risks_json, "non_blocking_risks"
+    )
+    if parse_error is not None:
+        return parse_error
 
     # Validate question structure
     blocking_questions: list[dict[str, str]] = []
@@ -3053,11 +3104,215 @@ PRD_REVIEW_VERDICTS = frozenset(
     {"ready_for_plan", "needs_prd_revision", "needs_user_decision", "route_to_wayfind"}
 )
 PRD_REVIEW_FINDING_SEVERITIES = frozenset({"critical", "major", "minor", "info"})
+PRD_REVIEW_EDGE_PRIORITIES = frozenset({"high", "medium", "low"})
+PRD_REVIEW_DIMENSIONS = (
+    "problem_user_value",
+    "outcomes_success_metrics",
+    "scope_priorities_non_goals",
+    "requirements_clarity_consistency",
+    "acceptance_criteria_testability",
+    "non_functional_requirements",
+    "interaction_failure_states_accessibility",
+    "data_lifecycle_privacy",
+    "security_trust_compliance",
+    "dependencies_feasibility_risks",
+    "edge_cases_recovery",
+    "rollout_operations_observability",
+    "downstream_usability_traceability",
+)
+
+
+def _prd_applicable_dimension_scores(
+    dimension_scores: Mapping[str, object],
+) -> list[float]:
+    """Validate the rubric and return its applicable (non-null) scores."""
+    expected_dimensions = set(PRD_REVIEW_DIMENSIONS)
+    actual_dimensions = set(dimension_scores)
+    if actual_dimensions != expected_dimensions:
+        missing = sorted(expected_dimensions - actual_dimensions)
+        unsupported = sorted(actual_dimensions - expected_dimensions)
+        raise ValueError(
+            "dimension keys must exactly match PRD_REVIEW_DIMENSIONS; "
+            f"missing={missing}, unsupported={unsupported}"
+        )
+    applicable_scores: list[float] = []
+    for dimension, score in dimension_scores.items():
+        if score is None:
+            continue
+        if (
+            isinstance(score, bool)
+            or not isinstance(score, (int, float))
+            or not math.isfinite(float(score))
+            or not 0 <= float(score) <= 10
+        ):
+            raise ValueError(
+                f"dimension score {dimension!r} must be a finite number "
+                "from 0 to 10 or null"
+            )
+        applicable_scores.append(float(score))
+    if not applicable_scores:
+        raise ValueError("at least one PRD review dimension must be applicable")
+    return applicable_scores
+
+
+def calculate_prd_readiness_score_exact(
+    dimension_scores: Mapping[str, object],
+) -> float:
+    """Return the UNROUNDED 0-10 mean of applicable PRD-dimension scores.
+
+    Every threshold comparison must use this value. Rounding first would let a
+    mean of 7.96 display as 8.0 and clear a ">= 8.0" gate, silently admitting a
+    PRD the rubric rejects -- apply the threshold before any presentation step.
+    """
+    applicable_scores = _prd_applicable_dimension_scores(dimension_scores)
+    return sum(applicable_scores) / len(applicable_scores)
+
+
+def calculate_prd_readiness_score(
+    dimension_scores: Mapping[str, object],
+) -> float:
+    """Return the display 0-10 mean of applicable PRD-dimension scores.
+
+    Rounded to one decimal for reports and the persisted artifact. Never compare
+    this against a threshold -- use ``calculate_prd_readiness_score_exact``.
+    """
+    return round(calculate_prd_readiness_score_exact(dimension_scores), 1)
+
+
+def _render_prd_review_markdown(payload: Mapping[str, Any]) -> str:
+    """Render the human-readable PRD review report from its JSON payload.
+
+    A pure ``payload -> str`` step, mirroring the module's other
+    ``_render_*_markdown`` helpers: the report can be exercised from a literal
+    payload, with no branch workspace, validation gauntlet or file write.
+    """
+    verdict = str(payload["verdict"])
+    readiness_score = float(payload["readiness_score"])
+    dimension_scores: Mapping[str, Any] = payload["dimension_scores"]
+    strengths: list[dict[str, str]] = list(payload["strengths"])
+    findings: list[dict[str, str]] = list(payload["findings"])
+    uncovered_edge_cases: list[dict[str, str]] = list(payload["uncovered_edge_cases"])
+    blocking_questions: list[dict[str, str]] = list(payload["blocking_questions"])
+    suggested_revisions: list[str] = list(payload["suggested_revisions"])
+    prd_source = str(payload.get("prd_source") or "")
+    route_recommendation = str(payload.get("route_recommendation") or "")
+
+    verdict_label = {
+        "ready_for_plan": "READY FOR PLAN",
+        "needs_prd_revision": "NEEDS PRD REVISION",
+        "needs_user_decision": "NEEDS USER DECISION",
+        "route_to_wayfind": "ROUTE TO WAYFIND",
+    }.get(verdict, verdict.upper())
+
+    md_lines = [
+        "# PRD / Requirements-Quality Review",
+        "",
+        f"**Verdict:** {verdict_label}",
+        f"**Readiness Score:** {readiness_score:.1f}/10",
+        f"**Branch:** `{payload['branch']}`",
+        f"**Generated:** {payload['generated_at']}",
+    ]
+    if prd_source:
+        md_lines.append(f"**PRD Source:** `{prd_source}`")
+    md_lines += ["", "## Summary", "", str(payload["summary"]), ""]
+
+    md_lines += [
+        "## Dimension Scores",
+        "",
+        "| Dimension | Score |",
+        "|-----------|------:|",
+    ]
+    for dimension in PRD_REVIEW_DIMENSIONS:
+        dimension_score = dimension_scores[dimension]
+        score_label = (
+            "N/A"
+            if dimension_score is None
+            else f"{float(dimension_score):.1f}"
+        )
+        md_lines.append(f"| `{dimension}` | {score_label} |")
+    md_lines.append("")
+
+    md_lines += ["## Strengths", ""]
+    if strengths:
+        for strength in strengths:
+            md_lines.append(
+                f"- **`{strength['dimension']}`:** {strength['description']}"
+            )
+            md_lines.append(f"  - *Evidence:* {strength['evidence']}")
+    else:
+        md_lines.append("- No evidence-backed strengths were identified.")
+    md_lines.append("")
+
+    md_lines += ["## Weaknesses / Risks (Findings)", ""]
+    if findings:
+        for finding in findings:
+            sev = finding["severity"].upper()
+            dim = finding["dimension"]
+            desc = finding["description"]
+            md_lines.append(f"- **[{sev}]** `{dim}`: {desc}")
+            if "suggested_revision" in finding:
+                md_lines.append(f"  - *Suggested:* {finding['suggested_revision']}")
+    else:
+        md_lines.append("- No weaknesses or risks were identified.")
+    md_lines.append("")
+
+    md_lines += ["## Uncovered Edge Cases", ""]
+    if uncovered_edge_cases:
+        for edge_case in uncovered_edge_cases:
+            md_lines.append(
+                f"- **[{edge_case['priority'].upper()}]** "
+                f"`{edge_case['category']}` — {edge_case['scenario']}"
+            )
+            md_lines.append(f"  - *Impact:* {edge_case['impact']}")
+            md_lines.append(
+                f"  - *Suggested handling:* {edge_case['suggested_handling']}"
+            )
+    else:
+        md_lines.append("- No uncovered edge cases were identified.")
+    md_lines.append("")
+
+    if blocking_questions:
+        md_lines += ["## Blocking Questions", ""]
+        for i, q in enumerate(blocking_questions, 1):
+            cat = q.get("category", "unspecified")
+            md_lines.append(f"{i}. **[{cat}]** {q['question']}")
+        md_lines.append("")
+
+    if suggested_revisions:
+        md_lines += ["## Suggested Revisions", ""]
+        for rev in suggested_revisions:
+            md_lines.append(f"- {rev}")
+        md_lines.append("")
+
+    if route_recommendation:
+        md_lines += [
+            "## Route Recommendation",
+            "",
+            route_recommendation,
+            "",
+        ]
+
+    planning_decision = payload.get("planning_decision")
+    if isinstance(planning_decision, Mapping):
+        decision_label = str(planning_decision["decision"]).replace("_", " ").upper()
+        md_lines += [
+            "## Planning Decision",
+            "",
+            f"**Decision:** {decision_label}",
+            f"**Rationale:** {planning_decision['rationale']}",
+            f"**Recorded:** {planning_decision['recorded_at']}",
+            "",
+        ]
+
+    return "\n".join(md_lines)
 
 
 def write_prd_review(
     verdict: str,
+    dimension_scores_json: str = "",
+    strengths_json: str = "[]",
     findings_json: str = "[]",
+    uncovered_edge_cases_json: str = "[]",
     blocking_questions_json: str = "[]",
     suggested_revisions_json: str = "[]",
     route_recommendation: str = "",
@@ -3078,7 +3333,24 @@ def write_prd_review(
       route_to_wayfind    — input is too foggy; use /map-wayfind instead
     """
     branch_name = branch or get_branch_name()
-    verdict = (verdict or "").strip().lower()
+    if not isinstance(verdict, str):
+        return {"status": "error", "message": "verdict must be a string"}
+    verdict = verdict.strip().lower()
+
+    text_fields = {
+        "route_recommendation": route_recommendation,
+        "summary": summary,
+        "prd_source": prd_source,
+    }
+    for field_name, field_value in text_fields.items():
+        if not isinstance(field_value, str):
+            return {
+                "status": "error",
+                "message": f"{field_name} must be a string",
+            }
+    route_recommendation = route_recommendation.strip()
+    normalized_summary = summary.strip() or "No summary provided."
+    prd_source = prd_source.strip()
 
     if verdict not in PRD_REVIEW_VERDICTS:
         return {
@@ -3088,27 +3360,120 @@ def write_prd_review(
                 f"Must be one of: {sorted(PRD_REVIEW_VERDICTS)}"
             ),
         }
+    is_ready = verdict == "ready_for_plan"
 
+    # An omitted --dimension-scores is a caller error, not a malformed rubric:
+    # answer it by naming the flag and its value contract, not by listing 13 bare
+    # keys under an internal constant name the caller cannot act on.
+    if (dimension_scores_json or "").strip() in ("", "{}"):
+        return {
+            "status": "error",
+            "message": (
+                "--dimension-scores is required. Pass a JSON object carrying all "
+                "13 PRD dimension keys, each set to a number from 0 to 10, or to "
+                "null when the dimension does not apply to this product. "
+                f"Required keys: {list(PRD_REVIEW_DIMENSIONS)}"
+            ),
+        }
     try:
-        parsed_findings = json.loads(findings_json or "[]")
+        parsed_dimension_scores = json.loads(dimension_scores_json)
     except json.JSONDecodeError as exc:
-        return {"status": "error", "message": f"Invalid findings JSON: {exc}"}
-    if not isinstance(parsed_findings, list):
-        return {"status": "error", "message": "findings must be a JSON array"}
+        return {"status": "error", "message": f"Invalid dimension_scores JSON: {exc}"}
+    if not isinstance(parsed_dimension_scores, dict):
+        return {"status": "error", "message": "dimension_scores must be a JSON object"}
+    try:
+        exact_readiness_score = calculate_prd_readiness_score_exact(
+            parsed_dimension_scores
+        )
+    except ValueError as exc:
+        return {"status": "error", "message": f"Invalid dimension_scores: {exc}"}
+    readiness_score = round(exact_readiness_score, 1)
+    # Gate on the exact mean. Gating on `readiness_score` would admit every mean
+    # in [7.95, 8.0) because it rounds up to a displayed 8.0.
+    if is_ready and exact_readiness_score < 8.0:
+        return {
+            "status": "error",
+            "message": (
+                "ready_for_plan requires readiness_score >= 8.0; the mean of the "
+                f"applicable dimensions is {exact_readiness_score:.4f} "
+                f"(displays as {readiness_score:.1f})"
+            ),
+        }
 
-    try:
-        parsed_blocking_questions = json.loads(blocking_questions_json or "[]")
-    except json.JSONDecodeError as exc:
-        return {"status": "error", "message": f"Invalid blocking_questions JSON: {exc}"}
-    if not isinstance(parsed_blocking_questions, list):
-        return {"status": "error", "message": "blocking_questions must be a JSON array"}
+    parsed_strengths, parse_error = _parse_json_array(strengths_json, "strengths")
+    if parse_error is not None:
+        return parse_error
+    strengths: list[dict[str, str]] = []
+    strength_keys = {"dimension", "description", "evidence"}
+    for i, strength in enumerate(parsed_strengths):
+        normalized_strength, item_error = _validate_exact_string_fields(
+            strength, i, "strengths", strength_keys
+        )
+        if normalized_strength is None:
+            return item_error if item_error is not None else {
+                "status": "error",
+                "message": f"strengths[{i}] is invalid",
+            }
+        dimension = normalized_strength["dimension"]
+        if dimension not in PRD_REVIEW_DIMENSIONS:
+            return {
+                "status": "error",
+                "message": (
+                    f"strengths[{i}].dimension={dimension!r} is not valid. "
+                    f"Must be one of: {sorted(PRD_REVIEW_DIMENSIONS)}"
+                ),
+            }
+        strengths.append(normalized_strength)
 
-    try:
-        parsed_suggested_revisions = json.loads(suggested_revisions_json or "[]")
-    except json.JSONDecodeError as exc:
-        return {"status": "error", "message": f"Invalid suggested_revisions JSON: {exc}"}
-    if not isinstance(parsed_suggested_revisions, list):
-        return {"status": "error", "message": "suggested_revisions must be a JSON array"}
+    parsed_findings, parse_error = _parse_json_array(findings_json, "findings")
+    if parse_error is not None:
+        return parse_error
+
+    parsed_uncovered_edge_cases, parse_error = _parse_json_array(
+        uncovered_edge_cases_json, "uncovered_edge_cases"
+    )
+    if parse_error is not None:
+        return parse_error
+    uncovered_edge_cases: list[dict[str, str]] = []
+    edge_case_keys = {
+        "category",
+        "scenario",
+        "impact",
+        "priority",
+        "suggested_handling",
+    }
+    for i, edge_case in enumerate(parsed_uncovered_edge_cases):
+        normalized_edge_case, item_error = _validate_exact_string_fields(
+            edge_case, i, "uncovered_edge_cases", edge_case_keys
+        )
+        if normalized_edge_case is None:
+            return item_error if item_error is not None else {
+                "status": "error",
+                "message": f"uncovered_edge_cases[{i}] is invalid",
+            }
+        priority = normalized_edge_case["priority"].lower()
+        if priority not in PRD_REVIEW_EDGE_PRIORITIES:
+            return {
+                "status": "error",
+                "message": (
+                    f"uncovered_edge_cases[{i}].priority={priority!r} is not valid. "
+                    f"Must be one of: {sorted(PRD_REVIEW_EDGE_PRIORITIES)}"
+                ),
+            }
+        normalized_edge_case["priority"] = priority
+        uncovered_edge_cases.append(normalized_edge_case)
+
+    parsed_blocking_questions, parse_error = _parse_json_array(
+        blocking_questions_json, "blocking_questions"
+    )
+    if parse_error is not None:
+        return parse_error
+
+    parsed_suggested_revisions, parse_error = _parse_json_array(
+        suggested_revisions_json, "suggested_revisions"
+    )
+    if parse_error is not None:
+        return parse_error
 
     # Validate findings structure
     allowed_finding_keys = {"dimension", "severity", "description", "suggested_revision"}
@@ -3128,7 +3493,28 @@ def write_prd_review(
                     "status": "error",
                     "message": f"findings[{i}] missing required field {req_field!r}",
                 }
+        dimension = f["dimension"]
+        if not isinstance(dimension, str) or not dimension.strip():
+            return {
+                "status": "error",
+                "message": f"findings[{i}].dimension must be a non-empty string",
+            }
+        dimension = dimension.strip()
+        if dimension not in PRD_REVIEW_DIMENSIONS:
+            return {
+                "status": "error",
+                "message": (
+                    f"findings[{i}].dimension={dimension!r} is not valid. "
+                    f"Must be one of: {sorted(PRD_REVIEW_DIMENSIONS)}"
+                ),
+            }
         severity = f["severity"]
+        if not isinstance(severity, str) or not severity.strip():
+            return {
+                "status": "error",
+                "message": f"findings[{i}].severity must be a non-empty string",
+            }
+        severity = severity.strip().lower()
         if severity not in PRD_REVIEW_FINDING_SEVERITIES:
             return {
                 "status": "error",
@@ -3137,20 +3523,37 @@ def write_prd_review(
                     f"Must be one of: {sorted(PRD_REVIEW_FINDING_SEVERITIES)}"
                 ),
             }
+        description = f["description"]
+        if not isinstance(description, str) or not description.strip():
+            return {
+                "status": "error",
+                "message": f"findings[{i}].description must be a non-empty string",
+            }
         normalized_finding: dict[str, str] = {
-            "dimension": f["dimension"],
+            "dimension": dimension,
             "severity": severity,
-            "description": f["description"],
+            "description": description.strip(),
         }
         if "suggested_revision" in f:
             suggested = f["suggested_revision"]
-            if not isinstance(suggested, str):
+            if not isinstance(suggested, str) or not suggested.strip():
                 return {
                     "status": "error",
-                    "message": f"findings[{i}].suggested_revision must be a string",
+                    "message": (
+                        f"findings[{i}].suggested_revision must be a non-empty string"
+                    ),
                 }
-            normalized_finding["suggested_revision"] = suggested
+            normalized_finding["suggested_revision"] = suggested.strip()
         findings.append(normalized_finding)
+
+    if is_ready and any(
+        finding["severity"] in {"critical", "major"}
+        for finding in findings
+    ):
+        return {
+            "status": "error",
+            "message": "ready_for_plan cannot include critical or major findings",
+        }
 
     # Validate blocking questions structure
     allowed_bq_keys = {"question", "category"}
@@ -3172,17 +3575,36 @@ def write_prd_review(
                     "status": "error",
                     "message": f"blocking_questions[{i}] missing required field {req_field!r}",
                 }
-        blocking_questions.append({"question": q["question"], "category": q["category"]})
+            value = q[req_field]
+            if not isinstance(value, str) or not value.strip():
+                return {
+                    "status": "error",
+                    "message": (
+                        f"blocking_questions[{i}].{req_field} must be a non-empty string"
+                    ),
+                }
+        category = q["category"].strip()
+        if category not in PRD_REVIEW_DIMENSIONS:
+            return {
+                "status": "error",
+                "message": (
+                    f"blocking_questions[{i}].category={category!r} is not valid. "
+                    f"Must be one of: {sorted(PRD_REVIEW_DIMENSIONS)}"
+                ),
+            }
+        blocking_questions.append(
+            {"question": q["question"].strip(), "category": category}
+        )
 
     # Validate suggested revisions
     suggested_revisions: list[str] = []
     for i, rev in enumerate(parsed_suggested_revisions):
-        if not isinstance(rev, str):
+        if not isinstance(rev, str) or not rev.strip():
             return {
                 "status": "error",
-                "message": f"suggested_revisions[{i}] must be a string",
+                "message": f"suggested_revisions[{i}] must be a non-empty string",
             }
-        suggested_revisions.append(rev)
+        suggested_revisions.append(rev.strip())
 
     if verdict == "needs_user_decision" and not blocking_questions:
         return {
@@ -3193,81 +3615,58 @@ def write_prd_review(
                 "must be answered before planning can proceed."
             ),
         }
+    if is_ready and blocking_questions:
+        return {
+            "status": "error",
+            "message": "ready_for_plan cannot include unresolved blocking questions",
+        }
+
+    carryable_gap_count = (
+        len(findings)
+        + len(uncovered_edge_cases)
+        + len(blocking_questions)
+        + len(suggested_revisions)
+        + (1 if route_recommendation else 0)
+    )
+    if not is_ready and carryable_gap_count == 0:
+        return {
+            "status": "error",
+            "message": (
+                "A non-ready PRD review requires at least one carryable gap: a "
+                "finding, blocking question, uncovered edge case, suggested revision, "
+                "or route recommendation."
+            ),
+        }
 
     branch_dir = get_branch_dir(branch_name)
     branch_dir.mkdir(parents=True, exist_ok=True)
 
     payload: dict[str, object] = {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "branch": branch_name,
         "generated_at": _utc_timestamp(),
         "verdict": verdict,
+        "ready_for_plan": is_ready,
+        "readiness_score": readiness_score,
+        "dimension_scores": parsed_dimension_scores,
+        "strengths": strengths,
         "findings": findings,
+        "uncovered_edge_cases": uncovered_edge_cases,
         "blocking_questions": blocking_questions,
         "suggested_revisions": suggested_revisions,
-        "summary": summary or "No summary provided.",
+        "summary": normalized_summary,
     }
-    if prd_source.strip():
-        payload["prd_source"] = prd_source.strip()
-    if route_recommendation.strip():
-        payload["route_recommendation"] = route_recommendation.strip()
+    if prd_source:
+        payload["prd_source"] = prd_source
+    if route_recommendation:
+        payload["route_recommendation"] = route_recommendation
 
     json_path = branch_dir / "prd-review.json"
     _write_json_file(json_path, payload)
 
     # Human-readable Markdown report
-    verdict_label = {
-        "ready_for_plan": "READY FOR PLAN",
-        "needs_prd_revision": "NEEDS PRD REVISION",
-        "needs_user_decision": "NEEDS USER DECISION",
-        "route_to_wayfind": "ROUTE TO WAYFIND",
-    }.get(verdict, verdict.upper())
-
-    md_lines = [
-        "# PRD / Requirements-Quality Review",
-        "",
-        f"**Verdict:** {verdict_label}",
-        f"**Branch:** `{branch_name}`",
-        f"**Generated:** {payload['generated_at']}",
-    ]
-    if prd_source.strip():
-        md_lines.append(f"**PRD Source:** `{prd_source.strip()}`")
-    md_lines += ["", "## Summary", "", payload["summary"], ""]  # type: ignore[arg-type]
-
-    if findings:
-        md_lines += ["## Findings", ""]
-        for finding in findings:
-            sev = finding["severity"].upper()
-            dim = finding["dimension"]
-            desc = finding["description"]
-            md_lines.append(f"- **[{sev}]** `{dim}`: {desc}")
-            if "suggested_revision" in finding:
-                md_lines.append(f"  - *Suggested:* {finding['suggested_revision']}")
-        md_lines.append("")
-
-    if blocking_questions:
-        md_lines += ["## Blocking Questions", ""]
-        for i, q in enumerate(blocking_questions, 1):
-            cat = q.get("category", "unspecified")
-            md_lines.append(f"{i}. **[{cat}]** {q['question']}")
-        md_lines.append("")
-
-    if suggested_revisions:
-        md_lines += ["## Suggested Revisions", ""]
-        for rev in suggested_revisions:
-            md_lines.append(f"- {rev}")
-        md_lines.append("")
-
-    if route_recommendation.strip():
-        md_lines += [
-            "## Route Recommendation",
-            "",
-            route_recommendation.strip(),
-            "",
-        ]
-
     md_path = branch_dir / "prd-review.md"
-    md_path.write_text("\n".join(md_lines), encoding="utf-8")
+    _write_text_file(md_path, _render_prd_review_markdown(payload))
 
     manifest = load_artifact_manifest(branch_name)
     _set_manifest_stage(
@@ -3280,7 +3679,11 @@ def write_prd_review(
         ],
         metadata={
             "verdict": verdict,
+            "ready_for_plan": is_ready,
+            "readiness_score": readiness_score,
+            "strengths_count": len(strengths),
             "findings_count": len(findings),
+            "uncovered_edge_cases_count": len(uncovered_edge_cases),
             "blocking_questions_count": len(blocking_questions),
             "suggested_revisions_count": len(suggested_revisions),
         },
@@ -3289,24 +3692,136 @@ def write_prd_review(
 
     verdict_messages = {
         "ready_for_plan": "PRD is ready for /map-plan.",
-        "needs_prd_revision": "PRD must be revised before planning. See suggested_revisions.",
-        "needs_user_decision": "Blocking product decisions must be answered before planning.",
-        "route_to_wayfind": "Input is too foggy for PRD review; use /map-wayfind instead.",
+        "needs_prd_revision": (
+            "PRD is not ready. Ask the user whether to revise it or proceed anyway "
+            "with the documented gaps."
+        ),
+        "needs_user_decision": (
+            "PRD is not ready. Ask the user whether to resolve the blocking decisions "
+            "or proceed anyway with them recorded."
+        ),
+        "route_to_wayfind": (
+            "Input is too foggy for a ready verdict. Ask the user whether to use "
+            "/map-wayfind or proceed anyway with the uncertainty recorded."
+        ),
     }
 
     result: dict[str, object] = {
         "status": "success",
         "verdict": verdict,
-        "proceed": verdict == "ready_for_plan",
+        "ready_for_plan": is_ready,
+        "readiness_score": readiness_score,
+        "proceed": is_ready,
         "json_path": str(json_path),
         "md_path": str(md_path),
         "manifest_path": manifest_result["path"],
         "findings_count": len(findings),
+        "strengths_count": len(strengths),
+        "uncovered_edge_cases_count": len(uncovered_edge_cases),
         "blocking_questions_count": len(blocking_questions),
         "suggested_revisions_count": len(suggested_revisions),
         "message": verdict_messages.get(verdict, verdict),
     }
     return result
+
+
+PRD_REVIEW_PLANNING_DECISIONS = frozenset({"proceed_anyway", "stop_for_revision"})
+
+
+def record_prd_review_decision(
+    decision: str,
+    rationale: str = "",
+    branch: str | None = None,
+) -> dict[str, object]:
+    """Record the user's planning choice after a non-ready PRD review."""
+    branch_name = branch or get_branch_name()
+    if not isinstance(decision, str):
+        return {"status": "error", "message": "planning decision must be a string"}
+    if not isinstance(rationale, str):
+        return {"status": "error", "message": "rationale must be a string"}
+    normalized_decision = decision.strip().lower()
+    if normalized_decision not in PRD_REVIEW_PLANNING_DECISIONS:
+        return {
+            "status": "error",
+            "message": (
+                f"Invalid planning decision: {normalized_decision!r}. "
+                f"Must be one of: {sorted(PRD_REVIEW_PLANNING_DECISIONS)}"
+            ),
+        }
+    if not rationale.strip():
+        return {
+            "status": "error",
+            "message": f"{normalized_decision} requires a non-empty rationale",
+        }
+
+    branch_dir = get_branch_dir(branch_name)
+    json_path = branch_dir / "prd-review.json"
+    md_path = branch_dir / "prd-review.md"
+    payload = _read_json_file(json_path)
+    if payload is None:
+        return {
+            "status": "error",
+            "message": f"PRD review artifact not found: {json_path}",
+        }
+    if payload.get("schema_version") != "2.0":
+        return {
+            "status": "error",
+            "message": (
+                "prd-review.json uses an older schema; re-run write_prd_review "
+                "before recording a planning decision"
+            ),
+        }
+    if payload.get("verdict") == "ready_for_plan":
+        return {
+            "status": "error",
+            "message": "ready_for_plan does not require a planning override",
+        }
+    if not md_path.exists():
+        return {
+            "status": "error",
+            "message": f"PRD review report not found: {md_path}",
+        }
+
+    planning_decision = {
+        "decision": normalized_decision,
+        "recorded_at": _utc_timestamp(),
+        "rationale": rationale.strip(),
+    }
+    payload["planning_decision"] = planning_decision
+    _write_json_file(json_path, payload)
+    # prd-review.md stays a pure function of prd-review.json: re-render the whole
+    # report instead of string-splicing around a heading marker.
+    _write_text_file(md_path, _render_prd_review_markdown(payload))
+
+    manifest = load_artifact_manifest(branch_name)
+    stages = manifest.get("stages")
+    current_stage = (
+        stages.get("prd_review", {})
+        if isinstance(stages, dict)
+        else {}
+    )
+    current_metadata = current_stage.get("metadata", {})
+    metadata = dict(current_metadata) if isinstance(current_metadata, dict) else {}
+    metadata["planning_decision"] = normalized_decision
+    current_artifacts = current_stage.get("artifacts", [])
+    artifacts = current_artifacts if isinstance(current_artifacts, list) else []
+    _set_manifest_stage(
+        manifest,
+        "prd_review",
+        "ready",
+        artifacts=cast(list[dict[str, str]], artifacts),
+        metadata=metadata,
+    )
+    manifest_result = save_artifact_manifest(manifest, branch_name)
+
+    return {
+        "status": "success",
+        "decision": normalized_decision,
+        "proceed": normalized_decision == "proceed_anyway",
+        "json_path": str(json_path),
+        "md_path": str(md_path),
+        "manifest_path": manifest_result["path"],
+    }
 
 
 def record_plan_artifacts(branch: str | None = None) -> dict[str, object]:
@@ -23403,21 +23918,13 @@ if __name__ == "__main__":
         #   '[{"question":"...","category":"api_contract","spec_reference":"file.md:42"}]'
         # non-blocking-risks JSON format:
         #   '["Risk A","Risk B"]'
-        def _irr_flag(name: str, default: str = "") -> str:
-            flag = f"--{name}"
-            if flag in sys.argv:
-                idx = sys.argv.index(flag)
-                if idx + 1 < len(sys.argv):
-                    return sys.argv[idx + 1]
-            return default
-
         result = write_implementer_readiness_review(
             sys.argv[2],
-            blocking_questions_json=_irr_flag("blocking-questions", "[]"),
-            non_blocking_risks_json=_irr_flag("non-blocking-risks", "[]"),
-            acceptance_rationale=_irr_flag("acceptance-rationale", ""),
-            summary=_irr_flag("summary", ""),
-            branch=_irr_flag("branch") or None,
+            blocking_questions_json=_cli_flag("blocking-questions", "[]"),
+            non_blocking_risks_json=_cli_flag("non-blocking-risks", "[]"),
+            acceptance_rationale=_cli_flag("acceptance-rationale", ""),
+            summary=_cli_flag("summary", ""),
+            branch=_cli_flag("branch") or None,
         )
         print(json.dumps(result, indent=2, ensure_ascii=True))
         if result.get("status") == "error":
@@ -23425,7 +23932,10 @@ if __name__ == "__main__":
 
     elif func_name == "write_prd_review" and len(sys.argv) >= 3:
         # CLI: write_prd_review <verdict>
+        #        --dimension-scores '<JSON object>'
+        #        [--strengths '<JSON array>']
         #        [--findings '<JSON array>']
+        #        [--uncovered-edge-cases '<JSON array>']
         #        [--blocking-questions '<JSON array>']
         #        [--suggested-revisions '<JSON array>']
         #        [--route-recommendation "..."]
@@ -23436,29 +23946,44 @@ if __name__ == "__main__":
         # verdict must be one of:
         #   ready_for_plan  needs_prd_revision  needs_user_decision  route_to_wayfind
         #
-        # findings JSON format:
-        #   '[{"dimension":"measurable_acceptance_criteria","severity":"major","description":"..."}]'
-        # blocking-questions JSON format:
-        #   '[{"question":"...","category":"product_decision"}]'
+        # dimension-scores JSON format (every PRD_REVIEW_DIMENSIONS key exactly
+        # once; each value is a number from 0 to 10, or null when the dimension
+        # is genuinely inapplicable):
+        #   '{"problem_user_value":8.5, ..., "downstream_usability_traceability":null}'
+        # strengths JSON format (dimension must be a PRD_REVIEW_DIMENSIONS key):
+        #   '[{"dimension":"outcomes_success_metrics","description":"...","evidence":"..."}]'
+        # findings JSON format (dimension must be a PRD_REVIEW_DIMENSIONS key):
+        #   '[{"dimension":"acceptance_criteria_testability","severity":"major","description":"..."}]'
+        # uncovered-edge-cases JSON format (priority: high|medium|low):
+        #   '[{"category":"concurrency","scenario":"...","impact":"...","priority":"high","suggested_handling":"..."}]'
+        # blocking-questions JSON format (category must be a PRD_REVIEW_DIMENSIONS key):
+        #   '[{"question":"...","category":"scope_priorities_non_goals"}]'
         # suggested-revisions JSON format:
         #   '["Revise AC-1 to specify latency budget","Add out-of-scope section"]'
-        def _prr_flag(name: str, default: str = "") -> str:
-            flag = f"--{name}"
-            if flag in sys.argv:
-                idx = sys.argv.index(flag)
-                if idx + 1 < len(sys.argv):
-                    return sys.argv[idx + 1]
-            return default
-
         result = write_prd_review(
             sys.argv[2],
-            findings_json=_prr_flag("findings", "[]"),
-            blocking_questions_json=_prr_flag("blocking-questions", "[]"),
-            suggested_revisions_json=_prr_flag("suggested-revisions", "[]"),
-            route_recommendation=_prr_flag("route-recommendation", ""),
-            summary=_prr_flag("summary", ""),
-            prd_source=_prr_flag("prd-source", ""),
-            branch=_prr_flag("branch") or None,
+            dimension_scores_json=_cli_flag("dimension-scores", ""),
+            strengths_json=_cli_flag("strengths", "[]"),
+            findings_json=_cli_flag("findings", "[]"),
+            uncovered_edge_cases_json=_cli_flag("uncovered-edge-cases", "[]"),
+            blocking_questions_json=_cli_flag("blocking-questions", "[]"),
+            suggested_revisions_json=_cli_flag("suggested-revisions", "[]"),
+            route_recommendation=_cli_flag("route-recommendation", ""),
+            summary=_cli_flag("summary", ""),
+            prd_source=_cli_flag("prd-source", ""),
+            branch=_cli_flag("branch") or None,
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+        if result.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "record_prd_review_decision" and len(sys.argv) >= 3:
+        # CLI: record_prd_review_decision <proceed_anyway|stop_for_revision>
+        #        [--rationale "..."] [--branch <branch>]
+        result = record_prd_review_decision(
+            sys.argv[2],
+            rationale=_cli_flag("rationale", ""),
+            branch=_cli_flag("branch") or None,
         )
         print(json.dumps(result, indent=2, ensure_ascii=True))
         if result.get("status") == "error":
@@ -23481,34 +24006,26 @@ if __name__ == "__main__":
         #        [--previous-verdict PROCEED|REVISE|BLOCK]
         #          (omit it: the prior verdict is read back from the existing ledger)
         #        [--branch <branch>]
-        def _rvl_flag(name: str, default: str = "") -> str:
-            flag = f"--{name}"
-            if flag in sys.argv:
-                idx = sys.argv.index(flag)
-                if idx + 1 < len(sys.argv):
-                    return sys.argv[idx + 1]
-            return default
-
         result = write_review_verdict_ledger(
-            monitor_json=_rvl_flag("monitor-json", ""),
-            predictor_json=_rvl_flag("predictor-json", ""),
-            evaluator_json=_rvl_flag("evaluator-json", ""),
-            adversarial_json=_rvl_flag("adversarial-json", ""),
+            monitor_json=_cli_flag("monitor-json", ""),
+            predictor_json=_cli_flag("predictor-json", ""),
+            evaluator_json=_cli_flag("evaluator-json", ""),
+            adversarial_json=_cli_flag("adversarial-json", ""),
             role_json={
-                r: _rvl_flag(f"{r.replace('_', '-')}-json", "") for r in ROLE_REVIEWER_IDS
+                r: _cli_flag(f"{r.replace('_', '-')}-json", "") for r in ROLE_REVIEWER_IDS
             },
-            monitor_file=_rvl_flag("monitor-file", ""),
-            predictor_file=_rvl_flag("predictor-file", ""),
-            evaluator_file=_rvl_flag("evaluator-file", ""),
-            adversarial_file=_rvl_flag("adversarial-file", ""),
+            monitor_file=_cli_flag("monitor-file", ""),
+            predictor_file=_cli_flag("predictor-file", ""),
+            evaluator_file=_cli_flag("evaluator-file", ""),
+            adversarial_file=_cli_flag("adversarial-file", ""),
             role_files={
-                r: _rvl_flag(f"{r.replace('_', '-')}-file", "") for r in ROLE_REVIEWER_IDS
+                r: _cli_flag(f"{r.replace('_', '-')}-file", "") for r in ROLE_REVIEWER_IDS
             },
-            destination=_rvl_flag("destination", "unknown"),
-            executor_class=_rvl_flag("executor-class", "unknown"),
-            review_mode=_rvl_flag("review-mode", "normal"),
-            previous_verdict=_rvl_flag("previous-verdict", ""),
-            branch=_rvl_flag("branch") or None,
+            destination=_cli_flag("destination", "unknown"),
+            executor_class=_cli_flag("executor-class", "unknown"),
+            review_mode=_cli_flag("review-mode", "normal"),
+            previous_verdict=_cli_flag("previous-verdict", ""),
+            branch=_cli_flag("branch") or None,
         )
         print(json.dumps(result, indent=2, ensure_ascii=True))
 

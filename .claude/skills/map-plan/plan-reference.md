@@ -77,6 +77,56 @@ User Request -> API boundary -> Service -> Store
 
 `/map-plan` exists to make scope and correctness reviewable before code is generated. The most important artifact is not prose; it is an executable contract that downstream Actor, Monitor, final-verifier, and reviewers can check.
 
+## PRD-quality Preflight
+
+Offer `/map-prd-review` only for a clear PRD/requirements artifact, not an ordinary task
+description. If accepted, follow that skill with the original input. A non-ready review
+must show its readiness score, top strengths, critical/major weaknesses, and
+high-priority uncovered edge cases before asking whether to proceed or revise.
+
+**Existing review short-circuit:** when `.map/<branch>/prd-review.json` already exists
+for the same PRD source (its `prd_source` matches the current input), do NOT re-offer
+the preflight. Surface the recorded verdict and readiness score, then follow the
+matching reuse state:
+
+- `ready_for_plan` — continue planning.
+- `planning_decision: proceed_anyway` — continue planning and carry the recorded gaps
+  as `PRD-GAP-N` entries, as if the decision had just been made.
+- `planning_decision: stop_for_revision` — stop planning; the operator asked for a
+  revised PRD first.
+- non-ready review with **no** recorded `planning_decision` (the operator never
+  answered) — summarize the stored review and ask the required proceed/stop decision
+  WITHOUT re-running the review.
+
+Re-offer the preflight only when the PRD source changed since the recorded review.
+"Changed" means content, not just the path: an edited document at the same
+`prd_source` path is a changed source — a stale review must not silently stand in for
+a revised document.
+
+For **continue planning anyway**, persist the explicit user override:
+
+```bash
+python3 .map/scripts/map_step_runner.py record_prd_review_decision proceed_anyway \
+  --rationale "User explicitly chose to continue planning with the reported PRD score and verdict."
+```
+
+Then carry every finding, blocking question, uncovered edge case, suggested revision,
+and route recommendation into the spec's Open Questions / Risks as stable `PRD-GAP-N`
+entries. Deduplicate overlapping items without dropping their evidence or suggested
+handling. For each dependent subtask, put `Provisional — blocked on PRD-GAP-N` in both
+its description and validation criteria until the gap is resolved; do not invent an
+unsupported blueprint field.
+
+For **stop and revise**, persist the choice and stop planning:
+
+```bash
+python3 .map/scripts/map_step_runner.py record_prd_review_decision stop_for_revision \
+  --rationale "User chose to stop planning and revise the PRD."
+```
+
+The artifact keeps `ready_for_plan: false`; `planning_decision: proceed_anyway` records
+accepted uncertainty, not retroactive readiness.
+
 ## Examples
 
 Authentication plan result:

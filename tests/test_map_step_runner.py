@@ -8037,7 +8037,7 @@ class TestDetectAlreadyDone:
         original_run = real_subprocess.run
         call_count: list[int] = [0]
 
-        def _raise_on_first(*args: object, **kwargs: object) -> object:
+        def _raise_on_first(*args: Any, **kwargs: Any) -> Any:
             call_count[0] += 1
             if call_count[0] == 1:
                 raise OSError("git: No such file or directory")
@@ -16865,11 +16865,728 @@ def test_write_implementer_readiness_review_needs_clarification_requires_blockin
 # write_prd_review tests
 # ---------------------------------------------------------------------------
 
+def _prd_dimension_scores(default: float = 8.0) -> dict[str, float]:
+    return {
+        dimension: default
+        for dimension in map_step_runner.PRD_REVIEW_DIMENSIONS
+    }
+
+
+def test_calculate_prd_readiness_score_averages_applicable_dimensions():
+    """A missing/N/A dimension must not lower an otherwise applicable score."""
+    scores = {
+        "problem_user_value": 10,
+        "outcomes_success_metrics": 9,
+        "scope_priorities_non_goals": 8,
+        "requirements_clarity_consistency": 7,
+        "acceptance_criteria_testability": 6,
+        "non_functional_requirements": 5,
+        "interaction_failure_states_accessibility": 4,
+        "data_lifecycle_privacy": 3,
+        "security_trust_compliance": 2,
+        "dependencies_feasibility_risks": 1,
+        "edge_cases_recovery": 0,
+        "rollout_operations_observability": None,
+        "downstream_usability_traceability": 10,
+    }
+    assert map_step_runner.calculate_prd_readiness_score(scores) == 5.4
+
+
+def test_calculate_prd_readiness_score_requires_the_complete_rubric():
+    with pytest.raises(ValueError, match="dimension keys"):
+        map_step_runner.calculate_prd_readiness_score(
+            {"problem_user_value": 10}
+        )
+
+
+@pytest.mark.parametrize("invalid_score", [-0.1, 10.1, float("nan"), True, "8"])
+def test_calculate_prd_readiness_score_rejects_invalid_values(invalid_score):
+    scores = {dimension: 8 for dimension in map_step_runner.PRD_REVIEW_DIMENSIONS}
+    scores["problem_user_value"] = invalid_score
+
+    with pytest.raises(ValueError, match="number from 0 to 10 or null"):
+        map_step_runner.calculate_prd_readiness_score(scores)
+
+
+def test_write_prd_review_cli_calculates_and_persists_readiness_score(
+    branch_workspace,
+):
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "write_prd_review",
+            "ready_for_plan",
+            "--dimension-scores",
+            json.dumps(_prd_dimension_scores()),
+            "--summary",
+            "The applicable dimensions are adequate for planning.",
+            "--branch",
+            "test-branch",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout)
+    assert result.get("readiness_score") == 8.0
+
+    payload = json.loads(
+        (branch_workspace / "prd-review.json").read_text(encoding="utf-8")
+    )
+    assert payload.get("schema_version") == "2.0"
+    assert payload.get("readiness_score") == 8.0
+    assert payload.get("ready_for_plan") is True
+    assert payload.get("dimension_scores") == _prd_dimension_scores()
+
+    markdown = (branch_workspace / "prd-review.md").read_text(encoding="utf-8")
+    assert "**Readiness Score:** 8.0/10" in markdown
+    assert "## Dimension Scores" in markdown
+    assert "| `problem_user_value` | 8.0 |" in markdown
+
+
+def test_write_prd_review_cli_persists_strengths_and_uncovered_edge_cases(
+    branch_workspace,
+):
+    strengths = [
+        {
+            "dimension": "scope_priorities_non_goals",
+            "description": "The release boundary is explicit and prioritized.",
+            "evidence": "Scope > Out of scope excludes offline editing and guests.",
+        }
+    ]
+    uncovered_edge_cases = [
+        {
+            "category": "concurrency_idempotency",
+            "scenario": "Two collaborators save edits based on the same draft version.",
+            "impact": "One collaborator's changes may be silently overwritten.",
+            "priority": "high",
+            "suggested_handling": "Define version checks and a visible conflict path.",
+        }
+    ]
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "write_prd_review",
+            "needs_prd_revision",
+            "--dimension-scores",
+            json.dumps(_prd_dimension_scores(6.0)),
+            "--strengths",
+            json.dumps(strengths),
+            "--uncovered-edge-cases",
+            json.dumps(uncovered_edge_cases),
+            "--summary",
+            "The scope is clear, but conflict handling is incomplete.",
+            "--branch",
+            "test-branch",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout)
+    assert result.get("strengths_count") == 1
+    assert result.get("uncovered_edge_cases_count") == 1
+
+    payload = json.loads(
+        (branch_workspace / "prd-review.json").read_text(encoding="utf-8")
+    )
+    assert payload.get("ready_for_plan") is False
+    assert payload.get("strengths") == strengths
+    assert payload.get("uncovered_edge_cases") == uncovered_edge_cases
+
+    markdown = (branch_workspace / "prd-review.md").read_text(encoding="utf-8")
+    assert "## Strengths" in markdown
+    assert "release boundary is explicit" in markdown
+    assert "## Uncovered Edge Cases" in markdown
+    assert "Two collaborators save edits" in markdown
+
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    metadata = manifest["stages"]["prd_review"]["metadata"]
+    assert metadata.get("strengths_count") == 1
+    assert metadata.get("uncovered_edge_cases_count") == 1
+
+
+@pytest.mark.parametrize(
+    ("flag", "value", "error_fragment"),
+    [
+        ("--strengths", "{}", "strengths must be a JSON array"),
+        (
+            "--uncovered-edge-cases",
+            json.dumps(
+                [
+                    {
+                        "category": "concurrency_idempotency",
+                        "scenario": "Two requests race.",
+                        "impact": "Duplicate work may be created.",
+                        "priority": "urgent",
+                        "suggested_handling": "Define idempotency semantics.",
+                    }
+                ]
+            ),
+            "priority='urgent' is not valid",
+        ),
+    ],
+)
+def test_write_prd_review_cli_rejects_malformed_structured_lists(
+    branch_workspace,
+    flag,
+    value,
+    error_fragment,
+):
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "write_prd_review",
+            "needs_prd_revision",
+            "--dimension-scores",
+            json.dumps(_prd_dimension_scores(6.0)),
+            flag,
+            value,
+            "--branch",
+            "test-branch",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert error_fragment in completed.stdout
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+def test_write_prd_review_rejects_ready_verdict_below_threshold(
+    branch_workspace,
+):
+    result = map_step_runner.write_prd_review(
+        verdict="ready_for_plan",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(7.9)),
+        summary="The rubric is below the ready threshold.",
+    )
+
+    assert result["status"] == "error"
+    assert "8.0" in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("scores", "exact_mean"),
+    [
+        ([8.0] * 11 + [7.6, 7.85], "7.9577"),
+        ([8.0] * 12 + [7.4], "7.9538"),
+    ],
+)
+def test_write_prd_review_rejects_ready_verdict_that_only_rounds_up_to_eight(
+    branch_workspace, scores, exact_mean
+):
+    """A mean in [7.95, 8.0) displays as 8.0 -- the gate must see the exact value.
+
+    The uniform-7.9 case above cannot catch this: every dimension has to be equal
+    for it, so it never lands inside the rounding band. Only a mixed set does.
+    """
+    dimension_scores = dict(
+        zip(map_step_runner.PRD_REVIEW_DIMENSIONS, scores, strict=True)
+    )
+    assert map_step_runner.calculate_prd_readiness_score(dimension_scores) == 8.0
+
+    result = map_step_runner.write_prd_review(
+        verdict="ready_for_plan",
+        dimension_scores_json=json.dumps(dimension_scores),
+        summary="The displayed score rounds up but the rubric mean is below 8.0.",
+    )
+
+    assert result["status"] == "error"
+    assert exact_mean in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+def test_calculate_prd_readiness_score_exact_is_unrounded():
+    dimension_scores = dict(
+        zip(
+            map_step_runner.PRD_REVIEW_DIMENSIONS,
+            [8.0] * 11 + [7.6, 7.85],
+            strict=True,
+        )
+    )
+
+    exact = map_step_runner.calculate_prd_readiness_score_exact(dimension_scores)
+
+    assert exact < 8.0
+    assert round(exact, 1) == map_step_runner.calculate_prd_readiness_score(
+        dimension_scores
+    )
+
+
+def test_calculate_prd_readiness_score_requires_one_applicable_dimension():
+    all_null = {
+        dimension: None for dimension in map_step_runner.PRD_REVIEW_DIMENSIONS
+    }
+
+    with pytest.raises(ValueError, match="at least one PRD review dimension"):
+        map_step_runner.calculate_prd_readiness_score(all_null)
+
+
+def test_write_prd_review_rejects_an_entirely_inapplicable_rubric(branch_workspace):
+    result = map_step_runner.write_prd_review(
+        verdict="needs_prd_revision",
+        dimension_scores_json=json.dumps(
+            {dimension: None for dimension in map_step_runner.PRD_REVIEW_DIMENSIONS}
+        ),
+        suggested_revisions_json=json.dumps(["Describe the product."]),
+        summary="Every dimension was marked inapplicable.",
+    )
+
+    assert result["status"] == "error"
+    assert "at least one PRD review dimension" in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+def test_write_prd_review_names_the_flag_when_dimension_scores_are_omitted(
+    branch_workspace,
+):
+    """An omitted flag is a caller error: answer with the flag, not a constant."""
+    result = map_step_runner.write_prd_review(
+        verdict="ready_for_plan",
+        summary="No rubric was supplied.",
+    )
+
+    assert result["status"] == "error"
+    assert "--dimension-scores" in result["message"]
+    assert "0 to 10" in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+def test_write_prd_review_rejects_ready_verdict_with_blocking_findings(
+    branch_workspace,
+):
+    findings = [
+        {
+            "dimension": "security_trust_compliance",
+            "severity": "major",
+            "description": "Authorization behavior is unresolved.",
+        }
+    ]
+    result = map_step_runner.write_prd_review(
+        verdict="ready_for_plan",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(8.0)),
+        findings_json=json.dumps(findings),
+        summary="The score passes, but a major gap remains.",
+    )
+
+    assert result["status"] == "error"
+    assert "critical or major" in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+def test_write_prd_review_rejects_ready_verdict_with_blocking_questions(
+    branch_workspace,
+):
+    blocking_questions = [
+        {
+            "question": "Must approval require a second administrator?",
+            "category": "security_trust_compliance",
+        }
+    ]
+    result = map_step_runner.write_prd_review(
+        verdict="ready_for_plan",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(8.0)),
+        blocking_questions_json=json.dumps(blocking_questions),
+        summary="The score passes, but a product decision remains unresolved.",
+    )
+
+    assert result["status"] == "error"
+    assert "blocking questions" in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+def test_write_prd_review_non_ready_result_prompts_for_planning_choice(
+    branch_workspace,
+):
+    result = map_step_runner.write_prd_review(
+        verdict="needs_prd_revision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
+        findings_json=json.dumps(
+            [
+                {
+                    "dimension": "requirements_clarity_consistency",
+                    "severity": "minor",
+                    "description": "A planning-relevant requirement remains ambiguous.",
+                }
+            ]
+        ),
+        summary="The PRD has known gaps.",
+    )
+
+    assert result["status"] == "success"
+    assert "proceed anyway" in result["message"]
+    markdown = (branch_workspace / "prd-review.md").read_text(encoding="utf-8")
+    assert "## Weaknesses / Risks" in markdown
+    assert "planning-relevant requirement remains ambiguous" in markdown
+
+
+def test_write_prd_review_rejects_non_ready_review_without_a_carryable_gap(
+    branch_workspace,
+):
+    result = map_step_runner.write_prd_review(
+        verdict="needs_prd_revision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
+        summary="The score is below threshold but no gap was explained.",
+    )
+
+    assert result["status"] == "error"
+    assert "carryable gap" in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("findings", "error_fragment"),
+    [
+        (
+            [
+                {
+                    "dimension": "requirements_clarity_consistency",
+                    "severity": ["major"],
+                    "description": "Ambiguous requirement.",
+                }
+            ],
+            "findings[0].severity must be a non-empty string",
+        ),
+        (
+            [
+                {
+                    "dimension": "unknown_dimension",
+                    "severity": "major",
+                    "description": "Ambiguous requirement.",
+                }
+            ],
+            "findings[0].dimension='unknown_dimension' is not valid",
+        ),
+        (
+            [
+                {
+                    "dimension": "requirements_clarity_consistency",
+                    "severity": "major",
+                    "description": "   ",
+                }
+            ],
+            "findings[0].description must be a non-empty string",
+        ),
+    ],
+)
+def test_write_prd_review_rejects_malformed_finding_fields(
+    branch_workspace,
+    findings,
+    error_fragment,
+):
+    result = map_step_runner.write_prd_review(
+        verdict="needs_prd_revision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
+        findings_json=json.dumps(findings),
+        summary="Malformed input must be rejected without a crash.",
+    )
+
+    assert result["status"] == "error"
+    assert error_fragment in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("questions", "error_fragment"),
+    [
+        (
+            [
+                {
+                    "question": [],
+                    "category": "security_trust_compliance",
+                }
+            ],
+            "blocking_questions[0].question must be a non-empty string",
+        ),
+        (
+            [
+                {
+                    "question": "Who can approve?",
+                    "category": "security_trust_boundaries",
+                }
+            ],
+            "blocking_questions[0].category='security_trust_boundaries' is not valid",
+        ),
+    ],
+)
+def test_write_prd_review_rejects_malformed_blocking_question_fields(
+    branch_workspace,
+    questions,
+    error_fragment,
+):
+    result = map_step_runner.write_prd_review(
+        verdict="needs_user_decision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
+        blocking_questions_json=json.dumps(questions),
+        summary="Malformed input must be rejected without a crash.",
+    )
+
+    assert result["status"] == "error"
+    assert error_fragment in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+def test_record_prd_review_decision_persists_proceed_anyway_override(
+    branch_workspace,
+):
+    review = map_step_runner.write_prd_review(
+        verdict="needs_prd_revision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
+        findings_json=json.dumps(
+            [
+                {
+                    "dimension": "requirements_clarity_consistency",
+                    "severity": "major",
+                    "description": "The core workflow is underspecified.",
+                }
+            ]
+        ),
+        summary="The PRD has known gaps.",
+    )
+    assert review["status"] == "success"
+    result = map_step_runner.record_prd_review_decision(
+        "proceed_anyway",
+        rationale="User accepted the documented PRD risks for planning.",
+    )
+
+    assert result["status"] == "success"
+    assert result["proceed"] is True
+    payload = json.loads(
+        (branch_workspace / "prd-review.json").read_text(encoding="utf-8")
+    )
+    assert payload["planning_decision"]["decision"] == "proceed_anyway"
+    assert "accepted the documented PRD risks" in payload["planning_decision"]["rationale"]
+    is_valid, errors = auto_route_schemas_module.validate_artifact(
+        payload,
+        auto_route_schemas_module.PRD_REVIEW_SCHEMA,
+    )
+    assert is_valid, f"Decision produced a schema-invalid PRD review: {errors}"
+
+    markdown = (branch_workspace / "prd-review.md").read_text(encoding="utf-8")
+    assert "## Planning Decision" in markdown
+    assert "PROCEED ANYWAY" in markdown
+
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    assert (
+        manifest["stages"]["prd_review"]["metadata"]["planning_decision"]
+        == "proceed_anyway"
+    )
+
+
+def test_record_prd_review_decision_requires_an_existing_review(branch_workspace):
+    """Calling the recorder before any review exists must not fabricate one."""
+    result = map_step_runner.record_prd_review_decision(
+        "proceed_anyway",
+        rationale="There is nothing to override yet.",
+    )
+
+    assert result["status"] == "error"
+    assert "artifact not found" in result["message"]
+    assert not (branch_workspace / "prd-review.json").exists()
+
+
+@pytest.mark.parametrize("decision", ["proceed_anyway", "stop_for_revision"])
+def test_record_prd_review_decision_requires_a_rationale_for_both_choices(
+    branch_workspace, decision
+):
+    """No decision may fabricate a rationale the user never supplied."""
+    review = map_step_runner.write_prd_review(
+        verdict="needs_prd_revision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
+        suggested_revisions_json=json.dumps(["Clarify the rollout plan."]),
+        summary="The PRD has known gaps.",
+    )
+    assert review["status"] == "success"
+
+    result = map_step_runner.record_prd_review_decision(decision, rationale="   ")
+
+    assert result["status"] == "error"
+    assert f"{decision} requires a non-empty rationale" in result["message"]
+    payload = json.loads(
+        (branch_workspace / "prd-review.json").read_text(encoding="utf-8")
+    )
+    assert "planning_decision" not in payload
+
+
+def test_record_prd_review_decision_rejects_a_legacy_schema_artifact(
+    branch_workspace,
+):
+    """A 1.0-era prd-review.json lacks the fields the renderer draws from."""
+    legacy_payload = {
+        "schema_version": "1.0",
+        "branch": "test-branch",
+        "verdict": "needs_prd_revision",
+    }
+    (branch_workspace / "prd-review.json").write_text(
+        json.dumps(legacy_payload), encoding="utf-8"
+    )
+    (branch_workspace / "prd-review.md").write_text(
+        "# PRD / Requirements-Quality Review\n", encoding="utf-8"
+    )
+
+    result = map_step_runner.record_prd_review_decision(
+        "proceed_anyway",
+        rationale="User accepted the documented gaps.",
+    )
+
+    assert result["status"] == "error"
+    assert "older schema" in result["message"]
+
+
+def test_record_prd_review_decision_is_idempotent_across_a_changed_mind(
+    branch_workspace,
+):
+    """Re-recording replaces the section instead of stacking duplicates."""
+    review = map_step_runner.write_prd_review(
+        verdict="needs_prd_revision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
+        suggested_revisions_json=json.dumps(["Clarify the rollout plan."]),
+        summary="The PRD has known gaps.",
+    )
+    assert review["status"] == "success"
+
+    map_step_runner.record_prd_review_decision(
+        "proceed_anyway", rationale="First choice: accept the gaps."
+    )
+    second = map_step_runner.record_prd_review_decision(
+        "stop_for_revision", rationale="Changed mind: revise the PRD first."
+    )
+
+    assert second["status"] == "success"
+    markdown = (branch_workspace / "prd-review.md").read_text(encoding="utf-8")
+    assert markdown.count("## Planning Decision") == 1
+    assert "STOP FOR REVISION" in markdown
+    assert "PROCEED ANYWAY" not in markdown
+    assert "## Suggested Revisions" in markdown, "the report body must survive"
+
+    payload = json.loads(
+        (branch_workspace / "prd-review.json").read_text(encoding="utf-8")
+    )
+    assert payload["planning_decision"]["decision"] == "stop_for_revision"
+    is_valid, errors = auto_route_schemas_module.validate_artifact(
+        payload,
+        auto_route_schemas_module.PRD_REVIEW_SCHEMA,
+    )
+    assert is_valid, f"Re-recorded decision produced a schema-invalid review: {errors}"
+
+
+def test_record_prd_review_decision_stop_choice_updates_the_manifest(
+    branch_workspace,
+):
+    review = map_step_runner.write_prd_review(
+        verdict="needs_user_decision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
+        blocking_questions_json=json.dumps(
+            [
+                {
+                    "question": "Who may approve another user's request?",
+                    "category": "security_trust_compliance",
+                }
+            ]
+        ),
+        summary="A product decision is unresolved.",
+    )
+    assert review["status"] == "success"
+
+    result = map_step_runner.record_prd_review_decision(
+        "stop_for_revision", rationale="Resolve the approval model first."
+    )
+
+    assert result["status"] == "success"
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    stage = manifest["stages"]["prd_review"]
+    assert stage["metadata"]["planning_decision"] == "stop_for_revision"
+    # The stage status records that the artifact was produced; the verdict and the
+    # planning decision live in metadata (same convention as
+    # write_implementer_readiness_review).
+    assert stage["status"] == "ready"
+    assert stage["metadata"]["verdict"] == "needs_user_decision"
+    assert stage["metadata"]["ready_for_plan"] is False
+
+
+def test_record_prd_review_decision_requires_markdown_sidecar(branch_workspace):
+    review = map_step_runner.write_prd_review(
+        verdict="needs_prd_revision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
+        findings_json=json.dumps(
+            [
+                {
+                    "dimension": "requirements_clarity_consistency",
+                    "severity": "major",
+                    "description": "The core workflow is underspecified.",
+                }
+            ]
+        ),
+        summary="The PRD has known gaps.",
+    )
+    assert review["status"] == "success"
+    markdown_path = branch_workspace / "prd-review.md"
+    markdown_path.unlink()
+
+    result = map_step_runner.record_prd_review_decision(
+        "proceed_anyway",
+        rationale="User accepted the documented gap.",
+    )
+
+    assert result["status"] == "error"
+    assert "report not found" in result["message"]
+    payload = json.loads(
+        (branch_workspace / "prd-review.json").read_text(encoding="utf-8")
+    )
+    assert "planning_decision" not in payload
+
+
+def test_record_prd_review_decision_cli_records_stop_choice(branch_workspace):
+    del branch_workspace  # fixture used for workspace side effect only
+    review = map_step_runner.write_prd_review(
+        verdict="needs_prd_revision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
+        suggested_revisions_json=json.dumps(
+            ["Clarify the planning-relevant requirements before implementation."]
+        ),
+        summary="The PRD has known gaps.",
+    )
+    assert review["status"] == "success"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "record_prd_review_decision",
+            "stop_for_revision",
+            "--rationale",
+            "User chose to revise the PRD before planning.",
+            "--branch",
+            "test-branch",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout)
+    assert result["decision"] == "stop_for_revision"
+    assert result["proceed"] is False
+
+
 def test_write_prd_review_ready_for_plan_creates_artifacts_and_manifest(
     branch_workspace,
 ):
     result = map_step_runner.write_prd_review(
         verdict="ready_for_plan",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(8.0)),
         summary="The PRD is complete and all dimensions pass.",
     )
 
@@ -16884,10 +17601,16 @@ def test_write_prd_review_ready_for_plan_creates_artifacts_and_manifest(
     assert json_path.exists()
     payload = json.loads(json_path.read_text(encoding="utf-8"))
     assert payload["verdict"] == "ready_for_plan"
-    assert payload["schema_version"] == "1.0"
+    assert payload["schema_version"] == "2.0"
+    assert payload["readiness_score"] == 8.0
     assert payload["findings"] == []
     assert payload["blocking_questions"] == []
     assert payload["suggested_revisions"] == []
+    is_valid, errors = auto_route_schemas_module.validate_artifact(
+        payload,
+        auto_route_schemas_module.PRD_REVIEW_SCHEMA,
+    )
+    assert is_valid, f"Writer produced a schema-invalid PRD review: {errors}"
 
     md_path = branch_workspace / "prd-review.md"
     assert md_path.exists()
@@ -16908,13 +17631,13 @@ def test_write_prd_review_needs_prd_revision_with_findings(
 ):
     findings_json = json.dumps([
         {
-            "dimension": "measurable_acceptance_criteria",
+            "dimension": "acceptance_criteria_testability",
             "severity": "major",
             "description": "AC-2 says 'fast response' but does not specify a latency budget.",
             "suggested_revision": "Define latency budget, e.g. p95 < 200ms under 100 RPS.",
         },
         {
-            "dimension": "explicit_out_of_scope",
+            "dimension": "scope_priorities_non_goals",
             "severity": "minor",
             "description": "No out-of-scope section is present.",
         },
@@ -16926,6 +17649,7 @@ def test_write_prd_review_needs_prd_revision_with_findings(
 
     result = map_step_runner.write_prd_review(
         verdict="needs_prd_revision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
         findings_json=findings_json,
         suggested_revisions_json=suggested_revisions_json,
         summary="Two fixable gaps found; PRD should be amended.",
@@ -16941,7 +17665,7 @@ def test_write_prd_review_needs_prd_revision_with_findings(
         (branch_workspace / "prd-review.json").read_text(encoding="utf-8")
     )
     assert len(payload["findings"]) == 2
-    assert payload["findings"][0]["dimension"] == "measurable_acceptance_criteria"
+    assert payload["findings"][0]["dimension"] == "acceptance_criteria_testability"
     assert payload["findings"][0]["suggested_revision"] == "Define latency budget, e.g. p95 < 200ms under 100 RPS."
     assert "suggested_revision" not in payload["findings"][1]
     assert payload["suggested_revisions"] == [
@@ -16952,7 +17676,7 @@ def test_write_prd_review_needs_prd_revision_with_findings(
     content = (branch_workspace / "prd-review.md").read_text(encoding="utf-8")
     assert "NEEDS PRD REVISION" in content
     assert "Findings" in content
-    assert "measurable_acceptance_criteria" in content
+    assert "acceptance_criteria_testability" in content
     assert "latency budget" in content
     assert "Suggested Revisions" in content
 
@@ -16967,12 +17691,13 @@ def test_write_prd_review_needs_user_decision_with_blocking_questions(
     questions_json = json.dumps([
         {
             "question": "Should the feature support unauthenticated users or require login?",
-            "category": "security_trust_boundaries",
+            "category": "security_trust_compliance",
         }
     ])
 
     result = map_step_runner.write_prd_review(
         verdict="needs_user_decision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
         blocking_questions_json=questions_json,
         summary="One product decision must be made by the user before planning.",
     )
@@ -16987,7 +17712,7 @@ def test_write_prd_review_needs_user_decision_with_blocking_questions(
         (branch_workspace / "prd-review.json").read_text(encoding="utf-8")
     )
     assert len(payload["blocking_questions"]) == 1
-    assert payload["blocking_questions"][0]["category"] == "security_trust_boundaries"
+    assert payload["blocking_questions"][0]["category"] == "security_trust_compliance"
 
     content = (branch_workspace / "prd-review.md").read_text(encoding="utf-8")
     assert "NEEDS USER DECISION" in content
@@ -17003,6 +17728,10 @@ def test_write_prd_review_route_to_wayfind_proceed_is_false(
 ):
     result = map_step_runner.write_prd_review(
         verdict="route_to_wayfind",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(2.0)),
+        route_recommendation=(
+            "Use /map-wayfind to identify the primary actor, core job, and bounded action."
+        ),
         summary="Input is too vague to review as a PRD; wayfinding needed first.",
     )
 
@@ -17025,6 +17754,7 @@ def test_write_prd_review_prd_source_stored_in_payload(
 ):
     result = map_step_runner.write_prd_review(
         verdict="ready_for_plan",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(8.0)),
         summary="Complete PRD.",
         prd_source="docs/feature-brief.md",
     )
@@ -17057,6 +17787,7 @@ def test_write_prd_review_needs_user_decision_requires_blocking_questions(
 ):
     result = map_step_runner.write_prd_review(
         verdict="needs_user_decision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
         blocking_questions_json="[]",
         summary="Unclear which path to take.",
     )
@@ -17072,6 +17803,7 @@ def test_write_prd_review_rejects_non_array_findings(
 ):
     result = map_step_runner.write_prd_review(
         verdict="needs_prd_revision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
         findings_json='{"dimension": "testability", "severity": "major", "description": "x"}',
         summary="Non-array findings.",
     )
@@ -17095,6 +17827,7 @@ def test_write_prd_review_rejects_finding_extra_keys(
 
     result = map_step_runner.write_prd_review(
         verdict="needs_prd_revision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
         findings_json=findings_json,
         summary="Finding has extra key.",
     )
@@ -17110,7 +17843,7 @@ def test_write_prd_review_rejects_invalid_finding_severity(
 ):
     findings_json = json.dumps([
         {
-            "dimension": "user_job_clarity",
+            "dimension": "problem_user_value",
             "severity": "blocker",
             "description": "Target user is not identified.",
         }
@@ -17118,6 +17851,7 @@ def test_write_prd_review_rejects_invalid_finding_severity(
 
     result = map_step_runner.write_prd_review(
         verdict="needs_prd_revision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
         findings_json=findings_json,
         summary="Invalid severity.",
     )
@@ -17140,6 +17874,7 @@ def test_write_prd_review_rejects_missing_finding_required_field(
 
     result = map_step_runner.write_prd_review(
         verdict="needs_prd_revision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
         findings_json=findings_json,
         summary="Finding missing severity.",
     )
@@ -17162,6 +17897,7 @@ def test_write_prd_review_rejects_blocking_question_extra_keys(
 
     result = map_step_runner.write_prd_review(
         verdict="needs_user_decision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
         blocking_questions_json=questions_json,
         summary="Blocking question has extra key.",
     )
@@ -17177,6 +17913,7 @@ def test_write_prd_review_rejects_non_array_blocking_questions(
 ):
     result = map_step_runner.write_prd_review(
         verdict="needs_user_decision",
+        dimension_scores_json=json.dumps(_prd_dimension_scores(6.0)),
         blocking_questions_json='{"question": "Who is the user?", "category": "ux"}',
         summary="Non-array blocking_questions.",
     )

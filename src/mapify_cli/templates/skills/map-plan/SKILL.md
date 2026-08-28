@@ -86,6 +86,26 @@ Per-artifact resume rules (only when `verdict` is `resume`):
 - Existing `task_plan`: skip decomposition and plan creation.
 - Existing `step_state.json`: plan is complete; print checkpoint and STOP.
 
+### Pre-flight: PRD-quality preflight (optional)
+
+Run only after Resume Detection returns `no_plan` (including after a resolved
+`goal_mismatch`). On `resume`, skip the PRD-quality preflight and preserve its existing
+review and `planning_decision`. An existing `.map/<branch>/prd-review.json` for the same PRD source also skips the re-offer — surface its verdict and score, then follow the reuse states in [plan-reference.md](plan-reference.md#prd-quality-preflight): a non-ready review with no recorded `planning_decision` still requires the proceed/stop question (without re-running the review), and an edited document at the same path is a changed source, so re-offer. Offer once ONLY for a document or substantive pasted text labeled PRD/Product Brief/Feature Brief/Requirements that states a problem, scope, and requirements — never for an ordinary task description and never in `--light` mode:
+
+> This looks like a PRD. Assess its readiness before planning? (optional)
+
+Declined: continue without review. Accepted: read `.claude/skills/map-prd-review/SKILL.md`
+in full and follow it with the original input; do not rely on automatic invocation.
+
+- `ready_for_plan`: surface the score and continue.
+- Non-ready: summarize score, top strengths, material weaknesses, and high-priority
+  uncovered edge cases, then ask:
+
+> The PRD is not ready. Continue planning anyway with these gaps recorded, or stop and revise the PRD?
+
+Do not choose or auto-stop. Follow [plan-reference.md](plan-reference.md#prd-quality-preflight)
+to call `record_prd_review_decision` with `proceed_anyway` or `stop_for_revision`, carry every gap, and mark dependent subtasks provisional.
+
 ### Pre-flight: Wayfinding Handoff (optional)
 
 If a `/map-wayfind` map already resolved the key decisions, seed this plan from its handoff instead of re-deciding them.

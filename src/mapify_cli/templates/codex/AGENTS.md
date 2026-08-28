@@ -25,6 +25,7 @@ agent files are ignored. Codex skills are installed under `.agents/skills`.
 | $map-fast | Quick implementation for small changes |
 | $map-check | Quality gates and verification |
 | $map-review | Pre-landing code review (normal, adversarial, cross-AI) |
+| $map-prd-review | Review PRD readiness, strengths, risks, and uncovered edge cases |
 
 ## Hooks
 

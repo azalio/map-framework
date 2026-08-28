@@ -1,8 +1,11 @@
 """Focused tests for new artifact schemas without importing package extras."""
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
+
+import pytest
 
 SCHEMAS_PATH = Path(__file__).resolve().parents[1] / "src" / "mapify_cli" / "schemas.py"
 SPEC = importlib.util.spec_from_file_location("artifact_schemas", SCHEMAS_PATH)
@@ -152,6 +155,139 @@ def test_validate_artifact_manifest_schema_accepts_legacy_without_run_health():
         artifact, MODULE.ARTIFACT_MANIFEST_SCHEMA
     )
     assert is_valid, f"Errors: {errors}"
+
+
+def _minimal_prd_review() -> dict:
+    return {
+        "schema_version": "2.0",
+        "branch": "test-branch",
+        "generated_at": "2026-08-27T10:00:00Z",
+        "prd_source": "docs/checkout-prd.md",
+        "verdict": "needs_prd_revision",
+        "ready_for_plan": False,
+        "readiness_score": 6.5,
+        "dimension_scores": {
+            dimension: 6.5 for dimension in map_step_runner.PRD_REVIEW_DIMENSIONS
+        },
+        "strengths": [
+            {
+                "dimension": "scope_priorities_non_goals",
+                "description": "The release boundary is explicit.",
+                "evidence": "Scope > Out of scope",
+            }
+        ],
+        "findings": [],
+        "uncovered_edge_cases": [
+            {
+                "category": "concurrency",
+                "scenario": "Two approvals race.",
+                "impact": "Conflicting decisions could be applied.",
+                "priority": "high",
+                "suggested_handling": "Define single-winner semantics.",
+            }
+        ],
+        "blocking_questions": [],
+        "suggested_revisions": [],
+        "summary": "The PRD needs bounded revisions.",
+        "planning_decision": {
+            "decision": "proceed_anyway",
+            "recorded_at": "2026-08-27T10:05:00Z",
+            "rationale": "User accepted the documented uncertainty for planning.",
+        },
+    }
+
+
+def test_prd_review_schema_accepts_scored_review_and_planning_decision():
+    artifact = _minimal_prd_review()
+
+    is_valid, errors = MODULE.validate_artifact(artifact, MODULE.PRD_REVIEW_SCHEMA)
+
+    assert is_valid, f"Errors: {errors}"
+
+
+def test_prd_review_schema_requires_every_dimension_score():
+    artifact = _minimal_prd_review()
+    del artifact["dimension_scores"]["security_trust_compliance"]
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.PRD_REVIEW_SCHEMA)[0]
+
+    assert not is_valid
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda artifact: artifact.update(schema_version="1.0"),
+        lambda artifact: artifact.update(ready_for_plan=True),
+        lambda artifact: artifact.update(verdict="ready_for_plan"),
+    ],
+)
+def test_prd_review_schema_rejects_contradictory_v2_semantics(mutation):
+    artifact = _minimal_prd_review()
+    mutation(artifact)
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.PRD_REVIEW_SCHEMA)[0]
+
+    assert not is_valid
+
+
+def test_prd_review_schema_rejects_planning_decision_on_ready_review():
+    artifact = _minimal_prd_review()
+    artifact.update(
+        verdict="ready_for_plan",
+        ready_for_plan=True,
+        readiness_score=8.0,
+        blocking_questions=[],
+        findings=[],
+    )
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.PRD_REVIEW_SCHEMA)[0]
+
+    assert not is_valid
+
+
+# ---------------------------------------------------------------------------
+# The 13 PRD dimension keys exist in three places: schemas.py, the runner, and
+# the map-prd-review SKILL.md table the agent actually reads. The first two are
+# coupled by _minimal_prd_review() above (it builds dimension_scores from the
+# runner and validates against the schema, which is `required` +
+# additionalProperties:false). The table was coupled to NOTHING -- so renaming a
+# dimension in both Python copies kept the suite green while the prompt went
+# stale, and the drift surfaced only as a runtime rejection in front of a user.
+# See architecture-patterns: Single-Source Schema Dict with Derived Consumer Lists.
+# ---------------------------------------------------------------------------
+
+_PRD_REVIEW_SKILL_PATHS = (
+    Path(".claude/skills/map-prd-review/SKILL.md"),
+    Path(".agents/skills/map-prd-review/SKILL.md"),
+    Path("src/mapify_cli/templates/skills/map-prd-review/SKILL.md"),
+    Path("src/mapify_cli/templates/codex/skills/map-prd-review/SKILL.md"),
+)
+
+
+def test_prd_review_schema_dimensions_match_runner_dimension_enum():
+    """Make the schemas.py <-> runner coupling explicit, not a fixture accident."""
+    schema_dimensions = MODULE.PRD_REVIEW_SCHEMA["properties"]["dimension_scores"][
+        "required"
+    ]
+
+    assert tuple(schema_dimensions) == map_step_runner.PRD_REVIEW_DIMENSIONS
+    assert tuple(MODULE._PRD_REVIEW_DIMENSIONS) == map_step_runner.PRD_REVIEW_DIMENSIONS
+
+
+@pytest.mark.parametrize("skill_path", _PRD_REVIEW_SKILL_PATHS)
+def test_prd_review_skill_table_matches_runner_dimension_enum(skill_path):
+    """The SKILL.md rubric is the agent's only dimension reference -- pin it."""
+    repo_root = Path(__file__).resolve().parents[1]
+    content = (repo_root / skill_path).read_text(encoding="utf-8")
+    table = content.split("## 13 Dimensions", 1)[1].split("\n##", 1)[0]
+    documented = tuple(re.findall(r"^\| `([a-z_]+)` \|", table, re.MULTILINE))
+
+    assert documented == map_step_runner.PRD_REVIEW_DIMENSIONS, (
+        f"{skill_path}: the 13 Dimensions table drifted from "
+        f"PRD_REVIEW_DIMENSIONS: "
+        f"{sorted(set(documented) ^ set(map_step_runner.PRD_REVIEW_DIMENSIONS))}"
+    )
 
 
 def _minimal_blueprint_with_requiredness() -> dict:

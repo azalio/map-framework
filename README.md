@@ -80,6 +80,7 @@ Then enable the Codex hook: run `/hooks`, select `PreToolUse`, press `t` to togg
 That's the whole golden path.
 
 - **Start with `/map-plan`** for anything non-trivial — it clarifies behavior and splits the work into contract-sized subtasks.
+- **Starting from a PRD?** Run `/map-prd-review` directly, or accept `/map-plan`'s optional readiness preflight. A non-ready result shows the gaps and asks whether to revise or continue planning anyway.
 - **Already scoped?** Go straight to `/map-efficient`.
 - **Tiny edit?** `/map-plan` off-ramps you to a direct edit or `/map-fast` instead of forcing full planning.
 - **Too foggy to plan?** `/map-wayfind` resolves open design decisions one at a time on a durable map, then hands settled decisions to `/map-plan`.
@@ -136,6 +137,7 @@ The DevOpsConf 2026 case study applies this process to a production Kubernetes P
 |---------|---------|
 | `/map-auto` | Single-entry autonomous autopilot: routes a task through existing MAP workflows and drives the chain to a committed branch |
 | `/map-plan` | **Start here** for non-trivial work; clarify behavior and decompose tasks |
+| `/map-prd-review` | Review a PRD with a 0-10 readiness score, strengths, risks, and uncovered edge cases |
 | `/map-wayfind` | Too foggy to plan? Resolve design decisions on a durable map *before* `/map-plan` |
 | `/map-efficient` | **Implement** an approved plan or already-scoped task |
 | `/map-fast` | Small, low-risk changes where full planning is overhead |

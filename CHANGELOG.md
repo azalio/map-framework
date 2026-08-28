@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`/map-prd-review` now produces a scored readiness verdict.** The review scores
+  13 PRD dimensions from 0-10 — the overall score is the equal-weight mean of the
+  applicable ones, with `null` for a genuinely inapplicable dimension — and reports
+  evidence-backed strengths, severity-ranked weaknesses/risks, and feature-specific
+  uncovered edge cases alongside the verdict. `ready_for_plan` requires a score of
+  at least 8.0 with no critical/major finding and no unresolved blocking question.
+- **`/map-plan` offers an optional PRD-quality preflight.** It runs only after
+  resume detection returns `no_plan`, so a resumed plan keeps its recorded review,
+  and it is offered only for input actually labeled as a PRD/brief/requirements —
+  never for an ordinary task description, and never under `--light`. A non-ready
+  verdict never auto-stops: `/map-plan` shows the score and the gaps, then asks the
+  user and records the answer with the new
+  `map_step_runner.py record_prd_review_decision <proceed_anyway|stop_for_revision>`
+  subcommand. Both decisions require an explicit `--rationale`; the recorder never
+  fabricates one. `proceed_anyway` carries every gap into the spec as `PRD-GAP-N` and
+  marks dependent subtasks provisional; it does not flip `ready_for_plan` to true.
+
+### Changed
+- **BREAKING (`.map/<branch>/prd-review.json`): `schema_version` 1.0 → 2.0.** All 11
+  previous dimension keys were replaced by 13 new ones, and `findings[].dimension`
+  and `blocking_questions[].category` are now validated against that enum instead of
+  accepting free-form strings. New required fields: `ready_for_plan`,
+  `readiness_score`, `dimension_scores`, `strengths`, `uncovered_edge_cases`.
+  `--dimension-scores` is now mandatory on `write_prd_review`. Nothing reads an
+  existing 1.0 artifact at runtime, so no upgrade step is forced — but re-run
+  `/map-prd-review` to regenerate one, because the old dimension keys are now
+  rejected at write time and `record_prd_review_decision` rejects a leftover 1.0
+  artifact with an explicit error instead of splicing into it.
+
+### Fixed
+- **A PRD scoring below the rubric's own bar could be accepted as `ready_for_plan`.**
+  `write_prd_review` compared the *display* readiness score — `round(mean, 1)` —
+  against its `>= 8.0` gate, so every applicable-dimension mean in `[7.95, 8.0)`
+  rounded up to a displayed `8.0` and cleared a bar it should have failed (a real
+  mean of 7.9577 was accepted). The gate now compares the exact mean via
+  `calculate_prd_readiness_score_exact()`; `calculate_prd_readiness_score()` keeps
+  returning the rounded value for reports and the persisted artifact, and the error
+  message names both. Regression-tested with mixed, non-uniform score sets — the
+  previous boundary test used a uniform 7.9, which cannot cross the rounding edge.
+- **The `write_prd_review` CLI usage comment documented two values the same release
+  made illegal.** Its examples still used `measurable_acceptance_criteria` (a retired
+  11-dimension key) and `product_decision` (a formerly free-form category); with the
+  new enums, copying either example exited 1. The comment now documents every flag,
+  including the payload shapes for `--dimension-scores`, `--strengths`, and
+  `--uncovered-edge-cases`, which had none.
+- **Omitting the now-mandatory `--dimension-scores` reported an internal constant
+  name instead of the flag.** The failure named `PRD_REVIEW_DIMENSIONS` and listed 13
+  bare keys, never the flag or its value contract; it now names `--dimension-scores`,
+  states the 0-10-or-null contract, and still lists the required keys.
+- **The `/map-prd-review` skill lost its per-verdict next step and its fan-out
+  ceiling.** The verdict table's `Next step` column is restored for all four verdicts
+  on both provider surfaces, and the `Effort and Parallelism Policy` block that caps
+  the review at a single sequential reviewer is back.
+
 ## [3.28.1] - 2026-08-23
 
 ### Fixed

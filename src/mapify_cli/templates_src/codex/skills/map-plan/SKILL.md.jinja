@@ -65,6 +65,66 @@ This reports the existing artifacts (`plan__discovery` or legacy `findings`/`spe
 
 ---
 
+## Pre-flight: PRD-quality preflight (optional)
+
+Run this only after Resume Detection returns `no_plan` (or after resolving a
+`goal_mismatch` and re-checking to get `no_plan`). On `resume`, skip the PRD-quality
+preflight and preserve the existing review and `planning_decision`. If
+`.map/<branch>/prd-review.json` already exists for this same PRD source, do NOT
+re-offer; surface its recorded verdict and score, then follow the reuse state:
+`ready_for_plan` — continue planning; `proceed_anyway` — continue and carry the
+recorded gaps; `stop_for_revision` — stop planning; a non-ready review with no
+recorded `planning_decision` — ask the proceed/stop decision below without
+re-running the review. Re-offer only if the PRD source changed since that review;
+an edited document at the same path is a changed source.
+
+For a fresh plan, decide whether the remaining input is clearly a PRD or requirements
+artifact: for example, an existing Markdown document or substantive pasted text labeled
+`PRD`, `Product Brief`, `Feature Brief`, or `Requirements` that describes a problem,
+scope, and requirements. Do not offer this preflight for an ordinary task description,
+and never in `--light` mode.
+
+For a clear PRD input, offer once before planning:
+
+> This looks like a PRD. Assess its readiness before planning? (optional)
+
+- If the user declines, continue without reviewing it.
+- If the user accepts, read `.agents/skills/map-prd-review/SKILL.md` in full and follow
+  it with the original PRD input. Do not duplicate its rubric inside `$map-plan`.
+- If the review returns `ready_for_plan`, surface its score and continue planning.
+- If the review is not ready (`needs_prd_revision`, `needs_user_decision`, or
+  `route_to_wayfind`), summarize its readiness score, top strengths, critical/major
+  weaknesses, and high-priority uncovered edge cases. Then ask exactly this decision:
+
+> The PRD is not ready. Continue planning anyway with these gaps recorded, or stop and revise the PRD?
+
+Do not choose for the user and do not turn a non-ready verdict into an automatic stop.
+
+- On **continue planning anyway**, persist the explicit override before continuing:
+
+  ```bash
+  python3 .map/scripts/map_step_runner.py record_prd_review_decision proceed_anyway \
+    --rationale "User explicitly chose to continue planning with the reported PRD score and verdict."
+  ```
+
+  Carry every finding, blocking question, uncovered edge case, suggested revision, and
+  route recommendation into the spec's Open Questions / Risks as stable `PRD-GAP-N`
+  entries, deduplicating overlapping items without dropping their evidence. Do not
+  invent resolutions. Put `Provisional — blocked on PRD-GAP-N` in both the description
+  and validation criteria of every dependent subtask.
+- On **stop and revise**, persist the choice and STOP planning:
+
+  ```bash
+  python3 .map/scripts/map_step_runner.py record_prd_review_decision stop_for_revision \
+    --rationale "User chose to stop planning and revise the PRD."
+  ```
+
+The persisted artifact fields are `ready_for_plan`, `planning_decision`, and the review
+verdict. A recorded `proceed_anyway` decision is an explicit user override, not a claim
+that the PRD became ready.
+
+---
+
 ## Pre-flight: Workflow-Fit Gate
 
 Assess whether MAP planning is warranted. Evaluate these signals:
