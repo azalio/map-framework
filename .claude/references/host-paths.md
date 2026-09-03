@@ -37,10 +37,10 @@ These four variables are reserved by MAP runtime layers. Do not repurpose or sha
 
 MAP uses the following host and project paths:
 
-- **`.map/`** — project-local MAP state. `.map/<branch>/` holds per-branch workflow artifacts. The automatic updater owns the gitignored `.map/update-state.json`, `.map/update.lock`, `.map/installer.lock`, and `.map/provider-refresh.lock` files.
+- **`.map/`** — project-local MAP state. `.map/<branch>/` holds per-branch workflow artifacts. `.map/.locks/<branch>.transaction.lock` serializes each branch's complete read-modify-write transaction across orchestrator and step-runner processes; the lock directory is gitignored. The automatic updater owns the separate gitignored `.map/update-state.json`, `.map/update.lock`, `.map/installer.lock`, and `.map/provider-refresh.lock` files.
 - **`.sofa/`** — opt-in SOFA credentials. `.sofa/credentials.lock` serializes private credential-file reads and writes and is ignored with the rest of `.sofa/`.
 - **`~/.map/`** — host-scoped shared state. Two subdirectories matter:
-  - `~/.map/locks/` — advisory lock files acquired by the orchestrator to prevent concurrent MAP sessions on the same branch.
+  - `~/.map/locks/` — host-scoped advisory locks and state sidecars owned by `mapify_cli._locking`; these are separate from project-local branch transaction locks.
   - `~/.map/hooks/` — host-level hook scripts invoked by the MAP hook harness before/after workflow phases.
 
 Root `.gitignore` mutation uses one cross-process lock keyed by the SHA-256 of
@@ -90,7 +90,7 @@ acquires only the provider barrier after installation completes.
 in_progress  created  updated  skipped  timeout  error
 ```
 
-This PR ships the enum and the sidecar writer; no MAP workflow surface is wired to call `flock_with_state` yet (Phase A consumes it for hook serialization, Phase E for memory-flush). The pre-existing `step_state.json` subtask statuses (`pending|in_progress|complete|blocked`) are a separate, unrelated enum owned by the orchestrator.
+Memory finalization uses `flock_with_state` to serialize a repository's flush. The project-local `.map/.locks/<branch>.transaction.lock` protocol is independent and has no state sidecar. The pre-existing `step_state.json` subtask statuses (`pending|in_progress|complete|blocked`) are a separate, unrelated enum owned by the orchestrator.
 
 **INV-5 invariant:** This is a closed enum. Adding a new state requires editing BOTH `src/mapify_cli/_locking.py:LockState` AND this document in the same PR. A PR that adds a state to one without the other must be rejected.
 

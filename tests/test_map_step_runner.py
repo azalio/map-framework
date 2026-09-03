@@ -2740,31 +2740,32 @@ def test_auto_decide_holds_routes_decide_error_to_hard_stops(branch_workspace, m
     )
 
 
-def test_write_json_file_uses_pid_scoped_temp_name(tmp_path):
-    """Bug #446 (Bugs 1-2): _write_json_file and _write_text_file must use
-    PID-scoped temp file names so concurrent writers don't collide.
-    """
-    import sys
+def test_write_helpers_use_invocation_unique_temp_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """JSON and text helpers publish through a fresh temp file on every call."""
+    json_path = tmp_path / "state.json"
+    text_path = tmp_path / "report.md"
+    replaced_from: list[Path] = []
+    original_replace = Path.replace
 
-    sys.dont_write_bytecode = True
-    import importlib.util
+    def recording_replace(source: Path, target: Path) -> Path:
+        replaced_from.append(source)
+        return original_replace(source, target)
 
-    spec = importlib.util.spec_from_file_location(
-        "map_step_runner_tmp",
-        str(SCRIPTS_PATH / "map_step_runner.py"),
-    )
-    assert spec and spec.loader
+    monkeypatch.setattr(Path, "replace", recording_replace)
 
-    # Just verify the naming pattern in the source rather than monkeypatching internals.
-    source = (SCRIPTS_PATH / "map_step_runner.py").read_text(encoding="utf-8")
-    # Check that the fixed naming pattern exists in the source
-    assert "os.getpid()" in source, (
-        "_write_json_file and _write_text_file must use os.getpid() for temp file naming"
-    )
-    # Confirm the old fixed-suffix pattern is gone
-    assert 'with_suffix(".tmp")' not in source or source.count('with_suffix(".tmp")') == 0, (
-        "fixed .tmp suffix (non-PID-unique) must not appear in map_step_runner.py"
-    )
+    map_step_runner._write_json_file(json_path, {"version": 1})
+    map_step_runner._write_json_file(json_path, {"version": 2})
+    map_step_runner._write_text_file(text_path, "complete\n")
+
+    assert json.loads(json_path.read_text(encoding="utf-8")) == {"version": 2}
+    assert text_path.read_text(encoding="utf-8") == "complete\n"
+    assert len(replaced_from) == 3
+    assert len(set(replaced_from)) == 3
+    assert all(path.parent == tmp_path for path in replaced_from)
+    assert all(path.name.endswith(".tmp") for path in replaced_from)
+    assert list(tmp_path.glob(".*.tmp")) == []
 
 
 def test_validate_blueprint_contract_accepts_contract_sized_plan(branch_workspace):

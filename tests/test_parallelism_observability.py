@@ -200,8 +200,8 @@ def test_detection_not_implemented() -> None:
 def _load_runner_module() -> object:
     """Import the rendered runner script as a module (bytecode-free).
 
-    The runner does ``from map_utils import get_branch_name`` at module level,
-    which fails outside an installed MAP project.  We inject a stub into
+    The runner imports its standalone ``map_utils`` dependencies at module
+    level, which fails outside an installed MAP project. We inject a stub into
     sys.modules before exec so the import resolves without a real map_utils.
     The stub is cleaned up after exec to avoid polluting the test session.
     """
@@ -217,6 +217,17 @@ def _load_runner_module() -> object:
         del _a, _kw  # del is valid in a def body (illegal in a lambda)
         return "stub"
 
+    def _unused_stub(*_a: object, **_kw: object) -> None:
+        del _a, _kw
+
+    def _unused_transaction(*_a: object, **_kw: object):
+        from contextlib import nullcontext
+
+        del _a, _kw
+        return nullcontext()
+
+    stub.atomic_write_text = _unused_stub  # type: ignore[attr-defined]
+    stub.branch_transaction = _unused_transaction  # type: ignore[attr-defined]
     stub.get_branch_name = _stub_branch_name  # type: ignore[attr-defined]
     injected = "map_utils" not in sys.modules
     if injected:
