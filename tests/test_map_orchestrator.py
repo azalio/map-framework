@@ -32,6 +32,7 @@ ORCHESTRATOR_PATH = (
 sys.path.insert(0, str(ORCHESTRATOR_PATH))
 
 import map_orchestrator  # pyright: ignore[reportMissingImports]
+import map_utils  # pyright: ignore[reportMissingImports]
 
 
 @pytest.fixture
@@ -6356,6 +6357,36 @@ def test_step_state_save_uses_invocation_unique_temp_files(
     assert all(path.name.startswith(".step_state.json.") for path in replaced_from)
     assert all(path.name.endswith(".tmp") for path in replaced_from)
     assert list(tmp_path.glob(".step_state.json.*.tmp")) == []
+
+
+def test_atomic_write_text_uses_binary_descriptor_and_explicit_lf_newlines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Atomic text writes avoid stacked newline translation on Windows."""
+    mkstemp_kwargs: dict[str, object] = {}
+    fdopen_kwargs: dict[str, object] = {}
+    original_mkstemp = map_utils.tempfile.mkstemp
+    original_fdopen = map_utils.os.fdopen
+
+    def recording_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        mkstemp_kwargs.update(kwargs)
+        return original_mkstemp(*args, **kwargs)
+
+    def recording_fdopen(
+        descriptor: int, *args: object, **kwargs: object
+    ) -> object:
+        fdopen_kwargs.update(kwargs)
+        return original_fdopen(descriptor, *args, **kwargs)
+
+    monkeypatch.setattr(map_utils.tempfile, "mkstemp", recording_mkstemp)
+    monkeypatch.setattr(map_utils.os, "fdopen", recording_fdopen)
+
+    target = tmp_path / "state.txt"
+    map_utils.atomic_write_text(target, "first\nsecond\n")
+
+    assert "text" not in mkstemp_kwargs
+    assert fdopen_kwargs["newline"] == "\n"
+    assert target.read_bytes() == b"first\nsecond\n"
 
 
 def test_step_state_save_replace_failure_preserves_target_and_cleans_temp(

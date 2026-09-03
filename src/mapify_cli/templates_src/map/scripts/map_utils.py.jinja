@@ -145,11 +145,10 @@ def atomic_write_text(path: Path, content: str) -> None:
         dir=str(path.parent),
         prefix=f".{path.name}.",
         suffix=".tmp",
-        text=True,
     )
     temporary_path = Path(temporary_name)
     try:
-        stream = os.fdopen(descriptor, "w", encoding="utf-8")
+        stream = os.fdopen(descriptor, "w", encoding="utf-8", newline="\n")
         descriptor = -1
         with stream:
             stream.write(content)
