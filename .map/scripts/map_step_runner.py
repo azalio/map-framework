@@ -707,20 +707,15 @@ def _validate_exact_string_fields(
 
 def _write_json_file(path: Path, payload: dict | list) -> None:
     """Atomically write JSON payload to disk."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_file = path.with_suffix(".tmp")
-    tmp_file.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
+    atomic_write_text(
+        path,
+        json.dumps(payload, indent=2, ensure_ascii=True) + "\n",
     )
-    tmp_file.replace(path)
 
 
 def _write_text_file(path: Path, content: str) -> None:
     """Atomically write text content to disk."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_file = path.parent / (path.name + ".tmp")
-    tmp_file.write_text(content, encoding="utf-8")
-    tmp_file.replace(path)
+    atomic_write_text(path, content)
 
 
 def _read_json_file(path: Path) -> dict[str, object] | None:
@@ -12804,7 +12799,11 @@ def add_known_issue(
     }
 
 
-from map_utils import get_branch_name  # type: ignore[import-not-found]
+from map_utils import (  # type: ignore[import-not-found]
+    atomic_write_text,
+    branch_transaction,
+    get_branch_name,
+)
 
 
 def update_step_state(
@@ -12829,6 +12828,19 @@ def update_step_state(
         branch = get_branch_name()
 
     state_file = Path(f".map/{branch}/step_state.json")
+    with branch_transaction(state_file.parent):
+        return _update_step_state_locked(
+            state_file, subtask_id, step_name, new_state
+        )
+
+
+def _update_step_state_locked(
+    state_file: Path,
+    subtask_id: str,
+    step_name: str,
+    new_state: str,
+) -> dict:
+    """Apply one state update while the caller holds the branch lock."""
 
     if not state_file.exists():
         return {"status": "error", "message": "step_state.json not found"}
@@ -12852,10 +12864,7 @@ def update_step_state(
         state["current_state"] = new_state
         state["current_subtask"] = subtask_id
 
-        # Write back atomically
-        tmp_file = state_file.with_suffix(".tmp")
-        tmp_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
-        tmp_file.replace(state_file)
+        _write_json_file(state_file, state)
 
         return {
             "status": "success",
@@ -12891,6 +12900,15 @@ def update_step_state_batch(
         branch = get_branch_name()
 
     state_file = Path(f".map/{branch}/step_state.json")
+    with branch_transaction(state_file.parent):
+        return _update_step_state_batch_locked(state_file, updates)
+
+
+def _update_step_state_batch_locked(
+    state_file: Path,
+    updates: list[dict],
+) -> dict:
+    """Apply a batch state update while the caller holds the branch lock."""
 
     if not state_file.exists():
         return {"status": "error", "message": "step_state.json not found"}
@@ -12930,10 +12948,7 @@ def update_step_state_batch(
             state["current_subtask"] = active_subtasks[0]
             state["current_state"] = updates[-1].get("new_state", "UPDATED")
 
-        # Write back atomically
-        tmp_file = state_file.with_suffix(".tmp")
-        tmp_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
-        tmp_file.replace(state_file)
+        _write_json_file(state_file, state)
 
         return {
             "status": "success",
@@ -16340,6 +16355,7 @@ def route_task(
         "next_command": next_command,
         "executed": executed,
         "blocked_by": blocked_by,
+        "block_reason": block_reason if chain_status == "blocked" else None,
     }
 
 
@@ -16382,13 +16398,13 @@ def record_auto_phase(
     audit note (INV-4).
 
     HC-2 fail-closed guard (code review 2): once chain_status is "aborted"
-    (3rd-attempt refusal above) or "blocked" (route_task hard-stop hold),
-    the chain must stay terminal until an explicit NEW route_task call --
-    route_task's own overwrite policy is the only legitimate way out of
-    "aborted"/"blocked". A call naming a DIFFERENT phase must never act as a
-    side door that resurrects the chain by appending a fresh entry and
-    flipping chain_status back to in_progress/completed. This guard runs
-    BEFORE the attempt-counter logic (which only protects the SAME phase
+    (3rd-attempt refusal above), "blocked" (route_task hard-stop hold), or
+    "completed", the chain must stay terminal until an explicit NEW route_task
+    call -- route_task's own overwrite policy is the only legitimate way out
+    of "aborted"/"blocked"/"completed". A call naming a DIFFERENT phase must
+    never act as a side door that resurrects the chain by appending a fresh
+    entry and flipping chain_status back to in_progress/completed. This guard
+    runs BEFORE the attempt-counter logic (which only protects the SAME phase
     name) and mutates nothing on the terminal-state path: no phases[]
     append, no chain_status change, no abort_reason/block_reason pop, no
     manifest write.
@@ -16408,7 +16424,7 @@ def record_auto_phase(
         }
 
     terminal_chain_status = artifact.get("chain_status")
-    if terminal_chain_status in {"aborted", "blocked"}:
+    if terminal_chain_status in {"aborted", "blocked", "completed"}:
         return {
             "status": "refused",
             "branch": branch_name,
@@ -19434,10 +19450,24 @@ def auto_decide_holds(branch: str | None = None) -> dict[str, Any]:
         hold_id = str(hold.get("id", ""))
         kind = str(hold.get("kind", ""))
         if kind in AUTO_APPROVABLE_HOLD_KINDS:
-            decide_approval_hold(hold_id, "approved", "auto-approved by map-auto", branch_name)
-            auto_approved.append(
-                {"id": hold_id, "kind": kind, "note": "auto-approved by map-auto"}
+            _decide_result = decide_approval_hold(
+                hold_id, "approved", "auto-approved by map-auto", branch_name
             )
+            if _decide_result.get("status") not in {"ok", "success"}:
+                hard_stops.append(
+                    {
+                        "id": hold_id,
+                        "kind": kind,
+                        "reason": (
+                            "decide_approval_hold failed: "
+                            + str(_decide_result.get("reasons", _decide_result.get("message", "unknown error")))
+                        ),
+                    }
+                )
+            else:
+                auto_approved.append(
+                    {"id": hold_id, "kind": kind, "note": "auto-approved by map-auto"}
+                )
         elif kind in HARD_STOP_HOLD_KINDS:
             hard_stops.append(
                 {
@@ -22630,23 +22660,24 @@ if __name__ == "__main__":
             _sys.exit(1)
         branch_name = get_branch_name()
         state_path = Path(f".map/{branch_name}/step_state.json")
-        if not state_path.exists():
-            print(json.dumps({"status": "error", "message": "step_state.json not found"}))
-            _sys.exit(1)
-        from map_orchestrator import StepState  # type: ignore[import-not-found]
-        st = StepState.load(state_path)
-        subtask_id = data.get("subtask_id") or st.current_subtask_id or ""
-        if not subtask_id:
-            print(json.dumps({"status": "skipped", "message": "No subtask_id"}))
-            _sys.exit(0)
-        st.record_subtask_result(
-            subtask_id=subtask_id,
-            files_changed=data.get("files", []),
-            status=data.get("status", "valid"),
-            summary=data.get("summary", ""),
-            commit_sha=data.get("commit_sha"),
-        )
-        st.save(state_path)
+        with branch_transaction(state_path.parent):
+            if not state_path.exists():
+                print(json.dumps({"status": "error", "message": "step_state.json not found"}))
+                _sys.exit(1)
+            from map_orchestrator import StepState  # type: ignore[import-not-found]
+            st = StepState.load(state_path)
+            subtask_id = data.get("subtask_id") or st.current_subtask_id or ""
+            if not subtask_id:
+                print(json.dumps({"status": "skipped", "message": "No subtask_id"}))
+                _sys.exit(0)
+            st.record_subtask_result(
+                subtask_id=subtask_id,
+                files_changed=data.get("files", []),
+                status=data.get("status", "valid"),
+                summary=data.get("summary", ""),
+                commit_sha=data.get("commit_sha"),
+            )
+            st.save(state_path)
         print(json.dumps({"status": "success", "subtask_id": subtask_id}))
 
     elif func_name == "build_context_block" and len(sys.argv) >= 4:

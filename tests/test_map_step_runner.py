@@ -2646,6 +2646,128 @@ def test_record_auto_phase_is_the_sole_phases_mutator_in_source():
     )
 
 
+def test_record_auto_phase_refuses_after_chain_completed(branch_workspace):
+    """Bug #446 (Bug 5): record_auto_phase must refuse when chain_status is
+    'completed', not just 'aborted'/'blocked'. A replayed or erroneous call
+    after a successful chain close must not corrupt the artifact.
+    """
+    branch = branch_workspace.name
+    map_step_runner.route_task("ship feature", branch=branch)
+
+    # Advance the chain to completed via record_auto_phase
+    map_step_runner.record_auto_phase("map-plan", "in_progress", branch=branch)
+    complete_result = map_step_runner.record_auto_phase(
+        "map-plan", "completed", branch=branch
+    )
+    assert complete_result["status"] == "success"
+    assert complete_result["chain_status"] == "completed"
+
+    artifact_before = _read_auto_route_artifact(branch_workspace)
+    assert artifact_before["chain_status"] == "completed"
+
+    # A subsequent call on a completed chain must be refused
+    refused = map_step_runner.record_auto_phase(
+        "map-efficient", "in_progress", branch=branch
+    )
+
+    assert refused["status"] == "refused"
+    assert refused["chain_status"] == "completed"
+
+    artifact_after = _read_auto_route_artifact(branch_workspace)
+    assert artifact_after == artifact_before, (
+        "no field of the artifact may change on a refused call against a completed chain"
+    )
+
+
+def test_route_task_includes_block_reason_when_blocked(branch_workspace):
+    """Bug #446 (Bug 6): route_task must include 'block_reason' in the return
+    dict when chain_status is 'blocked', so consuming agents and SKILL.md callers
+    can surface why the chain was blocked.
+    """
+    branch = branch_workspace.name
+    hold_result = map_step_runner.create_approval_hold(
+        kind="dangerous_action",
+        reason="Destructive shell command",
+        request_summary="rm -rf production bucket",
+        branch=branch,
+    )
+    hold_id = hold_result["hold_id"]
+
+    result = map_step_runner.route_task("run the cleanup", branch=branch, dry_run=False)
+
+    assert result["chain_status"] == "blocked"
+    assert result["blocked_by"] == [hold_id]
+    # Bug 6: block_reason was absent from the return dict
+    assert "block_reason" in result, "block_reason must be present in blocked route_task response"
+    assert result["block_reason"], "block_reason must be non-empty when chain is blocked"
+
+
+def test_auto_decide_holds_routes_decide_error_to_hard_stops(branch_workspace, monkeypatch):
+    """Bug #446 (Bug 7): auto_decide_holds must check the return value of
+    decide_approval_hold. When it returns an error (hold missing, already decided),
+    the hold must go to hard_stops[], not auto_approved[].
+    """
+    branch = branch_workspace.name
+    map_step_runner.route_task("ship something", branch=branch)
+
+    created = map_step_runner.create_approval_hold(
+        kind="plan_approval",
+        reason="plan needs sign-off",
+        request_summary="approve blueprint before executing",
+        branch=branch,
+    )
+    hold_id = created["hold_id"]
+
+    # Patch decide_approval_hold to simulate a failure (e.g. already decided)
+    original_decide = map_step_runner.decide_approval_hold
+
+    def failing_decide(hid: str, decision: str, note: str = "", branch: str | None = None) -> dict:  # type: ignore[override]
+        if hid == hold_id:
+            return {"status": "error", "message": f"hold {hid!r} already decided"}
+        return original_decide(hid, decision, note, branch)
+
+    monkeypatch.setattr(map_step_runner, "decide_approval_hold", failing_decide)
+
+    result = map_step_runner.auto_decide_holds(branch=branch)
+
+    # Bug 7: the hold must not appear in auto_approved when decide fails
+    assert not any(e["id"] == hold_id for e in result["auto_approved"]), (
+        "a hold whose decide_approval_hold call failed must not be in auto_approved"
+    )
+    # It must be routed to hard_stops instead
+    assert any(e["id"] == hold_id for e in result["hard_stops"]), (
+        "a hold whose decide_approval_hold call failed must appear in hard_stops"
+    )
+
+
+def test_write_helpers_use_invocation_unique_temp_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """JSON and text helpers publish through a fresh temp file on every call."""
+    json_path = tmp_path / "state.json"
+    text_path = tmp_path / "report.md"
+    replaced_from: list[Path] = []
+    original_replace = Path.replace
+
+    def recording_replace(source: Path, target: Path) -> Path:
+        replaced_from.append(source)
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", recording_replace)
+
+    map_step_runner._write_json_file(json_path, {"version": 1})
+    map_step_runner._write_json_file(json_path, {"version": 2})
+    map_step_runner._write_text_file(text_path, "complete\n")
+
+    assert json.loads(json_path.read_text(encoding="utf-8")) == {"version": 2}
+    assert text_path.read_text(encoding="utf-8") == "complete\n"
+    assert len(replaced_from) == 3
+    assert len(set(replaced_from)) == 3
+    assert all(path.parent == tmp_path for path in replaced_from)
+    assert all(path.name.endswith(".tmp") for path in replaced_from)
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
 def test_validate_blueprint_contract_accepts_contract_sized_plan(branch_workspace):
     blueprint = {
         "summary": "Deliver a user-visible fix",

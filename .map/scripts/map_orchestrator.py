@@ -840,13 +840,10 @@ class StepState:
 
     def save(self, state_file: Path) -> None:
         """Save state to file."""
-        state_file.parent.mkdir(parents=True, exist_ok=True)
-        tmp_file = state_file.with_suffix(".tmp")
-        tmp_file.write_text(
+        atomic_write_text(
+            state_file,
             json.dumps(self.to_dict(), indent=2, ensure_ascii=True),
-            encoding="utf-8",
         )
-        tmp_file.replace(state_file)
 
 
 def _get_step_order(tdd_mode: bool = False) -> list[str]:
@@ -855,7 +852,11 @@ def _get_step_order(tdd_mode: bool = False) -> list[str]:
 
 
 from map_utils import (  # pyright: ignore[reportMissingImports]
+    acquire_branch_transaction,
+    atomic_write_text,
+    branch_transaction,
     get_branch_name,
+    release_branch_transaction,
     sanitize_branch_name,
 )
 
@@ -2102,35 +2103,45 @@ def _restored_subtask_from_deferred(item: dict, subtask_id: str) -> dict:
 def _append_restored_subtask_to_plan(
     plan_file: Path, subtask: dict, item: dict
 ) -> bool:
-    if not plan_file.exists():
-        return False
-    content = plan_file.read_text(encoding="utf-8")
-    subtask_id = str(subtask.get("id"))
-    if re.search(rf"^###\s+{re.escape(subtask_id)}\b", content, re.MULTILINE):
-        return False
-    item_id = str(item.get("id") or "YG-???")
-    title = str(subtask.get("title") or "Restored deferred YAGNI item")
-    rationale = str(item.get("rationale") or "No rationale recorded")
-    restore_hint = str(item.get("restore_hint") or "No restore hint recorded")
-    addition = (
-        "\n\n## Restored Deferred YAGNI\n\n"
-        f"### {subtask_id}: {title}\n"
-        "- **Status:** pending\n"
-        f"- **Restored from:** {item_id}\n"
-        "- **Requiredness:** optional\n"
-        f"- **Rationale:** {rationale}\n"
-        f"- **Restore hint:** {restore_hint}\n"
-        "- **Validation:** Implement this restored scope or re-plan it before "
-        "approving execution.\n"
-    )
-    plan_file.write_text(content.rstrip() + addition, encoding="utf-8")
-    return True
+    """Append one restored subtask under the shared branch transaction lock."""
+    with branch_transaction(plan_file.parent):
+        if not plan_file.exists():
+            return False
+        content = plan_file.read_text(encoding="utf-8")
+        subtask_id = str(subtask.get("id"))
+        if re.search(rf"^###\s+{re.escape(subtask_id)}\b", content, re.MULTILINE):
+            return False
+        item_id = str(item.get("id") or "YG-???")
+        title = str(subtask.get("title") or "Restored deferred YAGNI item")
+        rationale = str(item.get("rationale") or "No rationale recorded")
+        restore_hint = str(item.get("restore_hint") or "No restore hint recorded")
+        addition = (
+            "\n\n## Restored Deferred YAGNI\n\n"
+            f"### {subtask_id}: {title}\n"
+            "- **Status:** pending\n"
+            f"- **Restored from:** {item_id}\n"
+            "- **Requiredness:** optional\n"
+            f"- **Rationale:** {rationale}\n"
+            f"- **Restore hint:** {restore_hint}\n"
+            "- **Validation:** Implement this restored scope or re-plan it before "
+            "approving execution.\n"
+        )
+        atomic_write_text(plan_file, content.rstrip() + addition)
+        return True
 
 
 def restore_deferred_yagni(
     item_id: str, branch: str, new_subtask_id: str | None = None
 ) -> dict:
     """Move one deferred_yagni item into active subtasks before plan approval."""
+    with branch_transaction(Path(f".map/{branch}")):
+        return _restore_deferred_yagni_unlocked(item_id, branch, new_subtask_id)
+
+
+def _restore_deferred_yagni_unlocked(
+    item_id: str, branch: str, new_subtask_id: str | None = None
+) -> dict:
+    """Restore one deferred item while the caller holds the branch lock."""
     normalized_item_id = (item_id or "").strip()
     if not re.fullmatch(r"YG-\d{3,}", normalized_item_id):
         return {
@@ -2201,12 +2212,10 @@ def restore_deferred_yagni(
     del deferred_yagni[match_index]
     subtasks.append(restored_subtask)
 
-    tmp_path = blueprint_path.with_suffix(".tmp")
-    tmp_path.write_text(
+    atomic_write_text(
+        blueprint_path,
         json.dumps(payload, indent=2, ensure_ascii=True) + "\n",
-        encoding="utf-8",
     )
-    tmp_path.replace(blueprint_path)
 
     plan_file = plan_dir / f"task_plan_{branch}.md"
     task_plan_updated = _append_restored_subtask_to_plan(
@@ -5081,7 +5090,17 @@ def main():
     # mapify_cli package is not importable from this script's environment.
     _emit_context_budget_warning(branch, args.transcript_path)
 
+    transaction_acquired = False
     try:
+        # A script-anchored fallback may point at the shipped template tree
+        # when invoked outside an initialized project. Keep read-only misses
+        # side-effect free instead of manufacturing ``templates/.map/.locks``.
+        # Installed MAP projects already contain ``.map/`` because this script
+        # itself lives under ``.map/scripts``.
+        if Path(".map").is_dir():
+            acquire_branch_transaction(Path(".map") / branch)
+            transaction_acquired = True
+
         if args.command == "get_next_step":
             result = get_next_step(branch)
             print(json.dumps(result, indent=2))
@@ -5498,6 +5517,9 @@ def main():
     except Exception as e:  # noqa: BLE001 — CLI top-level error handler
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)
+    finally:
+        if transaction_acquired:
+            release_branch_transaction()
 
 
 if __name__ == "__main__":

@@ -32,6 +32,7 @@ ORCHESTRATOR_PATH = (
 sys.path.insert(0, str(ORCHESTRATOR_PATH))
 
 import map_orchestrator  # pyright: ignore[reportMissingImports]
+import map_utils  # pyright: ignore[reportMissingImports]
 
 
 @pytest.fixture
@@ -6330,6 +6331,226 @@ class TestSetWavesImportFallback:
         waves = result["execution_waves"]
         assert waves[0] == ["ST-001"]
         assert waves[1] == ["ST-002"]
+
+
+def test_step_state_save_uses_invocation_unique_temp_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Each save publishes valid JSON through a fresh temporary file."""
+    state_file = tmp_path / "step_state.json"
+    replaced_from: list[Path] = []
+    original_replace = Path.replace
+
+    def recording_replace(source: Path, target: Path) -> Path:
+        replaced_from.append(source)
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", recording_replace)
+
+    map_orchestrator.StepState(current_step_id="1.0").save(state_file)
+    map_orchestrator.StepState(current_step_id="1.5").save(state_file)
+
+    assert json.loads(state_file.read_text(encoding="utf-8"))["current_step_id"] == "1.5"
+    assert len(replaced_from) == 2
+    assert replaced_from[0] != replaced_from[1]
+    assert all(path.parent == tmp_path for path in replaced_from)
+    assert all(path.name.startswith(".step_state.json.") for path in replaced_from)
+    assert all(path.name.endswith(".tmp") for path in replaced_from)
+    assert list(tmp_path.glob(".step_state.json.*.tmp")) == []
+
+
+def test_atomic_write_text_uses_binary_descriptor_and_explicit_lf_newlines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Atomic text writes avoid stacked newline translation on Windows."""
+    mkstemp_kwargs: dict[str, object] = {}
+    fdopen_kwargs: dict[str, object] = {}
+    original_mkstemp = map_utils.tempfile.mkstemp
+    original_fdopen = map_utils.os.fdopen
+
+    def recording_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        mkstemp_kwargs.update(kwargs)
+        return original_mkstemp(*args, **kwargs)
+
+    def recording_fdopen(
+        descriptor: int, *args: object, **kwargs: object
+    ) -> object:
+        fdopen_kwargs.update(kwargs)
+        return original_fdopen(descriptor, *args, **kwargs)
+
+    monkeypatch.setattr(map_utils.tempfile, "mkstemp", recording_mkstemp)
+    monkeypatch.setattr(map_utils.os, "fdopen", recording_fdopen)
+
+    target = tmp_path / "state.txt"
+    map_utils.atomic_write_text(target, "first\nsecond\n")
+
+    assert "text" not in mkstemp_kwargs
+    assert fdopen_kwargs["newline"] == "\n"
+    assert target.read_bytes() == b"first\nsecond\n"
+
+
+def test_step_state_save_replace_failure_preserves_target_and_cleans_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A failed atomic publish leaves the prior state intact and no temp residue."""
+    state_file = tmp_path / "step_state.json"
+    original = '{"current_step_id": "original"}\n'
+    state_file.write_text(original, encoding="utf-8")
+
+    def fail_replace(_source: Path, _target: Path) -> Path:
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="simulated replace failure"):
+        map_orchestrator.StepState(current_step_id="1.5").save(state_file)
+
+    assert state_file.read_text(encoding="utf-8") == original
+    assert list(tmp_path.glob(".step_state.json.*.tmp")) == []
+
+
+def _restored_plan_inputs(subtask_id: str = "ST-002") -> tuple[dict, dict]:
+    return (
+        {"id": subtask_id, "title": "Add optional export"},
+        {
+            "id": "YG-001",
+            "rationale": "Not required for the initial flow.",
+            "restore_hint": "Add CSV export when requested.",
+        },
+    )
+
+
+def test_append_restored_subtask_to_plan_writes_content_and_is_idempotent(
+    tmp_path: Path,
+):
+    """The plan append is valid at runtime and repeated calls are a no-op."""
+    plan_file = tmp_path / "task_plan_test.md"
+    plan_file.write_text("# Task Plan\n", encoding="utf-8")
+    subtask, item = _restored_plan_inputs()
+
+    assert map_orchestrator._append_restored_subtask_to_plan(
+        plan_file, subtask, item
+    ) is True
+    updated = plan_file.read_text(encoding="utf-8")
+    assert "### ST-002: Add optional export" in updated
+    assert "- **Restored from:** YG-001" in updated
+
+    assert map_orchestrator._append_restored_subtask_to_plan(
+        plan_file, subtask, item
+    ) is False
+    assert plan_file.read_text(encoding="utf-8") == updated
+    assert list(tmp_path.glob(".task_plan_test.md.*.tmp")) == []
+
+
+def test_append_restored_subtask_replace_failure_preserves_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A failed plan publish preserves the old plan and removes its temp file."""
+    plan_file = tmp_path / "task_plan_test.md"
+    original = "# Task Plan\n"
+    plan_file.write_text(original, encoding="utf-8")
+    subtask, item = _restored_plan_inputs()
+
+    def fail_replace(_source: Path, _target: Path) -> Path:
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="simulated replace failure"):
+        map_orchestrator._append_restored_subtask_to_plan(plan_file, subtask, item)
+
+    assert plan_file.read_text(encoding="utf-8") == original
+    assert list(tmp_path.glob(".task_plan_test.md.*.tmp")) == []
+
+
+def test_cli_state_transaction_waits_for_branch_lock(tmp_path: Path):
+    """A CLI mutation waits until the full branch transaction lock is released."""
+    branch = "concurrent-branch"
+    branch_path = tmp_path / ".map" / branch
+    branch_path.mkdir(parents=True)
+    state_file = branch_path / "step_state.json"
+    map_orchestrator.StepState(plan_approved=False).save(state_file)
+
+    helper = (
+        "import sys\n"
+        f"sys.path.insert(0, {str(ORCHESTRATOR_PATH)!r})\n"
+        "from pathlib import Path\n"
+        "from map_utils import branch_transaction\n"
+        f"with branch_transaction(Path({str(branch_path)!r})):\n"
+        "    print('locked', flush=True)\n"
+        "    sys.stdin.readline()\n"
+    )
+    holder = subprocess.Popen(
+        [sys.executable, "-c", helper],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    command: subprocess.Popen[str] | None = None
+    try:
+        assert holder.stdout is not None
+        assert holder.stdout.readline().strip() == "locked"
+
+        env = os.environ.copy()
+        env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
+        command = subprocess.Popen(
+            [
+                sys.executable,
+                str(ORCHESTRATOR_PATH / "map_orchestrator.py"),
+                "set_plan_approved",
+                "true",
+                "--branch",
+                branch,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+
+        with pytest.raises(subprocess.TimeoutExpired):
+            command.wait(timeout=0.5)
+
+        assert holder.stdin is not None
+        holder.stdin.write("\n")
+        holder.stdin.flush()
+        holder.wait(timeout=5)
+
+        stdout, stderr = command.communicate(timeout=10)
+        assert command.returncode == 0, stderr
+        assert json.loads(stdout)["status"] == "success"
+        assert map_orchestrator.StepState.load(state_file).plan_approved is True
+    finally:
+        if holder.poll() is None:
+            holder.kill()
+            holder.wait(timeout=5)
+        if command is not None and command.poll() is None:
+            command.kill()
+            command.wait(timeout=5)
+
+
+def test_cli_without_map_state_does_not_create_lock_directory(tmp_path: Path):
+    """A state lookup in an uninitialized project must remain side-effect free."""
+    env = os.environ.copy()
+    env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ORCHESTRATOR_PATH / "map_orchestrator.py"),
+            "peek_current_step",
+            "--branch",
+            "missing-branch",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert not (tmp_path / ".map").exists()
 
 
 if __name__ == "__main__":
