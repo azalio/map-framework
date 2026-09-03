@@ -841,7 +841,7 @@ class StepState:
     def save(self, state_file: Path) -> None:
         """Save state to file."""
         state_file.parent.mkdir(parents=True, exist_ok=True)
-        tmp_file = state_file.with_suffix(".tmp")
+        tmp_file = state_file.with_name(f".{state_file.name}.{os.getpid()}.tmp")
         tmp_file.write_text(
             json.dumps(self.to_dict(), indent=2, ensure_ascii=True),
             encoding="utf-8",
@@ -2123,7 +2123,9 @@ def _append_restored_subtask_to_plan(
         "- **Validation:** Implement this restored scope or re-plan it before "
         "approving execution.\n"
     )
-    plan_file.write_text(content.rstrip() + addition, encoding="utf-8")
+    tmp = plan_file.with_name(f".{plan_file.name}.{os.getpid()}.tmp")
+    tmp.write_text(content.rstrip() + addition, encoding="utf-8")
+    tmp.replace(plan_file)
     return True
 
 

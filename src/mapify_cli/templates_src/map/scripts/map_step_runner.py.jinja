@@ -683,7 +683,7 @@ def _validate_exact_string_fields(
 def _write_json_file(path: Path, payload: dict | list) -> None:
     """Atomically write JSON payload to disk."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_file = path.with_suffix(".tmp")
+    tmp_file = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     tmp_file.write_text(
         json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
     )
@@ -693,7 +693,7 @@ def _write_json_file(path: Path, payload: dict | list) -> None:
 def _write_text_file(path: Path, content: str) -> None:
     """Atomically write text content to disk."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_file = path.parent / (path.name + ".tmp")
+    tmp_file = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     tmp_file.write_text(content, encoding="utf-8")
     tmp_file.replace(path)
 
@@ -12828,7 +12828,7 @@ def update_step_state(
         state["current_subtask"] = subtask_id
 
         # Write back atomically
-        tmp_file = state_file.with_suffix(".tmp")
+        tmp_file = state_file.with_name(f".{state_file.name}.{os.getpid()}.tmp")
         tmp_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
         tmp_file.replace(state_file)
 
@@ -12906,7 +12906,7 @@ def update_step_state_batch(
             state["current_state"] = updates[-1].get("new_state", "UPDATED")
 
         # Write back atomically
-        tmp_file = state_file.with_suffix(".tmp")
+        tmp_file = state_file.with_name(f".{state_file.name}.{os.getpid()}.tmp")
         tmp_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
         tmp_file.replace(state_file)
 
@@ -16315,6 +16315,7 @@ def route_task(
         "next_command": next_command,
         "executed": executed,
         "blocked_by": blocked_by,
+        "block_reason": block_reason if chain_status == "blocked" else None,
     }
 
 
@@ -16383,7 +16384,7 @@ def record_auto_phase(
         }
 
     terminal_chain_status = artifact.get("chain_status")
-    if terminal_chain_status in {"aborted", "blocked"}:
+    if terminal_chain_status in {"aborted", "blocked", "completed"}:
         return {
             "status": "refused",
             "branch": branch_name,
@@ -19409,10 +19410,24 @@ def auto_decide_holds(branch: str | None = None) -> dict[str, Any]:
         hold_id = str(hold.get("id", ""))
         kind = str(hold.get("kind", ""))
         if kind in AUTO_APPROVABLE_HOLD_KINDS:
-            decide_approval_hold(hold_id, "approved", "auto-approved by map-auto", branch_name)
-            auto_approved.append(
-                {"id": hold_id, "kind": kind, "note": "auto-approved by map-auto"}
+            _decide_result = decide_approval_hold(
+                hold_id, "approved", "auto-approved by map-auto", branch_name
             )
+            if _decide_result.get("status") not in {"ok", "success"}:
+                hard_stops.append(
+                    {
+                        "id": hold_id,
+                        "kind": kind,
+                        "reason": (
+                            "decide_approval_hold failed: "
+                            + str(_decide_result.get("reasons", _decide_result.get("message", "unknown error")))
+                        ),
+                    }
+                )
+            else:
+                auto_approved.append(
+                    {"id": hold_id, "kind": kind, "note": "auto-approved by map-auto"}
+                )
         elif kind in HARD_STOP_HOLD_KINDS:
             hard_stops.append(
                 {

@@ -6332,5 +6332,56 @@ class TestSetWavesImportFallback:
         assert waves[1] == ["ST-002"]
 
 
+def test_step_state_save_uses_pid_scoped_temp_name():
+    """Bug #446 (Bug 3): StepState.save must use a PID-scoped temp file name so
+    concurrent orchestrator instances don't collide on the same .tmp file.
+    """
+    source = (ORCHESTRATOR_PATH / "map_orchestrator.py").read_text(encoding="utf-8")
+    # Locate save() method body tightly: it ends at the first top-level def/class
+    # after the method start (save is the last method in StepState, so the next
+    # top-level symbol starts at column 0).
+    save_start = source.index("def save(self, state_file: Path)")
+    # Find the end of the method: either the next top-level def/class or end of file
+    import re as _re
+    top_level_match = _re.search(r"\n(?:def |class )", source[save_start + 1:])
+    if top_level_match:
+        save_end = save_start + 1 + top_level_match.start()
+    else:
+        save_end = len(source)
+    save_body = source[save_start:save_end]
+    assert "os.getpid()" in save_body, (
+        "StepState.save must use os.getpid() in the temp file name to avoid "
+        "concurrent-writer collisions (Bug #446 Bug 3)"
+    )
+    assert 'with_suffix(".tmp")' not in save_body, (
+        "StepState.save must not use a fixed .tmp suffix — use a PID-scoped name instead"
+    )
+
+
+def test_append_restored_subtask_to_plan_is_atomic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Bug #446 (Bug 4): _append_restored_subtask_to_plan must write the plan file
+    atomically (temp-file + replace), not via a direct write_text() that truncates
+    the file before the new content is written.
+    """
+    source = (ORCHESTRATOR_PATH / "map_orchestrator.py").read_text(encoding="utf-8")
+    fn_start = source.index("def _append_restored_subtask_to_plan(")
+    fn_end = source.index("\ndef ", fn_start + 1)
+    fn_body = source[fn_start:fn_end]
+    # The function must use an atomic temp-file pattern, not a bare write_text
+    assert "os.getpid()" in fn_body, (
+        "_append_restored_subtask_to_plan must use os.getpid() in the temp file name "
+        "for atomic writes (Bug #446 Bug 4)"
+    )
+    assert fn_body.count(".replace(plan_file)") >= 1, (
+        "_append_restored_subtask_to_plan must use .replace() for an atomic rename"
+    )
+    # The bare non-atomic write must be gone
+    bare_write_count = fn_body.count("plan_file.write_text(")
+    assert bare_write_count == 0, (
+        "_append_restored_subtask_to_plan must not call plan_file.write_text() directly "
+        "— use a temp-file + replace() atomic pattern instead (Bug #446 Bug 4)"
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
