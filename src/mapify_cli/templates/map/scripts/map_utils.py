@@ -158,7 +158,7 @@ def atomic_write_text(path: Path, content: str) -> None:
             os.close(descriptor)
         try:
             temporary_path.unlink()
-        except FileNotFoundError:
+        except OSError:
             pass
 
 

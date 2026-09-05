@@ -12,7 +12,9 @@ allow path traversal via ``..``.
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -25,11 +27,18 @@ _MAP_UTILS_PATH = (
     / "scripts"
     / "map_utils.py"
 )
-_SPEC = importlib.util.spec_from_file_location("map_utils_under_test", _MAP_UTILS_PATH)
-assert _SPEC is not None and _SPEC.loader is not None
-_MODULE = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(_MODULE)
+_prev_no_bytecode = sys.dont_write_bytecode
+sys.dont_write_bytecode = True
+try:
+    _SPEC = importlib.util.spec_from_file_location("map_utils_under_test", _MAP_UTILS_PATH)
+    assert _SPEC is not None and _SPEC.loader is not None
+    _MODULE = importlib.util.module_from_spec(_SPEC)
+    _SPEC.loader.exec_module(_MODULE)
+finally:
+    sys.dont_write_bytecode = _prev_no_bytecode
+
 sanitize_branch_name = _MODULE.sanitize_branch_name
+atomic_write_text = _MODULE.atomic_write_text
 
 
 class TestSanitizeBranchName:
@@ -88,3 +97,57 @@ class TestSanitizeBranchName:
         # argparse default leaks through), fall back instead of raising.
         assert sanitize_branch_name(None) == "default"  # type: ignore[arg-type]
         assert sanitize_branch_name(123) == "default"  # type: ignore[arg-type]
+
+
+class TestAtomicWriteText:
+    """Tests for the atomic_write_text helper (issue #448).
+
+    Verifies that a cleanup OSError in the finally block does not mask the
+    original replace() error -- the fix changed ``except FileNotFoundError``
+    to ``except OSError`` so ALL cleanup errors are swallowed instead of only
+    FileNotFoundError.
+    """
+
+    def test_writes_content_to_destination(self, tmp_path: Path) -> None:
+        dest = tmp_path / "out.json"
+        atomic_write_text(dest, '{"ok": true}')
+        assert dest.read_text(encoding="utf-8") == '{"ok": true}'
+
+    def test_creates_parent_directory(self, tmp_path: Path) -> None:
+        dest = tmp_path / "sub" / "dir" / "out.txt"
+        atomic_write_text(dest, "hello")
+        assert dest.read_text(encoding="utf-8") == "hello"
+
+    def test_replace_error_propagates_not_masked_by_unlink_oserror(
+        self, tmp_path: Path
+    ) -> None:
+        """If replace() fails, a subsequent OSError from unlink() must not mask it.
+
+        Before the fix, the finally block caught only FileNotFoundError; any
+        other OSError from unlink() would propagate and hide the replace() error.
+        After the fix, OSError from cleanup is always swallowed, so the original
+        replace() error reaches the caller.
+        """
+        dest = tmp_path / "target.json"
+        replace_error = PermissionError("replace denied")
+        unlink_error = PermissionError("unlink denied")
+
+        def patched_replace(self: Path, target: object) -> Path:
+            raise replace_error
+
+        def patched_unlink(self: Path, missing_ok: bool = False) -> None:
+            raise unlink_error
+
+        with (
+            patch.object(Path, "replace", patched_replace),
+            patch.object(Path, "unlink", patched_unlink),
+            pytest.raises(PermissionError) as exc_info,
+        ):
+            atomic_write_text(dest, "data")
+
+        # The original replace() error must be what the caller sees, not the
+        # unlink() error that occurred in cleanup.
+        assert exc_info.value is replace_error, (
+            "replace() error was masked by the unlink() cleanup error; "
+            "expected the original PermissionError from replace() to propagate"
+        )

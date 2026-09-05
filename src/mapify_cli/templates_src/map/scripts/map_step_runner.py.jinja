@@ -16321,7 +16321,7 @@ def route_task(
     )
     save_artifact_manifest(manifest, branch_name)
 
-    return {
+    result: dict[str, object] = {
         "status": "blocked" if chain_status == "blocked" else "success",
         "branch": branch_name,
         "path": str(artifact_path),
@@ -16330,8 +16330,10 @@ def route_task(
         "next_command": next_command,
         "executed": executed,
         "blocked_by": blocked_by,
-        "block_reason": block_reason if chain_status == "blocked" else None,
     }
+    if chain_status == "blocked":
+        result["block_reason"] = block_reason
+    return result
 
 
 def record_auto_phase(

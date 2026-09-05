@@ -2226,6 +2226,47 @@ def test_route_task_blocks_on_pending_hard_stop_hold_under_dry_run(branch_worksp
     assert result["blocked_by"] == [hold_id]
 
 
+# route_task block_reason schema consistency (issue #448) --------------------
+# The return dict must omit block_reason when not blocked, matching the
+# on-disk artifact schema (which only writes block_reason when chain is blocked).
+
+
+def test_route_task_success_return_dict_omits_block_reason(branch_workspace):
+    """Non-blocked route_task must not include block_reason in the return dict."""
+    branch = branch_workspace.name
+    result = map_step_runner.route_task("some task", branch=branch, dry_run=True)
+
+    assert result["chain_status"] == "recommended_only"
+    assert "block_reason" not in result, (
+        f"route_task return dict must omit block_reason when chain is not blocked; "
+        f"got block_reason={result.get('block_reason')!r}"
+    )
+
+
+def test_route_task_blocked_return_dict_includes_block_reason(branch_workspace):
+    """Blocked route_task must include block_reason in both return dict and artifact."""
+    branch = branch_workspace.name
+    map_step_runner.create_approval_hold(
+        kind="dangerous_action",
+        reason="Risky command",
+        request_summary="rm -rf production",
+        branch=branch,
+    )
+
+    result = map_step_runner.route_task("do it", branch=branch, dry_run=False)
+
+    assert result["chain_status"] == "blocked"
+    assert "block_reason" in result, "blocked route_task must include block_reason in return dict"
+    assert result["block_reason"], "block_reason must be non-empty when blocked"
+
+    artifact = _read_auto_route_artifact(branch_workspace)
+    # Return dict and artifact must agree on whether block_reason is present.
+    assert "block_reason" in artifact, "blocked artifact must persist block_reason"
+    assert result["block_reason"] == artifact["block_reason"], (
+        "return dict block_reason must match the artifact's block_reason"
+    )
+
+
 # auto_decide_holds (issue #414 : auto-approve workflow-control
 # holds via a positive allowlist; dangerous_action/safety_guardrail can
 # never be decided by this code path) -------------------------------------
