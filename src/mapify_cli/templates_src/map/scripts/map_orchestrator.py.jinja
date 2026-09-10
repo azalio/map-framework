@@ -2927,11 +2927,10 @@ def _write_retry_quarantine(
         "updated_at": _utc_timestamp(),
         "quarantines": quarantines,
     }
-    tmp_path = path.with_suffix(".tmp")
-    tmp_path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8"
+    atomic_write_text(
+        path,
+        json.dumps(payload, indent=2, ensure_ascii=True) + "\n",
     )
-    tmp_path.replace(path)
     return str(path)
 
 

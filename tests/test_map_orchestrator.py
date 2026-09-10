@@ -6553,5 +6553,40 @@ def test_cli_without_map_state_does_not_create_lock_directory(tmp_path: Path):
     assert not (tmp_path / ".map").exists()
 
 
+def test_write_retry_quarantine_uses_invocation_unique_temp_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """_write_retry_quarantine must use atomic_write_text (unique temp, no collision)."""
+    branch = "test-branch"
+    branch_dir = tmp_path / ".map" / branch
+    branch_dir.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    replaced_from: list[Path] = []
+    original_replace = Path.replace
+
+    def recording_replace(source: Path, target: Path) -> Path:
+        replaced_from.append(source)
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", recording_replace)
+
+    map_orchestrator._write_retry_quarantine(branch, "ST-001", 1, None, "first feedback")
+    map_orchestrator._write_retry_quarantine(branch, "ST-001", 2, None, "second feedback")
+
+    quarantine_file = branch_dir / "retry_quarantine.json"
+    assert quarantine_file.exists(), "retry_quarantine.json must be written"
+    payload = json.loads(quarantine_file.read_text(encoding="utf-8"))
+    assert len(payload["quarantines"]) == 2
+    assert len(replaced_from) == 2, "two separate atomic replace operations expected"
+    assert replaced_from[0] != replaced_from[1], (
+        "_write_retry_quarantine must use unique temp files (no shared .tmp name)"
+    )
+    assert all(p.parent == branch_dir for p in replaced_from)
+    assert list(branch_dir.glob(".retry_quarantine.json.*.tmp")) == [], (
+        "no temp residue should remain after successful write"
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
