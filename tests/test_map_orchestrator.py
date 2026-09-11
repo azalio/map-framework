@@ -6588,5 +6588,89 @@ def test_write_retry_quarantine_uses_invocation_unique_temp_files(
     )
 
 
+def test_write_feedback_file_uses_atomic_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """_write_feedback_file must use atomic_write_text (unique temp, no collision).
+
+    Regression test for the bug missed in #446/#450 batch fix: _write_feedback_file
+    used plain write_text, which can produce a torn file if the process dies mid-write.
+    """
+    branch = "test-branch"
+    branch_dir = tmp_path / ".map" / branch
+    branch_dir.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    replaced_from: list[Path] = []
+    original_replace = Path.replace
+
+    def recording_replace(source: Path, target: Path) -> Path:
+        replaced_from.append(source)
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", recording_replace)
+
+    path1 = map_orchestrator._write_feedback_file(
+        branch, "monitor_feedback_1.md", "Monitor Feedback", "first feedback"
+    )
+    path2 = map_orchestrator._write_feedback_file(
+        branch, "monitor_feedback_2.md", "Monitor Feedback", "second feedback"
+    )
+
+    assert path1 is not None
+    assert path2 is not None
+    assert (branch_dir / "monitor_feedback_1.md").exists()
+    assert (branch_dir / "monitor_feedback_2.md").exists()
+    content = (branch_dir / "monitor_feedback_1.md").read_text(encoding="utf-8")
+    assert "first feedback" in content
+    assert len(replaced_from) == 2, "two separate atomic replace operations expected"
+    assert replaced_from[0] != replaced_from[1], (
+        "_write_feedback_file must use unique temp files per invocation"
+    )
+    assert all(p.parent == branch_dir for p in replaced_from)
+
+
+def test_finalize_plan_uses_atomic_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """finalize_plan must use atomic_write_text when writing artifact_manifest.json.
+
+    Regression test for the bug missed in #446/#450 batch fix: finalize_plan used
+    plain write_text on artifact_manifest.json — a critical state file — which can
+    be corrupted by a torn write if the process dies mid-write.
+    """
+    branch = "test-branch"
+    plan_dir = tmp_path / ".map" / branch
+    plan_dir.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    (plan_dir / f"task_plan_{branch}.md").write_text("# plan\n### ST-001\n")
+    (plan_dir / "blueprint.json").write_text(json.dumps({"subtasks": [{"id": "ST-001"}]}))
+    (plan_dir / "artifact_manifest.json").write_text(json.dumps({
+        "stages": {"plan": {"status": "partial"}}
+    }))
+
+    replaced_from: list[Path] = []
+    original_replace = Path.replace
+
+    def recording_replace(source: Path, target: Path) -> Path:
+        replaced_from.append(source)
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", recording_replace)
+
+    result = map_orchestrator.finalize_plan(branch)
+    assert result["status"] == "success"
+
+    manifest = json.loads((plan_dir / "artifact_manifest.json").read_text())
+    assert manifest["stages"]["plan"]["status"] == "complete"
+
+    assert len(replaced_from) == 1, "exactly one atomic replace operation expected"
+    assert replaced_from[0].parent == plan_dir
+    assert list(plan_dir.glob(".artifact_manifest.json.*.tmp")) == [], (
+        "no temp residue should remain after successful write"
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

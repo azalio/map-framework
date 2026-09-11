@@ -2872,7 +2872,7 @@ def _write_feedback_file(
         return None
     fb_path = Path(f".map/{branch}/{filename}")
     fb_path.parent.mkdir(parents=True, exist_ok=True)
-    fb_path.write_text(f"# {header}\n\n{feedback}\n", encoding="utf-8")
+    atomic_write_text(fb_path, f"# {header}\n\n{feedback}\n")
     return str(fb_path)
 
 
@@ -3805,7 +3805,7 @@ def finalize_plan(branch: str) -> dict:
     plan_stage["updated_at"] = _utc_timestamp()
     stages["plan"] = plan_stage
     manifest["stages"] = stages
-    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    atomic_write_text(manifest_path, json.dumps(manifest, indent=2))
     return {"status": "success", "plan_stage": plan_stage}
 
 
