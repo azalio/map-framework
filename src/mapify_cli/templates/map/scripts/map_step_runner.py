@@ -14725,7 +14725,7 @@ def refresh_blueprint_affected_files(
         bp_data["blueprint"] = target_body
     else:
         bp_data = target_body
-    bp_path.write_text(json.dumps(bp_data, indent=2), encoding="utf-8")
+    _write_json_file(bp_path, bp_data)
     return {
         "status": "success",
         "subtask_id": subtask_id,
@@ -14867,7 +14867,7 @@ def record_diagnostics_baseline(
         "recorded_at": _utc_timestamp(),
         "tools": results,
     }
-    baseline_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _write_json_file(baseline_path, payload)
     return payload
 
 
@@ -15059,7 +15059,7 @@ def record_test_baseline(
                 ),
                 "recorded_at": _utc_timestamp(),
             }
-            baseline_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            _write_json_file(baseline_path, payload)
             return payload
         run_dir = candidate
         detected_module_dir = module_dir_arg
@@ -15086,7 +15086,7 @@ def record_test_baseline(
                 "candidate_module_dirs": names,
                 "recorded_at": _utc_timestamp(),
             }
-            baseline_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            _write_json_file(baseline_path, payload)
             return payload
         detected_cmd = detection.get("command")
         if detected_cmd:
@@ -15112,7 +15112,7 @@ def record_test_baseline(
             ),
             "recorded_at": _utc_timestamp(),
         }
-        baseline_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _write_json_file(baseline_path, payload)
         return payload
 
     started = time.time()
@@ -15184,7 +15184,7 @@ def record_test_baseline(
         "baseline_failures": sorted(set(failures)),
         "recorded_at": _utc_timestamp(),
     }
-    baseline_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _write_json_file(baseline_path, payload)
     return payload
 
 
@@ -15561,7 +15561,7 @@ def record_subtask_baseline(branch: str, subtask_id: str) -> dict:
         "files": sorted(set(files)),
         "head_sha": head_sha,
     }
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _write_json_file(path, payload)
     return {
         "status": "success",
         "path": str(path),
@@ -19129,7 +19129,7 @@ def build_escalation_outcome(
 
     # Durable human-readable blocker report.
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
-    artifact_path.write_text(_render_escalation_artifact(outcome), encoding="utf-8")
+    _write_text_file(artifact_path, _render_escalation_artifact(outcome))
 
     # Register the manifest stage so run-health / resume can see the terminal stop.
     manifest = load_artifact_manifest(branch_name)
@@ -19291,7 +19291,7 @@ def create_approval_hold(
 
     report_path = _approval_hold_report_path(hold_id, branch_name)
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(_render_approval_hold_report(hold), encoding="utf-8")
+    _write_text_file(report_path, _render_approval_hold_report(hold))
 
     manifest = load_artifact_manifest(branch_name)
     _set_manifest_stage(
@@ -19366,7 +19366,7 @@ def decide_approval_hold(
 
     report_path = _approval_hold_report_path(hold_id, branch_name)
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(_render_approval_hold_report(hold), encoding="utf-8")
+    _write_text_file(report_path, _render_approval_hold_report(hold))
 
     pending_remaining = any(
         isinstance(h, dict) and h.get("state") == "pending" for h in holds.values()
