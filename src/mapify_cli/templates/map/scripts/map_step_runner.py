@@ -3100,7 +3100,7 @@ def write_implementer_readiness_review(
         ]
 
     md_path = branch_dir / "implementation-readiness.md"
-    md_path.write_text("\n".join(md_lines), encoding="utf-8")
+    _write_text_file(md_path, "\n".join(md_lines))
 
     manifest = load_artifact_manifest(branch_name)
     _set_manifest_stage(
@@ -5574,7 +5574,7 @@ def write_verification_summary(
         "implementation", branch_name
     )
     content += "\n" + _render_prior_stage_consumption_markdown(prior_stage_report)
-    summary_file.write_text(content, encoding="utf-8")
+    _write_text_file(summary_file, content)
     return {
         "status": "success",
         "path": str(summary_file),
@@ -8149,7 +8149,7 @@ def write_pr_draft(
         "## Risks / Follow-up\n"
         f"{risks_follow_up or '- [not recorded]'}\n"
     )
-    pr_file.write_text(content, encoding="utf-8")
+    _write_text_file(pr_file, content)
     return {"status": "success", "path": str(pr_file)}
 
 
@@ -8201,7 +8201,7 @@ def write_plan_review(
         "## Recommendation\n"
         f"- {recommendation}\n"
     )
-    review_file.write_text(content, encoding="utf-8")
+    _write_text_file(review_file, content)
     return {
         "status": "success",
         "path": str(review_file),
@@ -9341,7 +9341,7 @@ def write_review_verdict_ledger(
     ]
 
     md_path = branch_dir / "review-verdict-ledger.md"
-    md_path.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
+    _write_text_file(md_path, "\n".join(md_lines) + "\n")
 
     # Update artifact manifest
     manifest = load_artifact_manifest(branch_name)
@@ -9539,9 +9539,7 @@ def replace_active_issues(
         "updated_at": datetime.now(UTC).isoformat(),
         "issues": issues,
     }
-    issues_file.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
-    )
+    _write_json_file(issues_file, payload)
     return {"status": "success", "path": str(issues_file), "count": len(issues)}
 
 
@@ -9777,10 +9775,7 @@ def record_review_ordering(
             branch_dir = get_branch_dir(branch_name)
             branch_dir.mkdir(parents=True, exist_ok=True)
             pending_path = branch_dir / PENDING_ORDERING_FILENAME
-            pending_path.write_text(
-                json.dumps(payload, indent=2, ensure_ascii=True) + "\n",
-                encoding="utf-8",
-            )
+            _write_json_file(pending_path, payload)
         except OSError:
             pending_path = None
 
@@ -12742,7 +12737,7 @@ def write_learning_handoff(
         "\n## Learning Effectiveness Signals\n\n"
         f"{chr(10).join(repeated_violation_lines)}\n"
     )
-    markdown_path.write_text(markdown, encoding="utf-8")
+    _write_text_file(markdown_path, markdown)
 
     return {
         "status": "success",
@@ -12789,9 +12784,7 @@ def add_known_issue(
             "recorded_at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
         }
     )
-    issues_file.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
-    )
+    _write_json_file(issues_file, payload)
     return {
         "status": "success",
         "path": str(issues_file),
@@ -13000,7 +12993,7 @@ def update_plan_status(
             }
 
         # Write back
-        plan_file.write_text(updated_content, encoding="utf-8")
+        _write_text_file(plan_file, updated_content)
 
         return {
             "status": "success",
@@ -13848,7 +13841,7 @@ def save_research(
             snapshot.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
         except OSError:
             pass
-    path.write_text(content, encoding="utf-8")
+    _write_text_file(path, content)
     return str(path)
 
 
@@ -15300,9 +15293,7 @@ def acknowledge_diagnostic(
         }
         entries[key] = entry
     try:
-        path.write_text(
-            json.dumps(ledger, indent=2, sort_keys=True), encoding="utf-8"
-        )
+        _write_text_file(path, json.dumps(ledger, indent=2, sort_keys=True))
     except OSError as exc:
         return {"status": "error", "message": f"write failed: {exc}"}
     return {
@@ -21197,7 +21188,7 @@ def discard_subtask_worktree(
             attempts_dir = get_branch_dir(branch_name) / "worktree_attempts"
             attempts_dir.mkdir(parents=True, exist_ok=True)
             patch_path = attempts_dir / f"{slug}-{record.get('attempt', 0)}.patch"
-            patch_path.write_text(diff.stdout, encoding="utf-8")
+            _write_text_file(patch_path, diff.stdout)
 
     _wt_force_remove(wt_path, wt_branch)
     state = _read_worktree_state(branch_name)
