@@ -613,6 +613,29 @@ def _cli_flag(name: str, default: str = "") -> str:
     return default
 
 
+def _cli_flags_guard(known: frozenset[str], usage: str) -> None:
+    """Handle --help and reject unknown flags for _cli_flag-based subcommands.
+
+    Call this at the TOP of any ``elif func_name == ...`` branch that uses
+    ``_cli_flag`` — before the state-writing function is invoked — so that
+    ``--help`` exits cleanly without touching ``.map/`` and unrecognised flags
+    are caught as errors rather than silently ignored.
+    """
+    args = sys.argv[2:]
+    if "--help" in args or "-h" in args:
+        print(usage)
+        sys.exit(0)
+    unknown = [a for a in args if a.startswith("--") and a[2:] not in known]
+    if unknown:
+        plural = "flags" if len(unknown) > 1 else "flag"
+        print(
+            f"Unknown {plural}: {', '.join(unknown)}\n"
+            "Run with --help for usage.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def _utc_timestamp() -> str:
     """Return an unambiguous RFC3339 UTC timestamp."""
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -23969,6 +23992,14 @@ if __name__ == "__main__":
         #   '[{"question":"...","category":"api_contract","spec_reference":"file.md:42"}]'
         # non-blocking-risks JSON format:
         #   '["Risk A","Risk B"]'
+        _cli_flags_guard(
+            frozenset({"blocking-questions", "non-blocking-risks",
+                       "acceptance-rationale", "summary", "branch"}),
+            "Usage: write_implementer_readiness_review <verdict>"
+            " [--blocking-questions '<JSON>'] [--non-blocking-risks '<JSON>']"
+            " [--acceptance-rationale '...'] [--summary '...'] [--branch <branch>]\n"
+            "\nverdict: ready | needs_clarification | needs_spec_revision | accepted_with_risk",
+        )
         result = write_implementer_readiness_review(
             sys.argv[2],
             blocking_questions_json=_cli_flag("blocking-questions", "[]"),
@@ -24011,6 +24042,19 @@ if __name__ == "__main__":
         #   '[{"question":"...","category":"scope_priorities_non_goals"}]'
         # suggested-revisions JSON format:
         #   '["Revise AC-1 to specify latency budget","Add out-of-scope section"]'
+        _cli_flags_guard(
+            frozenset({"dimension-scores", "strengths", "findings",
+                       "uncovered-edge-cases", "blocking-questions",
+                       "suggested-revisions", "route-recommendation",
+                       "summary", "prd-source", "branch"}),
+            "Usage: write_prd_review <verdict>"
+            " --dimension-scores '<JSON object>'"
+            " [--strengths '<JSON array>'] [--findings '<JSON array>']"
+            " [--uncovered-edge-cases '<JSON array>'] [--blocking-questions '<JSON array>']"
+            " [--suggested-revisions '<JSON array>'] [--route-recommendation '...']"
+            " [--summary '...'] [--prd-source 'path/or/label'] [--branch <branch>]\n"
+            "\nverdict: ready_for_plan | needs_prd_revision | needs_user_decision | route_to_wayfind",
+        )
         result = write_prd_review(
             sys.argv[2],
             dimension_scores_json=_cli_flag("dimension-scores", ""),
@@ -24031,6 +24075,11 @@ if __name__ == "__main__":
     elif func_name == "record_prd_review_decision" and len(sys.argv) >= 3:
         # CLI: record_prd_review_decision <proceed_anyway|stop_for_revision>
         #        [--rationale "..."] [--branch <branch>]
+        _cli_flags_guard(
+            frozenset({"rationale", "branch"}),
+            "Usage: record_prd_review_decision <proceed_anyway|stop_for_revision>"
+            " [--rationale '...'] [--branch <branch>]",
+        )
         result = record_prd_review_decision(
             sys.argv[2],
             rationale=_cli_flag("rationale", ""),
@@ -24057,6 +24106,26 @@ if __name__ == "__main__":
         #        [--previous-verdict PROCEED|REVISE|BLOCK]
         #          (omit it: the prior verdict is read back from the existing ledger)
         #        [--branch <branch>]
+        _cli_flags_guard(
+            frozenset({
+                "monitor-json", "predictor-json", "evaluator-json", "adversarial-json",
+                "monitor-file", "predictor-file", "evaluator-file", "adversarial-file",
+                "review-mode", "previous-verdict", "branch",
+                "destination", "executor-class",
+            } | {f"{r.replace('_', '-')}-json" for r in ROLE_REVIEWER_IDS}
+              | {f"{r.replace('_', '-')}-file" for r in ROLE_REVIEWER_IDS}),
+            "Usage: write_review_verdict_ledger"
+            " [--monitor-json '<JSON>'] [--predictor-json '<JSON>']"
+            " [--evaluator-json '<JSON>'] [--adversarial-json '<JSON array>']"
+            " [--<role>-json '<JSON>'] (role from ROLE_REVIEWER_IDS, underscores->dashes)"
+            " [--monitor-file <path>] [--predictor-file <path>]"
+            " [--evaluator-file <path>] [--adversarial-file <path>]"
+            " [--<role>-file <path>]"
+            " [--review-mode normal|adversarial|cross_ai|compare_orderings]"
+            " [--previous-verdict PROCEED|REVISE|BLOCK]"
+            " [--destination <str>] [--executor-class <str>]"
+            " [--branch <branch>]",
+        )
         result = write_review_verdict_ledger(
             monitor_json=_cli_flag("monitor-json", ""),
             predictor_json=_cli_flag("predictor-json", ""),

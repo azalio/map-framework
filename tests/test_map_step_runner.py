@@ -18463,3 +18463,112 @@ class TestReviewDiffSource:
         assert "committed review target" in diff, diff
         assert "uncommitted working tree" in diff, diff
         assert "value = 2" in diff and "value = 4" in diff
+
+
+# ---------------------------------------------------------------------------
+# Tests: _cli_flags_guard — help flag and unknown flag handling (issue #459)
+# ---------------------------------------------------------------------------
+
+
+class TestCliFlagsGuard:
+    """_cli_flags_guard: --help exits 0 without side effects; unknown flags exit 1."""
+
+    # Use the rendered script path so we exercise the real CLI dispatch.
+    _SCRIPT = SCRIPTS_PATH / "map_step_runner.py"
+
+    def _run(self, *argv: str, cwd: "Path | None" = None) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(self._SCRIPT), *argv],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            check=False,
+        )
+
+    # --- write_review_verdict_ledger ------------------------------------------
+
+    def test_write_review_verdict_ledger_help_exits_zero(self, tmp_path):
+        proc = self._run("write_review_verdict_ledger", "--help", cwd=tmp_path)
+        assert proc.returncode == 0
+        assert "--monitor-json" in proc.stdout or "--monitor" in proc.stdout
+        # No .map/ written
+        assert not (tmp_path / ".map").exists()
+
+    def test_write_review_verdict_ledger_help_h_exits_zero(self, tmp_path):
+        proc = self._run("write_review_verdict_ledger", "-h", cwd=tmp_path)
+        assert proc.returncode == 0
+        assert not (tmp_path / ".map").exists()
+
+    def test_write_review_verdict_ledger_unknown_flag_exits_nonzero(self, tmp_path):
+        proc = self._run("write_review_verdict_ledger", "--typo-flag", "val", cwd=tmp_path)
+        assert proc.returncode != 0
+        assert "typo-flag" in proc.stderr
+        assert not (tmp_path / ".map").exists()
+
+    def test_write_review_verdict_ledger_unknown_flag_no_state_written(self, tmp_path):
+        """Unknown flag must not write ledger or manifest files (issue #459 regression)."""
+        proc = self._run("write_review_verdict_ledger", "--not-a-real-flag", "x", cwd=tmp_path)
+        assert proc.returncode != 0
+        assert not any((tmp_path / ".map").rglob("review-verdict-ledger*"))
+
+    # --- write_implementer_readiness_review -----------------------------------
+
+    def test_write_implementer_readiness_review_help_exits_zero(self, tmp_path):
+        proc = self._run("write_implementer_readiness_review", "--help", cwd=tmp_path)
+        assert proc.returncode == 0
+        assert not (tmp_path / ".map").exists()
+
+    def test_write_implementer_readiness_review_unknown_flag_exits_nonzero(self, tmp_path):
+        proc = self._run(
+            "write_implementer_readiness_review", "ready", "--oops", "val", cwd=tmp_path
+        )
+        assert proc.returncode != 0
+        assert "oops" in proc.stderr
+        assert not (tmp_path / ".map").exists()
+
+    # --- write_prd_review -----------------------------------------------------
+
+    def test_write_prd_review_help_exits_zero(self, tmp_path):
+        proc = self._run("write_prd_review", "--help", cwd=tmp_path)
+        assert proc.returncode == 0
+        assert not (tmp_path / ".map").exists()
+
+    def test_write_prd_review_unknown_flag_exits_nonzero(self, tmp_path):
+        proc = self._run(
+            "write_prd_review", "ready_for_plan", "--unknown-arg", "x", cwd=tmp_path
+        )
+        assert proc.returncode != 0
+        assert "unknown-arg" in proc.stderr
+        assert not (tmp_path / ".map").exists()
+
+    # --- record_prd_review_decision -------------------------------------------
+
+    def test_record_prd_review_decision_help_exits_zero(self, tmp_path):
+        proc = self._run("record_prd_review_decision", "--help", cwd=tmp_path)
+        assert proc.returncode == 0
+        assert not (tmp_path / ".map").exists()
+
+    def test_record_prd_review_decision_unknown_flag_exits_nonzero(self, tmp_path):
+        proc = self._run(
+            "record_prd_review_decision", "proceed_anyway", "--bogus", cwd=tmp_path
+        )
+        assert proc.returncode != 0
+        assert "bogus" in proc.stderr
+        assert not (tmp_path / ".map").exists()
+
+    # --- known flags still work -----------------------------------------------
+
+    def test_write_review_verdict_ledger_known_flags_accepted(self, tmp_path):
+        """Known flags must NOT be rejected by the guard."""
+        (tmp_path / ".map" / "main").mkdir(parents=True)
+        proc = self._run(
+            "write_review_verdict_ledger",
+            "--review-mode", "normal",
+            "--branch", "main",
+            cwd=tmp_path,
+        )
+        # The guard passes; the function itself may succeed or fail, but the
+        # guard must not be the reason it exits nonzero.
+        # exitcode 0 (success) or nonzero from function internals is both ok,
+        # but stderr must not mention "Unknown flag".
+        assert "Unknown flag" not in proc.stderr
