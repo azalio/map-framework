@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `mapify init --provider codex` on a project that already has `.map/scripts/`
+  now refreshes the shipped runtime scripts with the same policy as the Claude
+  provider (overwrite, `.bak.<ts>` on drift, project-added files untouched)
+  instead of skipping the whole directory — so `mapify _update` delivers
+  runtime fixes to Codex-only installs. A symlinked `.map` or `.map/scripts`
+  is rejected with a plain `Error:` line before any write. (#461)
+
 ## [3.30.0] - 2026-09-15
 
 ### Added

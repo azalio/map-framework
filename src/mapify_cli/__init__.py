@@ -1495,13 +1495,18 @@ def init(
             raise typer.Exit(1) from exc
 
     if provider == "codex":
-        # Codex provider: install .agents/.codex files + .map/scripts/ (skip-if-exists)
+        # Codex provider: install .agents/.codex files + .map/scripts/
+        # (.map/scripts policy is documented on create_codex_files)
         from mapify_cli.delivery.providers import CodexProvider
 
         tracker.add("create-codex", "Create Codex files")
         tracker.start("create-codex")
         codex_provider = CodexProvider()
-        counts = codex_provider.install(project_path)
+        try:
+            counts = codex_provider.install(project_path)
+        except RuntimeError as exc:
+            console.print(f"[red]Error:[/red] {exc}")
+            raise typer.Exit(1) from exc
         total = sum(counts.values())
         tracker.complete("create-codex", f"{total} files")
 

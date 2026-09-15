@@ -15,6 +15,9 @@ from pathlib import Path
 from typing import Any
 
 from mapify_cli.delivery.file_copier import (
+    _IGNORED_TEMPLATE_NAMES,
+    _IGNORED_TEMPLATE_SUFFIXES,
+    _copy_map_path,
     _extract_requires_block,
     _get_version,
     _load_template_skill_catalog,
@@ -65,14 +68,12 @@ def _copy_tree(
     """
     count = 0
     dst_dir.mkdir(parents=True, exist_ok=True)
-    ignored_names = {"__pycache__", ".DS_Store"}
-    ignored_suffixes = {".pyc", ".pyo"}
     for src_file in src_dir.rglob("*"):
         if not src_file.is_file():
             continue
-        if any(part in ignored_names for part in src_file.parts):
+        if any(part in _IGNORED_TEMPLATE_NAMES for part in src_file.parts):
             continue
-        if src_file.suffix in ignored_suffixes:
+        if src_file.suffix in _IGNORED_TEMPLATE_SUFFIXES:
             continue
         rel = src_file.relative_to(src_dir)
         target = dst_dir / rel
@@ -88,6 +89,20 @@ def _copy_tree(
 
 
 _EXEC_SUFFIXES = frozenset((".py", ".sh"))
+
+
+def _first_symlink_component(root: Path, dest: Path) -> Path | None:
+    """Return the first component of *dest* below *root* that is a symlink.
+
+    Checked component by component (``.map``, then ``.map/scripts``) so a
+    linked ancestor cannot redirect the runtime install outside *root*.
+    """
+    current = root
+    for part in dest.relative_to(root).parts:
+        current = current / part
+        if current.is_symlink():
+            return current
+    return None
 
 
 def _managed_codex_hook_names(hooks_dir_src: Path) -> frozenset[str]:
@@ -250,9 +265,11 @@ def create_codex_files(project_path: Path) -> dict[str, int]:
     Watched files (skills, agents, config, AGENTS.md, hooks) are installed
     fence-aware so a re-install preserves any user content below the fence;
     hooks.json is merged without MAP metadata because Codex validates top-level
-    keys strictly; .map/scripts is MAP-owned (fenced=False, skip-if-exists).
+    keys strictly; .map/scripts is MAP-owned and refreshed exactly like the
+    Claude provider's tree (``_copy_map_path``: shipped scripts are overwritten,
+    a drifted managed copy is backed up to ``.bak.<ts>`` first, project-added
+    files are left alone).
 
-    Skips .map/scripts/ if the directory already exists.
     Never creates or modifies any .claude/ path.
 
     Args:
@@ -264,6 +281,8 @@ def create_codex_files(project_path: Path) -> dict[str, int]:
     """
     templates_dir = get_templates_dir()
     codex_templates = templates_dir / "codex"
+    map_scripts_src = templates_dir / "map" / "scripts"
+    map_scripts_dst = project_path / ".map" / "scripts"
 
     empty_counts: dict[str, int] = {
         "skills": 0,
@@ -276,6 +295,14 @@ def create_codex_files(project_path: Path) -> dict[str, int]:
 
     if not codex_templates.exists():
         return empty_counts
+
+    if map_scripts_src.exists():
+        link = _first_symlink_component(project_path, map_scripts_dst)
+        if link is not None:
+            raise RuntimeError(
+                f"{link} is a symbolic link; mapify will not install .map/scripts "
+                "through it. Replace the link with a real directory and re-run."
+            )
 
     counts: dict[str, int] = dict(empty_counts)
     codex_dir = project_path / ".codex"
@@ -391,19 +418,11 @@ def create_codex_files(project_path: Path) -> dict[str, int]:
             counts["docs"] += 1
 
     # ------------------------------------------------------------------
-    # 6. .map/scripts/ — skip-if-exists (do not overwrite user scripts)
-    #    MAP-owned: install fenced=False (no fence) when absent.
+    # 6. .map/scripts/ — MAP-owned, same policy as the Claude provider:
+    #    shipped scripts are refreshed (.bak.<ts> on drift), project-added
+    #    files are never touched.
     # ------------------------------------------------------------------
-    map_scripts_dst = project_path / ".map" / "scripts"
-    if not map_scripts_dst.exists():
-        map_scripts_src = templates_dir / "map" / "scripts"
-        if map_scripts_src.exists():
-            counts["scripts"] = _copy_tree(
-                map_scripts_src,
-                map_scripts_dst,
-                version,
-                fenced=False,
-                executable_suffixes=_EXEC_SUFFIXES,
-            )
+    if map_scripts_src.exists():
+        counts["scripts"] = _copy_map_path(map_scripts_src, map_scripts_dst, version)
 
     return counts
