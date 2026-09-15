@@ -3591,6 +3591,47 @@ class TestInternalUpdateCommand:
         assert not (outside / "update.lock").exists()
         assert not (outside / "provider-refresh.lock").exists()
 
+    @pytest.mark.parametrize("mode", ["automatic", "manual"])
+    def test_internal_update_framework_source_repo_obeys_mode_boundary(
+        self, tmp_path: Path, mode: str
+    ) -> None:
+        """#462: the dev repo's rendered trees are never refreshed by the updater."""
+        (tmp_path / "src" / "mapify_cli" / "templates_src").mkdir(parents=True)
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "mapify-cli"\n', encoding="utf-8"
+        )
+        (tmp_path / ".claude" / "skills").mkdir(parents=True)
+
+        with (
+            mock.patch(
+                "mapify_cli.auto_update.detect_install_kind",
+                return_value=InstallKind.PIP,
+            ),
+            mock.patch(
+                "mapify_cli.auto_update.fetch_version_targets",
+                side_effect=AssertionError("network must not run"),
+            ),
+            mock.patch(
+                "mapify_cli.auto_update.refresh_installed_providers",
+                side_effect=AssertionError("provider refresh must not run"),
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                ["_update", "--mode", mode, "--project", str(tmp_path)],
+            )
+
+        assert result.stderr == ""
+        payload = json.loads(result.stdout)
+        assert "make render-templates" in payload["message"]
+        if mode == "automatic":
+            assert result.exit_code == 0
+            assert payload["status"] == "skipped"
+        else:
+            assert result.exit_code == 1
+            assert payload["status"] == "error"
+        assert not (tmp_path / ".map").exists()
+
     @mock.patch("mapify_cli.auto_update.check_and_update")
     def test_internal_update_automatic_error_is_silent_success(
         self, mock_update: mock.Mock, tmp_path: Path

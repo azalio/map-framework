@@ -647,7 +647,10 @@ actually invoked. This includes configuration/state errors, lock contention,
 network and package-manager failures, source/editable installs, and project
 refresh failures. A package update that succeeds before refresh fails is recorded
 as pending; a later preflight can retry the local provider refresh without another
-network version check.
+network version check. Inside the mapify-cli source repository itself the
+preflight is always a no-op (`skipped`), because that repo's `.claude/`,
+`.codex/`, `.agents/` and `.map/scripts/` trees are rendered from
+`src/mapify_cli/templates_src/`, not installed.
 
 Configure the project with:
 

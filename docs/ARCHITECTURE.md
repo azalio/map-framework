@@ -169,6 +169,15 @@ policy with `.map/update.lock`, serializes the package-manager lifetime with
 `uv tool` or the current interpreter's pip and never mutates source/editable
 installs. The state timestamp records an automatic attempt, not only success.
 
+The mapify-cli source repository is never an update target, whichever way the
+running `mapify` is installed: when the project contains
+`src/mapify_cli/templates_src/` next to a `pyproject.toml` whose
+`project.name` is `mapify-cli`, automatic mode returns `skipped` and manual mode
+an actionable `error` before any state, lock, or network access. The repo's
+generated trees are fence-free renders of `templates_src/`
+(`make render-templates`); installing the shipped templates over them would
+fence 100+ tracked files and leave a `.bak` beside each (#462).
+
 Update-state schema v4 retains the three-phase write-ahead state machine and adds
 an optional `declined_major_version` exact-version policy field:
 

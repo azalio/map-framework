@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of skipping the whole directory — so `mapify _update` delivers
   runtime fixes to Codex-only installs. A symlinked `.map` or `.map/scripts`
   is rejected with a plain `Error:` line before any write. (#461)
+- **Skill preflight no longer rewrites the framework's own source checkout.**
+  `mapify _update` now recognises the mapify-cli repository itself
+  (`src/mapify_cli/templates_src/` next to a `pyproject.toml` naming
+  `mapify-cli`) and never treats it as an install target: automatic mode
+  reports `skipped`, manual mode an actionable `error`. Previously the first
+  skill run after a release bump re-installed the shipped templates over the
+  repo's rendered `.claude/`, `.codex/`, `.agents/` and `.map/scripts/` trees
+  (115 tracked files fenced, ~100 `.bak` siblings). (#462)
 
 ## [3.30.0] - 2026-09-15
 
