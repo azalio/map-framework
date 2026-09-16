@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   skill run after a release bump re-installed the shipped templates over the
   repo's rendered `.claude/`, `.codex/`, `.agents/` and `.map/scripts/` trees
   (115 tracked files fenced, ~100 `.bak` siblings). (#462)
+- The three `.map/` writers missed by the #450–#457 atomic-write batch are
+  atomic too: `ensure_active_issues_file`, `ensure_known_issues_file` and
+  `ensure_human_artifacts` go through `_write_json_file` / `_write_text_file`,
+  and `add_known_issue` reads `known-issues.json` via `_read_json_file`,
+  falling back to the default payload on a corrupt or missing file instead of
+  raising `JSONDecodeError`. (#464)
 
 ## [3.30.0] - 2026-09-15
 
