@@ -39,6 +39,7 @@ from mapify_cli.update_state import (
 from mapify_cli.update_versions import ReleaseHighlights, StableVersion, VersionTargets
 
 NOW = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture(autouse=True)
@@ -439,6 +440,91 @@ def test_source_install_is_silent_skip_automatically_and_error_manually(
     assert manual.message is not None
     assert "source checkout" in manual.message
     assert "owner-managed" in manual.message
+
+
+def _write_framework_fingerprint(project: Path, *, name: str = "mapify-cli") -> None:
+    (project / "src" / "mapify_cli" / "templates_src").mkdir(parents=True)
+    (project / "pyproject.toml").write_text(
+        f'[project]\nname = "{name}"\nversion = "0.0.0"\n', encoding="utf-8"
+    )
+
+
+def test_framework_source_repo_is_silent_skip_automatically_and_error_manually(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#462: never install the shipped templates over the rendered dev trees."""
+    _write_framework_fingerprint(tmp_path)
+    fetch = Mock(side_effect=AssertionError("network must not run"))
+    monkeypatch.setattr(auto_update, "fetch_version_targets", fetch)
+    refresh = Mock(side_effect=AssertionError("provider refresh must not run"))
+    monkeypatch.setattr(auto_update, "refresh_installed_providers", refresh)
+
+    automatic = check_and_update(tmp_path, "3.29.1", UpdateMode.AUTOMATIC, now=NOW)
+    manual = check_and_update(tmp_path, "3.29.1", UpdateMode.MANUAL, now=NOW)
+
+    assert automatic.status is UpdateStatus.SKIPPED
+    assert automatic.message == auto_update.FRAMEWORK_SOURCE_REPO_MESSAGE
+    assert manual.status is UpdateStatus.ERROR
+    assert manual.message == auto_update.FRAMEWORK_SOURCE_REPO_MESSAGE
+    assert "make render-templates" in manual.message
+    fetch.assert_not_called()
+    refresh.assert_not_called()
+    # No update state, lock, or provider file is written in either mode.
+    assert not (tmp_path / ".map").exists()
+
+
+def test_framework_source_repo_skip_ignores_config_and_throttle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_framework_fingerprint(tmp_path)
+    _write_config(tmp_path, "updates.auto: true\n")
+    write_update_state(tmp_path, UpdateState(last_attempt_at="2026-08-01T00:00:00Z"))
+    attempt_before = read_update_state(tmp_path).last_attempt_at
+    fetch = Mock(side_effect=AssertionError("network must not run"))
+    monkeypatch.setattr(auto_update, "fetch_version_targets", fetch)
+
+    result = check_and_update(tmp_path, "3.29.1", UpdateMode.AUTOMATIC, now=NOW)
+
+    assert result.status is UpdateStatus.SKIPPED
+    assert result.message == auto_update.FRAMEWORK_SOURCE_REPO_MESSAGE
+    assert read_update_state(tmp_path).last_attempt_at == attempt_before
+    fetch.assert_not_called()
+
+
+def test_this_repository_is_the_framework_source_repo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real dev checkout must trip the guard, not only a synthetic fixture."""
+    assert auto_update.is_framework_source_repo(REPO_ROOT)
+    fetch = Mock(side_effect=AssertionError("network must not run"))
+    monkeypatch.setattr(auto_update, "fetch_version_targets", fetch)
+
+    result = check_and_update(REPO_ROOT, "3.29.1", UpdateMode.AUTOMATIC, now=NOW)
+
+    assert result.status is UpdateStatus.SKIPPED
+    assert result.message == auto_update.FRAMEWORK_SOURCE_REPO_MESSAGE
+    fetch.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("pyproject", "templates_src"),
+    [
+        pytest.param('[project]\nname = "mapify-cli"\n', False, id="no-templates-src"),
+        pytest.param('[project]\nname = "other-package"\n', True, id="other-name"),
+        pytest.param('[tool.x]\nname = "mapify-cli"\n', True, id="no-project-table"),
+        pytest.param("name = [unterminated\n", True, id="malformed-toml"),
+        pytest.param(None, True, id="no-pyproject"),
+    ],
+)
+def test_partial_framework_fingerprint_is_an_ordinary_project(
+    tmp_path: Path, pyproject: str | None, templates_src: bool
+) -> None:
+    if pyproject is not None:
+        (tmp_path / "pyproject.toml").write_text(pyproject, encoding="utf-8")
+    if templates_src:
+        (tmp_path / "src" / "mapify_cli" / "templates_src").mkdir(parents=True)
+
+    assert not auto_update.is_framework_source_repo(tmp_path)
 
 
 def test_lock_contention_skips_automatic_and_errors_manual(

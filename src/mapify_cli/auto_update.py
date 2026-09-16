@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tomllib
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -44,6 +45,33 @@ _DEFAULT_INSTALL_EXACT_VERSION = install_exact_version
 
 LOCK_TIMEOUT_SECONDS = 0.0
 REFRESH_BARRIER_TIMEOUT_SECONDS = 0.0
+
+FRAMEWORK_SOURCE_REPO_MESSAGE = (
+    "This project is the mapify-cli source repository; its provider trees are "
+    "rendered from src/mapify_cli/templates_src/ by `make render-templates` "
+    "and are never installed by the updater."
+)
+
+
+def is_framework_source_repo(project_path: Path) -> bool:
+    """Return True when ``project_path`` is the mapify-cli source repository.
+
+    The framework repo's generated trees (``.claude/``, ``.codex/``,
+    ``.agents/``, ``.map/scripts/``) are fence-free renders of
+    ``src/mapify_cli/templates_src/``. Running the provider refresh there
+    re-installs the shipped templates with fences and ``MAP-MANAGED`` headers
+    over 100+ tracked files and leaves a ``.bak`` beside each (#462).
+    """
+    project_path = Path(project_path)
+    if not (project_path / "src" / "mapify_cli" / "templates_src").is_dir():
+        return False
+    try:
+        with (project_path / "pyproject.toml").open("rb") as handle:
+            pyproject = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    project = pyproject.get("project")
+    return isinstance(project, dict) and project.get("name") == "mapify-cli"
 
 
 class UpdateMode(StrEnum):
@@ -714,6 +742,17 @@ def check_and_update(
 
     completed_result: UpdateResult | None = None
     try:
+        if is_framework_source_repo(project_path):
+            # Intent: the framework repo is never an install target. Its
+            # generated trees are the rendered source of truth (#462).
+            if mode is UpdateMode.AUTOMATIC:
+                return UpdateResult(
+                    UpdateStatus.SKIPPED,
+                    current_version,
+                    message=FRAMEWORK_SOURCE_REPO_MESSAGE,
+                )
+            return _error(current_version, FRAMEWORK_SOURCE_REPO_MESSAGE)
+
         if (
             mode is UpdateMode.AUTOMATIC
             and not load_map_config(project_path).updates_auto
