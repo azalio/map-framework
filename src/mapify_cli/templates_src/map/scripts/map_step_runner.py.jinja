@@ -5252,7 +5252,7 @@ def ensure_human_artifacts(branch: str | None = None) -> dict:
         if path.exists():
             existing.append(file_name)
             continue
-        path.write_text(content, encoding="utf-8")
+        _write_text_file(path, content)
         created.append(file_name)
 
     return {
@@ -9552,9 +9552,7 @@ def ensure_active_issues_file(branch: str | None = None) -> dict:
     issues_file = branch_dir / "active-issues.json"
     if not issues_file.exists():
         payload = {**ACTIVE_ISSUES_DEFAULT, "updated_at": datetime.now(UTC).isoformat()}
-        issues_file.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
-        )
+        _write_json_file(issues_file, payload)
         return {"status": "success", "path": str(issues_file), "created": True}
     return {"status": "success", "path": str(issues_file), "created": False}
 
@@ -12811,10 +12809,7 @@ def ensure_known_issues_file(branch: str | None = None) -> dict:
     branch_dir.mkdir(parents=True, exist_ok=True)
     issues_file = branch_dir / "known-issues.json"
     if not issues_file.exists():
-        issues_file.write_text(
-            json.dumps(KNOWN_ISSUES_DEFAULT, indent=2, ensure_ascii=True) + "\n",
-            encoding="utf-8",
-        )
+        _write_json_file(issues_file, KNOWN_ISSUES_DEFAULT)
         return {"status": "success", "path": str(issues_file), "created": True}
     return {"status": "success", "path": str(issues_file), "created": False}
 
@@ -12828,7 +12823,8 @@ def add_known_issue(
     """Append a known issue / accepted blocker entry."""
     ensure_known_issues_file(branch)
     issues_file = get_branch_dir(branch) / "known-issues.json"
-    payload = json.loads(issues_file.read_text(encoding="utf-8"))
+    raw = _read_json_file(issues_file)
+    payload: dict[str, Any] = dict(raw) if raw is not None else dict(KNOWN_ISSUES_DEFAULT)
     payload.setdefault("issues", []).append(
         {
             "title": title,

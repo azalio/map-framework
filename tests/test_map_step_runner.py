@@ -4868,6 +4868,18 @@ class TestEnsureActiveIssuesFile:
 
         assert issues_file.read_text(encoding="utf-8") == custom_content
 
+    def test_corrupt_file_is_not_written_partially(self, branch_workspace):
+        """File creation is atomic: reader never sees partial JSON (#464)."""
+        issues_file = branch_workspace / "active-issues.json"
+        # simulate a corrupt file left by a crash mid-write
+        issues_file.write_text("{corrupt", encoding="utf-8")
+
+        # ensure_active_issues_file skips creation if file exists (even corrupt)
+        result = map_step_runner.ensure_active_issues_file()
+        assert result["created"] is False
+        # the corrupt file is NOT overwritten by ensure_*; replace_active_issues must be used
+        assert issues_file.read_text(encoding="utf-8") == "{corrupt"
+
 
 # ---------------------------------------------------------------------------
 # replace_active_issues — focused unit tests
@@ -5185,6 +5197,14 @@ class TestEnsureKnownIssuesFile:
 
         assert issues_file.read_text(encoding="utf-8") == original
 
+    def test_new_file_write_is_valid_json(self, branch_workspace):
+        """ensure_known_issues_file writes valid JSON (atomic write, #464)."""
+        result = map_step_runner.ensure_known_issues_file()
+
+        assert result["created"] is True
+        data = json.loads((branch_workspace / "known-issues.json").read_text(encoding="utf-8"))
+        assert data == {"issues": []}
+
 
 # ---------------------------------------------------------------------------
 # add_known_issue — focused unit tests
@@ -5243,6 +5263,20 @@ class TestAddKnownIssue:
             (branch_workspace / "known-issues.json").read_text(encoding="utf-8")
         )
         assert data["issues"][0]["status"] == "accepted"
+
+    def test_add_known_issue_recovers_from_corrupt_file(self, branch_workspace):
+        """add_known_issue does not crash on corrupt known-issues.json (#464)."""
+        issues_file = branch_workspace / "known-issues.json"
+        # simulate a file left corrupt by a crash mid-write
+        issues_file.write_text("{corrupt json", encoding="utf-8")
+
+        # must not raise JSONDecodeError; should recover to an empty issues list
+        result = map_step_runner.add_known_issue("Post-crash issue", "accepted")
+
+        assert result["status"] == "success"
+        assert result["count"] == 1
+        data = json.loads(issues_file.read_text(encoding="utf-8"))
+        assert data["issues"][0]["title"] == "Post-crash issue"
 
 
 # ---------------------------------------------------------------------------
