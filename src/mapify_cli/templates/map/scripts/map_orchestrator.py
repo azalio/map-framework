@@ -835,7 +835,7 @@ class StepState:
         try:
             data = json.loads(state_file.read_text(encoding="utf-8"))
             return cls.from_dict(data)
-        except (json.JSONDecodeError, KeyError):
+        except (json.JSONDecodeError, KeyError, OSError):
             return cls()
 
     def save(self, state_file: Path) -> None:
