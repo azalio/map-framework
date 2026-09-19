@@ -4855,6 +4855,58 @@ class TestMcpJsonConfig:
         assert "sequential-thinking" in config["mcpServers"]
         assert "deepwiki" not in config["mcpServers"]
 
+    def test_write_project_mcp_json_is_atomic(self, tmp_path):
+        """Regression: write_project_mcp_json must use atomic temp+replace, not bare write_text.
+
+        After a successful write, no .tmp file should remain.
+        """
+        mcp_file = tmp_path / ".mcp.json"
+        config = {"mcpServers": {"test": {"command": "npx", "args": ["-y", "test"]}}}
+
+        write_project_mcp_json(mcp_file, config)
+
+        # The final file must exist and be valid
+        assert mcp_file.exists()
+        assert json.loads(mcp_file.read_text()) == config
+
+        # No leftover .tmp files (atomicity: temp file was replaced, not left behind)
+        tmp_files = list(tmp_path.glob(".*.tmp"))
+        assert tmp_files == [], f"Stale temp files after write: {tmp_files}"
+
+    def test_create_mcp_config_is_atomic(self, tmp_path):
+        """Regression: create_mcp_config must use atomic write for mcp_config.json.
+
+        After a successful write, no .tmp file should remain.
+        """
+        from mapify_cli.config.mcp import create_mcp_config
+
+        create_mcp_config(tmp_path, ["sequential-thinking"])
+
+        config_file = tmp_path / ".claude" / "mcp_config.json"
+        assert config_file.exists()
+
+        # Must be valid JSON with expected structure
+        content = json.loads(config_file.read_text())
+        assert "mcp_servers" in content
+        assert "sequential-thinking" in content["mcp_servers"]
+
+        # No leftover .tmp files
+        tmp_files = list((tmp_path / ".claude").glob(".*.tmp"))
+        assert tmp_files == [], f"Stale temp files after create_mcp_config: {tmp_files}"
+
+    def test_write_project_mcp_json_utf8_encoded(self, tmp_path):
+        """Regression: write_project_mcp_json must use UTF-8 encoding (not platform default)."""
+        mcp_file = tmp_path / ".mcp.json"
+        # Unicode content that would be mangled by latin-1 or similar
+        config = {"mcpServers": {"日本語サーバー": {"command": "npx", "args": ["ñoño"]}}}
+
+        write_project_mcp_json(mcp_file, config)
+
+        raw = mcp_file.read_bytes()
+        # File must decode as UTF-8 without errors and round-trip correctly
+        decoded = json.loads(raw.decode("utf-8"))
+        assert decoded == config
+
 
 class TestCreateMapTools:
     """Test create_map_tools() function for static analysis tools."""
