@@ -1577,6 +1577,24 @@ class TestVC15ReconcileStatuslineRemove:
         assert "permissions" in remaining, "user settings keys must be preserved"
         assert "statusLine" not in remaining
 
+    def test_remove_statusline_write_is_atomic(self, tmp_path: Path) -> None:
+        """Regression: _remove_statusline must use atomic write; no stale .tmp files remain."""
+        _setup_claude_install(tmp_path)
+        _write_statusline_local(tmp_path, '"/path/to/map-statusline.py"')
+        manifest = build_manifest(tmp_path, "claude", VERSION)
+        write_manifest(tmp_path, manifest)
+
+        claude_dir = tmp_path / ".claude"
+        reconcile_config(tmp_path)
+
+        # No leftover .tmp files after a successful atomic write
+        tmp_files = list(claude_dir.glob(".*.tmp"))
+        assert tmp_files == [], f"Stale .tmp files after _remove_statusline: {tmp_files}"
+
+        # File must still be valid JSON
+        settings_file = claude_dir / "settings.local.json"
+        __import__("json").loads(settings_file.read_text(encoding="utf-8"))
+
 
 # ---------------------------------------------------------------------------
 # VC16: reconcile_config refuses to remove user-defined statusline

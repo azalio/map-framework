@@ -2,6 +2,7 @@
 
 import copy
 import json
+import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,6 +11,20 @@ from typing import Any
 import typer
 
 from mapify_cli.cli_ui import console
+
+
+def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
+    """Write JSON atomically via per-PID temp file + os.replace()."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def create_mcp_config(project_path: Path, mcp_servers: list[str]) -> None:
@@ -68,7 +83,7 @@ def create_mcp_config(project_path: Path, mcp_servers: list[str]) -> None:
     # Write config file
     config_file = project_path / ".claude" / "mcp_config.json"
     config_file.parent.mkdir(parents=True, exist_ok=True)
-    config_file.write_text(json.dumps(config, indent=2))
+    _atomic_write_json(config_file, config)
 
 
 # =============================================================================
@@ -156,8 +171,7 @@ def write_project_mcp_json(path: Path, config: dict[str, Any]) -> None:
         - Newline at end of file
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    content = json.dumps(config, indent=2, ensure_ascii=False)
-    path.write_text(content + "\n", encoding="utf-8")
+    _atomic_write_json(path, config)
 
 
 def merge_mcp_json(

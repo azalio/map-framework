@@ -438,9 +438,15 @@ def _remove_statusline(project_path: Path, rel_file: str) -> bool:
     safe_write_path = _safe_project_candidate(project_path, rel_file)
     if safe_write_path is None:
         return False
-    safe_write_path.write_text(
-        json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    tmp = safe_write_path.with_name(f".{safe_write_path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        tmp.replace(safe_write_path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     return True
 
 
