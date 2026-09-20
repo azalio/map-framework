@@ -12648,6 +12648,213 @@ class TestDetectActorFilesChangedMismatch:
 
 
 # ---------------------------------------------------------------------------
+# Regression tests for issue #469: _update_step_state_locked crashes when
+# completed_steps is a list (written by the orchestrator).
+# ---------------------------------------------------------------------------
+
+class TestUpdateStepStateLockedCompletedStepsListRegression:
+    """Regression tests for #469: completed_steps list → TypeError."""
+
+    def test_list_completed_steps_normalised_to_dict(
+        self, branch_workspace: Path
+    ) -> None:
+        """#469: when completed_steps is a list in step_state.json (written by
+        orchestrator), _update_step_state_locked must not crash with TypeError
+        and must return status='success'."""
+        state_file = branch_workspace / "step_state.json"
+        # Orchestrator writes completed_steps as a list of subtask IDs.
+        state_file.write_text(
+            json.dumps({
+                "current_state": "ACTOR",
+                "current_subtask": "ST-001",
+                "completed_steps": ["1.0", "1.5", "2.2"],
+            }),
+            encoding="utf-8",
+        )
+
+        result = map_step_runner._update_step_state_locked(
+            state_file, "ST-003", "actor", "MONITOR"
+        )
+
+        assert result["status"] == "success", result
+        # After the fix, completed_steps must be a dict.
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        assert isinstance(state["completed_steps"], dict), state
+        assert "ST-003" in state["completed_steps"], state
+
+    def test_dict_completed_steps_unchanged(
+        self, branch_workspace: Path
+    ) -> None:
+        """Normal path: when completed_steps is already a dict, existing
+        entries are preserved and the new entry is added."""
+        state_file = branch_workspace / "step_state.json"
+        state_file.write_text(
+            json.dumps({
+                "current_state": "ACTOR",
+                "current_subtask": "ST-002",
+                "completed_steps": {"ST-001": ["actor", "monitor"]},
+            }),
+            encoding="utf-8",
+        )
+
+        result = map_step_runner._update_step_state_locked(
+            state_file, "ST-002", "actor", "MONITOR"
+        )
+
+        assert result["status"] == "success", result
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        assert state["completed_steps"]["ST-001"] == ["actor", "monitor"]
+        assert "ST-002" in state["completed_steps"], state
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for issue #471: detect_actor_files_changed_mismatch ignores
+# active worktree under worktree isolation.
+# ---------------------------------------------------------------------------
+
+class TestDetectActorFilesChangedMismatchWorktree:
+    """#471: worktree-aware mismatch detection."""
+
+    def _init_git(self, root: Path) -> None:
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"],
+            cwd=root, capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "t"],
+            cwd=root, capture_output=True, check=True,
+        )
+        (root / ".seed").write_text("seed\n")
+        subprocess.run(["git", "add", "."], cwd=root, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "init"],
+            cwd=root, capture_output=True, check=True,
+        )
+
+    def _write_state(self, branch_workspace: Path) -> None:
+        (branch_workspace / "step_state.json").write_text(
+            json.dumps({"subtask_results": {}})
+        )
+
+    def _write_worktrees_sidecar(
+        self, branch_workspace: Path, subtask_id: str, worktree_path: Path
+    ) -> None:
+        sidecar = {
+            "schema_version": "1.0",
+            "branch": branch_workspace.name,
+            "worktrees": {
+                f"{subtask_id}-0": {
+                    "subtask_id": subtask_id,
+                    "slug": f"{subtask_id}-0",
+                    "attempt": 0,
+                    "branch": f"map-wt/{subtask_id}-0",
+                    "path": str(worktree_path),
+                    "base_sha": "",
+                    "status": "created",
+                }
+            },
+        }
+        (branch_workspace / "worktrees.json").write_text(
+            json.dumps(sidecar), encoding="utf-8"
+        )
+
+    def test_worktree_active_files_seen_as_written(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#471: when a worktree is active and the Actor wrote files there,
+        detect_actor_files_changed_mismatch must NOT report them as
+        declared_not_written."""
+        branch = "test-branch"
+        # Set up a git repo (the "main checkout")
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_git(repo)
+
+        branch_dir = repo / ".map" / branch
+        branch_dir.mkdir(parents=True)
+        self._write_state(branch_dir)
+
+        # Set up a separate worktree directory (simulates git worktree add)
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        self._init_git(wt)
+        # Actor wrote a.py inside the worktree only.
+        (wt / "a.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "."], cwd=wt, capture_output=True, check=False)
+
+        self._write_worktrees_sidecar(branch_dir, "ST-003", wt)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+
+        report = map_step_runner.detect_actor_files_changed_mismatch(
+            branch, "ST-003", ["a.py"]
+        )
+
+        assert report["checked_in"] == "worktree", report
+        assert report["status_mismatch"] is False, report
+        assert report["declared_not_written"] == [], report
+
+    def test_no_worktree_falls_back_to_main(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When no worktrees.json sidecar exists, the function falls back to
+        the main checkout and checked_in == 'main'."""
+        branch = "test-branch"
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_git(repo)
+
+        branch_dir = repo / ".map" / branch
+        branch_dir.mkdir(parents=True)
+        self._write_state(branch_dir)
+
+        # Write a.py in the main checkout.
+        (repo / "a.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
+
+        # No worktrees sidecar.
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+
+        report = map_step_runner.detect_actor_files_changed_mismatch(
+            branch, "ST-001", ["a.py"]
+        )
+
+        assert report["checked_in"] == "main", report
+        assert report["status_mismatch"] is False, report
+
+    def test_worktree_path_gone_falls_back_to_main(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When the sidecar references a path that no longer exists (worktree
+        already merged/discarded), the function falls back to the main checkout."""
+        branch = "test-branch"
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_git(repo)
+
+        branch_dir = repo / ".map" / branch
+        branch_dir.mkdir(parents=True)
+        self._write_state(branch_dir)
+
+        # Write a.py in the main checkout.
+        (repo / "a.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
+
+        # Sidecar points to a non-existent directory (worktree removed).
+        self._write_worktrees_sidecar(
+            branch_dir, "ST-001", tmp_path / "gone-worktree"
+        )
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+
+        report = map_step_runner.detect_actor_files_changed_mismatch(
+            branch, "ST-001", ["a.py"]
+        )
+
+        assert report["checked_in"] == "main", report
+        assert report["status_mismatch"] is False, report
+
+
+# ---------------------------------------------------------------------------
 # ST-010: Unit tests for decomposition-completeness gate
 # ---------------------------------------------------------------------------
 

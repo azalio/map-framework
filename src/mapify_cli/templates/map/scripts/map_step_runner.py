@@ -12919,6 +12919,10 @@ def _update_step_state_locked(
         if "completed_steps" not in state:
             state["completed_steps"] = {}
 
+        # Guard: orchestrator writes completed_steps as a list; normalize to dict (#469)
+        if not isinstance(state["completed_steps"], dict):
+            state["completed_steps"] = {}
+
         # Initialize list for this subtask if missing
         if subtask_id not in state["completed_steps"]:
             state["completed_steps"][subtask_id] = []
@@ -17070,8 +17074,40 @@ def _map_artifact_written(path: str, project_dir: Path) -> bool:
         return False
 
 
-def _current_subtask_changed_files(
+def _get_active_worktree_path(
     branch_name: str, subtask_id: str, project_dir: Path
+) -> Path | None:
+    """Return the active worktree path for subtask_id from the sidecar, or None.
+
+    Reads the worktrees.json sidecar at project_dir/.map/<branch>/worktrees.json
+    and returns the recorded path if its directory still exists on disk.  When
+    the worktree has already been merged or discarded, the directory is gone and
+    None is returned so callers fall back to the main checkout.  Fixes #471.
+    """
+    sidecar = project_dir / ".map" / branch_name / WORKTREE_ARTIFACT_NAME
+    try:
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    worktrees = data.get("worktrees", {})
+    if not isinstance(worktrees, dict):
+        return None
+    for record in worktrees.values():
+        if not isinstance(record, dict):
+            continue
+        if record.get("subtask_id") != subtask_id:
+            continue
+        path_str = record.get("path")
+        if not isinstance(path_str, str) or not path_str:
+            continue
+        p = Path(path_str)
+        if p.is_dir():
+            return p
+    return None
+
+
+def _current_subtask_changed_files(
+    branch_name: str, subtask_id: str, project_dir: Path, *, work_dir: Path | None = None
 ) -> set[str] | None:
     """Files touched by the in-flight subtask since the prior subtask commit.
 
@@ -17086,14 +17122,19 @@ def _current_subtask_changed_files(
     Shares ``validate_mutation_boundary``'s base-ref resolution (incl. the #162
     re-base onto the subtask's commit parent when it is already committed) via
     ``_resolve_subtask_diff_base``.
+
+    ``work_dir``: when a git worktree is active for this subtask, pass its path
+    so git diff/status query the worktree rather than the main checkout.  State
+    files (.map/) are always read from ``project_dir`` regardless.  Fixes #471.
     """
+    git_cwd = work_dir if work_dir is not None else project_dir
     base_ref = _resolve_subtask_diff_base(branch_name, subtask_id, project_dir)
 
     try:
         if base_ref:
             diff_result = subprocess.run(
                 ["git", "diff", "--name-only", base_ref],
-                cwd=project_dir,
+                cwd=git_cwd,
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -17105,7 +17146,7 @@ def _current_subtask_changed_files(
         # new files inside a pre-existing untracked directory are invisible (#376).
         status_result = subprocess.run(
             ["git", "status", "--porcelain", "-uall"],
-            cwd=project_dir,
+            cwd=git_cwd,
             capture_output=True,
             text=True,
             timeout=10,
@@ -17318,6 +17359,7 @@ def detect_actor_files_changed_mismatch(
           "status_mismatch": bool,         # True when declared_not_written non-empty
           "recovery_instruction": str,     # non-empty only when status_mismatch
           "reason": str,                   # non-empty only on status=="unknown"
+          "checked_in": "worktree"|"main", # which tree was inspected for git files
         }
 
     Fail-safe: any git failure → ``status="unknown"`` + ``status_mismatch=True``
@@ -17338,6 +17380,12 @@ def detect_actor_files_changed_mismatch(
         d for d in map_declared if not _map_artifact_written(d, project_dir)
     )
 
+    # When worktree isolation is active, the Actor wrote files inside the
+    # worktree, not the main checkout.  Query the worktree path so that
+    # git diff/status sees the actual changes.  Fixes #471.
+    worktree_path = _get_active_worktree_path(branch_name, subtask_id, project_dir)
+    checked_in = "worktree" if worktree_path is not None else "main"
+
     status = "ok"
     reason = ""
     actual_list: list[str] = []
@@ -17347,7 +17395,9 @@ def detect_actor_files_changed_mismatch(
     # A MAP-only subtask needs no diff, so a git error must not force it into a
     # false mismatch.
     if git_declared:
-        actual_set = _current_subtask_changed_files(branch_name, subtask_id, project_dir)
+        actual_set = _current_subtask_changed_files(
+            branch_name, subtask_id, project_dir, work_dir=worktree_path
+        )
         if actual_set is None:
             # Intent: fail safe to mismatch so the gate cannot pass blindly on a
             # git error — but only for the git-tracked files. MAP artifacts were
@@ -17404,6 +17454,7 @@ def detect_actor_files_changed_mismatch(
         "status_mismatch": status_mismatch,
         "recovery_instruction": recovery_instruction,
         "reason": reason,
+        "checked_in": checked_in,
     }
 
 
