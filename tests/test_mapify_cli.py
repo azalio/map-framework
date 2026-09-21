@@ -4712,23 +4712,63 @@ class TestMcpJsonConfig:
         assert parsed == config
 
     @pytest.mark.skipif(
-        __import__("os").getuid() == 0,
-        reason="root bypasses file-permission enforcement; test is meaningless when running as root",
+        os.name == "nt" or os.getuid() == 0,
+        reason="requires POSIX directory permissions enforced for a non-root user",
     )
-    def test_write_project_mcp_json_permission_error(self, tmp_path):
-        """Test write_project_mcp_json raises OSError on permission denied."""
+    @pytest.mark.parametrize("existing_file", [False, True])
+    def test_write_project_mcp_json_permission_error(self, tmp_path, existing_file):
+        """Atomic writes require write permission on the parent directory."""
         mcp_file = tmp_path / ".mcp.json"
-        mcp_file.touch()
-        mcp_file.chmod(0o444)  # Read-only
+        original = b'{"mcpServers": {"user-server": {"command": "user-cmd"}}}\n'
+        if existing_file:
+            mcp_file.write_bytes(original)
+        original_mode = stat.S_IMODE(tmp_path.stat().st_mode)
+        tmp_path.chmod(0o555)
 
         config = {"mcpServers": {"test": {"command": "test"}}}
 
         try:
-            with pytest.raises(OSError):
+            with pytest.raises(PermissionError):
                 write_project_mcp_json(mcp_file, config)
         finally:
-            # Restore permissions so tmp_path cleanup works
+            tmp_path.chmod(original_mode)
+
+        if existing_file:
+            assert mcp_file.read_bytes() == original
+        else:
+            assert not mcp_file.exists()
+        assert list(tmp_path.glob(".*.tmp")) == []
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX atomic replacement semantics")
+    def test_write_project_mcp_json_replaces_readonly_file(self, tmp_path):
+        """A read-only file can be atomically replaced in a writable directory."""
+        mcp_file = tmp_path / ".mcp.json"
+        mcp_file.write_text('{"mcpServers": {}}\n', encoding="utf-8")
+        mcp_file.chmod(0o444)
+        config = {"mcpServers": {"test": {"command": "test"}}}
+
+        try:
+            write_project_mcp_json(mcp_file, config)
+            assert json.loads(mcp_file.read_text(encoding="utf-8")) == config
+            assert list(tmp_path.glob(".*.tmp")) == []
+        finally:
             mcp_file.chmod(0o644)
+
+    def test_write_project_mcp_json_replace_error_preserves_original(self, tmp_path):
+        """Failed replacement preserves the existing config and removes temp files."""
+        mcp_file = tmp_path / ".mcp.json"
+        original = b'{"mcpServers": {"user-server": {"command": "user-cmd"}}}\n'
+        mcp_file.write_bytes(original)
+        config = {"mcpServers": {"test": {"command": "test"}}}
+
+        with (
+            mock.patch.object(Path, "replace", side_effect=OSError("replace failed")),
+            pytest.raises(OSError, match="replace failed"),
+        ):
+            write_project_mcp_json(mcp_file, config)
+
+        assert mcp_file.read_bytes() == original
+        assert list(tmp_path.glob(".*.tmp")) == []
 
     def test_merge_mcp_json_preserves_existing(self):
         """Test that merge preserves existing servers."""
