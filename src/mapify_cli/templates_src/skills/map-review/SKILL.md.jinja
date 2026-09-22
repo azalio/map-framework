@@ -542,9 +542,11 @@ Focus only on plausible measurable impact, hot paths, accidental N+1 behavior, l
 ### Step B.5: Role Reviews (after the four sections)
 
 Present the surviving `user_experience` and `maintainer` findings as two
-groups, in the same A/B/C option protocol. Show each finding as the reviewer
-delivered it — `problem`, `current_code`, `proposed_code`, `why_better`, `cost`
-— and never paraphrase `proposed_code`: it is meant to be applied as a patch.
+groups, in the same A/B/C option protocol. Print once, above both groups:
+"Proposed patches were checked by reading; they were not built, linted or
+tested." Show each finding as the reviewer delivered it — `problem`,
+`current_code`, `proposed_code`, `why_better`, `cost`, `verified_by` — and
+never paraphrase `proposed_code`: it is meant to be applied as a patch.
 When a role returned `all_clear`, print its rationale; that is the review
 result, not an empty section. List dropped `contract_incomplete` findings under
 the group so an unfinished remark stays visible without gating the change.

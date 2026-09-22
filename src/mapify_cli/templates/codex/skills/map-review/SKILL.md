@@ -217,7 +217,9 @@ spawn_agent(
 The role reviewers read the repository (including `git show
 <default-branch>:<file>` for the pre-change surface) and answer to the
 five-part output contract — `problem`, `current_code`, `proposed_code`,
-`why_better`, `cost`. A finding missing any part never gates the change and
+`why_better`, `cost` — plus a `verified_by` tier per finding. Print once,
+above both role groups: "Proposed patches were checked by reading; they were
+not built, linted or tested." A finding missing any part never gates the change and
 never disappears: on the normal fan-out the ledger tombstones it as
 `contract_incomplete` and names it in `not_verified`, and above `minor` it
 also sets `escalation_required` so PROCEED is unavailable; under

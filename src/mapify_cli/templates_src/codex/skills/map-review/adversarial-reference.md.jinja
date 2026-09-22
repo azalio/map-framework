@@ -24,7 +24,7 @@ Five reviewer passes, each with only its permitted inputs:
 | **Edge Case Hunter** | diff + repo read access | Null handling, boundary conditions, error paths, codebase consistency |
 | **Acceptance Auditor** | diff + spec + plan + artifacts | Missed requirements, spec violations, AC gaps, extra/unplanned work |
 | **User (`user_experience`)** | diff + repo read access | Regressions in the already-shipped path: extra mandatory steps, confusable flags, an explicit value silently overridden |
-| **Maintainer (`maintainer`)** | diff + repo read access | Branch-scoped litter in comments, implementation leaking into user-facing text, copy-paste, split sources of truth, version predicates by number, embedded foreign-language code |
+| **Maintainer (`maintainer`)** | diff + repo read access | Branch-scoped litter in comments, implementation leaking into user-facing text, undiagnosable errors, copy-paste, split sources of truth, version predicates by number, embedded foreign-language code, settings carried through layers that only pass them on, names that promise more than the body does, mechanisms named after their first application, files placed against the local convention |
 
 With `--quick`: skip the Edge Case Hunter pass (Blind + Acceptance + both
 role passes).

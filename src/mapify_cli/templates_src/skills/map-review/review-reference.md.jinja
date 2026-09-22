@@ -54,27 +54,45 @@ the change make the ALREADY SHIPPED functionality harder or less convenient?
   `--from-release`)? Does the name alone say what it does?
 - Explicit input beats a default: an explicitly supplied value that is
   incompatible with the new mode must be REJECTED with a clear error, never
-  silently overridden.
-- The current flag set is not a given — propose the ideal one when it confuses.
+  silently overridden. Where defaults and overrides are layered, the
+  established priority contract must survive the change.
+- The current flag set is not a given — propose the final one for the real
+  goal when it confuses, even if that renames or splits flags.
 - Judged from two sub-roles: a human in a terminal, and a CI script.
 
-**`maintainer` — the person extending this a quarter from now.** Checks:
+**`maintainer` — the person extending this a quarter from now.** One question:
+can I extend this without re-reading every line, and without inheriting
+temporary decisions tied to the current task? Checks:
 
 | Class | What it hunts |
 |---|---|
 | A1 | Branch-scoped litter in comments (plan/tracker IDs, `.map/` paths, "step N") — it rots after merge |
-| A2 | Implementation vocabulary leaking into help/error/log/doc text |
+| A2 | Implementation vocabulary leaking into help/error/log/doc text and generated surfaces (CRD descriptions, API schemas, CLI help) |
+| A3 | Undiagnosable errors: a failure the user cannot explain from one run — no field name, data source, expected vs actual, safe value fragment, cause, or object id |
 | B | Copy-paste: near-identical logic in 2+ places that must change in sync |
-| C | Single source of truth: one decision computed in more than one place |
-| D | Overcomplication: twisted booleans, deep nesting, mixed responsibilities |
-| E | Order of logic: validation / defaults / execution readable top to bottom |
-| F | Dead or idle work: built-but-unused structures, duplicated guards |
-| G | Extensibility: how many places the next similar case touches — exact N |
+| C | Single source of truth: one decision computed in more than one place (not the sequential defaults/overrides chain) |
+| D | Overcomplication: twisted booleans, deep nesting, mixed responsibilities, hops that unify nothing |
+| E | Order of logic: validation / defaults / overrides / execution readable top to bottom; refusal before side effects |
+| F | Dead or idle work: built-but-unused structures, calls for disabled subsystems, duplicated guards, data prepared then overwritten |
+| G | Extensibility: how many places the next similar case touches — exact N before and after |
 | H | Version/capability predicates: one module (H1), named by capability not number (H2), one comparison style (H3) — found by whole-base grep, not in the diff |
 | I | Embedded shell/YAML/SQL/HCL inside string literals — unreviewable, untestable |
+| J | Setting applied too low: a value carried through layers that only pass it on when the existing object-assembly point could apply it (J1–J6: trace, split use from transit, find the assembly point, justify late application, prove equivalence, count transit before/after) |
+| K | Name vs contract: `ensure`/`sync`/`validate`/`get` that only disables, only creates, mutates, or writes; a one-sided switch named as two-sided |
+| L | Mechanism named after its first application (`certification_controls` for feature toggles); files grouped by task rather than responsibility |
+| M | File structure vs the local convention (M1 establish it from ≥2 neighbours, M2 find mixing, M3 language rule vs project rule, M4 the complete move with every reference) |
 
 For B, C and H one site is not a finding: the finding is the number of sites and
-the point where they collapse.
+the point where they collapse. The maintainer makes four separate passes —
+correctness/completeness; setting propagation and decision sources; names and
+boundaries (K, L); file structure (M) — and always records in
+`checks_performed` which modules served as the structure baseline and whether
+conventions are mixed, even with no findings.
+
+Both roles review an attached plan as well as the code: matching the plan does
+not prove the implementation is a good one. Existing signatures, names, fields,
+the responsibility split and the places settings are applied are all under
+review. Neither role modifies the working tree.
 
 ### The output contract
 
@@ -82,11 +100,16 @@ Every role finding carries five parts, or it is not reported:
 
 | Part | Requirement |
 |---|---|
-| `problem` | one line + exact `file:line` |
+| `problem` | one line: role, priority, exact `file:line` (every site when there are several), the concrete scenario or maintenance cost |
 | `current_code` | the lines as they are, copied verbatim |
-| `proposed_code` | applicable as a patch — the helper itself, not "extract a helper" |
-| `why_better` | measurable delta ("3 edit sites -> 1", "-1 responsibility"); bare "cleaner" is rejected |
+| `proposed_code` | applicable as a patch — signatures, bodies, imports, every call site, source→destination for moves; the helper itself, not "extract a helper" |
+| `why_better` | checkable delta ("3 edit sites -> 1", "-1 responsibility", "3 transit params -> 0"); for names, the exact discrepancy removed — no invented metrics; bare "cleaner" is rejected |
 | `cost` | the downside of the fix, or `none` |
+
+Proposed patches are checked by reading only — the reviewer never applies
+them, never builds a worktree for them, never compiles, lints or tests them —
+and the presentation says so once, above both groups. Each finding also names
+its `verified_by` tier: `read`, `test_run`, or `needs_environment`.
 
 A finding missing any part is NOT softened into an advisory, but where it lands
 depends on the path that ran:

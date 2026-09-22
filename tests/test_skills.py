@@ -2461,6 +2461,26 @@ class TestMapReviewComplexityLensWiring:
         ):
             assert token in skill_md
 
+    def test_skill_states_patches_were_checked_by_reading_only(self, skill_md):
+        """The role reviewers never build, lint or test a proposed patch; the
+        presentation must say so exactly once, above both role groups."""
+        assert skill_md.count("Proposed patches were checked by reading") == 1
+        assert "`verified_by`" in skill_md
+
+    def test_reference_documents_second_generation_role_classes(self, reference_md):
+        for token in (
+            "| A3 |",
+            "| J |",
+            "| K |",
+            "| L |",
+            "| M |",
+            "established priority contract must survive the change",
+            "four separate passes",
+            "Proposed patches are checked by reading only",
+            "`verified_by` tier",
+        ):
+            assert token in reference_md
+
     def test_reference_documents_complexity_lens_boundaries(self, reference_md):
         for token in (
             "What-To-Delete Lens",
