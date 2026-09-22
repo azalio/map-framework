@@ -39,6 +39,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its `verified_by` tier (`read`, `test_run`, `needs_environment`); the tier is
   descriptive and does not gate the five-part contract.
 
+### Fixed
+- `.mcp.json`, `.claude/mcp_config.json` and `settings.local.json`
+  (statusline removal) are written atomically via temp file + `os.replace()`
+  with explicit UTF-8, so a crash mid-write no longer leaves corrupt JSON.
+  (#466)
+- `StepState.load` in `map_orchestrator.py` catches `OSError` (permission
+  denied, stale NFS handle, disk error) on `step_state.json` and returns an
+  empty state instead of crashing every orchestrator function — parity with
+  the runner's `_read_json_file`. (#468)
+- `_update_step_state_locked` no longer raises `TypeError` when
+  `completed_steps` was previously written as a list of subtask IDs; a
+  non-dict value is reset to `{}`. (#469)
+- The Actor declared-vs-written files mismatch detector inspects the active
+  subtask worktree when worktree isolation is on, instead of the main
+  checkout — previously every declared file looked unwritten and
+  `/map-efficient` looped forever. The result carries `checked_in`
+  (`worktree` | `main`). (#471)
+
 ## [3.30.1] - 2026-09-16
 
 ### Fixed
