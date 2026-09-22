@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.0] - 2026-09-22
+
 ### Changed
 - `/map-explain` now explains as a knowledgeable colleague instead of emitting
   the tiered `[MUST READ]` / load-bearing-line tables. The walkthrough pins
