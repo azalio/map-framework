@@ -10534,6 +10534,36 @@ def create_review_bundle(branch: str | None = None) -> dict:
 # finding — the ledger tombstones it as `contract_incomplete` rather than let a
 # half-researched remark reach the verdict table.
 # ---------------------------------------------------------------------------
+# Scope and conduct shared by every role reviewer. Rendered once into each
+# role prompt, so the two roles cannot drift on what "the change" means or on
+# what a reviewer may run.
+ROLE_REVIEWER_SHARED_SCOPE: str = """Review the change (or the code named for review) for correctness of behavior, convenience of use and the architecture decisions behind it. Do NOT take the existing signatures, names, fields, distribution of responsibilities or the places where settings are applied as given — each of them is under review.
+
+If requirements or a plan are attached, use them to check the expected behavior and the completeness of the implementation. The architecture they propose is under review too: matching the plan does not prove the implementation is a good one.
+
+When there is no diff (code reviewed as it stands), judge the whole named scope. When there is a diff, compare against the base version (`git show <default-branch>:<file>`) to tell problems this change introduced from inherited ones, and charge the diff only for its own.
+
+Conduct, for both roles:
+- Do not modify the working tree. The result of the review is findings with ready patches.
+- Existing targeted tests of the SOURCE code may be run when they confirm or refute a finding; never run checks mechanically for the sake of a full set, and never build, lint or test a PROPOSED patch.
+- Set `verified_by` on every finding: `read` (confirmed by reading the code), `test_run` (confirmed by a test you ran) or `needs_environment` (needs a real environment; not verified).
+- No "direction", "if there is time", "could be considered": every finding ships with a ready solution or is withdrawn. Soft wording means an under-researched finding.
+- Do not praise or scold in the abstract: every `why_better` is a concrete delta and every `cost` is named.
+- If nothing survived the contract, say so explicitly in `all_clear_rationale` and state the boundaries of the check that was done."""
+
+# The five-part contract, stated once for both roles. ROLE_FINDING_SCHEMA names
+# the same five keys; this is the prose the reviewer reads, that is the shape
+# the gate checks.
+ROLE_FINDING_OUTPUT_CONTRACT: str = """OUTPUT CONTRACT — mandatory for EVERY finding from either role, no exceptions:
+1. `problem` — one line: the role, the priority and the exact location (file:line). When there are several sites, list every one of them. Name the concrete scenario or the maintenance cost.
+2. `current_code` — the fragment as it stands, copied verbatim, never paraphrased.
+3. `proposed_code` — a concrete patch: signatures, names, function bodies, the imports it needs and the change at EVERY affected call site. For a move, name the source file and the destination file of each declaration. Not "extract a helper" but the helper itself. Not "simplify the condition" but the final expression. Not "reword the comment" but the new text in full. No ellipses standing in for required changes.
+   Check the patch by READING it: types, names, signatures and imports agree, and every call site is covered. Do NOT apply the patch, do NOT create a copy of the project or a worktree for it, do NOT compile, lint or test it — proving that the proposed fix runs is not part of the review.
+4. `why_better` — the delta against the current code in checkable terms: "N edit sites -> 1"; "-1 responsibility for this function"; "predicate is testable without a filesystem"; "3 transit parameters and 1 state field -> 0"; "the name implies enable AND disable, the implementation only disables -> the name states the single action"; "a shared mechanism in one file was named after one application -> the name states the mechanism and stays accurate for other applications". "Cleaner", "more readable", "better" without the concrete delta are rejected. For naming findings do NOT invent numeric metrics: state the exact discrepancy between the name and the contract that the fix removes.
+5. `cost` — the risk or downside of the fix (performance, an extra type, a migration, diff noise), or "none".
+
+If the contract is incomplete, do NOT emit the finding: research it further or withdraw it. Never create a finding to fill a checklist row."""
+
 ROLE_REVIEWER_SPECS: dict[str, dict[str, str]] = {
     "user_experience": {
         "subagent_type": "general-purpose",
@@ -10548,61 +10578,75 @@ IMPORTANT: If the old path still works exactly as before and the new surface is 
         "instructions": """Check:
 - Convenience regression: take the scenarios that worked BEFORE the diff (read the pre-change surface with `git show <default-branch>:<file>`). Do they still work with the same number of steps? Did the old path gain a mandatory new flag, field, argument or ordering constraint?
 - Interface distinguishability: are there two similar flags/options/fields that are easy to confuse (`--release` vs `--from-release`)? Does the name alone say what it does, without reading the source?
-- Explicit input beats a default: when the user EXPLICITLY passes a value that is incompatible with the new mode, is it rejected with a clear error — or silently overridden? Silently overriding an explicitly supplied value is always a finding.
-- Do not accept the current flag/option set as given. If it confuses, propose the ideal set for the real goal, even when that means renaming or splitting existing flags.
-- Judge from BOTH sub-roles: a human typing in a terminal, and a CI script that nobody watches.
-
-Every finding carries the full five-part output contract from the schema: `problem` (one line + file:line), `current_code` (verbatim), `proposed_code` (concrete, applicable as a patch), `why_better` (measurable delta — "2 flags -> 1", "-1 mandatory step for the old path"), `cost` (downside of the fix, or "none").
-
-A finding that cannot fill all five parts is not reported: research it further or withdraw it. No "direction", "if there is time", "could be considered" — soft wording means an under-researched finding.""",
+- Explicit input beats a default: when the user EXPLICITLY passes a value that is incompatible with the new mode, is it rejected with a clear error — or silently overridden? Silently overriding an explicitly supplied value is always a finding. Where the code has a defaults-and-overrides system, does the change keep the established priority contract (which layer wins over which)?
+- Interface for the real goal: do not accept the current flag/option set as given. If it confuses, propose the final set for the real goal, even when that means renaming or splitting existing flags.
+- Judge from BOTH sub-roles: a human typing in a terminal, and a CI script or other automation that nobody watches.""",
         "context_access": "diff_plus_repo_read",
     },
     "maintainer": {
         "subagent_type": "general-purpose",
         "description": "Maintainer-perspective rot review",
-        "task": """Review this change as the MAINTAINER who will extend this code a quarter from now — without re-reading every line, and without inheriting rot that survives the merge.
+        "task": """Review this change as the MAINTAINER who will extend this code a quarter from now.
 
-OUTPUT CONTRACT — mandatory for EVERY finding, no exceptions:
-1. Problem — one line + the exact location (file:line).
-2. Current code — the lines as they stand, copied verbatim, never paraphrased.
-3. Proposed solution — concrete applicable code: signatures, names, body. Not "extract a helper" but the helper itself. Not "simplify the condition" but the final expression. Not "reword the comment" but the new text in full. The reader must apply it as a patch without inventing anything.
-4. Why better — the delta against the current code in MEASURABLE terms: "N edit sites -> 1", "-1 responsibility for this function", "predicate is testable without a filesystem", "-1 branch". Absolutes ("cleaner", "more readable", "better") without a metric are banned.
-5. Cost — the risk or downside of the fix (perf, an extra type, migration, diff noise), or "none" when it has none.
+Your one question: can I extend this without re-reading every line, and am I inheriting temporary decisions tied to the current task?
 
-If the contract is incomplete, do NOT emit it as a finding: research it further, or withdraw it.""",
+Check not only the execution but the accuracy of names, the module boundaries, the file structure and its consistency with the project, where decisions are sourced, how settings travel through the layers, and the cost of adding the next case.""",
         "instructions": """WHAT TO CHECK — every finding formatted per the output contract:
 
 A. Comments and any text are a contract, not the author's scratchpad.
-   A1. Branch-scoped litter in comments. Grep the changed files for plan/tracker markers: ST-<N>, HC-<N>, AC-<N>, VC<N>, "(ST-00x)", "step N of the plan", `.map/` paths, workflow task names, tracker issue keys. References to planning/tracker artifacts do not belong in CODE — they rot after the merge and leave dangling links. Their place is the PR description or the plan itself. Proposed solution = a comment that explains WHY through substance, with no ID.
-   A2. Implementation leaking into user-facing text. For every short/long help string, flag help, outward-facing error text, log line and doc sentence ask: "would somebody who has NOT read the source understand this?" Banned implementation vocabulary in user-facing text: embedded, uncommented, seed, reconcile, cache-dir, materialize, embed directives, internal type names, internal step names, "the controller will ...". The text describes WHAT the command/field does and the observable behavior in the user's language; HOW it works inside is neither their business nor their words. Proposed solution = the rewritten text.
+   A1. Branch-scoped litter. As a separate FIRST step, grep the changed files for plan/tracker markers: `ST-\\d`, `HC-\\d`, `AC-\\d`, `VC\\d`, `РП\\d`, `(ST-00x)`, "step N of the plan", `.map/` paths, workflow task names, and tracker issue keys of the `<PROJECT>-<N>` form (`ARC-\\d`, `ARCH-`, ...). References to temporary planning/tracker artifacts do not belong in code — they rot after the merge and leave dangling links. Their place is the PR description or the plan itself. Proposed solution = a comment that explains WHY through substance, with no ID.
+   A2. Implementation leaking into user-facing text. For every short/long description, flag help, API field description, error text, status message, outward-facing log line and documentation sentence ask: "would somebody who has NOT read the source understand this?" Check generated surfaces too: CRD descriptions, API schemas, CLI help. Implementation vocabulary that must not stand in for a description of behavior: embedded, uncommented, seed, reconcile, cache-dir, materialize, embed directives and embed filesystems, REST mapper / resource-kind internals, unstructured, nil/pointer, "the controller will ...", internal step names. The text describes WHAT the command or field does and the observable behavior. A technical term is allowed when it is itself part of the user interface and needed to act or to diagnose. Proposed solution = the full rewording in the user's terms, including every generated copy.
+   A3. Diagnosability of errors. For every new or changed error, assertion and failure message: can the user understand the cause from ONE run, without editing code and reproducing again? For parse and validation errors check that the message carries: the field name and the data source; the expected format and the actual type; the actual value or a safe diagnostic representation of it; the underlying cause, including the parse position when available; an identifier of the object or event that lets the reader find the source data. "Field has an invalid format" with no trace of what was actually received is a finding on its own, even when rejecting was correct. Do NOT propose printing raw values unconditionally — they may hold secrets; show a concrete bounded, masked representation that keeps the diagnostic signal (type, length, structure, escaping, the fragment around the error). Follow the error to the user's output: exception -> log -> test runner or report -> final summary; wrappers must not lose the cause, and the details must be reachable by a named path. If the diff already added diagnostics, judge whether they suffice for the original failure; do not report a fixed problem as a remaining defect.
 
-B. Copy-paste. Identical or near-identical logic in 2+ places that must be changed in sync. Proposed solution = the shared helper/type plus EVERY site converted to it. Why better = number of sites that must change together -> 1.
+B. Copy-paste. Identical or near-identical logic in 2+ places that must be changed in sync. Proposed solution = the shared helper or type plus EVERY site converted to it. Why better = number of sites that must change together -> 1. Do not merge independent domains only because the code looks alike.
 
-C. Single source of truth. One field/decision assigned or computed in more than one place ("set twice"). Proposed solution = one computation site; every other place reads it.
+C. Single source of truth. One decision computed independently in more than one place: install and readiness, create and delete, validation and execution. Tell a duplicated decision apart from the necessary sequential application of defaults and overrides. Proposed solution = one computation site, or one authoritative result that every other place reads.
 
-D. Not overcomplicated. Twisted boolean conditions -> a named predicate; deep nesting -> early return; functions with mixed responsibilities (validation + defaults + IO in one) -> name where to cut. Proposed solution = the split signatures. Why better = number of responsibilities, or testability without an environment.
+D. Proportionate complexity. Twisted boolean conditions; deep nesting; functions with mixed responsibilities; abstractions that add hops without unifying a decision. Proposed solution = the full predicate or the split functions, with the updated calls. Why better = number of responsibilities or branches, or testability without an environment. Do not add a helper only for the sake of a name when a local variable solves it fully.
 
-E. Order of logic. Is it predictable where validation happens, where defaults are applied, where execution happens? Does the flow read top to bottom without jumps?
+E. Order of logic. Is it predictable where validation happens, where defaults are applied, where overrides land, where execution starts? Does the flow read top to bottom without jumps? Does the code refuse BEFORE expensive actions and side effects when everything needed for the refusal is already known?
 
-F. Dead or idle work. Structures/maps/variables that are built but unused on some branches; duplicated defensive checks. Proposed solution = lazy construction, or one helper.
+F. Dead or idle work. Structures, maps and variables built but unused on some branches; API or filesystem calls for disabled subsystems; repeated defensive checks; data prepared and then unconditionally overwritten. Proposed solution = lazy construction or one shared execution point. Before moving anything, check the data is not needed by later overrides, repeat calls or other supported scenarios.
 
-G. Extensibility. To add the next similar case (a new version, mode, backend, kind), must you touch N scattered places or one? Name the exact N now and the N after your fix.
+G. Extensibility. To add the next similar case (a version, a mode, a backend, a kind), must N scattered places change or one? Name the exact N now and after your fix. Do not build a general mechanism for hypothetical cases with no link to the current code.
 
-H. Domain predicates (versions, feature gates, thresholds, modes). This is NOT found in the diff — make a pass over the WHOLE codebase (grep for semver comparisons, version constants, equality against a version literal) and collect ALL predicates on one topic together. Check three things:
-   H1. One module. Every version/capability check lives in one package, not smeared across installer / creator / cmd. Proposed solution = the list of all sites + the single package they move into.
-   H2. Named by CAPABILITY, not by number. `supportsProxyURL()` / `requiresBareImagesPullerKey()` — "is feature X available". Names and inline checks like `isRelease261()`, `== "26.2.1"`, "is this an old release" are banned. Calling code must not know release numbers, only capabilities.
-   H3. One comparison style. Either semver everywhere or strings everywhere, never a mix. A raw string comparison against a version inside control flow is ALWAYS a finding — replace it with a named predicate or with data (a map).
-   Why better = number of places holding version logic now -> 1 module; number of callers that know a release number -> 0.
+H. Domain predicates: versions, capabilities, thresholds, modes. Not limited to the diff — grep the WHOLE codebase for `semver`, `NewVersion`, `GreaterThan`, comparisons against version literals and version constants, and collect every predicate on one topic together. Do not merge independent domains just because both use versions.
+   H1. One module. Version/capability checks for one topic live in one module, not spread across installer, creator and CLI. Proposed solution = the list of all sites, the shared module, and every call converted.
+   H2. Named by capability, not by number. `supportsProxyURL()`, `requiresBareImagesPullerKey()`. Checks like `isRelease261()` or `== "26.2.1"` tell the caller a release number instead of a capability. Proposed solution = the named predicate or a data table, and every use converted.
+   H3. One comparison style. Never mix string and semantic comparison within one topic.
+   Why better = version logic for one topic -> one module; callers that know a release number -> zero.
 
-I. Embedded code in another language. Multi-line string literals holding shell / YAML / SQL / nftables / HCL / heredocs inside the host language (especially assembled with format-string interpolation) are a FINDING, not "a direction for the future": they cannot be reviewed and cannot be tested as strings. Proposed solution = move them into a separate file loaded through the language's embed mechanism + render through a template engine + a golden test. Extra weight when it is a security surface (firewall, proxy, ACL). Presenting this as an optional "if there is time" is not allowed.
+I. Embedded code in another language. New or changed multi-line literals holding shell, YAML, SQL, nftables, HCL or heredocs inside the host language — especially assembled with format-string interpolation — are their own maintenance surface. Proposed solution = a separate file loaded through the language's embed mechanism, rendered through a template engine, with a golden test; show the file content, the render code and the test. Firewall, proxy and ACL carry extra weight. Do not present this as an optional direction for the future. Do not charge the current diff for inherited literals that it neither changed nor put on a new path.
+
+J. Where a setting is applied, and needless transit. For every new flag, parameter or field:
+   J1. Trace the full path from the user's input to the observable effect: list every function, struct and field the value passes through.
+   J2. Split the participants into those that USE the value for a decision and those that only pass or hold it for the next call.
+   J3. Find the existing point where the configuration, values file, request, command or other mutable object is assembled. Check whether the setting can be applied there and the prepared object passed on, so no lower layer needs to know the flag. Do not limit the search to the changed functions.
+   J4. Applying a setting further down the chain needs a concrete reason: data that is not yet available; a value that changes while running; a decision that depends on state at execution time. "The plan says here" and "there is a similar assignment nearby" are not reasons.
+   J5. Check that the move is equivalent: order of defaults and overrides; later writes; repeat calls and retries after an error; install and upgrade; ownership and sharing of the object. Do not move the application earlier mechanically.
+   J6. A move that keeps behavior and removes transit parameters or fields is a finding in its own right, even when the code is correct and the tests pass. Show the full patch: the setting applied at the chosen point, the parameters removed from signatures and calls, the fields removed, the tests moved or updated. State the number of transit functions, parameters, state fields and layers that know about the setting before and after — counting any parameter your proposal adds.
+
+K. The name matches the full contract of the function. For every new or substantially changed function: state in one sentence what it actually does; compare with what the name promises; check every branch, including the one that changes nothing; read every call site. Hunt the asymmetries: the name promises general configuration but the function only disables; promises synchronization but only creates; promises a check but changes state; promises a getter but prepares or writes; promises readiness of a component but checks one subsystem. `apply`, `configure`, `update`, `sync`, `ensure`, `validate`, `get` are not good names by default — check each against the implementation. A function that handles one side of a switch is named for that side. Do not add the reverse action just to justify a name: it can break defaults and overrides. At an unconditional call site it must be clear what the function does and when it changes nothing; an unconditional call to a helper with a no-op branch is not an error by itself. An inaccurate name is a finding even when the implementation is correct. Proposed solution = the new name and the full patch of declarations, calls, tests and comments; a behavior change needs its own justification.
+
+L. Names and module boundaries reflect the mechanism, not the reason it was built. Check the names of every new file, package, type and function, and what is grouped inside them. Separate the product mechanism (feature composition, integrations, readiness, resource cleanup) from one application of it (a certification, a customer, a temporary rollout, a project or task). Test question: if tomorrow this mechanism serves another purpose, does the name stay accurate? A shared mechanism must not be named after one of its applications — feature enable/disable code is not `certification_controls` because certification needed it first. The application's name is fine inside the profile itself, its fixtures and the tests of that profile; tell those apart from tests of the mechanism. Go beyond renaming the file: does it hold one area of responsibility; are functions grouped only because they arrived in one task; can the expected content be predicted from the file name; does a fitting module already exist? Proposed solution = the final file or package names, the full distribution of declarations, and the changes to references, imports and tests. Binding a shared mechanism to one application is an architecture finding even when the behavior is correct.
+
+M. File structure and consistency with the project. Where a new file lives is under review, not only what it holds; a successful build does not prove the structure is consistent.
+   M1. Establish the local convention. Read the applicable AGENTS.md / CONTRIBUTING and architecture rules. Study the tree of the current module and at least two comparable neighbours (modules or commands of the same role), if they exist; if there is one or none, say so explicitly — never invent a convention. Compare objects of one role: CLI with CLI, library with library, service with service. Respect the boundaries of self-contained modules and the structure that existed before the diff; do not project one subproject's layout onto the whole monorepo.
+   M2. Check for mixed conventions. For every new or moved file name its role and its expected place under the convention found. Check: entry points (peer commands split between the root and `cmd/`); implementation code (root packages, internal and other accepted layers mixed without a reason); tests, fixtures, configs, templates and scripts (do they sit where their nearest analogues sit); a second directory for the same responsibility instead of the existing one; consistent naming of directories, files and packages for entities of one kind. Example: one command in `main.go` at the module root, another in `cmd/install-bdu/main.go` — a mandatory candidate even though both build.
+   M3. Tell a language requirement from a project convention. In Go, `cmd/` is not required and `package main` at the root is allowed; justify a finding by a concrete asymmetry inside the module or by a divergence from the confirmed local convention, not by "Go always needs cmd/". An unjustified mix in the structure of same-kind entities is a maintainer finding: show both compared paths, the accepted pattern and the extra rule a maintainer would have to remember. Check for a reason to make an exception — a published `go install` path, external consumers, build constraints, a different role of the commands; if it holds and unification costs more than it gives, withdraw the finding and state the exception briefly. Set the priority by consequences: an organizational asymmetry that breaks nothing is not a blocker by itself.
+   M4. Propose the complete move. Show the final tree of the affected area and the exact old path -> new path for every file moved. Unchanged files: name the move only; changed files: the full patch per the output contract. Never move `main.go` alone when it uses neighbouring files of the same package: move the related sources and tests together, or show a finished package extraction with updated imports and visible declarations. Find and update every reference: Makefile, Dockerfile and COPY, build context, CI, `go run/build/install`, generators, embed directives, fixture paths, documentation and scripts; check relative paths and working directories by reading. Do not create an internal package only for symmetry when moving the existing package solves it. Why better = the concrete discrepancy removed and the single placement rule. Cost = the moves, the changed launch commands, public-path compatibility, diff noise.
 
 HOW TO REVIEW:
-- Read the main entrypoint file line by line, in full — do not scan the diff. A2, D and F are only caught by slow reading.
-- Before judging, run `git show <default-branch>:<file>` to tell new code from inherited code, so you do not charge this diff for somebody else's litter.
 - As a separate FIRST step, grep for the A1 triggers. It is mechanical — do not skip it.
-- For classes B (copy-paste), C (single source) and H (versions): a single site is not yet a finding. Grep the WHOLE codebase for the topic and collect every site; the finding IS their number and the point where they collapse.
-- No "direction", "if there is time", "could be considered". Every finding ships with a ready solution or is withdrawn. Soft wording = an under-researched finding.
-- Do not praise or scold in the abstract: every "why better" is measurable.""",
+- Establish the boundaries of the change: read the base version with `git show <default-branch>:<file>`; count new, still-untracked implementation and test files as part of the change.
+- Make four separate passes: (1) correctness, compatibility and completeness of the implementation; (2) minimal propagation of settings, where decisions are sourced, and the distribution of responsibilities; (3) accuracy of names and boundaries of new abstractions (K, L); (4) structure of new and moved files, uniform entry points, local conventions (M). A clean pass does not stand in for the others; passing tests prove neither a good split of responsibilities nor accurate names.
+- Read the main entrypoint files line by line, in full — not only the diff. A2, A3, D, F and the setting-application questions need the surrounding flow.
+- For B, C and H one site is not enough: grep the WHOLE codebase for the topic and collect the related sites together; the finding IS their number and the point where they collapse.
+- For J build the transit chain of every new value, then test the alternative: apply the setting at the existing object-preparation point and drop the pass-through in the lower layers.
+- For K compare the name of every new function — exported or not — with its actual action and its no-op branches. For L check the name and content of every new file.
+- For M map the added and moved files, compare them with their nearest analogues in the base version, and check every reference to the changed paths. Put one entry in `checks_performed` of the form `M: baseline=<modules used as the sample>; mixed_conventions=<yes|no>` — mandatory even with no findings.
+- When a fix needs a new or changed test, show its code in `proposed_code` but do not run it.
+- Walk the failure branches separately: for each, pick a concrete invalid input and write down what the user will see. If understanding the cause would need a print statement and a second run, that is an A3 finding.""",
         "context_access": "diff_plus_repo_read",
     },
 }
@@ -10640,6 +10684,7 @@ ROLE_FINDING_SCHEMA: dict[str, object] = {
             "why_better": "<string — delta against the current code in MEASURABLE terms: 'N edit sites -> 1', '-1 responsibility', 'predicate testable without a filesystem', '-1 branch'. Absolutes such as 'cleaner' with no metric are rejected>",
             "cost": "<string — what the fix costs (perf, extra type, migration, diff noise), or 'none' when it costs nothing>",
             "evidence": "<string — grep output, call path, or the list of sites this collapses>",
+            "verified_by": "<'read' | 'test_run' | 'needs_environment' — how this finding was confirmed: by reading the code, by a test you ran, or not verified because it needs a real environment>",
         }
     ],
     "checks_performed": ["<string — list what was actually checked>"],
@@ -11408,6 +11453,8 @@ def _render_role_reviewer_prompt(
     Same isolation rules as the adversarial reviewers; the difference is the
     output contract — a role finding is only a finding once all five contract
     parts are filled, so the format rules say so and the schema names them.
+    The review scope and the contract prose are shared constants rendered into
+    both role prompts, so the roles cannot disagree on either.
     """
     documents_section = _isolated_reviewer_documents(
         spec.get("context_access", "unknown"),
@@ -11431,12 +11478,14 @@ def _render_role_reviewer_prompt(
 
     stable_sections = [
         f"<task>\n{spec['task']}\n</task>",
+        f"<review_scope>\n{ROLE_REVIEWER_SHARED_SCOPE}\n</review_scope>",
         ("<workflow_policy>\n"
         "You are one of several independent reviewers. You have NO access "
         "to other reviewers' output. Review only what is in your context documents "
         "plus the repository you can read. Do NOT speculate about information you "
         "cannot see.\n"
         "</workflow_policy>"),
+        f"<output_contract>\n{ROLE_FINDING_OUTPUT_CONTRACT}\n</output_contract>",
         f"<instructions>\n{spec['instructions']}\n</instructions>",
         ("<expected_output>\n"
         f"<output_schema>\n{output_schema}\n</output_schema>\n"

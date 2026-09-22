@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `/map-review` role reviewers (`user_experience`, `maintainer`) now carry the
+  second-generation review brief. Both roles share one review scope (existing
+  signatures, names, fields, the responsibility split and the places settings
+  are applied are all under review; an attached plan is reviewed too; a no-diff
+  run judges the whole named scope; the working tree is never modified) and one
+  output contract (role + priority + every site in `problem`; a patch with
+  imports, every call site and source→destination for moves in `proposed_code`;
+  no invented metrics for naming findings in `why_better`). Proposed patches are
+  checked by reading only — never applied, built, linted or tested — and the
+  presentation says so once above both groups. `user_experience` also checks
+  that a layered defaults/overrides priority contract survives the change.
+  `maintainer` gains five classes — A3 error diagnosability, J setting-application
+  site and needless transit (J1–J6), K name-vs-contract asymmetries, L
+  mechanism-named modules and files, M file structure versus the local
+  convention (M1–M4) — plus a four-pass procedure, a failure-branch walk and a
+  mandatory structure-baseline entry in `checks_performed`. Every finding names
+  its `verified_by` tier (`read`, `test_run`, `needs_environment`); the tier is
+  descriptive and does not gate the five-part contract.
+
 ## [3.30.1] - 2026-09-16
 
 ### Fixed

@@ -18664,6 +18664,80 @@ class TestRoleReviewers:
         assert "BUNDLE" in maintainer
         assert "diff --git a/x b/x" in maintainer
 
+    def test_both_role_prompts_share_one_scope_and_one_contract(
+        self, tmp_path, monkeypatch
+    ):
+        """The review scope and the output contract are rendered from shared
+        constants, exactly once per prompt — the two roles cannot disagree on
+        what "the change" is or on what a finding must carry."""
+        monkeypatch.chdir(tmp_path)
+        prompts = map_step_runner.build_role_review_prompts(
+            branch="test-branch",
+            git_diff_text="diff --git a/x b/x",
+            repo_context_text="BUNDLE",
+        )["prompts"]
+        for role in map_step_runner.ROLE_REVIEWER_IDS:
+            prompt = prompts[role]["prompt"]
+            assert map_step_runner.ROLE_REVIEWER_SHARED_SCOPE in prompt, role
+            assert map_step_runner.ROLE_FINDING_OUTPUT_CONTRACT in prompt, role
+            assert prompt.count("OUTPUT CONTRACT") == 1, role
+            # Patches are checked by reading only; no reviewer builds them.
+            assert "do NOT compile, lint or test it" in prompt, role
+            assert "Do not modify the working tree" in prompt, role
+            assert "verified_by" in prompt, role
+
+    def test_maintainer_prompt_covers_every_check_class(self, tmp_path, monkeypatch):
+        """A3 (diagnosability), J (setting transit), K (name vs contract),
+        L (mechanism naming) and M (file structure) are what distinguishes
+        the second-generation brief from the first; losing one is a silent
+        loss of coverage, so every class is pinned by its own marker."""
+        monkeypatch.chdir(tmp_path)
+        prompt = map_step_runner.build_role_review_prompts(
+            branch="test-branch",
+            git_diff_text="diff",
+            repo_context_text="BUNDLE",
+            roles=["maintainer"],
+        )["prompts"]["maintainer"]["prompt"]
+        for marker in (
+            "A1.", "A2.", "A3.",
+            "\nB.", "\nC.", "\nD.", "\nE.", "\nF.", "\nG.",
+            "H1.", "H2.", "H3.",
+            "\nI.",
+            "J1.", "J2.", "J3.", "J4.", "J5.", "J6.",
+            "\nK.", "\nL.",
+            "M1.", "M2.", "M3.", "M4.",
+            "Make four separate passes",
+            "M: baseline=",
+            "Walk the failure branches",
+        ):
+            assert marker in prompt, f"maintainer prompt lost class marker {marker!r}"
+
+    def test_user_prompt_checks_the_defaults_overrides_priority_contract(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        prompt = map_step_runner.build_role_review_prompts(
+            branch="test-branch",
+            git_diff_text="diff",
+            repo_context_text="BUNDLE",
+            roles=["user_experience"],
+        )["prompts"]["user_experience"]["prompt"]
+        assert "defaults-and-overrides" in prompt
+        assert "priority contract" in prompt
+        assert "CI script" in prompt
+
+    def test_role_finding_schema_names_the_verification_tier(self):
+        findings = map_step_runner.ROLE_FINDING_SCHEMA["findings"]
+        assert isinstance(findings, list)
+        skeleton = findings[0]
+        assert isinstance(skeleton, dict)
+        assert "verified_by" in skeleton
+        for tier in ("read", "test_run", "needs_environment"):
+            assert tier in skeleton["verified_by"]
+        # Descriptive, not a contract gate: a finding without it is complete.
+        assert "verified_by" not in map_step_runner.ROLE_FINDING_CONTRACT_KEYS
+        assert map_step_runner.role_finding_contract_gaps(self._complete_finding()) == []
+
     def test_role_prompt_schema_comes_from_agent_output_schemas(self, tmp_path, monkeypatch):
         """One schema object — the prompt, the truncation gate and the retry
         prompt must not be able to disagree."""
