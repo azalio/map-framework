@@ -1,16 +1,16 @@
 ---
 name: map-explain
-description: "Deep walkthrough of code, a diff, or the whole project — problem, entities, flow, load-bearing-line rationale, side effects, assumptions, breakage. Use when learning unfamiliar code or auditing a diff."
+description: "Explain code, a diff, or the whole project the way a knowledgeable colleague would — result and main scenario first, then participants, flow, mechanisms, rules and constraints in progressive depth, with Mermaid diagrams; for a PR or diff, exactly the change against the base with new behavior separated from existing context, documentation clarifications and unimplemented plans. Use when learning unfamiliar code, onboarding to a system, or auditing what a PR really does."
 ---
 [% include "_partials/auto-update-preflight.md.jinja" %]
 
-# $map-explain — Deep Walkthrough
+# $map-explain — Knowledgeable-Colleague Walkthrough
 
-**Purpose:** Build a complete mental model of a target (code, diff, or the whole repository). This skill ONLY teaches — it does NOT plan or execute.
+**Purpose:** Explain a target (code, diff, or the whole repository) as a knowledgeable colleague who has worked through the topic and is helping the reader understand it. The reader is technically literate but does not know the context of this system. This skill ONLY teaches — it does NOT plan or execute.
 
 **When to use:**
 - Learning unfamiliar code or onboarding to a module
-- Auditing a diff before merge
+- Understanding what a PR really changes before merge
 - Bootstrapping a new contributor on an existing project
 
 **Related skills:** `$map-plan` (decomposition before execution), `$map-fast` (small implementations), `$map-check` (post-execution verification).
@@ -58,15 +58,13 @@ exec_command:
 
 ### Mode A — Project overview (current branch is `main`/`master`, OR `HEAD` == `$BASE`)
 
-No branch diff to explain — walk the **whole repository**. Apply the output spec below at the project level, not a single-file level:
+No branch diff to explain — the subject is the project as a whole, so the new-versus-existing split from "Pin down the subject first" does not apply. Walk the **whole repository** with the same narrative structure:
 
-- *Mental model in 60 seconds*: what this repository exists to do — derive from `README.md`, then `docs/ARCHITECTURE.md`, `docs/USAGE.md`, `CLAUDE.md` / `AGENTS.md`.
-- *Decomposition*: top-level modules / packages / services and their responsibility boundaries. Read the directory listing, entry points, and manifests (`pyproject.toml`, `package.json`, `go.mod`, `Cargo.toml`).
-- *Execution flow*: what happens when the primary entry point runs (CLI invocation, server startup, request lifecycle).
-- *Load-bearing lines*: pick the 3–6 most load-bearing files/functions and walk only those. Do NOT cover every line in the repo.
-- *Assumptions & breakage*: runtime, OS, language version, external services, secrets, env vars, plus the kinds of changes that routinely break this project (`CONTRIBUTING.md`, `CHANGELOG.md`, recent commits, learned-patterns docs).
-
-There is no diff, so skip the before→after block.
+- *Result and main scenario*: what the project exists to do and for whom — derive from `README.md`, then `docs/ARCHITECTURE.md`, `docs/USAGE.md`, `CLAUDE.md` / `AGENTS.md`. Show the primary usage: the command or entry point a person runs, what they pass in, what they get back.
+- *Participants*: top-level modules / packages / services and their responsibility boundaries. Read the directory listing, entry points, and manifests (`pyproject.toml`, `package.json`, `go.mod`, `Cargo.toml`). Tie them into one end-to-end scenario, not a file list.
+- *Mechanisms*: what happens when the primary entry point runs (CLI invocation, server startup, request lifecycle). Pick the 3–6 files/functions that carry the design and walk only those. Do NOT cover every line in the repo.
+- *Rules*: configuration sources, defaults and precedence, env vars — each with a minimal example and its outcome.
+- *Constraints*: runtime, OS, language version, external services, secrets, plus the kinds of changes that routinely break this project (`CONTRIBUTING.md`, `CHANGELOG.md`, recent commits, learned-patterns docs).
 
 Bootstrap commands:
 
@@ -81,7 +79,7 @@ exec_command:
 
 ### Mode B — Branch diff (current branch is NOT `main`/`master` and `HEAD` != `$BASE`)
 
-The target is the current branch's diff against the upstream base. Treat it like a PR and **lead with the before→after block**.
+The target is the current branch's diff against the upstream base. Treat it exactly like a PR target: explain the change itself, and establish what is new versus what already existed in the base before writing.
 
 ```
 exec_command:
@@ -97,98 +95,151 @@ exec_command:
     git --no-pager diff --stat "$BASE"...HEAD
     git --no-pager log --oneline "$BASE"..HEAD
     git --no-pager diff "$BASE"...HEAD
+    # Pre-change state of a touched file, when the diff alone does not show it:
+    # git --no-pager show "$BASE":path/to/file
 ```
 
 ---
 
-## Size the explanation first
+## Pin down the subject first
 
-Classify the target by size and set a word budget. Budgets are **ceilings, not targets** — when in doubt, cut.
+When the target is a PR, a branch, or a diff, explain **the change itself**. Before writing, establish what this change introduces and what already existed in the base version.
 
-| Tier | Trigger | Word budget | Load-bearing line cap |
-|---|---|---|---|
-| Tiny | ≤50 lines / single symbol | 300–700 | full line detail OK |
-| Small | 31–150 lines | 600–1,200 | ≤10 |
-| Medium | 151–300 lines | 900–1,600 | ≤12 |
-| Large | 301–600 lines / multi-file | 1,200–2,200 | ≤18 |
-| Huge | >600 lines | 1,800–2,800 | ≤25 |
+Explain the existing design only as far as it is needed to understand the change. Every such fragment must answer the question: "how does this help understand this specific change?" If there is no direct link, leave it out. Do not turn the explanation of a small PR into a tour of the whole subsystem.
 
-Snippet caps: never quote more than 3 lines at once; ~20 quoted lines total across the whole explanation. Summarize the rest by `file:line` reference.
+Distinguish explicitly between:
 
-## Output spec
+- new behavior the change implements;
+- existing behavior that is needed as context;
+- documentation clarifications that do not change behavior on their own;
+- plans and proposals that are not implemented yet.
 
-Open with one framing line, then the blocks below **in order**. Tag each header with a read-tier so the reader can decide what to skip: `[MUST READ]`, `[READ IF MODIFYING]`, `[SKIM]`. Emit a block only when it applies (see "Adaptive sections").
+Do not present an added description of old behavior as a new capability. If the documentation is written in the future tense but the mechanism already exists, establish the actual state from the code and explain the discrepancy.
 
-`Target: <type> · Size: <tier> · Budget: <range> words`
+## Start with the result and the main scenario
 
-1. **Mental model in 60 seconds** `[MUST READ]` — ≤100 words / ≤5 sentences: what it is, its job, the one thing you most need to know, and the one thing most likely to surprise you.
-2. **Before → after** `[MUST READ]` — *PR/diff targets only; this goes first because the delta is the most important context for a diff.* A small table:
+Open with the essence in one or two short paragraphs: which practical problem is being solved, what changes for the user, and who benefits. Do not go into internals or the technical reasons for the decision yet — first make the result clear, then the mechanism that achieves it.
 
-   | Aspect | Before | After | Runtime effect |
-   |---|---|---|---|
+Right after the essence, show the main usage scenario. Start with the action by which a person gets the result, not with auxiliary preparation. Show what they do, what they pass in, and what they get out. If file locations, input data, or preconditions matter, state them briefly next to the example. It is fine to assume the tools and data are already prepared — say so explicitly.
 
-3. **Execution flow** `[MUST READ]` — entry point → branches → where they converge.
-4. **Decomposition** `[SKIM]` — a small table of entities/responsibilities: what each owns and what it explicitly does NOT do. Skip for a single function.
-5. **Load-bearing lines** `[READ IF MODIFYING]` — the one table defined below.
-6. **Assumptions & breakage** `[SKIM]` — what the code relies on (runtime, services, invariants) and what changes routinely break it.
-7. **Key insights** — plus common misunderstandings.
+For a change, pick an example on which its effect is visible: what happened with the same input before, and what happens now. Do not settle for a generic usage command if it does not show the point of the change.
 
-Close with a single line — not a "Skipped" header: `Omitted: <list> — irrelevant for <reason>`. Then offer 2–3 **natural-language** follow-ups (e.g. "Explain the authorization path line by line", "Focus only on the data flow"). Do NOT print fake CLI flags — the CLI cannot honor them.
+Template generation, tool installation, builds, and other preparatory conveniences come later, and only if needed.
 
-## Load-bearing lines (replaces line-by-line)
+If the material is not used directly by a person, show a concrete scenario: initial situation → event or input → observable result. If there are several fundamentally different ways to use it, show each briefly without enumerating every variant.
 
-A line is **load-bearing** — and earns a row — only if it:
+## Reveal the design progressively
 
-- mutates external/system state;
-- branches on a non-trivial condition;
-- crosses an abstraction boundary or public contract;
-- does validation, authorization, normalization, or parsing;
-- handles an error, retry, fallback, or edge case;
-- encodes a non-obvious invariant;
-- would silently change behavior if removed.
+After the scenario, introduce the main participants and entities needed to understand the material: who performs the actions, on what, which data it receives, and whom it hands off to. Do not start with a list of files, classes, functions, or internal objects.
 
-Skip (do not quote or explain): type annotations, logging, trivial assignments, boilerplate imports, standard decorators, getters/setters whose name equals their behavior.
+Do not stop at naming the participants: tie them into one complete scenario. The reader should understand how the parts of the system interact before diving into internal calls.
 
-Worked filter: in `if user.is_admin or has_scope(token, "write"):` the condition is load-bearing (an authorization branch); a neighboring `logger.debug(f"checking {user.id}")` is not.
+For a change, first explain the previous limitation and the new path at the level of the main participants. Show how the path of data or control changed: where settings or commands came from before, where they come from now, who receives them, and which rule determines the result. Only then move to the internal changes that make the new behavior possible.
 
-Emit them as one table — this merges the old "what every line does" and "why each line" into a single pass so the same code is never explained twice:
+Every next idea builds on something already understood. Introduce a new technical entity as a refinement of a concept explained earlier and show the link between them. For example: first "the component's config", then "this config is represented in Kubernetes by a CR object", then which code creates that object and when.
 
-| Where (file:line) | What it does | Why it matters / what breaks if changed |
-|---|---|---|
+Name executors precisely. If `kubeadm` performs the action, write `kubeadm`, not an abstract "the installer". On first mention, state the role in a few words: "kubeadm — the cluster bootstrapper". Do not attribute to "the cluster" or "the configuration" actions that a specific program or controller performs.
 
-- **Repeated shapes once.** When the target repeats a pattern (N handlers, routes, switch cases, validators, mappers), explain the shared shape once, then list only the meaningful exceptions. Never re-explain the same shape N times.
-- **Diffs: changed lines only.** For a PR/branch diff, apply this table to changed lines, not the whole file.
-- **Density.** One sentence for WHAT per row; add a second only when WHY is non-obvious.
+Where possible, carry the opening example through the rest of the explanation.
 
-## Adaptive sections (menu, not checklist)
+## Select details by their weight for the change
 
-Emit a block only when it carries signal for this target:
+For a technical decision it is usually enough to give the chain: essential constraint → chosen approach → consequence. Cover the central mechanisms in depth; group the auxiliary changes and describe them briefly.
 
-- Single function → skip *Decomposition*.
-- Pure function → skip side-effect discussion.
-- PR diff → fold "what differs" into *Before → after*; do not also write a separate differences section.
-- A category that is trivial for this target → compress to one sentence rather than a full block.
+Do not retell everything just because it appeared in the source. In particular, do not add lists of existing prohibitions, exceptions, system types, or special modes if the change does not touch them and they are not needed to understand how it works.
 
-Never emit a header just to write "Skipped" — list everything omitted in the closing `Omitted:` line instead.
+Explain constraints and trade-offs next to the mechanism they belong to, and only if they affect the reader's understanding of the result or what the user does. Do not add generic just-in-case warnings.
 
-## Rules
+State every essential constraint concretely: **under which condition, who does or stops doing what, and which consequence the user sees**. Avoid vague wording such as "does not promise to resume processing".
 
-- **Be dense.** Prefer one precise sentence over three vague ones. Prefer statements of purpose and consequence over procedural description.
-- do not use a term before explaining it; do not hide behind jargon;
-- separate intuition, exact mechanism, and practical meaning;
-- mark an inference with `Inferred:` only when it required reading multiple files or guessing intent — not for direct observations any competent reader would make.
-- No preamble, no apology, no closing pleasantries. Begin with the substance.
-- Ban filler openers: "This line…", "Here we have…", "It is important to note…", "Essentially…", "In other words…", "Note that…".
+For example, instead of:
+
+> After a syntax error it does not promise to resume parsing the following documents.
+
+write:
+
+> One YAML file may hold several documents separated by `---`. After a parse error the loader stops processing that file but keeps checking the other files. So after the first error is fixed, the next run may find another one in the same file.
+
+If such a detail is not essential for the change being explained, leave it out.
+
+## Make rules visible and checkable
+
+When the result depends on configuration, a default value, precedence, or a condition, show a minimal example and explain its outcome. An example should illustrate one idea, not require a separate large walkthrough.
+
+When there are several configuration sources, distinguish explicitly between:
+
+- choosing one source by precedence;
+- merging fields;
+- using one config wholesale instead of another;
+- filling missing fields with default values.
+
+Do not collapse these different mechanisms into the generic word "override".
+
+Stay technically precise. Examples must match the version being explained. Mark hypothetical examples as hypothetical, and distinguish configuration fragments from complete working configs.
+
+Distinguish an exact quote, a paraphrase of the documentation, and a conclusion drawn from the code. If you write "the diff says" or "the documentation clarifies", make sure that statement is actually in the text. Do not attribute to the documentation a conclusion you derived yourself from the implementation. Reproduce verbatim quotes exactly.
+
+Separate confirmed reasons for decisions from your own assumptions. Do not present the existence of a test as a successful run of that test.
+
+## Make the text easy to re-read
+
+Write in coherent paragraphs, but **separate independent logical parts with short, meaningful subheadings**. The reader should be able to skip a topic they already know and find the next one immediately.
+
+For example, validation changes and diagnostics changes are separate parts with the subheadings "Config validation" and "Diagnosing errors in files". Do not hide the switch to a new topic inside a paragraph with a phrase like "The second major change concerns…".
+
+Do not chop the text with a heading before every paragraph. A subheading is needed when the question the explanation answers changes, not at every new detail.
+
+Use lists for enumerations and instructions, and tables for comparisons and combinations of conditions. Inside the parts keep a natural narrative; avoid officialese and report format.
+
+## Use diagrams to explain the main thing
+
+Before writing, choose the key diagrams that convey the essence of the material. Usually 3–5 are enough; for short or simple material use fewer. Do not add secondary content for the sake of diagram count.
+
+Spread the diagrams through the narrative: from the result and the big picture to the internal mechanisms. Do not collect them into a gallery at the end.
+
+Pick the form by meaning:
+
+| Question the diagram answers | Form |
+|---|---|
+| How participants interact over time | Mermaid `sequenceDiagram` |
+| Dependencies and relationships | Mermaid `graph` |
+| Conditions and branches | Mermaid `flowchart` |
+| Flow through layers or stages | Mermaid `flowchart LR` with `subgraph` |
+| Lifecycle and status transitions | Mermaid `stateDiagram-v2` |
+| Combinations of settings | table |
+| Before / after | comparison table |
+
+If the result is achieved through an exchange of requests and data between participants, use a `sequenceDiagram`. Show the initiator, the recipients, the data passed, the responses, and the final result. Show essential alternatives and errors as separate branches.
+
+Respect abstraction levels: first the interaction of the main participants, then — if needed — a separate diagram of an internal mechanism. Do not mix the system overview with call-level details.
+
+Before a diagram, briefly introduce unfamiliar participants and state the question it answers. After it, explain the main takeaway or the essential limitation. Do not narrate every arrow in words.
+
+## Check before sending
+
+- Are the practical problem and the result clear without knowing the internals?
+- If this is a change, is it obvious what exactly it changes?
+- Is existing behavior or a documentation clarification ever presented as a new implementation?
+- Is every fragment of general context needed to understand this specific change?
+- Does the first example show the effect of the change?
+- Is the interaction of participants explained before internal objects and functions?
+- Is every new concept introduced through ones already understood?
+- Are the essential rules backed by short examples?
+- Are the constraints and their consequences stated concretely?
+- Are quotes, paraphrases, and conclusions from code distinguishable?
+- Can a reader find a separate logical part quickly by its subheading?
+- Do the diagrams explain the main thing without mixing detail levels or duplicating the text?
 
 ---
 
 ## How to apply
 
 1. **Locate the target** per the rules above (file / symbol / PR ref / snippet / empty).
-2. **Read enough context to answer "why this exists."** Imports, callers, tests, and adjacent files often carry intent the target itself does not.
-3. **Size it, then emit the output spec in order.** Front-load the mental model; the structure is part of the teaching, but only emit blocks that apply.
-4. **Quote, do not paraphrase,** the load-bearing lines you explain. Use `file:line` references, and respect the snippet caps.
-5. **Stop at the target's boundary.** Explain only what is needed to understand this target, not the whole codebase.
+2. **Read enough context to answer "why this exists."** Imports, callers, tests, and adjacent files often carry intent the target itself does not. For a change, also read the pre-change state of the touched files so the new-versus-existing split is grounded in the base, not guessed from the diff.
+3. **Pin down the subject and pick the diagrams before writing a word:** which behavior is new, which is context, which is a documentation clarification, which is a plan; which 3–5 diagrams carry the essence.
+4. **Write in order:** result and main scenario → participants and their interaction → the previous limitation and the new path → internal mechanisms → rules with minimal examples → constraints stated concretely. Add a subheading at every change of question.
+5. **Run the "Check before sending" list** and fix whatever fails.
+6. **Stop at the target's boundary.** Explain only what is needed to understand this target, not the whole codebase.
 
 ---
 
@@ -208,5 +259,6 @@ $map-explain HEAD~1..HEAD
 
 - **"neither origin/main nor origin/master exists"** — the repo has no upstream named `origin`, or its default branch is not `main`/`master`. Either add an `origin` remote, or pass an explicit target (file path / symbol / PR ref) instead of running with no arguments.
 - **`HEAD == $BASE`** — the current branch already matches the upstream base; there is no diff. The skill falls into Mode A (project overview); if that's not what you wanted, check `git status` and confirm your commits are on this branch.
-- **Diff is enormous and the walkthrough turns shallow** — pass a narrower target (single file, single symbol, or `HEAD~1..HEAD`) so the load-bearing table fits within the tier budget.
-- **Output mixes inference with source claims** — every non-explicit assertion must be prefixed with `Inferred:`. If you see unmarked guesses, ask the skill to re-emit with explicit confidence tags.
+- **Diff is enormous and the walkthrough turns shallow** — pass a narrower target (single file, single symbol, or `HEAD~1..HEAD`) so the central mechanisms can be covered in depth instead of skimmed.
+- **Output mixes conclusions from code with quotes from the docs or diff** — ask for a re-emit that labels each claim as a verbatim quote, a paraphrase, or a conclusion drawn from the implementation, and separates confirmed reasons from assumptions.
+- **The walkthrough of a small PR reads like a subsystem tour** — ask to restrict the context to what the change needs; every fragment of existing design must answer "how does this help understand this change?".
