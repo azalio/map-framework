@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `/map-explain` now explains as a knowledgeable colleague instead of emitting
+  the tiered `[MUST READ]` / load-bearing-line tables. The walkthrough pins
+  down the subject first (for a PR, branch or diff: exactly the change, with
+  new behavior separated from existing context, documentation clarifications
+  and unimplemented plans), opens with the practical result and the main
+  usage scenario (before/after on the same input for a change), then reveals
+  participants, the old limitation and the new path, mechanisms, rules with
+  minimal examples, and concretely stated constraints, with 3–5 Mermaid
+  diagrams spread through the narrative and short subheadings per logical
+  part. Quotes, paraphrases and conclusions from code are kept distinguishable;
+  a test's existence is never presented as a successful run. Both Claude and
+  Codex surfaces carry the same brief.
 - `/map-review` role reviewers (`user_experience`, `maintainer`) now carry the
   second-generation review brief. Both roles share one review scope (existing
   signatures, names, fields, the responsibility split and the places settings
