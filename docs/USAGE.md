@@ -704,7 +704,11 @@ mapify upgrade        # uv tool upgrade / pip install --upgrade, auto-detected
 mapify init . --force # then refresh this project's shipped MAP files
 ```
 
-This existing public command is unchanged and does not call the project updater.
+After the upgrade command runs, `mapify upgrade` reads the installed version back
+and only reports success if it went up. If the GitHub release is newer but PyPI
+does not serve it yet, it says the version is unchanged and exits 1; retry later.
+
+This public command does not call the project updater.
 It is distinct from `/map-upgrade` and `$map-upgrade`, which check immediately and
 refresh every installed provider through the central update service.
 
