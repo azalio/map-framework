@@ -4343,6 +4343,7 @@ class TestUpgradeCommand:
         assert result.exit_code == 0
         mock_auto.assert_not_called()
 
+    @mock.patch("mapify_cli._installed_mapify_version", return_value="9.9.9")
     @mock.patch("mapify_cli._run_self_upgrade", return_value=0)
     @mock.patch(
         "mapify_cli._self_upgrade_command",
@@ -4351,10 +4352,10 @@ class TestUpgradeCommand:
     @mock.patch("mapify_cli._mapify_install_kind", return_value="uv-tool")
     @mock.patch("mapify_cli.get_latest_release")
     def test_upgrade_self_upgrades_when_newer(
-        self, mock_get_latest, _mock_kind, _mock_cmd, mock_run, tmp_path
+        self, mock_get_latest, _mock_kind, _mock_cmd, mock_run, _mock_installed, tmp_path
     ):
         """A newer release self-upgrades the mapify CLI and writes no project files."""
-        del _mock_kind, _mock_cmd
+        del _mock_kind, _mock_cmd, _mock_installed
         os.chdir(tmp_path)
         mock_get_latest.return_value = {
             "tag_name": "v9.9.9",
@@ -4369,12 +4370,69 @@ class TestUpgradeCommand:
         assert result.exit_code == 0, result.stdout
         assert "New version available" in normalized
         assert "mapify upgraded" in normalized
+        assert "now 9.9.9" in normalized
         # Directs users at the project-file refresh path
         assert "mapify init . --force" in normalized
         # Shelled out to the self-upgrade command exactly once
         mock_run.assert_called_once_with(["uv", "tool", "upgrade", "mapify-cli"])
         # upgrade no longer creates any project files
         assert not (tmp_path / ".claude").exists()
+
+    @mock.patch("mapify_cli._installed_mapify_version", return_value="0.0.1")
+    @mock.patch("mapify_cli.__version__", "0.0.1")
+    @mock.patch("mapify_cli._run_self_upgrade", return_value=0)
+    @mock.patch(
+        "mapify_cli._self_upgrade_command",
+        return_value=["uv", "tool", "upgrade", "mapify-cli"],
+    )
+    @mock.patch("mapify_cli._mapify_install_kind", return_value="uv-tool")
+    @mock.patch("mapify_cli.get_latest_release")
+    def test_upgrade_does_not_claim_success_when_version_unchanged(
+        self, mock_get_latest, _mock_kind, _mock_cmd, _mock_run, _mock_installed
+    ):
+        """GitHub has the release but the package index still serves the old
+        version: `uv tool upgrade` exits 0 with "Nothing to upgrade", so the
+        installed version is unchanged. Must not report "mapify upgraded"."""
+        del _mock_kind, _mock_cmd, _mock_run, _mock_installed
+        mock_get_latest.return_value = {"tag_name": "v9.9.9"}
+
+        result = runner.invoke(app, ["upgrade"])
+
+        normalized = " ".join(result.stdout.split())
+        assert result.exit_code == 1, result.stdout
+        assert "mapify upgraded" not in normalized
+        assert "still 0.0.1" in normalized
+        assert "9.9.9" in normalized
+
+    @mock.patch("mapify_cli._installed_mapify_version", return_value=None)
+    @mock.patch("mapify_cli._run_self_upgrade", return_value=0)
+    @mock.patch(
+        "mapify_cli._self_upgrade_command",
+        return_value=["uv", "tool", "upgrade", "mapify-cli"],
+    )
+    @mock.patch("mapify_cli._mapify_install_kind", return_value="uv-tool")
+    @mock.patch("mapify_cli.get_latest_release")
+    def test_upgrade_unknown_installed_version_does_not_claim_target(
+        self, mock_get_latest, _mock_kind, _mock_cmd, _mock_run, _mock_installed
+    ):
+        """If the installed version cannot be read back, do not print the
+        GitHub release as the new version — ask the user to confirm instead."""
+        del _mock_kind, _mock_cmd, _mock_run, _mock_installed
+        mock_get_latest.return_value = {"tag_name": "v9.9.9"}
+
+        result = runner.invoke(app, ["upgrade"])
+
+        normalized = " ".join(result.stdout.split())
+        assert result.exit_code == 0, result.stdout
+        assert "now 9.9.9" not in normalized
+        assert "mapify --version" in normalized
+
+    def test_installed_mapify_version_reads_package_metadata(self):
+        """Reads the version from a fresh interpreter, not the stale in-process
+        ``__version__`` that predates the upgrade."""
+        from importlib.metadata import version
+
+        assert mapify_cli._installed_mapify_version() == version("mapify-cli")
 
     @mock.patch("mapify_cli._run_self_upgrade")
     @mock.patch("mapify_cli.get_latest_release")

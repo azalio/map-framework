@@ -2509,6 +2509,30 @@ def _run_self_upgrade(cmd: list[str]) -> int:
         return 127
 
 
+def _installed_mapify_version() -> str | None:
+    """Read the installed mapify-cli version after a self-upgrade.
+
+    The in-process ``__version__`` predates the upgrade, so ask a fresh
+    interpreter from the same environment. Returns None if it cannot be read.
+    """
+    try:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import importlib.metadata as m; print(m.version('mapify-cli'))",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    installed = proc.stdout.strip()
+    return installed if proc.returncode == 0 and installed else None
+
+
 @app.command()
 def upgrade():
     """Upgrade the mapify CLI itself to the latest released version.
@@ -2580,12 +2604,38 @@ def upgrade():
         console.print(f"  [cyan]{' '.join(cmd)}[/cyan]")
         raise typer.Exit(1)
 
-    target = latest_version or "the latest release"
+    # A zero exit does not mean the version changed: when PyPI's index lags the
+    # GitHub release, `uv tool upgrade` exits 0 with "Nothing to upgrade".
+    installed = _installed_mapify_version()
     console.print()
-    console.print(
-        f"[bold green]mapify upgraded[/bold green] (was {__version__}, now {target})."
-    )
-    console.print("[dim]Confirm with [cyan]mapify --version[/cyan].[/dim]")
+    if installed is not None and parse_version(installed) <= parse_version(
+        __version__
+    ):
+        if latest_version and parse_version(latest_version) > parse_version(
+            installed
+        ):
+            console.print(
+                f"[yellow]mapify was not upgraded: still {installed}.[/yellow] "
+                f"Release {latest_version} is on GitHub, but the package index "
+                "does not serve it yet (PyPI can lag behind a release). "
+                "Retry [cyan]mapify upgrade[/cyan] later."
+            )
+            raise typer.Exit(1)
+        console.print(
+            f"[green]mapify is already the newest version on the package index "
+            f"({installed}).[/green]"
+        )
+        return
+
+    if installed is not None:
+        console.print(
+            f"[bold green]mapify upgraded[/bold green] (was {__version__}, now {installed})."
+        )
+    else:
+        console.print(
+            "[bold green]Upgrade command finished.[/bold green] "
+            "Confirm the new version with [cyan]mapify --version[/cyan]."
+        )
     console.print(
         "[dim]To refresh this project's MAP files with the new templates, run "
         "[cyan]mapify init . --force[/cyan].[/dim]"

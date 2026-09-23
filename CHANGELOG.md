@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `mapify upgrade` no longer reports "mapify upgraded (now X)" when nothing was
+  installed. It now reads the installed version back after the upgrade command.
+  If PyPI has not caught up with the GitHub release yet (`uv tool upgrade`
+  prints "Nothing to upgrade" and exits 0), it says the version is unchanged
+  and exits 1 so you know to retry later.
+
 ## [3.31.1] - 2026-09-23
 
 ### Changed
