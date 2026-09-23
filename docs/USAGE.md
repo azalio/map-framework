@@ -700,7 +700,7 @@ managed skill catalogs.
 (provider-agnostic — it writes no project files):
 
 ```bash
-mapify upgrade        # uv tool upgrade / pip install --upgrade, auto-detected
+mapify upgrade        # uv tool install @latest / pip install --upgrade, auto-detected
 mapify init . --force # then refresh this project's shipped MAP files
 ```
 

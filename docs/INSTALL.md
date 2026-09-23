@@ -467,7 +467,7 @@ mapify init . --force
 for you. The equivalent manual commands are:
 
 ```bash
-uv tool upgrade mapify-cli                    # if installed via `uv tool`
+uv tool install mapify-cli@latest            # if installed via `uv tool`
 python -m pip install --upgrade mapify-cli    # if installed via pip
 ```
 

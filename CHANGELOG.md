@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `mapify upgrade` now upgrades uv tool installs again. The automatic updater
+  installs an exact `mapify-cli==X` pin, and `uv tool upgrade` honours that pin,
+  so it printed "Nothing to upgrade" forever. `mapify upgrade` now runs
+  `uv tool install mapify-cli@latest`, which installs the latest release and
+  drops the pin. Already stuck? Run `uv tool install mapify-cli@latest` once.
+
 ## [3.31.2] - 2026-09-23
 
 ### Fixed
