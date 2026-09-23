@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `/map-explain` now draws its diagrams as plain-text ASCII inside ` ```text `
+  fences instead of Mermaid, so the walkthrough reads the same in a terminal,
+  a diff and a raw file. Both Claude and Codex surfaces carry the change.
+
 ## [3.31.0] - 2026-09-22
 
 ### Changed
