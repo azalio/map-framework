@@ -1,7 +1,7 @@
 ---
 name: map-explain
 description: |
-  Explain code, a diff, or the whole project the way a knowledgeable colleague would — a coherent walkthrough that builds a mental model: the practical result and main usage scenario first, then participants, data/control flow, mechanisms, rules, side effects and constraints in progressive depth, with Mermaid diagrams for the key flows. For a PR, branch or diff it explains exactly the change against the base and separates new behavior from existing context, documentation clarifications and unimplemented plans. Use when learning unfamiliar code, onboarding to a system, or auditing what a PR really does. Do NOT use to plan or implement; use map-plan or map-efficient.
+  Explain code, a diff, or the whole project the way a knowledgeable colleague would — a coherent walkthrough that builds a mental model: the practical result and main usage scenario first, then participants, data/control flow, mechanisms, rules, side effects and constraints in progressive depth, with ASCII diagrams for the key flows. For a PR, branch or diff it explains exactly the change against the base and separates new behavior from existing context, documentation clarifications and unimplemented plans. Use when learning unfamiliar code, onboarding to a system, or auditing what a PR really does. Do NOT use to plan or implement; use map-plan or map-efficient.
 effort: medium
 disable-model-invocation: true
 argument-hint: "[file path | symbol | PR ref | code snippet | empty for branch diff vs origin/main (fallback origin/master), or project overview on main/master]"
@@ -186,19 +186,35 @@ Before writing, choose the key diagrams that convey the essence of the material.
 
 Spread the diagrams through the narrative: from the result and the big picture to the internal mechanisms. Do not collect them into a gallery at the end.
 
+Draw every diagram as plain-text ASCII (box-drawing characters allowed) inside a code fence tagged `text` — never Mermaid or any other renderer syntax: the walkthrough must read the same in a terminal, a diff and a raw file. Keep lines under ~100 columns and align columns with spaces, not tabs.
+
 Pick the form by meaning:
 
 | Question the diagram answers | Form |
 |---|---|
-| How participants interact over time | Mermaid `sequenceDiagram` |
-| Dependencies and relationships | Mermaid `graph` |
-| Conditions and branches | Mermaid `flowchart` |
-| Flow through layers or stages | Mermaid `flowchart LR` with `subgraph` |
-| Lifecycle and status transitions | Mermaid `stateDiagram-v2` |
+| How participants interact over time | ASCII sequence: participant columns, labeled `──►` / `◄──` arrows |
+| Dependencies and relationships | ASCII box-and-arrow graph |
+| Conditions and branches | ASCII flowchart with labeled `yes` / `no` branches |
+| Flow through layers or stages | ASCII left-to-right boxes grouped under a layer label |
+| Lifecycle and status transitions | ASCII state diagram: `[state] ──event──► [state]` |
 | Combinations of settings | table |
 | Before / after | comparison table |
 
-If the result is achieved through an exchange of requests and data between participants, use a `sequenceDiagram`. Show the initiator, the recipients, the data passed, the responses, and the final result. Show essential alternatives and errors as separate branches.
+A minimal ASCII sequence diagram looks like this:
+
+```text
+ CLI               Runner              Git
+  │   run(task)      │                  │
+  │────────────────► │                  │
+  │                  │ diff base..HEAD  │
+  │                  │────────────────► │
+  │                  │  changed files   │
+  │                  │ ◄────────────────│
+  │   report         │                  │
+  │ ◄────────────────│                  │
+```
+
+If the result is achieved through an exchange of requests and data between participants, use an ASCII sequence diagram. Show the initiator, the recipients, the data passed, the responses, and the final result. Show essential alternatives and errors as separate branches.
 
 Respect abstraction levels: first the interaction of the main participants, then — if needed — a separate diagram of an internal mechanism. Do not mix the system overview with call-level details.
 

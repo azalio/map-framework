@@ -146,7 +146,7 @@
       "skillClass": "task",
       "enforcement": "manual",
       "priority": "medium",
-      "description": "Knowledgeable-colleague walkthrough of code, a PR/diff, or the project that builds a mental model — result and main scenario first, then participants, data/control flow, mechanisms, rules and constraints in progressive depth, with Mermaid diagrams; for PRs, exactly the change against the base with new behavior separated from existing context, documentation clarifications and unimplemented plans.",
+      "description": "Knowledgeable-colleague walkthrough of code, a PR/diff, or the project that builds a mental model — result and main scenario first, then participants, data/control flow, mechanisms, rules and constraints in progressive depth, with ASCII diagrams; for PRs, exactly the change against the base with new behavior separated from existing context, documentation clarifications and unimplemented plans.",
       "promptTriggers": {
         "keywords": [
           "map-explain",
