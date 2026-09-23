@@ -4535,12 +4535,15 @@ class TestSelfUpgradeHelpers:
         assert mapify_cli._mapify_install_kind() == "source"
 
     def test_self_upgrade_command_uv_tool(self, monkeypatch):
+        """Must not be `uv tool upgrade`: the automatic updater installs with an
+        exact `mapify-cli==X` pin, which `uv tool upgrade` honours forever
+        ("Nothing to upgrade"). `install <pkg>@latest` replaces the pin."""
         monkeypatch.setattr(mapify_cli.shutil, "which", lambda *_: "/usr/bin/uv")
         assert mapify_cli._self_upgrade_command("uv-tool") == [
             "/usr/bin/uv",
             "tool",
-            "upgrade",
-            "mapify-cli",
+            "install",
+            "mapify-cli@latest",
         ]
 
     def test_self_upgrade_command_uv_tool_missing_uv(self, monkeypatch):

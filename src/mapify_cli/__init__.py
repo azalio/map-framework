@@ -2490,7 +2490,10 @@ def _self_upgrade_command(kind: str) -> list[str] | None:
     """Return the argv that upgrades mapify-cli for ``kind``, or None if unknown."""
     if kind == "uv-tool":
         uv = shutil.which("uv")
-        return [uv, "tool", "upgrade", "mapify-cli"] if uv else None
+        # Not `uv tool upgrade`: the automatic updater installs an exact
+        # `mapify-cli==X` pin, which `uv tool upgrade` honours ("Nothing to
+        # upgrade"). `install <pkg>@latest` upgrades and drops the pin.
+        return [uv, "tool", "install", "mapify-cli@latest"] if uv else None
     if kind == "pip":
         return [sys.executable, "-m", "pip", "install", "--upgrade", "mapify-cli"]
     return None
@@ -2587,7 +2590,7 @@ def upgrade():
             "[red]Could not determine how to upgrade mapify automatically.[/red]"
         )
         console.print(
-            "Upgrade manually: [cyan]uv tool upgrade mapify-cli[/cyan] "
+            "Upgrade manually: [cyan]uv tool install mapify-cli@latest[/cyan] "
             "or [cyan]pip install --upgrade mapify-cli[/cyan]"
         )
         raise typer.Exit(1)
@@ -2605,7 +2608,7 @@ def upgrade():
         raise typer.Exit(1)
 
     # A zero exit does not mean the version changed: when PyPI's index lags the
-    # GitHub release, `uv tool upgrade` exits 0 with "Nothing to upgrade".
+    # GitHub release, uv installs the older version it can resolve and exits 0.
     installed = _installed_mapify_version()
     console.print()
     if installed is not None and parse_version(installed) <= parse_version(

@@ -161,8 +161,9 @@ mapify upgrade
 Self-upgrades the installed `mapify-cli` package (the tool) — it does **not**
 touch the files inside a project and is provider-agnostic:
 
-- Auto-detects the install method and runs `uv tool upgrade mapify-cli`
-  (uv tool installs) or `python -m pip install --upgrade mapify-cli`
+- Auto-detects the install method and runs `uv tool install mapify-cli@latest`
+  (uv tool installs; unlike `uv tool upgrade`, this also replaces an exact
+  version pin left by the automatic updater) or `python -m pip install --upgrade mapify-cli`
   (pip installs).
 - When already on the latest release, it does nothing.
 - When running from a source checkout / editable install, self-upgrade is
