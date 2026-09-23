@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.2] - 2026-09-23
+
 ### Fixed
 - `mapify upgrade` no longer reports "mapify upgraded (now X)" when nothing was
   installed. It now reads the installed version back after the upgrade command.
