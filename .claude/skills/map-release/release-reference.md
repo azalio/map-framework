@@ -73,13 +73,14 @@ git pull origin main
 ### Gate 11: CI Status Verification
 
 ```bash
-gh run list --branch main --limit 1 --json conclusion,status,headBranch
-gh run view
+HEAD_SHA=$(git rev-parse HEAD)
+gh run list --commit "$HEAD_SHA" --workflow CI --json conclusion,status,headSha --jq '.[0]'
 ```
 
 **Expected Results:**
-- ✅ Latest CI run on main branch has `conclusion: "success"`
+- ✅ CI run for exact HEAD SHA (`git rev-parse HEAD`) has `conclusion: "success"` and `status: "completed"`
 - ✅ All jobs passed (build, test, lint)
+- ✅ `headSha` in the run output matches `git rev-parse HEAD`
 
 **If CI failed:** ABORT release, investigate and fix CI failures first.
 
@@ -276,9 +277,13 @@ git tag -l -n50 "$LAST_TAG"
 CURRENT_BRANCH=$(git branch --show-current)
 [[ "$CURRENT_BRANCH" != "main" ]] && echo "❌ ABORT: Not on main branch" && exit 1
 
-LATEST_RUN=$(gh run list --branch main --limit 1 --json conclusion,status,createdAt,headBranch --jq '.[0]')
+HEAD_SHA=$(git rev-parse HEAD)
+LATEST_RUN=$(gh run list --commit "$HEAD_SHA" --workflow CI --json conclusion,status,headSha --jq '.[0]')
+[[ -z "$LATEST_RUN" || "$LATEST_RUN" == "null" ]] && echo "❌ ABORT: No CI run found for HEAD ($HEAD_SHA)" && exit 1
+RUN_STATUS=$(printf '%s' "$LATEST_RUN" | jq -r '.status')
+[[ "$RUN_STATUS" != "completed" ]] && echo "❌ ABORT: CI run for HEAD is not completed (status: $RUN_STATUS)" && exit 1
 RUN_CONCLUSION=$(printf '%s' "$LATEST_RUN" | jq -r '.conclusion')
-[[ "$RUN_CONCLUSION" != "success" ]] && echo "❌ ABORT: Latest CI did not succeed" && exit 1
+[[ "$RUN_CONCLUSION" != "success" ]] && echo "❌ ABORT: CI run for HEAD ($HEAD_SHA) did not succeed (conclusion: $RUN_CONCLUSION)" && exit 1
 
 LAST_TAG=$(git tag --sort=-version:refname | head -1)
 git ls-remote --tags origin | grep -q "refs/tags/$LAST_TAG" && echo "❌ ABORT: Tag already on remote" && exit 1
