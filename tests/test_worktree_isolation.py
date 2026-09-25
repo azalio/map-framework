@@ -830,14 +830,14 @@ class TestDirtyTargetHoldRoutingIntegration:
         assert route_result["chain_status"] == "blocked"
         assert hold_id in route_result["blocked_by"]
 
-    def test_vc3_live_plan_approval_hold_does_not_block_route_task(
+    def test_vc3_legacy_plan_approval_hold_does_not_block_route_task(
         self, repo: Path
     ) -> None:
-        """VC3/AC-9 (#422 ST-004): a live plan_approval hold -- created via
-        the real `record_plan_artifacts`, never via a synthetic
-        `create_approval_hold` call -- must NOT block `route_task`: no
-        "blocked" chain state, the hold id absent from blocked_by[], route
-        proceeds normally. VC4 pins the complementary case in this SAME
+        """VC3/AC-9 (#422 ST-004): a pending plan_approval hold (no longer
+        produced by `record_plan_artifacts`, but an older install may have
+        left one behind) must NOT block `route_task`: no "blocked" chain
+        state, the hold id absent from blocked_by[], route proceeds
+        normally. VC4 pins the complementary case in this SAME
         test (not a separate, order-dependent one) so the assertion above
         cannot pass vacuously if a regression made route_task stop
         checking HARD_STOP_HOLD_KINDS altogether: the live dangerous_action
@@ -845,13 +845,14 @@ class TestDirtyTargetHoldRoutingIntegration:
         refusal) DOES block, with its id in blocked_by[].
         """
         branch = m.get_branch_name()
-        map_dir = repo / ".map" / branch
-        map_dir.mkdir(parents=True, exist_ok=True)
-        (map_dir / f"task_plan_{branch}.md").write_text("# Task Plan\n", encoding="utf-8")
-        (map_dir / "blueprint.json").write_text('{"subtasks": []}\n', encoding="utf-8")
-
-        plan_result = m.record_plan_artifacts(branch)
-        plan_hold_id = plan_result["plan_approval_hold_id"]
+        plan_hold = m.create_approval_hold(
+            kind="plan_approval",
+            reason="Legacy plan approval hold.",
+            request_summary=f"Approve the generated plan for {branch}",
+            source="map-plan",
+            branch=branch,
+        )
+        plan_hold_id = plan_hold["hold_id"]
         assert plan_hold_id
 
         # dry_run=True keeps chain_status at "recommended_only" (not

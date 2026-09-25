@@ -583,11 +583,8 @@ class TestCLI:
 
 
 # ---------------------------------------------------------------------------
-# Live plan_approval producer (#422 AC-1, AC-2, AC-6)
-#
-# Synthetic-free: this class never calls create_approval_hold directly. It
-# writes only plan artifacts to disk and drives the real
-# record_plan_artifacts / auto_decide_holds functions end to end.
+# record_plan_artifacts no longer produces a plan_approval hold: a ready plan
+# needs no approval before /map-efficient or /map-task.
 # ---------------------------------------------------------------------------
 
 
@@ -600,90 +597,18 @@ def _write_ready_plan_artifacts(branch_dir: Path) -> Path:
     return map_dir
 
 
-class TestPlanApprovalHoldProducer:
-    def test_ready_plan_creates_pending_plan_approval_hold(
-        self, branch_dir: Path
-    ) -> None:
-        _write_ready_plan_artifacts(branch_dir)
-
-        result = map_step_runner.record_plan_artifacts("test-branch")
-
-        assert result["status"] == "success"
-        assert result["plan_status"] == "ready"
-        hold_id = result["plan_approval_hold_id"]
-        assert hold_id
-
-        store = json.loads(
-            (_map_dir(branch_dir) / "approval_holds.json").read_text(encoding="utf-8")
-        )
-        holds = list(store["holds"].values())
-        assert len(holds) == 1
-        hold = holds[0]
-        assert hold["id"] == hold_id
-        assert hold["kind"] == "plan_approval"
-        assert hold["source"] == "map-plan"
-        assert hold["state"] == "pending"
-
-    def test_producer_failure_records_hold_error_but_still_succeeds(
-        self, branch_dir: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """PR #427 review: a create_approval_hold failure must not fail the
-        plan-artifact recording (INV-3 best-effort posture), but it must NOT
-        be silent either — the result carries plan_approval_hold_error so the
-        /map-plan Step 8 checkpoint can surface the degraded gate.
-        """
-        _write_ready_plan_artifacts(branch_dir)
-
-        def _boom(*_args: object, **_kwargs: object) -> dict[str, Any]:
-            del _args, _kwargs
-            raise RuntimeError("hold store unavailable")
-
-        monkeypatch.setattr(map_step_runner, "create_approval_hold", _boom)
+class TestPlanArtifactsCreateNoApprovalHold:
+    def test_ready_plan_creates_no_hold(self, branch_dir: Path) -> None:
+        map_dir = _write_ready_plan_artifacts(branch_dir)
 
         result = map_step_runner.record_plan_artifacts("test-branch")
 
         assert result["status"] == "success"
         assert result["plan_status"] == "ready"
         assert "plan_approval_hold_id" not in result
-        assert result["plan_approval_hold_error"] is True
-        assert not (_map_dir(branch_dir) / "approval_holds.json").exists()
-
-    def test_rerun_is_idempotent_no_duplicate_hold(self, branch_dir: Path) -> None:
-        _write_ready_plan_artifacts(branch_dir)
-
-        first = map_step_runner.record_plan_artifacts("test-branch")
-        second = map_step_runner.record_plan_artifacts("test-branch")
-
-        assert first["plan_approval_hold_id"] == second["plan_approval_hold_id"]
-        store = json.loads(
-            (_map_dir(branch_dir) / "approval_holds.json").read_text(encoding="utf-8")
-        )
-        assert len(store["holds"]) == 1
-
-    def test_auto_decide_holds_approves_live_plan_approval_hold(
-        self, branch_dir: Path
-    ) -> None:
-        _write_ready_plan_artifacts(branch_dir)
-        record_result = map_step_runner.record_plan_artifacts("test-branch")
-        hold_id = record_result["plan_approval_hold_id"]
-
-        decision = map_step_runner.auto_decide_holds(branch="test-branch")
-
-        assert decision["hard_stops"] == []
-        auto_approved_ids = {entry["id"] for entry in decision["auto_approved"]}
-        assert hold_id in auto_approved_ids
-        approved_entry = next(e for e in decision["auto_approved"] if e["id"] == hold_id)
-        assert approved_entry["note"] == "auto-approved by map-auto"
-
-        store = json.loads(
-            (_map_dir(branch_dir) / "approval_holds.json").read_text(encoding="utf-8")
-        )
-        assert store["holds"][hold_id]["state"] == "approved"
-
-        manifest = json.loads(
-            (_map_dir(branch_dir) / "artifact_manifest.json").read_text(encoding="utf-8")
-        )
-        assert manifest["stages"]["approval_hold"]["status"] == "decided"
+        assert "plan_approval_hold_error" not in result
+        assert not (map_dir / "approval_holds.json").exists()
+        assert map_step_runner.get_pending_holds("test-branch")["resume_blocked"] is False
 
     def test_partial_plan_creates_no_hold(self, branch_dir: Path) -> None:
         map_dir = _map_dir(branch_dir)

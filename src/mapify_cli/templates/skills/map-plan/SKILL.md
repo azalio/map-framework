@@ -428,14 +428,10 @@ Rerun blueprint validation after writing the human-readable plan if any decompos
 Record planning artifacts in the branch manifest after spec, blueprint, and task plan exist. Use the named CLI — don't introspect the script:
 
 ```bash
-PLAN_ARTIFACTS_RESULT=$(python3 .map/scripts/map_step_runner.py record_plan_artifacts)
-echo "$PLAN_ARTIFACTS_RESULT"
-PLAN_APPROVAL_HOLD_ID=$(printf '%s' "$PLAN_ARTIFACTS_RESULT" | jq -r '.plan_approval_hold_id // empty')
+python3 .map/scripts/map_step_runner.py record_plan_artifacts
 ```
 
 `/map-plan` deliberately stops BEFORE `INIT_STATE` (that step belongs to `/map-efficient`), so `plan_status: "ready"` requires only `task_plan_<branch>.md` + `blueprint.json` — `step_state.json` will land later. Don't be alarmed by `has_step_state: false` in the response; it's the expected planning-complete state.
-
-`record_plan_artifacts` also opens a `plan_approval` hold at the plan-ready boundary and returns it as `plan_approval_hold_id` (idempotent — re-running finds the same pending hold instead of spamming a new one). Capture `PLAN_APPROVAL_HOLD_ID` for the Step 8 checkpoint. This hold does **not** block `/map-plan` itself: planning artifacts are written and Step 8 prints its checkpoint regardless of whether the hold is still pending. The decision (`decide_approval_hold <hold-id> approved|denied`) happens later, at the `/map-efficient` approval-hold preflight or the `/map-task` Step 1 preflight — or automatically via `/map-auto`'s hold poll. If the result instead carries `plan_approval_hold_error: true`, the hold store failed — say so in the Step 8 checkpoint and have the operator create/decide the hold manually (`create_approval_hold --kind plan_approval ...`).
 
 Runner functions you'll commonly need from `/map-plan`:
 
@@ -460,11 +456,10 @@ Spec: .map/<branch>/spec_<branch>.md
 Blueprint: .map/<branch>/blueprint.json
 Task plan: .map/<branch>/task_plan_<branch>.md
 Mode: [standard | light | deep]
-Plan approval hold: <$PLAN_APPROVAL_HOLD_ID, or "none" if empty> — decide via `decide_approval_hold <hold-id> <approved|denied> --note "<operator note>"` before /map-efficient or /map-task will proceed
 Next: /map-efficient or /map-task for a selected subtask
 ```
 
-Include the active mode (`light` / `deep` / `standard`) so the operator knows which steps ran, and the `$PLAN_APPROVAL_HOLD_ID` captured in Step 7 on the "Plan approval hold" line. This hold does not gate the checkpoint — it prints whether the hold is pending, decided, or absent.
+Include the active mode (`light` / `deep` / `standard`) so the operator knows which steps ran. A ready plan needs no separate approval: `/map-efficient` or `/map-task` can start right away.
 
 ### Step 8.5: Execution Handoff Note
 

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- A ready plan no longer needs approval. `/map-plan` stopped opening a
+  `plan_approval` hold and no longer prints "approve hold-NNN" in its
+  checkpoint: once the plan is ready, run `/map-efficient` or `/map-task`
+  right away. If an older install left a pending `plan_approval` hold, the
+  `/map-efficient` and `/map-task` preflights close it without asking.
+
 ## [3.31.3] - 2026-09-23
 
 ### Fixed
