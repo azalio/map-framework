@@ -96,7 +96,7 @@ Resolve pending approval holds before `resume_from_plan` initializes any executi
 python3 .map/scripts/map_step_runner.py list_approval_holds --state pending
 ```
 
-A pending `plan_approval` requires an explicit operator approve/deny, recorded via `decide_approval_hold <hold-id> <approved|denied> --note "<operator note>"`: approved continues into Step 0, denied STOPS here — revise the plan and re-run `$map-plan` (no staleness re-check); an autonomous chain never reaches this ask because its pre-phase `auto_decide_holds` poll approves `plan_approval` first. A pending `dangerous_action`/`safety_guardrail` hold refuses to proceed instead — surface the hold's `reason` and stop.
+A ready plan needs no approval. A pending `plan_approval` (left by an older `$map-plan`) is not a gate: do not ask — close it via `decide_approval_hold <hold-id> approved --note "plan_approval no longer gates execution"` and continue into Step 0. A pending `dangerous_action`/`safety_guardrail` hold refuses to proceed instead — surface the hold's `reason` and stop.
 
 ## Step 0: Resume Existing State Or Plan
 

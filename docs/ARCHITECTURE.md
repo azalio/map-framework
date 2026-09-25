@@ -576,14 +576,13 @@ invoked; there is no shadow mode, calibration period, or opt-in flag.
   consuming `record_auto_phase` call's `evidence_refs`. `HARD_STOP_HOLD_KINDS`
   (`dangerous_action`, `safety_guardrail`) are never decided by any `/map-auto` code
   path; they are only ever returned in `hard_stops[]` for a human to act on.
-- **Live approval-hold producers (#422).** Three workflow paths create real approval
+- **Live approval-hold producers (#422).** Two workflow paths create real approval
   holds via the #344 mechanism (see Durable Approval Holds below); the auto-approve and
   hard-stop mechanics above act on holds those paths actually create, not synthetic test
-  fixtures. `plan_approval` is created by `record_plan_artifacts` once a plan reaches
-  `ready` (task_plan + blueprint both present, the `/map-plan` Step 7 boundary) and is
-  decided interactively at `/map-efficient`'s `INIT_STATE` phase or `/map-task`'s
-  preflight, or auto-approved by `/map-auto`'s `auto_decide_holds` (audit note
-  "auto-approved by map-auto"). `dangerous_action` is created by `merge_wave_worktrees`
+  fixtures. A ready plan needs no approval: `record_plan_artifacts` no longer creates a
+  `plan_approval` hold. A pending `plan_approval` left by an older install is closed
+  without asking by the `/map-efficient` and `/map-task` preflights, or auto-approved by
+  `/map-auto`'s `auto_decide_holds`. `dangerous_action` is created by `merge_wave_worktrees`
   when it refuses to merge a wave onto a working branch with uncommitted changes
   (dirty-target refusal); it is always a hard stop, blocking `route_task` via
   `blocked_by[]` and surfacing in `auto_decide_holds`'s `hard_stops[]` until a human
