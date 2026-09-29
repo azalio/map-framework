@@ -14,12 +14,16 @@ Gating (no-op in ~all turns):
     1. ``MAP_INVOKED_BY`` set            -> exit (don't run inside a sub-agent).
     2. no ``.map/<branch>/step_state.json`` OR ``workflow_status`` is not
        ``WORKFLOW_COMPLETE``            -> exit (run not finished).
-    3. marker ``.map/<branch>/.scrub_done`` present -> exit (already ran once).
-    4. ``scrub_internal_ids: false`` in ``.map/config.yaml`` -> exit (opt-out).
+    3. no ``.map/<branch>/run_health_report.json`` -> exit (final verification
+       not yet complete; ``workflow_status`` transitions to ``WORKFLOW_COMPLETE``
+       before the final-verifier step, so we gate on the health report instead).
+    4. marker ``.map/<branch>/.scrub_done`` present -> exit (already ran once).
+    5. ``scrub_internal_ids: false`` in ``.map/config.yaml`` -> exit (opt-out).
 
-When it does run: calls the engine in ``clean`` mode, commits the resulting
-working-tree changes as a dedicated ``chore(map): strip internal workflow IDs``
-commit (never amends), and writes the marker so it fires exactly once.
+When it does run: calls the engine in ``clean`` mode, leaves any cleaned files
+unstaged, prints a short ``stderr`` reminder to the operator, and writes the
+marker so it fires exactly once.  The operator decides how and whether to commit
+the changes (preserving the host repository's commit conventions).
 
 Synchronous by design (justified exception to the async-hook rule): the scrub
 must finish and commit before the run is considered done; a detached run would
@@ -135,6 +139,13 @@ def main() -> None:
     if status != "WORKFLOW_COMPLETE":
         _silent()
 
+    # Gate on run_health_report.json: written after the final-verifier step.
+    # workflow_status becomes WORKFLOW_COMPLETE before final verification, so
+    # we wait for the health report to avoid scrubbing while the verifier is
+    # reading HEAD.
+    if not (branch_dir / "run_health_report.json").exists():
+        _silent()
+
     marker = branch_dir / ".scrub_done"
     if marker.exists():
         _silent()
@@ -162,17 +173,16 @@ def main() -> None:
         report = {}
 
     modified = report.get("files_modified") or []
+    # Leave cleaned files unstaged so the operator can review and commit them
+    # using the host repository's conventions (ticket ID, sign-off, etc.).
+    # Never auto-commit with a fixed message.
     if modified:
-        try:
-            subprocess.run(["git", "add", "--", *modified], cwd=PROJECT_DIR,
-                           env=env, capture_output=True, text=True, timeout=15, check=False)
-            subprocess.run(
-                ["git", "commit", "-m", "chore(map): strip internal workflow IDs"],
-                cwd=PROJECT_DIR, env=env, capture_output=True, text=True, timeout=30,
-                check=False,
+        sys.stderr.write(
+            "[scrub-internal-ids] cleaned {} file(s) — review and commit with "
+            "your project's conventions:\n  git add -- {}\n".format(
+                len(modified), " ".join(modified)
             )
-        except (OSError, subprocess.SubprocessError):
-            pass  # leave the cleaned working tree in place; never block
+        )
 
     # Mark done so the scrub fires exactly once for this completed run.
     try:

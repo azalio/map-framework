@@ -85,6 +85,26 @@ class TestScrubLineComments:
         assert new == "    # condition"
         assert sorted(removed) == ["AC-1", "VC1"]
 
+    def test_trailing_colon_separator_absorbed(self) -> None:
+        # "proves ST-004: ProjectLister" -> "proves ProjectLister" (colon absorbed).
+        new, removed, _ = engine.scrub_line(
+            "func f() { // This suite proves ST-004: ProjectLister must work", GO
+        )
+        assert new == "func f() { // This suite proves ProjectLister must work"
+        assert removed == ["ST-004"]
+
+    def test_trailing_dash_separator_absorbed(self) -> None:
+        # "see AC-3 - description" -> "see description" (dash absorbed).
+        new, removed, _ = engine.scrub_line("x = 1  # see AC-3 - description", PY)
+        assert new == "x = 1  # see description"
+        assert removed == ["AC-3"]
+
+    def test_no_separator_absorption_for_space_only(self) -> None:
+        # "AC-3 reference" — no punctuation separator, only space; not absorbed.
+        new, removed, _ = engine.scrub_line("x = 1  # AC-3 reference", PY)
+        assert new == "x = 1  # reference"
+        assert removed == ["AC-3"]
+
 
 # --------------------------------------------------------------------------- #
 # Corruption avoidance — derived from the adversarial probes
@@ -142,6 +162,11 @@ class TestRename:
             ("test_register_vc2", "test_register"),
             ("TestVC1Foo", "TestFoo"),
             ("TestVc10Bar", "TestBar"),
+            # Underscore separators around the VC segment are preserved; only the
+            # double-underscore artifact from the removal is collapsed to a single _.
+            ("TestFoo_VC1_Bar", "TestFoo_Bar"),
+            ("TestProjectLister_VC1_ConvergedTrue_NoWrites",
+             "TestProjectLister_ConvergedTrue_NoWrites"),
         ],
     )
     def test_vc_segment_dropped(self, name: str, expected: str) -> None:

@@ -24,12 +24,18 @@ Safety model — conservative, hard-scoped, corruption-averse:
    and unknown types are skipped entirely — never blanked.
 3. EDIT. Only inside COMMENTS:
      - a comment whose payload is only an ID marker  -> delete the line;
-     - an ID token inside a larger comment           -> strip the token and tidy
-       adjacent decoration (``()`` / ``[]`` / stray ``:``), keep the line.
+     - an ID token inside a larger comment           -> strip the token and any
+       immediately trailing separator (``ID:`` -> `` ``, ``ID -`` -> `` ``),
+       empty brackets, and redundant whitespace. ``(ID)`` is handled by the
+       empty-bracket cleanup. The line is kept unless the whole comment becomes
+       empty.
    Test identifiers carrying ``vc<n>`` are renamed (``test_vc1_foo`` ->
-   ``test_foo``) with a collision guard. IDs in code, string literals, or
-   docstrings are LEFT IN PLACE and reported (stripping a string substring would
-   corrupt legitimate values, e.g. ``"INV-7-special-sku"`` or a JSON value).
+   ``test_foo``, ``TestFoo_VC1_Bar`` -> ``TestFoo_Bar``) with a collision guard.
+   IDs in code, string literals, or docstrings are LEFT IN PLACE and reported
+   (stripping a string substring would corrupt legitimate values, e.g.
+   ``"INV-7-special-sku"`` or a JSON value). Go subtest names
+   (``t.Run("AC-3: ...", ...)``) are string literals and therefore excluded;
+   they appear in the ``residual`` list so the operator can clean them manually.
 4. RE-SCAN. After cleaning, scope is scanned again; anything not removed is
    reported as ``residual`` rather than corrupted.
 
@@ -213,7 +219,13 @@ def scrub_line(line: str, syntax: dict | None) -> tuple[str | None, list[str], l
     eligible_spans: list[tuple[int, int]] = []
     for m in matches:
         if _region_kind(regions, m.start()) == "comment":
-            eligible_spans.append((m.start(), m.end()))
+            start, end = m.start(), m.end()
+            # Absorb a trailing separator ("ID: text" -> "text", "ID - note" -> "note")
+            # to avoid leaving broken prose. Only one separator consumed.
+            sep = re.match(r"[ \t]*[:\-][ \t]?", line[end:])
+            if sep:
+                end += sep.end()
+            eligible_spans.append((start, end))
             removed.append(m.group(0))
         else:
             residual.append(m.group(0))
@@ -254,9 +266,11 @@ def renamed_test_identifier(name: str) -> str | None:
     if not _VC_SEGMENT.search(name):
         return None
     new = _VC_SEGMENT.sub("", name)
-    new = re.sub(r"__+", "_", new)
-    new = re.sub(r"_+$", "", new)
-    new = re.sub(r"(?<=[A-Za-z])_(?=[A-Z])", "", new)  # Test_Foo -> TestFoo (Go/class)
+    new = re.sub(r"__+", "_", new)   # collapse double-underscore artifacts from removal
+    new = re.sub(r"_+$", "", new)    # strip trailing underscore artifacts
+    # NOTE: do NOT collapse single underscores (e.g. TestFoo_VC1_Bar -> TestFoo__Bar
+    # -> TestFoo_Bar). A blanket (?<=[A-Za-z])_(?=[A-Z]) rule would also remove
+    # legitimate Go table-test separators like TestFoo_CaseA.
     if not new or new in ("test", "test_", "Test"):
         return None
     if new == name:
