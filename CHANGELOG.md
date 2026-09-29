@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the pre-push check used to read the latest CI run on `main`, which could be
   a green run for an older commit. Both now query `gh run list --commit HEAD`
   and fail when no completed run exists for HEAD. (#479)
+- `/map-release` no longer aborts every release at the pre-push check. After
+  #479 it looked for a CI run on HEAD, which is the local version-bump commit
+  and never has one. Gate 11 and the pre-push check now verify CI on
+  `git merge-base HEAD origin/main` and abort if unpushed commits touch
+  anything besides `CHANGELOG.md`, `pyproject.toml` or
+  `src/mapify_cli/__init__.py`.
 - `mapify validate graph` accepts the blueprint that `/map-plan` writes. It
   now unwraps the `{schema_version, blueprint: {subtasks: [...]}}` shape and
   accepts `ST-NNN` string IDs next to integer IDs; other strings get a clear

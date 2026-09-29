@@ -76,7 +76,7 @@ Execute all 12 gates. Read the full gate scripts in [release-reference.md § Pha
 - **Gates 5–6:** Build + twine check
 - **Gate 7:** Security audit (`pip-audit`)
 - **Gates 8–10:** Git state — main branch, clean working directory, up-to-date with origin
-- **Gate 11:** Latest CI run on main must have `conclusion: "success"`
+- **Gate 11:** CI run for `git merge-base HEAD origin/main` must have `conclusion: "success"`; unpushed commits may touch only release metadata
 - **Gate 12:** CHANGELOG.md completeness (Unreleased section exists and has content; commit/entry gap check)
 
 **If any gate fails:** ABORT. Fix issues, re-run Phase 1.

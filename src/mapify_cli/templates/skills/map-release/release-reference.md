@@ -73,14 +73,21 @@ git pull origin main
 ### Gate 11: CI Status Verification
 
 ```bash
-HEAD_SHA=$(git rev-parse HEAD)
-gh run list --commit "$HEAD_SHA" --workflow CI --json conclusion,status,headSha --jq '.[0]'
+# CI only runs on pushed commits. Local commits on top of origin/main (a
+# docs(changelog) fix-up, later the chore(release) bump) never get a run, so
+# verify CI on the merge-base and allow only release-metadata files after it.
+git fetch origin main -q
+BASE_SHA=$(git merge-base HEAD origin/main)
+UNVERIFIED=$(git diff --name-only "$BASE_SHA" HEAD | grep -vxE 'CHANGELOG\.md|pyproject\.toml|src/mapify_cli/__init__\.py' || true)
+[[ -n "$UNVERIFIED" ]] && echo "❌ ABORT: local commits change files CI has not verified — push them and wait for CI:" && echo "$UNVERIFIED" && exit 1
+gh run list --commit "$BASE_SHA" --workflow CI --json conclusion,status,headSha --jq '.[0]'
 ```
 
 **Expected Results:**
-- ✅ CI run for exact HEAD SHA (`git rev-parse HEAD`) has `conclusion: "success"` and `status: "completed"`
+- ✅ Commits after `BASE_SHA` touch only `CHANGELOG.md`, `pyproject.toml`, `src/mapify_cli/__init__.py`
+- ✅ CI run for `BASE_SHA` has `conclusion: "success"` and `status: "completed"`
 - ✅ All jobs passed (build, test, lint)
-- ✅ `headSha` in the run output matches `git rev-parse HEAD`
+- ✅ `headSha` in the run output matches `BASE_SHA`
 
 **If CI failed:** ABORT release, investigate and fix CI failures first.
 
@@ -277,13 +284,19 @@ git tag -l -n50 "$LAST_TAG"
 CURRENT_BRANCH=$(git branch --show-current)
 [[ "$CURRENT_BRANCH" != "main" ]] && echo "❌ ABORT: Not on main branch" && exit 1
 
-HEAD_SHA=$(git rev-parse HEAD)
-LATEST_RUN=$(gh run list --commit "$HEAD_SHA" --workflow CI --json conclusion,status,headSha --jq '.[0]')
-[[ -z "$LATEST_RUN" || "$LATEST_RUN" == "null" ]] && echo "❌ ABORT: No CI run found for HEAD ($HEAD_SHA)" && exit 1
+# HEAD is the local chore(release) bump commit, which has no CI run yet.
+# Verify CI on the merge-base with origin/main and allow only
+# release-metadata files in the unpushed commits on top of it.
+git fetch origin main -q
+BASE_SHA=$(git merge-base HEAD origin/main)
+UNVERIFIED=$(git diff --name-only "$BASE_SHA" HEAD | grep -vxE 'CHANGELOG\.md|pyproject\.toml|src/mapify_cli/__init__\.py' || true)
+[[ -n "$UNVERIFIED" ]] && echo "❌ ABORT: unpushed commits change files CI has not verified:" && echo "$UNVERIFIED" && exit 1
+LATEST_RUN=$(gh run list --commit "$BASE_SHA" --workflow CI --json conclusion,status,headSha --jq '.[0]')
+[[ -z "$LATEST_RUN" || "$LATEST_RUN" == "null" ]] && echo "❌ ABORT: No CI run found for $BASE_SHA" && exit 1
 RUN_STATUS=$(printf '%s' "$LATEST_RUN" | jq -r '.status')
-[[ "$RUN_STATUS" != "completed" ]] && echo "❌ ABORT: CI run for HEAD is not completed (status: $RUN_STATUS)" && exit 1
+[[ "$RUN_STATUS" != "completed" ]] && echo "❌ ABORT: CI run for $BASE_SHA is not completed (status: $RUN_STATUS)" && exit 1
 RUN_CONCLUSION=$(printf '%s' "$LATEST_RUN" | jq -r '.conclusion')
-[[ "$RUN_CONCLUSION" != "success" ]] && echo "❌ ABORT: CI run for HEAD ($HEAD_SHA) did not succeed (conclusion: $RUN_CONCLUSION)" && exit 1
+[[ "$RUN_CONCLUSION" != "success" ]] && echo "❌ ABORT: CI run for $BASE_SHA did not succeed (conclusion: $RUN_CONCLUSION)" && exit 1
 
 LAST_TAG=$(git tag --sort=-version:refname | head -1)
 git ls-remote --tags origin | grep -q "refs/tags/$LAST_TAG" && echo "❌ ABORT: Tag already on remote" && exit 1
