@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.4] - 2026-09-29
+
 ### Changed
 - A ready plan no longer needs approval. `/map-plan` stopped opening a
   `plan_approval` hold and no longer prints "approve hold-NNN" in its
