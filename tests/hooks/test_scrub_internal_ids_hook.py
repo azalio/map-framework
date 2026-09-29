@@ -40,14 +40,19 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def _make_project(tmp_path: Path, *, complete: bool, leaked: bool = True,
-                  config: str | None = None) -> tuple[Path, str]:
-    """Build a git project with a completed (or not) MAP run state."""
+                  config: str | None = None,
+                  health_report: bool = True) -> tuple[Path, str]:
+    """Build a git project with a completed (or not) MAP run state.
+
+    ``health_report`` controls whether ``run_health_report.json`` is present.
+    When ``complete=True`` and ``health_report=True`` (the default), the project
+    is fully done and the hook should fire.  Set ``health_report=False`` to
+    simulate the window where ``WORKFLOW_COMPLETE`` is set but final verification
+    has not yet written the health report.
+    """
     project = tmp_path / "proj"
     project.mkdir()
     _git(project, "init", "-b", "main")
-    # Configure a repo-local identity so the hook's own `git commit` (which runs
-    # under ambient identity, not GIT_* env) succeeds — a real user repo always
-    # has one; CI runners do not set a global identity.
     _git(project, "config", "user.email", "t@t")
     _git(project, "config", "user.name", "t")
     (project / "seed.txt").write_text("seed\n", encoding="utf-8")
@@ -77,6 +82,10 @@ def _make_project(tmp_path: Path, *, complete: bool, leaked: bool = True,
         }),
         encoding="utf-8",
     )
+    if complete and health_report:
+        branch_dir.joinpath("run_health_report.json").write_text(
+            json.dumps({"status": "pass"}), encoding="utf-8"
+        )
     if config is not None:
         (project / ".map" / "config.yaml").write_text(config, encoding="utf-8")
     return project, branch
@@ -116,7 +125,21 @@ def test_noop_when_workflow_not_complete(tmp_path: Path) -> None:
     assert run.returncode == 0
     assert run.stdout.strip() in ("{}", "")
     assert "INV-7" in (project / "app.py").read_text(encoding="utf-8")  # untouched
-    assert "chore(map): strip internal workflow IDs" not in _commit_subjects(project)
+
+
+def test_noop_without_health_report(tmp_path: Path) -> None:
+    """workflow_status=COMPLETE but run_health_report.json absent -> no-op.
+
+    The hook must not fire during the final-verifier step (which runs while
+    workflow_status is already WORKFLOW_COMPLETE but before the health report is
+    written).
+    """
+    project, branch = _make_project(tmp_path, complete=True, health_report=False)
+    run = _run_hook(project)
+    assert run.returncode == 0
+    assert run.stdout.strip() in ("{}", "")
+    assert "INV-7" in (project / "app.py").read_text(encoding="utf-8")  # untouched
+    assert not (project / ".map" / branch / ".scrub_done").exists()  # no marker
 
 
 def test_noop_when_map_invoked_by_set(tmp_path: Path) -> None:
@@ -142,6 +165,7 @@ def test_noop_when_disabled_in_config(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 def test_active_path_scrubs_and_commits(tmp_path: Path) -> None:
     project, branch = _make_project(tmp_path, complete=True)
+    commits_before = len(_commit_subjects(project))
     run = _run_hook(project)
     assert run.returncode == 0
 
@@ -152,7 +176,10 @@ def test_active_path_scrubs_and_commits(tmp_path: Path) -> None:
     assert "def test_login" in content  # renamed, not deleted
     assert "value = 1" in content  # code preserved
 
-    assert "chore(map): strip internal workflow IDs" in _commit_subjects(project)
+    # Hook leaves cleaned files unstaged; no auto-commit.
+    assert len(_commit_subjects(project)) == commits_before
+    # The operator is told to commit via stderr.
+    assert "app.py" in run.stderr
     assert (project / ".map" / branch / ".scrub_done").exists()
 
 

@@ -385,7 +385,7 @@ class ASCIIGraphRenderer:
 
         return ANSIColors.RED if has_critical else ANSIColors.YELLOW
 
-    def _get_root_nodes(self) -> list[int]:
+    def _get_root_nodes(self) -> list[str | int]:
         """
         Find root nodes (tasks with no dependencies).
 
@@ -399,7 +399,7 @@ class ASCIIGraphRenderer:
                 roots.append(task_id)
         return roots
 
-    def _topological_sort(self) -> list[int]:
+    def _topological_sort(self) -> list[str | int]:
         """
         Perform topological sort using Kahn's algorithm.
 
