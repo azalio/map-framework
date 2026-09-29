@@ -22,6 +22,7 @@ Exit Codes:
 
 import argparse
 import json
+import re
 import sys
 from collections import defaultdict, deque
 from enum import Enum
@@ -54,7 +55,7 @@ class ValidationIssue:
         self,
         issue_type: str,
         severity: IssueSeverity,
-        affected_tasks: list[int],
+        affected_tasks: list[str | int],
         message: str,
     ):
         self.issue_type = issue_type
@@ -72,6 +73,18 @@ class ValidationIssue:
         }
 
 
+_ST_ID_RE = re.compile(r"^ST-\d{3,}$")
+
+
+def _is_valid_task_id(value: object) -> bool:
+    """Return True for integer IDs or ST-NNN string IDs."""
+    if isinstance(value, int):
+        return True
+    if isinstance(value, str):
+        return bool(_ST_ID_RE.match(value))
+    return False
+
+
 class DependencyValidator:
     """Validates task dependency graphs for common issues."""
 
@@ -79,8 +92,15 @@ class DependencyValidator:
         """
         Initialize validator with TaskDecomposer JSON output.
 
+        Accepts both the raw ``{"subtasks": [...]}`` shape and the canonical
+        wrapped shape produced by ``/map-plan``::
+
+            {"schema_version": "...", "blueprint": {"subtasks": [...]}, ...}
+
+        Task IDs may be integers (legacy) or ``ST-NNN`` strings (current schema).
+
         Args:
-            tasks_data: Dict with 'subtasks' key containing task list
+            tasks_data: Dict with 'subtasks' key, or wrapped blueprint shape
 
         Raises:
             ValueError: If input data is malformed
@@ -88,16 +108,21 @@ class DependencyValidator:
         if not isinstance(tasks_data, dict):
             raise ValueError("Input must be a JSON object")
 
+        # Unwrap canonical blueprint shape: {schema_version, blueprint: {subtasks: [...]}}
+        if "subtasks" not in tasks_data and isinstance(tasks_data.get("blueprint"), dict):
+            tasks_data = tasks_data["blueprint"]
+
         if "subtasks" not in tasks_data:
             raise ValueError("Missing required field 'subtasks'")
 
         self.subtasks = tasks_data["subtasks"]
         self.issues: list[ValidationIssue] = []
 
-        # Build task ID mapping and adjacency list
-        self.task_ids: set[int] = set()
-        self.adjacency: dict[int, list[int]] = defaultdict(list)
-        self.reverse_adjacency: dict[int, list[int]] = defaultdict(list)
+        # Build task ID mapping and adjacency list.
+        # IDs may be int (legacy) or ST-NNN strings (current schema).
+        self.task_ids: set[str | int] = set()
+        self.adjacency: dict[str | int, list[str | int]] = defaultdict(list)
+        self.reverse_adjacency: dict[str | int, list[str | int]] = defaultdict(list)
 
         self._build_graph()
 
@@ -108,8 +133,10 @@ class DependencyValidator:
                 raise ValueError(f"Task missing 'id' field: {task}")
 
             task_id = task["id"]
-            if not isinstance(task_id, int):
-                raise ValueError(f"Task ID must be integer, got: {task_id}")
+            if not _is_valid_task_id(task_id):
+                raise ValueError(
+                    f"Task ID must be an integer or ST-NNN string, got: {task_id!r}"
+                )
 
             self.task_ids.add(task_id)
 
@@ -119,8 +146,10 @@ class DependencyValidator:
                 raise ValueError(f"Task {task_id} dependencies must be a list")
 
             for dep_id in dependencies:
-                if not isinstance(dep_id, int):
-                    raise ValueError(f"Dependency ID must be integer: {dep_id}")
+                if not _is_valid_task_id(dep_id):
+                    raise ValueError(
+                        f"Dependency ID must be an integer or ST-NNN string: {dep_id!r}"
+                    )
 
                 self.adjacency[task_id].append(dep_id)
                 self.reverse_adjacency[dep_id].append(task_id)
@@ -180,11 +209,11 @@ class DependencyValidator:
         Returns:
             True if no cycles found
         """
-        visited: set[int] = set()
-        recursion_stack: set[int] = set()
-        path_stack: list[int] = []
+        visited: set[str | int] = set()
+        recursion_stack: set[str | int] = set()
+        path_stack: list[str | int] = []
 
-        def dfs(node: int) -> bool:
+        def dfs(node: str | int) -> bool:
             """
             DFS traversal with cycle detection.
 
@@ -293,12 +322,12 @@ class DependencyValidator:
             "issues": [issue.to_dict() for issue in self.issues],
         }
 
-    def get_task_title(self, task_id: int) -> str:
+    def get_task_title(self, task_id: str | int) -> str:
         """
         Get task title by ID.
 
         Args:
-            task_id: Task ID to look up
+            task_id: Task ID to look up (int or ST-NNN string)
 
         Returns:
             Task title or empty string if not found
@@ -326,12 +355,12 @@ class ASCIIGraphRenderer:
         self.issues = validator.issues
 
         # Build issue lookup for color coding
-        self.task_issues: dict[int, list[ValidationIssue]] = defaultdict(list)
+        self.task_issues: dict[str | int, list[ValidationIssue]] = defaultdict(list)
         for issue in self.issues:
             for task_id in issue.affected_tasks:
                 self.task_issues[task_id].append(issue)
 
-    def _get_task_color(self, task_id: int, use_colors: bool = True) -> str:
+    def _get_task_color(self, task_id: str | int, use_colors: bool = True) -> str:
         """
         Determine color for task based on validation status.
 
@@ -382,7 +411,7 @@ class ASCIIGraphRenderer:
         # in_degree[A] = number of dependencies task A has (outgoing edges from A in dependency graph)
         # Note: In graph theory terms, these are outgoing edges, but we call it "in-degree"
         # because it counts incoming dependencies that must be satisfied before A can execute
-        in_degree: dict[int, int] = {
+        in_degree: dict[str | int, int] = {
             task_id: len(self.adjacency.get(task_id, [])) for task_id in self.task_ids
         }
 
@@ -409,10 +438,10 @@ class ASCIIGraphRenderer:
 
     def _render_tree_node(
         self,
-        task_id: int,
+        task_id: str | int,
         prefix: str,
         is_last: bool,
-        visited: set[int],
+        visited: set[str | int],
         max_depth: int,
         current_depth: int = 0,
         use_colors: bool = True,
@@ -551,7 +580,7 @@ class ASCIIGraphRenderer:
         lines.append(f"{C.BOLD}Dependency Tree:{C.RESET}")
         lines.append(f"{C.GRAY}{'─' * 60}{C.RESET}")
 
-        visited: set[int] = set()
+        visited: set[str | int] = set()
 
         for i, root_id in enumerate(roots):
             is_last_root = i == len(roots) - 1
@@ -607,8 +636,6 @@ class ASCIIGraphRenderer:
         Returns:
             Text with ANSI codes removed
         """
-        import re
-
         ansi_escape = re.compile(r"\033\[[0-9;]*m")
         return ansi_escape.sub("", text)
 
@@ -623,8 +650,6 @@ class ASCIIGraphRenderer:
         Returns:
             Truncated line with ANSI codes preserved
         """
-        import re
-
         ansi_escape = re.compile(r"\033\[[0-9;]*m")
 
         result = []
