@@ -14,6 +14,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   right away. If an older install left a pending `plan_approval` hold, the
   `/map-efficient` and `/map-task` preflights close it without asking.
 
+### Fixed
+- `/map-release` checks CI for the exact commit being released. Gate 11 and
+  the pre-push check used to read the latest CI run on `main`, which could be
+  a green run for an older commit. Both now query `gh run list --commit HEAD`
+  and fail when no completed run exists for HEAD. (#479)
+- `mapify validate graph` accepts the blueprint that `/map-plan` writes. It
+  now unwraps the `{schema_version, blueprint: {subtasks: [...]}}` shape and
+  accepts `ST-NNN` string IDs next to integer IDs; other strings get a clear
+  error. (#482)
+- The `scrub-internal-ids` hook no longer commits on its own: cleaned files stay
+  unstaged so you commit them with your repo's conventions. It waits for
+  `run_health_report.json` (written after final verification) instead of
+  firing on `WORKFLOW_COMPLETE`, drops the separator after a removed token
+  (`proves ST-004: Foo` → `proves Foo`), and keeps Go test names intact
+  (`TestFoo_VC1_Bar` → `TestFoo_Bar`, not `TestFooBar`). (#483)
+
 ## [3.31.3] - 2026-09-23
 
 ### Fixed
