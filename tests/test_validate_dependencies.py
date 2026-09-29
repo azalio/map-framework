@@ -218,9 +218,9 @@ class TestDependencyValidator:
             DependencyValidator({"subtasks": [{"title": "No ID"}]})
 
     def test_invalid_task_id_not_integer(self):
-        """Raises error for non-integer task ID"""
-        with pytest.raises(ValueError, match="Task ID must be integer"):
-            DependencyValidator({"subtasks": [{"id": "1", "title": "String ID"}]})
+        """Raises error for task ID that is neither int nor ST-NNN string"""
+        with pytest.raises(ValueError, match="Task ID must be an integer or ST-NNN string"):
+            DependencyValidator({"subtasks": [{"id": "not-valid", "title": "Bad ID"}]})
 
     def test_invalid_dependencies_not_list(self):
         """Raises error for non-list dependencies"""
@@ -780,9 +780,9 @@ class TestEdgeCases:
         assert cyclic_validator.validate_circular_dependencies() is False
 
     def test_non_integer_dependency_id(self):
-        """Raises error for string dependency IDs"""
-        data = {"subtasks": [{"id": 1, "dependencies": ["2"]}]}  # String instead of int
-        with pytest.raises(ValueError, match="Dependency ID must be integer"):
+        """Raises error for dependency IDs that are neither int nor ST-NNN strings"""
+        data = {"subtasks": [{"id": 1, "dependencies": ["not-valid"]}]}
+        with pytest.raises(ValueError, match="Dependency ID must be an integer or ST-NNN string"):
             DependencyValidator(data)
 
     def test_duplicate_task_ids(self):
@@ -798,3 +798,147 @@ class TestEdgeCases:
         validator = DependencyValidator(data)
         # At least validate it doesn't crash
         assert validator.task_ids == {1}
+
+
+# ============================================================================
+# Tests for issue #482: wrapped blueprint shape and ST-NNN string IDs
+# ============================================================================
+
+
+class TestBlueprintShapeAndStringIDs:
+    """Tests for issue #482: accept /map-plan output format."""
+
+    # -- ST-NNN string IDs --
+
+    def test_st_ids_basic_valid_graph(self):
+        """Accepts ST-NNN IDs in the flat {subtasks: [...]} shape."""
+        data = {
+            "subtasks": [
+                {"id": "ST-001", "title": "First", "dependencies": []},
+                {"id": "ST-002", "title": "Second", "dependencies": ["ST-001"]},
+                {"id": "ST-003", "title": "Third", "dependencies": ["ST-002"]},
+            ]
+        }
+        validator = DependencyValidator(data)
+        assert validator.task_ids == {"ST-001", "ST-002", "ST-003"}
+        # A linear chain has no cycles, no forward refs, no self-deps, no orphans — valid.
+        assert validator.validate_all() is True
+        report = validator.get_report()
+        assert report["valid"] is True
+
+    def test_st_ids_forward_reference(self):
+        """ST-NNN IDs: detects reference to a non-existent subtask."""
+        data = {
+            "subtasks": [
+                {"id": "ST-001", "title": "Task", "dependencies": []},
+                {"id": "ST-002", "title": "Bad dep", "dependencies": ["ST-001", "ST-999"]},
+            ]
+        }
+        validator = DependencyValidator(data)
+        assert validator.validate_forward_references() is False
+        report = validator.get_report()
+        assert report["valid"] is False
+        assert any(i["type"] == "forward_reference" for i in report["issues"])
+
+    def test_st_ids_cycle_detected(self):
+        """ST-NNN IDs: cycle detection works correctly."""
+        data = {
+            "subtasks": [
+                {"id": "ST-001", "title": "A", "dependencies": ["ST-003"]},
+                {"id": "ST-002", "title": "B", "dependencies": ["ST-001"]},
+                {"id": "ST-003", "title": "C", "dependencies": ["ST-002"]},
+            ]
+        }
+        validator = DependencyValidator(data)
+        assert validator.validate_circular_dependencies() is False
+
+    def test_invalid_string_id_rejected(self):
+        """String IDs that don't match ST-NNN are rejected."""
+        data = {"subtasks": [{"id": "not-valid", "dependencies": []}]}
+        with pytest.raises(ValueError, match="Task ID must be an integer or ST-NNN string"):
+            DependencyValidator(data)
+
+    def test_invalid_string_dependency_rejected(self):
+        """String dependency IDs that don't match ST-NNN are rejected."""
+        data = {"subtasks": [{"id": "ST-001", "dependencies": ["2"]}]}
+        with pytest.raises(ValueError, match="Dependency ID must be an integer or ST-NNN string"):
+            DependencyValidator(data)
+
+    # -- Wrapped blueprint shape --
+
+    def test_wrapped_blueprint_shape_accepted(self):
+        """Accepts the canonical /map-plan output: {schema_version, blueprint: {subtasks: []}}."""
+        data = {
+            "schema_version": "1.0",
+            "analysis": {"some": "field"},
+            "blueprint": {
+                "subtasks": [
+                    {"id": "ST-001", "title": "Foundation", "dependencies": []},
+                    {"id": "ST-002", "title": "Feature", "dependencies": ["ST-001"]},
+                ]
+            },
+        }
+        validator = DependencyValidator(data)
+        assert validator.task_ids == {"ST-001", "ST-002"}
+        report = validator.get_report()
+        assert report["valid"] is True
+        assert report["total_tasks"] == 2
+
+    def test_wrapped_blueprint_cycle_detected(self):
+        """Wrapped blueprint shape: cycle detection still works."""
+        data = {
+            "schema_version": "1.0",
+            "blueprint": {
+                "subtasks": [
+                    {"id": "ST-001", "dependencies": ["ST-002"]},
+                    {"id": "ST-002", "dependencies": ["ST-001"]},
+                ]
+            },
+        }
+        validator = DependencyValidator(data)
+        assert validator.validate_circular_dependencies() is False
+
+    def test_flat_shape_still_accepted(self):
+        """Existing flat {subtasks: [...]} shape still works (backward compat)."""
+        data = {
+            "subtasks": [
+                {"id": 1, "title": "Legacy int IDs", "dependencies": []},
+                {"id": 2, "title": "Task 2", "dependencies": [1]},
+            ]
+        }
+        validator = DependencyValidator(data)
+        assert validator.task_ids == {1, 2}
+        assert validator.get_report()["valid"] is True
+
+    def test_wrapped_blueprint_missing_subtasks_raises(self):
+        """Wrapped blueprint without a 'subtasks' key inside raises ValueError."""
+        data = {"schema_version": "1.0", "blueprint": {"other_key": []}}
+        with pytest.raises(ValueError, match="Missing required field 'subtasks'"):
+            DependencyValidator(data)
+
+    def test_st_id_title_lookup(self):
+        """get_task_title works with ST-NNN IDs."""
+        data = {
+            "subtasks": [
+                {"id": "ST-001", "title": "My Title", "dependencies": []},
+            ]
+        }
+        validator = DependencyValidator(data)
+        assert validator.get_task_title("ST-001") == "My Title"
+        assert validator.get_task_title("ST-999") == ""
+
+    def test_wrapped_blueprint_ascii_render(self):
+        """ASCIIGraphRenderer works with wrapped blueprint + ST-NNN IDs."""
+        data = {
+            "blueprint": {
+                "subtasks": [
+                    {"id": "ST-001", "title": "Root", "dependencies": []},
+                    {"id": "ST-002", "title": "Child", "dependencies": ["ST-001"]},
+                ]
+            }
+        }
+        validator = DependencyValidator(data)
+        renderer = ASCIIGraphRenderer(validator)
+        output = renderer.render(use_colors=False)
+        assert "ST-001" in output
+        assert "ST-002" in output
