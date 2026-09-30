@@ -324,8 +324,8 @@ repetition. Objections live in `.map/<branch>/review-objections.json`.
 The review stage gate is bound to the ledger. `write_stage_gate review <verdict>`
 is refused — and no gate file written — when `<verdict>` contradicts
 `computed_verdict`, or when no ledger exists for the branch at all. This is on by
-default; `MAP_REVIEW_LEDGER_ENFORCE=0` is the explicit opt-out. Pass
-`$FINAL_VERDICT` straight from the ledger output rather than retyping a verdict.
+default; `MAP_REVIEW_LEDGER_ENFORCE=0` is the explicit opt-out. Read
+`computed_verdict` from `review-verdict-ledger.json` rather than retyping a verdict.
 
 `--destination pre_commit|pr_review|ci` and `--executor-class <tier>` are
 recorded on the ledger for audit. They are deliberately NOT table arguments: no

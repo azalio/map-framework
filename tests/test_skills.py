@@ -2358,6 +2358,30 @@ class TestMapReviewSkillBundleWiring:
                 f"<stage> <verdict> <source_artifact> <notes>; got {args}"
             )
 
+    def test_vc1_vc2_map_review_has_single_ledger_bound_review_gate(self, skill_md):
+        """The review stage gate is written once, from the ledger's computed_verdict."""
+        review_calls = [
+            args
+            for args in _shell_invocations(skill_md, "write_stage_gate")
+            if args and args[0] == "review"
+        ]
+        assert len(review_calls) == 1, review_calls
+        assert review_calls[0][1] == "$FINAL_VERDICT", review_calls[0]
+        assert "## Workflow Gate Unlock" not in skill_md
+        assert "$REVIEW_SUMMARY" not in skill_md
+
+        fence = re.search(
+            r"```bash\n((?:(?!```).)*?write_stage_gate(?:(?!```).)*?)```",
+            skill_md,
+            re.DOTALL,
+        )
+        assert fence, "no fenced block holds the write_stage_gate call"
+        block = fence.group(1)
+        assert block.lstrip().startswith("BRANCH=$(git rev-parse"), block[:80]
+        assert 'BRANCH_DIR=".map/$BRANCH"' in block
+        assert "review-verdict-ledger.json" in block
+        assert "computed_verdict" in block
+
     def test_map_review_skill_documents_verdict_normalization(self, skill_md):
         """Regression #388: SKILL.md must state how PROCEED/REVISE/BLOCK map to gates."""
         assert "needs-revision" in skill_md, (

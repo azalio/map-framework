@@ -596,36 +596,29 @@ FINAL_VERDICT=$(printf '%s' "$LEDGER" | python3 -c 'import json,sys; print(json.
 `cross_ai` or `compare_orderings`. Every phase feeds the ledger — none of them
 assigns its own verdict.
 
-Use `$FINAL_VERDICT` for the stage gate below — do not retype a verdict of your
-own. Report `not_verified` and any `escalation_reasons` from
+The stage gate below reads `computed_verdict` from `review-verdict-ledger.json` —
+do not retype a verdict of your own. Report `not_verified` and any `escalation_reasons` from
 `.map/<branch>/review-verdict-ledger.md` in the walkthrough.
 
 Full usage, decision table, and adversarial-mode flags → review-reference.md § Verdict Ledger.
 
-## Workflow Gate Unlock (REVISE/BLOCK only)
+## Handoff Artifact Update
 
-If edits are needed, write the stage gate so the owning workflow can continue.
-Positional arguments are `<stage> <verdict> <source_artifact> <notes>` — the
-summary is the FOURTH argument, not the third:
+Update durable review artifacts before closeout. The review stage gate is written
+once, for every verdict; its verdict is the ledger's `computed_verdict`, never a
+literal. Positional arguments are `<stage> <verdict> <source_artifact> <notes>` —
+the summary is the FOURTH argument:
 
 ```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH_DIR=".map/$BRANCH"
+FINAL_VERDICT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["computed_verdict"])' "$BRANCH_DIR/review-verdict-ledger.json")
+
 python3 .map/scripts/map_step_runner.py write_stage_gate \
   review \
   "$FINAL_VERDICT" \
   code-review-001.md \
-  "$REVIEW_SUMMARY"
-```
-
-## Handoff Artifact Update
-
-Update durable review artifacts before closeout:
-
-```bash
-python3 .map/scripts/map_step_runner.py write_stage_gate \
-  review \
-  ready \
-  code-review-001.md \
-  "Final review passed"
+  "<one-line review summary>"
 
 python3 .map/scripts/map_step_runner.py ensure_active_issues_file
 python3 .map/scripts/map_step_runner.py replace_active_issues \
