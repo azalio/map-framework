@@ -4020,3 +4020,133 @@ def test_map_review_truncation_gate_pipes_response_on_stdin(rendered: str) -> No
         "detect_truncated_agent_output --agent <kind>"
     ) in text
     assert 'status:"no_input"' in text
+
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_TEMPLATES_SRC = _REPO_ROOT / "src/mapify_cli/templates_src"
+
+
+def _non_include_twins(twin_dir: Path) -> list[Path]:
+    """Files in a Codex twin dir that are not a pure include of the same-named shared source."""
+    skill = twin_dir.name
+    return sorted(
+        path
+        for path in twin_dir.rglob("*")
+        if path.is_file()
+        and path.read_text(encoding="utf-8").strip()
+        != f'[% include "skills/{skill}/{path.relative_to(twin_dir).as_posix()}" %]'
+    )
+
+
+def test_single_source_codex_skills_set_is_pinned() -> None:
+    assert SINGLE_SOURCE_CODEX_SKILLS == {"map-architecture", "map-auto", "map-review"}
+
+
+@pytest.mark.parametrize("skill", sorted(SINGLE_SOURCE_CODEX_SKILLS))
+def test_vc1_every_codex_twin_file_is_a_pure_include(skill: str) -> None:
+    twin_dir = _TEMPLATES_SRC / "codex/skills" / skill
+    assert list(twin_dir.rglob("*.jinja")), f"no twin files found in {twin_dir}"
+    assert _non_include_twins(twin_dir) == []
+    for path in twin_dir.rglob("*"):
+        if path.is_file():
+            shared = _TEMPLATES_SRC / "skills" / skill / path.relative_to(twin_dir)
+            assert shared.is_file(), f"{path} includes a missing shared source"
+
+
+def test_vc1_non_include_twin_is_detected(tmp_path: Path) -> None:
+    twin_dir = tmp_path / "map-review"
+    twin_dir.mkdir()
+    (twin_dir / "SKILL.md.jinja").write_text(
+        '[% include "skills/map-review/SKILL.md.jinja" %]\n', encoding="utf-8"
+    )
+    assert _non_include_twins(twin_dir) == []
+    forked = twin_dir / "review-reference.md.jinja"
+    forked.write_text("hand-forked copy\n", encoding="utf-8")
+    wrong_target = twin_dir / "adversarial-reference.md.jinja"
+    wrong_target.write_text(
+        '[% include "skills/map-review/SKILL.md.jinja" %]\n', encoding="utf-8"
+    )
+    assert _non_include_twins(twin_dir) == [wrong_target, forked]
+
+
+_CODEX_MAP_REVIEW_DIRS = (
+    ".agents/skills/map-review",
+    "src/mapify_cli/templates/codex/skills/map-review",
+)
+_CLAUDE_MAP_REVIEW_DIRS = (
+    ".claude/skills/map-review",
+    "src/mapify_cli/templates/skills/map-review",
+)
+_MAP_REVIEW_FILES = ("SKILL.md", "review-reference.md", "adversarial-reference.md")
+_CLAUDE_ONLY_LEAKS = (
+    re.compile(r"\bTask\("),
+    re.compile(r"subagent_type="),
+    re.compile(r"(?<![A-Za-z0-9_./-])/map-"),
+)
+_CODEX_ONLY_LEAKS = (
+    re.compile(r"\bspawn_agent\("),
+    re.compile(r"(?<![A-Za-z0-9_$./-])\$map-"),
+)
+
+
+def _provider_leaks(text: str, patterns: tuple[re.Pattern[str], ...]) -> list[str]:
+    return [p.pattern for p in patterns if p.search(text)]
+
+
+@pytest.mark.parametrize("rel_dir", _CODEX_MAP_REVIEW_DIRS + _CLAUDE_MAP_REVIEW_DIRS)
+def test_vc3_map_review_provider_leaks(rel_dir: str) -> None:
+    patterns = _CODEX_ONLY_LEAKS if rel_dir in _CLAUDE_MAP_REVIEW_DIRS else _CLAUDE_ONLY_LEAKS
+    for name in _MAP_REVIEW_FILES:
+        text = (_REPO_ROOT / rel_dir / name).read_text(encoding="utf-8")
+        assert _provider_leaks(text, patterns) == [], f"{rel_dir}/{name}"
+
+
+_LEDGER_CMD = re.compile(
+    r"^(?:\w+=\$\()?python3 \.map/scripts/map_step_runner\.py write_review_verdict_ledger\b",
+    re.MULTILINE,
+)
+_GATE_CMD = re.compile(
+    r"^(?:\w+=\$\()?python3 \.map/scripts/map_step_runner\.py write_stage_gate\b",
+    re.MULTILINE,
+)
+
+
+def _ledger_before_gate_problems(text: str) -> list[str]:
+    problems: list[str] = []
+    ledger, gate = _LEDGER_CMD.search(text), _GATE_CMD.search(text)
+    if ledger is None or gate is None:
+        return ["ledger or stage-gate command line missing"]
+    if gate.start() < ledger.start():
+        problems.append("write_stage_gate precedes write_review_verdict_ledger")
+    final_lines = re.findall(r"^FINAL_VERDICT=.*$", text, re.MULTILINE)
+    if not final_lines or not all("computed_verdict" in line for line in final_lines):
+        problems.append("FINAL_VERDICT not read from computed_verdict")
+    if "Choose exactly one" in text:
+        problems.append("hand-picked verdict text present")
+    return problems
+
+
+@pytest.mark.parametrize("rel_dir", _CODEX_MAP_REVIEW_DIRS)
+def test_vc4_codex_map_review_ledger_before_gate(rel_dir: str) -> None:
+    text = (_REPO_ROOT / rel_dir / "SKILL.md").read_text(encoding="utf-8")
+    assert _ledger_before_gate_problems(text) == []
+
+
+def test_vc4_ledger_before_gate_detects_bad_ordering() -> None:
+    good = (_REPO_ROOT / ".agents/skills/map-review/SKILL.md").read_text(encoding="utf-8")
+    swapped = good.replace(
+        "write_review_verdict_ledger", "TMP_X"
+    ).replace("write_stage_gate", "write_review_verdict_ledger").replace(
+        "TMP_X", "write_stage_gate"
+    )
+    assert "precedes" in " ".join(_ledger_before_gate_problems(swapped))
+    assert _ledger_before_gate_problems(good + "\nChoose exactly one verdict\n")
+    assert _ledger_before_gate_problems(
+        good.replace('["computed_verdict"]', '["verdict"]')
+    )
+
+
+def test_vc3_provider_leak_patterns_detect_leaks() -> None:
+    assert _provider_leaks('Task(subagent_type="x") /map-review', _CLAUDE_ONLY_LEAKS)
+    assert _provider_leaks("spawn_agent(x) $map-review", _CODEX_ONLY_LEAKS)
+    assert not _provider_leaks("use $map-review", _CLAUDE_ONLY_LEAKS)

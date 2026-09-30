@@ -123,3 +123,18 @@ def test_doctrine_documented_in_architecture():
     )
     assert "all nine Codex pipeline-dispatched agents" in text
     assert "DocumentationReviewer | *(no skill dispatch" not in text
+
+
+def test_codex_agent_roster_is_exactly_the_nine_expected_roles():
+    """Pin the exact roster so a dropped role cannot hide behind a count-only check."""
+    assert _codex_agent_names() == {
+        "actor",
+        "decomposer",
+        "documentation-reviewer",
+        "evaluator",
+        "final-verifier",
+        "monitor",
+        "predictor",
+        "reflector",
+        "researcher",
+    }
