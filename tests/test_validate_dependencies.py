@@ -942,3 +942,28 @@ class TestBlueprintShapeAndStringIDs:
         output = renderer.render(use_colors=False)
         assert "ST-001" in output
         assert "ST-002" in output
+
+    def test_mixed_str_int_ids_no_type_error(self):
+        """sorted() on mixed str|int task_ids must not raise TypeError (#486)."""
+        data = {
+            "subtasks": [
+                {"id": 1, "title": "Legacy int", "dependencies": []},
+                {"id": "ST-002", "title": "New string", "dependencies": []},
+            ]
+        }
+        validator = DependencyValidator(data)
+        renderer = ASCIIGraphRenderer(validator)
+        # render() exercises _get_root_nodes, _topological_sort, _render_tree_node,
+        # and the disconnected/unvisited sorted() call — all must not raise TypeError
+        output = renderer.render(use_colors=False)
+        assert "Task 1" in output
+        assert "ST-002" in output
+
+    def test_is_valid_task_id_rejects_booleans(self):
+        """_is_valid_task_id must not accept Python booleans as integer IDs (#486)."""
+        from mapify_cli.tools.validate_dependencies import _is_valid_task_id
+
+        assert _is_valid_task_id(1) is True
+        assert _is_valid_task_id("ST-001") is True
+        assert _is_valid_task_id(True) is False
+        assert _is_valid_task_id(False) is False
