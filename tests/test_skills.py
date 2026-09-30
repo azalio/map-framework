@@ -4003,3 +4003,20 @@ class TestMapReviewSharedSourceCodexRender:
             assert needle not in claude, needle
         assert "## Mutation Boundary Constraints" not in codex
         assert "## Mutation Boundary Constraints" not in claude
+
+
+@pytest.mark.parametrize(
+    "rendered",
+    [
+        ".claude/skills/map-review/SKILL.md",
+        ".agents/skills/map-review/SKILL.md",
+    ],
+)
+def test_map_review_truncation_gate_pipes_response_on_stdin(rendered: str) -> None:
+    """detect_truncated_agent_output reads stdin; a bare call is no_input, not a pass."""
+    text = (Path(__file__).parent.parent / rendered).read_text(encoding="utf-8")
+    assert (
+        "printf '%s' \"$RESPONSE\" | python3 .map/scripts/map_step_runner.py "
+        "detect_truncated_agent_output --agent <kind>"
+    ) in text
+    assert 'status:"no_input"' in text

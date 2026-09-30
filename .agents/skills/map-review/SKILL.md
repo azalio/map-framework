@@ -385,9 +385,10 @@ When enabled (`minimality != off`), the complexity lens is advisory only. It lis
 
 ### Step A.2b: Truncated-response gate (MANDATORY — post-fan-out, pre-verification)
 
-After each reviewer returns, validate its output via
-`detect_truncated_agent_output --agent <kind>` using the role-specific kind
-shown below. On truncation: log via
+After each reviewer returns, pipe its response on stdin (a bare call returns
+`status:"no_input"`, not a pass):
+`printf '%s' "$RESPONSE" | python3 .map/scripts/map_step_runner.py detect_truncated_agent_output --agent <kind>`
+using the role-specific kind shown below. On truncation: log via
 `log_agent_failure --agent <role> --phase post-invoke --failure-label truncated --reasons '<reasons>'`
 and re-invoke that reviewer ONCE using the prompt from
 `build_json_retry_prompt --agent <role> --errors '<reasons>'`; if still
