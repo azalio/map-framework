@@ -3974,3 +3974,30 @@ class TestMapReviewSharedSourceCodexRender:
         assert "fresh `task_name`" in skill.split("Step A.2b: Truncated-response gate")[1]
         compare = skill.split("Step A.1d")[1].split("Step A.2:")[0]
         assert "keeps incrementing across both collections" in compare
+
+    def test_vc1_codex_cross_ai_self_review_caveat(self) -> None:
+        codex = self._render("SKILL.md.jinja", "codex")
+        claude = self._render("SKILL.md.jinja", "claude")
+        assert "`--cross-ai codex` from a Codex host spawns a fresh `codex exec`" in codex
+        assert "same-vendor check even though the runner reports `independent_vendor: true`" in codex
+        assert "`--cross-ai claude` is the real cross-vendor second opinion on Codex" in codex
+        assert "`independent_vendor: false`" in codex
+        assert "neither case is a configuration error" in codex
+        assert "#490" in codex
+        assert "from a Codex host" not in claude
+
+    def test_vc2_codex_supported_review_states_note(self) -> None:
+        codex = self._render("SKILL.md.jinja", "codex")
+        claude = self._render("SKILL.md.jinja", "claude")
+        for needle in (
+            "Codex — supported review states",
+            "`WORKFLOW_COMPLETE`",
+            "MAP_MONITOR_HOTFIX",
+            "In other non-editing phases (e.g. `DECOMPOSE`, `PREDICTOR`",
+            "workflow-gate hook denies shell writes",
+            "do not work around the hook",
+        ):
+            assert needle in codex, needle
+            assert needle not in claude, needle
+        assert "## Mutation Boundary Constraints" not in codex
+        assert "## Mutation Boundary Constraints" not in claude

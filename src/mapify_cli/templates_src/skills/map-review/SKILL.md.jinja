@@ -63,6 +63,10 @@ parallel_tool_policy: single_review_fanout
    bug-introduced-here BEFORE Phase B. Bare claims without evidence are
    downgraded to `needs_investigation` and not published as issues.
 8. Present options neutrally as A/B/C. Append `(Recommended)` after the option label, not by position.
+[%- if PROVIDER == "codex" %]
+
+**Codex — supported review states:** run `$map-review` (normal, `--adversarial`, `--cross-ai`) with no `.map/<branch>/step_state.json`, in `COMPLETE`/`WORKFLOW_COMPLETE`, or in `MONITOR` while `MAP_MONITOR_HOTFIX` is not `0`. In other non-editing phases (e.g. `DECOMPOSE`, `PREDICTOR`, or `MONITOR` with `MAP_MONITOR_HOTFIX=0`) the Codex workflow-gate hook denies shell writes to `$`-expanded targets (precheck log, `review-mode.json`, reviewer envelopes, adversarial files). On such a deny, archive the stale workflow (or finish it) or rerun `$map-review` from a supported state — do not work around the hook.
+[%- endif %]
 
 ## Review Preferences (Customize per project)
 
@@ -528,6 +532,10 @@ second opinion, not a gate: its verdict is presented, never assigned, and the
 stage gate rests on the ledger computed from in-session reviewers. Any other
 status (`unparsed`/`secret_blocked`/`disabled`/`unavailable`/`timeout`/`error`) →
 announce `reason` (own-status, never fenced) and fall through the same way.
+[%- if PROVIDER == "codex" %]
+
+**Edge case — self-review (informational, not an error):** `--cross-ai codex` from a Codex host spawns a fresh `codex exec`. That is a same-vendor check even though the runner reports `independent_vendor: true` (the flag is static per runtime and assumes a Claude host). `--cross-ai claude` is the real cross-vendor second opinion on Codex, even though the runner reports `independent_vendor: false`. Present the run with the matching caveat; neither case is a configuration error. The host-aware flag is tracked in #490.
+[%- endif %]
 
 ## Phase B: Adversarial Review (--adversarial only)
 When `--adversarial` is set (with `--cross-ai`: present cross-AI first, then this), skip the Monitor/Predictor/Evaluator fan-out and the 4-section interactive walkthrough. Instead run the five independent reviewers with isolated contexts, then aggregate. See [adversarial-reference.md](adversarial-reference.md) for the detailed step-by-step commands.
