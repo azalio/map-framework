@@ -3811,3 +3811,60 @@ class TestMapReviewCrossAiSecondOpinion:
         assert "`compare_orderings` (`cross_ai` is reserved; no phase sets it)" in ref
         for text in (skill, ref):
             assert "REVIEW_MODE_LABEL=cross_ai" not in text
+
+
+class TestMapReviewFreshShellBlocks:
+    """Each Bash tool call is a fresh shell, so every fenced bash block must
+    derive the variables it uses instead of relying on an earlier block."""
+
+    _DIR = Path(__file__).parent.parent / ".claude" / "skills" / "map-review"
+    _FILES = ("SKILL.md", "review-reference.md", "adversarial-reference.md")
+    _NAMES = ("BRANCH", "BRANCH_DIR", "REVIEW_MODE_LABEL")
+    _FENCE = re.compile(r"^```bash\n(.*?)^```", re.MULTILINE | re.DOTALL)
+
+    @classmethod
+    def _unassigned_uses(cls, block: str) -> list[str]:
+        lines = block.splitlines()
+        problems = []
+        for name in cls._NAMES:
+            use = re.compile(r"\$\{?" + name + r"\b")
+            assign = re.compile(r"^\s*" + name + r"=")
+            first_use = next((i for i, ln in enumerate(lines) if use.search(ln)), None)
+            if first_use is None:
+                continue
+            first_assign = next(
+                (i for i, ln in enumerate(lines) if assign.match(ln)), None
+            )
+            if first_assign is None or first_assign > first_use:
+                problems.append(name)
+        return problems
+
+    def test_vc2_every_bash_block_assigns_before_first_use(self) -> None:
+        checked = 0
+        for name in self._FILES:
+            text = (self._DIR / name).read_text(encoding="utf-8")
+            for match in self._FENCE.finditer(text):
+                problems = self._unassigned_uses(match.group(1))
+                line_no = text[: match.start()].count("\n") + 1
+                assert not problems, (
+                    f"{name}:{line_no} uses {problems} before assigning"
+                )
+                checked += 1
+        assert checked > 0
+
+    def test_vc2_ledger_blocks_assign_review_mode_label(self) -> None:
+        for name in ("SKILL.md", "review-reference.md"):
+            text = (self._DIR / name).read_text(encoding="utf-8")
+            ledger = [
+                m.group(1)
+                for m in self._FENCE.finditer(text)
+                if "write_review_verdict_ledger" in m.group(1)
+            ]
+            assert ledger, name
+            for block in ledger:
+                assert re.search(r"^REVIEW_MODE_LABEL=", block, re.MULTILINE), name
+
+    def test_vc2_detector_flags_use_without_assignment(self) -> None:
+        assert self._unassigned_uses('echo "$BRANCH_DIR"\n') == ["BRANCH_DIR"]
+        assert self._unassigned_uses('echo "$BRANCH"\nBRANCH=x\n') == ["BRANCH"]
+        assert self._unassigned_uses('BRANCH=x\nBRANCH_DIR=".map/$BRANCH"\n') == []

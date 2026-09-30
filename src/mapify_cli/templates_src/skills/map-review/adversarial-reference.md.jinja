@@ -77,6 +77,8 @@ Each reviewer must return valid JSON matching the adversarial finding schema. If
 Write each reviewer's raw JSON output to a temp file, then aggregate:
 
 ```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH_DIR=".map/$BRANCH"
 printf '%s' "$BLIND_OUTPUT" > .map/$BRANCH/adversarial-blind.json
 printf '%s' "$ACCEPTANCE_OUTPUT" > .map/$BRANCH/adversarial-acceptance.json
 printf '%s' "$USER_EXPERIENCE_OUTPUT" > .map/$BRANCH/adversarial-user-experience.json
@@ -148,7 +150,7 @@ When `--show-raw-findings` is set, also show the raw per-reviewer JSON files.
 ## Step B.adversarial.5: Feed the verdict ledger
 
 This phase does not assign a verdict. Write the aggregator's `ledger_findings`
-array to `.map/$BRANCH/review-agent-adversarial.json` and set
+array to `.map/<branch>/review-agent-adversarial.json` and set
 `REVIEW_MODE_LABEL=adversarial`; `write_review_verdict_ledger` then computes
 `PROCEED`/`REVISE`/`BLOCK` from the decision table in
 [review-reference.md § Verdict Ledger](review-reference.md#verdict-ledger).

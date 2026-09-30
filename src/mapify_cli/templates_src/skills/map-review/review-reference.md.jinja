@@ -223,6 +223,8 @@ Write each reviewer's JSON envelope verbatim with a quoted heredoc, so nothing
 inside the payload is expanded by the shell:
 
 ```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH_DIR=".map/$BRANCH"
 cat > "$BRANCH_DIR/review-agent-monitor.json" <<'MONITOR_EOF'
 <paste the Monitor JSON envelope verbatim>
 MONITOR_EOF
@@ -347,6 +349,9 @@ read errors are findings. Both `adversarial` and `compare_orderings` write their
 `--adversarial-file`.
 
 ```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH_DIR=".map/$BRANCH"
+REVIEW_MODE_LABEL=normal   # or adversarial / compare_orderings when that phase ran
 LEDGER_ARGS=()
 # The artifact name keeps the underscore; the ledger flag uses dashes.
 for ROLE in monitor predictor evaluator adversarial user_experience maintainer; do

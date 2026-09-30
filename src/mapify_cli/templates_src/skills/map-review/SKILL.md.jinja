@@ -218,6 +218,8 @@ says the same thing in 2 seconds).
 # concatenated literal "\n" sequences inside double quotes, which is
 # what `echo` writes verbatim (not a newline). Use printf or direct
 # redirection instead.
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH_DIR=".map/$BRANCH"
 PRECHECK_LOG=".map/$BRANCH/precheck.log"
 mkdir -p ".map/$BRANCH"
 : > "$PRECHECK_LOG"
@@ -246,6 +248,8 @@ contradict a clean precheck require evidence stronger than narrative
 ### Step A.0b: Detect review mode
 
 ```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH_DIR=".map/$BRANCH"
 REVIEW_MODE="full"
 # Empty / placeholder review-bundle.md ⇒ lightweight.
 if [ -f ".map/$BRANCH/review-bundle.md" ] && \
@@ -578,6 +582,9 @@ Pass only the envelopes the phase that ran actually produced — a file that doe
 not exist is a read error, and read errors are findings.
 
 ```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH_DIR=".map/$BRANCH"
+REVIEW_MODE_LABEL=normal   # or adversarial / compare_orderings when that phase ran
 LEDGER_ARGS=()
 # The artifact name keeps the underscore; the ledger flag uses dashes.
 for ROLE in monitor predictor evaluator adversarial user_experience maintainer; do
