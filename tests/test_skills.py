@@ -3771,3 +3771,43 @@ class TestMapPrdReviewReadinessWorkflow:
         assert "an edited document at the same path is a changed source" in (
             flat_content
         ), f"{skill_path} allows a stale review to stand in for a revised PRD"
+
+
+class TestMapReviewCrossAiSecondOpinion:
+    """Cross-AI success is a second opinion; the ledger still decides."""
+
+    _DIR = Path(__file__).parent.parent / ".claude" / "skills" / "map-review"
+    _FILES = ("SKILL.md", "review-reference.md", "adversarial-reference.md")
+
+    def _read(self, name: str) -> str:
+        return (self._DIR / name).read_text(encoding="utf-8")
+
+    def test_vc1_success_row_is_a_second_opinion(self) -> None:
+        text = self._read("review-reference.md")
+        assert "set `FINAL_VERDICT` from `normalized.verdict`" not in text
+        assert "skip adversarial/normal phases" not in text
+        row = next(ln for ln in text.splitlines() if ln.startswith("| `success` |"))
+        assert "second opinion" in row
+        assert "in-session review then runs" in row
+        assert "ledger computes the verdict" in row
+
+    def test_vc2_cross_ai_never_takes_precedence_or_skips(self) -> None:
+        for name in self._FILES:
+            text = self._read(name)
+            assert "precedence" not in text.lower(), name
+            assert "CROSS_AI_STATUS=success" not in text, name
+            assert "(and `--cross-ai` is not)" not in text, name
+        skill = self._read("SKILL.md")
+        assert "present cross-AI first, then this" in skill
+        assert "including after a cross-AI" in skill
+
+    def test_vc3_cross_ai_label_is_reserved(self) -> None:
+        skill = self._read("SKILL.md")
+        ref = self._read("review-reference.md")
+        assert (
+            "`normal`, `adversarial` or\n`compare_orderings` (`cross_ai` is reserved"
+            in skill
+        )
+        assert "`compare_orderings` (`cross_ai` is reserved; no phase sets it)" in ref
+        for text in (skill, ref):
+            assert "REVIEW_MODE_LABEL=cross_ai" not in text

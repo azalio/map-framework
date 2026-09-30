@@ -458,8 +458,8 @@ publishing the bare verdict.
 ## Phase B: Cross-AI Peer Review (--cross-ai only)
 
 When `CROSS_AI_FLAG=true`, dispatch the review to an INDEPENDENT external AI CLI
-instead of the in-session fan-out (precedence over adversarial/normal; ANY
-dispatch failure falls back to the normal in-session review — do NOT hard-stop).
+as a second opinion; the in-session review always runs afterwards (ANY
+dispatch failure just continues to it — do NOT hard-stop).
 Full status protocol, egress/secret-scan, and independence semantics are in
 [review-reference.md](review-reference.md#cross-ai); read that section first.
 
@@ -489,7 +489,7 @@ status (`unparsed`/`secret_blocked`/`disabled`/`unavailable`/`timeout`/`error`) 
 announce `reason` (own-status, never fenced) and fall through the same way.
 
 ## Phase B: Adversarial Review (--adversarial only)
-When `--adversarial` is set (and `--cross-ai` is not), skip the Monitor/Predictor/Evaluator fan-out and the 4-section interactive walkthrough. Instead run the five independent reviewers with isolated contexts, then aggregate. See [adversarial-reference.md](adversarial-reference.md) for the detailed step-by-step commands.
+When `--adversarial` is set (with `--cross-ai`: present cross-AI first, then this), skip the Monitor/Predictor/Evaluator fan-out and the 4-section interactive walkthrough. Instead run the five independent reviewers with isolated contexts, then aggregate. See [adversarial-reference.md](adversarial-reference.md) for the detailed step-by-step commands.
 
 ### Quick reference
 
@@ -509,9 +509,8 @@ When `--adversarial` is set (and `--cross-ai` is not), skip the Monitor/Predicto
 
 ## Phase B: Interactive Presentation (4 Sections) — NORMAL MODE ONLY
 
-This phase runs ONLY when `ADVERSARIAL_FLAG=false` AND `CROSS_AI_STATUS` is not
-`success` (empty or any cross-AI graceful-fallback status). Skip it entirely when
-`--adversarial` is set or `CROSS_AI_STATUS=success`.
+This phase runs ONLY when `ADVERSARIAL_FLAG=false`, including after a cross-AI
+`success`. Skip it entirely when `--adversarial` is set.
 
 ### Step B.0: Determine section presentation order
 
@@ -592,8 +591,8 @@ LEDGER=$(python3 .map/scripts/map_step_runner.py write_review_verdict_ledger \
 FINAL_VERDICT=$(printf '%s' "$LEDGER" | python3 -c 'import json,sys; print(json.load(sys.stdin)["computed_verdict"])')
 ```
 
-`REVIEW_MODE_LABEL` is set by the phase that ran: `normal`, `adversarial`,
-`cross_ai` or `compare_orderings`. Every phase feeds the ledger — none of them
+`REVIEW_MODE_LABEL` is set by the phase that ran: `normal`, `adversarial` or
+`compare_orderings` (`cross_ai` is reserved; no phase sets it). Every phase feeds the ledger — none of them
 assigns its own verdict.
 
 The stage gate below reads `computed_verdict` from `review-verdict-ledger.json` —

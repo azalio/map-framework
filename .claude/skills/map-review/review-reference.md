@@ -171,7 +171,7 @@ Status protocol (`run_cross_ai_review` → `status`):
 
 | `status` | meaning | action |
 |---|---|---|
-| `success` | normalized findings + `untrusted_block` present | present verdict + fenced raw output; set `FINAL_VERDICT` from `normalized.verdict`; skip adversarial/normal phases |
+| `success` | normalized findings + `untrusted_block` present | present verdict + fenced raw output as a second opinion; the in-session review then runs and the ledger computes the verdict |
 | `unparsed` | ran but no parseable findings JSON | present fenced `untrusted_block`; fall back to in-session review |
 | `secret_blocked` | high-confidence secret in outbound prompt | announce `reason` (pattern name only); fall back |
 | `disabled` | `review.cross_ai.enabled` is false | announce; fall back |
@@ -331,7 +331,7 @@ default; `MAP_REVIEW_LEDGER_ENFORCE=0` is the explicit opt-out. Read
 recorded on the ledger for audit. They are deliberately NOT table arguments: no
 reachable branch turns on them today, and a rule nothing can reach is dead code
 in a gate. `evidence_mode` is derived from the run rather than asserted —
-`independent_run` when adversarial or cross-AI findings took part, `structural`
+`independent_run` when adversarial findings took part, `structural`
 otherwise.
 
 `journal.previous_verdict` is read back from the ledger already on disk when
@@ -339,8 +339,8 @@ otherwise.
 
 ### Invocation
 
-`REVIEW_MODE_LABEL` must be one of `normal`, `adversarial`, `cross_ai`, or
-`compare_orderings`, and must name the phase that actually ran. Pass only the
+`REVIEW_MODE_LABEL` must be one of `normal`, `adversarial`, or
+`compare_orderings` (`cross_ai` is reserved; no phase sets it), and must name the phase that actually ran. Pass only the
 envelopes that phase produced: a file that does not exist is a read error, and
 read errors are findings. Both `adversarial` and `compare_orderings` write their
 `ledger_findings` array to `review-agent-adversarial.json`, so both pass
