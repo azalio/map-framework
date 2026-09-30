@@ -332,6 +332,10 @@ If `DETACHED_STATUS` is `success`, tell reviewer agents to read source files fro
 ### Step A.1d: Prepare compare-mode ordering (optional, `--compare-orderings` only)
 
 When compare mode is active, run two review collections with `ordering_label='default'` and `ordering_label='reverse'`, then call `compare-review-runs` and `record-review-ordering` to stage the drift summary. See [review-reference.md](review-reference.md#compare-orderings) for the detailed loop.
+[%- if PROVIDER != "claude" %]
+
+On Codex, `<n>` in `task_name` (the `map_review_<role>_<n>` counter from Step A.2) keeps incrementing across both collections, so the second (`reverse`) collection dispatches with fresh names.
+[%- endif %]
 
 ### Step A.2: Launch all parallel calls
 
@@ -350,16 +354,42 @@ USER_EXPERIENCE_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import
 MAINTAINER_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["maintainer"]["prompt"])')
 ```
 
+[%- if PROVIDER == "claude" %]
+
 Use the extracted prompt variables as the Task prompts. Keep reviewer task calls below the bundle and prompt-builder commands.
+[%- else %]
+
+Use the extracted prompt variables as the spawn_agent messages. Keep reviewer spawn calls below the bundle and prompt-builder commands.
+[%- endif %]
 
 ```text
+[%- if PROVIDER == "claude" %]
 Task(subagent_type="monitor", description="Review diff for correctness", prompt=MONITOR_PROMPT)
 Task(subagent_type="predictor", description="Predict integration risk", prompt=PREDICTOR_PROMPT)
 Task(subagent_type="evaluator", description="Score review quality", prompt=EVALUATOR_PROMPT)
 Task(subagent_type="general-purpose", description="User-perspective regression review", prompt=USER_EXPERIENCE_PROMPT)
 Task(subagent_type="general-purpose", description="Maintainer-perspective rot review", prompt=MAINTAINER_PROMPT)
 If COMPLEXITY_LENS_ENABLED=true: Task(subagent_type="evaluator", description="Find deletable complexity", prompt=COMPLEXITY_LENS_PROMPT)
+[%- else %]
+spawn_agent(agent_type="monitor", task_name="map_review_monitor_<n>", message=MONITOR_PROMPT)
+spawn_agent(agent_type="predictor", task_name="map_review_predictor_<n>", message=PREDICTOR_PROMPT)
+spawn_agent(agent_type="evaluator", task_name="map_review_evaluator_<n>", message=EVALUATOR_PROMPT)
+spawn_agent(agent_type="predictor", task_name="map_review_user_experience_<n>", message=USER_EXPERIENCE_PROMPT)
+spawn_agent(agent_type="documentation-reviewer", task_name="map_review_maintainer_<n>", message=MAINTAINER_PROMPT)
+If COMPLEXITY_LENS_ENABLED=true: spawn_agent(agent_type="evaluator", task_name="map_review_complexity_lens_<n>", message=COMPLEXITY_LENS_PROMPT)
+[%- endif %]
 ```
+[%- if PROVIDER != "claude" %]
+
+Codex dispatch rules:
+
+- `<n>` increments on every dispatch in the run (including the Step A.2b truncation retry and the second `--compare-orderings` collection), so every call gets a unique `task_name`.
+- Each call sends its generated prompt as `message`, plus a reminder that the reviewer is read-only and must return only the required JSON.
+- Wait for all dispatched reviewers and map each final JSON back to its role variable (`MONITOR_OUTPUT`, `PREDICTOR_OUTPUT`, `EVALUATOR_OUTPUT`, `USER_EXPERIENCE_OUTPUT`, `MAINTAINER_OUTPUT`, and `COMPLEXITY_LENS_OUTPUT` when enabled).
+- If concurrency is unavailable, make the same calls sequentially.
+- Never replace independent review with parent-session personas.
+- The routed Codex agent types (`monitor`, `predictor`, `evaluator`, `documentation-reviewer`) carry their own developer instructions; the role prompt in `message` supplements them, it does not replace them.
+[%- endif %]
 
 The role reviewers run in the SAME fan-out but with isolated context: they see
 the diff and the bundle, never the other reviewers' output. They read the repo
@@ -380,6 +410,10 @@ shown below. On truncation: log via
 and re-invoke that reviewer ONCE using the prompt from
 `build_json_retry_prompt --agent <role> --errors '<reasons>'`; if still
 malformed, stop with CLARIFICATION_NEEDED.
+[%- if PROVIDER != "claude" %]
+
+On Codex, the re-invocation is a new `spawn_agent` call: `<n>` keeps incrementing, so the retry gets a fresh `task_name`.
+[%- endif %]
 
 Role → `--agent` kind for the truncation check:
 - monitor reviewer → `--agent review-monitor` (enforces the full review schema:
@@ -502,8 +536,14 @@ When `--adversarial` is set (with `--cross-ai`: present cross-AI first, then thi
 
 ```text
 1. Build prompts:  python3 .map/scripts/map_step_runner.py build_adversarial_review_prompts [--quick]
+[%- if PROVIDER == "claude" %]
 2. Fan-out:        Task(subagent_type="general-purpose", ...) for blind, edge_case, acceptance,
                    user_experience, maintainer — parallel, then wait for all (--quick drops edge_case)
+[%- else %]
+2. Fan-out:        spawn_agent(agent_type=..., task_name="map_review_<role>_<n>", message=<ROLE>_PROMPT)
+                   with blind→monitor, edge_case→monitor, acceptance→evaluator,
+                   user_experience→predictor, maintainer→documentation-reviewer — parallel, then wait for all (--quick drops edge_case)
+[%- endif %]
 3. Validate:       Each must return valid JSON per adversarial finding schema; retry ONCE on failure
 4. Aggregate:      python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings --blind <path> --edge-case <path> --acceptance <path> --user-experience <path> --maintainer <path>
 5. Present:        Unified report: CRITICAL/IMPORTANT/MINOR, convergence section, all-clear statements (--show-raw-findings for debug)

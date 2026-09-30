@@ -51,6 +51,7 @@ MAINTAINER_DESC=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys;
 ## Step B.adversarial.1: Launch all five in parallel (fan-out)
 
 ```text
+[%- if PROVIDER == "claude" %]
 # Launch all five reviewers in parallel — they are fully independent
 # with no shared context. Wait for all to complete before aggregation.
 
@@ -64,7 +65,28 @@ Task(subagent_type="general-purpose", description=USER_EXPERIENCE_DESC, prompt=U
 # Save output as USER_EXPERIENCE_OUTPUT
 Task(subagent_type="general-purpose", description=MAINTAINER_DESC, prompt=MAINTAINER_PROMPT)
 # Save output as MAINTAINER_OUTPUT
+[%- else %]
+# Dispatch all five reviewers together — they are fully independent.
+# <n> increments on every dispatch in the run.
+
+spawn_agent(agent_type="monitor", task_name="map_review_blind_<n>", message=BLIND_PROMPT)
+spawn_agent(agent_type="monitor", task_name="map_review_edge_case_<n>", message=EDGE_PROMPT)  # skip if --quick
+spawn_agent(agent_type="evaluator", task_name="map_review_acceptance_<n>", message=ACCEPTANCE_PROMPT)
+spawn_agent(agent_type="predictor", task_name="map_review_user_experience_<n>", message=USER_EXPERIENCE_PROMPT)
+spawn_agent(agent_type="documentation-reviewer", task_name="map_review_maintainer_<n>", message=MAINTAINER_PROMPT)
+[%- endif %]
 ```
+[%- if PROVIDER != "claude" %]
+
+Codex dispatch rules:
+
+- `<n>` increments on every dispatch in the run (including the Step A.2b truncation retry, the Step B.adversarial.2 re-invoke, and the second `--compare-orderings` collection), so every call gets a unique `task_name`.
+- Each call sends its generated prompt as `message`, plus a reminder that the reviewer is read-only and must return only the required JSON.
+- Wait for all dispatched reviewers and map each final JSON back to `BLIND_OUTPUT`, `EDGE_OUTPUT`, `ACCEPTANCE_OUTPUT`, `USER_EXPERIENCE_OUTPUT`, and `MAINTAINER_OUTPUT`.
+- If concurrency is unavailable, make the same calls sequentially.
+- Never replace independent review with parent-session personas.
+- The routed Codex agent types carry their own developer instructions; the role prompt in `message` supplements them, it does not replace them.
+[%- endif %]
 
 ## Step B.adversarial.2: Validate reviewer outputs
 

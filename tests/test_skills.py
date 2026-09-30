@@ -3909,3 +3909,68 @@ class TestMapReviewSharedSourceCodexRender:
         claude = self._render("review-reference.md.jinja", "claude")
         assert "$map-review" in codex
         assert "/map-review" in claude and "$map-review" not in claude
+
+    _NORMAL_DISPATCH = (
+        ("monitor", "monitor"),
+        ("predictor", "predictor"),
+        ("evaluator", "evaluator"),
+        ("user_experience", "predictor"),
+        ("maintainer", "documentation-reviewer"),
+        ("complexity_lens", "evaluator"),
+    )
+    _ADVERSARIAL_DISPATCH = (
+        ("blind", "monitor"),
+        ("edge_case", "monitor"),
+        ("acceptance", "evaluator"),
+        ("user_experience", "predictor"),
+        ("maintainer", "documentation-reviewer"),
+    )
+
+    @staticmethod
+    def _spawn_line(text: str, role: str, agent_type: str) -> bool:
+        pattern = (
+            rf'spawn_agent\(agent_type="{re.escape(agent_type)}", '
+            rf'task_name="map_review_{role}_<n>", message='
+        )
+        return re.search(pattern, text) is not None
+
+    def test_vc1_codex_dispatch_uses_spawn_agent_with_d4_mapping(self) -> None:
+        skill = self._render("SKILL.md.jinja", "codex")
+        adversarial = self._render("adversarial-reference.md.jinja", "codex")
+        for text in (skill, adversarial):
+            assert "Task(" not in text
+            assert "subagent_type=" not in text
+        for role, agent_type in self._NORMAL_DISPATCH:
+            assert self._spawn_line(skill, role, agent_type), role
+        for role, agent_type in self._ADVERSARIAL_DISPATCH:
+            assert self._spawn_line(adversarial, role, agent_type), role
+        assert "as the spawn_agent messages" in skill
+        quick = (
+            "with blind→monitor, edge_case→monitor, acceptance→evaluator,\n"
+            "                   user_experience→predictor, maintainer→documentation-reviewer"
+        )
+        assert quick in skill
+        assert 'spawn_agent(agent_type=..., task_name="map_review_<role>_<n>"' in skill
+
+    def test_vc1_claude_render_keeps_task_dispatch(self) -> None:
+        for name in ("SKILL.md.jinja", "adversarial-reference.md.jinja"):
+            claude = self._render(name, "claude")
+            assert "Task(subagent_type=" in claude, name
+            assert "spawn_agent(" not in claude, name
+
+    def test_vc2_codex_states_counter_and_five_dispatch_rules(self) -> None:
+        skill = self._render("SKILL.md.jinja", "codex")
+        adversarial = self._render("adversarial-reference.md.jinja", "codex")
+        for text in (skill, adversarial):
+            assert re.search(r"`<n>` increments on every dispatch in the run", text)
+            assert "Step A.2b truncation retry" in text
+            assert "second `--compare-orderings` collection" in text
+            assert "unique `task_name`" in text
+            assert "read-only and must return only the required JSON" in text
+            assert "Wait for all dispatched reviewers and map each final JSON" in text
+            assert "sequentially" in text
+            assert "parent-session personas" in text
+        assert "carry their own developer instructions" in skill
+        assert "fresh `task_name`" in skill.split("Step A.2b: Truncated-response gate")[1]
+        compare = skill.split("Step A.1d")[1].split("Step A.2:")[0]
+        assert "keeps incrementing across both collections" in compare
