@@ -1,10 +1,13 @@
 ---
+[% set cmd = "/" if PROVIDER == "claude" else "$" -%]
 name: map-review
 description: |
   Interactive 4-section code review using Monitor, Predictor, and Evaluator agents plus the user and maintainer role reviewers on current changes. Use when reviewing a diff, PR, or staged work before merge. Do NOT use to plan or implement; use map-plan or map-efficient.
+[%- if PROVIDER == "claude" %]
 effort: high
 disable-model-invocation: true
 argument-hint: "[review focus] [--detached] [--ci] [--reverse-sections] [--shuffle-sections] [--seed <int>] [--compare-orderings] [--adversarial] [--quick] [--show-raw-findings] [--cross-ai <runtime>]"
+[%- endif %]
 ---
 [% include "_partials/auto-update-preflight.md.jinja" %]
 # MAP Review Workflow
@@ -284,7 +287,7 @@ Mode semantics:
 ### Step A.1: Gather changes
 
 Diff against the **merge-base with the default branch**, not `HEAD`. On a
-fully-committed branch — the normal `/map-check` → `/map-review` state —
+fully-committed branch — the normal `<% cmd %>map-check` → `<% cmd %>map-review` state —
 `git diff HEAD` is empty and under-reports the review scope to zero (#426).
 
 ```bash
@@ -669,7 +672,7 @@ CI mode auto-selects options marked `(Recommended)`, records the selected path, 
 
 ## Optional: Preserve Review Learnings
 
-After review closes, run `/map-learn` if this review produced reusable rules, gotchas, or repeated issues.
+After review closes, run `<% cmd %>map-learn` if this review produced reusable rules, gotchas, or repeated issues.
 
 ## MCP Tools Used
 

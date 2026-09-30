@@ -1,4 +1,5 @@
-# /map-review Supporting Reference
+[% set cmd = "/" if PROVIDER == "claude" else "$" -%]
+# <% cmd %>map-review Supporting Reference
 
 This file contains lower-frequency review details. Keep `SKILL.md` focused on the active review sequence.
 
@@ -187,27 +188,27 @@ all` (multi-runtime consensus) is a planned follow-up slice.
 
 Plain review:
 ```text
-/map-review correctness first
+<% cmd %>map-review correctness first
 ```
 
 Cross-AI second opinion (requires `review.cross_ai.enabled: true`):
 ```text
-/map-review --cross-ai codex
+<% cmd %>map-review --cross-ai codex
 ```
 
 Detached review:
 ```text
-/map-review --detached
+<% cmd %>map-review --detached
 ```
 
 CI review:
 ```text
-/map-review --ci
+<% cmd %>map-review --ci
 ```
 
 Ordering drift check:
 ```text
-/map-review --compare-orderings
+<% cmd %>map-review --compare-orderings
 ```
 
 ## Verdict Ledger

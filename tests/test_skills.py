@@ -3868,3 +3868,44 @@ class TestMapReviewFreshShellBlocks:
         assert self._unassigned_uses('echo "$BRANCH_DIR"\n') == ["BRANCH_DIR"]
         assert self._unassigned_uses('echo "$BRANCH"\nBRANCH=x\n') == ["BRANCH"]
         assert self._unassigned_uses('BRANCH=x\nBRANCH_DIR=".map/$BRANCH"\n') == []
+
+
+class TestMapReviewSharedSourceCodexRender:
+    """The shared map-review sources render cleanly for the Codex provider."""
+
+    _SRC = (
+        Path(__file__).resolve().parent.parent
+        / "src/mapify_cli/templates_src/skills/map-review"
+    )
+    _FILES = ("SKILL.md.jinja", "review-reference.md.jinja", "adversarial-reference.md.jinja")
+    _BARE_SLASH_CMD = re.compile(r"(?<![A-Za-z0-9_./-])/map-")
+    _GATED_KEYS = ("effort:", "disable-model-invocation:", "argument-hint:")
+
+    def _render(self, name: str, provider: str) -> str:
+        from mapify_cli.delivery.template_renderer import get_environment
+
+        env = get_environment(self._SRC.parent.parent)
+        source = (self._SRC / name).read_text(encoding="utf-8")
+        return env.from_string(source).render(PROVIDER=provider)
+
+    def test_vc1_codex_frontmatter_drops_claude_only_keys(self) -> None:
+        codex = self._render("SKILL.md.jinja", "codex")
+        front = codex.split("---\n")[1]
+        assert front.startswith("name: map-review\n")
+        assert "description:" in front
+        for key in self._GATED_KEYS:
+            assert key not in front
+        claude_front = self._render("SKILL.md.jinja", "claude").split("---\n")[1]
+        positions = [claude_front.index(k) for k in self._GATED_KEYS]
+        assert positions == sorted(positions)
+
+    def test_vc3_command_prefix_follows_provider(self) -> None:
+        for name in self._FILES:
+            source = (self._SRC / name).read_text(encoding="utf-8")
+            assert not self._BARE_SLASH_CMD.search(source), name
+            assert "[% set cmd" in source, name
+            assert not self._BARE_SLASH_CMD.search(self._render(name, "codex")), name
+        codex = self._render("review-reference.md.jinja", "codex")
+        claude = self._render("review-reference.md.jinja", "claude")
+        assert "$map-review" in codex
+        assert "/map-review" in claude and "$map-review" not in claude
