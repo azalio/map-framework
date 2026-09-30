@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `/map-review --adversarial` no longer tells the agent to pick the verdict
+  itself. Step B.adversarial.5 carried an old rule (BLOCK only for a
+  corroborated CRITICAL or more than two CRITICAL from one reviewer) that
+  contradicted the verdict ledger. The step now points to the ledger, which
+  blocks on any CRITICAL or an important security/correctness finding.
+
 ## [3.31.4] - 2026-09-29
 
 ### Changed

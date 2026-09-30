@@ -145,12 +145,14 @@ Parse the aggregated JSON and present the report in this structure:
 
 When `--show-raw-findings` is set, also show the raw per-reviewer JSON files.
 
-## Step B.adversarial.5: Determine verdict
+## Step B.adversarial.5: Feed the verdict ledger
 
-Based on aggregated findings:
-- **BLOCK**: any CRITICAL finding with corroboration OR > 2 CRITICAL from any single reviewer
-- **REVISE**: any CRITICAL (uncorroborated) OR any IMPORTANT
-- **PROCEED**: only MINOR findings OR all all_clear
+This phase does not assign a verdict. Write the aggregator's `ledger_findings`
+array to `.map/$BRANCH/review-agent-adversarial.json` and set
+`REVIEW_MODE_LABEL=adversarial`; `write_review_verdict_ledger` then computes
+`PROCEED`/`REVISE`/`BLOCK` from the decision table in
+[review-reference.md § Verdict Ledger](review-reference.md#verdict-ledger).
+Corroboration raises confidence in the report; it does not change the verdict.
 
 ## Step B.adversarial.6: Skip to Final Verdict
 
