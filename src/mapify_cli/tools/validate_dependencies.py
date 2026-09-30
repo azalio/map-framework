@@ -78,7 +78,7 @@ _ST_ID_RE = re.compile(r"^ST-\d{3,}$")
 
 def _is_valid_task_id(value: object) -> bool:
     """Return True for integer IDs or ST-NNN string IDs."""
-    if isinstance(value, int):
+    if isinstance(value, int) and not isinstance(value, bool):
         return True
     if isinstance(value, str):
         return bool(_ST_ID_RE.match(value))
@@ -393,7 +393,7 @@ class ASCIIGraphRenderer:
             List of task IDs that are roots (no incoming edges in dependency graph)
         """
         roots = []
-        for task_id in sorted(self.task_ids):
+        for task_id in sorted(self.task_ids, key=str):
             # Root nodes are those that don't depend on anything
             if len(self.adjacency[task_id]) == 0:
                 roots.append(task_id)
@@ -431,7 +431,7 @@ class ASCIIGraphRenderer:
                     queue.append(dependent)
 
         # Add remaining nodes (those in cycles) in sorted order
-        remaining = sorted([tid for tid in self.task_ids if in_degree[tid] > 0])
+        remaining = sorted([tid for tid in self.task_ids if in_degree[tid] > 0], key=str)
         sorted_order.extend(remaining)
 
         return sorted_order
@@ -494,7 +494,7 @@ class ASCIIGraphRenderer:
         child_prefix = prefix + ("    " if is_last else "│   ")
 
         # Get tasks that depend on this one (children in the tree)
-        dependents = sorted(self.reverse_adjacency.get(task_id, []))
+        dependents = sorted(self.reverse_adjacency.get(task_id, []), key=str)
 
         # Render children
         for i, dep_task_id in enumerate(dependents):
@@ -596,7 +596,7 @@ class ASCIIGraphRenderer:
         if unvisited:
             lines.append("")
             lines.append(f"{C.YELLOW}Disconnected/Cyclic Tasks:{C.RESET}")
-            for task_id in sorted(unvisited):
+            for task_id in sorted(unvisited, key=str):
                 title = self.validator.get_task_title(task_id)
                 color = self._get_task_color(task_id, use_colors)
                 node_label = f"Task {task_id}"
