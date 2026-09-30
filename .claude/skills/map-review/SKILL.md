@@ -145,33 +145,33 @@ CI mode scans for the `(Recommended)` marker; it does not pick by first position
 
 ```bash
 CI_MODE=false
-if echo "$ARGUMENTS" | grep -qE -- '--(ci|auto)'; then
+if printf '%s' "$ARGUMENTS" | grep -qE -- '--(ci|auto)'; then
   CI_MODE=true
 fi
 
 DETACHED_FLAG=false
-if echo "$ARGUMENTS" | grep -q -- '--detached'; then
+if printf '%s' "$ARGUMENTS" | grep -q -- '--detached'; then
   DETACHED_FLAG=true
-  ARGUMENTS=$(echo "$ARGUMENTS" | sed 's/--detached//g' | xargs)
+  ARGUMENTS=$(printf '%s' "$ARGUMENTS" | sed 's/--detached//g' | xargs)
 fi
 
 REVERSE_FLAG=false
-if echo "$ARGUMENTS" | grep -q -- '--reverse-sections'; then
+if printf '%s' "$ARGUMENTS" | grep -q -- '--reverse-sections'; then
   REVERSE_FLAG=true
 fi
 
 SHUFFLE_FLAG=false
-if echo "$ARGUMENTS" | grep -q -- '--shuffle-sections'; then
+if printf '%s' "$ARGUMENTS" | grep -q -- '--shuffle-sections'; then
   SHUFFLE_FLAG=true
 fi
 
 SEED_RAW=""
-if echo "$ARGUMENTS" | grep -qE -- '--seed[ =][0-9]+'; then
-  SEED_RAW=$(echo "$ARGUMENTS" | sed -nE 's/.*--seed[ =]([0-9]+).*/\1/p')
+if printf '%s' "$ARGUMENTS" | grep -qE -- '--seed[ =][0-9]+'; then
+  SEED_RAW=$(printf '%s' "$ARGUMENTS" | sed -nE 's/.*--seed[ =]([0-9]+).*/\1/p')
 fi
 
 COMPARE_FLAG=false
-if echo "$ARGUMENTS" | grep -q -- '--compare-orderings'; then
+if printf '%s' "$ARGUMENTS" | grep -q -- '--compare-orderings'; then
   COMPARE_FLAG=true
 fi
 
@@ -183,21 +183,21 @@ fi
 ADVERSARIAL_FLAG=false
 QUICK_FLAG=false
 SHOW_RAW_FLAG=false
-if echo "$ARGUMENTS" | grep -q -- '--adversarial'; then
+if printf '%s' "$ARGUMENTS" | grep -q -- '--adversarial'; then
   ADVERSARIAL_FLAG=true
 fi
-if echo "$ARGUMENTS" | grep -q -- '--quick'; then
+if printf '%s' "$ARGUMENTS" | grep -q -- '--quick'; then
   QUICK_FLAG=true
 fi
-if echo "$ARGUMENTS" | grep -q -- '--show-raw-findings'; then
+if printf '%s' "$ARGUMENTS" | grep -q -- '--show-raw-findings'; then
   SHOW_RAW_FLAG=true
 fi
 
 CROSS_AI_FLAG=false
 CROSS_AI_RUNTIME=""  # optional --cross-ai <rt>; empty => configured default
-if echo "$ARGUMENTS" | grep -qE -- '--cross-ai'; then
+if printf '%s' "$ARGUMENTS" | grep -qE -- '--cross-ai'; then
   CROSS_AI_FLAG=true
-  CROSS_AI_RUNTIME=$(echo "$ARGUMENTS" | sed -nE 's/.*--cross-ai[ =]([a-z][a-z0-9-]*).*/\1/p')
+  CROSS_AI_RUNTIME=$(printf '%s' "$ARGUMENTS" | sed -nE 's/.*--cross-ai[ =]([a-z][a-z0-9-]*).*/\1/p')
 fi
 
 MODE_FLAG="default"
