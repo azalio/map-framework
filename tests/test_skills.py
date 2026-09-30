@@ -62,7 +62,7 @@ SUPPORTED_SKILL_CLASSES = {"reference", "task", "hybrid"}
 # so the generic Claude negative-trigger convention does not apply here.
 NEGATIVE_TRIGGER_DESCRIPTION_EXEMPT_SKILLS = {"map-upgrade"}
 # Codex twins rendered from the Claude source via [% include %] (PROVIDER-conditional).
-SINGLE_SOURCE_CODEX_SKILLS = {"map-architecture", "map-auto"}
+SINGLE_SOURCE_CODEX_SKILLS = {"map-architecture", "map-auto", "map-review"}
 
 WORKFLOW_EFFORT_PROFILES = {
     "map-fast": "low/direct",
@@ -492,14 +492,16 @@ class TestProviderUpdateSkills:
             encoding="utf-8"
         )
         assert source.startswith('---\n[% set cmd = "/" if PROVIDER == "claude" else "$" -%]\n')
-        assert "/map-" not in source, "use <% cmd %>map- so both providers render"
+        claude_cmd = re.compile(r"(?<![A-Za-z0-9_./-])/map-")
+        codex_cmd = re.compile(r"(?<![A-Za-z0-9_$./-])\$map-")
+        assert not claude_cmd.search(source), "use <% cmd %>map- so both providers render"
 
         claude = project_root / ".claude/skills" / skill / "SKILL.md"
         codex = project_root / ".agents/skills" / skill / "SKILL.md"
         claude_text = claude.read_text(encoding="utf-8")
         codex_text = codex.read_text(encoding="utf-8")
-        assert "$map-" not in claude_text and "/map-" in claude_text
-        assert "/map-" not in codex_text and "$map-" in codex_text
+        assert not codex_cmd.search(claude_text) and claude_cmd.search(claude_text)
+        assert not claude_cmd.search(codex_text) and codex_cmd.search(codex_text)
         for key in ("effort:", "disable-model-invocation:", "argument-hint:"):
             assert key in claude_text.partition("\n---\n")[0]
             assert key not in codex_text.partition("\n---\n")[0]
