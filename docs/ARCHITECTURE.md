@@ -1355,14 +1355,23 @@ Their output is governed by a **five-part contract** — `problem` (one line + `
 
 #### 5. `/map-release` - Release Workflow (No Agents)
 
-**Workflow:** 7 sequential phases with validation gates (no AI agents)
+**Workflow:** 7 sequential phases with validation gates (no AI agents).
+Claude `/map-release` and Codex `$map-release` render from shared provider-aware
+sources, including the supporting reference. Provider-specific confirmation UX
+remains explicit; the release policy is shared.
+
+Gate 11 and the pre-push gate verify CI for `git merge-base HEAD origin/main`.
+Only `CHANGELOG.md`, `pyproject.toml` and `src/mapify_cli/__init__.py` may change
+in local commits after that verified base. Each gate requires a completed,
+successful CI run whose `headSha` equals the base; missing/malformed evidence,
+Git/GitHub failures and unverified application files abort before tag push.
 
 **Phases:**
 1. Pre-release validation (12 gates: tests, lint, CI, security, CHANGELOG)
 2. Version determination (user chooses bump type)
 3. Execute bump-version.sh (updates pyproject.toml, CHANGELOG, creates tag)
 4. Push tag (⚠️ IRREVERSIBLE - triggers CI/CD)
-5. Monitor CI/CD, create GitHub release
+5. Monitor the release workflow for the tag's exact commit; it creates the GitHub Release automatically
 6. Verify PyPI availability + installation test
 7. Summary
 

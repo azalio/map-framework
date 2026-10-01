@@ -62,7 +62,7 @@ SUPPORTED_SKILL_CLASSES = {"reference", "task", "hybrid"}
 # so the generic Claude negative-trigger convention does not apply here.
 NEGATIVE_TRIGGER_DESCRIPTION_EXEMPT_SKILLS = {"map-upgrade"}
 # Codex twins rendered from the Claude source via [% include %] (PROVIDER-conditional).
-SINGLE_SOURCE_CODEX_SKILLS = {"map-architecture", "map-auto", "map-review"}
+SINGLE_SOURCE_CODEX_SKILLS = {"map-architecture", "map-auto", "map-review", "map-release"}
 
 WORKFLOW_EFFORT_PROFILES = {
     "map-fast": "low/direct",
@@ -3872,6 +3872,65 @@ class TestMapReviewFreshShellBlocks:
         assert self._unassigned_uses('BRANCH=x\nBRANCH_DIR=".map/$BRANCH"\n') == []
 
 
+class TestMapReleaseSharedSourceCodexRender:
+    """Both providers share release safety while retaining native consent surfaces."""
+
+    _FILES = ("SKILL.md.jinja", "release-reference.md.jinja")
+
+    def _render(self, name: str, provider: str) -> str:
+        from mapify_cli.delivery.template_renderer import get_environment
+
+        root = Path(__file__).resolve().parents[1] / "src/mapify_cli/templates_src"
+        return get_environment(root).get_template(f"skills/map-release/{name}").render(
+            PROVIDER=provider
+        )
+
+    def test_frontmatter_and_command_prefix_follow_provider(self) -> None:
+        codex = self._render("SKILL.md.jinja", "codex")
+        claude = self._render("SKILL.md.jinja", "claude")
+        for key in ("effort:", "disable-model-invocation:", "argument-hint:"):
+            assert key not in codex.split("---\n")[1]
+            assert key in claude.split("---\n")[1]
+        for name in self._FILES:
+            codex, claude = self._render(name, "codex"), self._render(name, "claude")
+            assert not re.search(r"(?<![A-Za-z0-9_./-])/map-", codex)
+            assert "$map-release" in codex and "/map-release" in claude
+            assert "AskUserQuestion" not in codex
+            assert "AskUserQuestion" in claude
+            assert "[%" not in codex and "<%" not in codex
+
+    def test_user_decisions_remain_binding_on_both_providers(self) -> None:
+        for provider in ("claude", "codex"):
+            reference = self._render("release-reference.md.jinja", provider)
+            assert "ask a separate question for the exact" in reference
+            assert "Only YES permits Phase 4.3" in reference
+            assert "never interpret REVIEW, silence" in reference
+            assert "user-approved exact version" in reference
+            if provider == "codex":
+                assert "do not continue until they answer" in reference
+                assert "Accept only an unambiguous YES" in reference
+
+    def test_gate_blocks_are_identical_across_provider_outputs(self) -> None:
+        for heading in ("### Gate 11:", "### 4.1 Pre-Push"):
+            blocks = []
+            for provider in ("claude", "codex"):
+                section = self._render("release-reference.md.jinja", provider).split(
+                    heading, 1
+                )[1]
+                blocks.append(re.search(r"```bash\n(.*?)\n```", section, re.DOTALL))
+            assert blocks[0] is not None and blocks[1] is not None
+            assert blocks[0].group(1) == blocks[1].group(1)
+
+    def test_release_sources_do_not_restore_stale_selection_or_pipe_head(self) -> None:
+        for name in self._FILES:
+            for provider in ("claude", "codex"):
+                text = self._render(name, provider)
+                assert not re.search(r"\|\s*head\b", text)
+                assert "gh run list --branch main" not in text
+                assert "git tag --sort=-version" not in text
+                assert "--limit 1" not in text
+
+
 class TestMapReviewSharedSourceCodexRender:
     """The shared map-review sources render cleanly for the Codex provider."""
 
@@ -4039,7 +4098,9 @@ def _non_include_twins(twin_dir: Path) -> list[Path]:
 
 
 def test_single_source_codex_skills_set_is_pinned() -> None:
-    assert SINGLE_SOURCE_CODEX_SKILLS == {"map-architecture", "map-auto", "map-review"}
+    assert SINGLE_SOURCE_CODEX_SKILLS == {
+        "map-architecture", "map-auto", "map-review", "map-release"
+    }
 
 
 @pytest.mark.parametrize("skill", sorted(SINGLE_SOURCE_CODEX_SKILLS))
