@@ -11,6 +11,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -275,6 +276,7 @@ def test_envelope_ledger_gate_fresh_shell(project, case):
     gate = _bash_blocks(text, "## Handoff Artifact Update")[0]
 
     # Each rendered block runs in its own fresh shell, in order.
+    _start_review(project, "", lightweight=case in {"PROCEED", "REVISE"})
     _run_block(project, _capture_script(capture, envelopes))
     branch_dir = project / ".map" / BRANCH_DIR_NAME
     for role in envelopes:
@@ -291,6 +293,155 @@ def test_envelope_ledger_gate_fresh_shell(project, case):
         # Only an ingested Evaluator envelope populates evaluator_scores, so this
         # proves the rendered ledger loop passed --evaluator-file through.
         assert _find_key(ledger_doc, "evaluator_scores") == envelopes["evaluator"]
+
+
+def _adversarial_report(root: Path, findings: list[dict]) -> dict:
+    branch_dir = root / ".map" / BRANCH_DIR_NAME
+    clean = {"all_clear": True, "findings": [], "checks_performed": ["changed paths"]}
+    roles = ("blind", "edge_case", "acceptance", "user_experience", "maintainer")
+    flags = []
+    for role in roles:
+        payload = {**clean, "all_clear": False, "findings": findings} if role == "blind" and findings else clean
+        path = branch_dir / f"adversarial-{role}.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        flags.extend([f"--{role.replace('_', '-')}", str(path)])
+    output = _run_block(root, shlex.join([
+        "python3", ".map/scripts/map_step_runner.py", "aggregate_adversarial_findings", *flags,
+    ]))
+    return json.loads(output)
+
+
+def _start_review(root: Path, arguments: str, *, lightweight: bool = False) -> None:
+    branch_dir = root / ".map" / BRANCH_DIR_NAME
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    (branch_dir / "review-bundle.md").write_text(
+        "MISSING\n" if lightweight else "## Review bundle\nChanged paths and requirements\n",
+        encoding="utf-8",
+    )
+    text = _skill_text(root)
+    blocks = [
+        _bash_blocks(text, "## Step 0")[0],
+        _bash_blocks(text, "### Step A.0b")[0],
+    ]
+    for block in re.findall(r"```bash\n(.*?)\n```", text, flags=re.DOTALL):
+        if "begin_review_run" in block and block not in blocks:
+            blocks.append(block)
+    _run_block(root, f"ARGUMENTS={shlex.quote(arguments)}\n" + "\n".join(blocks))
+
+
+@pytest.mark.parametrize(
+    ("previous", "mode", "arguments", "current", "expected"),
+    [
+        ("blocked", "adversarial", "--adversarial", "minor", "PROCEED"),
+        ("blocked", "compare_orderings", "--adversarial --compare-orderings", "minor", "PROCEED"),
+        ("adversarial", "normal", "", "monitor", "PROCEED"),
+        ("blocked", "normal", "", "peers", "REVISE"),
+        ("clean", "normal", "", "peers", "REVISE"),
+    ],
+    ids=["normal-to-adversarial", "compare-orderings", "adversarial-to-lightweight",
+         "same-mode-missing-blocked-monitor", "same-mode-missing-clean-monitor"],
+)
+def test_current_review_closeout_does_not_consume_previous_run(
+    project, previous, mode, arguments, current, expected,
+):
+    branch_dir = project / ".map" / BRANCH_DIR_NAME
+    capture = _bash_blocks(_skill_text(project), "### Step A.2c")[0]
+    ledger_block = _bash_blocks(_skill_text(project), "## Write Review Verdict Ledger")[0]
+    gate_block = _bash_blocks(_skill_text(project), "## Handoff Artifact Update")[0]
+    blocked_monitor = {**MONITOR_FINDING, "issues": [
+        {**MONITOR_FINDING["issues"][0], "category": "correctness"},
+    ]}
+    minor = [{"severity": "minor", "category": "tests", "claim": "Naming nit"}]
+    _start_review(project, "", lightweight=True)
+    _run_block(project, _capture_script(capture, {
+        "monitor": blocked_monitor if previous == "blocked" else MONITOR_CLEAN,
+    }))
+    _run_block(project, ledger_block)
+    _run_block(project, gate_block)
+    if previous == "adversarial":
+        _start_review(project, "--adversarial")
+        (branch_dir / "review-agent-adversarial.json").write_text(
+            json.dumps(_adversarial_report(project, [{
+                "severity": "critical", "category": "correctness", "claim": "Old bug",
+            }])), encoding="utf-8",
+        )
+        _run_block(project, ledger_block)
+        _run_block(project, gate_block)
+    prior = json.loads((branch_dir / "review-verdict-ledger.json").read_text())["computed_verdict"]
+
+    _start_review(project, arguments, lightweight=current == "monitor")
+    if current == "minor":
+        report = _adversarial_report(project, minor)
+        directories = [branch_dir] if mode != "compare_orderings" else [
+            branch_dir / "review-collections" / label for label in ("default", "reverse")
+        ]
+        for directory in directories:
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "review-agent-adversarial.json").write_text(json.dumps(report), encoding="utf-8")
+    else:
+        envelopes = {"monitor": MONITOR_CLEAN} if current == "monitor" else {
+            "predictor": PREDICTOR_LOW_RISK, "evaluator": EVALUATOR_HIGH,
+            "user_experience": _role_clear("user_experience"), "maintainer": _role_clear("maintainer"),
+        }
+        _run_block(project, _capture_script(capture, envelopes))
+    _run_block(project, ledger_block)
+    _run_block(project, gate_block)
+
+    ledger = json.loads((branch_dir / "review-verdict-ledger.json").read_text())
+    assert ledger["computed_verdict"] == expected
+    assert ledger["input_classification"]["review_mode"] == mode
+    assert ledger["journal"]["previous_verdict"] == prior
+    gate = json.loads((branch_dir / "review-gate.json").read_text())
+    assert gate["verdict"] == ("ready" if expected == "PROCEED" else "needs-revision")
+
+
+@pytest.mark.parametrize("content", [None, "", "{}", '{"unrelated":true}'],
+                         ids=["missing", "empty", "empty-object", "unrelated-object"])
+def test_missing_or_empty_scheduled_monitor_cannot_be_masked_by_clean_peers(project, content):
+    _start_review(project, "")
+    text = _skill_text(project)
+    capture = _bash_blocks(text, "### Step A.2c")[0]
+    peers = {role: envelope for role, envelope in ROSTERS["full_roster_PROCEED"][0].items()
+             if role != "monitor"}
+    _run_block(project, _capture_script(capture, peers))
+    branch_dir = project / ".map" / BRANCH_DIR_NAME
+    if content is not None:
+        (branch_dir / "review-agent-monitor.json").write_text(content, encoding="utf-8")
+    _run_block(project, _bash_blocks(text, "## Write Review Verdict Ledger")[0])
+    ledger = json.loads((branch_dir / "review-verdict-ledger.json").read_text())
+    assert ledger["computed_verdict"] == "REVISE"
+    assert any("monitor" in row["claim"] for row in ledger["findings_registry"]
+               if row["transition_reason"] == "input_integrity")
+
+
+def test_quick_adversarial_capture_uses_persisted_roster_in_a_fresh_shell(project):
+    _start_review(project, "--adversarial --quick")
+    branch_dir = project / ".map" / BRANCH_DIR_NAME
+    (branch_dir / "adversarial-edge.json").write_text("stale edge", encoding="utf-8")
+    reference = (project / ".agents/skills/map-review/adversarial-reference.md").read_text()
+    capture = _bash_blocks(reference, "## Step B.adversarial.3")[0]
+    clean = json.dumps({"all_clear": True, "findings": [], "checks_performed": ["diff"]})
+    capture = re.sub(r"<paste [^>]*JSON[^>]*>", clean, capture)
+    _run_block(project, capture)
+    assert not (branch_dir / "adversarial-edge.json").exists()
+    for role in ("blind", "acceptance", "user-experience", "maintainer"):
+        raw = json.loads((branch_dir / f"adversarial-{role}.json").read_text())
+        assert raw["all_clear"] is True
+        assert raw["findings"] == []
+    mode = json.loads((branch_dir / "review-mode.json").read_text())
+    assert mode["review_mode"] == "adversarial"
+    assert mode["scheduled_reviewers"] == ["blind", "acceptance", "user_experience", "maintainer"]
+
+
+def test_current_run_closeout_without_mode_fails_loudly(project):
+    text = _skill_text(project)
+    proc = subprocess.run(
+        ["bash", "-c", _bash_blocks(text, "## Write Review Verdict Ledger")[0]],
+        cwd=project, capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode != 0
+    assert "review-mode.json" in proc.stderr + proc.stdout
+    assert not (project / ".map" / BRANCH_DIR_NAME / "review-verdict-ledger.json").exists()
 
 
 def _find_key(node: object, key: str) -> object:

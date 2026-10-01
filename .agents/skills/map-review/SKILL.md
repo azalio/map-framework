@@ -266,11 +266,16 @@ fi
 SIBLING_HINT=""
 if git log -1 --format=%B | grep -iE 'twin of |sibling |mirror of |port of ' >/dev/null; then
   REVIEW_MODE="sibling-aware"
-  SIBLING_HINT=$(git log -1 --format=%B | grep -oiE '(twin of|sibling|mirror of|port of)[^.]*' | head -1)
+  SIBLING_HINT=$(git log -1 --format=%B | grep -oiE '(twin of|sibling|mirror of|port of)[^.]*' | sed -n '1p')
 fi
-echo "{\"mode\":\"$REVIEW_MODE\",\"sibling_hint\":\"$SIBLING_HINT\"}" \
-  > .map/$BRANCH/review-mode.json
+python3 .map/scripts/map_step_runner.py begin_review_run \
+  --mode "$REVIEW_MODE" --arguments="$ARGUMENTS" --sibling-hint "$SIBLING_HINT" || exit 1
 ```
+
+Start once per invocation, before any capture or fan-out. Abort on a start error;
+never restart during a reviewer retry or between ordering collections. The runner
+archives only prior reviewer inputs and gate, preserves ledger/objections, and
+persists the actual mode, arguments and scheduled roster in `review-mode.json`.
 
 Mode semantics:
 - **`full`** (default): five reviewers TOTAL — Monitor, Predictor, Evaluator + both roles (`complexity_lens` is advisory, extra), all four sections.
@@ -417,7 +422,9 @@ unobserved review, not as a clean one.
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 BRANCH_DIR=".map/$BRANCH"
-REVIEW_MODE_LABEL=normal   # overridden by Phase A/B when another mode ran
+# For compare-orderings set ORDERING_LABEL=default or reverse in this call.
+# Preserve both collections; do not call begin_review_run between them.
+if [ -n "${ORDERING_LABEL:-}" ]; then BRANCH_DIR="$BRANCH_DIR/review-collections/$ORDERING_LABEL"; fi
 mkdir -p "$BRANCH_DIR"
 
 cat > "$BRANCH_DIR/review-agent-monitor.json" <<'MONITOR_EOF'
@@ -428,9 +435,9 @@ MONITOR_EOF
 The quoted heredoc marker (`<<'MONITOR_EOF'`, quotes included) is what stops the
 shell expanding anything inside the payload. Repeat for `predictor`,
 `evaluator`, `user_experience` and `maintainer`. In adversarial or
-compare-orderings mode write the aggregator's **`ledger_findings`** array to
-`review-agent-adversarial.json` instead — that array, NOT `findings`, since it
-also carries `contract_incomplete` (see review-reference.md § Verdict Ledger).
+compare-orderings mode write the complete tagged aggregate to
+`review-agent-adversarial.json` instead, including `ledger_findings`,
+`reviewer_status` and `parse_errors`; an empty findings array alone cannot prove review.
 
 ### Step A.3: Verification gate (MANDATORY before any presentation)
 
@@ -525,8 +532,8 @@ When `--adversarial` is set (with `--cross-ai`: present cross-AI first, then thi
 3. Validate:       Each must return valid JSON per adversarial finding schema; retry ONCE on failure
 4. Aggregate:      python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings --blind <path> --edge-case <path> --acceptance <path> --user-experience <path> --maintainer <path>
 5. Present:        Unified report: CRITICAL/IMPORTANT/MINOR, convergence section, all-clear statements (--show-raw-findings for debug)
-6. Feed ledger:    write ledger_findings (NOT findings) to "$BRANCH_DIR/review-agent-adversarial.json"
-                   and set REVIEW_MODE_LABEL=adversarial (compare-orderings: compare_orderings)
+6. Feed ledger:    persist the complete tagged aggregate to "$BRANCH_DIR/review-agent-adversarial.json"
+                   including ledger_findings, reviewer_status and parse_errors
 7. Skip to:        Final Verdict → Handoff Artifacts; do NOT run normal 4-section walkthrough
                    The verdict is computed by the ledger from those findings — this phase
                    does not assign one.
@@ -599,22 +606,14 @@ so either spelling is accepted by `write_stage_gate`.
 Run this BEFORE the stage gate: the review gate is refused when its verdict
 contradicts the computed one.
 
-Pass only the envelopes the phase that ran actually produced — a file that does
-not exist is a read error, and read errors are findings.
+Use the persisted scheduled roster, not file discovery. The runner passes every
+expected path even when missing or empty; those failures are integrity findings.
 
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 BRANCH_DIR=".map/$BRANCH"
-REVIEW_MODE_LABEL=normal   # or adversarial / compare_orderings when that phase ran
-LEDGER_ARGS=()
-# The artifact name keeps the underscore; the ledger flag uses dashes.
-for ROLE in monitor predictor evaluator adversarial user_experience maintainer; do
-  [ -f "$BRANCH_DIR/review-agent-$ROLE.json" ] && \
-    LEDGER_ARGS+=(--"${ROLE//_/-}"-file "$BRANCH_DIR/review-agent-$ROLE.json")
-done
-
-LEDGER=$(python3 .map/scripts/map_step_runner.py write_review_verdict_ledger \
-  "${LEDGER_ARGS[@]}" --review-mode "$REVIEW_MODE_LABEL")
+REVIEW_MODE_LABEL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["review_mode"])' "$BRANCH_DIR/review-mode.json") || exit 1
+LEDGER=$(python3 .map/scripts/map_step_runner.py write_review_verdict_ledger --current-run) || exit 1
 
 FINAL_VERDICT=$(printf '%s' "$LEDGER" | python3 -c 'import json,sys; print(json.load(sys.stdin)["computed_verdict"])')
 ```

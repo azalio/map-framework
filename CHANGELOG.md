@@ -22,6 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#490). The Codex skill text says so.
 
 ### Fixed
+- Test helpers use concrete update-state/context-manager return types, narrow
+  recorded CLI argument arrays before membership checks, and give nested SOFA
+  operations distinct names. The shipped Python-version guard remains checked
+  by static analysis without losing its unsupported-interpreter behavior; PRD
+  boundary annotations now match their runtime input checks. (#493)
+- `/map-review` retains successful adversarial review evidence even when the
+  reviewers report no findings. Missing or malformed reviewer output still
+  requires revision. New runs isolate reviewer inputs from earlier runs, so an
+  old envelope cannot block a clean review or replace a missing current one.
+  The previous verdict remains available in the ledger journal. (#492)
 - `/map-review --adversarial` no longer tells the agent to pick the verdict
   itself. Step B.adversarial.5 carried an old rule (BLOCK only for a
   corroborated CRITICAL or more than two CRITICAL from one reviewer) that

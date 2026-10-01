@@ -406,6 +406,7 @@ def test_vc2_dry_run_counts_no_dispatch(tmp_path: Path) -> None:
     dispatch_called = []
 
     def _raise_if_called(*_args: object, **_kwargs: object) -> None:
+        del _args, _kwargs
         dispatch_called.append(True)
         raise AssertionError(
             "ClaudeSubprocessDispatcher.dispatch must NOT be called in dry-run"
@@ -456,7 +457,7 @@ def test_vc3_missing_claude_exits_nonzero(tmp_path: Path) -> None:
     original_which = mapify_cli.shutil.which
 
     def _which_none(name: object, *_args: object, **_kwargs: object) -> None:
-        return None
+        del name, _args, _kwargs
 
     mapify_cli.shutil.which = _which_none  # type: ignore[attr-defined]
     try:
@@ -488,7 +489,11 @@ def test_missing_codex_provider_exits_nonzero(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(mapify_cli.shutil, "which", lambda name: None)
+
+    def missing_binary(name: str) -> None:
+        del name
+
+    monkeypatch.setattr(mapify_cli.shutil, "which", missing_binary)
     try:
         result = CliRunner().invoke(
             app,
@@ -556,11 +561,17 @@ def test_cli_run_then_cross_provider_resume_stays_scoped(
         json.dumps({"entries": [{"prompt": "hello"}]}), encoding="utf-8"
     )
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(mapify_cli.shutil, "which", lambda _name: "/bin/fake")
+
+    def fake_binary(name: str) -> str:
+        del name
+        return "/bin/fake"
+
+    monkeypatch.setattr(mapify_cli.shutil, "which", fake_binary)
 
     def _dispatch(
         _self: VariantDispatcher, _prompt: str
     ) -> DispatchResult:
+        del _self, _prompt
         return DispatchResult(
             raw_output="ok",
             triggered_skill=None,
@@ -640,11 +651,17 @@ def test_cli_resumes_providerless_claude_partial_run_with_trailing_fragment(
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(mapify_cli.shutil, "which", lambda _name: "/bin/fake")
+
+    def fake_binary(name: str) -> str:
+        del name
+        return "/bin/fake"
+
+    monkeypatch.setattr(mapify_cli.shutil, "which", fake_binary)
 
     def _dispatch(
         _self: ClaudeSubprocessDispatcher, _prompt: str
     ) -> DispatchResult:
+        del _self, _prompt
         return DispatchResult(
             raw_output="ok",
             triggered_skill=None,
@@ -687,6 +704,7 @@ def test_dry_run_malformed_eval_set_exits_2(tmp_path: Path) -> None:
     dispatch_called = []
 
     def _raise_if_called(*_args: object, **_kwargs: object) -> None:
+        del _args, _kwargs
         dispatch_called.append(True)
         raise AssertionError("dispatch must NOT be called on malformed eval-set")
 
@@ -810,8 +828,10 @@ def test_codex_dispatcher_uses_isolated_seed_and_exec_json(
         max_retries=0,
     ).dispatch("prompt")
 
-    assert seen["argv"] == codex_exec_argv()
-    assert "--sandbox" in seen["argv"] and "read-only" in seen["argv"]
+    argv = seen["argv"]
+    assert isinstance(argv, list)
+    assert argv == codex_exec_argv()
+    assert "--sandbox" in argv and "read-only" in argv
     assert seen["seeded"] == (True, True)
     assert seen["instrumented"] is True
     assert seen["body_replaced"] is True
@@ -865,6 +885,7 @@ def test_vc4_backoff_bounded_on_transient_failure(
         *args: object,
         **kwargs: object,
     ) -> object:
+        del args, kwargs
         call_count[0] += 1
         import subprocess as _sp
 
@@ -872,7 +893,7 @@ def test_vc4_backoff_bounded_on_transient_failure(
         return result
 
     def _noop_sleep(seconds: object) -> None:
-        pass
+        del seconds
 
     monkeypatch.setattr(_disp_mod.subprocess, "run", _failing_run)
     monkeypatch.setattr(_disp_mod.time, "sleep", _noop_sleep)
@@ -912,6 +933,7 @@ def test_vc3_subprocess_cwd_is_temp_not_repo_map(
         *args: object,
         **kwargs: object,
     ) -> object:
+        del args
         cwd_val = kwargs.get("cwd")
         if cwd_val is not None:
             cwd_path = Path(str(cwd_val))
@@ -933,7 +955,7 @@ def test_vc3_subprocess_cwd_is_temp_not_repo_map(
         return _sp.CompletedProcess(args=argv, returncode=0, stdout=envelope, stderr="")
 
     def _noop_sleep(seconds: object) -> None:
-        pass
+        del seconds
 
     monkeypatch.setattr(_disp_mod.subprocess, "run", _capture_run)
     monkeypatch.setattr(_disp_mod.time, "sleep", _noop_sleep)

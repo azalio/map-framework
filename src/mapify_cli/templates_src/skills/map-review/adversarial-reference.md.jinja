@@ -25,10 +25,9 @@ fill all five is dropped by `aggregate_adversarial_findings` into
 ## Step B.adversarial.0: Build adversarial review prompts
 
 ```bash
-QUICK_ARG=""
-if [ "$QUICK_FLAG" = "true" ]; then
-  QUICK_ARG="--quick"
-fi
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH_DIR=".map/$BRANCH"
+QUICK_ARG=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("--quick" if "edge_case" not in d["scheduled_reviewers"] else "")' "$BRANCH_DIR/review-mode.json") || exit 1
 
 ADV_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_adversarial_review_prompts $QUICK_ARG)
 
@@ -102,40 +101,34 @@ Write each reviewer's raw JSON output to a temp file, then aggregate:
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 BRANCH_DIR=".map/$BRANCH"
-printf '%s' "$BLIND_OUTPUT" > .map/$BRANCH/adversarial-blind.json
-printf '%s' "$ACCEPTANCE_OUTPUT" > .map/$BRANCH/adversarial-acceptance.json
-printf '%s' "$USER_EXPERIENCE_OUTPUT" > .map/$BRANCH/adversarial-user-experience.json
-printf '%s' "$MAINTAINER_OUTPUT" > .map/$BRANCH/adversarial-maintainer.json
-
-# The Edge Case Hunter did not run under --quick. Writing its file anyway
-# would leave an EMPTY payload (or a stale one from an earlier full run)
-# that the `-f` test below happily forwards; the aggregator then reports
-# edge_case as parse_error, or folds in findings from another review.
-# Remove it, then write it only when the pass actually ran.
-rm -f .map/$BRANCH/adversarial-edge.json
+RUN_MODE="$BRANCH_DIR/review-mode.json"
+QUICK_FLAG=$(python3 -c 'import json,sys; print("true" if "edge_case" not in json.load(open(sys.argv[1]))["scheduled_reviewers"] else "false")' "$RUN_MODE") || exit 1
+# In compare-orderings set ORDERING_LABEL=default or reverse in this call.
+if [ -n "${ORDERING_LABEL:-}" ]; then BRANCH_DIR="$BRANCH_DIR/review-collections/$ORDERING_LABEL"; fi
+mkdir -p "$BRANCH_DIR"
+cat > "$BRANCH_DIR/adversarial-blind.json" <<'BLIND_EOF'
+<paste the Blind JSON envelope verbatim>
+BLIND_EOF
+cat > "$BRANCH_DIR/adversarial-acceptance.json" <<'ACCEPTANCE_EOF'
+<paste the Acceptance JSON envelope verbatim>
+ACCEPTANCE_EOF
+cat > "$BRANCH_DIR/adversarial-user-experience.json" <<'USER_EOF'
+<paste the User Experience JSON envelope verbatim>
+USER_EOF
+cat > "$BRANCH_DIR/adversarial-maintainer.json" <<'MAINTAINER_EOF'
+<paste the Maintainer JSON envelope verbatim>
+MAINTAINER_EOF
+rm -f "$BRANCH_DIR/adversarial-edge.json"
+ADV_ARGS=(--blind "$BRANCH_DIR/adversarial-blind.json" --acceptance "$BRANCH_DIR/adversarial-acceptance.json"
+  --user-experience "$BRANCH_DIR/adversarial-user-experience.json" --maintainer "$BRANCH_DIR/adversarial-maintainer.json")
 if [ "$QUICK_FLAG" != "true" ]; then
-  printf '%s' "$EDGE_OUTPUT" > .map/$BRANCH/adversarial-edge.json
+  cat > "$BRANCH_DIR/adversarial-edge.json" <<'EDGE_EOF'
+<paste the Edge Case JSON envelope verbatim>
+EDGE_EOF
+  ADV_ARGS+=(--edge-case "$BRANCH_DIR/adversarial-edge.json")
 fi
-
-ADV_ARGS=""
-if [ -f .map/$BRANCH/adversarial-blind.json ]; then
-  ADV_ARGS="$ADV_ARGS --blind .map/$BRANCH/adversarial-blind.json"
-fi
-if [ -f .map/$BRANCH/adversarial-edge.json ]; then
-  ADV_ARGS="$ADV_ARGS --edge-case .map/$BRANCH/adversarial-edge.json"
-fi
-if [ -f .map/$BRANCH/adversarial-acceptance.json ]; then
-  ADV_ARGS="$ADV_ARGS --acceptance .map/$BRANCH/adversarial-acceptance.json"
-fi
-if [ -f .map/$BRANCH/adversarial-user-experience.json ]; then
-  ADV_ARGS="$ADV_ARGS --user-experience .map/$BRANCH/adversarial-user-experience.json"
-fi
-if [ -f .map/$BRANCH/adversarial-maintainer.json ]; then
-  ADV_ARGS="$ADV_ARGS --maintainer .map/$BRANCH/adversarial-maintainer.json"
-fi
-
-ADV_AGGREGATED=$(python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings \
-  $ADV_ARGS)
+python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings \
+  "${ADV_ARGS[@]}" > "$BRANCH_DIR/review-agent-adversarial.json" || exit 1
 ```
 
 ## Step B.adversarial.4: Present unified adversarial report
@@ -172,9 +165,10 @@ When `--show-raw-findings` is set, also show the raw per-reviewer JSON files.
 
 ## Step B.adversarial.5: Feed the verdict ledger
 
-This phase does not assign a verdict. Write the aggregator's `ledger_findings`
-array to `.map/<branch>/review-agent-adversarial.json` and set
-`REVIEW_MODE_LABEL=adversarial`; `write_review_verdict_ledger` then computes
+This phase does not assign a verdict. The capture block persists the complete
+`adversarial_aggregate.v1` report, including `ledger_findings`, `reviewer_status`
+and `parse_errors`. Closeout reads the current roster from `review-mode.json`;
+`write_review_verdict_ledger --current-run` then computes
 `PROCEED`/`REVISE`/`BLOCK` from the decision table in
 [review-reference.md § Verdict Ledger](review-reference.md#verdict-ledger).
 Corroboration raises confidence in the report; it does not change the verdict.

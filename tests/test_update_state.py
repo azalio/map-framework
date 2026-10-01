@@ -10,6 +10,8 @@ import stat
 import subprocess
 import sys
 import threading
+from collections.abc import Callable, Generator
+from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Any, cast
@@ -348,6 +350,7 @@ def test_failed_state_replace_preserves_old_state_and_removes_tempfile(
     replace_error = OSError("replace failed")
 
     def fail_replace(source: Path, destination: Path) -> None:
+        del source, destination
         raise replace_error
 
     monkeypatch.setattr(update_state_module.os, "replace", fail_replace)
@@ -396,7 +399,7 @@ def test_missing_state_is_a_default_cache_miss(tmp_path: Path) -> None:
 def test_pending_refresh_state_requires_flag_version_and_provider_membership(
     tmp_path: Path,
 ) -> None:
-    pending_refresh_state = getattr(
+    pending_refresh_state: Callable[[Path, str], UpdateState | None] | None = getattr(
         update_state_module,
         "pending_refresh_state",
         None,
@@ -450,10 +453,8 @@ def test_pending_refresh_state_requires_flag_version_and_provider_membership(
 def test_complete_pending_provider_refresh_narrows_then_clears_state(
     tmp_path: Path,
 ) -> None:
-    complete_pending_provider_refresh = getattr(
-        update_state_module,
-        "complete_pending_provider_refresh",
-        None,
+    complete_pending_provider_refresh: Callable[[Path, str], UpdateState] | None = (
+        getattr(update_state_module, "complete_pending_provider_refresh", None)
     )
     assert callable(
         complete_pending_provider_refresh
@@ -632,7 +633,9 @@ def test_parent_lease_requires_active_lock_exact_parent_project_and_refresh_phas
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    validate = getattr(update_state_module, "validate_parent_update_lease", None)
+    validate: Callable[[Path, str, str, str | None], bool] | None = getattr(
+        update_state_module, "validate_parent_update_lease", None
+    )
     assert callable(validate), "provider children need a validated lease boundary"
     write_update_state(
         tmp_path,
@@ -664,7 +667,9 @@ def test_parent_lease_accepts_only_matching_install_intent_phase(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    validate = getattr(update_state_module, "validate_parent_update_lease", None)
+    validate: Callable[[Path, str, str, str | None], bool] | None = getattr(
+        update_state_module, "validate_parent_update_lease", None
+    )
     assert callable(validate)
     write_update_state(
         tmp_path,
@@ -683,7 +688,9 @@ def test_parent_lease_accepts_only_matching_install_intent_phase(
 def test_provider_refresh_lock_is_an_independent_orphan_barrier(
     tmp_path: Path,
 ) -> None:
-    refresh_lock = getattr(update_state_module, "provider_refresh_lock", None)
+    refresh_lock: Callable[..., AbstractContextManager[None]] | None = getattr(
+        update_state_module, "provider_refresh_lock", None
+    )
     assert callable(refresh_lock), "orphan refreshes need their own barrier lock"
 
     with (
@@ -703,7 +710,9 @@ def test_provider_refresh_lock_is_an_independent_orphan_barrier(
 def test_installer_process_lock_is_an_independent_orphan_barrier(
     tmp_path: Path,
 ) -> None:
-    installer_lock = getattr(update_state_module, "installer_process_lock", None)
+    installer_lock: Callable[..., AbstractContextManager[None]] | None = getattr(
+        update_state_module, "installer_process_lock", None
+    )
     assert callable(installer_lock), "orphan installers need their own barrier lock"
 
     with (
@@ -717,7 +726,9 @@ def test_installer_process_lock_is_an_independent_orphan_barrier(
 def test_installer_probe_does_not_create_barrier_when_no_controller_exists(
     tmp_path: Path,
 ) -> None:
-    probe = getattr(update_state_module, "installer_process_probe", None)
+    probe: Callable[..., AbstractContextManager[None]] | None = getattr(
+        update_state_module, "installer_process_probe", None
+    )
     assert callable(probe)
     (tmp_path / ".map").mkdir()
 
@@ -730,7 +741,9 @@ def test_installer_probe_does_not_create_barrier_when_no_controller_exists(
 def test_standalone_provider_refresh_session_owns_locks_in_global_order(
     tmp_path: Path,
 ) -> None:
-    session = getattr(update_state_module, "provider_refresh_session", None)
+    session: Callable[..., AbstractContextManager[None]] | None = getattr(
+        update_state_module, "provider_refresh_session", None
+    )
     assert callable(session), "refresh-existing needs a serialized session boundary"
 
     with session(
@@ -755,8 +768,12 @@ def test_standalone_provider_refresh_session_owns_locks_in_global_order(
 def test_standalone_provider_refresh_waits_for_orphan_installer(
     tmp_path: Path,
 ) -> None:
-    installer_lock = getattr(update_state_module, "installer_process_lock", None)
-    session = getattr(update_state_module, "provider_refresh_session", None)
+    installer_lock: Callable[..., AbstractContextManager[None]] | None = getattr(
+        update_state_module, "installer_process_lock", None
+    )
+    session: Callable[..., AbstractContextManager[None]] | None = getattr(
+        update_state_module, "provider_refresh_session", None
+    )
     assert callable(installer_lock)
     assert callable(session)
     write_update_state(
@@ -786,7 +803,9 @@ def test_borrowed_provider_refresh_session_promotes_matching_intent_without_dead
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    session = getattr(update_state_module, "provider_refresh_session", None)
+    session: Callable[..., AbstractContextManager[None]] | None = getattr(
+        update_state_module, "provider_refresh_session", None
+    )
     assert callable(session)
     write_update_state(
         tmp_path,
@@ -831,7 +850,8 @@ def test_borrowed_refresh_revalidates_parent_inside_provider_barrier(
         _project_path: Path,
         *,
         timeout_s: float,
-    ) -> Any:
+    ) -> Generator[None, None, None]:
+        del _project_path
         nonlocal barrier_held
         assert timeout_s == 0.0
         barrier_held = True
@@ -841,6 +861,7 @@ def test_borrowed_refresh_revalidates_parent_inside_provider_barrier(
             barrier_held = False
 
     def validate_inside_barrier(*_args: object, **_kwargs: object) -> bool:
+        del _args, _kwargs
         assert barrier_held, (
             "parent death after validation must not let a delayed child cross a "
             "replacement updater's completed barrier probe"
@@ -874,8 +895,12 @@ def test_parent_refresh_session_rejects_missing_or_forged_lease_under_contention
     monkeypatch: pytest.MonkeyPatch,
     raw_lease: str | None,
 ) -> None:
-    session = getattr(update_state_module, "provider_refresh_session", None)
-    rejection = getattr(update_state_module, "UpdateLeaseRejected", RuntimeError)
+    session: Callable[..., AbstractContextManager[None]] | None = getattr(
+        update_state_module, "provider_refresh_session", None
+    )
+    rejection: type[RuntimeError] = getattr(
+        update_state_module, "UpdateLeaseRejected", RuntimeError
+    )
     assert callable(session)
     write_update_state(
         tmp_path,

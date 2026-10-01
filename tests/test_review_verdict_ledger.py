@@ -3,6 +3,7 @@
 import json
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -1643,6 +1644,261 @@ def test_unreadable_role_envelope_is_a_finding_not_a_clean_pass(branch_workspace
     )
     assert result["computed_verdict"] in {"REVISE", "BLOCK"}
     assert any("maintainer" in err for err in result["input_errors"])
+
+
+# ---------------------------------------------------------------------------
+# Observed adversarial reviews and review-run isolation
+# ---------------------------------------------------------------------------
+
+
+def _all_clear_adversarial_report(blind_payload: str | None = "clean") -> dict:
+    clean = json.dumps({
+        "all_clear": True,
+        "all_clear_rationale": "Reviewed the diff and found no reachable defect",
+        "findings": [],
+        "checks_performed": ["changed paths", "boundary inputs"],
+    })
+    return map_step_runner.aggregate_adversarial_findings(
+        blind_json=clean if blind_payload == "clean" else blind_payload,
+        edge_case_json=clean,
+        acceptance_json=clean,
+        role_json={"user_experience": clean, "maintainer": clean},
+    )
+
+
+@pytest.mark.parametrize("mode", ["adversarial", "compare_orderings"])
+def test_all_clear_adversarial_aggregate_is_an_observed_review(branch_workspace, mode):
+    report = _all_clear_adversarial_report()
+    assert report["ledger_findings"] == []
+    assert report["parse_errors"] == []
+    assert {entry["status"] for entry in report["reviewer_status"].values()} == {"ok"}
+    aggregate_path = branch_workspace / "review-agent-adversarial.json"
+    aggregate_path.write_text(json.dumps(report), encoding="utf-8")
+
+    result = map_step_runner.write_review_verdict_ledger(
+        adversarial_file=str(aggregate_path), review_mode=mode,
+    )
+
+    assert result["computed_verdict"] == "PROCEED"
+    assert result["input_errors"] == []
+    ledger = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())
+    assert ledger["findings_registry"] == []
+    assert ledger["escalation_required"] is False
+    assert ledger["input_classification"]["review_mode"] == mode
+    assert ledger["input_classification"]["evidence_mode"] == "independent_run"
+
+
+@pytest.mark.parametrize("observed", [False, True])
+def test_adversarial_observation_is_independent_of_finding_count(observed):
+    ledger = cast(Any, map_step_runner).normalize_review_verdict(
+        adversarial_findings=[], adversarial_inputs_supplied=observed,
+        review_mode="adversarial", branch="test-branch",
+    )
+    assert ledger["computed_verdict"] == ("PROCEED" if observed else "REVISE")
+    assert ledger["escalation_required"] is not observed
+
+
+@pytest.mark.parametrize(
+    "blind_payload",
+    [None, "", "{broken", "{}", '{"all_clear":"true","findings":[]}',
+     '{"all_clear":true,"findings":{}}',
+     '{"all_clear":true,"findings":[{"severity":"MINOR","category":"tests"}]}'],
+    ids=["missing", "empty", "invalid-json", "missing-fields", "invalid-bool",
+         "invalid-findings", "contradictory-all-clear"],
+)
+def test_adversarial_incomplete_current_reviewer_fails_closed_with_clean_peers(
+    branch_workspace, blind_payload,
+):
+    del branch_workspace
+    result = map_step_runner.write_review_verdict_ledger(
+        adversarial_json=json.dumps(_all_clear_adversarial_report(blind_payload)),
+        review_mode="adversarial",
+    )
+    assert result["computed_verdict"] == "REVISE"
+    assert any("blind" in error for error in result["input_errors"]), result
+
+
+@pytest.mark.parametrize("broken_field", ["schema_version", "ledger_findings", "parse_errors"])
+def test_malformed_tagged_adversarial_aggregate_is_not_a_legacy_finding(
+    branch_workspace, broken_field,
+):
+    del branch_workspace
+    report = _all_clear_adversarial_report()
+    report[broken_field] = "adversarial_aggregate.v999" if broken_field == "schema_version" else {}
+    result = map_step_runner.write_review_verdict_ledger(
+        adversarial_json=json.dumps(report), review_mode="adversarial",
+    )
+    assert result["computed_verdict"] == "REVISE"
+    assert result["input_errors"], "a malformed aggregate must be reported as input integrity"
+
+
+@pytest.mark.parametrize("container", ["empty-list", "empty-dict", "finding-list", "finding-dict"])
+def test_legacy_adversarial_payload_compatibility(branch_workspace, container):
+    del branch_workspace
+    finding = {"severity": "critical", "category": "correctness", "claim": "Data loss"}
+    payload = {"empty-list": [], "empty-dict": {}, "finding-list": [finding], "finding-dict": finding}[
+        container
+    ]
+    result = map_step_runner.write_review_verdict_ledger(
+        adversarial_json=json.dumps(payload), review_mode="adversarial",
+    )
+    assert result["computed_verdict"] == ("REVISE" if container.startswith("empty-") else "BLOCK")
+    assert result["input_errors"] == []
+
+
+def test_begin_review_run_archives_only_inputs_and_gate_preserving_journal(branch_workspace):
+    workspace = branch_workspace
+    map_step_runner.write_review_verdict_ledger(monitor_json=json.dumps(_monitor_with_critical()))
+    map_step_runner.record_review_objection("RVF-001", "no_new_fact", "retain this objection")
+    preserved_names = (
+        "review-verdict-ledger.json", "review-verdict-ledger.md", "review-objections.json",
+    )
+    preserved = {name: (workspace / name).read_bytes() for name in preserved_names}
+    stale_names = (
+        *(f"review-agent-{role}.json" for role in (
+            "monitor", "predictor", "evaluator", "adversarial", "user_experience", "maintainer",
+        )),
+        *(f"adversarial-{role}.json" for role in (
+            "blind", "edge", "acceptance", "user-experience", "maintainer",
+        )),
+        "review-mode.json", "review-gate.json",
+    )
+    stale = {name: json.dumps({"previous_input": name}).encode() for name in stale_names}
+    untouched = {
+        "review-agent-unrelated.json": b"not a runner-owned reviewer",
+        "adversarial-unrelated.json": b"not a runner-owned raw envelope",
+        "code-review-001.md": b"previous walkthrough",
+    }
+    for name, content in {**stale, **untouched}.items():
+        (workspace / name).write_bytes(content)
+
+    result = cast(Any, map_step_runner).begin_review_run(
+        review_mode="adversarial",
+        scheduled_reviewers=["blind", "edge_case", "acceptance", "user_experience", "maintainer"],
+    )
+
+    assert result["status"] == "success"
+    for name, content in stale.items():
+        archived = [path for path in workspace.rglob(name) if path != workspace / name]
+        assert len(archived) == 1, name
+        assert archived[0].read_bytes() == content
+        if name != "review-mode.json":
+            assert not (workspace / name).exists(), name
+    for name, content in {**preserved, **untouched}.items():
+        assert (workspace / name).read_bytes() == content
+        assert list(workspace.rglob(name)) == [workspace / name], name
+    mode = json.loads((workspace / "review-mode.json").read_text())
+    assert mode["review_mode"] == "adversarial"
+    assert mode["scheduled_reviewers"] == [
+        "blind", "edge_case", "acceptance", "user_experience", "maintainer",
+    ]
+    map_step_runner.write_review_verdict_ledger(monitor_json=json.dumps(_monitor_no_issues()))
+    ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
+    assert ledger["journal"]["previous_verdict"] == "BLOCK"
+
+
+def test_same_mode_review_reruns_do_not_overwrite_archived_inputs(branch_workspace):
+    workspace = branch_workspace
+    begin = cast(Any, map_step_runner).begin_review_run
+    for marker in ("first", "second"):
+        (workspace / "review-agent-monitor.json").write_text(marker, encoding="utf-8")
+        begin(review_mode="normal", scheduled_reviewers=["monitor"])
+    archives = list(workspace.rglob("review-agent-monitor.json"))
+    assert len(archives) == 2
+    assert {path.read_text() for path in archives} == {"first", "second"}
+    assert not (workspace / "review-agent-monitor.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("arguments", "mode", "reviewers"),
+    [
+        ("check user's config", "normal", ["monitor", "predictor", "evaluator", "user_experience", "maintainer"]),
+        ('review the "new config', "normal", ["monitor", "predictor", "evaluator", "user_experience", "maintainer"]),
+        ("check user's config --adversarial --quick", "adversarial", ["blind", "acceptance", "user_experience", "maintainer"]),
+        ('review "new config --compare-orderings', "compare_orderings", ["monitor", "predictor", "evaluator", "user_experience", "maintainer"]),
+    ],
+    ids=["apostrophe", "unbalanced-quote", "prose-quick-flags", "prose-compare-flag"],
+)
+def test_review_start_accepts_free_prose_preserving_arguments(branch_workspace, arguments, mode, reviewers):
+    result = map_step_runner.begin_review_run(arguments=arguments)
+    assert result["status"] == "success"
+    persisted = json.loads((branch_workspace / "review-mode.json").read_text())
+    assert persisted["arguments"] == arguments
+    assert persisted["review_mode"] == mode
+    assert persisted["scheduled_reviewers"] == reviewers
+
+
+def test_review_start_preserves_sibling_hint(branch_workspace):
+    result = map_step_runner.begin_review_run(mode="sibling-aware", sibling_hint="port of sibling/install.py")
+    assert result["status"] == "success"
+    persisted = json.loads((branch_workspace / "review-mode.json").read_text())
+    assert persisted["mode"] == "sibling-aware"
+    assert persisted["sibling_hint"] == "port of sibling/install.py"
+
+
+def test_current_run_requires_tagged_adversarial_evidence(branch_workspace):
+    map_step_runner.begin_review_run(arguments="--adversarial")
+    (branch_workspace / "review-agent-adversarial.json").write_text(json.dumps([
+        {"severity": "minor", "category": "tests", "claim": "Finding without roster evidence"},
+    ]), encoding="utf-8")
+    result = map_step_runner.write_review_verdict_ledger(current_run=True)
+    assert result["computed_verdict"] == "REVISE"
+    assert any("tagged aggregate" in error for error in result["input_errors"])
+
+
+def test_archive_failure_aborts_review_start_before_new_mode(branch_workspace, monkeypatch):
+    marker = branch_workspace / "review-agent-monitor.json"
+    marker.write_text("prior review", encoding="utf-8")
+
+    def fail_rename(self, target):
+        del self, target
+        raise OSError("archive unavailable")
+
+    monkeypatch.setattr(Path, "rename", fail_rename)
+    result = map_step_runner.begin_review_run(scheduled_reviewers=["monitor"])
+    assert result["status"] == "error"
+    assert "archive unavailable" in result["message"]
+    assert marker.read_text() == "prior review"
+    assert not (branch_workspace / "review-mode.json").exists()
+
+
+@pytest.mark.parametrize("missing_collection", [False, True], ids=["both-returned", "reverse-missing"])
+@pytest.mark.parametrize("adversarial", [False, True], ids=["normal", "adversarial"])
+def test_compare_orderings_preserves_both_collections(branch_workspace, missing_collection, adversarial):
+    workspace = branch_workspace
+    map_step_runner.begin_review_run(arguments="--compare-orderings" + (" --adversarial" if adversarial else ""))
+    for label in ("default", "reverse"):
+        directory = workspace / "review-collections" / label
+        directory.mkdir(parents=True, exist_ok=True)
+        if label == "reverse" and missing_collection:
+            continue
+        if adversarial:
+            report = _all_clear_adversarial_report()
+            if label == "default":
+                report["ledger_findings"] = [{
+                    "severity": "important", "category": "performance", "claim": "First collection hot-path regression",
+                }]
+            (directory / "review-agent-adversarial.json").write_text(json.dumps(report), encoding="utf-8")
+        else:
+            envelopes = {
+                "monitor": _monitor_no_issues(), "predictor": _predictor_low_risk(), "evaluator": _evaluator_high_score(),
+                "user_experience": {"all_clear": True, "findings": []},
+                "maintainer": {"all_clear": True, "findings": []},
+            }
+            if label == "default":
+                envelopes["monitor"] = {"issues": [{
+                    "severity": "HIGH", "category": "performance", "description": "First collection hot-path regression",
+                    "reach_evidence": "benchmark reproduces", "was_present_before_pr": False,
+                }]}
+            for reviewer, envelope in envelopes.items():
+                (directory / f"review-agent-{reviewer}.json").write_text(json.dumps(envelope), encoding="utf-8")
+    result = map_step_runner.write_review_verdict_ledger(current_run=True)
+    assert result["computed_verdict"] == "REVISE"
+    ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
+    assert any("First collection" in row["claim"] for row in ledger["findings_registry"])
+    assert bool(result["input_errors"]) is missing_collection
+    if missing_collection:
+        assert any("reverse" in error for error in result["input_errors"])
 
 
 def test_ledger_with_role_findings_validates_against_its_declared_schema(branch_workspace):
