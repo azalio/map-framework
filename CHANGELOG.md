@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Codex `$map-release` and its supporting reference render from the shared
+  provider-aware release sources instead of separate copies. (#488)
 - Codex `$map-review` is rendered from the same source as the Claude
   `/map-review`, so the two can no longer drift apart. Codex dispatch names now
   come from one counter, so retries and the second `--compare-orderings` pass
@@ -22,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#490). The Codex skill text says so.
 
 ### Fixed
+- Both release CI gates reject missing, malformed, incomplete, failed or
+  mismatched-commit evidence and stop on Git/GitHub command failures. They verify
+  the merge-base with `origin/main`, allowing only the three release-metadata
+  files after that commit. Codex no longer accepts an older green run on `main`.
+  Release steps derive their tag and workflow run in each fresh shell; monitoring
+  selects the release workflow for the tag's exact commit and rejects multiple
+  JSON response values instead of accepting the last one. (#488)
 - Test helpers use concrete update-state/context-manager return types, narrow
   recorded CLI argument arrays before membership checks, and give nested SOFA
   operations distinct names. The shipped Python-version guard remains checked

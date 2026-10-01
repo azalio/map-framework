@@ -1,6 +1,7 @@
-# /map-release Supporting Reference
+[% set cmd = '$' if PROVIDER == 'codex' else '/' -%]
+# <% cmd %>map-release Supporting Reference
 
-This file holds full phase scripts, rollback procedures, examples, and troubleshooting for `/map-release` so the invoked `SKILL.md` stays focused on the active release flow.
+This file holds full phase scripts, rollback procedures, examples, and troubleshooting for `<% cmd %>map-release` so the invoked `SKILL.md` stays focused on the active release flow.
 
 ## Phase 1: Pre-Release Validation
 
@@ -76,11 +77,21 @@ git pull origin main
 # CI only runs on pushed commits. Local commits on top of origin/main (a
 # docs(changelog) fix-up, later the chore(release) bump) never get a run, so
 # verify CI on the merge-base and allow only release-metadata files after it.
-git fetch origin main -q
-BASE_SHA=$(git merge-base HEAD origin/main)
-UNVERIFIED=$(git diff --name-only "$BASE_SHA" HEAD | grep -vxE 'CHANGELOG\.md|pyproject\.toml|src/mapify_cli/__init__\.py' || true)
-[[ -n "$UNVERIFIED" ]] && echo "❌ ABORT: local commits change files CI has not verified — push them and wait for CI:" && echo "$UNVERIFIED" && exit 1
-gh run list --commit "$BASE_SHA" --workflow CI --json conclusion,status,headSha --jq '.[0]'
+git fetch origin main -q || { echo "ABORT: git fetch failed"; exit 1; }
+BASE_SHA=$(git merge-base HEAD origin/main) || { echo "ABORT: merge-base failed"; exit 1; }
+[[ -n "$BASE_SHA" ]] || { echo "ABORT: missing merge-base"; exit 1; }
+# Intent: capture diff before filtering so grep's no-match cannot hide git failure.
+CHANGED_FILES=$(git diff --name-only "$BASE_SHA" HEAD) || { echo "ABORT: git diff failed"; exit 1; }
+UNVERIFIED=$(printf '%s\n' "$CHANGED_FILES" | grep -vxE 'CHANGELOG\.md|pyproject\.toml|src/mapify_cli/__init__\.py|^$')
+FILTER_STATUS=$?
+[[ "$FILTER_STATUS" -le 1 ]] || { echo "ABORT: file filter failed"; exit 1; }
+[[ -z "$UNVERIFIED" ]] || { echo "ABORT: files not verified by CI:"; printf '%s\n' "$UNVERIFIED"; exit 1; }
+CI_RUN=$(gh run list --commit "$BASE_SHA" --workflow CI --json conclusion,status,headSha --jq '.[0]') || { echo "ABORT: CI query failed"; exit 1; }
+printf '%s' "$CI_RUN" | jq -es --arg sha "$BASE_SHA" '
+  length == 1 and (.[0] | type == "object" and .status == "completed" and
+  .conclusion == "success" and .headSha == $sha)
+' > /dev/null || { echo "ABORT: missing, invalid, incomplete, failed, or mismatched CI evidence"; exit 1; }
+echo "CI verified: $BASE_SHA"
 ```
 
 **Expected Results:**
@@ -181,7 +192,7 @@ fi
 
 ```bash
 # Get current version from pyproject.toml
-CURRENT_VERSION=$(grep -E '^version = ' pyproject.toml | head -1 | sed -E 's/version = "(.*)"/\1/')
+CURRENT_VERSION=$(grep -m1 -E '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
 echo "Current version: $CURRENT_VERSION"
 
 # Read CHANGELOG unreleased section
@@ -193,6 +204,7 @@ UNRELEASED_CHANGES=$(awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f' CHANGE
 - **MINOR (x.Y.0):** New features, backward-compatible additions
 - **PATCH (x.y.Z):** Bug fixes and minor improvements
 
+[% if PROVIDER == 'claude' %]
 Use `AskUserQuestion` with these options:
 
 ```
@@ -213,13 +225,29 @@ AskUserQuestion(
 )
 ```
 
-If explicit version requested, validate `^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`.
+[% else %]
+Ask the user directly which bump to perform: PATCH for fixes, MINOR for
+backward-compatible features, MAJOR for breaking changes, or EXPLICIT.
+Do not choose on the user's behalf and do not continue until they answer.
+[% endif %]
+
+For EXPLICIT, ask a separate question for the exact `X.Y.Z` value; selecting the
+option alone supplies no version. Validate `^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`.
+Calculate the proposed `NEW_VERSION` from the user's bump choice and current
+version (or their explicit version). Show the exact result before execution.
+Supply `BUMP_TYPE` (`patch`, `minor`, `major`, or the exact version) and
+`NEW_VERSION` explicitly to **each** Phase 3 shell invocation, using only these
+approved values. Missing values abort; never assume a previous shell survives.
 
 ## Phase 3: Execute Version Bump Script
 
 ### 3.1 Show What Will Happen
 
 ```bash
+set -euo pipefail
+: "${BUMP_TYPE:?Supply the user-approved bump type for this invocation}"
+: "${NEW_VERSION:?Supply the user-approved exact version for this invocation}"
+[[ "$NEW_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "ABORT: invalid approved version"; exit 1; }
 echo "Version Bump Script Will Execute:"
 echo "1. Update pyproject.toml: version = \"$NEW_VERSION\""
 echo "2. Update CHANGELOG.md: [Unreleased] → [$NEW_VERSION] - $(date +%Y-%m-%d)"
@@ -231,26 +259,31 @@ echo "Changes will be committed locally but NOT pushed yet."
 ### 3.2 Execute
 
 ```bash
-./scripts/bump-version.sh --yes "$BUMP_TYPE"
+set -euo pipefail
+: "${BUMP_TYPE:?Supply the user-approved bump type for this invocation}"
+: "${NEW_VERSION:?Supply the user-approved exact version for this invocation}"
+[[ "$NEW_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "ABORT: invalid approved version"; exit 1; }
+[[ "$BUMP_TYPE" =~ ^(patch|minor|major)$ || "$BUMP_TYPE" == "$NEW_VERSION" ]] || { echo "ABORT: invalid approved bump type"; exit 1; }
+# Intent: use the approved exact version so a changed current version cannot alter the bump.
+./scripts/bump-version.sh --yes "$NEW_VERSION"
 ```
 
 ### 3.3 Verify
 
 ```bash
-LAST_TAG=$(git tag --sort=-version:refname | head -1)
-TAG_VERSION="${LAST_TAG#v}"
+set -euo pipefail
+PYPROJECT_VERSION=$(grep -m1 -E '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+[[ "$PYPROJECT_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "ABORT: invalid release version"; exit 1; }
+LAST_TAG="v$PYPROJECT_VERSION"
+TAG_VERSION="$PYPROJECT_VERSION"
 
-# Verify tag points to HEAD
-TAG_COMMIT=$(git rev-list -n 1 "$LAST_TAG")
+# Verify the version-derived release tag, not the highest tag in the repository.
+TAG_COMMIT=$(git rev-parse "$LAST_TAG^{commit}")
 HEAD_COMMIT=$(git rev-parse HEAD)
-[[ "$TAG_COMMIT" != "$HEAD_COMMIT" ]] && echo "❌ ERROR: Tag does not point to HEAD" && exit 1
-
-# Verify pyproject.toml matches tag
-PYPROJECT_VERSION=$(grep -E '^version = ' pyproject.toml | head -1 | sed -E 's/version = "(.*)"/\1/')
-[[ "$PYPROJECT_VERSION" != "$TAG_VERSION" ]] && echo "❌ ERROR: Version mismatch" && exit 1
+[[ "$TAG_COMMIT" == "$HEAD_COMMIT" ]] || { echo "ABORT: release tag does not point to HEAD"; exit 1; }
 
 # 🚨 CRITICAL: Verify __version__ in __init__.py (bump-version.sh known bug)
-INIT_VERSION=$(grep -E '^__version__ = ' src/mapify_cli/__init__.py | head -1 | sed -E 's/__version__ = "(.*)"/\1/')
+INIT_VERSION=$(grep -m1 -E '^__version__ = ' src/mapify_cli/__init__.py | sed -E 's/__version__ = "(.*)"/\1/')
 if [[ "$INIT_VERSION" != "$TAG_VERSION" ]]; then
   echo "❌ CRITICAL ERROR: __version__ mismatch!"
   echo "   pyproject.toml: $PYPROJECT_VERSION"
@@ -272,6 +305,13 @@ echo "✅ All version fields match (pyproject.toml, __init__.py, git tag)"
 ### 3.4 Show Changes for Review
 
 ```bash
+set -euo pipefail
+PYPROJECT_VERSION=$(grep -m1 -E '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+[[ "$PYPROJECT_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "ABORT: invalid release version"; exit 1; }
+LAST_TAG="v$PYPROJECT_VERSION"
+TAG_COMMIT=$(git rev-parse "$LAST_TAG^{commit}")
+HEAD_COMMIT=$(git rev-parse HEAD)
+[[ "$TAG_COMMIT" == "$HEAD_COMMIT" ]] || { echo "ABORT: release tag does not point to HEAD"; exit 1; }
 git show --stat
 git tag -l -n50 "$LAST_TAG"
 ```
@@ -287,25 +327,38 @@ CURRENT_BRANCH=$(git branch --show-current)
 # HEAD is the local chore(release) bump commit, which has no CI run yet.
 # Verify CI on the merge-base with origin/main and allow only
 # release-metadata files in the unpushed commits on top of it.
-git fetch origin main -q
-BASE_SHA=$(git merge-base HEAD origin/main)
-UNVERIFIED=$(git diff --name-only "$BASE_SHA" HEAD | grep -vxE 'CHANGELOG\.md|pyproject\.toml|src/mapify_cli/__init__\.py' || true)
-[[ -n "$UNVERIFIED" ]] && echo "❌ ABORT: unpushed commits change files CI has not verified:" && echo "$UNVERIFIED" && exit 1
-LATEST_RUN=$(gh run list --commit "$BASE_SHA" --workflow CI --json conclusion,status,headSha --jq '.[0]')
-[[ -z "$LATEST_RUN" || "$LATEST_RUN" == "null" ]] && echo "❌ ABORT: No CI run found for $BASE_SHA" && exit 1
-RUN_STATUS=$(printf '%s' "$LATEST_RUN" | jq -r '.status')
-[[ "$RUN_STATUS" != "completed" ]] && echo "❌ ABORT: CI run for $BASE_SHA is not completed (status: $RUN_STATUS)" && exit 1
-RUN_CONCLUSION=$(printf '%s' "$LATEST_RUN" | jq -r '.conclusion')
-[[ "$RUN_CONCLUSION" != "success" ]] && echo "❌ ABORT: CI run for $BASE_SHA did not succeed (conclusion: $RUN_CONCLUSION)" && exit 1
+git fetch origin main -q || { echo "ABORT: git fetch failed"; exit 1; }
+BASE_SHA=$(git merge-base HEAD origin/main) || { echo "ABORT: merge-base failed"; exit 1; }
+[[ -n "$BASE_SHA" ]] || { echo "ABORT: missing merge-base"; exit 1; }
+# Intent: capture diff before filtering so grep's no-match cannot hide git failure.
+CHANGED_FILES=$(git diff --name-only "$BASE_SHA" HEAD) || { echo "ABORT: git diff failed"; exit 1; }
+UNVERIFIED=$(printf '%s\n' "$CHANGED_FILES" | grep -vxE 'CHANGELOG\.md|pyproject\.toml|src/mapify_cli/__init__\.py|^$')
+FILTER_STATUS=$?
+[[ "$FILTER_STATUS" -le 1 ]] || { echo "ABORT: file filter failed"; exit 1; }
+[[ -z "$UNVERIFIED" ]] || { echo "ABORT: files not verified by CI:"; printf '%s\n' "$UNVERIFIED"; exit 1; }
+CI_RUN=$(gh run list --commit "$BASE_SHA" --workflow CI --json conclusion,status,headSha --jq '.[0]') || { echo "ABORT: CI query failed"; exit 1; }
+printf '%s' "$CI_RUN" | jq -es --arg sha "$BASE_SHA" '
+  length == 1 and (.[0] | type == "object" and .status == "completed" and
+  .conclusion == "success" and .headSha == $sha)
+' > /dev/null || { echo "ABORT: missing, invalid, incomplete, failed, or mismatched CI evidence"; exit 1; }
+echo "CI verified: $BASE_SHA"
 
-LAST_TAG=$(git tag --sort=-version:refname | head -1)
-git ls-remote --tags origin | grep -q "refs/tags/$LAST_TAG" && echo "❌ ABORT: Tag already on remote" && exit 1
+set -euo pipefail
+PYPROJECT_VERSION=$(grep -m1 -E '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+[[ "$PYPROJECT_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "ABORT: invalid release version"; exit 1; }
+LAST_TAG="v$PYPROJECT_VERSION"
+TAG_COMMIT=$(git rev-parse "$LAST_TAG^{commit}")
+HEAD_COMMIT=$(git rev-parse HEAD)
+[[ "$TAG_COMMIT" == "$HEAD_COMMIT" ]] || { echo "ABORT: release tag does not point to HEAD"; exit 1; }
+REMOTE_TAG=$(git ls-remote --tags origin "refs/tags/$LAST_TAG" "refs/tags/$LAST_TAG^{}")
+[[ -z "$REMOTE_TAG" ]] || { echo "ABORT: Tag already on remote"; exit 1; }
 
 echo "✅ Pre-push safety checks passed"
 ```
 
 ### 4.2 User Confirmation
 
+[% if PROVIDER == 'claude' %]
 ```
 AskUserQuestion(
   questions=[
@@ -323,11 +376,28 @@ AskUserQuestion(
 )
 ```
 
+[% else %]
+Ask the user directly for explicit confirmation before pushing. State that
+`$LAST_TAG` to `origin/main` will trigger GitHub Actions, publish to PyPI, and
+create a public GitHub release. Accept only an unambiguous YES; NO aborts, and
+REVIEW shows the commit, tag, and CHANGELOG before asking again.
+[% endif %]
+
 If `REVIEW`: show `git show`, `git tag -l -n50 "$LAST_TAG"`, and CHANGELOG excerpt, then ask again.
+Only YES permits Phase 4.3. Repeat Phase 4.1 and ask again if the commit or version
+changes; never interpret REVIEW, silence, or an earlier bump choice as push consent.
 
 ### 4.3 Push
 
 ```bash
+set -euo pipefail
+PYPROJECT_VERSION=$(grep -m1 -E '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+[[ "$PYPROJECT_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "ABORT: invalid release version"; exit 1; }
+LAST_TAG="v$PYPROJECT_VERSION"
+TAG_COMMIT=$(git rev-parse "$LAST_TAG^{commit}")
+HEAD_COMMIT=$(git rev-parse HEAD)
+[[ "$TAG_COMMIT" == "$HEAD_COMMIT" ]] || { echo "ABORT: release tag does not point to HEAD"; exit 1; }
+# Execute only after the user approved this exact tag and commit in Phase 4.2.
 git push origin main
 git push origin "$LAST_TAG"
 PUSH_TIMESTAMP=$(date +%s)
@@ -338,32 +408,52 @@ echo "✅ Release workflow triggered"
 ## Phase 5: CI/CD Monitoring
 
 ```bash
-echo "Waiting for release workflow to start..."
+set -euo pipefail
+PYPROJECT_VERSION=$(grep -m1 -E '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+[[ "$PYPROJECT_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "ABORT: invalid release version"; exit 1; }
+LAST_TAG="v$PYPROJECT_VERSION"
+RELEASE_SHA=$(git rev-parse "$LAST_TAG^{commit}")
+HEAD_COMMIT=$(git rev-parse HEAD)
+[[ "$RELEASE_SHA" == "$HEAD_COMMIT" ]] || { echo "ABORT: release tag does not point to HEAD"; exit 1; }
+echo "Waiting for release workflow for $LAST_TAG ($RELEASE_SHA)..."
 sleep 10
 
-RELEASE_RUN=$(gh run list --workflow=release.yml --limit 1 --json databaseId,status,conclusion,createdAt)
-RUN_ID=$(printf '%s' "$RELEASE_RUN" | jq -r '.[0].databaseId')
-
-if [[ -z "$RUN_ID" || "$RUN_ID" == "null" ]]; then
-  echo "⚠️  Workflow not started yet; retrying in 30s..."
-  sleep 30
-  RELEASE_RUN=$(gh run list --workflow=release.yml --limit 1 --json databaseId,status,conclusion,createdAt)
-  RUN_ID=$(printf '%s' "$RELEASE_RUN" | jq -r '.[0].databaseId')
-fi
-
+for ATTEMPT in 1 2; do
+  RELEASE_RUN=$(gh run list --commit "$RELEASE_SHA" --workflow release.yml --json databaseId,status,conclusion,headSha --jq '.[0]') || { echo "ABORT: release query failed"; exit 1; }
+  if [[ "$RELEASE_RUN" == "null" && "$ATTEMPT" == 1 ]]; then
+    echo "Workflow not started yet; retrying in 30s..."
+    sleep 30
+  else
+    break
+  fi
+done
+RUN_ID=$(printf '%s' "$RELEASE_RUN" | jq -esr --arg sha "$RELEASE_SHA" '
+  select(length == 1) | .[0] |
+  select(type == "object" and .headSha == $sha) | .databaseId |
+  select(type == "number" and . > 0 and . == floor)
+') || { echo "ABORT: missing or mismatched release workflow"; exit 1; }
 echo "Workflow URL: https://github.com/azalio/map-framework/actions/runs/$RUN_ID"
-gh run watch "$RUN_ID"
-
-FINAL_STATUS=$(gh run view "$RUN_ID" --json conclusion --jq '.conclusion')
-[[ "$FINAL_STATUS" != "success" ]] && echo "❌ Release workflow failed. See rollback procedures." && exit 1
+gh run watch "$RUN_ID" --exit-status || { echo "ABORT: release workflow watch failed"; exit 1; }
+FINAL_RUN=$(gh run view "$RUN_ID" --json status,conclusion,headSha) || { echo "ABORT: release status query failed"; exit 1; }
+printf '%s' "$FINAL_RUN" | jq -es --arg sha "$RELEASE_SHA" '
+  length == 1 and (.[0] | type == "object" and .status == "completed" and
+  .conclusion == "success" and .headSha == $sha)
+' > /dev/null || { echo "ABORT: release workflow did not succeed for the release commit"; exit 1; }
 echo "✅ Release workflow completed successfully"
 ```
 
 ## Phase 6: Post-Release Verification
 
 ```bash
+set -euo pipefail
+PYPROJECT_VERSION=$(grep -m1 -E '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+[[ "$PYPROJECT_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "ABORT: invalid release version"; exit 1; }
+LAST_TAG="v$PYPROJECT_VERSION"
+TAG_COMMIT=$(git rev-parse "$LAST_TAG^{commit}")
+HEAD_COMMIT=$(git rev-parse HEAD)
+[[ "$TAG_COMMIT" == "$HEAD_COMMIT" ]] || { echo "ABORT: release tag does not point to HEAD"; exit 1; }
 sleep 120
-TAG_VERSION="${LAST_TAG#v}"
+TAG_VERSION="$PYPROJECT_VERSION"
 PYPI_URL="https://pypi.org/project/mapify-cli/$TAG_VERSION/"
 
 # The retry MUST wrap the install itself, not a cheap HTML probe. The
@@ -427,8 +517,9 @@ git add . && git commit -m "chore: prepare for release"
 Package NOT published to PyPI (CI must succeed for publish).
 
 ```bash
-gh run list --workflow=release.yml --limit 1
-gh run view --log
+# Supply the exact release run ID verified against the release tag commit in Phase 5.
+: "${RUN_ID:?Supply the verified release run ID for this invocation}"
+gh run view "$RUN_ID" --log
 
 # Fix issue in new commit, then create a new patch release
 git add . && git commit -m "fix: resolve release workflow failure"
@@ -456,7 +547,10 @@ You CANNOT delete packages from PyPI. Only option is yank.
 ### Scenario 5: PyPI Not Available After 5+ Minutes
 
 ```bash
-gh run view $RUN_ID --log | grep -A 10 "pypi-publish"
+# Supply the exact release run ID from Phase 5 and the approved exact version.
+: "${RUN_ID:?Supply the verified release run ID for this invocation}"
+: "${TAG_VERSION:?Supply the approved exact release version for this invocation}"
+gh run view "$RUN_ID" --log | grep -A 10 "pypi-publish"
 # Check https://status.python.org/
 # Wait up to 15 minutes, probing the simple index pip resolves against —
 # NOT the project page, which goes live earlier (see Phase 6):
@@ -484,13 +578,17 @@ gh run view <run-id> --log
 ## MCP Tools
 
 - **`mcp__sequential-thinking__sequentialthinking`** — complex decision making for version bump
+[% if PROVIDER == 'claude' %]
 - **`AskUserQuestion`** (built-in) — explicit confirmation for IRREVERSIBLE operations
+[% else %]
+- **Direct user confirmation** — wait for explicit consent for IRREVERSIBLE operations
+[% endif %]
 
 ## Examples
 
 ```
-/map-release                            # full release workflow; bump type chosen at confirmation gate
-/map-release patch                      # hint to version-determination phase
+<% cmd %>map-release                            # full release workflow; bump type chosen at confirmation gate
+<% cmd %>map-release patch                      # hint to version-determination phase
 ```
 
 ## Troubleshooting
@@ -498,4 +596,4 @@ gh run view <run-id> --log
 - **`make check` (Gate 1) fails.** Stop — fix every lint/type/test failure before any tag or publish step; the release gates are hard stops, not warnings.
 - **`__version__` is out of sync after `bump-version.sh`.** Apply the documented `__version__` sync workaround in Phase 3 before continuing: manually edit `__init__.py`, amend the commit, re-tag.
 - **A tag or PyPI publish step failed midway.** Follow the rollback scenario for that phase; never re-run an irreversible step blindly.
-- **CI shows stale run.** Ensure the run being checked is on `main` and was triggered AFTER the last commit; use `--limit 1` and inspect `headBranch` + `createdAt`.
+- **CI shows stale run.** Fetch `origin/main`, recompute `git merge-base HEAD origin/main`, and query `--commit "$BASE_SHA" --workflow CI`. Require matching `headSha`, completed status, and success; permit only the three release-metadata files after that base. Never substitute latest-main or require CI for the local unpushed bump commit. For release monitoring, query `release.yml` for the version-derived tag commit and validate its `headSha`.

@@ -22,6 +22,23 @@ Once a plan reaches `ready` (task_plan + blueprint both present, the Step 7 boun
 
 When a MAP run enters a merge/rebase conflict, the PreToolUse workflow-context hook adds a conflict-resolution discipline block to `additionalContext`. It fires before `git merge` / `git rebase` and whenever git reports unmerged paths via `git diff --name-only --diff-filter=U`. The protocol is deliberately manual and intent-preserving: list conflicted files, resolve one file or small batch at a time, preserve both sides' intended behavior, check for conflict markers, run the project's test gate after each batch, stage only resolved files, and continue the merge/rebase only after no unmerged files remain. Final verification is: branch current with `origin/main`, no conflict markers, and tests green. The hook never mutates the worktree and never auto-runs tests.
 
+## Package release workflow (`/map-release`, `$map-release`)
+
+Claude and Codex use the same release templates and CI gate policy. The workflow
+still requires an explicit version decision and confirmation before an irreversible
+tag push; ordinary feature fixes do not authorize publication.
+
+Before release and again before push, the gate refreshes `origin/main` and verifies
+CI for `git merge-base HEAD origin/main`. Local commits after that base may change
+only `CHANGELOG.md`, `pyproject.toml` and `src/mapify_cli/__init__.py`. This allows
+the local version bump without treating an older unrelated green run as evidence.
+
+Both gates require `status: completed`, `conclusion: success` and a matching
+`headSha`. Missing or malformed CI evidence, Git/GitHub command failures and
+unverified application changes abort the workflow. Push application changes and
+wait for their CI before restarting validation; do not select the latest run on
+`main` or override a failing gate.
+
 ## Python interpreter requirement (`python3` on PATH)
 
 MAP's runtime surfaces — every hook in `.claude/hooks/` and `.codex/hooks/`, and every runner in `.map/scripts/` — are executables that start with `#!/usr/bin/env python3`. They therefore start under the `python3` your shell resolves, **not** under the interpreter that ran `mapify` (with `uvx`/`uv tool run` that is a temporary environment whose `bin` is prepended to `PATH` only for the duration of the command). They require Python 3.11+; on a stock macOS `python3` is `/usr/bin/python3` (3.9), where the version guard reports the mismatch. Codex memory hooks then delegate memory operations to the installed `mapify _memory-hook` runtime, avoiding imports from the target project or ambient system interpreter.

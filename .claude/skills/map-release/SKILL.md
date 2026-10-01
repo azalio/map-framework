@@ -84,27 +84,21 @@ Execute all 12 gates. Read the full gate scripts in [release-reference.md § Pha
 ## Phase 2: Version Determination
 
 Read CHANGELOG.md `[Unreleased]` section to determine bump type (MAJOR/MINOR/PATCH/EXPLICIT).
-Get current version from `pyproject.toml`. Ask user for bump type via `AskUserQuestion`.
+Get current version from `pyproject.toml`.
+
+Ask user for bump type via `AskUserQuestion`.
+
+For EXPLICIT, ask separately for the exact version. Carry only the user's approved
+`BUMP_TYPE` and exact `NEW_VERSION` into Phase 3; each command runs in a fresh shell.
 
 See [release-reference.md § Phase 2](release-reference.md#phase-2-version-determination) for the full question/option block.
 
 ## Phase 3: Execute Version Bump Script
 
-Run `./scripts/bump-version.sh --yes "$BUMP_TYPE"`, then verify:
-
-```bash
-# Verify tag points to HEAD
-TAG_COMMIT=$(git rev-list -n 1 "$LAST_TAG")
-HEAD_COMMIT=$(git rev-parse HEAD)
-[[ "$TAG_COMMIT" != "$HEAD_COMMIT" ]] && echo "❌ Tag mismatch" && exit 1
-
-# 🚨 CRITICAL: Verify __version__ in __init__.py (bump-version.sh known bug)
-INIT_VERSION=$(grep -E '^__version__ = ' src/mapify_cli/__init__.py | head -1 | sed -E 's/__version__ = "(.*)"/\1/')
-TAG_VERSION="${LAST_TAG#v}"
-[[ "$INIT_VERSION" != "$TAG_VERSION" ]] && echo "❌ __version__ mismatch — fix manually, see reference" && exit 1
-
-echo "✅ Version bump successful: all version fields match"
-```
+Show the exact approved version and bump type, then execute the Phase 3 reference
+blocks with those values explicitly supplied in each invocation. Never rely on
+variables left by a previous shell. Verify the version-derived `vX.Y.Z` tag points
+to HEAD and both version fields match it using the Phase 3.3 reference block.
 
 If `__version__` mismatches, follow the fix procedure in [release-reference.md § Phase 3 workaround](release-reference.md#phase-3-execute-version-bump-script).
 
@@ -112,25 +106,24 @@ If `__version__` mismatches, follow the fix procedure in [release-reference.md �
 
 **⚠️ CRITICAL PHASE:** Once the tag is pushed the release workflow triggers and publishes to PyPI.
 
-Re-verify: on main branch, CI passed, tag does not already exist on remote. Then ask for **explicit user confirmation** via `AskUserQuestion` (YES / NO / REVIEW options). See [release-reference.md § Phase 4](release-reference.md#phase-4-push-commit-and-tag-irreversible) for the full confirmation block.
+Re-verify: on main branch, exact merge-base CI completed successfully with matching
+`headSha`, only the three allowed metadata files changed, version-derived tag
+points to HEAD and does not already exist on remote. Then request **explicit user
+confirmation** (YES / NO / REVIEW options).
 
-```bash
-git push origin main
-git push origin "$LAST_TAG"
-```
+Use `AskUserQuestion` for that decision.
+
+Read [release-reference.md § Phase 4](release-reference.md#phase-4-push-commit-and-tag-irreversible)
+for the confirmation and push blocks. Recompute the tag in the push invocation;
+consent for an earlier version or commit does not authorize a changed release.
 
 If user aborts: stop workflow, exit gracefully. Tag remains local only.
 
 ## Phase 5: CI/CD Monitoring
 
-Wait for the release workflow to start, then watch it to completion:
-
-```bash
-gh run list --workflow=release.yml --limit 1 --json databaseId,status,conclusion,createdAt
-gh run watch "$RUN_ID"
-FINAL_STATUS=$(gh run view "$RUN_ID" --json conclusion --jq '.conclusion')
-[[ "$FINAL_STATUS" != "success" ]] && echo "❌ Release workflow failed — see reference for rollback" && exit 1
-```
+Use the Phase 5 reference block: recompute the version-derived tag and release
+commit, select `release.yml` for that exact commit (not latest-main), derive
+`RUN_ID` in the same shell, then watch and validate the final status and `headSha`.
 
 The GitHub Release is created automatically by the workflow (no manual step).
 

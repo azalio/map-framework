@@ -156,7 +156,7 @@ The DevOpsConf 2026 case study applies this process to a production Kubernetes P
 | `/map-debug` | Bug fixes and debugging |
 | `/map-task` | Execute a single subtask from an existing plan |
 | `/map-tdd` | Test-first implementation workflow |
-| `/map-release` | Package release workflow |
+| `/map-release` | Package release workflow; Codex `$map-release` shares the same commit-bound CI gates |
 | `/map-resume` | Resume interrupted workflows |
 
 [Detailed usage and options →](docs/USAGE.md)
