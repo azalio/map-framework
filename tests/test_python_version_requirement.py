@@ -37,7 +37,8 @@ from mapify_cli.python_runtime import (
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SHEBANG = "#!/usr/bin/env python3"
-GUARD_CONDITION = f"sys.version_info < ({MINIMUM_PYTHON[0]}, {MINIMUM_PYTHON[1]})"
+CLI_GUARD_CONDITION = f"sys.version_info < ({MINIMUM_PYTHON[0]}, {MINIMUM_PYTHON[1]})"
+GUARD_CONDITION = f"tuple(sys.version_info) < ({MINIMUM_PYTHON[0]}, {MINIMUM_PYTHON[1]})"
 TEMPLATES_SRC = REPO_ROOT / "src" / "mapify_cli" / "templates_src"
 GUARD_PARTIAL = "_partials/python-version-guard.py.jinja"
 DENY_SELECTOR = 'guard_mode = "deny"'
@@ -115,7 +116,7 @@ def test_cli_import_guard_agrees_on_the_floor() -> None:
     guard = (REPO_ROOT / "src" / "mapify_cli" / "_python_guard.py").read_text(
         encoding="utf-8"
     )
-    assert GUARD_CONDITION in guard
+    assert CLI_GUARD_CONDITION in guard
 
     init_source = (REPO_ROOT / "src" / "mapify_cli" / "__init__.py").read_text(
         encoding="utf-8"
@@ -329,11 +330,14 @@ def test_guard_mode_matches_the_hook_class(path: Path) -> None:
 def test_detects_the_running_interpreter_without_a_subprocess(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "mapify_cli.python_runtime.shutil.which", lambda *_a, **_k: sys.executable
-    )
+    def running_interpreter(*args: object, **kwargs: object) -> str:
+        del args, kwargs
+        return sys.executable
+
+    monkeypatch.setattr("mapify_cli.python_runtime.shutil.which", running_interpreter)
 
     def _fail(*_args: object, **_kwargs: object) -> None:  # pragma: no cover
+        del _args, _kwargs
         raise AssertionError("must not spawn a subprocess for our own interpreter")
 
     monkeypatch.setattr("mapify_cli.python_runtime.subprocess.run", _fail)
@@ -344,9 +348,10 @@ def test_detects_the_running_interpreter_without_a_subprocess(
 
 
 def test_missing_python3_is_a_problem(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "mapify_cli.python_runtime.shutil.which", lambda *_a, **_k: None
-    )
+    def missing_interpreter(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+    monkeypatch.setattr("mapify_cli.python_runtime.shutil.which", missing_interpreter)
     info = detect_hook_interpreter()
     assert info.found is False
     assert info.satisfies_minimum is False
@@ -481,6 +486,7 @@ def test_empty_path_entry_is_dropped_when_it_is_our_own_env(
 
 def test_skip_env_var_bypasses_detection(monkeypatch: pytest.MonkeyPatch) -> None:
     def _fail(*_args: object, **_kwargs: object) -> None:  # pragma: no cover
+        del _args, _kwargs
         raise AssertionError("detection must not run when the skip flag is set")
 
     monkeypatch.setattr("mapify_cli.python_runtime.shutil.which", _fail)
@@ -504,15 +510,23 @@ def test_skip_env_var_parsing(
 # --------------------------------------------------------------------------- #
 # 4. `mapify init` / `mapify check` behaviour
 # --------------------------------------------------------------------------- #
+def _old_interpreter(*args: object, **kwargs: object) -> InterpreterInfo:
+    del args, kwargs
+    return InterpreterInfo(executable="/usr/bin/python3", version=(3, 9, 6))
+
+
+def _supported_interpreter(*args: object, **kwargs: object) -> InterpreterInfo:
+    del args, kwargs
+    return InterpreterInfo(executable="/usr/bin/python3", version=(3, 12, 1))
+
+
 def test_init_refuses_and_writes_nothing_when_python3_is_too_old(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv(SKIP_ENV_VAR, raising=False)
     monkeypatch.setattr(
         "mapify_cli.python_runtime.detect_hook_interpreter",
-        lambda *_a, **_k: InterpreterInfo(
-            executable="/usr/bin/python3", version=(3, 9, 6)
-        ),
+        _old_interpreter,
     )
     target = tmp_path / "project"
     result = CliRunner().invoke(
@@ -532,9 +546,7 @@ def test_init_proceeds_with_skip_flag(
     monkeypatch.delenv(SKIP_ENV_VAR, raising=False)
     monkeypatch.setattr(
         "mapify_cli.python_runtime.detect_hook_interpreter",
-        lambda *_a, **_k: InterpreterInfo(
-            executable="/usr/bin/python3", version=(3, 9, 6)
-        ),
+        _old_interpreter,
     )
     target = tmp_path / "project"
     result = CliRunner().invoke(
@@ -557,9 +569,7 @@ def test_rejected_init_writes_no_workflow_log_even_with_debug(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         "mapify_cli.python_runtime.detect_hook_interpreter",
-        lambda *_a, **_k: InterpreterInfo(
-            executable="/usr/bin/python3", version=(3, 9, 6)
-        ),
+        _old_interpreter,
     )
     target = tmp_path / "project"
     result = CliRunner().invoke(
@@ -580,9 +590,7 @@ def test_accepted_init_with_debug_still_logs(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         "mapify_cli.python_runtime.detect_hook_interpreter",
-        lambda *_a, **_k: InterpreterInfo(
-            executable="/usr/bin/python3", version=(3, 12, 1)
-        ),
+        _supported_interpreter,
     )
     target = tmp_path / "project"
     result = CliRunner().invoke(
@@ -599,9 +607,7 @@ def test_check_reports_the_hook_interpreter(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         "mapify_cli.python_runtime.detect_hook_interpreter",
-        lambda *_a, **_k: InterpreterInfo(
-            executable="/usr/bin/python3", version=(3, 9, 6)
-        ),
+        _old_interpreter,
     )
     result = CliRunner().invoke(app, ["check"])
     assert "python3 on PATH" in result.output

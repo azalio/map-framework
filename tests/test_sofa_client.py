@@ -23,6 +23,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,11 @@ def _load_sofa_client():
 sofa = _load_sofa_client()
 
 _SAFE_SOFA_GITIGNORE = "# map:sofa\n.sofa/\n"
+
+
+def _is_windows() -> bool:
+    return os.name == "nt"
+
 
 _CONCURRENCY_WORKER = r"""from __future__ import annotations
 
@@ -695,7 +701,7 @@ def test_vc3_non_canonical_variants_still_add_the_exact_rule(
 
 
 def test_vc3_secure_merge_preserves_readonly_mode_and_content(tmp_path: Path) -> None:
-    if os.name == "nt":
+    if _is_windows():
         pytest.skip("POSIX read-only mode contract")
     gitignore = tmp_path / ".gitignore"
     gitignore.write_bytes(b"user-rule/\n")
@@ -713,7 +719,7 @@ def test_vc3_secure_merge_rejects_linked_gitignore(
     tmp_path: Path,
     attack: str,
 ) -> None:
-    if attack == "hardlink" and os.name == "nt":
+    if attack == "hardlink" and _is_windows():
         pytest.skip("POSIX hardlink security contract")
     outside = tmp_path / "outside-gitignore"
     outside.write_bytes(b"outside-sentinel\n")
@@ -746,7 +752,7 @@ def test_vc3_secure_merge_rejects_nonregular_gitignore(tmp_path: Path) -> None:
 def test_vc3_cli_and_standalone_share_private_persistent_lock(tmp_path: Path) -> None:
     from mapify_cli.delivery import file_copier
 
-    if os.name == "nt":
+    if _is_windows():
         pytest.skip("Windows uses a named mutex with no lock file")
     project_root = tmp_path.resolve(strict=True)
     assert sofa._gitignore_lock_path(project_root) == file_copier._gitignore_lock_path(
@@ -759,7 +765,7 @@ def test_vc3_cli_and_standalone_share_private_persistent_lock(tmp_path: Path) ->
     lock_stat = os.lstat(lock_path)
     assert stat.S_ISREG(lock_stat.st_mode)
     assert lock_stat.st_nlink == 1
-    if os.name != "nt":
+    if not _is_windows():
         assert stat.S_IMODE(lock_stat.st_mode) == 0o600
 
 
@@ -857,7 +863,12 @@ def test_vc3_descriptor_mode_checks_preserve_windows_readonly_semantics(
 
     opened = os.stat_result((stat.S_IFREG | actual, 0, 0, 1, 0, 0, 0, 0, 0, 0))
     monkeypatch.setattr(file_copier.os, "name", "nt")
-    monkeypatch.setattr(file_copier.os, "fstat", lambda _descriptor: opened)
+
+    def opened_stat(descriptor: int) -> os.stat_result:
+        del descriptor
+        return opened
+
+    monkeypatch.setattr(file_copier.os, "fstat", opened_stat)
 
     assert file_copier._descriptor_mode_matches(17, expected) is matches
     assert sofa._descriptor_mode_matches(17, expected) is matches
@@ -870,7 +881,8 @@ def test_vc3_windows_failure_never_leaves_unignored_project_lock(
     from mapify_cli.delivery import file_copier
 
     @contextmanager
-    def fake_mutex(_project_stat: os.stat_result):
+    def fake_mutex(_project_stat: os.stat_result) -> Generator[None, None, None]:
+        del _project_stat
         yield
 
     monkeypatch.setattr(file_copier, "_uses_windows_gitignore_mutex", lambda: True)
@@ -906,16 +918,18 @@ def test_vc3_project_root_swap_cannot_mutate_replacement_or_outside(
     if writer == "cli":
         module = file_copier
 
-        def operation():
+        def merge_cli_gitignore():
             return file_copier.merge_update_runtime_gitignore(project)
 
+        operation = merge_cli_gitignore
         error = file_copier.UpdateRuntimeGitignoreSecurityError
     else:
         module = sofa
 
-        def operation():  # type: ignore[misc]
+        def ensure_standalone_gitignore():
             return sofa.ensure_sofa_gitignore(project)
 
+        operation = ensure_standalone_gitignore
         error = sofa.SofaGitignoreSecurityError
 
     real_read = module._read_safe_gitignore
@@ -951,16 +965,18 @@ def test_vc3_platform_without_project_dir_fd_fails_closed(
     if writer == "cli":
         monkeypatch.setattr(file_copier, "_CAN_USE_PROJECT_DIRECTORY_FD", False)
 
-        def operation():
+        def merge_cli_gitignore():
             return file_copier.merge_update_runtime_gitignore(tmp_path)
 
+        operation = merge_cli_gitignore
         error = file_copier.UpdateRuntimeGitignoreSecurityError
     else:
         monkeypatch.setattr(sofa, "_CAN_USE_PROJECT_DIRECTORY_FD", False)
 
-        def operation():  # type: ignore[misc]
+        def ensure_standalone_gitignore():
             return sofa.ensure_sofa_gitignore(tmp_path)
 
+        operation = ensure_standalone_gitignore
         error = sofa.SofaGitignoreSecurityError
 
     with pytest.raises(error, match="cannot pin project-relative"):
@@ -1288,7 +1304,7 @@ def test_vc3_gitignore_writer_rejects_unsafe_shared_lock(
 ) -> None:
     from mapify_cli.delivery import file_copier
 
-    if os.name == "nt":
+    if _is_windows():
         pytest.skip("Windows uses a named mutex with no lock file")
     lock_path = tmp_path / "shared-gitignore.lock"
     outside = tmp_path / "outside-lock"
@@ -1303,27 +1319,33 @@ def test_vc3_gitignore_writer_rejects_unsafe_shared_lock(
     else:
         lock_path.mkdir()
 
+    def controlled_lock_path(_root: Path, _stat: os.stat_result) -> Path:
+        del _root, _stat
+        return lock_path
+
     if writer == "cli":
         monkeypatch.setattr(
             file_copier,
             "_gitignore_lock_path_for_stat",
-            lambda _root, _stat: lock_path,
+            controlled_lock_path,
         )
 
-        def operation():
+        def merge_cli_gitignore():
             return file_copier.merge_update_runtime_gitignore(tmp_path)
 
+        operation = merge_cli_gitignore
         error = file_copier.UpdateRuntimeGitignoreSecurityError
     else:
         monkeypatch.setattr(
             sofa,
             "_gitignore_lock_path_for_stat",
-            lambda _root, _stat: lock_path,
+            controlled_lock_path,
         )
 
-        def operation():  # type: ignore[misc]
+        def ensure_standalone_gitignore():
             return sofa.ensure_sofa_gitignore(tmp_path)
 
+        operation = ensure_standalone_gitignore
         error = sofa.SofaGitignoreSecurityError
 
     with pytest.raises(error):
@@ -1387,31 +1409,37 @@ def test_vc3_no_fchmod_lock_swap_cannot_chmod_outside_file(
             target.symlink_to(outside)
         real_chmod(target, mode)
 
+    def controlled_lock_path(_root: Path, _stat: os.stat_result) -> Path:
+        del _root, _stat
+        return lock_path
+
     if writer == "cli":
         monkeypatch.delattr(file_copier.os, "fchmod", raising=False)
         monkeypatch.setattr(
             file_copier,
             "_gitignore_lock_path_for_stat",
-            lambda _root, _stat: lock_path,
+            controlled_lock_path,
         )
         monkeypatch.setattr(file_copier.os, "chmod", swap_then_chmod)
 
-        def operation():
+        def merge_cli_gitignore():
             return file_copier.merge_update_runtime_gitignore(tmp_path)
 
+        operation = merge_cli_gitignore
         error = file_copier.UpdateRuntimeGitignoreSecurityError
     else:
         monkeypatch.delattr(sofa.os, "fchmod", raising=False)
         monkeypatch.setattr(
             sofa,
             "_gitignore_lock_path_for_stat",
-            lambda _root, _stat: lock_path,
+            controlled_lock_path,
         )
         monkeypatch.setattr(sofa.os, "chmod", swap_then_chmod)
 
-        def operation():  # type: ignore[misc]
+        def ensure_standalone_gitignore():
             return sofa.ensure_sofa_gitignore(tmp_path)
 
+        operation = ensure_standalone_gitignore
         error = sofa.SofaGitignoreSecurityError
 
     with pytest.raises(error):
@@ -1447,31 +1475,37 @@ def test_vc3_no_fchmod_gitignore_temp_swap_fails_closed(
             target.symlink_to(outside)
         real_chmod(target, mode)
 
+    def controlled_lock_path(_root: Path, _stat: os.stat_result) -> Path:
+        del _root, _stat
+        return lock_path
+
     if writer == "cli":
         monkeypatch.delattr(file_copier.os, "fchmod", raising=False)
         monkeypatch.setattr(
             file_copier,
             "_gitignore_lock_path_for_stat",
-            lambda _root, _stat: lock_path,
+            controlled_lock_path,
         )
         monkeypatch.setattr(file_copier.os, "chmod", swap_temp_then_chmod)
 
-        def operation():
+        def merge_cli_gitignore():
             return file_copier.merge_update_runtime_gitignore(tmp_path)
 
+        operation = merge_cli_gitignore
         error = file_copier.UpdateRuntimeGitignoreSecurityError
     else:
         monkeypatch.delattr(sofa.os, "fchmod", raising=False)
         monkeypatch.setattr(
             sofa,
             "_gitignore_lock_path_for_stat",
-            lambda _root, _stat: lock_path,
+            controlled_lock_path,
         )
         monkeypatch.setattr(sofa.os, "chmod", swap_temp_then_chmod)
 
-        def operation():  # type: ignore[misc]
+        def ensure_standalone_gitignore():
             return sofa.ensure_sofa_gitignore(tmp_path)
 
+        operation = ensure_standalone_gitignore
         error = sofa.SofaGitignoreSecurityError
 
     with pytest.raises(error):
@@ -2087,7 +2121,7 @@ def test_vc4_store_rejects_linked_credential_paths_without_secret_exposure(
     tmp_path: Path,
     attack: str,
 ) -> None:
-    if attack == "credential-hardlink" and os.name == "nt":
+    if attack == "credential-hardlink" and _is_windows():
         pytest.skip("POSIX hardlink security contract")
     outside_dir = tmp_path / "outside-sofa"
     outside_dir.mkdir()
@@ -2121,7 +2155,7 @@ def test_vc4_store_rejects_nonregular_credentials_path(
     tmp_path: Path,
     kind: str,
 ) -> None:
-    if kind == "fifo" and (os.name == "nt" or not hasattr(os, "mkfifo")):
+    if kind == "fifo" and (_is_windows() or not hasattr(os, "mkfifo")):
         pytest.skip("FIFO unavailable")
     sofa_dir = tmp_path / ".sofa"
     sofa_dir.mkdir()
@@ -2158,7 +2192,7 @@ def test_vc4_store_does_not_clobber_invalid_existing_credentials(
 
 
 def test_vc4_store_does_not_clobber_unreadable_credentials(tmp_path: Path) -> None:
-    if os.name == "nt" or (os.name == "posix" and os.getuid() == 0):
+    if _is_windows() or (os.name == "posix" and os.getuid() == 0):
         pytest.skip("POSIX unreadable-file contract does not apply to root or Windows")
     sofa_dir = tmp_path / ".sofa"
     sofa_dir.mkdir()
@@ -2219,6 +2253,7 @@ def test_vc4_fallback_revalidates_sofa_before_allocating_secret_temp(
         return result
 
     def forbidden_mkstemp(*args: object, **kwargs: object):
+        del args, kwargs
         pytest.fail("unsafe .sofa must be rejected before allocating a temp file")
 
     monkeypatch.setattr(sofa, "_CAN_USE_DIRECTORY_FD", False)
@@ -2327,7 +2362,7 @@ def test_vc4_resolve_key_rejects_linked_credential_paths(
     tmp_path: Path,
     attack: str,
 ) -> None:
-    if attack == "credential-hardlink" and os.name == "nt":
+    if attack == "credential-hardlink" and _is_windows():
         pytest.skip("POSIX hardlink security contract")
     outside_dir = tmp_path / "outside-sofa"
     outside_dir.mkdir()
@@ -2391,7 +2426,7 @@ def test_vc4_safe_atomic_store_and_resolve_preserve_entries(tmp_path: Path) -> N
     assert data["existing"]["api_key"] == "keep"
     assert stat.S_IMODE(credentials_file.stat().st_mode) == 0o600
     assert stat.S_IMODE(sofa_dir.stat().st_mode) == 0o700
-    if os.name != "nt":
+    if not _is_windows():
         assert stat.S_IMODE((sofa_dir / "credentials.lock").stat().st_mode) == 0o600
 
 
@@ -2450,7 +2485,7 @@ def test_vc4_store_rejects_unsafe_credentials_transaction_lock(
     tmp_path: Path,
     attack: str,
 ) -> None:
-    if attack == "hardlink" and os.name == "nt":
+    if attack == "hardlink" and _is_windows():
         pytest.skip("POSIX hardlink security contract")
     (tmp_path / ".gitignore").write_text(_SAFE_SOFA_GITIGNORE, encoding="utf-8")
     sofa_dir = tmp_path / ".sofa"

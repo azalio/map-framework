@@ -32,6 +32,7 @@ ARCHITECTURE = REPO / "docs" / "ARCHITECTURE.md"
 DOCUMENTED_OPTIONAL_AGENTS = {"documentation-reviewer"}
 
 _DISPATCH_RE = re.compile(r'subagent_type=["\']([a-z0-9-]+)["\']')
+CODEX_SKILLS_RENDERED = REPO / ".agents" / "skills"
 _CODEX_DISPATCH_RE = re.compile(r'agent_type=["\']([a-z0-9-]+)["\']')
 
 
@@ -56,6 +57,10 @@ def _codex_dispatched_agent_names() -> set[str]:
     names: set[str] = set()
     for jinja in CODEX_SKILLS_SRC.rglob("*.jinja"):
         names.update(_CODEX_DISPATCH_RE.findall(jinja.read_text(encoding="utf-8")))
+    # Skills rendered from a shared Claude source have no dispatch text in the
+    # codex jinja twin; discover their agent_type= sites in the rendered tree.
+    for rendered in CODEX_SKILLS_RENDERED.rglob("*.md"):
+        names.update(_CODEX_DISPATCH_RE.findall(rendered.read_text(encoding="utf-8")))
     return names
 
 
@@ -118,3 +123,18 @@ def test_doctrine_documented_in_architecture():
     )
     assert "all nine Codex pipeline-dispatched agents" in text
     assert "DocumentationReviewer | *(no skill dispatch" not in text
+
+
+def test_codex_agent_roster_is_exactly_the_nine_expected_roles():
+    """Pin the exact roster so a dropped role cannot hide behind a count-only check."""
+    assert _codex_agent_names() == {
+        "actor",
+        "decomposer",
+        "documentation-reviewer",
+        "evaluator",
+        "final-verifier",
+        "monitor",
+        "predictor",
+        "reflector",
+        "researcher",
+    }

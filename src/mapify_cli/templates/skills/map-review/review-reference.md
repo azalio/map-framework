@@ -11,7 +11,12 @@ This file contains lower-frequency review details. Keep `SKILL.md` focused on th
 
 ## Compare Orderings
 
-When `--compare-orderings` is set, collect one run with `ordering_label='default'`, collect one with `ordering_label='reverse'`, aggregate with `compare-review-runs`, then persist with `record-review-ordering`. Treat verdict drift as review evidence.
+When `--compare-orderings` is set, begin the invocation once, then collect with
+`ORDERING_LABEL=default` and `ORDERING_LABEL=reverse` set in each capture call.
+Keep envelopes in `review-collections/default/` and `review-collections/reverse/`;
+never reset between collections. Closeout consumes both, so a finding in the
+first cannot disappear when the second is clean. Aggregate presentation drift
+with `compare-review-runs`, then persist with `record-review-ordering`.
 
 ## What-To-Delete Lens
 
@@ -171,7 +176,7 @@ Status protocol (`run_cross_ai_review` → `status`):
 
 | `status` | meaning | action |
 |---|---|---|
-| `success` | normalized findings + `untrusted_block` present | present verdict + fenced raw output; set `FINAL_VERDICT` from `normalized.verdict`; skip adversarial/normal phases |
+| `success` | normalized findings + `untrusted_block` present | present verdict + fenced raw output as a second opinion; the in-session review then runs and the ledger computes the verdict |
 | `unparsed` | ran but no parseable findings JSON | present fenced `untrusted_block`; fall back to in-session review |
 | `secret_blocked` | high-confidence secret in outbound prompt | announce `reason` (pattern name only); fall back |
 | `disabled` | `review.cross_ai.enabled` is false | announce; fall back |
@@ -223,6 +228,8 @@ Write each reviewer's JSON envelope verbatim with a quoted heredoc, so nothing
 inside the payload is expanded by the shell:
 
 ```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH_DIR=".map/$BRANCH"
 cat > "$BRANCH_DIR/review-agent-monitor.json" <<'MONITOR_EOF'
 <paste the Monitor JSON envelope verbatim>
 MONITOR_EOF
@@ -230,8 +237,12 @@ MONITOR_EOF
 
 Repeat for `review-agent-predictor.json`, `review-agent-evaluator.json`,
 `review-agent-user_experience.json` and `review-agent-maintainer.json`. In
-adversarial or compare-orderings mode also write the aggregator's
-`ledger_findings` array to `review-agent-adversarial.json`.
+adversarial or compare-orderings mode persist the complete tagged aggregate to
+`review-agent-adversarial.json`, not its findings array. The producer emits
+`schema_version: adversarial_aggregate.v1`, `ledger_findings`, `reviewer_status`
+and `parse_errors`; unknown/malformed tags never fall back to legacy findings.
+Successful scheduled reviewers supply evidence even when they found nothing;
+missing, empty, malformed or contradictory envelopes remain integrity errors.
 
 Use `ledger_findings`, never `findings`. The report array holds only the
 findings that survived the contract, which keeps the printed counts honest;
@@ -324,14 +335,14 @@ repetition. Objections live in `.map/<branch>/review-objections.json`.
 The review stage gate is bound to the ledger. `write_stage_gate review <verdict>`
 is refused — and no gate file written — when `<verdict>` contradicts
 `computed_verdict`, or when no ledger exists for the branch at all. This is on by
-default; `MAP_REVIEW_LEDGER_ENFORCE=0` is the explicit opt-out. Pass
-`$FINAL_VERDICT` straight from the ledger output rather than retyping a verdict.
+default; `MAP_REVIEW_LEDGER_ENFORCE=0` is the explicit opt-out. Read
+`computed_verdict` from `review-verdict-ledger.json` rather than retyping a verdict.
 
 `--destination pre_commit|pr_review|ci` and `--executor-class <tier>` are
 recorded on the ledger for audit. They are deliberately NOT table arguments: no
 reachable branch turns on them today, and a rule nothing can reach is dead code
 in a gate. `evidence_mode` is derived from the run rather than asserted —
-`independent_run` when adversarial or cross-AI findings took part, `structural`
+`independent_run` when adversarial findings took part, `structural`
 otherwise.
 
 `journal.previous_verdict` is read back from the ledger already on disk when
@@ -339,23 +350,22 @@ otherwise.
 
 ### Invocation
 
-`REVIEW_MODE_LABEL` must be one of `normal`, `adversarial`, `cross_ai`, or
-`compare_orderings`, and must name the phase that actually ran. Pass only the
-envelopes that phase produced: a file that does not exist is a read error, and
-read errors are findings. Both `adversarial` and `compare_orderings` write their
-`ledger_findings` array to `review-agent-adversarial.json`, so both pass
-`--adversarial-file`.
+Current modes are `normal`, `adversarial`, and
+`compare_orderings` (`cross_ai` is reserved; no phase sets it).
+
+`begin_review_run` runs once per invocation before capture, archives the bounded
+old inputs/gate, and persists `review_run.v1` mode plus scheduled roster in
+`review-mode.json`. It preserves the previous ledger and objections. Archive or
+mode-write failure aborts collection. `--current-run` requires valid persisted
+mode, selects only scheduled inputs, and reports missing/empty expected files.
+Never discover inputs by scanning the branch directory. Legacy direct file/JSON
+calls remain supported; bare `[]` or `{}` alone is not observed review evidence.
 
 ```bash
-LEDGER_ARGS=()
-# The artifact name keeps the underscore; the ledger flag uses dashes.
-for ROLE in monitor predictor evaluator adversarial user_experience maintainer; do
-  [ -f "$BRANCH_DIR/review-agent-$ROLE.json" ] && \
-    LEDGER_ARGS+=(--"${ROLE//_/-}"-file "$BRANCH_DIR/review-agent-$ROLE.json")
-done
-
-python3 .map/scripts/map_step_runner.py write_review_verdict_ledger \
-  "${LEDGER_ARGS[@]}" --review-mode "$REVIEW_MODE_LABEL"
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH_DIR=".map/$BRANCH"
+REVIEW_MODE_LABEL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["review_mode"])' "$BRANCH_DIR/review-mode.json") || exit 1
+python3 .map/scripts/map_step_runner.py write_review_verdict_ledger --current-run || exit 1
 ```
 
 The `--*-json` flags still accept an inline payload, but reviewer envelopes are

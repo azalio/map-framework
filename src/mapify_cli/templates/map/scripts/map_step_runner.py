@@ -36,13 +36,13 @@ import sys
 # evaluated annotations) fails with a message that never mentions the version.
 # Name the real cause instead. Kept in sync with
 # mapify_cli/python_runtime.MINIMUM_PYTHON.
-# UP036 is suppressed on purpose: the project targets 3.11, but the interpreter
-# executing this shipped file is the user's `python3`, not the project's.
+# Compare the runtime tuple: the executing interpreter is the user's `python3`,
+# not necessarily the Python version targeted by the project's static checker.
 #
 # FAIL-OPEN mode. Exit 1 is a non-blocking hook error for Claude Code (only
 # exit 2, or a JSON deny, blocks a tool call), so the reason reaches the user
 # and the session continues -- a broken interpreter is not a policy decision.
-if sys.version_info < (3, 11):  # noqa: UP036
+if tuple(sys.version_info) < (3, 11):
     _MAP_PYTHON_PROBLEM = (
         f"MAP requires Python 3.11 or newer, but {sys.executable} is "
         f"Python {sys.version_info[0]}.{sys.version_info[1]}.\n"
@@ -192,7 +192,8 @@ def _concurrent_dispatch_enabled(project_dir: Path) -> bool:
     return raw.strip().lower() in _CONCURRENT_DISPATCH_TRUTHY
 
 
-def _execution_wave_mode(project_dir: Path) -> str:
+# Compatibility export: imported by map_orchestrator's strategy selector.
+def _execution_wave_mode(project_dir: Path) -> str:  # pyright: ignore[reportUnusedFunction]
     """Return the execution.wave_mode setting: 'off' | 'auto' | 'on'.
 
     Default + enum mirror the canonical MapConfig schema (config/project_config.py):
@@ -3433,7 +3434,7 @@ def _render_prd_review_markdown(payload: Mapping[str, Any]) -> str:
 
 
 def write_prd_review(
-    verdict: str,
+    verdict: object,
     dimension_scores_json: str = "",
     strengths_json: str = "[]",
     findings_json: str = "[]",
@@ -3854,8 +3855,8 @@ PRD_REVIEW_PLANNING_DECISIONS = frozenset({"proceed_anyway", "stop_for_revision"
 
 
 def record_prd_review_decision(
-    decision: str,
-    rationale: str = "",
+    decision: object,
+    rationale: object = "",
     branch: str | None = None,
 ) -> dict[str, object]:
     """Record the user's planning choice after a non-ready PRD review."""
@@ -8475,12 +8476,144 @@ def _apply_verdict_table(active_findings: list[dict[str, Any]]) -> tuple[str, st
     return "PROCEED", "Only minor active findings remain. Decision table rule 5 → PROCEED."
 
 
+REVIEW_RUN_SCHEMA = "review_run.v1"
+ADVERSARIAL_AGGREGATE_SCHEMA = "adversarial_aggregate.v1"
+REVIEW_INPUT_NAMES = (
+    *(f"review-agent-{role}.json" for role in (
+        "monitor", "predictor", "evaluator", "adversarial", "user_experience", "maintainer",
+    )),
+    *(f"adversarial-{role}.json" for role in (
+        "blind", "edge", "acceptance", "user-experience", "maintainer",
+    )),
+    "review-mode.json", "review-gate.json", "review-collections",
+)
+
+
+class ReviewRun(TypedDict):
+    schema_version: str
+    review_mode: str
+    scheduled_reviewers: list[str]
+    arguments: str
+    mode: str
+    sibling_hint: str
+
+
+def _validate_review_run(data: Any) -> str | None:
+    if not isinstance(data, dict) or data.get("schema_version") != REVIEW_RUN_SCHEMA:
+        return "missing or unsupported review-run schema"
+    if data.get("review_mode") not in {"normal", "adversarial", "compare_orderings"}:
+        return "invalid review mode"
+    roster = data.get("scheduled_reviewers")
+    if not isinstance(roster, list) or not roster or any(not isinstance(r, str) for r in roster):
+        return "scheduled_reviewers must be a nonempty string array"
+    valid_rosters = [set(NORMAL_REVIEWERS), {"monitor"}, set(ADVERSARIAL_REVIEWERS),
+                     set(ADVERSARIAL_REVIEWERS) - {"edge_case"}]
+    if data["review_mode"] == "normal":
+        valid_rosters = valid_rosters[:2]
+    elif data["review_mode"] == "adversarial":
+        valid_rosters = valid_rosters[2:]
+    if len(set(roster)) != len(roster) or set(roster) not in valid_rosters:
+        return "invalid scheduled reviewer roster"
+    if not isinstance(data.get("arguments"), str) or not isinstance(data.get("mode"), str):
+        return "invalid review-run arguments or mode"
+    return None
+
+
+def begin_review_run(
+    review_mode: str = "normal", scheduled_reviewers: list[str] | None = None,
+    *, mode: str = "full", arguments: str = "", sibling_hint: str = "", branch: str | None = None,
+) -> dict[str, Any]:
+    """Archive bounded prior inputs before collection; retain ledger and objections."""
+    # Intent: focus text is free prose, not a shell command; detect only literal flag tokens.
+    flags = arguments.split()
+    if scheduled_reviewers is None:
+        adversarial = "--adversarial" in flags
+        review_mode = "compare_orderings" if "--compare-orderings" in flags else (
+            "adversarial" if adversarial else "normal"
+        )
+        scheduled_reviewers = list(ADVERSARIAL_REVIEWERS if adversarial else (
+            ("monitor",) if mode == "lightweight" else NORMAL_REVIEWERS
+        ))
+        if adversarial and "--quick" in flags:
+            scheduled_reviewers.remove("edge_case")
+    payload: ReviewRun = {
+        "schema_version": REVIEW_RUN_SCHEMA, "review_mode": review_mode,
+        "scheduled_reviewers": scheduled_reviewers, "arguments": arguments, "mode": mode,
+        "sibling_hint": sibling_hint,
+    }
+    error = _validate_review_run(payload)
+    if error:
+        return {"status": "error", "message": error}
+    branch_dir = get_branch_dir(branch or get_branch_name())
+    archive_path = None
+    try:
+        branch_dir.mkdir(parents=True, exist_ok=True)
+        previous = [branch_dir / name for name in REVIEW_INPUT_NAMES if (branch_dir / name).exists()]
+        if previous:
+            archive_root = branch_dir / "review-input-archive"
+            archive_root.mkdir(exist_ok=True)
+            archive_path = Path(tempfile.mkdtemp(prefix="run-", dir=archive_root))
+            for path in previous:
+                path.rename(archive_path / path.name)
+        _write_json_file(branch_dir / "review-mode.json", dict(payload))
+    except OSError as exc:
+        return {"status": "error", "message": f"Review start failed: {exc}",
+                "archive_path": str(archive_path) if archive_path else None}
+    return {"status": "success", "review_mode": review_mode,
+            "scheduled_reviewers": scheduled_reviewers,
+            "archived_inputs": [path.name for path in previous],
+            "archive_path": str(archive_path) if archive_path else None}
+
+
+def _adversarial_reviewer_error(parsed: Any) -> str | None:
+    if not isinstance(parsed, dict):
+        return "output is not a JSON object"
+    if not isinstance(parsed.get("all_clear"), bool):
+        return "all_clear must be a boolean"
+    if not isinstance(parsed.get("findings"), list) or any(
+        not isinstance(finding, dict) for finding in parsed.get("findings", [])
+    ):
+        return "findings must be an object array"
+    if parsed["all_clear"] and parsed["findings"]:
+        return "all_clear contradicts nonempty findings"
+    return None
+
+
+def _adversarial_aggregate_errors(report: dict[str, Any], expected: list[str]) -> list[str]:
+    errors = []
+    if report.get("schema_version") != ADVERSARIAL_AGGREGATE_SCHEMA:
+        return ["adversarial: unsupported aggregate schema"]
+    if not isinstance(report.get("ledger_findings"), list) or any(
+        not isinstance(finding, dict) for finding in report.get("ledger_findings", [])
+    ):
+        errors.append("adversarial: ledger_findings must be an object array")
+    if not isinstance(report.get("parse_errors"), list) or any(
+        not isinstance(err, str) for err in report.get("parse_errors", [])
+    ):
+        errors.append("adversarial: parse_errors must be a string array")
+    else:
+        errors.extend(report["parse_errors"])
+    statuses = report.get("reviewer_status")
+    if not isinstance(statuses, dict):
+        return [*errors, "adversarial: reviewer_status must be an object"]
+    for reviewer in expected:
+        entry = statuses.get(reviewer)
+        if not isinstance(entry, dict) or entry.get("status") != "ok":
+            errors.append(f"{reviewer}: scheduled reviewer output missing or invalid")
+        else:
+            error = _adversarial_reviewer_error(entry.get("raw"))
+            if error:
+                errors.append(f"{reviewer}: {error}")
+    return errors
+
+
 def normalize_review_verdict(
     monitor_result: dict[str, Any] | None = None,
     predictor_result: dict[str, Any] | None = None,
     evaluator_result: dict[str, Any] | None = None,
     *,
     adversarial_findings: list[dict[str, Any]] | None = None,
+    adversarial_inputs_supplied: bool = False,
     role_findings: list[Any] | None = None,
     role_inputs_supplied: bool = False,
     review_mode: str = "normal",
@@ -8858,7 +8991,7 @@ def normalize_review_verdict(
         "monitor": bool(monitor_data),
         "predictor": bool(predictor_data),
         "evaluator": bool(evaluator_data),
-        "adversarial": bool(adversarial_findings),
+        "adversarial": bool(adversarial_findings) or adversarial_inputs_supplied,
         # Envelope presence, not finding count: every other source uses
         # truthiness of the parsed payload, and an `all_clear` role envelope
         # carries zero findings while still being a review that ran.
@@ -8988,7 +9121,7 @@ def normalize_review_verdict(
             # above a structural read of one reviewer pass.
             "evidence_mode": (
                 "independent_run"
-                if (adversarial_findings or []) or review_mode == "cross_ai"
+                if (adversarial_findings or []) or adversarial_inputs_supplied or review_mode == "cross_ai"
                 else "structural"
             ),
             "executor_class": executor_class or "unknown",
@@ -9151,6 +9284,7 @@ def write_review_verdict_ledger(
     evaluator_file: str = "",
     adversarial_file: str = "",
     role_files: Mapping[str, str] | None = None,
+    current_run: bool = False,
     review_mode: str = "normal",
     previous_verdict: str = "",
     destination: str = "unknown",
@@ -9196,12 +9330,43 @@ def write_review_verdict_ledger(
     # Parse failures are RECORDED, not swallowed: a truncated Monitor envelope
     # must surface as an integrity finding rather than as an absence of findings.
     input_errors: list[str] = []
+    expected_adversarial = list(ADVERSARIAL_REVIEWERS)
+    collection_dirs = [branch_dir]
+    roster: list[str] = []
+    if current_run:
+        try:
+            run = json.loads((branch_dir / "review-mode.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return {"status": "error", "message": f"Cannot load current review-mode.json: {exc}"}
+        run_error = _validate_review_run(run)
+        if run_error:
+            return {"status": "error", "message": run_error}
+        review_mode = run["review_mode"]
+        roster = run["scheduled_reviewers"]
+        if review_mode == "compare_orderings":
+            collection_dirs = [branch_dir / "review-collections" / label for label in ("default", "reverse")]
+        if "monitor" in roster:
+            monitor_file = str(collection_dirs[0] / "review-agent-monitor.json")
+            predictor_file = str(collection_dirs[0] / "review-agent-predictor.json") if "predictor" in roster else ""
+            evaluator_file = str(collection_dirs[0] / "review-agent-evaluator.json") if "evaluator" in roster else ""
+            role_files = {r: str(collection_dirs[0] / f"review-agent-{r}.json") for r in ROLE_REVIEWER_IDS if r in roster}
+            adversarial_file = ""
+        else:
+            expected_adversarial = roster
+            adversarial_file = str(collection_dirs[0] / "review-agent-adversarial.json")
+            monitor_file = predictor_file = evaluator_file = ""
+            role_files = {}
+        monitor_json = predictor_json = evaluator_json = adversarial_json = ""
+        role_json = {}
 
     def _read_source(raw: str, path: str, label: str) -> str:
         """Return the payload for one reviewer, preferring an on-disk file."""
         if path:
             try:
-                return Path(path).read_text(encoding="utf-8")
+                content = Path(path).read_text(encoding="utf-8")
+                if not content.strip():
+                    input_errors.append(f"{label}: empty reviewer file {path}")
+                return content
             except OSError as exc:
                 input_errors.append(f"{label}: cannot read {path} ({exc.strerror or exc})")
                 return ""
@@ -9218,6 +9383,23 @@ def write_review_verdict_ledger(
         if not isinstance(parsed, dict):
             input_errors.append(f"{label}: expected a JSON object, got {type(parsed).__name__}")
             return {}
+        if current_run:
+            reviewer = label.removeprefix("reverse ")
+            invalid = False
+            if reviewer == "monitor":
+                invalid = not isinstance(parsed.get("issues"), list) or any(
+                    not isinstance(issue, dict) for issue in parsed.get("issues", [])
+                )
+            elif reviewer == "predictor":
+                invalid = parsed.get("risk_assessment") not in _PREDICTOR_RISK_MAP
+            elif reviewer == "evaluator":
+                score = parsed.get("overall_score")
+                invalid = isinstance(score, bool) or not isinstance(score, (int, float))
+            elif reviewer in ROLE_REVIEWER_IDS:
+                invalid = _adversarial_reviewer_error(parsed) is not None
+            if invalid:
+                input_errors.append(f"{label}: invalid scheduled reviewer envelope")
+                return {}
         return parsed
 
     def _safe_parse_list(raw: str, label: str) -> list[dict[str, Any]]:
@@ -9238,9 +9420,50 @@ def write_review_verdict_ledger(
     monitor_result = _safe_parse(_read_source(monitor_json, monitor_file, "monitor"), "monitor")
     predictor_result = _safe_parse(_read_source(predictor_json, predictor_file, "predictor"), "predictor")
     evaluator_result = _safe_parse(_read_source(evaluator_json, evaluator_file, "evaluator"), "evaluator")
-    adversarial_findings = _safe_parse_list(
-        _read_source(adversarial_json, adversarial_file, "adversarial"), "adversarial"
-    )
+    adversarial_inputs_supplied = False
+
+    def _parse_adversarial(raw: str) -> list[dict[str, Any]]:
+        nonlocal adversarial_inputs_supplied
+        if not raw.strip():
+            return []
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return _safe_parse_list(raw, "adversarial")
+        if isinstance(parsed, dict) and any(
+            field in parsed for field in ("schema_version", "ledger_findings", "reviewer_status", "parse_errors")
+        ):
+            errors = _adversarial_aggregate_errors(parsed, expected_adversarial)
+            input_errors.extend(errors)
+            adversarial_inputs_supplied = not errors
+            findings = parsed.get("ledger_findings")
+            return [item for item in findings if isinstance(item, dict)] if isinstance(findings, list) else []
+        if current_run:
+            input_errors.append("adversarial: current review requires a tagged aggregate")
+            return _safe_parse_list(raw, "adversarial") if parsed else []
+        if parsed == {}:
+            return []
+        return _safe_parse_list(raw, "adversarial")
+
+    adversarial_findings = _parse_adversarial(_read_source(adversarial_json, adversarial_file, "adversarial"))
+    if current_run and review_mode == "compare_orderings":
+        if adversarial_file:
+            adversarial_findings.extend(_parse_adversarial(_read_source(
+                "", str(collection_dirs[1] / "review-agent-adversarial.json"), "reverse adversarial",
+            )))
+        else:
+            for reviewer, target in (("monitor", monitor_result), ("predictor", predictor_result), ("evaluator", evaluator_result)):
+                if reviewer not in roster:
+                    continue
+                other = _safe_parse(_read_source(
+                    "", str(collection_dirs[1] / f"review-agent-{reviewer}.json"), f"reverse {reviewer}",
+                ), f"reverse {reviewer}")
+                if reviewer == "monitor":
+                    target["issues"] = [*(target.get("issues") or []), *(other.get("issues") or [])]
+                elif reviewer == "predictor":
+                    risk_order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+                    if risk_order.get(str(other.get("risk_assessment")), -1) > risk_order.get(str(target.get("risk_assessment")), -1):
+                        target.update(other)
 
     # Role reviewers hand over their envelope verbatim, exactly like Monitor —
     # the ledger owns the unwrap so no caller has to pre-flatten a findings array.
@@ -9272,6 +9495,22 @@ def write_review_verdict_ledger(
                 {**entry, "reviewer": entry.get("reviewer") or role_id}
                 if isinstance(entry, dict)
                 else entry
+            )
+    if current_run and review_mode == "compare_orderings" and not adversarial_file:
+        for role_id in ROLE_REVIEWER_IDS:
+            if role_id not in roster:
+                continue
+            other = _safe_parse(_read_source(
+                "", str(collection_dirs[1] / f"review-agent-{role_id}.json"), f"reverse {role_id}",
+            ), f"reverse {role_id}")
+            entries = other.get("findings")
+            if not isinstance(entries, list):
+                input_errors.append(f"reverse {role_id}: expected a 'findings' array")
+                continue
+            role_inputs_supplied = True
+            role_findings.extend(
+                {**entry, "reviewer": entry.get("reviewer") or role_id} if isinstance(entry, dict) else entry
+                for entry in entries
             )
 
     # A PARTIAL roster means a reviewer was dispatched and its envelope never
@@ -9309,6 +9548,7 @@ def write_review_verdict_ledger(
         predictor_result=predictor_result,
         evaluator_result=evaluator_result,
         adversarial_findings=adversarial_findings,
+        adversarial_inputs_supplied=adversarial_inputs_supplied,
         role_findings=role_findings,
         role_inputs_supplied=role_inputs_supplied,
         review_mode=review_mode,
@@ -10647,6 +10887,8 @@ HOW TO REVIEW:
 # The roster IS the spec keys: one declaration, so a role cannot exist for the
 # prompt builder while staying invisible to the ledger, the aggregator and the CLI.
 ROLE_REVIEWER_IDS: tuple[str, ...] = tuple(ROLE_REVIEWER_SPECS)
+NORMAL_REVIEWERS = ("monitor", "predictor", "evaluator", *ROLE_REVIEWER_IDS)
+ADVERSARIAL_REVIEWERS = ("blind", "edge_case", "acceptance", *ROLE_REVIEWER_IDS)
 
 # The five parts every role finding must carry. Presence is checked
 # mechanically here; wording quality is the reviewer prompt's job.
@@ -11735,14 +11977,6 @@ def _cluster_adversarial_findings(
     return clusters
 
 
-def _dedup_cluster_via_llm_fallback(cluster: dict[str, object]) -> dict[str, object]:
-    """Return cluster as-is for v1 — deterministic clustering is sufficient.
-
-    LLM adjudication for ambiguous cases is deferred to v2.
-    """
-    return cluster
-
-
 def _severity_rank(severity: str) -> int:
     return {"CRITICAL": 0, "IMPORTANT": 1, "MINOR": 2}.get(str(severity).upper(), 3)
 
@@ -11829,13 +12063,11 @@ def aggregate_adversarial_findings(
             continue
         try:
             parsed = json.loads(raw_json)
-            if not isinstance(parsed, dict):
-                reviewer_data[reviewer_id] = {
-                    "status": "parse_error",
-                    "error": "Output is not a JSON object",
-                }
+            envelope_error = _adversarial_reviewer_error(parsed)
+            if envelope_error:
+                reviewer_data[reviewer_id] = {"status": "parse_error", "error": envelope_error}
                 findings_by_reviewer[reviewer_id] = []
-                parse_errors.append(f"{reviewer_id}: output is not a JSON object")
+                parse_errors.append(f"{reviewer_id}: {envelope_error}")
                 continue
             reviewer_data[reviewer_id] = {
                 "status": "ok",
@@ -11917,6 +12149,7 @@ def aggregate_adversarial_findings(
         all_clear_by_reviewer[reviewer_id] = data.get("all_clear")
 
     return {
+        "schema_version": ADVERSARIAL_AGGREGATE_SCHEMA,
         "status": "success",
         "summary": {
             "total_findings": len(merged_findings),
@@ -19836,7 +20069,8 @@ def _wt_force_remove(path: Path, branch_ref: str) -> None:
 # Stable reason codes shared by resolve_worktree_isolation and ST-011 observability.
 _WT_REASON_NOT_GIT_REPO: str = "not_git_repo"
 _WT_REASON_UNSUPPORTED: str = "worktree_unsupported"
-_WT_REASON_CREATE_FAILED: str = "worktree_create_failed"
+# Compatibility export: pinned to the observability module's reason vocabulary.
+_WT_REASON_CREATE_FAILED: str = "worktree_create_failed"  # pyright: ignore[reportUnusedVariable]
 _WT_REASON_DIRTY_MERGE_TARGET: str = "dirty_merge_target"
 # concurrency_ready reason codes
 _WT_REASON_NO_RECORD: str = "no_record"
@@ -19928,7 +20162,8 @@ def _wt_max_deletions(project_dir: Path) -> int:
 _LINT_ENFORCEMENT_VALID = frozenset({"off", "warn", "repair_once", "strict"})
 
 
-def _lint_dependency_enforcement(project_dir: Path) -> str:
+# Compatibility helper: external callers/tests rely on the dormant config parser.
+def _lint_dependency_enforcement(project_dir: Path) -> str:  # pyright: ignore[reportUnusedFunction]
     """Return the lint.dependency_enforcement setting.
 
     Accepted values: 'off' | 'warn' | 'repair_once' | 'strict'.
@@ -19940,7 +20175,8 @@ def _lint_dependency_enforcement(project_dir: Path) -> str:
     return normalized if normalized in _LINT_ENFORCEMENT_VALID else "warn"
 
 
-def _lint_auto_prune(project_dir: Path) -> bool:
+# Compatibility helper: keep config parsing without activating pruning side effects.
+def _lint_auto_prune(project_dir: Path) -> bool:  # pyright: ignore[reportUnusedFunction]
     """Return the lint.auto_prune setting (default False).
 
     Absent key → False (no mutation today).  Never raises.
@@ -19949,7 +20185,8 @@ def _lint_auto_prune(project_dir: Path) -> bool:
     return _parse_boolish(raw)
 
 
-def _observability_parallelism_enabled(project_dir: Path) -> bool:
+# Compatibility helper: callers can query the toggle without emitting artifacts.
+def _observability_parallelism_enabled(project_dir: Path) -> bool:  # pyright: ignore[reportUnusedFunction]
     """Return the observability.parallelism setting (default False).
 
     This is the dormant no-op gate that ST-011's parallelism.json writer
@@ -24233,6 +24470,21 @@ if __name__ == "__main__":
         if result.get("status") == "error":
             sys.exit(1)
 
+    elif func_name == "begin_review_run":
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py begin_review_run")
+        _p.add_argument("--mode", default="full", choices=("full", "lightweight", "sibling-aware"))
+        _p.add_argument("--arguments", default="")
+        _p.add_argument("--sibling-hint", default="")
+        _p.add_argument("--branch", default=None)
+        _args = _p.parse_args(sys.argv[2:])
+        result = begin_review_run(mode=_args.mode, arguments=_args.arguments,
+                                  sibling_hint=_args.sibling_hint, branch=_args.branch)
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+        if result["status"] == "error":
+            sys.exit(1)
+
     elif func_name == "write_review_verdict_ledger":
         # CLI: write_review_verdict_ledger
         #        [--monitor-json '<JSON>']
@@ -24254,7 +24506,7 @@ if __name__ == "__main__":
             frozenset({
                 "monitor-json", "predictor-json", "evaluator-json", "adversarial-json",
                 "monitor-file", "predictor-file", "evaluator-file", "adversarial-file",
-                "review-mode", "previous-verdict", "branch",
+                "review-mode", "previous-verdict", "branch", "current-run",
                 "destination", "executor-class",
             } | {f"{r.replace('_', '-')}-json" for r in ROLE_REVIEWER_IDS}
               | {f"{r.replace('_', '-')}-file" for r in ROLE_REVIEWER_IDS}),
@@ -24265,7 +24517,7 @@ if __name__ == "__main__":
             " [--monitor-file <path>] [--predictor-file <path>]"
             " [--evaluator-file <path>] [--adversarial-file <path>]"
             " [--<role>-file <path>]"
-            " [--review-mode normal|adversarial|cross_ai|compare_orderings]"
+            " [--review-mode normal|adversarial|cross_ai|compare_orderings] [--current-run]"
             " [--previous-verdict PROCEED|REVISE|BLOCK]"
             " [--destination <str>] [--executor-class <str>]"
             " [--branch <branch>]",
@@ -24287,11 +24539,14 @@ if __name__ == "__main__":
             },
             destination=_cli_flag("destination", "unknown"),
             executor_class=_cli_flag("executor-class", "unknown"),
+            current_run="--current-run" in sys.argv[2:],
             review_mode=_cli_flag("review-mode", "normal"),
             previous_verdict=_cli_flag("previous-verdict", ""),
             branch=_cli_flag("branch") or None,
         )
         print(json.dumps(result, indent=2, ensure_ascii=True))
+        if result.get("status") == "error":
+            sys.exit(1)
 
     elif func_name == "route_task" and len(sys.argv) >= 3:
         # CLI: route_task <task> [--branch B] [--dry-run]

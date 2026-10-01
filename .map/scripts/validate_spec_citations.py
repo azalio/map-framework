@@ -27,13 +27,13 @@ import sys
 # evaluated annotations) fails with a message that never mentions the version.
 # Name the real cause instead. Kept in sync with
 # mapify_cli/python_runtime.MINIMUM_PYTHON.
-# UP036 is suppressed on purpose: the project targets 3.11, but the interpreter
-# executing this shipped file is the user's `python3`, not the project's.
+# Compare the runtime tuple: the executing interpreter is the user's `python3`,
+# not necessarily the Python version targeted by the project's static checker.
 #
 # FAIL-OPEN mode. Exit 1 is a non-blocking hook error for Claude Code (only
 # exit 2, or a JSON deny, blocks a tool call), so the reason reaches the user
 # and the session continues -- a broken interpreter is not a policy decision.
-if sys.version_info < (3, 11):  # noqa: UP036
+if tuple(sys.version_info) < (3, 11):
     _MAP_PYTHON_PROBLEM = (
         f"MAP requires Python 3.11 or newer, but {sys.executable} is "
         f"Python {sys.version_info[0]}.{sys.version_info[1]}.\n"

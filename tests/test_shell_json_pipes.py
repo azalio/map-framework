@@ -123,3 +123,44 @@ def test_no_echo_pipe_into_jq_or_read_loop() -> None:
 def test_banned_pattern_detection(line: str, banned: bool) -> None:
     """The detector itself must catch the bug class and not the safe forms."""
     assert bool(BANNED_RE.search(line)) is banned
+
+
+# `echo "$ARGUMENTS"` / `echo $ARGUMENTS` in the map-review flag-parsing step.
+# Scoped to map-review only: other skills still carry the pattern.
+ECHO_ARGUMENTS_RE = re.compile(r"""echo(?:\s+-[a-zA-Z]+)*\s+"?\$\{?ARGUMENTS\}?"?""")
+
+
+def test_map_review_has_no_echo_arguments() -> None:
+    """map-review must parse $ARGUMENTS via printf, not zsh-escape-mangling echo."""
+    review_files = [p for p in _scan_files() if "/map-review/" in p.as_posix()]
+    assert review_files, "no map-review files scanned — gate is inert"
+    offenders: list[str] = []
+    for path in review_files:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if ECHO_ARGUMENTS_RE.search(line):
+                offenders.append(
+                    f"{path.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}"
+                )
+    assert not offenders, (
+        "Use `printf '%s' \"$ARGUMENTS\"` instead of echo in map-review.\n"
+        + "\n".join(offenders)
+    )
+
+
+@pytest.mark.parametrize(
+    ("line", "banned"),
+    [
+        ('if echo "$ARGUMENTS" | grep -q -- \'--quick\'; then', True),
+        ("if echo $ARGUMENTS | grep -q -- '--quick'; then", True),
+        ("X=$(echo \"${ARGUMENTS}\" | sed 's/a/b/')", True),
+        ('echo -n "$ARGUMENTS" | grep -q -- --ci', True),
+        ("if printf '%s' \"$ARGUMENTS\" | grep -q -- '--quick'; then", False),
+    ],
+)
+def test_map_review_echo_arguments_detection(line: str, banned: bool) -> None:
+    """Negative check: the detector flags a reintroduced echo line, not printf."""
+    assert bool(ECHO_ARGUMENTS_RE.search(line)) is banned

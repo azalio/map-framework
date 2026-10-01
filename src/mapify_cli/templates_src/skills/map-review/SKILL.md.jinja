@@ -1,10 +1,13 @@
 ---
+[% set cmd = "/" if PROVIDER == "claude" else "$" -%]
 name: map-review
 description: |
   Interactive 4-section code review using Monitor, Predictor, and Evaluator agents plus the user and maintainer role reviewers on current changes. Use when reviewing a diff, PR, or staged work before merge. Do NOT use to plan or implement; use map-plan or map-efficient.
+[%- if PROVIDER == "claude" %]
 effort: high
 disable-model-invocation: true
 argument-hint: "[review focus] [--detached] [--ci] [--reverse-sections] [--shuffle-sections] [--seed <int>] [--compare-orderings] [--adversarial] [--quick] [--show-raw-findings] [--cross-ai <runtime>]"
+[%- endif %]
 ---
 [% include "_partials/auto-update-preflight.md.jinja" %]
 # MAP Review Workflow
@@ -60,6 +63,10 @@ parallel_tool_policy: single_review_fanout
    bug-introduced-here BEFORE Phase B. Bare claims without evidence are
    downgraded to `needs_investigation` and not published as issues.
 8. Present options neutrally as A/B/C. Append `(Recommended)` after the option label, not by position.
+[%- if PROVIDER == "codex" %]
+
+**Codex — supported review states:** run `$map-review` (normal, `--adversarial`, `--cross-ai`) with no `.map/<branch>/step_state.json`, in `COMPLETE`/`WORKFLOW_COMPLETE`, or in `MONITOR` while `MAP_MONITOR_HOTFIX` is not `0`. In other non-editing phases (e.g. `DECOMPOSE`, `PREDICTOR`, or `MONITOR` with `MAP_MONITOR_HOTFIX=0`) the Codex workflow-gate hook denies shell writes to `$`-expanded targets (precheck log, `review-mode.json`, reviewer envelopes, adversarial files). On such a deny, archive the stale workflow (or finish it) or rerun `$map-review` from a supported state — do not work around the hook.
+[%- endif %]
 
 ## Review Preferences (Customize per project)
 
@@ -140,33 +147,33 @@ CI mode scans for the `(Recommended)` marker; it does not pick by first position
 
 ```bash
 CI_MODE=false
-if echo "$ARGUMENTS" | grep -qE -- '--(ci|auto)'; then
+if printf '%s' "$ARGUMENTS" | grep -qE -- '--(ci|auto)'; then
   CI_MODE=true
 fi
 
 DETACHED_FLAG=false
-if echo "$ARGUMENTS" | grep -q -- '--detached'; then
+if printf '%s' "$ARGUMENTS" | grep -q -- '--detached'; then
   DETACHED_FLAG=true
-  ARGUMENTS=$(echo "$ARGUMENTS" | sed 's/--detached//g' | xargs)
+  ARGUMENTS=$(printf '%s' "$ARGUMENTS" | sed 's/--detached//g' | xargs)
 fi
 
 REVERSE_FLAG=false
-if echo "$ARGUMENTS" | grep -q -- '--reverse-sections'; then
+if printf '%s' "$ARGUMENTS" | grep -q -- '--reverse-sections'; then
   REVERSE_FLAG=true
 fi
 
 SHUFFLE_FLAG=false
-if echo "$ARGUMENTS" | grep -q -- '--shuffle-sections'; then
+if printf '%s' "$ARGUMENTS" | grep -q -- '--shuffle-sections'; then
   SHUFFLE_FLAG=true
 fi
 
 SEED_RAW=""
-if echo "$ARGUMENTS" | grep -qE -- '--seed[ =][0-9]+'; then
-  SEED_RAW=$(echo "$ARGUMENTS" | sed -nE 's/.*--seed[ =]([0-9]+).*/\1/p')
+if printf '%s' "$ARGUMENTS" | grep -qE -- '--seed[ =][0-9]+'; then
+  SEED_RAW=$(printf '%s' "$ARGUMENTS" | sed -nE 's/.*--seed[ =]([0-9]+).*/\1/p')
 fi
 
 COMPARE_FLAG=false
-if echo "$ARGUMENTS" | grep -q -- '--compare-orderings'; then
+if printf '%s' "$ARGUMENTS" | grep -q -- '--compare-orderings'; then
   COMPARE_FLAG=true
 fi
 
@@ -178,21 +185,21 @@ fi
 ADVERSARIAL_FLAG=false
 QUICK_FLAG=false
 SHOW_RAW_FLAG=false
-if echo "$ARGUMENTS" | grep -q -- '--adversarial'; then
+if printf '%s' "$ARGUMENTS" | grep -q -- '--adversarial'; then
   ADVERSARIAL_FLAG=true
 fi
-if echo "$ARGUMENTS" | grep -q -- '--quick'; then
+if printf '%s' "$ARGUMENTS" | grep -q -- '--quick'; then
   QUICK_FLAG=true
 fi
-if echo "$ARGUMENTS" | grep -q -- '--show-raw-findings'; then
+if printf '%s' "$ARGUMENTS" | grep -q -- '--show-raw-findings'; then
   SHOW_RAW_FLAG=true
 fi
 
 CROSS_AI_FLAG=false
 CROSS_AI_RUNTIME=""  # optional --cross-ai <rt>; empty => configured default
-if echo "$ARGUMENTS" | grep -qE -- '--cross-ai'; then
+if printf '%s' "$ARGUMENTS" | grep -qE -- '--cross-ai'; then
   CROSS_AI_FLAG=true
-  CROSS_AI_RUNTIME=$(echo "$ARGUMENTS" | sed -nE 's/.*--cross-ai[ =]([a-z][a-z0-9-]*).*/\1/p')
+  CROSS_AI_RUNTIME=$(printf '%s' "$ARGUMENTS" | sed -nE 's/.*--cross-ai[ =]([a-z][a-z0-9-]*).*/\1/p')
 fi
 
 MODE_FLAG="default"
@@ -218,6 +225,8 @@ says the same thing in 2 seconds).
 # concatenated literal "\n" sequences inside double quotes, which is
 # what `echo` writes verbatim (not a newline). Use printf or direct
 # redirection instead.
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH_DIR=".map/$BRANCH"
 PRECHECK_LOG=".map/$BRANCH/precheck.log"
 mkdir -p ".map/$BRANCH"
 : > "$PRECHECK_LOG"
@@ -246,6 +255,8 @@ contradict a clean precheck require evidence stronger than narrative
 ### Step A.0b: Detect review mode
 
 ```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH_DIR=".map/$BRANCH"
 REVIEW_MODE="full"
 # Empty / placeholder review-bundle.md ⇒ lightweight.
 if [ -f ".map/$BRANCH/review-bundle.md" ] && \
@@ -258,11 +269,16 @@ fi
 SIBLING_HINT=""
 if git log -1 --format=%B | grep -iE 'twin of |sibling |mirror of |port of ' >/dev/null; then
   REVIEW_MODE="sibling-aware"
-  SIBLING_HINT=$(git log -1 --format=%B | grep -oiE '(twin of|sibling|mirror of|port of)[^.]*' | head -1)
+  SIBLING_HINT=$(git log -1 --format=%B | grep -oiE '(twin of|sibling|mirror of|port of)[^.]*' | sed -n '1p')
 fi
-echo "{\"mode\":\"$REVIEW_MODE\",\"sibling_hint\":\"$SIBLING_HINT\"}" \
-  > .map/$BRANCH/review-mode.json
+python3 .map/scripts/map_step_runner.py begin_review_run \
+  --mode "$REVIEW_MODE" --arguments="$ARGUMENTS" --sibling-hint "$SIBLING_HINT" || exit 1
 ```
+
+Start once per invocation, before any capture or fan-out. Abort on a start error;
+never restart during a reviewer retry or between ordering collections. The runner
+archives only prior reviewer inputs and gate, preserves ledger/objections, and
+persists the actual mode, arguments and scheduled roster in `review-mode.json`.
 
 Mode semantics:
 - **`full`** (default): five reviewers TOTAL — Monitor, Predictor, Evaluator + both roles (`complexity_lens` is advisory, extra), all four sections.
@@ -280,7 +296,7 @@ Mode semantics:
 ### Step A.1: Gather changes
 
 Diff against the **merge-base with the default branch**, not `HEAD`. On a
-fully-committed branch — the normal `/map-check` → `/map-review` state —
+fully-committed branch — the normal `<% cmd %>map-check` → `<% cmd %>map-review` state —
 `git diff HEAD` is empty and under-reports the review scope to zero (#426).
 
 ```bash
@@ -325,6 +341,10 @@ If `DETACHED_STATUS` is `success`, tell reviewer agents to read source files fro
 ### Step A.1d: Prepare compare-mode ordering (optional, `--compare-orderings` only)
 
 When compare mode is active, run two review collections with `ordering_label='default'` and `ordering_label='reverse'`, then call `compare-review-runs` and `record-review-ordering` to stage the drift summary. See [review-reference.md](review-reference.md#compare-orderings) for the detailed loop.
+[%- if PROVIDER != "claude" %]
+
+On Codex, `<n>` in `task_name` (the `map_review_<role>_<n>` counter from Step A.2) keeps incrementing across both collections, so the second (`reverse`) collection dispatches with fresh names.
+[%- endif %]
 
 ### Step A.2: Launch all parallel calls
 
@@ -343,16 +363,42 @@ USER_EXPERIENCE_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import
 MAINTAINER_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["maintainer"]["prompt"])')
 ```
 
+[%- if PROVIDER == "claude" %]
+
 Use the extracted prompt variables as the Task prompts. Keep reviewer task calls below the bundle and prompt-builder commands.
+[%- else %]
+
+Use the extracted prompt variables as the spawn_agent messages. Keep reviewer spawn calls below the bundle and prompt-builder commands.
+[%- endif %]
 
 ```text
+[%- if PROVIDER == "claude" %]
 Task(subagent_type="monitor", description="Review diff for correctness", prompt=MONITOR_PROMPT)
 Task(subagent_type="predictor", description="Predict integration risk", prompt=PREDICTOR_PROMPT)
 Task(subagent_type="evaluator", description="Score review quality", prompt=EVALUATOR_PROMPT)
 Task(subagent_type="general-purpose", description="User-perspective regression review", prompt=USER_EXPERIENCE_PROMPT)
 Task(subagent_type="general-purpose", description="Maintainer-perspective rot review", prompt=MAINTAINER_PROMPT)
 If COMPLEXITY_LENS_ENABLED=true: Task(subagent_type="evaluator", description="Find deletable complexity", prompt=COMPLEXITY_LENS_PROMPT)
+[%- else %]
+spawn_agent(agent_type="monitor", task_name="map_review_monitor_<n>", message=MONITOR_PROMPT)
+spawn_agent(agent_type="predictor", task_name="map_review_predictor_<n>", message=PREDICTOR_PROMPT)
+spawn_agent(agent_type="evaluator", task_name="map_review_evaluator_<n>", message=EVALUATOR_PROMPT)
+spawn_agent(agent_type="predictor", task_name="map_review_user_experience_<n>", message=USER_EXPERIENCE_PROMPT)
+spawn_agent(agent_type="documentation-reviewer", task_name="map_review_maintainer_<n>", message=MAINTAINER_PROMPT)
+If COMPLEXITY_LENS_ENABLED=true: spawn_agent(agent_type="evaluator", task_name="map_review_complexity_lens_<n>", message=COMPLEXITY_LENS_PROMPT)
+[%- endif %]
 ```
+[%- if PROVIDER != "claude" %]
+
+Codex dispatch rules:
+
+- `<n>` increments on every dispatch in the run (including the Step A.2b truncation retry and the second `--compare-orderings` collection), so every call gets a unique `task_name`.
+- Each call sends its generated prompt as `message`, plus a reminder that the reviewer is read-only and must return only the required JSON.
+- Wait for all dispatched reviewers and map each final JSON back to its role variable (`MONITOR_OUTPUT`, `PREDICTOR_OUTPUT`, `EVALUATOR_OUTPUT`, `USER_EXPERIENCE_OUTPUT`, `MAINTAINER_OUTPUT`, and `COMPLEXITY_LENS_OUTPUT` when enabled).
+- If concurrency is unavailable, make the same calls sequentially.
+- Never replace independent review with parent-session personas.
+- The routed Codex agent types (`monitor`, `predictor`, `evaluator`, `documentation-reviewer`) carry their own developer instructions; the role prompt in `message` supplements them, it does not replace them.
+[%- endif %]
 
 The role reviewers run in the SAME fan-out but with isolated context: they see
 the diff and the bundle, never the other reviewers' output. They read the repo
@@ -366,13 +412,18 @@ When enabled (`minimality != off`), the complexity lens is advisory only. It lis
 
 ### Step A.2b: Truncated-response gate (MANDATORY — post-fan-out, pre-verification)
 
-After each reviewer returns, validate its output via
-`detect_truncated_agent_output --agent <kind>` using the role-specific kind
-shown below. On truncation: log via
+After each reviewer returns, pipe its response on stdin (a bare call returns
+`status:"no_input"`, not a pass):
+`printf '%s' "$RESPONSE" | python3 .map/scripts/map_step_runner.py detect_truncated_agent_output --agent <kind>`
+using the role-specific kind shown below. On truncation: log via
 `log_agent_failure --agent <role> --phase post-invoke --failure-label truncated --reasons '<reasons>'`
 and re-invoke that reviewer ONCE using the prompt from
 `build_json_retry_prompt --agent <role> --errors '<reasons>'`; if still
 malformed, stop with CLARIFICATION_NEEDED.
+[%- if PROVIDER != "claude" %]
+
+On Codex, the re-invocation is a new `spawn_agent` call: `<n>` keeps incrementing, so the retry gets a fresh `task_name`.
+[%- endif %]
 
 Role → `--agent` kind for the truncation check:
 - monitor reviewer → `--agent review-monitor` (enforces the full review schema:
@@ -395,7 +446,9 @@ unobserved review, not as a clean one.
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 BRANCH_DIR=".map/$BRANCH"
-REVIEW_MODE_LABEL=normal   # overridden by Phase A/B when another mode ran
+# For compare-orderings set ORDERING_LABEL=default or reverse in this call.
+# Preserve both collections; do not call begin_review_run between them.
+if [ -n "${ORDERING_LABEL:-}" ]; then BRANCH_DIR="$BRANCH_DIR/review-collections/$ORDERING_LABEL"; fi
 mkdir -p "$BRANCH_DIR"
 
 cat > "$BRANCH_DIR/review-agent-monitor.json" <<'MONITOR_EOF'
@@ -406,9 +459,9 @@ MONITOR_EOF
 The quoted heredoc marker (`<<'MONITOR_EOF'`, quotes included) is what stops the
 shell expanding anything inside the payload. Repeat for `predictor`,
 `evaluator`, `user_experience` and `maintainer`. In adversarial or
-compare-orderings mode write the aggregator's **`ledger_findings`** array to
-`review-agent-adversarial.json` instead — that array, NOT `findings`, since it
-also carries `contract_incomplete` (see review-reference.md § Verdict Ledger).
+compare-orderings mode write the complete tagged aggregate to
+`review-agent-adversarial.json` instead, including `ledger_findings`,
+`reviewer_status` and `parse_errors`; an empty findings array alone cannot prove review.
 
 ### Step A.3: Verification gate (MANDATORY before any presentation)
 
@@ -458,8 +511,8 @@ publishing the bare verdict.
 ## Phase B: Cross-AI Peer Review (--cross-ai only)
 
 When `CROSS_AI_FLAG=true`, dispatch the review to an INDEPENDENT external AI CLI
-instead of the in-session fan-out (precedence over adversarial/normal; ANY
-dispatch failure falls back to the normal in-session review — do NOT hard-stop).
+as a second opinion; the in-session review always runs afterwards (ANY
+dispatch failure just continues to it — do NOT hard-stop).
 Full status protocol, egress/secret-scan, and independence semantics are in
 [review-reference.md](review-reference.md#cross-ai); read that section first.
 
@@ -487,21 +540,31 @@ second opinion, not a gate: its verdict is presented, never assigned, and the
 stage gate rests on the ledger computed from in-session reviewers. Any other
 status (`unparsed`/`secret_blocked`/`disabled`/`unavailable`/`timeout`/`error`) →
 announce `reason` (own-status, never fenced) and fall through the same way.
+[%- if PROVIDER == "codex" %]
+
+**Edge case — self-review (informational, not an error):** `--cross-ai codex` from a Codex host spawns a fresh `codex exec`. That is a same-vendor check even though the runner reports `independent_vendor: true` (the flag is static per runtime and assumes a Claude host). `--cross-ai claude` is the real cross-vendor second opinion on Codex, even though the runner reports `independent_vendor: false`. Present the run with the matching caveat; neither case is a configuration error. The host-aware flag is tracked in #490.
+[%- endif %]
 
 ## Phase B: Adversarial Review (--adversarial only)
-When `--adversarial` is set (and `--cross-ai` is not), skip the Monitor/Predictor/Evaluator fan-out and the 4-section interactive walkthrough. Instead run the five independent reviewers with isolated contexts, then aggregate. See [adversarial-reference.md](adversarial-reference.md) for the detailed step-by-step commands.
+When `--adversarial` is set (with `--cross-ai`: present cross-AI first, then this), skip the Monitor/Predictor/Evaluator fan-out and the 4-section interactive walkthrough. Instead run the five independent reviewers with isolated contexts, then aggregate. See [adversarial-reference.md](adversarial-reference.md) for the detailed step-by-step commands.
 
 ### Quick reference
 
 ```text
 1. Build prompts:  python3 .map/scripts/map_step_runner.py build_adversarial_review_prompts [--quick]
+[%- if PROVIDER == "claude" %]
 2. Fan-out:        Task(subagent_type="general-purpose", ...) for blind, edge_case, acceptance,
                    user_experience, maintainer — parallel, then wait for all (--quick drops edge_case)
+[%- else %]
+2. Fan-out:        spawn_agent(agent_type=..., task_name="map_review_<role>_<n>", message=<ROLE>_PROMPT)
+                   with blind→monitor, edge_case→monitor, acceptance→evaluator,
+                   user_experience→predictor, maintainer→documentation-reviewer — parallel, then wait for all (--quick drops edge_case)
+[%- endif %]
 3. Validate:       Each must return valid JSON per adversarial finding schema; retry ONCE on failure
 4. Aggregate:      python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings --blind <path> --edge-case <path> --acceptance <path> --user-experience <path> --maintainer <path>
 5. Present:        Unified report: CRITICAL/IMPORTANT/MINOR, convergence section, all-clear statements (--show-raw-findings for debug)
-6. Feed ledger:    write ledger_findings (NOT findings) to "$BRANCH_DIR/review-agent-adversarial.json"
-                   and set REVIEW_MODE_LABEL=adversarial (compare-orderings: compare_orderings)
+6. Feed ledger:    persist the complete tagged aggregate to "$BRANCH_DIR/review-agent-adversarial.json"
+                   including ledger_findings, reviewer_status and parse_errors
 7. Skip to:        Final Verdict → Handoff Artifacts; do NOT run normal 4-section walkthrough
                    The verdict is computed by the ledger from those findings — this phase
                    does not assign one.
@@ -509,9 +572,8 @@ When `--adversarial` is set (and `--cross-ai` is not), skip the Monitor/Predicto
 
 ## Phase B: Interactive Presentation (4 Sections) — NORMAL MODE ONLY
 
-This phase runs ONLY when `ADVERSARIAL_FLAG=false` AND `CROSS_AI_STATUS` is not
-`success` (empty or any cross-AI graceful-fallback status). Skip it entirely when
-`--adversarial` is set or `CROSS_AI_STATUS=success`.
+This phase runs ONLY when `ADVERSARIAL_FLAG=false`, including after a cross-AI
+`success`. Skip it entirely when `--adversarial` is set.
 
 ### Step B.0: Determine section presentation order
 
@@ -575,57 +637,45 @@ so either spelling is accepted by `write_stage_gate`.
 Run this BEFORE the stage gate: the review gate is refused when its verdict
 contradicts the computed one.
 
-Pass only the envelopes the phase that ran actually produced — a file that does
-not exist is a read error, and read errors are findings.
+Use the persisted scheduled roster, not file discovery. The runner passes every
+expected path even when missing or empty; those failures are integrity findings.
 
 ```bash
-LEDGER_ARGS=()
-# The artifact name keeps the underscore; the ledger flag uses dashes.
-for ROLE in monitor predictor evaluator adversarial user_experience maintainer; do
-  [ -f "$BRANCH_DIR/review-agent-$ROLE.json" ] && \
-    LEDGER_ARGS+=(--"${ROLE//_/-}"-file "$BRANCH_DIR/review-agent-$ROLE.json")
-done
-
-LEDGER=$(python3 .map/scripts/map_step_runner.py write_review_verdict_ledger \
-  "${LEDGER_ARGS[@]}" --review-mode "$REVIEW_MODE_LABEL")
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH_DIR=".map/$BRANCH"
+REVIEW_MODE_LABEL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["review_mode"])' "$BRANCH_DIR/review-mode.json") || exit 1
+LEDGER=$(python3 .map/scripts/map_step_runner.py write_review_verdict_ledger --current-run) || exit 1
 
 FINAL_VERDICT=$(printf '%s' "$LEDGER" | python3 -c 'import json,sys; print(json.load(sys.stdin)["computed_verdict"])')
 ```
 
-`REVIEW_MODE_LABEL` is set by the phase that ran: `normal`, `adversarial`,
-`cross_ai` or `compare_orderings`. Every phase feeds the ledger — none of them
+`REVIEW_MODE_LABEL` is set by the phase that ran: `normal`, `adversarial` or
+`compare_orderings` (`cross_ai` is reserved; no phase sets it). Every phase feeds the ledger — none of them
 assigns its own verdict.
 
-Use `$FINAL_VERDICT` for the stage gate below — do not retype a verdict of your
-own. Report `not_verified` and any `escalation_reasons` from
+The stage gate below reads `computed_verdict` from `review-verdict-ledger.json` —
+do not retype a verdict of your own. Report `not_verified` and any `escalation_reasons` from
 `.map/<branch>/review-verdict-ledger.md` in the walkthrough.
 
 Full usage, decision table, and adversarial-mode flags → review-reference.md § Verdict Ledger.
 
-## Workflow Gate Unlock (REVISE/BLOCK only)
+## Handoff Artifact Update
 
-If edits are needed, write the stage gate so the owning workflow can continue.
-Positional arguments are `<stage> <verdict> <source_artifact> <notes>` — the
-summary is the FOURTH argument, not the third:
+Update durable review artifacts before closeout. The review stage gate is written
+once, for every verdict; its verdict is the ledger's `computed_verdict`, never a
+literal. Positional arguments are `<stage> <verdict> <source_artifact> <notes>` —
+the summary is the FOURTH argument:
 
 ```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH_DIR=".map/$BRANCH"
+FINAL_VERDICT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["computed_verdict"])' "$BRANCH_DIR/review-verdict-ledger.json")
+
 python3 .map/scripts/map_step_runner.py write_stage_gate \
   review \
   "$FINAL_VERDICT" \
   code-review-001.md \
-  "$REVIEW_SUMMARY"
-```
-
-## Handoff Artifact Update
-
-Update durable review artifacts before closeout:
-
-```bash
-python3 .map/scripts/map_step_runner.py write_stage_gate \
-  review \
-  ready \
-  code-review-001.md \
-  "Final review passed"
+  "<one-line review summary>"
 
 python3 .map/scripts/map_step_runner.py ensure_active_issues_file
 python3 .map/scripts/map_step_runner.py replace_active_issues \
@@ -670,7 +720,7 @@ CI mode auto-selects options marked `(Recommended)`, records the selected path, 
 
 ## Optional: Preserve Review Learnings
 
-After review closes, run `/map-learn` if this review produced reusable rules, gotchas, or repeated issues.
+After review closes, run `<% cmd %>map-learn` if this review produced reusable rules, gotchas, or repeated issues.
 
 ## MCP Tools Used
 

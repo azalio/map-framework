@@ -1,52 +1,32 @@
 # Adversarial Review Reference
 
-Detailed workflow for `$map-review --adversarial`. See [SKILL.md](SKILL.md)
-for context and integration points. It preserves the five-reviewer contract
-using Codex configured subagents and concurrent dispatch where the passes are
-independent.
-
-## Dispatch design
-
-Codex dispatch targets configured roles rather than inventing ad-hoc agent
-names. Use `monitor` for Blind and Edge Case, `evaluator` for Acceptance,
-`predictor` for User Experience, and `documentation-reviewer` for Maintainer.
-Each prompt supplies the narrower reviewer persona and permitted inputs. Spawn
-the independent passes in one batch when concurrency is available; otherwise
-dispatch them sequentially without merging their contexts.
+Detailed workflow for `map-review --adversarial`. See [SKILL.md](SKILL.md) for context and integration points.
 
 ## Overview
 
-Five reviewer passes, each with only its permitted inputs:
+Five reviewers run in parallel, each with only its permitted inputs:
 
-| Pass | Context | Finds |
-|------|---------|-------|
+| Reviewer | Context | Finds |
+|----------|---------|-------|
 | **Blind Hunter** | diff only | Typos, dead code, logic errors visible in isolation |
 | **Edge Case Hunter** | diff + repo read access | Null handling, boundary conditions, error paths, codebase consistency |
 | **Acceptance Auditor** | diff + spec + plan + artifacts | Missed requirements, spec violations, AC gaps, extra/unplanned work |
 | **User (`user_experience`)** | diff + repo read access | Regressions in the already-shipped path: extra mandatory steps, confusable flags, an explicit value silently overridden |
 | **Maintainer (`maintainer`)** | diff + repo read access | Branch-scoped litter in comments, implementation leaking into user-facing text, undiagnosable errors, copy-paste, split sources of truth, version predicates by number, embedded foreign-language code, settings carried through layers that only pass them on, names that promise more than the body does, mechanisms named after their first application, files placed against the local convention |
 
-With `--quick`: skip the Edge Case Hunter pass (Blind + Acceptance + both
-role passes).
+With `--quick`: skip Edge Case Hunter (Blind + Acceptance + both roles).
 
-The two role passes answer to the five-part output contract (`problem`,
-`current_code`, `proposed_code`, `why_better`, `cost`); a finding that
-cannot fill all five is dropped into `contract_incomplete` by the
-aggregator — reported, never counted. See
-[review-reference.md](review-reference.md#role-reviewers) for what each role
-checks.
-
-Keep every prompt scoped to its permitted inputs (for example, do not supply
-the spec to Blind Hunter), and collect each result independently before
-aggregation.
+The two role reviewers answer to the five-part output contract (`problem`,
+`current_code`, `proposed_code`, `why_better`, `cost`). A finding that cannot
+fill all five is dropped by `aggregate_adversarial_findings` into
+`contract_incomplete` — reported, never counted.
 
 ## Step B.adversarial.0: Build adversarial review prompts
 
 ```bash
-QUICK_ARG=""
-if [ "$QUICK_FLAG" = "true" ]; then
-  QUICK_ARG="--quick"
-fi
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH_DIR=".map/$BRANCH"
+QUICK_ARG=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("--quick" if "edge_case" not in d["scheduled_reviewers"] else "")' "$BRANCH_DIR/review-mode.json") || exit 1
 
 ADV_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_adversarial_review_prompts $QUICK_ARG)
 
@@ -60,93 +40,77 @@ ACCEPTANCE_PROMPT=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sy
 ACCEPTANCE_DESC=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("acceptance",{}).get("description",""))')
 
 USER_EXPERIENCE_PROMPT=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("user_experience",{}).get("prompt",""))')
+USER_EXPERIENCE_DESC=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("user_experience",{}).get("description",""))')
+
 MAINTAINER_PROMPT=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("maintainer",{}).get("prompt",""))')
+MAINTAINER_DESC=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("maintainer",{}).get("description",""))')
 ```
 
-`build_adversarial_review_prompts` is the exact same CLI verb the Claude
-port calls — payload flows out via stdout JSON only, never via argv, per
-the stdin-safe piping convention used throughout this skill.
-
-## Step B.adversarial.1: Dispatch all five passes
+## Step B.adversarial.1: Launch all five in parallel (fan-out)
 
 ```text
-Dispatch these independent calls together when slots permit; every call must
-include a unique `task_name`, its generated prompt as `message`, and a reminder
-that the reviewer is read-only and must return only the required JSON:
+# Dispatch all five reviewers together — they are fully independent.
+# <n> increments on every dispatch in the run.
 
-Blind Hunter:       spawn_agent(agent_type="monitor", task_name="review_blind", message=BLIND_PROMPT)
-Edge Case Hunter:   spawn_agent(agent_type="monitor", task_name="review_edge", message=EDGE_PROMPT) (skip under --quick)
-Acceptance Auditor: spawn_agent(agent_type="evaluator", task_name="review_acceptance", message=ACCEPTANCE_PROMPT)
-User Experience:   spawn_agent(agent_type="predictor", task_name="review_user_experience", message=USER_EXPERIENCE_PROMPT)
-Maintainer:         spawn_agent(agent_type="documentation-reviewer", task_name="review_maintainer", message=MAINTAINER_PROMPT)
-
-Wait for all dispatched reviewers and map their final JSON to `BLIND_OUTPUT`,
-`EDGE_OUTPUT`, `ACCEPTANCE_OUTPUT`, `USER_EXPERIENCE_OUTPUT`, and
-`MAINTAINER_OUTPUT`. If concurrency is unavailable, make the same calls
-sequentially; do not replace independent review with parent-session personas.
+spawn_agent(agent_type="monitor", task_name="map_review_blind_<n>", message=BLIND_PROMPT)
+spawn_agent(agent_type="monitor", task_name="map_review_edge_case_<n>", message=EDGE_PROMPT)  # skip if --quick
+spawn_agent(agent_type="evaluator", task_name="map_review_acceptance_<n>", message=ACCEPTANCE_PROMPT)
+spawn_agent(agent_type="predictor", task_name="map_review_user_experience_<n>", message=USER_EXPERIENCE_PROMPT)
+spawn_agent(agent_type="documentation-reviewer", task_name="map_review_maintainer_<n>", message=MAINTAINER_PROMPT)
 ```
+
+Codex dispatch rules:
+
+- `<n>` increments on every dispatch in the run (including the Step A.2b truncation retry, the Step B.adversarial.2 re-invoke, and the second `--compare-orderings` collection), so every call gets a unique `task_name`.
+- Each call sends its generated prompt as `message`, plus a reminder that the reviewer is read-only and must return only the required JSON.
+- Wait for all dispatched reviewers and map each final JSON back to `BLIND_OUTPUT`, `EDGE_OUTPUT`, `ACCEPTANCE_OUTPUT`, `USER_EXPERIENCE_OUTPUT`, and `MAINTAINER_OUTPUT`.
+- If concurrency is unavailable, make the same calls sequentially.
+- Never replace independent review with parent-session personas.
+- The routed Codex agent types carry their own developer instructions; the role prompt in `message` supplements them, it does not replace them.
 
 ## Step B.adversarial.2: Validate reviewer outputs
 
-Each pass must produce valid JSON matching the adversarial finding schema.
-Validate the same way Phase A validates monitor/predictor/evaluator output
-— pipe the raw response via stdin, never pass it as an argv positional:
-
-```bash
-printf '%s' "$BLIND_OUTPUT" | \
-  python3 .map/scripts/map_step_runner.py detect_truncated_agent_output --agent review-monitor
-```
-
-If a pass's output is truncated or invalid JSON:
+Each reviewer must return valid JSON matching the adversarial finding schema. If any reviewer output is truncated or invalid JSON:
 - Log the failure
-- Re-run that specific pass ONCE with the same prompt
-- If still invalid, record the pass as `parse_error` and continue with the
-  remaining passes
+- Re-invoke that specific reviewer ONCE with the same prompt
+- If still invalid, record the reviewer as `parse_error` and continue with remaining reviewers
 
 ## Step B.adversarial.3: Aggregate findings
 
-Write each pass's raw JSON output to a temp file, then aggregate:
+Write each reviewer's raw JSON output to a temp file, then aggregate:
 
 ```bash
-printf '%s' "$BLIND_OUTPUT" > .map/$BRANCH/adversarial-blind.json
-printf '%s' "$ACCEPTANCE_OUTPUT" > .map/$BRANCH/adversarial-acceptance.json
-printf '%s' "$USER_EXPERIENCE_OUTPUT" > .map/$BRANCH/adversarial-user-experience.json
-printf '%s' "$MAINTAINER_OUTPUT" > .map/$BRANCH/adversarial-maintainer.json
-
-# The Edge Case Hunter pass did not run under --quick. Writing its file
-# anyway would leave an EMPTY payload (or a stale one from an earlier full
-# run) that the `-f` test below happily forwards; the aggregator then
-# reports edge_case as parse_error, or folds in findings from another
-# review. Remove it, then write it only when the pass actually ran.
-rm -f .map/$BRANCH/adversarial-edge.json
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH_DIR=".map/$BRANCH"
+RUN_MODE="$BRANCH_DIR/review-mode.json"
+QUICK_FLAG=$(python3 -c 'import json,sys; print("true" if "edge_case" not in json.load(open(sys.argv[1]))["scheduled_reviewers"] else "false")' "$RUN_MODE") || exit 1
+# In compare-orderings set ORDERING_LABEL=default or reverse in this call.
+if [ -n "${ORDERING_LABEL:-}" ]; then BRANCH_DIR="$BRANCH_DIR/review-collections/$ORDERING_LABEL"; fi
+mkdir -p "$BRANCH_DIR"
+cat > "$BRANCH_DIR/adversarial-blind.json" <<'BLIND_EOF'
+<paste the Blind JSON envelope verbatim>
+BLIND_EOF
+cat > "$BRANCH_DIR/adversarial-acceptance.json" <<'ACCEPTANCE_EOF'
+<paste the Acceptance JSON envelope verbatim>
+ACCEPTANCE_EOF
+cat > "$BRANCH_DIR/adversarial-user-experience.json" <<'USER_EOF'
+<paste the User Experience JSON envelope verbatim>
+USER_EOF
+cat > "$BRANCH_DIR/adversarial-maintainer.json" <<'MAINTAINER_EOF'
+<paste the Maintainer JSON envelope verbatim>
+MAINTAINER_EOF
+rm -f "$BRANCH_DIR/adversarial-edge.json"
+ADV_ARGS=(--blind "$BRANCH_DIR/adversarial-blind.json" --acceptance "$BRANCH_DIR/adversarial-acceptance.json"
+  --user-experience "$BRANCH_DIR/adversarial-user-experience.json" --maintainer "$BRANCH_DIR/adversarial-maintainer.json")
 if [ "$QUICK_FLAG" != "true" ]; then
-  printf '%s' "$EDGE_OUTPUT" > .map/$BRANCH/adversarial-edge.json
+  cat > "$BRANCH_DIR/adversarial-edge.json" <<'EDGE_EOF'
+<paste the Edge Case JSON envelope verbatim>
+EDGE_EOF
+  ADV_ARGS+=(--edge-case "$BRANCH_DIR/adversarial-edge.json")
 fi
-
-ADV_ARGS=""
-if [ -f .map/$BRANCH/adversarial-blind.json ]; then
-  ADV_ARGS="$ADV_ARGS --blind .map/$BRANCH/adversarial-blind.json"
-fi
-if [ -f .map/$BRANCH/adversarial-edge.json ]; then
-  ADV_ARGS="$ADV_ARGS --edge-case .map/$BRANCH/adversarial-edge.json"
-fi
-if [ -f .map/$BRANCH/adversarial-acceptance.json ]; then
-  ADV_ARGS="$ADV_ARGS --acceptance .map/$BRANCH/adversarial-acceptance.json"
-fi
-if [ -f .map/$BRANCH/adversarial-user-experience.json ]; then
-  ADV_ARGS="$ADV_ARGS --user-experience .map/$BRANCH/adversarial-user-experience.json"
-fi
-if [ -f .map/$BRANCH/adversarial-maintainer.json ]; then
-  ADV_ARGS="$ADV_ARGS --maintainer .map/$BRANCH/adversarial-maintainer.json"
-fi
-
-ADV_AGGREGATED=$(python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings \
-  $ADV_ARGS)
+python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings \
+  "${ADV_ARGS[@]}" > "$BRANCH_DIR/review-agent-adversarial.json" || exit 1
 ```
-
-`aggregate_adversarial_findings` is the exact same CLI verb the Claude port
-calls, taking file paths (not raw payload on argv) — the raw finding JSON
-itself never travels on the command line.
 
 ## Step B.adversarial.4: Present unified adversarial report
 
@@ -157,9 +121,9 @@ Parse the aggregated JSON and present the report in this structure:
 
 ## Summary
 - Total findings: N (C CRITICAL, I IMPORTANT, M MINOR)
-- Corroborated (found by 2+ passes): K — highest confidence
-- Per-pass: Blind: B, Edge Case: E, Acceptance: A, User: U, Maintainer: M
-- All-clear: [passes that reported all_clear=true]
+- Corroborated (found by 2+ reviewers): K — highest confidence
+- Per-reviewer: Blind: B, Edge Case: E, Acceptance: A, User: U, Maintainer: M
+- All-clear: [reviewers who reported all_clear=true]
 - Dropped for an incomplete output contract: [contract_incomplete entries]
 
 ## CRITICAL
@@ -172,33 +136,33 @@ Parse the aggregated JSON and present the report in this structure:
 [per finding: same structure]
 
 ## Cross-Reviewer Convergence
-[Highlight what multiple passes independently found — these are highest-confidence issues]
+[Highlight what multiple reviewers independently found — these are highest-confidence issues]
 
 ## Reviewer All-Clear Statements
-[Per pass that said all_clear: what it checked and why it's clean]
+[Per reviewer who said all_clear: what they checked and why it's clean]
 ```
 
-When `--show-raw-findings` is set, also show the raw per-pass JSON files.
+When `--show-raw-findings` is set, also show the raw per-reviewer JSON files.
 
-## Step B.adversarial.5: Determine verdict
+## Step B.adversarial.5: Feed the verdict ledger
 
-Based on aggregated findings:
-- **BLOCK**: any CRITICAL finding with corroboration OR > 2 CRITICAL from any single pass
-- **REVISE**: any CRITICAL (uncorroborated) OR any IMPORTANT
-- **PROCEED**: only MINOR findings OR all all_clear
+This phase does not assign a verdict. The capture block persists the complete
+`adversarial_aggregate.v1` report, including `ledger_findings`, `reviewer_status`
+and `parse_errors`. Closeout reads the current roster from `review-mode.json`;
+`write_review_verdict_ledger --current-run` then computes
+`PROCEED`/`REVISE`/`BLOCK` from the decision table in
+[review-reference.md § Verdict Ledger](review-reference.md#verdict-ledger).
+Corroboration raises confidence in the report; it does not change the verdict.
 
 ## Step B.adversarial.6: Skip to Final Verdict
 
-After presenting the adversarial report, skip the normal 4-section
-interactive walkthrough and go directly to Final Verdict → Handoff
-Artifacts.
+After presenting the adversarial report, skip the normal 4-section interactive walkthrough and go directly to Final Verdict → Handoff Artifacts.
 
 ## Flow summary for adversarial
 
 When `ADVERSARIAL_FLAG=true`, the workflow is:
-Phase A (all steps) → Phase B: Adversarial Review (5 sequential in-session
-passes, 4 with `--quick`) → Final Verdict → Handoff Artifacts. Do NOT run the normal
-Monitor/Predictor/Evaluator fan-out or the 4-section walkthrough.
+Phase A (all steps) → Phase B: Adversarial Review → Final Verdict → Handoff Artifacts.
+Do NOT run the normal Monitor/Predictor/Evaluator fan-out or the 4-section walkthrough.
 
 ## Examples
 
@@ -206,19 +170,14 @@ See [review-reference.md](review-reference.md#examples) for adversarial examples
 
 ## Troubleshooting
 
-### A pass returns invalid JSON
+### Reviewer returns invalid JSON
 
-Re-run that specific pass ONCE. If still invalid, record `parse_error` and
-continue — two valid passes are better than zero.
+Re-invoke that specific reviewer ONCE. If still invalid, record `parse_error` and continue — two valid reviewers are better than zero.
 
-### All passes fail
+### All reviewers fail
 
-Stop with CLARIFICATION_NEEDED. The diff may be too large or the context
-too complex for adversarial review.
+Stop with CLARIFICATION_NEEDED. The diff may be too large or the context too complex for adversarial review.
 
-### Edge Case Hunter pass runs out of context
+### Edge Case Hunter runs out of context
 
-The Edge Case Hunter pass has repo read access. If the repo is very large,
-limit its scope by pre-computing an impact graph of files
-importing/imported-by the changes plus relevant tests. Defer full
-implementation to v2.
+Edge Case Hunter has repo read access. If the repo is very large, limit its scope by pre-computing an impact graph of files importing/imported-by the changes plus relevant tests. Defer full implementation to v2.

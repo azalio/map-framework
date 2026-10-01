@@ -62,7 +62,7 @@ SUPPORTED_SKILL_CLASSES = {"reference", "task", "hybrid"}
 # so the generic Claude negative-trigger convention does not apply here.
 NEGATIVE_TRIGGER_DESCRIPTION_EXEMPT_SKILLS = {"map-upgrade"}
 # Codex twins rendered from the Claude source via [% include %] (PROVIDER-conditional).
-SINGLE_SOURCE_CODEX_SKILLS = {"map-architecture", "map-auto"}
+SINGLE_SOURCE_CODEX_SKILLS = {"map-architecture", "map-auto", "map-review"}
 
 WORKFLOW_EFFORT_PROFILES = {
     "map-fast": "low/direct",
@@ -492,14 +492,16 @@ class TestProviderUpdateSkills:
             encoding="utf-8"
         )
         assert source.startswith('---\n[% set cmd = "/" if PROVIDER == "claude" else "$" -%]\n')
-        assert "/map-" not in source, "use <% cmd %>map- so both providers render"
+        claude_cmd = re.compile(r"(?<![A-Za-z0-9_./-])/map-")
+        codex_cmd = re.compile(r"(?<![A-Za-z0-9_$./-])\$map-")
+        assert not claude_cmd.search(source), "use <% cmd %>map- so both providers render"
 
         claude = project_root / ".claude/skills" / skill / "SKILL.md"
         codex = project_root / ".agents/skills" / skill / "SKILL.md"
         claude_text = claude.read_text(encoding="utf-8")
         codex_text = codex.read_text(encoding="utf-8")
-        assert "$map-" not in claude_text and "/map-" in claude_text
-        assert "/map-" not in codex_text and "$map-" in codex_text
+        assert not codex_cmd.search(claude_text) and claude_cmd.search(claude_text)
+        assert not claude_cmd.search(codex_text) and codex_cmd.search(codex_text)
         for key in ("effort:", "disable-model-invocation:", "argument-hint:"):
             assert key in claude_text.partition("\n---\n")[0]
             assert key not in codex_text.partition("\n---\n")[0]
@@ -2358,6 +2360,30 @@ class TestMapReviewSkillBundleWiring:
                 f"<stage> <verdict> <source_artifact> <notes>; got {args}"
             )
 
+    def test_map_review_has_single_ledger_bound_review_gate(self, skill_md):
+        """The review stage gate is written once, from the ledger's computed_verdict."""
+        review_calls = [
+            args
+            for args in _shell_invocations(skill_md, "write_stage_gate")
+            if args and args[0] == "review"
+        ]
+        assert len(review_calls) == 1, review_calls
+        assert review_calls[0][1] == "$FINAL_VERDICT", review_calls[0]
+        assert "## Workflow Gate Unlock" not in skill_md
+        assert "$REVIEW_SUMMARY" not in skill_md
+
+        fence = re.search(
+            r"```bash\n((?:(?!```).)*?write_stage_gate(?:(?!```).)*?)```",
+            skill_md,
+            re.DOTALL,
+        )
+        assert fence, "no fenced block holds the write_stage_gate call"
+        block = fence.group(1)
+        assert block.lstrip().startswith("BRANCH=$(git rev-parse"), block[:80]
+        assert 'BRANCH_DIR=".map/$BRANCH"' in block
+        assert "review-verdict-ledger.json" in block
+        assert "computed_verdict" in block
+
     def test_map_review_skill_documents_verdict_normalization(self, skill_md):
         """Regression #388: SKILL.md must state how PROCEED/REVISE/BLOCK map to gates."""
         assert "needs-revision" in skill_md, (
@@ -3747,3 +3773,380 @@ class TestMapPrdReviewReadinessWorkflow:
         assert "an edited document at the same path is a changed source" in (
             flat_content
         ), f"{skill_path} allows a stale review to stand in for a revised PRD"
+
+
+class TestMapReviewCrossAiSecondOpinion:
+    """Cross-AI success is a second opinion; the ledger still decides."""
+
+    _DIR = Path(__file__).parent.parent / ".claude" / "skills" / "map-review"
+    _FILES = ("SKILL.md", "review-reference.md", "adversarial-reference.md")
+
+    def _read(self, name: str) -> str:
+        return (self._DIR / name).read_text(encoding="utf-8")
+
+    def test_success_row_is_a_second_opinion(self) -> None:
+        text = self._read("review-reference.md")
+        assert "set `FINAL_VERDICT` from `normalized.verdict`" not in text
+        assert "skip adversarial/normal phases" not in text
+        row = next(ln for ln in text.splitlines() if ln.startswith("| `success` |"))
+        assert "second opinion" in row
+        assert "in-session review then runs" in row
+        assert "ledger computes the verdict" in row
+
+    def test_cross_ai_never_takes_precedence_or_skips(self) -> None:
+        for name in self._FILES:
+            text = self._read(name)
+            assert "precedence" not in text.lower(), name
+            assert "CROSS_AI_STATUS=success" not in text, name
+            assert "(and `--cross-ai` is not)" not in text, name
+        skill = self._read("SKILL.md")
+        assert "present cross-AI first, then this" in skill
+        assert "including after a cross-AI" in skill
+
+    def test_cross_ai_label_is_reserved(self) -> None:
+        skill = self._read("SKILL.md")
+        ref = self._read("review-reference.md")
+        assert (
+            "`normal`, `adversarial` or\n`compare_orderings` (`cross_ai` is reserved"
+            in skill
+        )
+        assert "`compare_orderings` (`cross_ai` is reserved; no phase sets it)" in ref
+        for text in (skill, ref):
+            assert "REVIEW_MODE_LABEL=cross_ai" not in text
+
+
+class TestMapReviewFreshShellBlocks:
+    """Each Bash tool call is a fresh shell, so every fenced bash block must
+    derive the variables it uses instead of relying on an earlier block."""
+
+    _DIR = Path(__file__).parent.parent / ".claude" / "skills" / "map-review"
+    _FILES = ("SKILL.md", "review-reference.md", "adversarial-reference.md")
+    _NAMES = ("BRANCH", "BRANCH_DIR", "REVIEW_MODE_LABEL")
+    _FENCE = re.compile(r"^```bash\n(.*?)^```", re.MULTILINE | re.DOTALL)
+
+    @classmethod
+    def _unassigned_uses(cls, block: str) -> list[str]:
+        lines = block.splitlines()
+        problems = []
+        for name in cls._NAMES:
+            use = re.compile(r"\$\{?" + name + r"\b")
+            assign = re.compile(r"^\s*" + name + r"=")
+            first_use = next((i for i, ln in enumerate(lines) if use.search(ln)), None)
+            if first_use is None:
+                continue
+            first_assign = next(
+                (i for i, ln in enumerate(lines) if assign.match(ln)), None
+            )
+            if first_assign is None or first_assign > first_use:
+                problems.append(name)
+        return problems
+
+    def test_every_bash_block_assigns_before_first_use(self) -> None:
+        checked = 0
+        for name in self._FILES:
+            text = (self._DIR / name).read_text(encoding="utf-8")
+            for match in self._FENCE.finditer(text):
+                problems = self._unassigned_uses(match.group(1))
+                line_no = text[: match.start()].count("\n") + 1
+                assert not problems, (
+                    f"{name}:{line_no} uses {problems} before assigning"
+                )
+                checked += 1
+        assert checked > 0
+
+    def test_ledger_blocks_assign_review_mode_label(self) -> None:
+        for name in ("SKILL.md", "review-reference.md"):
+            text = (self._DIR / name).read_text(encoding="utf-8")
+            ledger = [
+                m.group(1)
+                for m in self._FENCE.finditer(text)
+                if "write_review_verdict_ledger" in m.group(1)
+            ]
+            assert ledger, name
+            for block in ledger:
+                assert re.search(r"^REVIEW_MODE_LABEL=", block, re.MULTILINE), name
+
+    def test_detector_flags_use_without_assignment(self) -> None:
+        assert self._unassigned_uses('echo "$BRANCH_DIR"\n') == ["BRANCH_DIR"]
+        assert self._unassigned_uses('echo "$BRANCH"\nBRANCH=x\n') == ["BRANCH"]
+        assert self._unassigned_uses('BRANCH=x\nBRANCH_DIR=".map/$BRANCH"\n') == []
+
+
+class TestMapReviewSharedSourceCodexRender:
+    """The shared map-review sources render cleanly for the Codex provider."""
+
+    _SRC = (
+        Path(__file__).resolve().parent.parent
+        / "src/mapify_cli/templates_src/skills/map-review"
+    )
+    _FILES = ("SKILL.md.jinja", "review-reference.md.jinja", "adversarial-reference.md.jinja")
+    _BARE_SLASH_CMD = re.compile(r"(?<![A-Za-z0-9_./-])/map-")
+    _GATED_KEYS = ("effort:", "disable-model-invocation:", "argument-hint:")
+
+    def _render(self, name: str, provider: str) -> str:
+        from mapify_cli.delivery.template_renderer import get_environment
+
+        env = get_environment(self._SRC.parent.parent)
+        source = (self._SRC / name).read_text(encoding="utf-8")
+        return env.from_string(source).render(PROVIDER=provider)
+
+    def test_codex_frontmatter_drops_claude_only_keys(self) -> None:
+        codex = self._render("SKILL.md.jinja", "codex")
+        front = codex.split("---\n")[1]
+        assert front.startswith("name: map-review\n")
+        assert "description:" in front
+        for key in self._GATED_KEYS:
+            assert key not in front
+        claude_front = self._render("SKILL.md.jinja", "claude").split("---\n")[1]
+        positions = [claude_front.index(k) for k in self._GATED_KEYS]
+        assert positions == sorted(positions)
+
+    def test_command_prefix_follows_provider(self) -> None:
+        for name in self._FILES:
+            source = (self._SRC / name).read_text(encoding="utf-8")
+            assert not self._BARE_SLASH_CMD.search(source), name
+            assert "[% set cmd" in source, name
+            assert not self._BARE_SLASH_CMD.search(self._render(name, "codex")), name
+        codex = self._render("review-reference.md.jinja", "codex")
+        claude = self._render("review-reference.md.jinja", "claude")
+        assert "$map-review" in codex
+        assert "/map-review" in claude and "$map-review" not in claude
+
+    _NORMAL_DISPATCH = (
+        ("monitor", "monitor"),
+        ("predictor", "predictor"),
+        ("evaluator", "evaluator"),
+        ("user_experience", "predictor"),
+        ("maintainer", "documentation-reviewer"),
+        ("complexity_lens", "evaluator"),
+    )
+    _ADVERSARIAL_DISPATCH = (
+        ("blind", "monitor"),
+        ("edge_case", "monitor"),
+        ("acceptance", "evaluator"),
+        ("user_experience", "predictor"),
+        ("maintainer", "documentation-reviewer"),
+    )
+
+    @staticmethod
+    def _spawn_line(text: str, role: str, agent_type: str) -> bool:
+        pattern = (
+            rf'spawn_agent\(agent_type="{re.escape(agent_type)}", '
+            rf'task_name="map_review_{role}_<n>", message='
+        )
+        return re.search(pattern, text) is not None
+
+    def test_codex_dispatch_uses_spawn_agent_with_d4_mapping(self) -> None:
+        skill = self._render("SKILL.md.jinja", "codex")
+        adversarial = self._render("adversarial-reference.md.jinja", "codex")
+        for text in (skill, adversarial):
+            assert "Task(" not in text
+            assert "subagent_type=" not in text
+        for role, agent_type in self._NORMAL_DISPATCH:
+            assert self._spawn_line(skill, role, agent_type), role
+        for role, agent_type in self._ADVERSARIAL_DISPATCH:
+            assert self._spawn_line(adversarial, role, agent_type), role
+        assert "as the spawn_agent messages" in skill
+        quick = (
+            "with blind→monitor, edge_case→monitor, acceptance→evaluator,\n"
+            "                   user_experience→predictor, maintainer→documentation-reviewer"
+        )
+        assert quick in skill
+        assert 'spawn_agent(agent_type=..., task_name="map_review_<role>_<n>"' in skill
+
+    def test_claude_render_keeps_task_dispatch(self) -> None:
+        for name in ("SKILL.md.jinja", "adversarial-reference.md.jinja"):
+            claude = self._render(name, "claude")
+            assert "Task(subagent_type=" in claude, name
+            assert "spawn_agent(" not in claude, name
+
+    def test_codex_states_counter_and_five_dispatch_rules(self) -> None:
+        skill = self._render("SKILL.md.jinja", "codex")
+        adversarial = self._render("adversarial-reference.md.jinja", "codex")
+        for text in (skill, adversarial):
+            assert re.search(r"`<n>` increments on every dispatch in the run", text)
+            assert "Step A.2b truncation retry" in text
+            assert "second `--compare-orderings` collection" in text
+            assert "unique `task_name`" in text
+            assert "read-only and must return only the required JSON" in text
+            assert "Wait for all dispatched reviewers and map each final JSON" in text
+            assert "sequentially" in text
+            assert "parent-session personas" in text
+        assert "carry their own developer instructions" in skill
+        assert "fresh `task_name`" in skill.split("Step A.2b: Truncated-response gate")[1]
+        compare = skill.split("Step A.1d")[1].split("Step A.2:")[0]
+        assert "keeps incrementing across both collections" in compare
+
+    def test_codex_cross_ai_self_review_caveat(self) -> None:
+        codex = self._render("SKILL.md.jinja", "codex")
+        claude = self._render("SKILL.md.jinja", "claude")
+        assert "`--cross-ai codex` from a Codex host spawns a fresh `codex exec`" in codex
+        assert "same-vendor check even though the runner reports `independent_vendor: true`" in codex
+        assert "`--cross-ai claude` is the real cross-vendor second opinion on Codex" in codex
+        assert "`independent_vendor: false`" in codex
+        assert "neither case is a configuration error" in codex
+        assert "#490" in codex
+        assert "from a Codex host" not in claude
+
+    def test_codex_supported_review_states_note(self) -> None:
+        codex = self._render("SKILL.md.jinja", "codex")
+        claude = self._render("SKILL.md.jinja", "claude")
+        for needle in (
+            "Codex — supported review states",
+            "`WORKFLOW_COMPLETE`",
+            "MAP_MONITOR_HOTFIX",
+            "In other non-editing phases (e.g. `DECOMPOSE`, `PREDICTOR`",
+            "workflow-gate hook denies shell writes",
+            "do not work around the hook",
+        ):
+            assert needle in codex, needle
+            assert needle not in claude, needle
+        assert "## Mutation Boundary Constraints" not in codex
+        assert "## Mutation Boundary Constraints" not in claude
+
+
+@pytest.mark.parametrize(
+    "rendered",
+    [
+        ".claude/skills/map-review/SKILL.md",
+        ".agents/skills/map-review/SKILL.md",
+    ],
+)
+def test_map_review_truncation_gate_pipes_response_on_stdin(rendered: str) -> None:
+    """detect_truncated_agent_output reads stdin; a bare call is no_input, not a pass."""
+    text = (Path(__file__).parent.parent / rendered).read_text(encoding="utf-8")
+    assert (
+        "printf '%s' \"$RESPONSE\" | python3 .map/scripts/map_step_runner.py "
+        "detect_truncated_agent_output --agent <kind>"
+    ) in text
+    assert 'status:"no_input"' in text
+
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_TEMPLATES_SRC = _REPO_ROOT / "src/mapify_cli/templates_src"
+
+
+def _non_include_twins(twin_dir: Path) -> list[Path]:
+    """Files in a Codex twin dir that are not a pure include of the same-named shared source."""
+    skill = twin_dir.name
+    return sorted(
+        path
+        for path in twin_dir.rglob("*")
+        if path.is_file()
+        and path.read_text(encoding="utf-8").strip()
+        != f'[% include "skills/{skill}/{path.relative_to(twin_dir).as_posix()}" %]'
+    )
+
+
+def test_single_source_codex_skills_set_is_pinned() -> None:
+    assert SINGLE_SOURCE_CODEX_SKILLS == {"map-architecture", "map-auto", "map-review"}
+
+
+@pytest.mark.parametrize("skill", sorted(SINGLE_SOURCE_CODEX_SKILLS))
+def test_every_codex_twin_file_is_a_pure_include(skill: str) -> None:
+    twin_dir = _TEMPLATES_SRC / "codex/skills" / skill
+    assert list(twin_dir.rglob("*.jinja")), f"no twin files found in {twin_dir}"
+    assert _non_include_twins(twin_dir) == []
+    for path in twin_dir.rglob("*"):
+        if path.is_file():
+            shared = _TEMPLATES_SRC / "skills" / skill / path.relative_to(twin_dir)
+            assert shared.is_file(), f"{path} includes a missing shared source"
+
+
+def test_non_include_twin_is_detected(tmp_path: Path) -> None:
+    twin_dir = tmp_path / "map-review"
+    twin_dir.mkdir()
+    (twin_dir / "SKILL.md.jinja").write_text(
+        '[% include "skills/map-review/SKILL.md.jinja" %]\n', encoding="utf-8"
+    )
+    assert _non_include_twins(twin_dir) == []
+    forked = twin_dir / "review-reference.md.jinja"
+    forked.write_text("hand-forked copy\n", encoding="utf-8")
+    wrong_target = twin_dir / "adversarial-reference.md.jinja"
+    wrong_target.write_text(
+        '[% include "skills/map-review/SKILL.md.jinja" %]\n', encoding="utf-8"
+    )
+    assert _non_include_twins(twin_dir) == [wrong_target, forked]
+
+
+_CODEX_MAP_REVIEW_DIRS = (
+    ".agents/skills/map-review",
+    "src/mapify_cli/templates/codex/skills/map-review",
+)
+_CLAUDE_MAP_REVIEW_DIRS = (
+    ".claude/skills/map-review",
+    "src/mapify_cli/templates/skills/map-review",
+)
+_MAP_REVIEW_FILES = ("SKILL.md", "review-reference.md", "adversarial-reference.md")
+_CLAUDE_ONLY_LEAKS = (
+    re.compile(r"\bTask\("),
+    re.compile(r"subagent_type="),
+    re.compile(r"(?<![A-Za-z0-9_./-])/map-"),
+)
+_CODEX_ONLY_LEAKS = (
+    re.compile(r"\bspawn_agent\("),
+    re.compile(r"(?<![A-Za-z0-9_$./-])\$map-"),
+)
+
+
+def _provider_leaks(text: str, patterns: tuple[re.Pattern[str], ...]) -> list[str]:
+    return [p.pattern for p in patterns if p.search(text)]
+
+
+@pytest.mark.parametrize("rel_dir", _CODEX_MAP_REVIEW_DIRS + _CLAUDE_MAP_REVIEW_DIRS)
+def test_map_review_provider_leaks(rel_dir: str) -> None:
+    patterns = _CODEX_ONLY_LEAKS if rel_dir in _CLAUDE_MAP_REVIEW_DIRS else _CLAUDE_ONLY_LEAKS
+    for name in _MAP_REVIEW_FILES:
+        text = (_REPO_ROOT / rel_dir / name).read_text(encoding="utf-8")
+        assert _provider_leaks(text, patterns) == [], f"{rel_dir}/{name}"
+
+
+_LEDGER_CMD = re.compile(
+    r"^(?:\w+=\$\()?python3 \.map/scripts/map_step_runner\.py write_review_verdict_ledger\b",
+    re.MULTILINE,
+)
+_GATE_CMD = re.compile(
+    r"^(?:\w+=\$\()?python3 \.map/scripts/map_step_runner\.py write_stage_gate\b",
+    re.MULTILINE,
+)
+
+
+def _ledger_before_gate_problems(text: str) -> list[str]:
+    problems: list[str] = []
+    ledger, gate = _LEDGER_CMD.search(text), _GATE_CMD.search(text)
+    if ledger is None or gate is None:
+        return ["ledger or stage-gate command line missing"]
+    if gate.start() < ledger.start():
+        problems.append("write_stage_gate precedes write_review_verdict_ledger")
+    final_lines = re.findall(r"^FINAL_VERDICT=.*$", text, re.MULTILINE)
+    if not final_lines or not all("computed_verdict" in line for line in final_lines):
+        problems.append("FINAL_VERDICT not read from computed_verdict")
+    if "Choose exactly one" in text:
+        problems.append("hand-picked verdict text present")
+    return problems
+
+
+@pytest.mark.parametrize("rel_dir", _CODEX_MAP_REVIEW_DIRS)
+def test_codex_map_review_ledger_before_gate(rel_dir: str) -> None:
+    text = (_REPO_ROOT / rel_dir / "SKILL.md").read_text(encoding="utf-8")
+    assert _ledger_before_gate_problems(text) == []
+
+
+def test_ledger_before_gate_detects_bad_ordering() -> None:
+    good = (_REPO_ROOT / ".agents/skills/map-review/SKILL.md").read_text(encoding="utf-8")
+    swapped = good.replace(
+        "write_review_verdict_ledger", "TMP_X"
+    ).replace("write_stage_gate", "write_review_verdict_ledger").replace(
+        "TMP_X", "write_stage_gate"
+    )
+    assert "precedes" in " ".join(_ledger_before_gate_problems(swapped))
+    assert _ledger_before_gate_problems(good + "\nChoose exactly one verdict\n")
+    assert _ledger_before_gate_problems(
+        good.replace('["computed_verdict"]', '["verdict"]')
+    )
+
+
+def test_provider_leak_patterns_detect_leaks() -> None:
+    assert _provider_leaks('Task(subagent_type="x") /map-review', _CLAUDE_ONLY_LEAKS)
+    assert _provider_leaks("spawn_agent(x) $map-review", _CODEX_ONLY_LEAKS)
+    assert not _provider_leaks("use $map-review", _CLAUDE_ONLY_LEAKS)

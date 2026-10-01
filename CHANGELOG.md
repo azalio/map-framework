@@ -7,12 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Codex `$map-review` is rendered from the same source as the Claude
+  `/map-review`, so the two can no longer drift apart. Codex dispatch names now
+  come from one counter, so retries and the second `--compare-orderings` pass
+  also get a fresh `task_name`.
+- On Codex, `$map-review` works with no active workflow, after a workflow is
+  complete, in editing phases, or in `MONITOR` unless `MAP_MONITOR_HOTFIX=0`.
+  In planning phases such as `DECOMPOSE` the Codex workflow-gate hook denies
+  its shell writes to `.map/$BRANCH/...`; finish or archive the workflow first.
+- The runner's `independent_vendor` flag for `--cross-ai` assumes a Claude
+  host. On a Codex host `--cross-ai codex` is a same-vendor check although it
+  is labeled independent, and `--cross-ai claude` is the real second opinion
+  (#490). The Codex skill text says so.
+
 ### Fixed
+- Test helpers use concrete update-state/context-manager return types, narrow
+  recorded CLI argument arrays before membership checks, and give nested SOFA
+  operations distinct names. The shipped Python-version guard remains checked
+  by static analysis without losing its unsupported-interpreter behavior; PRD
+  boundary annotations now match their runtime input checks. (#493)
+- `/map-review` retains successful adversarial review evidence even when the
+  reviewers report no findings. Missing or malformed reviewer output still
+  requires revision. New runs isolate reviewer inputs from earlier runs, so an
+  old envelope cannot block a clean review or replace a missing current one.
+  The previous verdict remains available in the ledger journal. (#492)
 - `/map-review --adversarial` no longer tells the agent to pick the verdict
   itself. Step B.adversarial.5 carried an old rule (BLOCK only for a
   corroborated CRITICAL or more than two CRITICAL from one reviewer) that
   contradicted the verdict ledger. The step now points to the ledger, which
   blocks on any CRITICAL or an important security/correctness finding.
+- Codex `$map-review` now closes the review. Its closeout was refused every
+  time with "no review-verdict-ledger.json", because the Codex copy of the
+  skill never saved reviewer responses to `review-agent-<role>.json` or wrote
+  the verdict ledger. It now does both and writes the review gate from the
+  computed verdict, the same way Claude does.
+- `/map-review` no longer errors at closeout on a REVISE or BLOCK verdict.
+  After writing the gate with the computed verdict, the closeout wrote it a
+  second time with a hardcoded `ready`, which the ledger check refuses. The
+  gate is now written once, and its verdict is read from
+  `review-verdict-ledger.json`.
+- `/map-review` shell steps work when each one runs in a new shell, as agents
+  run them. Steps used `$BRANCH`, `$BRANCH_DIR` and the review mode label set
+  by an earlier step, so a fresh shell saw empty values and the ledger found no
+  reviewer files. Each step now sets what it uses. Flag parsing reads
+  `$ARGUMENTS` with `printf` instead of `echo`, which could mangle backslashes.
+- The `/map-review` truncation check now shows how to pipe the reviewer
+  response on stdin. The step did not show the pipe, and a call without input
+  returns `status: "no_input"` with exit code 0, so the mandatory check could
+  silently do nothing.
+- `/map-review --cross-ai` is a second opinion everywhere in the skill. Some
+  steps still told the agent to take the verdict from the external CLI and skip
+  the in-session review; now the in-session review always runs and the ledger
+  computes the verdict. The `cross_ai` review mode label is reserved, because
+  no step sets it and it would mark in-session findings as independent.
 
 ## [3.31.4] - 2026-09-29
 

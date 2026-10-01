@@ -5548,13 +5548,18 @@ class TestCodexProvider:
         assert not missing, f"Missing Codex skill references: {missing}"
 
     def test_documented_codex_task_names_are_schema_valid(self, codex_project):
-        """Literal task_name examples use lowercase letters, digits, underscores."""
+        """Literal task_name examples use lowercase letters, digits, underscores.
+
+        ``<placeholder>`` tokens are substituted at dispatch time, so each is
+        validated as the lowercase token it stands for.
+        """
         invalid: list[str] = []
         for path in (codex_project / ".agents" / "skills").rglob("*.md"):
             for name in re.findall(
                 r'task_name\s*=\s*"([^"]+)"', path.read_text(encoding="utf-8")
             ):
-                if re.fullmatch(r"[a-z0-9_]+", name) is None:
+                resolved = re.sub(r"<[a-z_]+>", "x", name)
+                if re.fullmatch(r"[a-z0-9_]+", resolved) is None:
                     invalid.append(f"{path.name}: {name}")
         assert not invalid, f"Invalid Codex task_name examples: {invalid}"
 
