@@ -2360,7 +2360,7 @@ class TestMapReviewSkillBundleWiring:
                 f"<stage> <verdict> <source_artifact> <notes>; got {args}"
             )
 
-    def test_vc1_vc2_map_review_has_single_ledger_bound_review_gate(self, skill_md):
+    def test_map_review_has_single_ledger_bound_review_gate(self, skill_md):
         """The review stage gate is written once, from the ledger's computed_verdict."""
         review_calls = [
             args
@@ -3784,7 +3784,7 @@ class TestMapReviewCrossAiSecondOpinion:
     def _read(self, name: str) -> str:
         return (self._DIR / name).read_text(encoding="utf-8")
 
-    def test_vc1_success_row_is_a_second_opinion(self) -> None:
+    def test_success_row_is_a_second_opinion(self) -> None:
         text = self._read("review-reference.md")
         assert "set `FINAL_VERDICT` from `normalized.verdict`" not in text
         assert "skip adversarial/normal phases" not in text
@@ -3793,7 +3793,7 @@ class TestMapReviewCrossAiSecondOpinion:
         assert "in-session review then runs" in row
         assert "ledger computes the verdict" in row
 
-    def test_vc2_cross_ai_never_takes_precedence_or_skips(self) -> None:
+    def test_cross_ai_never_takes_precedence_or_skips(self) -> None:
         for name in self._FILES:
             text = self._read(name)
             assert "precedence" not in text.lower(), name
@@ -3803,7 +3803,7 @@ class TestMapReviewCrossAiSecondOpinion:
         assert "present cross-AI first, then this" in skill
         assert "including after a cross-AI" in skill
 
-    def test_vc3_cross_ai_label_is_reserved(self) -> None:
+    def test_cross_ai_label_is_reserved(self) -> None:
         skill = self._read("SKILL.md")
         ref = self._read("review-reference.md")
         assert (
@@ -3841,7 +3841,7 @@ class TestMapReviewFreshShellBlocks:
                 problems.append(name)
         return problems
 
-    def test_vc2_every_bash_block_assigns_before_first_use(self) -> None:
+    def test_every_bash_block_assigns_before_first_use(self) -> None:
         checked = 0
         for name in self._FILES:
             text = (self._DIR / name).read_text(encoding="utf-8")
@@ -3854,7 +3854,7 @@ class TestMapReviewFreshShellBlocks:
                 checked += 1
         assert checked > 0
 
-    def test_vc2_ledger_blocks_assign_review_mode_label(self) -> None:
+    def test_ledger_blocks_assign_review_mode_label(self) -> None:
         for name in ("SKILL.md", "review-reference.md"):
             text = (self._DIR / name).read_text(encoding="utf-8")
             ledger = [
@@ -3866,7 +3866,7 @@ class TestMapReviewFreshShellBlocks:
             for block in ledger:
                 assert re.search(r"^REVIEW_MODE_LABEL=", block, re.MULTILINE), name
 
-    def test_vc2_detector_flags_use_without_assignment(self) -> None:
+    def test_detector_flags_use_without_assignment(self) -> None:
         assert self._unassigned_uses('echo "$BRANCH_DIR"\n') == ["BRANCH_DIR"]
         assert self._unassigned_uses('echo "$BRANCH"\nBRANCH=x\n') == ["BRANCH"]
         assert self._unassigned_uses('BRANCH=x\nBRANCH_DIR=".map/$BRANCH"\n') == []
@@ -3890,7 +3890,7 @@ class TestMapReviewSharedSourceCodexRender:
         source = (self._SRC / name).read_text(encoding="utf-8")
         return env.from_string(source).render(PROVIDER=provider)
 
-    def test_vc1_codex_frontmatter_drops_claude_only_keys(self) -> None:
+    def test_codex_frontmatter_drops_claude_only_keys(self) -> None:
         codex = self._render("SKILL.md.jinja", "codex")
         front = codex.split("---\n")[1]
         assert front.startswith("name: map-review\n")
@@ -3901,7 +3901,7 @@ class TestMapReviewSharedSourceCodexRender:
         positions = [claude_front.index(k) for k in self._GATED_KEYS]
         assert positions == sorted(positions)
 
-    def test_vc3_command_prefix_follows_provider(self) -> None:
+    def test_command_prefix_follows_provider(self) -> None:
         for name in self._FILES:
             source = (self._SRC / name).read_text(encoding="utf-8")
             assert not self._BARE_SLASH_CMD.search(source), name
@@ -3936,7 +3936,7 @@ class TestMapReviewSharedSourceCodexRender:
         )
         return re.search(pattern, text) is not None
 
-    def test_vc1_codex_dispatch_uses_spawn_agent_with_d4_mapping(self) -> None:
+    def test_codex_dispatch_uses_spawn_agent_with_d4_mapping(self) -> None:
         skill = self._render("SKILL.md.jinja", "codex")
         adversarial = self._render("adversarial-reference.md.jinja", "codex")
         for text in (skill, adversarial):
@@ -3954,13 +3954,13 @@ class TestMapReviewSharedSourceCodexRender:
         assert quick in skill
         assert 'spawn_agent(agent_type=..., task_name="map_review_<role>_<n>"' in skill
 
-    def test_vc1_claude_render_keeps_task_dispatch(self) -> None:
+    def test_claude_render_keeps_task_dispatch(self) -> None:
         for name in ("SKILL.md.jinja", "adversarial-reference.md.jinja"):
             claude = self._render(name, "claude")
             assert "Task(subagent_type=" in claude, name
             assert "spawn_agent(" not in claude, name
 
-    def test_vc2_codex_states_counter_and_five_dispatch_rules(self) -> None:
+    def test_codex_states_counter_and_five_dispatch_rules(self) -> None:
         skill = self._render("SKILL.md.jinja", "codex")
         adversarial = self._render("adversarial-reference.md.jinja", "codex")
         for text in (skill, adversarial):
@@ -3977,7 +3977,7 @@ class TestMapReviewSharedSourceCodexRender:
         compare = skill.split("Step A.1d")[1].split("Step A.2:")[0]
         assert "keeps incrementing across both collections" in compare
 
-    def test_vc1_codex_cross_ai_self_review_caveat(self) -> None:
+    def test_codex_cross_ai_self_review_caveat(self) -> None:
         codex = self._render("SKILL.md.jinja", "codex")
         claude = self._render("SKILL.md.jinja", "claude")
         assert "`--cross-ai codex` from a Codex host spawns a fresh `codex exec`" in codex
@@ -3988,7 +3988,7 @@ class TestMapReviewSharedSourceCodexRender:
         assert "#490" in codex
         assert "from a Codex host" not in claude
 
-    def test_vc2_codex_supported_review_states_note(self) -> None:
+    def test_codex_supported_review_states_note(self) -> None:
         codex = self._render("SKILL.md.jinja", "codex")
         claude = self._render("SKILL.md.jinja", "claude")
         for needle in (
@@ -4043,7 +4043,7 @@ def test_single_source_codex_skills_set_is_pinned() -> None:
 
 
 @pytest.mark.parametrize("skill", sorted(SINGLE_SOURCE_CODEX_SKILLS))
-def test_vc1_every_codex_twin_file_is_a_pure_include(skill: str) -> None:
+def test_every_codex_twin_file_is_a_pure_include(skill: str) -> None:
     twin_dir = _TEMPLATES_SRC / "codex/skills" / skill
     assert list(twin_dir.rglob("*.jinja")), f"no twin files found in {twin_dir}"
     assert _non_include_twins(twin_dir) == []
@@ -4053,7 +4053,7 @@ def test_vc1_every_codex_twin_file_is_a_pure_include(skill: str) -> None:
             assert shared.is_file(), f"{path} includes a missing shared source"
 
 
-def test_vc1_non_include_twin_is_detected(tmp_path: Path) -> None:
+def test_non_include_twin_is_detected(tmp_path: Path) -> None:
     twin_dir = tmp_path / "map-review"
     twin_dir.mkdir()
     (twin_dir / "SKILL.md.jinja").write_text(
@@ -4094,7 +4094,7 @@ def _provider_leaks(text: str, patterns: tuple[re.Pattern[str], ...]) -> list[st
 
 
 @pytest.mark.parametrize("rel_dir", _CODEX_MAP_REVIEW_DIRS + _CLAUDE_MAP_REVIEW_DIRS)
-def test_vc3_map_review_provider_leaks(rel_dir: str) -> None:
+def test_map_review_provider_leaks(rel_dir: str) -> None:
     patterns = _CODEX_ONLY_LEAKS if rel_dir in _CLAUDE_MAP_REVIEW_DIRS else _CLAUDE_ONLY_LEAKS
     for name in _MAP_REVIEW_FILES:
         text = (_REPO_ROOT / rel_dir / name).read_text(encoding="utf-8")
@@ -4127,12 +4127,12 @@ def _ledger_before_gate_problems(text: str) -> list[str]:
 
 
 @pytest.mark.parametrize("rel_dir", _CODEX_MAP_REVIEW_DIRS)
-def test_vc4_codex_map_review_ledger_before_gate(rel_dir: str) -> None:
+def test_codex_map_review_ledger_before_gate(rel_dir: str) -> None:
     text = (_REPO_ROOT / rel_dir / "SKILL.md").read_text(encoding="utf-8")
     assert _ledger_before_gate_problems(text) == []
 
 
-def test_vc4_ledger_before_gate_detects_bad_ordering() -> None:
+def test_ledger_before_gate_detects_bad_ordering() -> None:
     good = (_REPO_ROOT / ".agents/skills/map-review/SKILL.md").read_text(encoding="utf-8")
     swapped = good.replace(
         "write_review_verdict_ledger", "TMP_X"
@@ -4146,7 +4146,7 @@ def test_vc4_ledger_before_gate_detects_bad_ordering() -> None:
     )
 
 
-def test_vc3_provider_leak_patterns_detect_leaks() -> None:
+def test_provider_leak_patterns_detect_leaks() -> None:
     assert _provider_leaks('Task(subagent_type="x") /map-review', _CLAUDE_ONLY_LEAKS)
     assert _provider_leaks("spawn_agent(x) $map-review", _CODEX_ONLY_LEAKS)
     assert not _provider_leaks("use $map-review", _CLAUDE_ONLY_LEAKS)

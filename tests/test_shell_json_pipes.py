@@ -130,7 +130,7 @@ def test_banned_pattern_detection(line: str, banned: bool) -> None:
 ECHO_ARGUMENTS_RE = re.compile(r"""echo(?:\s+-[a-zA-Z]+)*\s+"?\$\{?ARGUMENTS\}?"?""")
 
 
-def test_vc1_map_review_has_no_echo_arguments() -> None:
+def test_map_review_has_no_echo_arguments() -> None:
     """map-review must parse $ARGUMENTS via printf, not zsh-escape-mangling echo."""
     review_files = [p for p in _scan_files() if "/map-review/" in p.as_posix()]
     assert review_files, "no map-review files scanned — gate is inert"
@@ -161,6 +161,6 @@ def test_vc1_map_review_has_no_echo_arguments() -> None:
         ("if printf '%s' \"$ARGUMENTS\" | grep -q -- '--quick'; then", False),
     ],
 )
-def test_vc1_map_review_echo_arguments_detection(line: str, banned: bool) -> None:
+def test_map_review_echo_arguments_detection(line: str, banned: bool) -> None:
     """Negative check: the detector flags a reintroduced echo line, not printf."""
     assert bool(ECHO_ARGUMENTS_RE.search(line)) is banned

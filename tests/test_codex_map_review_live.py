@@ -141,7 +141,7 @@ def _selected_blocks(root: Path, hook) -> list[str]:
     return selected
 
 
-def test_vc1_shell_expansion_blocks_allowed_in_supported_states(project):
+def test_shell_expansion_blocks_allowed_in_supported_states(project):
     hook = _load_hook(project)
     blocks = _selected_blocks(project, hook)
     assert blocks, "no map-review block has a shell-expanded write target (vacuous)"
@@ -266,7 +266,7 @@ def _run_block(root: Path, script: str) -> str:
 
 
 @pytest.mark.parametrize("case", list(ROSTERS))
-def test_vc2_envelope_ledger_gate_fresh_shell(project, case):
+def test_envelope_ledger_gate_fresh_shell(project, case):
     envelopes, expected_ledger, expected_gate = ROSTERS[case]
     text = _skill_text(project)
 
