@@ -44,6 +44,11 @@ def repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _unreadable(path: Path) -> str:
+    del path
+    return ""
+
+
 def _write_resolution(slug: str, ticket_id: str, text: str = "The decision prose.") -> str:
     """Write a prose resolution and return its MAP-DIR-relative path (runner contract)."""
     rel = f"resolutions/{ticket_id}.md"
@@ -75,6 +80,22 @@ def _resolve(slug: str, ticket_id: str, session: str, gist: str = "decided") -> 
     """Claim + resolve a non-HITL ticket (task/research) in one shot."""
     wr.claim_ticket(slug, ticket_id, session)
     path = _write_resolution(slug, ticket_id)
+    ticket = wr.show_ticket(slug, ticket_id)["ticket"]
+    if ticket["type"] == "research":
+        assert wr.configure_research(slug, ticket_id, session, "direct", "Fixture factual lookup")["status"] == "success"
+        root = Path(".map/wayfind") / slug
+        research_dir = root / "research" / ticket_id
+        research_dir.mkdir(parents=True, exist_ok=True)
+        brief_path = f"research/{ticket_id}/brief.json"
+        context = wr.research_context(slug, ticket_id)["context"]
+        (root / brief_path).write_text(json.dumps({"protocol_version": 1, "ticket_id": ticket_id, "question": context["question"], "constraints": [], "settling_criteria": ["Inspect documentation"], "dependency_bindings": context["dependency_bindings"], "verification_target": None}))
+        attempt = wr.reserve_research_attempt(slug, ticket_id, session, "fixture", "initial", "fixture-worker", brief_path)["attempt"]
+        report_path = f"research/{ticket_id}/report.json"
+        (root / report_path).write_text(json.dumps({"protocol_version": 1, "ticket_id": ticket_id, "attempt_id": attempt["attempt_id"], "brief_sha256": attempt["brief_sha256"], "answer": gist, "claims": [{"id": "claim", "text": gist, "evidence": ["doc"]}], "sources": [{"id": "doc", "kind": "documentation", "url": "https://example.org/spec", "version": "fixture", "observed_at": "2026-10-07", "freshness_limit": "Observed-only fixture"}], "decisive_assumptions": [], "falsification_conditions": [], "uncertainty": []}))
+        assert wr.record_research_attempt(slug, ticket_id, session, attempt["attempt_id"], "completed", report_path)["status"] == "success"
+        assessment_path = f"research/{ticket_id}/assessment.json"
+        (root / assessment_path).write_text(json.dumps({"protocol_version": 1, "ticket_id": ticket_id, "assessment_id": "fixture", "attempt_bindings": [{"attempt_id": attempt["attempt_id"], "report_sha256": wr.research_artifact_hash(slug, report_path)["sha256"]}], "verdict": "sufficient", "gist": gist, "resolution_path": path, "resolution_sha256": wr.research_artifact_hash(slug, path)["sha256"], "material_disputes": [], "remaining_uncertainty": [], "no_further_verification_rationale": "Fixture evidence is complete"}))
+        assert wr.record_research_assessment(slug, ticket_id, session, assessment_path)["status"] == "success"
     return wr.resolve_ticket(slug, ticket_id, session, gist, path)
 
 
@@ -545,7 +566,7 @@ class TestSessionGuardrail:
         p = Path(".map/wayfind/checkout") / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("content", encoding="utf-8")
-        monkeypatch.setattr(wr, "_safe_read", lambda _p: "")
+        monkeypatch.setattr(wr, "_safe_read", _unreadable)
         result = wr.record_human_input("checkout", tid, "sess-1", rel)
         assert result["status"] == "error"
         assert result["code"] == "missing_input"
@@ -581,7 +602,7 @@ class TestViews:
         p = Path(".map/wayfind/checkout") / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("content", encoding="utf-8")
-        monkeypatch.setattr(wr, "_safe_read", lambda _p: "")
+        monkeypatch.setattr(wr, "_safe_read", _unreadable)
         result = wr.resolve_ticket("checkout", tid, "sess-1", "g", rel)
         assert result["status"] == "error"
         assert result["code"] == "missing_resolution"
@@ -708,7 +729,7 @@ class TestAmendResolution:
         p = Path(".map/wayfind/checkout") / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("amended resolution", encoding="utf-8")
-        monkeypatch.setattr(wr, "_safe_read", lambda _p: "")
+        monkeypatch.setattr(wr, "_safe_read", _unreadable)
         result = wr.amend_resolution("checkout", a, resolution_path=rel)
         assert result["status"] == "error"
         assert result["code"] == "missing_resolution"
@@ -781,6 +802,7 @@ class TestSafeRead:
         f.write_text("content", encoding="utf-8")
 
         def raise_oserror(*args: object, **kwargs: object) -> str:
+            del args, kwargs
             raise OSError("permission denied")
 
         monkeypatch.setattr(Path, "read_text", raise_oserror)

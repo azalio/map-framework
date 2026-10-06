@@ -492,12 +492,14 @@ straight to the provider's `map-plan` entry point.
 - **`wayfind_runner.py`** (`.map/scripts/`): a self-contained, **stdlib-only** runner
   (sibling of `map_step_runner.py`, mirroring the `sofa_client.py` pattern) that owns
   EVERY mutation to `.map/wayfind/<slug>/state.json` and regenerates the `map.md` /
-  `tickets/*.md` views after each write. The LLM writes only prose (resolutions,
-  verbatim human answers); it never hand-edits the JSON or the views. Each subcommand
+  `tickets/*.md` views after each write. The coordinator writes prose and structured
+  research artifacts, then registers them; it never hand-edits canonical state or
+  views. Workers return findings without mutating the map. Each subcommand
   prints a typed JSON result; the CLI exits non-zero on an error status.
 - **Determinism boundary**: every invariant lives above persistence in the runner —
-  DFS cycle-freedom for `blocked_by` wiring, claim-before-work, one-non-research-resolve
-  per session (a session ledger in `state.json`), the human-in-the-loop gate (a
+  DFS cycle-freedom for `blocked_by` wiring, claim-before-work, the optional
+  non-research session cap (`WAYFIND_MAX_NONRESEARCH_RESOLVES_PER_SESSION`, unlimited
+  by default), the human-in-the-loop gate (a
   `prototype`/`grilling` ticket cannot resolve until `record_human_input` registers a
   non-empty verbatim answer file), and the terminal handoff condition (fog empty AND no
   active claims AND every ticket in `{resolved, out_of_scope}`). A naive
@@ -514,10 +516,43 @@ straight to the provider's `map-plan` entry point.
   pre-seeds the spec's Decisions Made / Out of Scope / Open Questions. The map is
   repo-level because it outlives the feature branch that later consumes it.
 
-The runner is optimistic-concurrency aware (`--expected-revision` guards against
-concurrent sessions clobbering the map). Honesty note: the human-in-the-loop and
-session-limit checks add friction and an audit trail, not a mechanical guarantee that an
-LLM cannot fabricate input — the same layered-defense posture MAP uses elsewhere.
+### Default-on research evidence protocol
+
+Research tickets carry a versioned ledger in canonical state: routing rationale,
+reservations, outcomes, budget extensions, assessments and the accepted evidence
+binding. The default budget is four lifetime investigation attempts per ticket;
+failures and unknown dispatches remain spent. Reservations precede dispatch, and
+request IDs make retries idempotent without authorizing duplicate work. Extending
+the budget requires a one-use, recorded human authorization for a finite increment.
+
+Both `chart` and `work` use the same shared Claude/Codex procedure. A factual lookup
+can be direct; an ambiguous or consequential decision needs two completed initial
+reports from distinct investigators. Initial prompts omit sibling conclusions.
+Synthesis identifies material disagreements and commissions only targeted checks;
+exhaustion or unresolved disputes cannot become a sufficient assessment.
+
+The runner binds reports, briefs, assessments and resolution bytes, plus the
+question, dependency decisions and explicitly cited local source files. External
+sources record their observation/version and remain observed-only: validation does
+not fetch URLs or claim universal freshness. Structured validation checks integrity
+and coverage, not truth or independent thought. Non-research HITL rules are unchanged.
+
+A correction has a separate owner record, preserves the previous resolution and
+spent budget, and invalidates its evidence until a matching reassessment is accepted.
+It does not reopen unrelated tickets or resume frozen claims. Handoffs retain the
+existing decision/exclusion/risk fields and add evidence provenance and a publication
+commitment. Files are published before their hashes are committed to state; a partial
+publication fails read-only `validate_wayfind_handoff`. Both planning providers
+validate immediately before consuming explicit or offered handoffs. Early handoff
+omits active-correction decisions and lists them as risks. Legacy completed maps
+remain readable with unrecorded-evidence provenance and no read-time migration.
+
+The runner supports **one coordinator per map**, with sequential mutations.
+`--expected-revision` detects stale reads but is not a lock or compare-and-swap;
+atomic replacement does not make concurrent read-modify-write safe. Persisted state
+survives ordinary process restarts; no new power-loss durability guarantee is made.
+Human-input and authorization records provide an audit trail, not authentication
+against a model fabricating human input.
 
 ## Single-Entry Autopilot (`/map-auto`)
 

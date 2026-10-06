@@ -66,7 +66,7 @@ You reach it two ways: invoke it yourself, or let `/map-plan` send you. `/map-pl
 
 The unit of work is a **decision ticket** on a durable, repo-level map at `.map/wayfind/<slug>/` (the map outlives branches and can span sessions). Tickets are typed:
 
-- `research` — find out an answer that already exists (a subagent may help). Exempt from the one-per-session limit.
+- `research` — investigate a sharp question with evidence. A factual lookup uses one direct investigation; an uncertain or consequential choice uses two independent initial investigations, then targeted checks if needed. Evidence-first research is enabled by default in both providers, including newly worked open tickets from older maps.
 - `prototype` — build a cheap throwaway probe, then get the human's read. Human-in-the-loop.
 - `grilling` — interrogate the human: ask the sharp question, capture their verbatim answer. Human-in-the-loop.
 - `task` — a self-contained decision or chore you settle yourself.
@@ -81,9 +81,17 @@ Three explicit modes (no auto-detection):
 /map-wayfind handoff checkout           # when exhausted, emit the handoff for /map-plan
 ```
 
-All state lives in `.map/wayfind/<slug>/state.json` and is mutated only through `python3 .map/scripts/wayfind_runner.py <command>`; you write prose only (resolutions, verbatim human answers). The `map.md` and `tickets/*.md` views are regenerated on every mutation and carry a DO-NOT-EDIT banner. Every command prints a JSON result; a non-success `status` means stop and read the message.
+All canonical state lives in `.map/wayfind/<slug>/state.json` and is mutated only through `python3 .map/scripts/wayfind_runner.py <command>`. The coordinator writes resolution prose, verbatim human answers, and structured research artifacts, then registers them through the runner. Workers return findings; they do not mutate the map. The `map.md` and `tickets/*.md` views are regenerated on every mutation and carry a DO-NOT-EDIT banner. Every command prints a JSON result; a non-success `status` means stop and read the message.
+
+**Research budget and recovery.** Each research ticket starts with four investigation attempts, reserved durably **before** dispatch. Failed, cancelled and unknown attempts count; changing sessions or reclaiming a ticket never resets them. At exhaustion, the skill stops with the unresolved question and asks for a specific additional number of attempts. Each approval authorizes one extension only. On restart, inspect the existing claim and research ledger: recover the original result or close the uncertain attempt, never blindly redispatch it. This is an investigation-count limit, not a hard token or wall-clock cap.
+
+**Evidence, not votes.** Independent investigators receive the same neutral question and constraints without sibling conclusions. Their reports identify sources, decisive assumptions, falsification conditions and uncertainty. Agreement does not prove correctness; a material contradiction needs a targeted check or stays unresolved. The runner checks structural completeness and hashes, not the truth of an argument. Cited local files are checked for changes; external documentation is explicitly observed-only. Code-writing experiments and human preferences still use `prototype` / `grilling`, not autonomous research side effects.
+
+Research resolutions are bound to their accepted assessment and evidence. To correct a managed decision, supply a new matching assessment to `amend_resolution`; if further investigation is needed, start `begin_research_correction` first. Corrections preserve the ticket's spent budget and history. See the installed `map-wayfind/wayfind-reference.md` for JSON schemas and complete CLI examples.
 
 `/map-wayfind handoff <slug>` requires the map to be **exhausted** — fog empty, no active claims, and every ticket resolved or out-of-scope (`--early --confirmed-by-user` overrides, folding open items into remaining risks). It writes `handoff.md`/`handoff.json` and registers a `wayfind_handoff` artifact-manifest stage. Feed it into planning with `/map-plan --wayfind <slug>` on a feature branch: the handoff's decisions seed the spec's **Decisions Made** (settled — the interview does not re-ask them), out-of-scope items seed **Out of Scope**, and remaining risks seed **Open Questions**. Without an explicit `--wayfind`, `/map-plan` runs `list_handoffs` and offers a single completed handoff but never consumes one silently.
+
+Before either provider consumes a handoff, `validate_wayfind_handoff <slug>` checks its publication and evidence bindings without modifying the map. Changed reports, cited local sources, dependency decisions or resolutions require correction and re-emission. An early handoff carries unfinished research and active corrections only as risks, never as settled decisions. Completed legacy maps remain readable with explicit unrecorded-evidence provenance; they are not silently migrated or retrospectively called verified. An already-started plan still takes precedence over a new handoff.
 
 **Sharing / privacy.** Maps are committed by default (decisions are durable, reviewable history). `grilling` transcripts and prose resolutions may contain sensitive content — `chart` warns about this. To keep one map local, add `.map/wayfind/<slug>/.gitignore` with a single `*`.
 
