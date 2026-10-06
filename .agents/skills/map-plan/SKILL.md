@@ -130,6 +130,18 @@ that the PRD became ready.
 
 ---
 
+## Pre-flight: Wayfinding Handoff (optional)
+
+A handoff seeds a fresh plan ONLY after Resume Detection returns `no_plan` (or after operator-confirmed archival resolves `goal_mismatch`). On `resume`, existing spec/task-plan wins and the handoff is NOT re-consumed; never overwrite an in-progress plan by re-seeding.
+
+- For explicit `--wayfind <slug>`, select `.map/wayfind/<slug>/handoff.json` (repo-level).
+- Otherwise run `python3 .map/scripts/wayfind_runner.py list_handoffs`; exactly one completed handoff may be offered, but consume only on an explicit user yes. Never guess a match; zero/multiple handoffs means skip.
+- For BOTH explicit and user-accepted offered handoffs, run `python3 .map/scripts/wayfind_runner.py validate_wayfind_handoff <slug>` immediately before seeding. Non-success → STOP: stale, tampered, missing or actively corrected managed evidence is not settled input. Success with `evidence_status: legacy_unrecorded` → surface the provenance warning, never call it verified. Validation is read-only and proves integrity, not truth; do not repair or migrate the map on read.
+
+When a handoff is used, pre-seed the spec: `decisions[]` → **Decisions Made** (settled; do not re-ask), `out_of_scope[]` → **Out of Scope**, `remaining_risks[]` → **Open Questions**. Unresolved research and corrections in risks are not decisions. Continue for anything the handoff did not settle; never modify the wayfinding map.
+
+---
+
 ## Pre-flight: Workflow-Fit Gate
 
 Assess whether MAP planning is warranted. Evaluate these signals:

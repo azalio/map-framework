@@ -115,6 +115,8 @@ If a `/map-wayfind` map already resolved the key decisions, seed this plan from 
 - If `$ARGUMENTS` contains `--wayfind <slug>`, read `.map/wayfind/<slug>/handoff.json` (repo-level, not branch-scoped).
 - Otherwise run `python3 .map/scripts/wayfind_runner.py list_handoffs`. If exactly one completed handoff exists, OFFER it to the user ("found a completed wayfinding map `<slug>` — seed the plan from it?") and use it only on an explicit yes. Never match a handoff to the request by guessing; with zero or multiple handoffs and no explicit `--wayfind`, skip this step.
 
+For BOTH explicit `--wayfind <slug>` and user-accepted offered handoffs, run `python3 .map/scripts/wayfind_runner.py validate_wayfind_handoff <slug>` immediately before seeding. Non-success → STOP; stale, tampered, missing or actively corrected managed evidence is not settled input. Success with `evidence_status: legacy_unrecorded` → surface the provenance warning, never call it verified; validation is read-only and proves integrity, not truth. Do not repair or migrate the map on read.
+
 When a handoff is used, pre-seed the spec: `decisions[]` → **Decisions Made** (settled — the interview must NOT re-ask them; carry them as a do-not-re-ask list), `out_of_scope[]` → **Out of Scope**, `remaining_risks[]` → **Open Questions**. Then continue below for anything the handoff did not settle. Do not modify the wayfinding map.
 
 ### Pre-flight: Workflow-Fit Gate

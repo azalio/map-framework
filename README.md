@@ -89,7 +89,7 @@ That's the whole golden path.
 - **Starting from a PRD?** Run `/map-prd-review` directly, or accept `/map-plan`'s optional readiness preflight. A non-ready result shows the gaps and asks whether to revise or continue planning anyway.
 - **Already scoped?** Go straight to `/map-efficient`.
 - **Tiny edit?** `/map-plan` off-ramps you to a direct edit or `/map-fast` instead of forcing full planning.
-- **Too foggy to plan?** `/map-wayfind` resolves open design decisions one at a time on a durable map, then hands settled decisions to `/map-plan`.
+- **Too foggy to plan?** `/map-wayfind` resolves open design decisions on a durable map. Evidence-first research is on by default: factual lookups stay light; uncertain decisions get independent investigations and targeted checks, with four attempts before asking to extend the budget. Research handoffs are checked before `/map-plan`; historical decisions retain explicit legacy provenance.
 - **Want one entry point?** `/map-auto` routes and drives the chain autonomously; hard-stops only on `dangerous_action`/`safety_guardrail` holds.
 
 > Codex CLI ships the same 23 MAP skill entry points and invokes them with `$`:

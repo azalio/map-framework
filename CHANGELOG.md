@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Default-on evidence-first research in `map-wayfind`: direct factual lookups or
+  independent investigations, targeted verification, hash-bound assessments, and
+  four durable investigation attempts per ticket. Failed attempts count; bounded
+  extensions require a one-use recorded human approval.
+- Research correction and read-only handoff validation preserve evidence history,
+  reject stale planning inputs, and keep legacy decisions explicitly unverified.
+
 ### Changed
+- Claude and Codex wayfind skills share their source and research procedure; both
+  planning surfaces validate wayfind evidence before consuming a handoff.
 - Codex `$map-release` and its supporting reference render from the shared
   provider-aware release sources instead of separate copies. (#488)
 - Codex `$map-review` is rendered from the same source as the Claude

@@ -62,7 +62,9 @@ SUPPORTED_SKILL_CLASSES = {"reference", "task", "hybrid"}
 # so the generic Claude negative-trigger convention does not apply here.
 NEGATIVE_TRIGGER_DESCRIPTION_EXEMPT_SKILLS = {"map-upgrade"}
 # Codex twins rendered from the Claude source via [% include %] (PROVIDER-conditional).
-SINGLE_SOURCE_CODEX_SKILLS = {"map-architecture", "map-auto", "map-review", "map-release"}
+SINGLE_SOURCE_CODEX_SKILLS = {
+    "map-architecture", "map-auto", "map-review", "map-release", "map-wayfind"
+}
 
 WORKFLOW_EFFORT_PROFILES = {
     "map-fast": "low/direct",
@@ -4085,6 +4087,146 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _TEMPLATES_SRC = _REPO_ROOT / "src/mapify_cli/templates_src"
 
 
+def _assert_wayfind_research_policy(body: str, reference: str) -> None:
+    chart = body.split('## Mode: chart', 1)[1].split('## Mode: work', 1)[0]
+    work = body.split('## Mode: work', 1)[1].split('## Mode: handoff', 1)[0]
+    for mode in (chart, work):
+        assert "Default-on research procedure" in mode
+    for required in (
+        "narrow factual lookup", "two completed independent initial reports",
+        "reserve_research_attempt", "created: true", "created: false",
+        "four lifetime attempts", "failed/unknown/cancelled", "unknown", "never blindly redispatch",
+        "actual user authorization", "one-use", "general-purpose",
+        "no sibling outputs", "no opt-in flag", "restart/reclaim never resets",
+        "No recursive research rounds", "code-writing experiments",
+        "Only the coordinator", "not proof of truth", "begin_research_correction",
+        "validate_wayfind_handoff", "legacy_unrecorded", "STOP",
+    ):
+        assert required in body + reference, required
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_wayfind_default_research_policy_source(provider: str) -> None:
+    from mapify_cli.delivery.template_renderer import get_environment
+
+    env = get_environment(_TEMPLATES_SRC)
+    prefix = "codex/" if provider == "codex" else ""
+    body = env.get_template(f"{prefix}skills/map-wayfind/SKILL.md.jinja").render(
+        PROVIDER=provider
+    )
+    reference = env.get_template(
+        f"{prefix}skills/map-wayfind/wayfind-reference.md.jinja"
+    ).render(PROVIDER=provider)
+    _assert_wayfind_research_policy(body, reference)
+    assert not body.endswith("\n\n")
+    assert not reference.endswith("\n\n")
+    assert len(body.splitlines()) <= _DEFAULT_SKILL_BODY_BUDGET
+    if provider == "codex":
+        assert 'spawn_agent(agent_type="default"' in reference
+        assert _provider_leaks(body + reference, _CLAUDE_ONLY_LEAKS) == []
+        assert "AskUserQuestion" not in body + reference
+        front = body.split("---\n")[1]
+        for key in ("effort:", "disable-model-invocation:", "argument-hint:"):
+            assert key not in front
+    else:
+        assert 'Task(subagent_type="general-purpose"' in reference
+        assert _provider_leaks(body + reference, _CODEX_ONLY_LEAKS) == []
+
+
+@pytest.mark.parametrize(
+    "rel_dir",
+    [
+        ".claude/skills/map-wayfind",
+        ".agents/skills/map-wayfind",
+        "src/mapify_cli/templates/skills/map-wayfind",
+        "src/mapify_cli/templates/codex/skills/map-wayfind",
+    ],
+)
+def test_wayfind_rendered_research_policy(rel_dir: str) -> None:
+    body = (_REPO_ROOT / rel_dir / "SKILL.md").read_text(encoding="utf-8")
+    reference = (_REPO_ROOT / rel_dir / "wayfind-reference.md").read_text(encoding="utf-8")
+    _assert_wayfind_research_policy(body, reference)
+    codex = "/codex/" in rel_dir or rel_dir.startswith(".agents/")
+    leaks = _CLAUDE_ONLY_LEAKS if codex else _CODEX_ONLY_LEAKS
+    assert _provider_leaks(body + reference, leaks) == []
+    assert "<%" not in body + reference
+    assert "[[ cmd ]]" not in body + reference
+
+
+@pytest.mark.parametrize(
+    "required",
+    [
+        "reserve_research_attempt",
+        "two completed independent initial reports",
+        "actual user authorization",
+        "begin_research_correction",
+        "validate_wayfind_handoff",
+    ],
+)
+def test_wayfind_policy_guard_rejects_missing_contract_in_fixture(required: str) -> None:
+    from mapify_cli.delivery.template_renderer import get_environment
+
+    env = get_environment(_TEMPLATES_SRC)
+    body = env.get_template("skills/map-wayfind/SKILL.md.jinja").render(PROVIDER="claude")
+    reference = env.get_template("skills/map-wayfind/wayfind-reference.md.jinja").render(
+        PROVIDER="claude"
+    )
+    with pytest.raises(AssertionError, match=re.escape(required)):
+        _assert_wayfind_research_policy(
+            body.replace(required, "removed_contract"),
+            reference.replace(required, "removed_contract"),
+        )
+
+
+def _assert_wayfind_planning_preflight(body: str) -> None:
+    preflight = body.split("Pre-flight: Wayfinding Handoff", 1)[1].split(
+        "Pre-flight: Workflow-Fit Gate", 1
+    )[0]
+    assert "--wayfind <slug>" in preflight
+    assert "list_handoffs" in preflight
+    assert "validate_wayfind_handoff <slug>" in preflight, "validate_wayfind_handoff"
+    assert preflight.index("validate_wayfind_handoff <slug>") < preflight.index(
+        "pre-seed the spec"
+    )
+    for required in ("resume", "NOT re-consumed", "explicit", "offered", "STOP", "legacy_unrecorded"):
+        assert required in preflight
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_wayfind_planning_preflight_source(provider: str) -> None:
+    from mapify_cli.delivery.template_renderer import get_environment
+
+    env = get_environment(_TEMPLATES_SRC)
+    prefix = "codex/" if provider == "codex" else ""
+    body = env.get_template(f"{prefix}skills/map-plan/SKILL.md.jinja").render(PROVIDER=provider)
+    _assert_wayfind_planning_preflight(body)
+
+
+def test_wayfind_planning_guard_rejects_missing_preflight_in_fixture() -> None:
+    from mapify_cli.delivery.template_renderer import get_environment
+
+    body = get_environment(_TEMPLATES_SRC).get_template(
+        "skills/map-plan/SKILL.md.jinja"
+    ).render(PROVIDER="claude")
+    with pytest.raises(AssertionError, match="validate_wayfind_handoff"):
+        _assert_wayfind_planning_preflight(
+            body.replace("validate_wayfind_handoff <slug>", "removed_preflight")
+        )
+
+
+@pytest.mark.parametrize(
+    "rel_path",
+    [
+        ".claude/skills/map-plan/SKILL.md",
+        ".agents/skills/map-plan/SKILL.md",
+        "src/mapify_cli/templates/skills/map-plan/SKILL.md",
+        "src/mapify_cli/templates/codex/skills/map-plan/SKILL.md",
+    ],
+)
+def test_wayfind_rendered_planning_preflight(rel_path: str) -> None:
+    _assert_wayfind_planning_preflight((_REPO_ROOT / rel_path).read_text(encoding="utf-8"))
+
+
 def _non_include_twins(twin_dir: Path) -> list[Path]:
     """Files in a Codex twin dir that are not a pure include of the same-named shared source."""
     skill = twin_dir.name
@@ -4099,7 +4241,7 @@ def _non_include_twins(twin_dir: Path) -> list[Path]:
 
 def test_single_source_codex_skills_set_is_pinned() -> None:
     assert SINGLE_SOURCE_CODEX_SKILLS == {
-        "map-architecture", "map-auto", "map-review", "map-release"
+        "map-architecture", "map-auto", "map-review", "map-release", "map-wayfind"
     }
 
 
