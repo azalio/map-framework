@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.0] - 2026-10-07
+
 ### Added
 - Default-on evidence-first research in `map-wayfind`: direct factual lookups or
   independent investigations, targeted verification, hash-bound assessments, and
