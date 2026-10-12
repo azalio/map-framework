@@ -998,6 +998,65 @@ Context compaction occurs when Claude's conversation memory reaches its limit. W
 - But your work files on disk remain intact
 - MAP **automatically restores your workflow state** in the new session
 
+### Independent Serial Blocker Repair
+
+An unrelated full-gate failure during active Actor work is not a reason to
+replace the task sequence or reset the checkpoint. A separately approved,
+disjoint repair can run in a private checkout while the current serial task
+keeps its phase, result ledger, retry history and staged/unstaged/untracked work.
+The parent remains paused until the repair finishes; no parent Monitor pass is
+implied.
+
+Add one independent subtask to the branch blueprint with exact `affected_files`,
+completed `dependencies`, and nonempty `repair_checks` command vectors. For
+example, `"repair_checks": [["make", "check"]]` executes the actual full gate
+without interpreting shell text. Stop all parent writers before starting.
+
+```bash
+python3 .map/scripts/map_orchestrator.py request_repair ST-REPAIR
+# Present the returned exact contract and hold to the user;
+# record their approval through the runner's approval-hold API.
+python3 .map/scripts/map_orchestrator.py begin_repair ST-REPAIR --approval-hold HOLD_ID
+```
+
+Use the returned `private_checkout` as the working directory for the repair and
+all its agents. Run its normal RESEARCH → ACTOR → MONITOR stages (including TDD
+when enabled). Commit the private Actor candidate and record its result with
+`commit_sha` before closing Monitor. Monitor reviews the clean committed HEAD
+tree and saves independent evidence under the private branch artifact directory.
+The complete `valid:true`, `recommendation:"approve"`, `summary`, `issues`
+envelope must also bind `operation_id`, `contract_digest`, and `candidate_tree`
+(`git rev-parse HEAD^{tree}`). Close `validate_step 2.4` with that envelope and
+continue the private workflow to `WORKFLOW_COMPLETE`. An earlier approval cannot
+certify later edits.
+
+Return to the parent checkout:
+
+```bash
+python3 .map/scripts/map_orchestrator.py verify_repair OPERATION_ID --monitor-file PRIVATE_MONITOR_FILE
+python3 .map/scripts/map_orchestrator.py finish_repair OPERATION_ID
+python3 .map/scripts/map_orchestrator.py get_interruption_status
+```
+
+Verification runs the approved gates against the combined paused working
+snapshot plus repair. Finish applies only the verified disjoint repair paths;
+the repair commit is parented to the original HEAD and excludes paused Actor
+work. Resume the original task at its unchanged phase and perform its independent
+Monitor. Its adjusted mutation baseline excludes repair-only changes but still
+counts subsequent edits to repaired paths.
+
+After an ordinary process restart, query `get_interruption_status` first. Repeat
+`finish_repair` only for recognized partial finish; recovery proceeds forward,
+not by whole-index restoration or reset. Unknown state/Git/file drift is a
+blocker requiring inspection. Do not remove markers, unfamiliar locks or temp
+files by hand. Serial exclusive ownership is required: concurrent waves,
+nested repairs, overlapping paths, unsupported Git/filesystem configurations and
+sensitive snapshot inputs fail closed. Recovery covers recognized journaled
+checkpoints; incomplete preparation or a crash before lock/temp ownership was
+recorded requires operator inspection. This is not an every-instruction,
+concurrent-writer or sudden power-loss guarantee; see
+[the binding spike](blocker-repair-spike.md).
+
 ### Checkpoint Recovery with /map-resume
 
 **How it works:**

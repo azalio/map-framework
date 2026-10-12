@@ -7,7 +7,7 @@ This file holds low-frequency MAP Efficient details so `SKILL.md` stays focused 
 Two CLI scripts back the workflow; calling the wrong one fails with `invalid choice`. Route by purpose, not by name prefix:
 
 - **`python3 .map/scripts/map_orchestrator.py <cmd>`** — state-machine transitions and step-state writes:
-  `get_next_step`, `peek_current_step`, `validate_step`, `initialize`, `set_plan_approved`, `set_execution_mode`, `set_tdd_mode`, `skip_step`, `set_subtasks`, `mark_contract_ready`, `resume_from_plan`, `resume_from_test_contract`, `check_circuit_breaker`, `set_waves`, `get_wave_step`, `validate_wave_step`, `advance_wave`, `resume_single_subtask`, `get_plan_progress`, `monitor_failed`, `wave_monitor_failed`, `defer_flaky_subtask`, `reopen_for_fixes`, `mark_workflow_complete`, `archive`, `mark_subtask_complete`, `record_subtask_result`, `backfill_subtask_ids`, `finalize_plan`.
+  `get_next_step`, `peek_current_step`, `validate_step`, `initialize`, `set_plan_approved`, `set_execution_mode`, `set_tdd_mode`, `skip_step`, `set_subtasks`, `mark_contract_ready`, `resume_from_plan`, `resume_from_test_contract`, `check_circuit_breaker`, `set_waves`, `get_wave_step`, `validate_wave_step`, `advance_wave`, `resume_single_subtask`, `get_plan_progress`, `monitor_failed`, `wave_monitor_failed`, `defer_flaky_subtask`, `reopen_for_fixes`, `mark_workflow_complete`, `archive`, `mark_subtask_complete`, `record_subtask_result`, `backfill_subtask_ids`, `finalize_plan`, `request_repair`, `begin_repair`, `verify_repair`, `finish_repair`, `get_interruption_status`.
 
 - **`python3 .map/scripts/map_step_runner.py <cmd>`** — pure analysis/persistence helpers (no state-machine side effect). The list below names ONLY commands that have a `func_name` dispatch branch in `map_step_runner.py` and are thus invocable from the shell; the module defines additional internal helpers (`save_artifact_manifest`, `save_learning_metrics`, `load_learning_metrics`, `load_blueprint`, `record_repeated_learning_violations`, `record_token_budget_decision`, …) that are used by other dispatch branches but cannot be called directly:
   - `detect_*` family: `detect_truncated_agent_output`, `detect_already_done`, `detect_cross_subtask_regression_risk`, `detect_actor_files_changed_mismatch`, `detect_symbol_blast_radius`
@@ -21,6 +21,57 @@ Two CLI scripts back the workflow; calling the wrong one fails with `invalid cho
   - `log_*`: `log_agent_failure`
 
 Rule of thumb: anything that mutates `step_state.json` → orchestrator. Anything that reads the repo, writes a sidecar artifact, or returns a JSON verdict without touching `step_state.json` → step_runner. The two `record_subtask_result` (orchestrator) vs `record_test_baseline` (step_runner) cases are the most common confusion point — orchestrator advances the cursor, step_runner just persists a baseline file.
+
+## Independent Serial Blocker Repair
+
+If an unrelated blocker needs a separately approved repair while a serial
+subtask has active work, preserve that work with the interruption protocol.
+Do not use `set_subtasks`, `resume_single_subtask`, `resume_from_plan`, archive,
+abandon, or hand-edit `step_state.json` to insert a repair. Those are not
+lossless suspension APIs.
+
+1. Stop parent Actor/Monitor activity and establish exclusive, quiescent
+   ownership of the checkout. Concurrent waves and nested repairs are not
+   supported. Define one independent blueprint subtask with exact
+   `affected_files`, completed `dependencies`, and nonempty `repair_checks`
+   command vectors (the real full gate, not a no-op or weakened check).
+2. Run `python3 .map/scripts/map_orchestrator.py request_repair REPAIR_ID`.
+   Present the exact returned contract/approval hold to the user. Record their
+   decision with `python3 .map/scripts/map_step_runner.py decide_approval_hold
+   HOLD_ID approved` only after explicit approval; do not self-approve.
+3. Run `python3 .map/scripts/map_orchestrator.py begin_repair REPAIR_ID
+   --approval-hold HOLD_ID`. Use the returned `operation_id`,
+   `contract_digest`, and `private_checkout`. The parent checkout remains
+   paused and untouched. Change the working directory to the private checkout
+   for **all** repair commands and agent dispatches; an absolute file path alone
+   does not redirect an agent's working directory.
+4. Execute the private repair's normal RESEARCH → ACTOR → MONITOR workflow,
+   including TDD steps if enabled. Commit the private Actor candidate and
+   `record_subtask_result` with its `commit_sha` before closing Monitor. Monitor
+   inspects that clean committed HEAD tree and emits a complete `valid:true`,
+   `recommendation:"approve"`, `summary`, `issues` envelope with
+   `operation_id`, `contract_digest`, and `candidate_tree` (from
+   `git rev-parse HEAD^{tree}`). Close `validate_step 2.4` with that envelope
+   and continue the normal private workflow to `WORKFLOW_COMPLETE`. A stale
+   verdict or parent Monitor approval is not repair evidence.
+5. Return to the parent checkout and run
+   `python3 .map/scripts/map_orchestrator.py verify_repair OPERATION_ID
+   --monitor-file PRIVATE_MONITOR_FILE`. Verification executes the approved
+   gates against the private combined working snapshot plus repair and refuses
+   drift or writes outside the approved paths.
+6. Only after successful verification run
+   `python3 .map/scripts/map_orchestrator.py finish_repair OPERATION_ID`.
+   The resulting repair commit excludes the paused Actor's work. Resume the
+   original subtask at its preserved phase and run its own Monitor; repair
+   completion is not a fake pass for the parent.
+
+On restart, query `get_interruption_status` before ordinary resume. Continue
+only the reported repair operation; recognized partial finish is recovered
+forward by repeating `finish_repair`. Unexpected Git/state/index/file changes
+are blockers: stop and show the refusal, without reset, stash, rollback,
+manual marker removal, or unfamiliar lock/temp-file deletion. This protocol
+supports ordinary process restart, not sudden power-loss or concurrent writers.
+
 
 ### Flaky-test triage sidecar
 

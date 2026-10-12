@@ -114,14 +114,23 @@ if tuple(sys.version_info) < (3, 11):
     sys.exit(1)
 
 import argparse
+import inspect
 import json
 import os
 import re
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import wraps
 from pathlib import Path
+from typing import TYPE_CHECKING, ParamSpec
+
+if TYPE_CHECKING:
+    from map_interruption import (  # pyright: ignore[reportMissingImports]
+        ActiveInterruption,
+    )
 
 # Step phase definitions with execution order
 STEP_PHASES = {
@@ -162,6 +171,112 @@ TDD_STEP_ORDER = [
     "2.3",
     "2.4",
 ]
+
+
+def _interruption_guard(branch: str) -> dict | None:
+    """Use the repair engine's durable guard; never reset unreadable parent state."""
+    state_file = Path(f".map/{branch}/step_state.json")
+    if state_file.exists():
+        try:
+            payload = json.loads(state_file.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("state must be an object")
+        except (OSError, UnicodeError, ValueError):
+            return {
+                "status": "error", "valid": False,
+                "message": "Unreadable workflow state; refusing mutation.",
+            }
+    else:
+        payload = {}
+    try:
+        from map_interruption import (  # pyright: ignore[reportMissingImports]
+            interruption_guard,
+        )
+    except ImportError:
+        if (
+            payload.get("active_interruption") is not None
+            or Path(".git/map-repairs").exists()
+            or Path(".git").is_file()
+        ):
+            return {
+                "status": "error", "valid": False,
+                "message": "Active repair; repair engine unavailable. Parent is suspended.",
+            }
+        return None
+    return interruption_guard(branch)
+
+
+def _setup_guard(branch: str) -> dict | None:
+    """Reject destructive setup while serial execution owns the current frame."""
+    state = StepState.load(Path(f".map/{branch}/step_state.json"))
+    if (
+        state.current_subtask_id
+        and not _is_workflow_complete(state)
+        and state.workflow_status not in {"COMPLETED", "ABANDONED"}
+        and state.current_step_phase in {
+            "RESEARCH", "ACTOR", "MONITOR", "TEST_WRITER", "TEST_FAIL_GATE",
+        }
+    ):
+        return {
+            "status": "error", "valid": False,
+            "message": "Active execution cannot be replaced; use blocker repair or finish the run.",
+        }
+    return None
+
+
+_MutationParams = ParamSpec("_MutationParams")
+
+
+def _parent_mutation(
+    *, destructive_setup: bool = False,
+) -> Callable[[Callable[_MutationParams, dict]], Callable[_MutationParams, dict]]:
+    """Guard direct Python calls as well as CLI calls, before any side effect."""
+    def decorate(
+        function: Callable[_MutationParams, dict],
+    ) -> Callable[_MutationParams, dict]:
+        signature = inspect.signature(function)
+
+        @wraps(function)
+        def guarded(*args: _MutationParams.args, **kwargs: _MutationParams.kwargs) -> dict:
+            branch = signature.bind(*args, **kwargs).arguments["branch"]
+            refusal = _interruption_guard(branch)
+            if refusal is None and destructive_setup:
+                refusal = _setup_guard(branch)
+            if refusal is not None:
+                return {**refusal, "status": "error", "valid": False}
+            return function(*args, **kwargs)
+
+        return guarded
+    return decorate
+
+
+def _repair_command(command: str, *args: str) -> dict:
+    """Delegate engine-owned operations without importing it at module load."""
+    try:
+        import map_interruption  # pyright: ignore[reportMissingImports]
+    except ImportError:
+        return {"status": "error", "message": "Repair engine unavailable."}
+    return getattr(map_interruption, command)(*args)
+
+
+def request_repair(repair_id: str, branch: str) -> dict:
+    return _repair_command("request_repair", repair_id, branch)
+
+
+def begin_repair(repair_id: str, branch: str, approval_hold_id: str) -> dict:
+    return _repair_command("begin_repair", repair_id, branch, approval_hold_id)
+
+
+def verify_repair(operation_id: str, branch: str, monitor_file: str) -> dict:
+    return _repair_command("verify_repair", operation_id, branch, monitor_file)
+
+
+def finish_repair(operation_id: str, branch: str) -> dict:
+    return _repair_command("finish_repair", operation_id, branch)
+
+
+def get_interruption_status(branch: str) -> dict:
+    return _repair_command("get_interruption_status", branch)
 
 
 def _utc_timestamp() -> str:
@@ -697,6 +812,9 @@ class StepState:
     guard_rework_counts: dict[str, int] = field(default_factory=dict)
     constraints: dict | None = None
     subtask_results: dict[str, dict] = field(default_factory=dict)
+    active_interruption: "ActiveInterruption | None" = None
+    completed_repair_operations: dict[str, dict] = field(default_factory=dict)
+    subtask_diff_bases: dict[str, str] = field(default_factory=dict)
     last_subtask_commit_sha: str | None = None
     contract_ready_subtasks: dict[str, dict] = field(default_factory=dict)
     clean_retry_count: int = 0
@@ -773,6 +891,9 @@ class StepState:
             "guard_rework_counts": self.guard_rework_counts,
             "constraints": self.constraints,
             "subtask_results": self.subtask_results,
+            "active_interruption": self.active_interruption,
+            "completed_repair_operations": self.completed_repair_operations,
+            "subtask_diff_bases": self.subtask_diff_bases,
             "last_subtask_commit_sha": self.last_subtask_commit_sha,
             "contract_ready_subtasks": self.contract_ready_subtasks,
             "clean_retry_count": self.clean_retry_count,
@@ -813,6 +934,9 @@ class StepState:
             guard_rework_counts=data.get("guard_rework_counts", {}),
             constraints=data.get("constraints"),
             subtask_results=data.get("subtask_results", {}),
+            active_interruption=data.get("active_interruption"),
+            completed_repair_operations=data.get("completed_repair_operations", {}),
+            subtask_diff_bases=data.get("subtask_diff_bases", {}),
             last_subtask_commit_sha=data.get("last_subtask_commit_sha"),
             contract_ready_subtasks=data.get("contract_ready_subtasks", {}),
             clean_retry_count=data.get("clean_retry_count", 0),
@@ -1174,6 +1298,7 @@ def peek_current_step(branch: str) -> dict:
     }
 
 
+@_parent_mutation()
 def get_next_step(branch: str) -> dict:
     """
     Determine next step in workflow.
@@ -1479,6 +1604,7 @@ def _validate_monitor_disposition_binding(
     return None
 
 
+@_parent_mutation()
 def validate_step(
     step_id: str,
     branch: str,
@@ -1988,6 +2114,7 @@ def validate_step(
     return response
 
 
+@_parent_mutation(destructive_setup=True)
 def initialize_workflow(task: str, branch: str) -> dict:
     """
     Initialize workflow state for new task.
@@ -2028,6 +2155,7 @@ def initialize_workflow(task: str, branch: str) -> dict:
     return result
 
 
+@_parent_mutation()
 def set_plan_approved(value: str, branch: str) -> dict:
     """Persist explicit plan approval in step_state.json."""
     state_file = Path(f".map/{branch}/step_state.json")
@@ -2130,6 +2258,7 @@ def _append_restored_subtask_to_plan(
         return True
 
 
+@_parent_mutation()
 def restore_deferred_yagni(
     item_id: str, branch: str, new_subtask_id: str | None = None
 ) -> dict:
@@ -2245,6 +2374,7 @@ def _restore_deferred_yagni_unlocked(
     }
 
 
+@_parent_mutation()
 def set_execution_mode(mode: str, branch: str) -> dict:
     """Persist execution mode in step_state.json."""
     state_file = Path(f".map/{branch}/step_state.json")
@@ -2260,6 +2390,7 @@ def set_execution_mode(mode: str, branch: str) -> dict:
     return {"status": "success", "execution_mode": state.execution_mode}
 
 
+@_parent_mutation()
 def set_tdd_mode(value: str, branch: str) -> dict:
     """Enable or disable TDD mode (test-first workflow).
 
@@ -2327,6 +2458,7 @@ def set_tdd_mode(value: str, branch: str) -> dict:
     return {"status": "success", "tdd_mode": state.tdd_mode}
 
 
+@_parent_mutation()
 def set_waves(branch: str, blueprint_path: str | None = None) -> dict:
     """Compute execution waves from blueprint DAG and store in step_state.json.
 
@@ -2467,6 +2599,7 @@ def set_waves(branch: str, blueprint_path: str | None = None) -> dict:
     }
 
 
+@_parent_mutation()
 def get_wave_step(branch: str) -> dict:
     """Get the current wave's subtask batch and per-subtask phases.
 
@@ -2565,6 +2698,7 @@ def get_wave_step(branch: str) -> dict:
     }
 
 
+@_parent_mutation()
 def validate_wave_step(subtask_id: str, step_id: str, branch: str) -> dict:
     """Validate one subtask's step within a wave and advance its phase.
 
@@ -2603,6 +2737,7 @@ def validate_wave_step(subtask_id: str, step_id: str, branch: str) -> dict:
     }
 
 
+@_parent_mutation()
 def advance_wave(branch: str) -> dict:
     """Advance to the next execution wave.
 
@@ -3011,6 +3146,7 @@ def _check_retry_limit(
     return None
 
 
+@_parent_mutation()
 def monitor_failed(branch: str, feedback: str = "") -> dict:
     """Handle Monitor valid=false: requeue ACTOR+MONITOR, increment retry_count.
 
@@ -3104,6 +3240,7 @@ def monitor_failed(branch: str, feedback: str = "") -> dict:
     }
 
 
+@_parent_mutation()
 def wave_monitor_failed(
     subtask_id: str, branch: str, feedback: str = ""
 ) -> dict:
@@ -3176,6 +3313,7 @@ def wave_monitor_failed(
     }
 
 
+@_parent_mutation()
 def mark_workflow_complete(branch: str) -> dict:
     """Atomically mark the workflow as complete.
 
@@ -3222,6 +3360,7 @@ def mark_workflow_complete(branch: str) -> dict:
     }
 
 
+@_parent_mutation()
 def record_subtask_result(
     subtask_id: str,
     branch: str,
@@ -3588,6 +3727,7 @@ def _advance_after_terminal_current_subtask(state: StepState, branch: str) -> di
     return result
 
 
+@_parent_mutation()
 def defer_flaky_subtask(
     subtask_id: str,
     branch: str,
@@ -3727,6 +3867,7 @@ def defer_flaky_subtask(
     }
 
 
+@_parent_mutation()
 def backfill_subtask_ids(branch: str) -> dict:
     """Populate the redundant ``subtask_id`` field on legacy subtask_results.
 
@@ -3766,6 +3907,7 @@ def backfill_subtask_ids(branch: str) -> dict:
     }
 
 
+@_parent_mutation()
 def finalize_plan(branch: str) -> dict:
     """Bump the artifact_manifest plan stage to "complete" when artifacts exist.
 
@@ -3818,6 +3960,7 @@ VALID_MARK_COMPLETE_KINDS = {
 }
 
 
+@_parent_mutation()
 def mark_subtask_complete(
     subtask_id: str,
     branch: str,
@@ -3972,6 +4115,7 @@ def _is_workflow_complete(state: "StepState") -> bool:
     return all(sid in completed for sid in sequence)
 
 
+@_parent_mutation()
 def reopen_for_fixes(branch: str, feedback: str = "") -> dict:
     """Transition from COMPLETE back to ACTOR for post-review fixes.
 
@@ -4036,6 +4180,7 @@ def reopen_for_fixes(branch: str, feedback: str = "") -> dict:
     }
 
 
+@_parent_mutation()
 def archive_completed_workflow(branch: str) -> dict:
     """Retire a COMPLETED workflow so the branch returns to a clean state.
 
@@ -4102,6 +4247,7 @@ def archive_completed_workflow(branch: str) -> dict:
     }
 
 
+@_parent_mutation()
 def abandon_workflow(branch: str) -> dict:
     """Forcibly retire any workflow, including stuck/in-flight ones.
 
@@ -4155,6 +4301,7 @@ def abandon_workflow(branch: str) -> dict:
 SKIPPABLE_STEPS = {"2.25", "2.26"}
 
 
+@_parent_mutation()
 def skip_step(step_id: str, branch: str) -> dict:
     """Skip a conditional step without executing it.
 
@@ -4344,6 +4491,7 @@ def _normalize_subtask_ids(raw_subtask_ids: list[str]) -> tuple[list[str], str |
     return subtask_ids, None
 
 
+@_parent_mutation(destructive_setup=True)
 def set_subtasks(subtask_ids: list[str], branch: str) -> dict:
     """Set subtask sequence after decomposition and select the first subtask.
 
@@ -4416,6 +4564,7 @@ def _contract_artifact_paths(branch: str, subtask_id: str) -> tuple[Path, Path]:
     )
 
 
+@_parent_mutation()
 def mark_contract_ready(subtask_id: str, branch: str) -> dict:
     """Stop execution after TEST_FAIL_GATE and mark the test contract ready."""
     state_file = Path(f".map/{branch}/step_state.json")
@@ -4471,6 +4620,7 @@ def mark_contract_ready(subtask_id: str, branch: str) -> dict:
     }
 
 
+@_parent_mutation(destructive_setup=True)
 def resume_from_test_contract(subtask_id: str, branch: str) -> dict:
     """Resume a single subtask at ACTOR using a persisted TDD handoff."""
     plan_dir = Path(f".map/{branch}")
@@ -4548,6 +4698,7 @@ def resume_from_test_contract(subtask_id: str, branch: str) -> dict:
     }
 
 
+@_parent_mutation(destructive_setup=True)
 def resume_from_plan(branch: str) -> dict:
     """Resume workflow from an existing /map-plan output, skipping init phases.
 
@@ -4704,6 +4855,7 @@ def get_plan_progress(branch: str) -> dict:
     }
 
 
+@_parent_mutation(destructive_setup=True)
 def resume_single_subtask(subtask_id: str, branch: str, tdd_mode: bool = False) -> dict:
     """Set up state to execute a single subtask from an existing plan.
 
@@ -4863,6 +5015,12 @@ def main():
     parser.add_argument(
         "command",
         choices=[
+            "request_repair",
+            "begin_repair",
+            "verify_repair",
+            "finish_repair",
+            "repair_status",
+            "get_interruption_status",
             "get_next_step",
             "peek_current_step",
             "validate_step",
@@ -4905,6 +5063,10 @@ def main():
         "extra_args", nargs="*", help="Additional arguments (e.g., more subtask IDs)"
     )
     parser.add_argument("--branch", help="Git branch (auto-detected if omitted)")
+    parser.add_argument("--approval-hold", help="Approved hold ID for begin_repair")
+    parser.add_argument(
+        "--monitor-file", help="Persisted Monitor JSON file path for verify_repair"
+    )
     parser.add_argument(
         "--blueprint", help="Path to blueprint JSON (for set_waves command)"
     )
@@ -5100,7 +5262,31 @@ def main():
             acquire_branch_transaction(Path(".map") / branch)
             transaction_acquired = True
 
-        if args.command == "get_next_step":
+        if args.command in {
+            "request_repair", "begin_repair", "verify_repair", "finish_repair",
+            "repair_status", "get_interruption_status",
+        }:
+            if args.command in {"repair_status", "get_interruption_status"}:
+                result = get_interruption_status(branch)
+            elif not args.task_or_step:
+                parser.error("repair ID or operation ID required")
+            elif args.command == "request_repair":
+                result = request_repair(args.task_or_step, branch)
+            elif args.command == "begin_repair":
+                if not args.approval_hold:
+                    parser.error("--approval-hold required for begin_repair")
+                result = begin_repair(args.task_or_step, branch, args.approval_hold)
+            elif args.command == "verify_repair":
+                if not args.monitor_file or args.monitor_file == "-":
+                    parser.error("--monitor-file must name a persisted Monitor JSON file")
+                result = verify_repair(args.task_or_step, branch, args.monitor_file)
+            else:
+                result = finish_repair(args.task_or_step, branch)
+            print(json.dumps(result, indent=2))
+            if result.get("status") == "error":
+                sys.exit(1)
+
+        elif args.command == "get_next_step":
             result = get_next_step(branch)
             print(json.dumps(result, indent=2))
 

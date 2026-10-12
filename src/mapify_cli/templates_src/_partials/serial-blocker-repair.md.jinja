@@ -1,0 +1,49 @@
+## Independent Serial Blocker Repair
+
+If an unrelated blocker needs a separately approved repair while a serial
+subtask has active work, preserve that work with the interruption protocol.
+Do not use `set_subtasks`, `resume_single_subtask`, `resume_from_plan`, archive,
+abandon, or hand-edit `step_state.json` to insert a repair. Those are not
+lossless suspension APIs.
+
+1. Stop parent Actor/Monitor activity and establish exclusive, quiescent
+   ownership of the checkout. Concurrent waves and nested repairs are not
+   supported. Define one independent blueprint subtask with exact
+   `affected_files`, completed `dependencies`, and nonempty `repair_checks`
+   command vectors (the real full gate, not a no-op or weakened check).
+2. Run `python3 .map/scripts/map_orchestrator.py request_repair REPAIR_ID`.
+   Present the exact returned contract/approval hold to the user. Record their
+   decision with `python3 .map/scripts/map_step_runner.py decide_approval_hold
+   HOLD_ID approved` only after explicit approval; do not self-approve.
+3. Run `python3 .map/scripts/map_orchestrator.py begin_repair REPAIR_ID
+   --approval-hold HOLD_ID`. Use the returned `operation_id`,
+   `contract_digest`, and `private_checkout`. The parent checkout remains
+   paused and untouched. Change the working directory to the private checkout
+   for **all** repair commands and agent dispatches; an absolute file path alone
+   does not redirect an agent's working directory.
+4. Execute the private repair's normal RESEARCH → ACTOR → MONITOR workflow,
+   including TDD steps if enabled. Commit the private Actor candidate and
+   `record_subtask_result` with its `commit_sha` before closing Monitor. Monitor
+   inspects that clean committed HEAD tree and emits a complete `valid:true`,
+   `recommendation:"approve"`, `summary`, `issues` envelope with
+   `operation_id`, `contract_digest`, and `candidate_tree` (from
+   `git rev-parse HEAD^{tree}`). Close `validate_step 2.4` with that envelope
+   and continue the normal private workflow to `WORKFLOW_COMPLETE`. A stale
+   verdict or parent Monitor approval is not repair evidence.
+5. Return to the parent checkout and run
+   `python3 .map/scripts/map_orchestrator.py verify_repair OPERATION_ID
+   --monitor-file PRIVATE_MONITOR_FILE`. Verification executes the approved
+   gates against the private combined working snapshot plus repair and refuses
+   drift or writes outside the approved paths.
+6. Only after successful verification run
+   `python3 .map/scripts/map_orchestrator.py finish_repair OPERATION_ID`.
+   The resulting repair commit excludes the paused Actor's work. Resume the
+   original subtask at its preserved phase and run its own Monitor; repair
+   completion is not a fake pass for the parent.
+
+On restart, query `get_interruption_status` before ordinary resume. Continue
+only the reported repair operation; recognized partial finish is recovered
+forward by repeating `finish_repair`. Unexpected Git/state/index/file changes
+are blockers: stop and show the refusal, without reset, stash, rollback,
+manual marker removal, or unfamiliar lock/temp-file deletion. This protocol
+supports ordinary process restart, not sudden power-loss or concurrent writers.

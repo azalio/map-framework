@@ -14953,6 +14953,13 @@ def refresh_blueprint_affected_files(
             except (json.JSONDecodeError, OSError):
                 pass
 
+    try:
+        adjusted_base = _adjusted_subtask_diff_base(branch_name, subtask_id, project_dir)
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+    if adjusted_base is not None:
+        # Intent: repair commits belong to the adjusted tree, not Actor's surface.
+        baseline_head_sha = None
     actual_set: set[str] = set()
     # Layer 1: committed-since-baseline files (the per-subtask commit
     # workflow's output). git diff base..HEAD enumerates every path
@@ -15010,6 +15017,11 @@ def refresh_blueprint_affected_files(
                 and not path.startswith(".agents/")
             ):
                 actual_set.add(path)
+    if adjusted_base is not None:
+        current_surface = _current_subtask_changed_files(branch_name, subtask_id, project_dir)
+        if current_surface is None:
+            return {"status": "error", "message": "Cannot determine adjusted mutation surface"}
+        actual_set = current_surface
     actual_set -= baseline_files
     actual_files = sorted(actual_set)
 
@@ -16917,12 +16929,48 @@ def record_scope_baseline(branch: str) -> dict:
     return {"status": "success", "path": str(baseline_path), "count": len(payload["files"]), "files": payload["files"]}
 
 
+def _adjusted_subtask_diff_base(
+    branch_name: str, subtask_id: str, project_dir: Path
+) -> str | None:
+    """Read the repair-adjusted tree without hiding invalid attribution metadata."""
+    state_file = project_dir / ".map" / branch_name / "step_state.json"
+    if not state_file.exists():
+        return None
+    try:
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ValueError("Cannot read subtask diff attribution state") from exc
+    if not isinstance(state, dict):
+        raise ValueError("Subtask diff attribution state must be an object")
+    if "subtask_diff_bases" not in state:
+        return None
+    bases = state["subtask_diff_bases"]
+    if not isinstance(bases, dict):
+        raise ValueError("subtask_diff_bases must be an object")
+    if subtask_id not in bases:
+        return None
+    base = bases[subtask_id]
+    if not isinstance(base, str) or not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", base):
+        raise ValueError("Adjusted subtask diff base must be a tree OID")
+    try:
+        probe = subprocess.run(
+            ["git", "cat-file", "-t", base], cwd=project_dir,
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError("Cannot verify adjusted subtask diff tree") from exc
+    if probe.returncode != 0 or probe.stdout.strip() != "tree":
+        raise ValueError("Adjusted subtask diff tree is missing or invalid")
+    return base
+
+
 def _resolve_subtask_diff_base(
     branch_name: str, subtask_id: str, project_dir: Path
 ) -> str | None:
     """Auto-resolve the git base_ref for diffing a subtask's mutation surface.
 
-    Resolution order: ``last_subtask_commit_sha`` from step_state → ``HEAD`` →
+    Resolution order: exact-ID ``subtask_diff_bases`` repair-adjusted tree →
+    ``last_subtask_commit_sha`` from step_state → ``HEAD`` →
     ``None`` (a fresh repo with no commits, where the caller falls through to
     porcelain-only). The returned ref is meant to be diffed against the WORKING
     TREE (``git diff --name-only <ref>``).
@@ -16938,6 +16986,9 @@ def _resolve_subtask_diff_base(
     committed work shows up in the diff. The parent is probed first so a root
     commit (no parent) safely keeps the commit itself.
     """
+    adjusted = _adjusted_subtask_diff_base(branch_name, subtask_id, project_dir)
+    if adjusted is not None:
+        return adjusted
     base_ref: str | None = None
     recorded: str | None = None
     state_file = project_dir / ".map" / branch_name / "step_state.json"
@@ -17063,6 +17114,7 @@ def validate_mutation_boundary(
     # behaviour in a brand-new repo before its first commit.
     base_ref_explicit = bool(base_ref)
     try:
+        adjusted_base = _adjusted_subtask_diff_base(branch_name, subtask_id, project_dir)
         if not base_ref:
             base_ref = _resolve_subtask_diff_base(branch_name, subtask_id, project_dir)
         if base_ref:
@@ -17090,7 +17142,7 @@ def validate_mutation_boundary(
             timeout=10,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
         return {
             "status": "error",
             "message": f"git invocation failed: {exc}",
@@ -17109,21 +17161,17 @@ def validate_mutation_boundary(
                 f"{status_result.stderr.strip() or 'no stderr'}"
             ),
         }
-    # An explicit invalid base_ref (caller-supplied) is a hard error so the
-    # operator sees the mistake. An auto-resolved one that became "no diff"
-    # is acceptable (we just fall through to porcelain-only).
+    # A resolved but missing ref cannot prove a clean mutation surface.
     if diff_result is not None and diff_result.returncode != 0:
-        if base_ref_explicit:
-            return {
-                "status": "error",
-                "subtask_id": subtask_id,
-                "message": (
-                    f"`git diff --name-only {base_ref}` failed "
-                    f"(exit {diff_result.returncode}): "
-                    f"{diff_result.stderr.strip() or 'no stderr'}"
-                ),
-            }
-        diff_result = None  # treat as no commit-range diff available
+        return {
+            "status": "error",
+            "subtask_id": subtask_id,
+            "message": (
+                f"`git diff --name-only {base_ref}` failed "
+                f"(exit {diff_result.returncode}): "
+                f"{diff_result.stderr.strip() or 'no stderr'}"
+            ),
+        }
 
     actual_set: set[str] = set()
     if diff_result is not None:
@@ -17155,6 +17203,15 @@ def validate_mutation_boundary(
         and not p.startswith(".codex/")
         and not p.startswith(".agents/")
     }
+
+    if adjusted_base is not None and not base_ref_explicit:
+        current_surface = _current_subtask_changed_files(branch_name, subtask_id, project_dir)
+        if current_surface is None:
+            return {
+                "status": "error", "subtask_id": subtask_id,
+                "message": "Cannot determine adjusted mutation surface",
+            }
+        actual_set = current_surface
 
     # Baseline filter — two layers:
     #   1. Per-subtask baseline (auto-snapshotted at validate_step('2.2')):
@@ -17378,7 +17435,10 @@ def _current_subtask_changed_files(
     files (.map/) are always read from ``project_dir`` regardless.  Fixes #471.
     """
     git_cwd = work_dir if work_dir is not None else project_dir
-    base_ref = _resolve_subtask_diff_base(branch_name, subtask_id, project_dir)
+    try:
+        base_ref = _resolve_subtask_diff_base(branch_name, subtask_id, project_dir)
+    except ValueError:
+        return None
 
     try:
         if base_ref:

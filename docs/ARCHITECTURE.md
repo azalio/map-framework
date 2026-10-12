@@ -135,6 +135,44 @@ Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json`
 - **Evaluate Skills**: `/map-skill-eval`, `$map-skill-eval`, and `mapify skill-eval` run trigger/cost eval sets through isolated provider workers (`claude -p` or `codex exec`), append resumable JSONL rows, aggregate pass/fail and usage, optimize frontmatter descriptions against held-out eval cases, and render stored optimization reports.
 - **Audit/Validate**: Maintainers use tests and helper modules such as `python -m mapify_cli.skill_ir ...`, `mapify check`, `mapify doctor`, template-sync tests, artifact-schema tests, workflow-gate tests, and adversarial governance violation fixtures to keep shipped provider surfaces aligned with the documented runtime contract.
 
+### Serial blocker-repair interruption
+
+A blocker repair is a separate execution frame, not a replacement task list or
+an implicit restart. `map_orchestrator.py` preserves the active parent
+`StepState` in place, including its cursor, phase, completed results, retries,
+TDD settings and subtask mutation baselines. An interruption marker binds the
+repair's operation ID and approved contract digest. While it is active, normal
+parent transitions and provider editing gates refuse to continue paused work.
+The repair has its own serial RESEARCH → ACTOR → MONITOR workflow state.
+
+`map_interruption.py` owns the filesystem transaction. It snapshots supported
+nonignored working inputs into a private standalone Git repository, leaving the
+parent's staged, unstaged and untracked work untouched. The private synthetic
+baseline reproduces the failing combined working tree; it must never enter the
+parent feature history. Monitor and full-gate evidence must bind the exact
+repair candidate. The resulting commit is parented to the original parent HEAD
+and contains only disjoint repair paths, not the paused Actor's work.
+
+Finish uses a durable forward-recovery journal, expected-HEAD ref update and
+path-targeted index/worktree updates. It restores neither a whole saved index
+nor an old copy of parent state. Recognized partial operations resume forward;
+unknown drift stops without undoing external changes. Successful finish adds
+repair evidence and resumes the original phase without advancing it or forging
+Monitor success. Diff attribution excludes repair changes from the paused
+subtask's mutation baseline.
+
+The supported boundary is **serial, quiescent, disjoint-path repair**. Concurrent
+waves, nested interruptions, overlapping paths, unsupported Git/filesystem
+layouts and unsafe snapshot inputs are refused. Ref CAS and index locks are not
+an atomic transaction across Git, filesystem and workflow state; this protocol
+requires exclusive runner ownership, not concurrent external writers. Its
+process-restart recovery covers recognized journaled checkpoints, not every
+instruction or sudden power loss. Incomplete snapshot preparation or a crash
+before temporary-file/lock ownership is durably recorded stops for operator
+inspection; unfamiliar storage is never removed automatically. The empirical
+binding experiment and its limitations are recorded in
+[`blocker-repair-spike.md`](blocker-repair-spike.md).
+
 ### Automatic update subsystem
 
 Installed skills use a hidden JSON CLI adapter instead of embedding network or

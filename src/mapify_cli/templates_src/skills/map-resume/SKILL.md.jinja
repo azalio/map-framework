@@ -80,6 +80,13 @@ No recovery needed.
 
 ---
 
+Before ordinary recovery, run
+`python3 .map/scripts/map_orchestrator.py get_interruption_status`.
+If a repair is active or recovery reports an error, do not restart, clear,
+archive or abandon the parent checkpoint. Follow
+[Independent Serial Blocker Repair](resume-reference.md#independent-serial-blocker-repair)
+and surface any unexpected drift as a blocker.
+
 ## Step 2: Load and Display Progress
 
 Read both state files, the task plan, and branch artifacts to display a briefing:

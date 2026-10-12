@@ -63,7 +63,7 @@ Predictor is conditional: invoke it during stuck recovery or high-risk/escalated
 Single source of truth: `.map/<branch>/step_state.json`.
 
 Do not modify it directly. Use `.map/scripts/map_orchestrator.py` and `.map/scripts/map_step_runner.py`.
-
+For active serial blockers, use [lossless repair](efficient-reference.md#independent-serial-blocker-repair), not checkpoint replacement/reset.
 ## Workflow Artifacts
 
 - `.map/<branch>/blueprint.json`
