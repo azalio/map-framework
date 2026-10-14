@@ -3343,6 +3343,54 @@ class TestMapEfficientSaveResearchWiring:
             assert "repository-wide `rg`/`grep`/`find`/`git grep`" in content
 
 
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("skill", ["map-efficient", "map-resume"])
+def test_stale_attribution_recovery_documented(provider: str, skill: str) -> None:
+    root = Path(__file__).parent.parent
+    prefix = "codex/" if provider == "codex" else ""
+    reference = skill.removeprefix("map-") + "-reference.md"
+    content = (root / "src/mapify_cli/templates" / prefix / "skills" / skill / reference).read_text(
+        encoding="utf-8"
+    )
+    _assert_stale_attribution_recovery(content)
+
+
+def _assert_stale_attribution_recovery(content: str) -> None:
+    assert "## Stale Commit Attribution Recovery" in content
+    section = content.split("## Stale Commit Attribution Recovery", 1)[1].split("\n## ", 1)[0]
+    for required in (
+        'fail-closed `status="error"`',
+        "Do not override the base with `HEAD`",
+        "A valid exact-subtask repair-adjusted tree takes priority",
+        "record_subtask_result",
+        "verified rewritten counterpart",
+        "all current Actor changes",
+        "rerun the current subtask's Monitor",
+        "no general lossless rebase-attribution migration",
+        "arbitrary filename lists or enriched result records",
+    ):
+        assert required in section, required
+
+
+@pytest.mark.parametrize(
+    "required",
+    [
+        'fail-closed `status="error"`',
+        "Do not override the base with `HEAD`",
+        "A valid exact-subtask repair-adjusted tree takes priority",
+        "rerun the current subtask's Monitor",
+    ],
+)
+def test_stale_attribution_docs_guard_rejects_missing_guidance(required: str) -> None:
+    from mapify_cli.delivery.template_renderer import get_environment
+
+    content = get_environment(_TEMPLATES_SRC).get_template(
+        "skills/map-resume/resume-reference.md.jinja"
+    ).render(PROVIDER="claude")
+    with pytest.raises(AssertionError, match=re.escape(required)):
+        _assert_stale_attribution_recovery(content.replace(required, "removed_guidance"))
+
+
 class TestResearchArtifactSchemaDocumented:
     """#228: the exact hand-author research contract must be documented (not prose).
 

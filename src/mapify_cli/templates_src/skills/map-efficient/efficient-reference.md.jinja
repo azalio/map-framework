@@ -732,6 +732,8 @@ single wave subtask, `discard_subtask_worktree` THAT subtask and retry it; call
 `merge_wave_worktrees` only once the whole wave is green. The `overlaps` field is
 advisory telemetry (actual changed-file intersections), not a gate.
 
+[% include "_partials/stale-attribution-recovery.md.jinja" %]
+
 ## Troubleshooting
 
 - Blueprint validation fails: fix the decomposer output before Actor starts.
