@@ -370,6 +370,131 @@ def test_guard_detects_missing_corrupt_journal(workspace: Any):
     assert w.engine.interruption_guard(w.branch)["status"] == "error"
 
 
+@pytest.mark.parametrize("fault", ["init", "fetch", "prepared"])
+def test_begin_initialization_failure_unblocks_parent(workspace: Any, fault: str, monkeypatch: pytest.MonkeyPatch):
+    w = workspace
+    request = w.engine.request_repair("REPAIR", w.branch)
+    path = w.directory / "approval_holds.json"
+    holds = json.loads(path.read_text())
+    holds["holds"]["hold-001"]["state"] = "approved"
+    dump(path, holds)
+    before = ((w.root / ".git/index").read_bytes(), (w.directory / "step_state.json").read_bytes(),
+              {p: w.engine._image(w.root, p) for p in w.engine._paths(w.root)})
+    original_git = w.engine._git
+
+    def failing_git(root: Path, *args: str, **kwargs: Any) -> bytes:
+        if root != w.root and args[0] == fault:
+            raise w.engine.RepairError("Injected private initialization failure")
+        return original_git(root, *args, **kwargs)
+
+    def checkpoint(name: str) -> None:
+        if name == fault:
+            raise OSError("Injected prepared initialization failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(w.engine, "_git", failing_git)
+        patch.setattr(w.engine, "_checkpoint", checkpoint)
+        result = w.engine.begin_repair("REPAIR", w.branch, request["hold_id"])
+    assert result["status"] == "error", result
+    assert w.engine.interruption_guard(w.branch) is None
+    assert not (w.root / ".git/map-repairs" / request["operation_id"]).exists()
+    archives = list((w.root / ".git").glob("map-failed-" + request["operation_id"] + "-*"))
+    assert len(archives) == 1
+    assert archives[0].stat().st_mode & 0o777 == 0o700
+    assert not archives[0].is_symlink()
+    assert f".git/{archives[0].name}" in result["reasons"][0]
+    assert (archives[0] / "checkout").is_dir()
+    if fault == "prepared":
+        assert json.loads((archives[0] / "journal.json").read_text())["stage"] == "prepared"
+    assert before == ((w.root / ".git/index").read_bytes(), (w.directory / "step_state.json").read_bytes(),
+                      {p: w.engine._image(w.root, p) for p in w.engine._paths(w.root)})
+    assert git(w.root, "rev-parse", "HEAD") == w.head
+    assert w.engine.begin_repair("REPAIR", w.branch, request["hold_id"])["stage"] == "active"
+
+
+@pytest.mark.parametrize("drift", ["journal", "missing_journal", "state", "directory", "marker"])
+def test_begin_failure_preserves_drifted_recovery_storage(workspace: Any, drift: str, monkeypatch: pytest.MonkeyPatch):
+    w = workspace
+    request = w.engine.request_repair("REPAIR", w.branch)
+    path = w.directory / "approval_holds.json"
+    holds = json.loads(path.read_text())
+    holds["holds"]["hold-001"]["state"] = "approved"
+    dump(path, holds)
+    directory = w.root / ".git/map-repairs" / request["operation_id"]
+
+    def checkpoint(name: str) -> None:
+        if name != "prepared":
+            return
+        if drift == "journal":
+            journal = json.loads((directory / "journal.json").read_text())
+            journal["stage"] = "unfamiliar"
+            dump(directory / "journal.json", journal)
+        elif drift == "missing_journal":
+            (directory / "journal.json").unlink()
+        elif drift == "directory":
+            directory.rename(directory.with_name("saved-private"))
+            directory.mkdir()
+            (directory / "unfamiliar").write_text("preserve")
+        else:
+            state = dict(w.state)
+            if drift == "marker":
+                state["active_interruption"] = {"operation_id": request["operation_id"],
+                                                "contract_digest": request["contract_digest"]}
+            else:
+                state["retry_count"] += 1
+            dump(w.directory / "step_state.json", state)
+        raise OSError("Injected failure after metadata drift")
+
+    monkeypatch.setattr(w.engine, "_checkpoint", checkpoint)
+    result = w.engine.begin_repair("REPAIR", w.branch, request["hold_id"])
+    assert result["status"] == "error" and "cleanup refused" in result["reasons"][0], result
+    assert directory.is_dir()
+    assert not list((w.root / ".git").glob("map-failed-*"))
+    if drift == "directory":
+        assert (directory / "unfamiliar").read_text() == "preserve"
+        assert (directory.with_name("saved-private") / "checkout").is_dir()
+    else:
+        assert (directory / "checkout").is_dir()
+    assert git(w.root, "rev-parse", "HEAD") == w.head
+
+
+def test_begin_does_not_archive_preexisting_unfamiliar_storage(workspace: Any):
+    w = workspace
+    request = w.engine.request_repair("REPAIR", w.branch)
+    path = w.directory / "approval_holds.json"
+    holds = json.loads(path.read_text())
+    holds["holds"]["hold-001"]["state"] = "approved"
+    dump(path, holds)
+    directory = w.root / ".git/map-repairs" / request["operation_id"]
+    directory.mkdir(parents=True)
+    (directory / "unfamiliar").write_text("preserve")
+    result = w.engine.begin_repair("REPAIR", w.branch, request["hold_id"])
+    assert result["status"] == "error", result
+    assert (directory / "unfamiliar").read_text() == "preserve"
+    assert not list((w.root / ".git").glob("map-failed-*"))
+
+
+def test_begin_ordinary_failure_after_marker_retains_recovery(workspace: Any, monkeypatch: pytest.MonkeyPatch):
+    w = workspace
+    request = w.engine.request_repair("REPAIR", w.branch)
+    path = w.directory / "approval_holds.json"
+    holds = json.loads(path.read_text())
+    holds["holds"]["hold-001"]["state"] = "approved"
+    dump(path, holds)
+
+    def checkpoint(name: str) -> None:
+        if name == "marker_written":
+            raise OSError("Injected failure after durable marker")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(w.engine, "_checkpoint", checkpoint)
+        result = w.engine.begin_repair("REPAIR", w.branch, request["hold_id"])
+    assert result["status"] == "error", result
+    assert w.engine.interruption_guard(w.branch)["operation_id"] == request["operation_id"]
+    assert not list((w.root / ".git").glob("map-failed-*"))
+    assert w.engine.begin_repair("REPAIR", w.branch, request["hold_id"])["stage"] == "active"
+
+
 @pytest.mark.parametrize("cut", ["prepared", "marker_written"])
 def test_initialization_marker_cut_recovers(workspace: Any, cut: str, monkeypatch: pytest.MonkeyPatch):
     w = workspace

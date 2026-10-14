@@ -14967,23 +14967,18 @@ def refresh_blueprint_affected_files(
     if baseline_head_sha:
         try:
             diff_proc = subprocess.run(
-                ["git", "diff", "--name-only", f"{baseline_head_sha}..HEAD"],
+                ["git", "diff", "--name-only", "--no-renames", "-z", f"{baseline_head_sha}..HEAD"],
                 cwd=project_dir,
                 capture_output=True,
-                text=True,
+                text=False,
                 timeout=10,
                 check=False,
             )
             if diff_proc.returncode == 0:
-                for raw in diff_proc.stdout.splitlines():
-                    path = raw.strip()
-                    if (
-                        path
-                        and not path.startswith(".map/")
-                        and not path.startswith(".codex/")
-                        and not path.startswith(".agents/")
-                    ):
-                        actual_set.add(path)
+                actual_set.update(
+                    path for path in _git_diff_paths(diff_proc.stdout)
+                    if not _is_map_internal_artifact(path)
+                )
         except (OSError, subprocess.TimeoutExpired):
             pass
     # Layer 2: uncommitted (worktree + index) via porcelain.
@@ -14991,10 +14986,10 @@ def refresh_blueprint_affected_files(
     # rather than collapsed to the directory name (e.g. "docs/" -> "docs/a.md").
     try:
         status_proc = subprocess.run(
-            ["git", "status", "--porcelain", "-uall"],
+            ["git", "status", "--porcelain", "-z", "-uall"],
             cwd=project_dir,
             capture_output=True,
-            text=True,
+            text=False,
             timeout=10,
             check=False,
         )
@@ -15003,20 +14998,12 @@ def refresh_blueprint_affected_files(
     if status_proc.returncode != 0:
         return {
             "status": "error",
-            "message": f"git status non-zero: {status_proc.stderr.strip() or 'no stderr'}",
+            "message": f"git status non-zero: {os.fsdecode(status_proc.stderr).strip() or 'no stderr'}",
         }
-    for raw in status_proc.stdout.splitlines():
-        if len(raw) >= 4:
-            path = raw[3:].strip()
-            if " -> " in path:
-                path = path.split(" -> ", 1)[1]
-            if (
-                path
-                and not path.startswith(".map/")
-                and not path.startswith(".codex/")
-                and not path.startswith(".agents/")
-            ):
-                actual_set.add(path)
+    actual_set.update(
+        path for path in _git_status_paths(status_proc.stdout)
+        if not _is_map_internal_artifact(path)
+    )
     if adjusted_base is not None:
         current_surface = _current_subtask_changed_files(branch_name, subtask_id, project_dir)
         if current_surface is None:
@@ -15812,6 +15799,26 @@ def _subtask_baseline_path(branch: str, subtask_id: str, project_dir: Path) -> P
     )
 
 
+def _git_status_paths(output: bytes) -> set[str]:
+    """Read porcelain v1 -z paths literally, including both rename endpoints."""
+    paths: set[str] = set()
+    records = iter(output.split(b"\0"))
+    for record in records:
+        if len(record) < 4:
+            continue
+        paths.add(os.fsdecode(record[3:]))
+        if b"R" in record[:2] or b"C" in record[:2]:
+            source = next(records, b"")
+            if source:
+                paths.add(os.fsdecode(source))
+    return paths
+
+
+def _git_diff_paths(output: bytes) -> set[str]:
+    """Read NUL-delimited name-only output without quoting or whitespace loss."""
+    return {os.fsdecode(path) for path in output.split(b"\0") if path}
+
+
 def record_subtask_baseline(branch: str, subtask_id: str) -> dict:
     """Snapshot the current ``git status --porcelain -uall`` set + HEAD SHA as
     a per-subtask baseline that validate_mutation_boundary will subtract
@@ -15837,10 +15844,10 @@ def record_subtask_baseline(branch: str, subtask_id: str) -> dict:
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
     try:
         proc = subprocess.run(
-            ["git", "status", "--porcelain", "-uall"],
+            ["git", "status", "--porcelain", "-z", "-uall"],
             cwd=project_dir,
             capture_output=True,
-            text=True,
+            text=False,
             timeout=10,
             check=False,
         )
@@ -15849,21 +15856,12 @@ def record_subtask_baseline(branch: str, subtask_id: str) -> dict:
     if proc.returncode != 0:
         return {
             "status": "error",
-            "message": f"git status non-zero: {proc.stderr.strip() or 'no stderr'}",
+            "message": f"git status non-zero: {os.fsdecode(proc.stderr).strip() or 'no stderr'}",
         }
-    files: list[str] = []
-    for raw in proc.stdout.splitlines():
-        if len(raw) >= 4:
-            path = raw[3:].strip()
-            if " -> " in path:
-                path = path.split(" -> ", 1)[1]
-            if (
-                path
-                and not path.startswith(".map/")
-                and not path.startswith(".codex/")
-                and not path.startswith(".agents/")
-            ):
-                files.append(path)
+    files = sorted(
+        path for path in _git_status_paths(proc.stdout)
+        if not _is_map_internal_artifact(path)
+    )
     # Capture HEAD SHA so downstream commits can be diffed against this
     # baseline. Fresh repos with no commits return non-zero — fall back to
     # None (refresh / validate code handles that case).
@@ -16884,10 +16882,10 @@ def record_scope_baseline(branch: str) -> dict:
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
     try:
         status_proc = subprocess.run(
-            ["git", "status", "--porcelain", "-uall"],
+            ["git", "status", "--porcelain", "-z", "-uall"],
             cwd=project_dir,
             capture_output=True,
-            text=True,
+            text=False,
             timeout=10,
             check=False,
         )
@@ -16898,26 +16896,13 @@ def record_scope_baseline(branch: str) -> dict:
             "status": "error",
             "message": (
                 f"git status non-zero (exit {status_proc.returncode}): "
-                f"{status_proc.stderr.strip() or 'no stderr'}"
+                f"{os.fsdecode(status_proc.stderr).strip() or 'no stderr'}"
             ),
         }
-    files: list[str] = []
-    for raw in status_proc.stdout.splitlines():
-        if len(raw) >= 4:
-            path = raw[3:].strip()
-            if " -> " in path:
-                path = path.split(" -> ", 1)[1]
-            # git porcelain v1 double-quotes paths with spaces/special characters.
-            # Strip surrounding quotes so baseline entries match the unquoted form.
-            if path.startswith('"') and path.endswith('"'):
-                path = path[1:-1]
-            if (
-                path
-                and not path.startswith(".map/")
-                and not path.startswith(".codex/")
-                and not path.startswith(".agents/")
-            ):
-                files.append(path)
+    files = sorted(
+        path for path in _git_status_paths(status_proc.stdout)
+        if not _is_map_internal_artifact(path)
+    )
     baseline_path = _scope_baseline_path(branch, project_dir)
     baseline_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -17119,10 +17104,10 @@ def validate_mutation_boundary(
             base_ref = _resolve_subtask_diff_base(branch_name, subtask_id, project_dir)
         if base_ref:
             diff_result = subprocess.run(
-                ["git", "diff", "--name-only", base_ref],
+                ["git", "diff", "--name-only", "--no-renames", "-z", base_ref],
                 cwd=project_dir,
                 capture_output=True,
-                text=True,
+                text=False,
                 timeout=10,
                 check=False,
             )
@@ -17135,10 +17120,10 @@ def validate_mutation_boundary(
         # actual_set and the baseline subtraction, producing a false-negative
         # scope check (#376).
         status_result = subprocess.run(
-            ["git", "status", "--porcelain", "-uall"],
+            ["git", "status", "--porcelain", "-z", "-uall"],
             cwd=project_dir,
             capture_output=True,
-            text=True,
+            text=False,
             timeout=10,
             check=False,
         )
@@ -17158,7 +17143,7 @@ def validate_mutation_boundary(
             "subtask_id": subtask_id,
             "message": (
                 f"`git status --porcelain -uall` failed (exit {status_result.returncode}): "
-                f"{status_result.stderr.strip() or 'no stderr'}"
+                f"{os.fsdecode(status_result.stderr).strip() or 'no stderr'}"
             ),
         }
     # A resolved but missing ref cannot prove a clean mutation surface.
@@ -17169,28 +17154,13 @@ def validate_mutation_boundary(
             "message": (
                 f"`git diff --name-only {base_ref}` failed "
                 f"(exit {diff_result.returncode}): "
-                f"{diff_result.stderr.strip() or 'no stderr'}"
+                f"{os.fsdecode(diff_result.stderr).strip() or 'no stderr'}"
             ),
         }
 
-    actual_set: set[str] = set()
+    actual_set = _git_status_paths(status_result.stdout)
     if diff_result is not None:
-        actual_set.update(
-            line.strip() for line in diff_result.stdout.splitlines() if line.strip()
-        )
-    # Include uncommitted (worktree + index) paths from porcelain output.
-    for raw in status_result.stdout.splitlines():
-        if len(raw) >= 4:
-            path = raw[3:].strip()
-            if " -> " in path:
-                path = path.split(" -> ", 1)[1]
-            # git porcelain v1 double-quotes paths that contain spaces or special
-            # characters (e.g. `?? "file with spaces.txt"`). Strip the surrounding
-            # quotes so the path compares equal to the unquoted form in expected/baseline.
-            if path.startswith('"') and path.endswith('"'):
-                path = path[1:-1]
-            if path:
-                actual_set.add(path)
+        actual_set.update(_git_diff_paths(diff_result.stdout))
 
     # Filter framework-owned paths that are NEVER part of a subtask's mutation
     # surface: `.map/` carries orchestrator artifacts (blueprint, step_state,
@@ -17443,10 +17413,10 @@ def _current_subtask_changed_files(
     try:
         if base_ref:
             diff_result = subprocess.run(
-                ["git", "diff", "--name-only", base_ref],
+                ["git", "diff", "--name-only", "--no-renames", "-z", base_ref],
                 cwd=git_cwd,
                 capture_output=True,
-                text=True,
+                text=False,
                 timeout=10,
                 check=False,
             )
@@ -17455,10 +17425,10 @@ def _current_subtask_changed_files(
         # -uall: see validate_mutation_boundary for the same flag; without it
         # new files inside a pre-existing untracked directory are invisible (#376).
         status_result = subprocess.run(
-            ["git", "status", "--porcelain", "-uall"],
+            ["git", "status", "--porcelain", "-z", "-uall"],
             cwd=git_cwd,
             capture_output=True,
-            text=True,
+            text=False,
             timeout=10,
             check=False,
         )
@@ -17476,18 +17446,9 @@ def _current_subtask_changed_files(
         # this function's documented contract.
         return None
 
-    changed: set[str] = set()
+    changed = _git_status_paths(status_result.stdout)
     if diff_result is not None:
-        changed.update(
-            line.strip() for line in diff_result.stdout.splitlines() if line.strip()
-        )
-    for raw in status_result.stdout.splitlines():
-        if len(raw) >= 4:
-            path = raw[3:].strip()
-            if " -> " in path:
-                path = path.split(" -> ", 1)[1]
-            if path:
-                changed.add(path)
+        changed.update(_git_diff_paths(diff_result.stdout))
 
     changed = {p for p in changed if not _is_map_internal_artifact(p)}
 

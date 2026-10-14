@@ -49,6 +49,14 @@ parallel_tool_policy: sequential_state_machine
 
 ## Step 1: Detect Checkpoint
 
+Before checkpoint detection, run
+`python3 .map/scripts/map_orchestrator.py get_interruption_status`.
+On an error, stop and surface it before offering a fresh workflow, even if
+`step_state.json` is missing. If a repair is active, do not restart, clear,
+archive or abandon the parent checkpoint; follow
+[Independent Serial Blocker Repair](resume-reference.md#independent-serial-blocker-repair).
+For idle status, continue normal checkpoint detection below.
+
 Check if state files exist for the current branch:
 
 ```bash
@@ -76,13 +84,6 @@ No recovery needed.
 **Stop here if no checkpoint.**
 
 ---
-
-Before ordinary recovery, run
-`python3 .map/scripts/map_orchestrator.py get_interruption_status`.
-If a repair is active or recovery reports an error, do not restart, clear,
-archive or abandon the parent checkpoint. Follow
-[Independent Serial Blocker Repair](resume-reference.md#independent-serial-blocker-repair)
-and surface any unexpected drift as a blocker.
 
 ## Step 2: Load and Display Progress
 

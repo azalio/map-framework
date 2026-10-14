@@ -166,6 +166,57 @@ def test_missing_legacy_ref_is_unknown_not_clean(runner, repaired_repo):
     assert runner.validate_mutation_boundary(BRANCH, SUBTASK)["status"] == "error"
 
 
+@pytest.mark.parametrize("filename", [
+    "file with spaces.txt", 'file"quote.txt', "файл.txt", " literal -> name.txt ",
+    "file\ttab.txt", "file\nnewline.txt", "file\rcarriage.txt",
+])
+@pytest.mark.parametrize("adjusted", [True, False])
+def test_current_surface_preserves_literal_git_paths(runner, repaired_repo, filename, adjusted):
+    repo, _ = repaired_repo
+    if not adjusted:
+        write_state(repo, {})
+    (repo / filename).write_text("Actor untracked\n")
+    expected = {"actor.txt", "new.txt", filename}
+    if not adjusted:
+        expected.add("repair.txt")
+    assert runner._current_subtask_changed_files(BRANCH, SUBTASK, repo) == expected
+    report = runner.validate_mutation_boundary(BRANCH, SUBTASK)
+    assert report["status"] == "violation"
+    assert report["unexpected"] == sorted({filename} | ({"repair.txt"} if not adjusted else set()))
+    report = runner.refresh_blueprint_affected_files(BRANCH, SUBTASK, replace=True)
+    assert report["current"] == sorted(expected)
+    blueprint = json.loads((repo / ".map" / BRANCH / "blueprint.json").read_text())
+    assert blueprint["subtasks"][0]["affected_files"] == sorted(expected)
+    # Also exercise the diff path after this file leaves porcelain entirely.
+    git(repo, "add", "--", filename)
+    git(repo, "commit", "-m", "Actor file", "--", filename)
+    assert runner._current_subtask_changed_files(BRANCH, SUBTASK, repo) == expected
+
+
+def test_current_surface_preserves_both_rename_endpoints(runner, repaired_repo):
+    repo, _ = repaired_repo
+    destination = 'renamed "файл -> target.txt'
+    git(repo, "mv", "outside.txt", destination)
+    expected = {"actor.txt", "new.txt", "outside.txt", destination}
+    assert runner._current_subtask_changed_files(BRANCH, SUBTASK, repo) == expected
+    report = runner.validate_mutation_boundary(BRANCH, SUBTASK)
+    assert report["unexpected"] == sorted({"outside.txt", destination})
+    report = runner.refresh_blueprint_affected_files(BRANCH, SUBTASK, replace=True)
+    assert report["current"] == sorted(expected)
+
+
+@pytest.mark.parametrize("record", ["record_subtask_baseline", "record_scope_baseline"])
+def test_baselines_preserve_literal_paths(runner, repaired_repo, record):
+    repo, _ = repaired_repo
+    filename = 'preexisting "файл\n -> file.txt '
+    (repo / filename).write_text("preexisting\n")
+    recorder = getattr(runner, record)
+    report = recorder(BRANCH, SUBTASK) if record == "record_subtask_baseline" else recorder(BRANCH)
+    baseline = json.loads(Path(report["path"]).read_text())
+    assert filename in baseline["files"]
+    assert filename not in runner.validate_mutation_boundary(BRANCH, SUBTASK)["actual"]
+
+
 def test_absent_adjustment_preserves_legacy_parent_fallback(runner, repaired_repo):
     repo, _ = repaired_repo
     write_state(repo, {})

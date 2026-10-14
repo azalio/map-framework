@@ -398,6 +398,41 @@ def _commit(root: Path, tree: str, parent: str, message: str) -> str:
     }).decode().strip()
 
 
+@contextlib.contextmanager
+def _initialization(gitdir: Path, branch_dir: Path, path: Path,
+                    state: dict[str, Any]) -> Any:
+    """Archive only this call's unmarked initialization; never discard a snapshot."""
+    path.parent.mkdir(mode=0o700)
+    identity = path.parent.stat()
+    state_digest = _digest(state)
+    expected: dict[str, Any] = {}
+    try:
+        yield expected
+    except Exception as exc:
+        try:
+            info = path.parent.lstat()
+            if (path.parent.is_symlink() or path.parent.parent.is_symlink() or
+                    not stat.S_ISDIR(info.st_mode) or
+                    (info.st_dev, info.st_ino) != (identity.st_dev, identity.st_ino)):
+                raise RepairError("Initialization directory ownership drift")
+            current = _read(branch_dir / "step_state.json")
+            if current.get("active_interruption") is not None or _digest(current) != state_digest:
+                raise RepairError("Initialization state changed; recovery storage retained")
+            if expected.get("journal_written") and not os.path.lexists(path):
+                raise RepairError("Initialization journal missing; recovery storage retained")
+            if os.path.lexists(path) and (
+                    "journal_digest" not in expected or _digest(_read(path)) != expected["journal_digest"]):
+                raise RepairError("Initialization journal drift; recovery storage retained")
+            if gitdir.is_symlink():
+                raise RepairError("Git storage identity drift")
+            archive = Path(tempfile.mkdtemp(prefix="map-failed-" + path.parent.name + "-", dir=gitdir))
+            path.parent.chmod(0o700)
+            os.replace(path.parent, archive)
+        except (RepairError, OSError, ValueError, KeyError, TypeError) as cleanup_error:
+            raise RepairError(f"{exc}; initialization cleanup refused: {cleanup_error}") from exc
+        raise RepairError(f"{exc}; failed initialization preserved at .git/{archive.name}") from exc
+
+
 def begin_repair(repair_id: str, branch: str, approval_hold_id: str) -> dict[str, Any]:
     try:
         root, gitdir, branch_dir = _context(branch)
@@ -455,77 +490,79 @@ def begin_repair(repair_id: str, branch: str, approval_hold_id: str) -> dict[str
             baseline = _text(root, "rev-parse", baseline + "^{tree}")
             journal_path.parent.parent.mkdir(mode=0o700, exist_ok=True)
             journal_path.parent.parent.chmod(0o700)
-            journal_path.parent.mkdir(mode=0o700)
-            journal_path.parent.chmod(0o700)
-            private = journal_path.parent / "checkout"
-            private.mkdir(mode=0o700)
-            _git(private, "init", "--quiet")
-            _git(private, "fetch", "--quiet", "--no-tags", str(root), head)
-            _git(private, "symbolic-ref", "HEAD", ref)
-            _git(private, "update-ref", ref, head)
-            _git(private, "read-tree", head)
-            for path, image in images.items():
-                _put(private, path, image)
-            # Intent: runtime artifacts belong to the private workflow, not its candidate tree.
-            _git(private, "add", "-A", "--", ".")
-            excluded = [p for p in _entries(private) if _runtime(p)]
-            if excluded:
-                _git(private, "update-index", "--force-remove", "--", *excluded)
-            snapshot_tree = _text(private, "write-tree")
-            snapshot = _commit(private, snapshot_tree, head, "Private working snapshot\n")
-            _git(private, "update-ref", ref, snapshot, head)
-            (private / ".git/info/exclude").write_text(".map/*\n", encoding="utf-8")
-            # Installed scripts can be ignored in the host. Copy only executable
-            # runtime sources, never parent branch artifacts or local settings.
-            runtime_images = {}
-            instruction_paths = [root / "CLAUDE.md", root / "AGENTS.md"]
-            for provider in (".claude", ".codex", ".agents"):
-                instruction_paths.extend((root / provider).rglob("*.md"))
-            for runtime_path in [*(root / ".map/scripts").glob("*.py"), *instruction_paths]:
-                if not runtime_path.exists():
-                    continue
-                relative = runtime_path.relative_to(root).as_posix()
-                if relative not in images:
-                    runtime_images[relative] = _image(root, relative)
-                    _put(private, relative, runtime_images[relative])
-                    with (private / ".git/info/exclude").open("a", encoding="utf-8") as stream:
-                        stream.write("/" + relative + "\n")
-            local = private / ".map" / branch
-            local.mkdir(parents=True)
-            _write(local / "blueprint.json", {"subtasks": [contract["entry"]]})
-            (local / f"task_plan_{branch}.md").write_text(
-                f"# Repair plan\n\n## {repair_id}\n\n{_json(contract['entry'])}\n", encoding="utf-8")
-            _write(local / "parent_context.json", state)
-            orchestrator = importlib.import_module("map_orchestrator")
-            order = orchestrator._get_step_order(bool(state.get("tdd_mode")))
-            private_state = orchestrator.StepState(
-                current_subtask_id=repair_id, subtask_sequence=[repair_id],
-                current_step_id="2.2", current_step_phase="RESEARCH",
-                completed_steps=["1.0", "1.5", "1.55", "1.56", "1.6"],
-                pending_steps=order[order.index("2.2"):], plan_approved=True,
-                tdd_mode=bool(state.get("tdd_mode")), workflow_status="IN_PROGRESS",
-                subtask_results=contract["dependency_results"],
-            )
-            private_state.save(local / "step_state.json")
-            journal = {"version": 1, "operation_id": operation, "branch": branch,
-                       "repair_id": repair_id, "contract": contract, "contract_digest": digest,
-                       "approval_hold_id": approval_hold_id, "root": str(root), "gitdir": str(gitdir),
-                       "ref": ref, "head": head, "baseline_tree": baseline,
-                       "private_checkout": str(private), "snapshot": snapshot,
-                       "snapshot_tree": snapshot_tree, "original_index": index,
-                       "original_images": images, "runtime_images": runtime_images,
-                       "paused_paths": sorted(dirty),
-                       "frame": state, "stage": "prepared"}
-            _write(journal_path, journal)
-            _checkpoint("prepared")
-            if _entries(root) != index or _text(root, "rev-parse", "HEAD") != head or any(_image(root, p) != v for p, v in images.items()):
-                raise RepairError("Checkout drift during snapshot; main state not marked")
-            state["active_interruption"] = {"operation_id": operation, "contract_digest": digest}
-            _write(branch_dir / "step_state.json", state)
-            _checkpoint("marker_written")
-            journal["stage"] = "active"
-            _write(journal_path, journal)
-            return _status(journal)
+            with _initialization(gitdir, branch_dir, journal_path, state) as expected:
+                journal_path.parent.chmod(0o700)
+                private = journal_path.parent / "checkout"
+                private.mkdir(mode=0o700)
+                _git(private, "init", "--quiet")
+                _git(private, "fetch", "--quiet", "--no-tags", str(root), head)
+                _git(private, "symbolic-ref", "HEAD", ref)
+                _git(private, "update-ref", ref, head)
+                _git(private, "read-tree", head)
+                for path, image in images.items():
+                    _put(private, path, image)
+                # Intent: runtime artifacts belong to the private workflow, not its candidate tree.
+                _git(private, "add", "-A", "--", ".")
+                excluded = [p for p in _entries(private) if _runtime(p)]
+                if excluded:
+                    _git(private, "update-index", "--force-remove", "--", *excluded)
+                snapshot_tree = _text(private, "write-tree")
+                snapshot = _commit(private, snapshot_tree, head, "Private working snapshot\n")
+                _git(private, "update-ref", ref, snapshot, head)
+                (private / ".git/info/exclude").write_text(".map/*\n", encoding="utf-8")
+                # Installed scripts can be ignored in the host. Copy only executable
+                # runtime sources, never parent branch artifacts or local settings.
+                runtime_images = {}
+                instruction_paths = [root / "CLAUDE.md", root / "AGENTS.md"]
+                for provider in (".claude", ".codex", ".agents"):
+                    instruction_paths.extend((root / provider).rglob("*.md"))
+                for runtime_path in [*(root / ".map/scripts").glob("*.py"), *instruction_paths]:
+                    if not runtime_path.exists():
+                        continue
+                    relative = runtime_path.relative_to(root).as_posix()
+                    if relative not in images:
+                        runtime_images[relative] = _image(root, relative)
+                        _put(private, relative, runtime_images[relative])
+                        with (private / ".git/info/exclude").open("a", encoding="utf-8") as stream:
+                            stream.write("/" + relative + "\n")
+                local = private / ".map" / branch
+                local.mkdir(parents=True)
+                _write(local / "blueprint.json", {"subtasks": [contract["entry"]]})
+                (local / f"task_plan_{branch}.md").write_text(
+                    f"# Repair plan\n\n## {repair_id}\n\n{_json(contract['entry'])}\n", encoding="utf-8")
+                _write(local / "parent_context.json", state)
+                orchestrator = importlib.import_module("map_orchestrator")
+                order = orchestrator._get_step_order(bool(state.get("tdd_mode")))
+                private_state = orchestrator.StepState(
+                    current_subtask_id=repair_id, subtask_sequence=[repair_id],
+                    current_step_id="2.2", current_step_phase="RESEARCH",
+                    completed_steps=["1.0", "1.5", "1.55", "1.56", "1.6"],
+                    pending_steps=order[order.index("2.2"):], plan_approved=True,
+                    tdd_mode=bool(state.get("tdd_mode")), workflow_status="IN_PROGRESS",
+                    subtask_results=contract["dependency_results"],
+                )
+                private_state.save(local / "step_state.json")
+                journal = {"version": 1, "operation_id": operation, "branch": branch,
+                           "repair_id": repair_id, "contract": contract, "contract_digest": digest,
+                           "approval_hold_id": approval_hold_id, "root": str(root), "gitdir": str(gitdir),
+                           "ref": ref, "head": head, "baseline_tree": baseline,
+                           "private_checkout": str(private), "snapshot": snapshot,
+                           "snapshot_tree": snapshot_tree, "original_index": index,
+                           "original_images": images, "runtime_images": runtime_images,
+                           "paused_paths": sorted(dirty),
+                           "frame": state, "stage": "prepared"}
+                expected["journal_digest"] = _digest(journal)
+                _write(journal_path, journal)
+                expected["journal_written"] = True
+                _checkpoint("prepared")
+                if _entries(root) != index or _text(root, "rev-parse", "HEAD") != head or any(_image(root, p) != v for p, v in images.items()):
+                    raise RepairError("Checkout drift during snapshot; main state not marked")
+                state["active_interruption"] = {"operation_id": operation, "contract_digest": digest}
+                _write(branch_dir / "step_state.json", state)
+                _checkpoint("marker_written")
+                journal["stage"] = "active"
+                _write(journal_path, journal)
+                return _status(journal)
     except (RepairError, OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as exc:
         return {"status": "error", "reasons": [str(exc)]}
 

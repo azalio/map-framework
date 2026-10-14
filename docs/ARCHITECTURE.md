@@ -167,9 +167,12 @@ layouts and unsafe snapshot inputs are refused. Ref CAS and index locks are not
 an atomic transaction across Git, filesystem and workflow state; this protocol
 requires exclusive runner ownership, not concurrent external writers. Its
 process-restart recovery covers recognized journaled checkpoints, not every
-instruction or sudden power loss. Incomplete snapshot preparation or a crash
-before temporary-file/lock ownership is durably recorded stops for operator
-inspection; unfamiliar storage is never removed automatically. The empirical
+instruction or sudden power loss. Ordinary initialization failures before the
+parent marker archive only the current attempt's unchanged, identity-verified
+storage to a private `.git/map-failed-<operation>-<random>` directory, preserving
+the snapshot and allowing retry. Unexpected storage/state drift or an abrupt
+crash before ownership is durably recorded stops for operator inspection;
+unfamiliar storage is never removed automatically. The empirical
 binding experiment and its limitations are recorded in
 [`blocker-repair-spike.md`](blocker-repair-spike.md).
 

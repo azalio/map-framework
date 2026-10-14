@@ -819,6 +819,17 @@ class TestSkillStructure:
             assert "## Examples" in reference
             assert "## Troubleshooting" in reference
 
+    def test_resume_checks_interruption_before_missing_checkpoint_exit(self):
+        """Orphan repair storage must block fresh setup even without a checkpoint."""
+        root = Path(__file__).resolve().parents[1]
+        sources = root / "src/mapify_cli/templates_src"
+        for provider in (sources / "skills", sources / "codex/skills"):
+            content = (provider / "map-resume/SKILL.md.jinja").read_text()
+            assert content.index("get_interruption_status") < content.index(
+                'test -f ".map/${BRANCH}/step_state.json"'
+            )
+            assert "before offering a fresh workflow" in content
+
     def test_high_traffic_workflow_skills_keep_active_bodies_compact(
         self, skills_dir, template_skills_dir
     ):
