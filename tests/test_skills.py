@@ -819,6 +819,17 @@ class TestSkillStructure:
             assert "## Examples" in reference
             assert "## Troubleshooting" in reference
 
+    def test_resume_checks_interruption_before_missing_checkpoint_exit(self):
+        """Orphan repair storage must block fresh setup even without a checkpoint."""
+        root = Path(__file__).resolve().parents[1]
+        sources = root / "src/mapify_cli/templates_src"
+        for provider in (sources / "skills", sources / "codex/skills"):
+            content = (provider / "map-resume/SKILL.md.jinja").read_text()
+            assert content.index("get_interruption_status") < content.index(
+                'test -f ".map/${BRANCH}/step_state.json"'
+            )
+            assert "before offering a fresh workflow" in content
+
     def test_high_traffic_workflow_skills_keep_active_bodies_compact(
         self, skills_dir, template_skills_dir
     ):
@@ -3330,6 +3341,56 @@ class TestMapEfficientSaveResearchWiring:
             assert "Read cited code before broad search" in content
             assert "For confidence >= 0.7 with `relevant_locations`" in content
             assert "repository-wide `rg`/`grep`/`find`/`git grep`" in content
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("skill", ["map-efficient", "map-resume"])
+def test_stale_attribution_recovery_documented(provider: str, skill: str) -> None:
+    root = Path(__file__).parent.parent
+    prefix = "codex/" if provider == "codex" else ""
+    reference = skill.removeprefix("map-") + "-reference.md"
+    content = (root / "src/mapify_cli/templates" / prefix / "skills" / skill / reference).read_text(
+        encoding="utf-8"
+    )
+    _assert_stale_attribution_recovery(content)
+
+
+def _assert_stale_attribution_recovery(content: str) -> None:
+    assert "## Stale Commit Attribution Recovery" in content
+    section = content.split("## Stale Commit Attribution Recovery", 1)[1].split("\n## ", 1)[0]
+    for required in (
+        'fail-closed `status="error"`',
+        "Do not override the base with `HEAD`",
+        "A valid exact-subtask repair-adjusted tree takes priority",
+        "If no exact-subtask adjusted-base entry is recorded, proceed to step 3",
+        "If an entry is recorded but its tree object is missing/invalid",
+        "record_subtask_result",
+        "verified rewritten counterpart",
+        "all current Actor changes",
+        "rerun the current subtask's Monitor",
+        "no general lossless rebase-attribution migration",
+        "arbitrary filename lists or enriched result records",
+    ):
+        assert required in section, required
+
+
+@pytest.mark.parametrize(
+    "required",
+    [
+        'fail-closed `status="error"`',
+        "Do not override the base with `HEAD`",
+        "A valid exact-subtask repair-adjusted tree takes priority",
+        "rerun the current subtask's Monitor",
+    ],
+)
+def test_stale_attribution_docs_guard_rejects_missing_guidance(required: str) -> None:
+    from mapify_cli.delivery.template_renderer import get_environment
+
+    content = get_environment(_TEMPLATES_SRC).get_template(
+        "skills/map-resume/resume-reference.md.jinja"
+    ).render(PROVIDER="claude")
+    with pytest.raises(AssertionError, match=re.escape(required)):
+        _assert_stale_attribution_recovery(content.replace(required, "removed_guidance"))
 
 
 class TestResearchArtifactSchemaDocumented:

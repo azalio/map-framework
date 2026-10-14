@@ -338,6 +338,8 @@ Copy-pasteable skeleton (a valid artifact — swap in your real values):
 failure, so the first reject is self-correcting: copy the `skeleton`, swap your
 values, re-save. Extra fields beyond the contract are allowed and ignored.
 
+[% include "_partials/stale-attribution-recovery.md.jinja" %]
+
 ## Troubleshooting
 
 - `resume_from_plan` fails: inspect the returned JSON and fix missing plan,

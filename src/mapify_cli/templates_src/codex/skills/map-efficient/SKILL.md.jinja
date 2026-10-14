@@ -47,6 +47,8 @@ These constraints apply before any write-capable step:
    isolation would add no value.
 7. Stop on any Monitor `valid=false` verdict and fix the issue before advancing.
 
+[% include "_partials/serial-blocker-repair.md.jinja" %]
+
 ## Script Routing
 
 - `python3 .map/scripts/map_orchestrator.py <cmd>` owns state transitions:

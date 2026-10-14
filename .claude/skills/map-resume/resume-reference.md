@@ -2,6 +2,89 @@
 
 This file holds low-frequency examples, integration notes, and troubleshooting details for `/map-resume`. Load it only when the compact resume flow in `SKILL.md` is not enough to recover the workflow.
 
+## Independent Serial Blocker Repair
+
+If an unrelated blocker needs a separately approved repair while a serial
+subtask has active work, preserve that work with the interruption protocol.
+Do not use `set_subtasks`, `resume_single_subtask`, `resume_from_plan`, archive,
+abandon, or hand-edit `step_state.json` to insert a repair. Those are not
+lossless suspension APIs.
+
+1. Stop parent Actor/Monitor activity and establish exclusive, quiescent
+   ownership of the checkout. Concurrent waves and nested repairs are not
+   supported. Define one independent blueprint subtask with exact
+   `affected_files`, completed `dependencies`, and nonempty `repair_checks`
+   command vectors (the real full gate, not a no-op or weakened check).
+2. Run `python3 .map/scripts/map_orchestrator.py request_repair REPAIR_ID`.
+   Present the exact returned contract/approval hold to the user. Record their
+   decision with `python3 .map/scripts/map_step_runner.py decide_approval_hold
+   HOLD_ID approved` only after explicit approval; do not self-approve.
+3. Run `python3 .map/scripts/map_orchestrator.py begin_repair REPAIR_ID
+   --approval-hold HOLD_ID`. Use the returned `operation_id`,
+   `contract_digest`, and `private_checkout`. The parent checkout remains
+   paused and untouched. Change the working directory to the private checkout
+   for **all** repair commands and agent dispatches; an absolute file path alone
+   does not redirect an agent's working directory.
+4. Execute the private repair's normal RESEARCH → ACTOR → MONITOR workflow,
+   including TDD steps if enabled. Commit the private Actor candidate and
+   `record_subtask_result` with its `commit_sha` before closing Monitor. Monitor
+   inspects that clean committed HEAD tree and emits a complete `valid:true`,
+   `recommendation:"approve"`, `summary`, `issues` envelope with
+   `operation_id`, `contract_digest`, and `candidate_tree` (from
+   `git rev-parse HEAD^{tree}`). Close `validate_step 2.4` with that envelope
+   and continue the normal private workflow to `WORKFLOW_COMPLETE`. A stale
+   verdict or parent Monitor approval is not repair evidence.
+5. Return to the parent checkout and run
+   `python3 .map/scripts/map_orchestrator.py verify_repair OPERATION_ID
+   --monitor-file PRIVATE_MONITOR_FILE`. Verification executes the approved
+   gates against the private combined working snapshot plus repair and refuses
+   drift or writes outside the approved paths.
+6. Only after successful verification run
+   `python3 .map/scripts/map_orchestrator.py finish_repair OPERATION_ID`.
+   The resulting repair commit excludes the paused Actor's work. Resume the
+   original subtask at its preserved phase and run its own Monitor; repair
+   completion is not a fake pass for the parent.
+
+On restart, query `get_interruption_status` before ordinary resume. Continue
+only the reported repair operation; recognized partial finish is recovered
+forward by repeating `finish_repair`. Unexpected Git/state/index/file changes
+are blockers: stop and show the refusal, without reset, stash, rollback,
+manual marker removal, or unfamiliar lock/temp-file deletion. This protocol
+supports ordinary process restart, not sudden power-loss or concurrent writers.
+
+
+## Stale Commit Attribution Recovery
+
+If `last_subtask_commit_sha` resolves but `git diff` fails (for example, the
+commit is unavailable after history rewriting), preserve the fail-closed `status="error"`:
+unknown committed changes are not an empty diff.
+
+1. Stop and preserve the checkpoint and Actor work. Query `get_interruption_status`
+   first; a non-idle result requires its reported recovery. Do not hand-edit
+   `step_state.json`, reinitialize with `resume_single_subtask`/`resume_from_plan`,
+   or re-snapshot scope/subtask baselines: these can erase attribution or hide
+   Actor changes. `record_scope_baseline` cannot repair a failed diff.
+2. A valid exact-subtask repair-adjusted tree takes priority over the stored
+   commit SHA. Do not override the base with `HEAD` or an explicit validator
+   base. If an entry is recorded but its tree object is missing/invalid, stop
+   and ask the operator; re-recording a commit cannot repair it.
+   If no exact-subtask adjusted-base entry is recorded, proceed to step 3.
+3. Only for an ordinary commit baseline, use repository evidence to identify its
+   verified rewritten counterpart and prove the boundary includes all current Actor changes.
+   Use the orchestrator's `record_subtask_result` with explicit `--commit-sha`
+   to re-record the same genuine completed result ID, status, files, and summary;
+   do not fabricate a result or record current `HEAD` merely to move the baseline.
+   If this is the current subtask's already-recorded commit, its rewritten parent
+   must still bound all of that subtask's work: automatic resolution uses that parent.
+   The writer replaces the result; this is not a lossless recipe for arbitrary filename lists or enriched result records.
+4. Rerun `validate_mutation_boundary` for the current subtask without a base
+   override, inspect its result, then rerun the current subtask's Monitor before
+   normal closeout. Do not refresh `affected_files` just to conceal a violation.
+
+If the counterpart or full Actor boundary cannot be proven, stop and ask the
+operator: existing APIs provide no general lossless rebase-attribution migration.
+
+
 ## Examples
 
 ### Example 1: Simple Resume

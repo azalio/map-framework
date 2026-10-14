@@ -82,6 +82,7 @@ if tuple(sys.version_info) < (3, 11):
 import json
 import os
 import re
+import shlex
 import sys
 from fnmatch import fnmatch
 from pathlib import Path
@@ -333,6 +334,77 @@ def get_branch_name() -> str:
     except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
     return "default"
+
+
+def _has_active_interruption(branch: str) -> bool:
+    """The parent marker suspends writes; only the engine validates its journal."""
+    try:
+        state = json.loads(
+            (PROJECT_DIR / ".map" / branch / "step_state.json").read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        state = None  # Ordinary corrupt state remains fail-open without repair evidence.
+    if isinstance(state, dict) and state.get("active_interruption") is not None:
+        return True
+    # Intent: durable repair intent still protects the parent after state corruption.
+    try:
+        for journal in (PROJECT_DIR / ".git/map-repairs").glob("repair-*/journal.json"):
+            if not re.fullmatch(r"repair-[0-9a-f]{24}", journal.parent.name):
+                continue
+            record = json.loads(journal.read_text(encoding="utf-8"))
+            if not isinstance(record, dict) or not all(
+                isinstance(record.get(key), str) and record[key] for key in ("branch", "stage")
+            ):
+                return True
+            if record.get("branch") == branch and record.get("stage") != "done":
+                return True
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return True
+    return False
+
+
+def _interruption_allows_bash(command: str) -> bool:
+    """Accept explicit inspection/checks or the canonical runner, not a prefix."""
+    # Intent: opaque expansion and compound shell commands cannot prove read-only intent.
+    if any(character in command for character in "$`\n\r"):
+        return False
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>()")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        return False
+    if not tokens or any(token and all(character in ";&|<>()" for character in token)
+                         for token in tokens):
+        return False
+    executable, args = tokens[0], tokens[1:]
+    if executable in {"python", "python3"}:
+        if not args:
+            return False
+        script = args[0]
+        for name in ("map_step_runner.py", "map_orchestrator.py"):
+            canonical = Path(".map/scripts") / name
+            if script in {str(canonical), str(PROJECT_DIR / canonical)}:
+                return len(args) > 1 and args[1] in {
+                    "begin_repair", "verify_repair", "finish_repair", "repair_status",
+                    "get_interruption_status",
+                }
+        return False
+    if executable == "git":
+        if not args:
+            return False
+        if args[0] in {"status", "rev-parse", "ls-files"}:
+            return not any(arg.startswith("--output") for arg in args)
+        if args == ["branch", "--show-current"]:
+            return True
+        if args[:2] == ["--no-pager", "diff"]:
+            options = args[:args.index("--")] if "--" in args else args
+            return {"--no-ext-diff", "--no-textconv"}.issubset(options) and not any(
+                arg.startswith(("--output", "--ext-diff", "--textconv")) for arg in args
+            )
+        return False
+    return executable in {"cat", "ls", "pwd", "grep", "head", "tail", "wc", "true"}
 
 
 def _current_phase_is_research(branch: str) -> bool:
@@ -710,12 +782,24 @@ def main() -> None:
         tool_call = json.load(sys.stdin)
         tool_name = tool_call.get("tool_name", "")
 
-        # Non-editing tools → always allow
-        if tool_name not in EDITING_TOOLS:
+        # Bash is inspected only while the parent workflow is suspended.
+        if tool_name not in EDITING_TOOLS and tool_name != "Bash":
             allow()
 
         target_paths = extract_target_file_paths(tool_call)
         branch = get_branch_name()
+        interrupted = _has_active_interruption(branch)
+        if interrupted:
+            if tool_name == "Bash":
+                tool_input = tool_call.get("tool_input") or {}
+                command = tool_input.get("command") if isinstance(tool_input, dict) else None
+                if isinstance(command, str) and _interruption_allows_bash(command):
+                    allow()
+                deny("Workflow suspended for blocker repair: main-checkout Bash writes are denied.")
+            if not target_paths or any(not is_exempt_path(p) for p in target_paths):
+                deny("Workflow suspended for blocker repair: edit application files in the private checkout.")
+        elif tool_name == "Bash":
+            allow()
 
         # State-tamper detector (D3): runner-owned MAP state
         # (step_state.json, approval_holds.json, auto-route.json,
@@ -728,7 +812,7 @@ def main() -> None:
         # protected path alongside ordinary ones) denies as a whole — fail
         # closed on any protected target.
         tamper_paths = [p for p in target_paths if is_state_tamper_path(p)]
-        if tamper_paths and _is_workflow_active(branch):
+        if tamper_paths and (interrupted or _is_workflow_active(branch)):
             attempted = tamper_paths[0]
             try:
                 attempted = _to_repo_relative(tamper_paths[0]) or tamper_paths[0]

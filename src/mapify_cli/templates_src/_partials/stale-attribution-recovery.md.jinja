@@ -1,0 +1,30 @@
+## Stale Commit Attribution Recovery
+
+If `last_subtask_commit_sha` resolves but `git diff` fails (for example, the
+commit is unavailable after history rewriting), preserve the fail-closed `status="error"`:
+unknown committed changes are not an empty diff.
+
+1. Stop and preserve the checkpoint and Actor work. Query `get_interruption_status`
+   first; a non-idle result requires its reported recovery. Do not hand-edit
+   `step_state.json`, reinitialize with `resume_single_subtask`/`resume_from_plan`,
+   or re-snapshot scope/subtask baselines: these can erase attribution or hide
+   Actor changes. `record_scope_baseline` cannot repair a failed diff.
+2. A valid exact-subtask repair-adjusted tree takes priority over the stored
+   commit SHA. Do not override the base with `HEAD` or an explicit validator
+   base. If an entry is recorded but its tree object is missing/invalid, stop
+   and ask the operator; re-recording a commit cannot repair it.
+   If no exact-subtask adjusted-base entry is recorded, proceed to step 3.
+3. Only for an ordinary commit baseline, use repository evidence to identify its
+   verified rewritten counterpart and prove the boundary includes all current Actor changes.
+   Use the orchestrator's `record_subtask_result` with explicit `--commit-sha`
+   to re-record the same genuine completed result ID, status, files, and summary;
+   do not fabricate a result or record current `HEAD` merely to move the baseline.
+   If this is the current subtask's already-recorded commit, its rewritten parent
+   must still bound all of that subtask's work: automatic resolution uses that parent.
+   The writer replaces the result; this is not a lossless recipe for arbitrary filename lists or enriched result records.
+4. Rerun `validate_mutation_boundary` for the current subtask without a base
+   override, inspect its result, then rerun the current subtask's Monitor before
+   normal closeout. Do not refresh `affected_files` just to conceal a violation.
+
+If the counterpart or full Actor boundary cannot be proven, stop and ask the
+operator: existing APIs provide no general lossless rebase-attribution migration.

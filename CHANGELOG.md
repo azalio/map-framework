@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Active serial workflows refuse destructive setup/resume operations. Independent
+  blocker repairs use a private checkout, exact-contract approval and exact-tree
+  Monitor/full-gate evidence, preserving paused progress and staged/unstaged/
+  untracked work. Targeted forward recovery excludes paused Actor changes from
+  repair history and mutation attribution. Concurrent waves, nested repairs,
+  overlapping paths and unexpected drift fail closed. (#502)
+
 ## [3.32.0] - 2026-10-07
 
 ### Added

@@ -653,6 +653,364 @@ class TestPlanResumeContract:
         assert result["waves_computed"] == "success"
 
 
+class TestLosslessBlockerRepairSetup:
+    """#502: setup APIs must not repurpose or erase an active execution ledger."""
+
+    @pytest.fixture
+    def repair_plan(self, branch_dir, tmp_path):
+        plan_dir = tmp_path / ".map" / branch_dir
+        (plan_dir / f"task_plan_{branch_dir}.md").write_text(
+            "# Task Plan\n\n"
+            "### ST-003: Repair blocker\n- **Status:** pending\n\n"
+            "### ST-001: Completed work\n- **Status:** complete\n\n"
+            "### ST-002: Paused work\n- **Status:** pending\n",
+            encoding="utf-8",
+        )
+        (plan_dir / "blueprint.json").write_text(
+            json.dumps(
+                {
+                    "subtasks": [
+                        {"id": "ST-003", "dependencies": []},
+                        {"id": "ST-001", "dependencies": []},
+                        {"id": "ST-002", "dependencies": ["ST-001", "ST-003"]},
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        return plan_dir
+
+    @pytest.fixture
+    def active_repair_state(self, repair_plan):
+        state = map_orchestrator.StepState(
+            started_at="2026-10-12T00:00:00Z",
+            subtask_sequence=["ST-001", "ST-002"],
+            subtask_index=1,
+            current_subtask_id="ST-002",
+            current_step_id="2.3",
+            current_step_phase="ACTOR",
+            completed_steps=["1.0", "1.5", "1.55", "1.56", "1.6", "2.2"],
+            pending_steps=["2.3", "2.4"],
+            retry_count=2,
+            plan_approved=True,
+            workflow_status="IN_PROGRESS",
+        )
+        state.record_subtask_result(
+            "ST-001",
+            ["src/service.py"],
+            "valid",
+            summary="Completed and verified before the blocker.",
+            commit_sha="1" * 40,
+        )
+        state_file = repair_plan / "step_state.json"
+        state.save(state_file)
+        return state_file
+
+    @staticmethod
+    def _setup_repair(api, branch):
+        if api == "set_subtasks":
+            return map_orchestrator.set_subtasks(["ST-003", "ST-001", "ST-002"], branch)
+        if api == "resume_single_subtask":
+            return map_orchestrator.resume_single_subtask("ST-003", branch)
+        return map_orchestrator.resume_from_plan(branch)
+
+    @pytest.mark.parametrize(
+        "api", ["set_subtasks", "resume_single_subtask", "resume_from_plan"]
+    )
+    def test_active_repair_setup_refuses_without_changing_state_bytes(
+        self, api, branch_dir, active_repair_state
+    ):
+        before = active_repair_state.read_bytes()
+
+        result = self._setup_repair(api, branch_dir)
+
+        unchanged = active_repair_state.read_bytes() == before
+        after = map_orchestrator.StepState.load(active_repair_state)
+        assert (result["status"], unchanged) == ("error", True), (
+            f"{api} must refuse active execution without writing step_state.json; "
+            f"status={result['status']}, unchanged_bytes={unchanged}, "
+            f"cursor={after.current_subtask_id}/{after.current_step_phase}, "
+            f"retry_count={after.retry_count}, results={after.subtask_results}"
+        )
+
+    @pytest.mark.parametrize(
+        "api", ["set_subtasks", "resume_single_subtask", "resume_from_plan"]
+    )
+    def test_fresh_repair_setup_remains_supported(self, api, branch_dir, repair_plan):
+        state_file = repair_plan / "step_state.json"
+        assert not state_file.exists()
+
+        result = self._setup_repair(api, branch_dir)
+
+        assert result["status"] == "success"
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.current_subtask_id == "ST-003"
+        assert state.subtask_sequence == (
+            ["ST-003"]
+            if api == "resume_single_subtask"
+            else ["ST-003", "ST-001", "ST-002"]
+        )
+        assert state.subtask_results == {}
+        assert state.retry_count == 0
+
+
+class TestRepairSuspension:
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            (
+                "active_interruption",
+                {"operation_id": "repair-123", "contract_digest": "abc"},
+            ),
+            (
+                "completed_repair_operations",
+                {"repair-123": {"status": "completed", "commit_sha": "a" * 40}},
+            ),
+            ("subtask_diff_bases", {"ST-002": "b" * 40}),
+        ],
+    )
+    def test_marker_fields_round_trip_and_legacy_defaults(self, field, value, tmp_path):
+        state_file = tmp_path / "state.json"
+        state = map_orchestrator.StepState.from_dict({field: value})
+        state.record_subtask_result("ST-001", ["service.py"], "valid")
+        state.save(state_file)
+        loaded = map_orchestrator.StepState.load(state_file)
+        assert getattr(loaded, field) == value
+        assert loaded.to_dict() == state.to_dict()
+        assert loaded.subtask_results == state.subtask_results
+        legacy = map_orchestrator.StepState.from_dict({})
+        assert legacy.active_interruption is None
+        assert legacy.completed_repair_operations == {}
+        assert legacy.subtask_diff_bases == {}
+
+    @pytest.mark.parametrize(
+        ("api", "arguments"),
+        [
+            ("get_next_step", {}),
+            ("validate_step", {"step_id": "2.3"}),
+            ("initialize_workflow", {"task": "replacement"}),
+            ("set_plan_approved", {"value": "true"}),
+            ("restore_deferred_yagni", {"item_id": "YAGNI-001"}),
+            ("set_execution_mode", {"mode": "batch"}),
+            ("set_tdd_mode", {"value": "true"}),
+            ("skip_step", {"step_id": "2.25"}),
+            ("set_subtasks", {"subtask_ids": ["ST-003"]}),
+            ("mark_contract_ready", {"subtask_id": "ST-002"}),
+            ("resume_from_plan", {}),
+            ("resume_from_test_contract", {"subtask_id": "ST-002"}),
+            ("set_waves", {}),
+            ("get_wave_step", {}),
+            ("validate_wave_step", {"subtask_id": "ST-002", "step_id": "2.3"}),
+            ("advance_wave", {}),
+            ("resume_single_subtask", {"subtask_id": "ST-003"}),
+            ("monitor_failed", {}),
+            ("wave_monitor_failed", {"subtask_id": "ST-002"}),
+            ("defer_flaky_subtask", {"subtask_id": "ST-002", "check_id": "flaky"}),
+            ("reopen_for_fixes", {}),
+            ("mark_workflow_complete", {}),
+            ("mark_subtask_complete", {"subtask_id": "ST-002"}),
+            (
+                "record_subtask_result",
+                {"subtask_id": "ST-002", "status": "valid", "files_changed": []},
+            ),
+            ("backfill_subtask_ids", {}),
+            ("finalize_plan", {}),
+            ("archive_completed_workflow", {}),
+            ("abandon_workflow", {}),
+        ],
+    )
+    def test_direct_mutations_refuse_before_side_effects(
+        self, api, arguments, branch_dir, tmp_path, monkeypatch
+    ):
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state = map_orchestrator.StepState(
+            current_subtask_id="ST-002",
+            current_step_id="2.3",
+            current_step_phase="ACTOR",
+            pending_steps=["2.3", "2.4"],
+        )
+        state.save(state_file)
+        before = state_file.read_bytes()
+
+        def suspended_guard(branch):
+            assert branch == branch_dir
+            return {
+                "status": "error",
+                "reasons": ["missing or malformed repair journal"],
+            }
+
+        monkeypatch.setattr(map_orchestrator, "_interruption_guard", suspended_guard)
+        result = getattr(map_orchestrator, api)(branch=branch_dir, **arguments)
+        assert result["status"] == "error"
+        assert result["valid"] is False
+        assert state_file.read_bytes() == before
+        assert sorted(p.name for p in state_file.parent.iterdir()) == [
+            "step_state.json"
+        ]
+
+    @pytest.mark.parametrize(
+        "phase", ["ACTOR", "MONITOR", "TEST_WRITER", "TEST_FAIL_GATE", "RESEARCH"]
+    )
+    @pytest.mark.parametrize(
+        "api", ["set_subtasks", "resume_single_subtask", "resume_from_plan"]
+    )
+    def test_destructive_setup_rejects_each_running_phase(
+        self, phase, api, branch_dir, tmp_path
+    ):
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state = map_orchestrator.StepState(
+            current_subtask_id="ST-002",
+            current_step_phase=phase,
+            current_step_id="2.3",
+            subtask_sequence=["ST-001", "ST-002"],
+        )
+        state.save(state_file)
+        before = state_file.read_bytes()
+        assert (
+            TestLosslessBlockerRepairSetup._setup_repair(api, branch_dir)["status"]
+            == "error"
+        )
+        assert state_file.read_bytes() == before
+
+    @pytest.mark.parametrize("phase", ["INIT_STATE", "COMPLETE"])
+    def test_setup_allows_init_and_completed_run(self, phase, branch_dir, tmp_path):
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        map_orchestrator.StepState(
+            current_subtask_id="ST-001",
+            current_step_phase=phase,
+            current_step_id="1.6" if phase == "INIT_STATE" else "COMPLETE",
+        ).save(state_file)
+        assert (
+            map_orchestrator.set_subtasks(["ST-002"], branch_dir)["status"] == "success"
+        )
+        assert (
+            map_orchestrator.StepState.load(state_file).current_subtask_id == "ST-002"
+        )
+
+    @pytest.mark.parametrize(
+        "reason", ["missing journal", "malformed journal", "unfinished orphan journal"]
+    )
+    def test_durable_guard_refusal_without_marker_is_preserved(
+        self, reason, branch_dir, tmp_path, monkeypatch
+    ):
+        import types
+
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        map_orchestrator.StepState().save(state_file)
+        before = state_file.read_bytes()
+
+        def journal_guard(branch):
+            assert branch == branch_dir
+            return {"status": "error", "reasons": [reason]}
+
+        monkeypatch.setitem(
+            sys.modules,
+            "map_interruption",
+            types.SimpleNamespace(interruption_guard=journal_guard),
+        )
+        result = map_orchestrator.set_subtasks(["ST-003"], branch_dir)
+        assert result["reasons"] == [reason]
+        assert state_file.read_bytes() == before
+
+    @pytest.mark.parametrize(
+        "marker", [{}, "corrupt", {"operation_id": "repair-missing"}]
+    )
+    def test_marker_denies_when_engine_unavailable(
+        self, marker, branch_dir, tmp_path, monkeypatch
+    ):
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state_file.write_text(
+            json.dumps({"active_interruption": marker}), encoding="utf-8"
+        )
+        before = state_file.read_bytes()
+        monkeypatch.setitem(sys.modules, "map_interruption", None)
+        assert (
+            map_orchestrator.initialize_workflow("replacement", branch_dir)["status"]
+            == "error"
+        )
+        assert state_file.read_bytes() == before
+
+    @pytest.mark.parametrize("raw_state", ["{", "[]"])
+    def test_corrupt_state_is_not_reset(self, raw_state, branch_dir, tmp_path):
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state_file.write_text(raw_state, encoding="utf-8")
+        assert (
+            map_orchestrator.initialize_workflow("replacement", branch_dir)["status"]
+            == "error"
+        )
+        assert state_file.read_text(encoding="utf-8") == raw_state
+
+    def test_read_only_peek_and_progress_allow_suspension(
+        self, branch_dir, tmp_path, monkeypatch
+    ):
+        plan_dir = tmp_path / ".map" / branch_dir
+        state_file = plan_dir / "step_state.json"
+        state = map_orchestrator.StepState(
+            current_subtask_id="ST-002",
+            current_step_id="2.3",
+            current_step_phase="ACTOR",
+            pending_steps=["2.3", "2.4"],
+        )
+        state.save(state_file)
+        (plan_dir / f"task_plan_{branch_dir}.md").write_text(
+            "### ST-002: Paused\n- **Status:** pending\n", encoding="utf-8"
+        )
+        before = state_file.read_bytes()
+
+        def unexpected_guard(branch):
+            pytest.fail(f"Read-only API must not use mutation guard for {branch}")
+
+        monkeypatch.setattr(map_orchestrator, "_interruption_guard", unexpected_guard)
+        assert map_orchestrator.peek_current_step(branch_dir)["phase"] == "ACTOR"
+        assert map_orchestrator.get_plan_progress(branch_dir)["status"] == "success"
+        assert state_file.read_bytes() == before
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "request_repair",
+            "begin_repair",
+            "verify_repair",
+            "finish_repair",
+            "repair_status",
+            "get_interruption_status",
+        ],
+    )
+    def test_repair_cli_delegates_explicit_file_and_hold(
+        self, command, branch_dir, tmp_path, monkeypatch, capsys
+    ):
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        argv = ["map_orchestrator.py", command, "--branch", branch_dir]
+        if command not in {"repair_status", "get_interruption_status"}:
+            argv.insert(2, "repair-123")
+        if command == "begin_repair":
+            argv += ["--approval-hold", "hold-123"]
+        if command == "verify_repair":
+            argv += ["--monitor-file", "monitor.json"]
+        calls = []
+
+        def delegate(name, *arguments):
+            calls.append((name, arguments))
+            return {"status": "ok"}
+
+        monkeypatch.setattr(map_orchestrator, "_repair_command", delegate)
+        monkeypatch.setattr(sys, "argv", argv)
+        map_orchestrator.main()
+        assert json.loads(capsys.readouterr().out)["status"] == "ok"
+        expected = () if command in {"repair_status", "get_interruption_status"} else ("repair-123",)
+        expected += (branch_dir,)
+        if command == "begin_repair":
+            expected += ("hold-123",)
+        if command == "verify_repair":
+            expected += ("monitor.json",)
+        assert calls == [
+            (
+                "get_interruption_status" if command in {"repair_status", "get_interruption_status"} else command,
+                expected,
+            )
+        ]
+
+
 class TestRestoreDeferredYagni:
     """Restore deferred_yagni items into active plan scope before approval."""
 
@@ -6397,7 +6755,8 @@ def test_step_state_save_replace_failure_preserves_target_and_cleans_temp(
     original = '{"current_step_id": "original"}\n'
     state_file.write_text(original, encoding="utf-8")
 
-    def fail_replace(_source: Path, _target: Path) -> Path:
+    def fail_replace(source: Path, target: Path) -> Path:
+        del source, target
         raise OSError("simulated replace failure")
 
     monkeypatch.setattr(Path, "replace", fail_replace)
@@ -6451,7 +6810,8 @@ def test_append_restored_subtask_replace_failure_preserves_plan(
     plan_file.write_text(original, encoding="utf-8")
     subtask, item = _restored_plan_inputs()
 
-    def fail_replace(_source: Path, _target: Path) -> Path:
+    def fail_replace(source: Path, target: Path) -> Path:
+        del source, target
         raise OSError("simulated replace failure")
 
     monkeypatch.setattr(Path, "replace", fail_replace)
