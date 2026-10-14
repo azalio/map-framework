@@ -3362,6 +3362,8 @@ def _assert_stale_attribution_recovery(content: str) -> None:
         'fail-closed `status="error"`',
         "Do not override the base with `HEAD`",
         "A valid exact-subtask repair-adjusted tree takes priority",
+        "If no exact-subtask adjusted-base entry is recorded, proceed to step 3",
+        "If an entry is recorded but its tree object is missing/invalid",
         "record_subtask_result",
         "verified rewritten counterpart",
         "all current Actor changes",

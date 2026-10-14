@@ -794,8 +794,9 @@ unknown committed changes are not an empty diff.
    Actor changes. `record_scope_baseline` cannot repair a failed diff.
 2. A valid exact-subtask repair-adjusted tree takes priority over the stored
    commit SHA. Do not override the base with `HEAD` or an explicit validator
-   base. If the adjusted tree is missing/invalid, stop and ask the operator;
-   re-recording a commit cannot repair it.
+   base. If an entry is recorded but its tree object is missing/invalid, stop
+   and ask the operator; re-recording a commit cannot repair it.
+   If no exact-subtask adjusted-base entry is recorded, proceed to step 3.
 3. Only for an ordinary commit baseline, use repository evidence to identify its
    verified rewritten counterpart and prove the boundary includes all current Actor changes.
    Use the orchestrator's `record_subtask_result` with explicit `--commit-sha`
