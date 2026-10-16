@@ -454,6 +454,14 @@ def test_apply_provider_matrix(tmp_path: Path, provider: str, skill: str) -> Non
     before = env.get_template(name).render(PROVIDER=opposite)
     include = source / "codex" / name
     include_before = include.read_bytes()
+    from mapify_cli.delivery.template_renderer import render_repo_trees
+
+    for runtime in ("claude", "codex"):
+        render_repo_trees(runtime, repo_root=root, templates_src_root=source)
+    # Snapshot actual generated files for both runtimes, including modes and
+    # wrapper-specific terminal newlines, not merely common-source rendering.
+    before_files = {p: (p.read_bytes(), p.stat().st_mode & 0o777)
+                    for p in root.rglob("*") if p.is_file()}
     winner = "Exact optimized winner.\nNo previous description tail."
     apply_optimized_description(skill=skill, winner=winner, current_description="old",
                                 no_improvement=False, repo_root=root, stage=False, provider=provider)
@@ -465,6 +473,18 @@ def test_apply_provider_matrix(tmp_path: Path, provider: str, skill: str) -> Non
     assert include.read_bytes() == include_before
     generated = root / (".claude/skills" if provider == "claude" else ".agents/skills") / skill / "SKILL.md"
     assert _read_frontmatter_description(generated) == winner
+    selected_roots = (".claude/skills", "src/mapify_cli/templates/skills") if provider == "claude" else (
+        ".agents/skills", "src/mapify_cli/templates/codex/skills"
+    )
+    selected_paths = {root / d / skill / "SKILL.md" for d in selected_roots}
+    from mapify_cli.skills_eval.apply_patcher import _plain_description
+
+    for path, (data, mode) in before_files.items():
+        assert path.stat().st_mode & 0o777 == mode
+        if path in selected_paths:
+            assert path.read_text() == _plain_description(data.decode(), winner)
+        elif path != _jinja_path(root, skill):
+            assert path.read_bytes() == data, f"Unrelated/opposite file changed: {path}"
 
 
 @pytest.mark.parametrize("provider", ["claude", "codex"])
