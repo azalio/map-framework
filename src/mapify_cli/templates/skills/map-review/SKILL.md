@@ -42,7 +42,7 @@ parallel_tool_policy: single_review_fanout
 - `--adversarial`: run five independent reviewers (Blind Hunter, Edge Case Hunter, Acceptance Auditor, plus the `user_experience` and `maintainer` roles) in parallel, then aggregate with deduplication and convergence analysis. Each reviewer operates in an isolated context with only its permitted inputs.
 - `--quick`: used with `--adversarial` to skip the Edge Case Hunter (Blind + Acceptance + both roles). Reduces token cost for routine changes.
 - `--show-raw-findings`: used with `--adversarial` to include raw reviewer outputs in the report. Useful for debugging or verifying aggregation.
-- `--cross-ai <runtime>`: dispatch the review to an INDEPENDENT external AI CLI (`claude`, `codex`, `gemini`, `opencode`) for a true second opinion. Off by default and **double-consent** (the flag AND `review.cross_ai.enabled: true`) — your diff/code leaves the machine. Runtime optional (configured default used). See the Cross-AI phase below and [review-reference.md](review-reference.md#cross-ai).
+- `--cross-ai <runtime>`: dispatch the review to an external AI CLI (`claude`, `codex`, `gemini`, `opencode`) for a fresh-context check; vendor independence depends on the returned provenance. Off by default and **double-consent** (the flag AND `review.cross_ai.enabled: true`) — your diff/code leaves the machine. Runtime optional (configured default used). See the Cross-AI phase below and [review-reference.md](review-reference.md#cross-ai).
 
 ## Execution Rules
 

@@ -14436,6 +14436,7 @@ class TestCrossAiWrap:
         assert map_step_runner.CROSS_AI_INJECTION_LABEL not in wrapped
         assert wrapped.startswith("```")
         assert wrapped.endswith("```")
+        assert "independent" not in wrapped.lower()
 
     def test_wrap_flags_injection(self):
         wrapped = map_step_runner.wrap_cross_ai_result(
