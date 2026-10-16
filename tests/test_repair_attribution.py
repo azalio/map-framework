@@ -211,6 +211,9 @@ def test_baselines_preserve_literal_paths(runner, repaired_repo, record):
     repo, _ = repaired_repo
     filename = 'preexisting "файл\n -> file.txt '
     (repo / filename).write_text("preexisting\n")
+    if record == "record_scope_baseline":
+        # Exercise scope fallback rather than the fixture's authoritative subtask boundary.
+        (repo / ".map" / BRANCH / "subtask-baselines" / f"{SUBTASK}.json").unlink()
     recorder = getattr(runner, record)
     report = recorder(BRANCH, SUBTASK) if record == "record_subtask_baseline" else recorder(BRANCH)
     baseline = json.loads(Path(report["path"]).read_text())
@@ -359,6 +362,47 @@ def test_work_dir_evidence_not_main_checkout_controls_attribution(runner, repair
     assert "existing.txt" in current
 
 
+@pytest.mark.parametrize("rewritten", [False, True], ids=["unwritten", "written"])
+def test_active_worktree_does_not_inherit_main_baseline_evidence(
+    runner, repaired_repo, tmp_path, baseline_producer, rewritten
+):
+    repo, _ = repaired_repo
+    record_baseline(runner, repo, baseline_producer)
+    worktree = tmp_path / "actor-worktree"
+    git(repo, "worktree", "add", "--detach", str(worktree), "HEAD")
+    (repo / ".map" / BRANCH / "worktrees.json").write_text(json.dumps({
+        "worktrees": {SUBTASK: {"subtask_id": SUBTASK, "path": str(worktree)}},
+    }))
+    if rewritten:
+        (worktree / "existing.txt").write_text("Actor worktree rewrite\n")
+    # Internal files remain excluded even on the separate-checkout path.
+    (worktree / ".map").mkdir()
+    (worktree / ".map" / "internal.txt").write_text("internal artifact\n")
+    expected = {"existing.txt"} if rewritten else set()
+    report = runner.detect_actor_files_changed_mismatch(BRANCH, SUBTASK, ["existing.txt"])
+    assert report["checked_in"] == "worktree", report
+    assert report["declared_not_written"] == ([] if rewritten else ["existing.txt"]), report
+    assert report["status_mismatch"] is (not rewritten), report
+    assert report["actual"] == sorted(expected), report
+    assert runner._current_subtask_changed_files(
+        BRANCH, SUBTASK, repo, work_dir=worktree,
+    ) == expected
+
+
+def test_same_checkout_work_dir_alias_still_reconciles_baseline(
+    runner, repaired_repo, tmp_path, baseline_producer
+):
+    repo, _ = repaired_repo
+    record_baseline(runner, repo, baseline_producer)
+    alias = tmp_path / "repository-link"
+    alias.symlink_to(repo, target_is_directory=True)
+    assert runner._current_subtask_changed_files(BRANCH, SUBTASK, repo, work_dir=alias) == set()
+    (repo / "existing.txt").write_text("Actor later rewrite\n")
+    assert runner._current_subtask_changed_files(
+        BRANCH, SUBTASK, repo, work_dir=alias,
+    ) == {"existing.txt"}
+
+
 @pytest.fixture(params=["subtask", "scope"])
 def baseline_producer(request):
     return request.param
@@ -455,6 +499,149 @@ def test_public_baseline_unchanged_path_is_excluded(
     else:
         report = runner.refresh_blueprint_affected_files(BRANCH, SUBTASK, replace=True)
         assert "existing.txt" not in report["current"], report
+
+
+@pytest.mark.parametrize("consumer", ["surface", "boundary", "refresh"])
+def test_symlinked_project_root_certifies_unchanged_dirty_baseline(
+    runner, repaired_repo, baseline_producer, consumer, monkeypatch, tmp_path
+):
+    repo, _ = repaired_repo
+    alias = tmp_path / "repository-link"
+    alias.symlink_to(repo, target_is_directory=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(alias))
+    record_baseline(runner, repo, baseline_producer)
+
+    def actual_paths():
+        if consumer == "surface":
+            current = runner._current_subtask_changed_files(BRANCH, SUBTASK, alias)
+            assert current is not None
+            return current
+        if consumer == "boundary":
+            report = runner.validate_mutation_boundary(BRANCH, SUBTASK)
+            assert report["status"] == "clean", report
+            return report["actual"]
+        report = runner.refresh_blueprint_affected_files(BRANCH, SUBTASK, replace=True)
+        assert report["status"] == "success", report
+        return report["current"]
+
+    assert "existing.txt" not in actual_paths()
+    # Resolving the trusted root must not suppress real later rewrites.
+    (repo / "existing.txt").write_text("Actor rewrite through aliased project root\n")
+    current = runner._current_subtask_changed_files(BRANCH, SUBTASK, alias)
+    assert current is not None
+    assert "existing.txt" in current
+
+
+def test_symlinked_project_root_still_rejects_symlink_ancestor(runner, tmp_path):
+    repo = tmp_path / "repository"
+    repo.mkdir()
+    alias = tmp_path / "repository-link"
+    alias.symlink_to(repo, target_is_directory=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "file.txt").write_text("must not follow this ancestor\n")
+    (repo / "linked-directory").symlink_to(outside, target_is_directory=True)
+    assert runner._baseline_worktree_evidence(alias, "linked-directory/file.txt") is None
+
+
+def test_symlinked_project_root_hashes_leaf_link_not_target(runner, tmp_path):
+    repo = tmp_path / "repository"
+    repo.mkdir()
+    alias = tmp_path / "repository-link"
+    alias.symlink_to(repo, target_is_directory=True)
+    target = tmp_path / "outside.txt"
+    target.write_text("initial target content\n")
+    (repo / "link.txt").symlink_to(target)
+    before = runner._baseline_worktree_evidence(alias, "link.txt")
+    assert before is not None
+    assert before["type"] == "symlink"
+    target.write_text("changed target content must not affect evidence\n")
+    assert runner._baseline_worktree_evidence(alias, "link.txt") == before
+
+
+@pytest.mark.parametrize("path", ["../outside.txt", ".git/config", ".env", "credentials.json"])
+def test_symlinked_project_root_preserves_path_exclusions(runner, tmp_path, path):
+    repo = tmp_path / "repository"
+    repo.mkdir()
+    alias = tmp_path / "repository-link"
+    alias.symlink_to(repo, target_is_directory=True)
+    assert runner._baseline_worktree_evidence(alias, path) is None
+
+
+def test_symlinked_project_root_rejects_special_file(runner, tmp_path):
+    repo = tmp_path / "repository"
+    repo.mkdir()
+    alias = tmp_path / "repository-link"
+    alias.symlink_to(repo, target_is_directory=True)
+    os.mkfifo(repo / "pipe")
+    assert runner._baseline_worktree_evidence(alias, "pipe") is None
+
+
+@pytest.mark.parametrize("committed", [False, True], ids=["dirty-prior-work", "committed-prior-work"])
+@pytest.mark.parametrize("consumer", ["surface", "boundary", "refresh"])
+def test_current_subtask_baseline_excludes_untouched_prior_subtask_work(
+    runner, repaired_repo, committed, consumer
+):
+    repo, _ = repaired_repo
+    git(repo, "add", "actor.txt", "new.txt", "existing.txt")
+    git(repo, "commit", "-m", "Complete fixture work")
+    path = repo / "existing.txt"
+    path.write_text("dirty before ST-001\n")
+    scope = runner.record_scope_baseline(BRANCH)
+    assert scope["status"] == "success", scope
+    scope_path = Path(scope["path"])
+    frozen_scope = scope_path.read_bytes()
+    path.write_text("ST-001 work\n")
+    if committed:
+        git(repo, "add", "existing.txt")
+        git(repo, "commit", "-m", "ST-001")
+    (repo / ".map" / BRANCH / "step_state.json").write_text(json.dumps({
+        "last_subtask_commit_sha": git(repo, "rev-parse", "HEAD"),
+        "subtask_results": {},
+    }))
+    baseline = runner.record_subtask_baseline(BRANCH, SUBTASK)
+    assert baseline["status"] == "success", baseline
+    # Selection is by artifact existence, not an untrusted JSON identity field.
+    baseline_path = Path(baseline["path"])
+    payload = json.loads(baseline_path.read_text())
+    payload.pop("subtask_id")
+    baseline_path.write_text(json.dumps(payload))
+    if consumer == "surface":
+        assert runner._current_subtask_changed_files(BRANCH, SUBTASK, repo) == set()
+    elif consumer == "boundary":
+        report = runner.validate_mutation_boundary(BRANCH, SUBTASK)
+        assert report["actual"] == [], report
+        assert report["status"] == "clean", report
+    else:
+        report = runner.refresh_blueprint_affected_files(BRANCH, SUBTASK, replace=True)
+        assert report["current"] == [], report
+    assert scope_path.read_bytes() == frozen_scope
+
+
+@pytest.mark.parametrize("subtask_payload", ["{", "null", "[]", '{"files":["existing.txt"]}'])
+def test_existing_invalid_subtask_baseline_never_falls_back_to_scope(
+    runner, repaired_repo, subtask_payload
+):
+    repo, _ = repaired_repo
+    report = runner.record_scope_baseline(BRANCH)
+    assert report["status"] == "success", report
+    (repo / ".map" / BRANCH / "subtask-baselines" / f"{SUBTASK}.json").write_text(
+        subtask_payload
+    )
+    current = runner._current_subtask_changed_files(BRANCH, SUBTASK, repo)
+    assert current is not None
+    assert "existing.txt" in current
+
+
+def test_missing_subtask_baseline_uses_scope_without_refresh(runner, repaired_repo):
+    repo, _ = repaired_repo
+    record_baseline(runner, repo, "scope")
+    scope_path = repo / ".map" / BRANCH / "scope-baseline.json"
+    frozen_scope = scope_path.read_bytes()
+    assert runner._current_subtask_changed_files(BRANCH, SUBTASK, repo) == set()
+    (repo / "existing.txt").write_text("Actor rewrite after scope-only capture\n")
+    assert runner._current_subtask_changed_files(BRANCH, SUBTASK, repo) == {"existing.txt"}
+    assert scope_path.read_bytes() == frozen_scope
 
 
 @pytest.mark.parametrize("consumer", ["surface", "boundary", "refresh"])

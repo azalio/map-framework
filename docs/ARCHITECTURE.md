@@ -144,12 +144,17 @@ entries. It stores no file contents. Existing atomic JSON publication keeps the
 snapshot readable across process restarts; capture belongs before Actor work,
 not during a retry to silence a gate.
 
-Attribution reconciles raw Git paths together with baseline paths, so restoring
-a dirty file to HEAD is still a visible change. A path is excluded only when
-every baseline layer listing it has complete evidence matching its current
-working-tree and index state. A rewrite or unknown evidence in either layer
-prevents exclusion. Old path-only records cannot prove that a file is unchanged
-and are retained conservatively; this may surface additional scope warnings.
+Attribution uses the current subtask baseline exclusively when its artifact
+exists; the branch scope baseline is a fallback only when that artifact is
+absent. Older scope evidence neither adds candidates nor vetoes suppression for
+a later subtask, and is not refreshed at subtask boundaries. Raw Git paths are
+reconciled together with paths from the selected baseline, so restoring a dirty
+file to HEAD is still a visible change. A path is excluded only when the selected
+baseline has complete evidence matching its current working-tree and index
+state. Legacy, malformed or unknown evidence cannot certify unchanged state and
+is retained conservatively, without falling back to an older scope artifact.
+Baselines describe their capture checkout; a distinct active worktree uses its
+own raw Git mutation surface rather than inheriting main-checkout evidence.
 The same reconciliation serves Actor mismatch, mutation-boundary checks,
 regression/blast-radius detection and affected-files refresh. Repair-adjusted
 trees still determine the underlying diff and exclude independent repair work.

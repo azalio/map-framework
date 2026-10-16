@@ -15854,7 +15854,8 @@ def _baseline_worktree_evidence(git_cwd: Path, path: str) -> dict[str, object] |
     descriptors: list[int] = []
     try:
         directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-        descriptors.append(os.open(git_cwd, directory_flags))
+        # Resolve the trusted checkout root, never the untrusted path beneath it.
+        descriptors.append(os.open(git_cwd.resolve(), directory_flags))
         for part in parts[:-1]:
             try:
                 descriptors.append(os.open(part, directory_flags, dir_fd=descriptors[-1]))
@@ -15964,28 +15965,34 @@ def _valid_baseline_path_evidence(value: object) -> bool:
 
 
 def _load_mutation_baselines(branch: str, subtask_id: str, project_dir: Path) -> list[dict]:
-    layers: list[dict] = []
-    for path in (
-        _subtask_baseline_path(branch, subtask_id, project_dir),
-        _scope_baseline_path(branch, project_dir),
-    ):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                layers.append(data)
-        except (OSError, ValueError):
-            pass
-    return layers
+    """Select the subtask artifact; use scope only when that artifact is absent.
+
+    Invalid or unreadable subtask evidence cannot fall back to an older scope
+    snapshot. Artifact presence, not JSON identity fields, owns the boundary.
+    """
+    path = _subtask_baseline_path(branch, subtask_id, project_dir)
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        path = _scope_baseline_path(branch, project_dir)
+    except OSError:
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return [data] if isinstance(data, dict) else []
+    except (OSError, ValueError):
+        return []
 
 
 def _reconcile_mutation_baselines(
     candidates: set[str], branch: str, subtask_id: str, project_dir: Path, *, git_cwd: Path,
 ) -> set[str]:
-    """Suppress only paths certified unchanged by EVERY layer listing that path.
+    """Suppress only paths certified unchanged by the selected baseline.
 
-    Union baseline paths first: returning dirty content to HEAD can disappear
-    from Git's current candidate list, but is still a mutation since capture.
-    Layers not listing a path have no vote; legacy/unknown evidence vetoes.
+    The current subtask artifact is authoritative; scope is only a fallback
+    when it is absent. Union selected baseline paths first: returning dirty
+    content to HEAD can disappear from Git's candidates but remains a mutation
+    since capture. Legacy/unknown evidence cannot certify an unchanged path.
     """
     applicable: dict[str, list[object]] = {}
     for layer in _load_mutation_baselines(branch, subtask_id, project_dir):
@@ -16019,9 +16026,10 @@ def record_subtask_baseline(branch: str, subtask_id: str) -> dict:
     Fires automatically when validate_step("2.2") completes RESEARCH, before
     Actor starts. Repeated completed-step validation does not recapture it.
     Explicit calls are for pre-Actor capture only, never mid-Actor or retries.
-    Shared attribution suppresses a listed path only while ALL listing layers
-    (this snapshot and scope-baseline.json) certify its state is unchanged.
-    Legacy or unavailable evidence cannot hide a mutation.
+    This artifact is the authoritative attribution boundary when present;
+    scope-baseline.json is consulted only when this artifact is absent.
+    A listed path is suppressed only while its evidence certifies unchanged
+    state. Legacy or unavailable evidence cannot hide a mutation.
 
     Added 2026-05-26: ``head_sha`` field captures the commit SHA at
     baseline time so refresh_blueprint_affected_files can resolve the
@@ -17063,8 +17071,10 @@ def record_scope_baseline(branch: str) -> dict:
     """Capture pre-existing dirty paths and semantic worktree/index evidence.
 
     Call only before Actor starts, never to silence a mid-Actor scope warning.
-    A path is suppressed only while every baseline listing it has complete,
-    valid evidence equal to its current state; legacy evidence is conservative.
+    Used only when the current subtask baseline artifact is absent; never
+    refreshed to account for earlier subtasks. A listed path is suppressed only
+    with complete, valid evidence equal to its current state; legacy evidence
+    is conservative.
     Uses ``-uall`` to preserve individual files inside untracked directories
     instead of masking new siblings behind a collapsed directory (#376).
 
@@ -17610,6 +17620,9 @@ def _current_subtask_changed_files(
     if diff_result is not None:
         changed.update(_git_diff_paths(diff_result.stdout))
 
+    if git_cwd.resolve() != project_dir.resolve():
+        # Durable baselines describe the main checkout, not an isolated worktree.
+        return {path for path in changed if not _is_map_internal_artifact(path)}
     return _reconcile_mutation_baselines(
         changed, branch_name, subtask_id, project_dir, git_cwd=git_cwd,
     )
