@@ -1,10 +1,12 @@
 ---
+[% set cmd = "/" if PROVIDER == "claude" else "$" -%]
 name: map-fast
 description: |
   Minimal MAP workflow for small low-risk changes (40-50% token savings, no Predictor/Reflector). Use when the change is small, low-risk, and learning is not needed. Do NOT use for risky or complex work; use map-efficient.
-effort: low
+[% if PROVIDER == "claude" %]effort: low
 disable-model-invocation: true
 argument-hint: "[task description]"
+[% else %][% endif -%]
 ---
 [% include "_partials/auto-update-preflight.md.jinja" %]
 # MAP Fast Workflow
@@ -27,7 +29,7 @@ parallel_tool_policy: sequential_by_default
 ```
 
 - Keep reasoning brief and action-oriented; this workflow exists to avoid heavyweight orchestration for bounded, low-risk work.
-- Do not add research, Predictor, Evaluator, Reflector, or extra self-audit steps unless the task no longer fits `/map-fast`; switch to `/map-efficient` instead.
+- Do not add research, Predictor, Evaluator, Reflector, or extra self-audit steps unless the task no longer fits `<% cmd %>map-fast`; switch to `<% cmd %>map-efficient` instead.
 - Run agent phases sequentially. Parallelize only independent read-only file inspection or independent check commands when there are no state transitions or edits involved.
 
 ## When Not To Expand Scope
@@ -35,7 +37,7 @@ parallel_tool_policy: sequential_by_default
 - Do not add discovery, design review, impact analysis, or learning steps to keep this workflow busy.
 - Do not refactor nearby code unless the selected small task cannot work without that exact change.
 - Do not edit unrelated files or add, remove, or upgrade dependencies unless the task explicitly requires that exact change.
-- If the task becomes risky, multi-stage, or ambiguous, stop using `/map-fast` and switch to `/map-efficient` or `/map-plan` instead.
+- If the task becomes risky, multi-stage, or ambiguous, stop using `<% cmd %>map-fast` and switch to `<% cmd %>map-efficient` or `<% cmd %>map-plan` instead.
 
 ## Mutation Boundary Constraints
 
@@ -51,8 +53,9 @@ These constraints apply to the Actor implementation prompt:
 Minimal agent sequence (token-optimized, reduced analysis depth):
 
 ```
-1. DECOMPOSE → task-decomposer
-2. FOR each subtask:
+[% if PROVIDER == "claude" %]1. DECOMPOSE → task-decomposer
+[% else %]1. DECOMPOSE → decomposer
+[% endif %]2. FOR each subtask:
    3. IMPLEMENT → actor (edits files directly)
    4. VALIDATE → monitor (reads written files)
    5. If invalid: provide feedback, go to step 3 (max 3 iterations)
@@ -70,11 +73,15 @@ Minimal agent sequence (token-optimized, reduced analysis depth):
 Break down the task into subtasks:
 
 ```
-Task(
+[% if PROVIDER == "claude" %]Task(
   subagent_type="task-decomposer",
   description="Decompose task into subtasks",
   prompt="Break down this task into atomic subtasks (≤8):
-
+[% else %]spawn_agent(
+  agent_type="decomposer",
+  task_name="decompose_task_into_subtasks",
+  message="Break down this task into atomic subtasks (≤8):
+[% endif %]
 Task: $ARGUMENTS
 
 JSON contract reference: [Decomposition Output](../../references/map-json-output-contracts.md#decomposition-output).
@@ -96,11 +103,19 @@ Each subtask must be:
 ### 2.1 Call Actor to Implement
 
 ```
-Task(
+[% if PROVIDER == "claude" %]Task(
   subagent_type="actor",
   description="Implement subtask [ID]",
   prompt="Implement this subtask:
+[% else %]Derive `SAFE_SUBTASK_ID` by lowercasing the current id and replacing every
+non-alphanumeric run with `_`; include the current retry number in
+`ACTOR_TASK_NAME` and `MONITOR_TASK_NAME` so each dispatch is unique.
 
+spawn_agent(
+  agent_type="actor",
+  task_name=ACTOR_TASK_NAME,
+  message="Implement this subtask:
+[% endif %]
 **Subtask:** [description]
 **Acceptance Criteria:** [criteria]
 
@@ -113,19 +128,24 @@ Output JSON with:
   - trade_offs: array of strings
   - remaining_risks: array of strings
 
-Apply changes directly with Edit/Write tools. Do not serialize full file contents in your response.
-Do not edit unrelated files, add or upgrade dependencies, or refactor neighboring code unless the current subtask explicitly requires it. Report any required scope expansion as a blocker/tradeoff."
+[% if PROVIDER == "claude" %]Apply changes directly with Edit/Write tools. Do not serialize full file contents in your response.
+[% else %]Apply changes directly with `apply_patch`. Do not serialize full file contents in your response.
+[% endif %]Do not edit unrelated files, add or upgrade dependencies, or refactor neighboring code unless the current subtask explicitly requires it. Report any required scope expansion as a blocker/tradeoff."
 )
 ```
 
 ### 2.2 Call Monitor to Validate
 
 ```
-Task(
+[% if PROVIDER == "claude" %]Task(
   subagent_type="monitor",
   description="Validate implementation",
   prompt="Validate written code for this subtask:
-
+[% else %]spawn_agent(
+  agent_type="monitor",
+  task_name=MONITOR_TASK_NAME,
+  message="Validate written code for this subtask:
+[% endif %]
 **Written Files:** [files_changed from Actor]
 **Subtask:** [description]
 **Acceptance Criteria:** [criteria]
@@ -179,12 +199,12 @@ Begin now with minimal workflow.
 ## Examples
 
 ```
-/map-fast add a --verbose flag to the status command
-/map-fast fix the off-by-one error in the pagination offset
+<% cmd %>map-fast add a --verbose flag to the status command
+<% cmd %>map-fast fix the off-by-one error in the pagination offset
 ```
 
 ## Troubleshooting
 
-- **Issue:** Task turns out risky, multi-stage, or ambiguous. **Fix:** Stop using `/map-fast`; switch to `/map-efficient` or `/map-plan` (see "When Not To Expand Scope").
+- **Issue:** Task turns out risky, multi-stage, or ambiguous. **Fix:** Stop using `<% cmd %>map-fast`; switch to `<% cmd %>map-efficient` or `<% cmd %>map-plan` (see "When Not To Expand Scope").
 - **Issue:** A subtask exceeds 3 iterations without passing Monitor. **Fix:** Report it as a blocker/tradeoff — do not loop or fake-complete (see "Critical Constraints").
-- **Issue:** The session was interrupted mid-workflow. **Fix:** Run `/map-resume` to recover.
+- **Issue:** The session was interrupted mid-workflow. **Fix:** Run `<% cmd %>map-resume` to recover.
