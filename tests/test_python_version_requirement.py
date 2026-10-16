@@ -89,7 +89,7 @@ def _shebang_files() -> list[Path]:
         for path in sorted(root.rglob("*.py*")):
             if path.suffix not in {".py", ".jinja"}:
                 continue
-            if EXCLUDED_PARTS.intersection(path.parts):
+            if EXCLUDED_PARTS.intersection(path.relative_to(root).parts):
                 continue
             try:
                 first = path.read_text(encoding="utf-8").split("\n", 1)[0]
@@ -164,6 +164,21 @@ def test_shebang_files_are_discovered() -> None:
     """Guard against a silently empty scan making the checks below vacuous."""
     files = _shebang_files()
     assert len(files) >= 60, f"expected the shebang scan to find files, got {files}"
+
+
+def test_shebang_scan_ignores_only_exclusions_below_scan_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A checkout nested in worktrees still scans its own shipped scripts."""
+    root = tmp_path / "worktrees" / "checkout" / "scripts"
+    root.mkdir(parents=True)
+    shipped = root / "runner.py"
+    shipped.write_text(SHEBANG + "\n", encoding="utf-8")
+    nested = root / "worktrees" / "nested"
+    nested.mkdir(parents=True)
+    (nested / "ignored.py").write_text(SHEBANG + "\n", encoding="utf-8")
+    monkeypatch.setitem(globals(), "SHEBANG_ROOTS", (root,))
+    assert _shebang_files() == [shipped]
 
 
 def test_shebang_scan_skips_nested_worktrees_and_venvs(

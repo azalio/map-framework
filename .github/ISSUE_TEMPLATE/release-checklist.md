@@ -25,7 +25,7 @@ assignees: ''
   - Command examples (bash/sed commands below)
   - URLs and file paths
 - Verify replacement: Search for `{{VERSION}}` - should find 0 results
-- Total replacements needed: 17 instances
+- Replace every occurrence; the count changes as the checklist evolves.
 
 ---
 
@@ -114,30 +114,23 @@ assignees: ''
 
 ---
 
-## Phase 3: Create GitHub Release (~5 min)
+## Phase 3: Verify Automatic GitHub Release (~5 min)
 
 > **Reference**: [Creating a GitHub Release](../RELEASING.md#creating-a-github-release) in RELEASING.md
 
-### 3.1 Extract Release Notes
+The tag push triggers `.github/workflows/release.yml`. Its `publish` job
+automatically creates the GitHub Release after PyPI publishing succeeds,
+using `softprops/action-gh-release@v2` and the matching version section in
+`CHANGELOG.md` for release notes. Do not create a release manually.
 
-- [ ] Extract CHANGELOG excerpt for release notes:
+- [ ] Find the release workflow run for the tag and expected commit:
   ```bash
-  # BSD/macOS compatible. NB: a two-address awk range (/start/,/end/) collapses
-  # to one line here — the version heading matches both patterns; use a flag.
-  awk '/^## \[{{VERSION}}\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md
+  gh run list --workflow=release.yml --branch v{{VERSION}} --commit "$(git rev-parse 'v{{VERSION}}^{commit}')"
   ```
-- [ ] Review release notes content
-- [ ] Add any additional context (migration notes, breaking changes, etc.)
-
-### 3.2 Create GitHub Release
-
-- [ ] Create release using GitHub CLI:
-  ```bash
-  gh release create v{{VERSION}} \
-    --title "MAP Framework v{{VERSION}}" \
-    --notes "$(awk '/^## \[{{VERSION}}\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md)"
-  ```
-- [ ] Verify release created: `gh release view v{{VERSION}}`
+- [ ] Wait for that run: `gh run watch <release-run-id> --exit-status`
+- [ ] If it fails, inspect `gh run view <release-run-id> --log-failed`; check PyPI publishing separately before recovery
+- [ ] Verify the automatically created release: `gh release view v{{VERSION}}`
+- [ ] Verify title, tag, and release notes match the versioned CHANGELOG section
 - [ ] Release appears on GitHub releases page: https://github.com/azalio/map-framework/releases
 
 ---
