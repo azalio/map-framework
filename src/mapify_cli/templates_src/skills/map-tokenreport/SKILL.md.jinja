@@ -1,13 +1,15 @@
 ---
+[% set cmd = "/" if PROVIDER == "claude" else "$" -%]
 name: map-tokenreport
 description: |
   Show per-subtask/agent token accounting (input, output, cache read/creation, cost, cache-hit ratio) for the current branch. Supports --dashboard (box-drawing visual), --history (trends), --estimate (cost projection), --json / --csv export, and --finalize (record session snapshot). Use when asked for token usage, run cost, or a token report. Do NOT use to plan or run work; use map-efficient.
-effort: low
+[% if PROVIDER == "claude" %]effort: low
 disable-model-invocation: true
 argument-hint: "[branch] [--dashboard|--history|--estimate|--json|--csv|--finalize]"
+[% else %][% endif -%]
 ---
 [% include "_partials/auto-update-preflight.md.jinja" %]
-# /map-tokenreport - Token Accounting Report
+# <% cmd %>map-tokenreport - Token Accounting Report
 
 Purpose: surface how many tokens (and how much money) the current branch's MAP
 run spent, attributed to the subtask, phase, and agent that spent them.
@@ -19,12 +21,13 @@ gates.
 This skill is strictly read-only reporting.
 
 - **NEVER** edit code, state, or git from this skill — it renders an existing rollup and stops.
-- **NEVER** run or resume a MAP workflow here; if work is needed, hand off to `/map-efficient`.
+- **NEVER** run or resume a MAP workflow here; if work is needed, hand off to `<% cmd %>map-efficient`.
 - **NEVER** present `est_cost_usd` as a billing source of truth — it is a per-model estimate.
 
 The numbers come from the `map-token-meter` hook (wired on `SubagentStop` and
-`Stop`), which reads each Claude Code transcript's per-turn `usage` block and
-appends attributed rows to `.map/<branch>/token_log.jsonl`, rolled up into
+[% if PROVIDER == "claude" %]`Stop`), which reads each Claude Code transcript's per-turn `usage` block and
+[% else %]`Stop`), which reads each Codex transcript's per-turn `usage` block and
+[% endif %]appends attributed rows to `.map/<branch>/token_log.jsonl`, rolled up into
 `.map/<branch>/token_accounting.json`. This skill just renders that rollup.
 
 ## What it shows
@@ -36,10 +39,12 @@ appends attributed rows to `.map/<branch>/token_log.jsonl`, rolled up into
   `map_step_runner.py` (estimate, not a billing source of truth).
 - **cache_hit_ratio** = `cache_read / (input + cache_read)` — how well prompt
   caching is paying off.
-- Breakdowns by subtask, by agent (actor / monitor / research-agent /
-  orchestrator / ...), and by phase.
-- **research_roi** — research-agent / Codex researcher tokens and cost compared
-  with downstream Actor/Monitor tokens, so users can see whether delegated
+[% if PROVIDER == "claude" %]- Breakdowns by subtask, by agent (actor / monitor / research-agent /
+[% else %]- Breakdowns by subtask, by agent (actor / monitor / researcher /
+[% endif %]  orchestrator / ...), and by phase.
+[% if PROVIDER == "claude" %]- **research_roi** — research-agent / Codex researcher tokens and cost compared
+[% else %]- **research_roi** — researcher / Codex researcher tokens and cost compared
+[% endif %]  with downstream Actor/Monitor tokens, so users can see whether delegated
   exploration paid for itself.
 
 ## Modes
@@ -129,37 +134,37 @@ Fill every field from the `token_report` output. If a value is unavailable, writ
 Report token usage for the current branch:
 
 ```text
-/map-tokenreport
+<% cmd %>map-tokenreport
 ```
 
 Visual dashboard:
 
 ```text
-/map-tokenreport --dashboard
+<% cmd %>map-tokenreport --dashboard
 ```
 
 Trend over last 5 sessions:
 
 ```text
-/map-tokenreport --history 5
+<% cmd %>map-tokenreport --history 5
 ```
 
 Cost estimate before starting:
 
 ```text
-/map-tokenreport --estimate
+<% cmd %>map-tokenreport --estimate
 ```
 
 Export for CI pipeline:
 
 ```text
-/map-tokenreport --json > .map/token_report.json
+<% cmd %>map-tokenreport --json > .map/token_report.json
 ```
 
 Record a snapshot (typically called automatically by the Stop hook):
 
 ```text
-/map-tokenreport --finalize
+<% cmd %>map-tokenreport --finalize
 ```
 
 Typical dashboard output:
@@ -226,13 +231,14 @@ Cost estimate — feat-oauth2
 - **`token_accounting.json` does not exist / report is empty.** The
   `map-token-meter` hook has not fired for this branch yet. It records on
   `SubagentStop` and `Stop`, so a brand-new branch with no completed turns has
-  nothing to show. Confirm the hook is wired in `.claude/settings.json`
-  (`SubagentStop` and `Stop` entries) and that `.map/<branch>/token_log.jsonl`
+[% if PROVIDER == "claude" %]  nothing to show. Confirm the hook is wired in `.claude/settings.json`
+[% else %]  nothing to show. Confirm the hook is wired in `.codex/hooks.json`
+[% endif %]  (`SubagentStop` and `Stop` entries) and that `.map/<branch>/token_log.jsonl`
   exists.
 - **Everything is attributed to `orchestrator` / `unattributed`.** Those turns
   ran outside a MAP subtask (e.g. direct edits, or before `step_state.json` had
   a `current_subtask_id`). Per-subtask attribution appears once a
-  `/map-efficient` run sets the active subtask.
+  `<% cmd %>map-efficient` run sets the active subtask.
 - **Cost looks high relative to raw input.** That is expected when most input
   is cached: `cache_creation` is the dominant cost on cache-heavy runs. Compare
   `cache_creation` vs `cache_read` and the cache-hit ratio to see where the
@@ -241,7 +247,7 @@ Cost estimate — feat-oauth2
   default model price for unrecognized model ids; update that table in
   `map_step_runner.py` when a new model ships.
 - **`--history` / `--estimate` show no data.** No snapshots have been recorded.
-  Run `/map-tokenreport --finalize` at the end of each session, or set up the
+  Run `<% cmd %>map-tokenreport --finalize` at the end of each session, or set up the
   Stop hook to call `record_session_snapshot` automatically.
 - **Dashboard layout looks wrong in narrow terminals.** The dashboard uses
   a fixed 67-character width. Pipe the output to a file and view it in a wider
