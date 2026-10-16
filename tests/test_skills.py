@@ -63,7 +63,7 @@ SUPPORTED_SKILL_CLASSES = {"reference", "task", "hybrid"}
 NEGATIVE_TRIGGER_DESCRIPTION_EXEMPT_SKILLS = {"map-upgrade"}
 # Codex twins rendered from the Claude source via [% include %] (PROVIDER-conditional).
 SINGLE_SOURCE_CODEX_SKILLS = {
-    "map-architecture", "map-auto", "map-check", "map-debug", "map-efficient", "map-explain", "map-learn", "map-plan", "map-prd-review", "map-resume", "map-state", "map-task", "map-tdd", "map-tokenreport", "map-understand", "map-review", "map-release", "map-fast", "map-memory-now", "map-skill-eval", "map-so-search", "map-wayfind"
+    "map-architecture", "map-auto", "map-check", "map-debug", "map-efficient", "map-explain", "map-learn", "map-plan", "map-prd-review", "map-resume", "map-state", "map-task", "map-tdd", "map-tokenreport", "map-understand", "map-upgrade", "map-review", "map-release", "map-fast", "map-memory-now", "map-skill-eval", "map-so-search", "map-wayfind"
 }
 
 WORKFLOW_EFFORT_PROFILES = {
@@ -424,25 +424,32 @@ class TestProviderUpdateSkills:
             "Use when the user asks to update, upgrade, or check the installed "
             "MAP version."
         )
-        claude = templates_src / "skills/map-upgrade/SKILL.md.jinja"
-        codex = templates_src / "codex/skills/map-upgrade/SKILL.md.jinja"
+        from mapify_cli.delivery.template_renderer import get_environment
 
-        assert claude.read_text(encoding="utf-8") == (
+        env = get_environment(templates_src)
+        claude = env.get_template("skills/map-upgrade/SKILL.md.jinja")
+        codex = env.get_template("codex/skills/map-upgrade/SKILL.md.jinja")
+        for provider, template in (("claude", claude), ("codex", codex)):
+            flow = env.get_template("_partials/manual-upgrade-flow.md.jinja").render(
+                PROVIDER=provider
+            )
+            assert template.render(PROVIDER=provider).partition("\n---\n")[2] == flow + "\n"
+        assert MANUAL_UPGRADE_FLOW_INCLUDE in (
+            templates_src / "skills/map-upgrade/SKILL.md.jinja"
+        ).read_text(encoding="utf-8")
+
+        assert claude.render(PROVIDER="claude").partition("\n---\n")[0] == (
             "---\n"
             "name: map-upgrade\n"
             f'description: "{description}"\n'
             "effort: low\n"
             "disable-model-invocation: true\n"
-            'argument-hint: "[no arguments]"\n'
-            "---\n"
-            f"{MANUAL_UPGRADE_FLOW_INCLUDE}\n"
+            'argument-hint: "[no arguments]"'
         )
-        assert codex.read_text(encoding="utf-8") == (
+        assert codex.render(PROVIDER="codex").partition("\n---\n")[0] == (
             "---\n"
             "name: map-upgrade\n"
-            f'description: "{description}"\n'
-            "---\n"
-            f"{MANUAL_UPGRADE_FLOW_INCLUDE}\n"
+            f'description: "{description}"'
         )
 
     def test_rendered_map_upgrade_skills_share_complete_manual_status_flow(
@@ -502,8 +509,11 @@ class TestProviderUpdateSkills:
         codex = project_root / ".agents/skills" / skill / "SKILL.md"
         claude_text = claude.read_text(encoding="utf-8")
         codex_text = codex.read_text(encoding="utf-8")
-        assert not codex_cmd.search(claude_text) and claude_cmd.search(claude_text)
-        assert not claude_cmd.search(codex_text) and codex_cmd.search(codex_text)
+        assert not codex_cmd.search(claude_text)
+        assert not claude_cmd.search(codex_text)
+        # The manual-upgrade flow uses mapify directly, without slash commands.
+        assert bool(claude_cmd.search(claude_text)) == (skill != "map-upgrade")
+        assert bool(codex_cmd.search(codex_text)) == (skill != "map-upgrade")
         for key in ("effort:", "disable-model-invocation:", "argument-hint:"):
             # Preserve existing auto-invocable and argument-free metadata.
             expected = skill not in {"map-so-search", "map-state"} and not (
@@ -4418,7 +4428,7 @@ def test_sofa_shared_source_preserves_provider_contract(
 
 def test_single_source_codex_skills_set_is_pinned() -> None:
     assert SINGLE_SOURCE_CODEX_SKILLS == {
-        "map-architecture", "map-auto", "map-check", "map-debug", "map-efficient", "map-explain", "map-learn", "map-plan", "map-prd-review", "map-resume", "map-state", "map-task", "map-tdd", "map-tokenreport", "map-understand", "map-review", "map-release", "map-fast", "map-memory-now", "map-skill-eval", "map-so-search", "map-wayfind"
+        "map-architecture", "map-auto", "map-check", "map-debug", "map-efficient", "map-explain", "map-learn", "map-plan", "map-prd-review", "map-resume", "map-state", "map-task", "map-tdd", "map-tokenreport", "map-understand", "map-upgrade", "map-review", "map-release", "map-fast", "map-memory-now", "map-skill-eval", "map-so-search", "map-wayfind"
     }
 
 
