@@ -56,6 +56,82 @@ def write_state(repo: Path, value: Any) -> None:
     (repo / ".map" / BRANCH / "step_state.json").write_text(json.dumps(state))
 
 
+@pytest.mark.parametrize("mode", ["off", "false", "0", "no", "n", "auto", "required"])
+@pytest.mark.parametrize("written_in", ["main", "worktree"])
+def test_stale_worktree_attribution_respects_isolation_mode(
+    runner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, written_in: str,
+):
+    """A disabled sidecar is retained for recovery, not used as write evidence."""
+    monkeypatch.setenv("GIT_OPTIONAL_LOCKS", "0")
+    repo = tmp_path / "mode-repository"
+    repo.mkdir()
+    git(repo, "init", "-b", BRANCH)
+    git(repo, "config", "user.name", "Fixture")
+    git(repo, "config", "user.email", "fixture@example.invalid")
+    (repo / ".gitignore").write_text(".map/\n")
+    (repo / "target.py").write_text("original = True\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-m", "seed")
+    workspace = repo / ".map" / BRANCH
+    workspace.mkdir(parents=True)
+    config = repo / ".map" / "config.yaml"
+    config.write_text("worktree.isolation: auto\n")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+    (workspace / "step_state.json").write_text(json.dumps({"subtask_results": {}}))
+    assert runner.record_subtask_baseline(BRANCH, SUBTASK)["status"] == "success"
+    worktree = tmp_path / "retained-worktree"
+    git(repo, "worktree", "add", "--detach", str(worktree), "HEAD")
+    (workspace / "worktrees.json").write_text(json.dumps({"worktrees": {
+        SUBTASK: {"subtask_id": SUBTASK, "path": str(worktree),
+                  "base_sha": git(repo, "rev-parse", "HEAD"), "status": "created"},
+    }}))
+    config.write_text(f"worktree.isolation: {mode}\nexecution.concurrent_dispatch: false\n")
+    selected = worktree if written_in == "worktree" else repo
+    (selected / "target.py").write_text("actor = True\n")
+
+    def snapshot():
+        return (
+            {str(p.relative_to(repo)): p.read_bytes() for p in (repo / ".map").rglob("*")
+             if p.is_file()},
+            (repo / "target.py").read_bytes(), (worktree / "target.py").read_bytes(),
+            git(repo, "show-ref"), git(repo, "rev-parse", "HEAD"),
+            git(worktree, "rev-parse", "HEAD"), git(repo, "worktree", "list", "--porcelain"),
+            (repo / ".git" / "index").read_bytes(),
+            Path(git(worktree, "rev-parse", "--git-path", "index")).read_bytes(),
+        )
+
+    before = snapshot()
+    reports = [runner.detect_actor_files_changed_mismatch(BRANCH, SUBTASK, ["target.py"])
+               for _ in range(2)]
+    script = (
+        "import json,runpy,sys; "
+        f"sys.path.insert(0, {str(SCRIPTS)!r}); "
+        f"m=runpy.run_path({runner.__file__!r}); "
+        f"print(json.dumps(m['detect_actor_files_changed_mismatch']({BRANCH!r}, "
+        f"{SUBTASK!r}, ['target.py'])))"
+    )
+    fresh = subprocess.run(
+        [sys.executable, "-B", "-c", script], cwd=repo, env=os.environ.copy(),
+        capture_output=True, text=True, check=True, timeout=20,
+    )
+    reports.append(json.loads(fresh.stdout))
+    cli = subprocess.run(
+        [sys.executable, "-B", str(SCRIPTS / "map_step_runner.py"),
+         "detect_actor_files_changed_mismatch", BRANCH, SUBTASK, "--declared", "target.py"],
+        cwd=repo, env=os.environ.copy(), capture_output=True, text=True, check=True, timeout=20,
+    )
+    reports.append(json.loads(cli.stdout))
+    assert snapshot() == before, "Attribution must not mutate recovery artifacts or Git state"
+    expected_tree = "worktree" if mode in {"auto", "required"} else "main"
+    expected_missing = [] if written_in == expected_tree else ["target.py"]
+    for report in reports:
+        assert report["status"] == "ok", report
+        assert report["checked_in"] == expected_tree, report
+        assert report["declared_not_written"] == expected_missing, report
+        assert report["status_mismatch"] is bool(expected_missing), report
+        assert report["actual"] == ([] if expected_missing else ["target.py"]), report
+
+
 @pytest.fixture
 def repaired_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runner) -> tuple[Path, str]:
     repo = tmp_path / "repository"

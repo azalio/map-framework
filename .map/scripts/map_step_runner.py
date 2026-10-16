@@ -17736,7 +17736,11 @@ def _get_active_worktree_path(
     and returns the recorded path if its directory still exists on disk.  When
     the worktree has already been merged or discarded, the directory is gone and
     None is returned so callers fall back to the main checkout.  Fixes #471.
+    Disabled isolation also selects main, without deleting retained recovery
+    records or worktree contents (#501).
     """
+    if not _wt_isolation_enabled(project_dir):
+        return None
     sidecar = project_dir / ".map" / branch_name / WORKTREE_ARTIFACT_NAME
     try:
         data = json.loads(sidecar.read_text(encoding="utf-8"))

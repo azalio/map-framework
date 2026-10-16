@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Actor write-attribution checks honor disabled worktree isolation even when a
+  retained sidecar points to a live worktree. Main-checkout writes are recognized
+  without deleting recovery state or counting writes in the disabled tree. (#501)
 - Dirty-path baselines suppress only unchanged working-tree and index evidence,
   keeping repeated Actor edits visible to mismatch, scope and regression checks
   and affected-files refresh. The current subtask baseline takes precedence over

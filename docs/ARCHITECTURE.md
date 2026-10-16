@@ -364,7 +364,11 @@ alternatives and must never both be active on the same subtask.
 the full legacy sequential path byte-identical to pre-Slice-5a) or set
 `worktree.isolation: off` in `.map/config.yaml` (per-repo opt-out). The `auto`
 default degrades gracefully to sequential when git worktrees are unavailable
-(non-git repo, shallow clone, etc.).
+(non-git repo, shallow clone, etc.). Explicit isolation `off` also disables
+sidecar-based Actor write attribution: a retained worktree record is recovery
+metadata, not authority to inspect that checkout. Attribution uses main without
+mutating worktree contents, baseline evidence or workflow state. Sequential
+scheduling alone does not disable attribution to an enabled isolated worktree.
 
 Design decisions (llm-council-reviewed, conv `461b92f9`):
 
