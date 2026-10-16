@@ -8460,6 +8460,32 @@ class TestValidateMutationBoundary:
         log = branch_workspace / "scope-violations.log"
         assert log.exists(), "warning must be appended to scope-violations.log"
 
+    @pytest.mark.parametrize("operation", ["open", "mkdir"])
+    def test_warning_reports_audit_persistence_failure(
+        self, branch_workspace, monkeypatch, operation
+    ):
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
+        (repo / "b.py").write_text("y = 2\n")
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
+        original = getattr(Path, operation)
+
+        def fail_audit(path, *args, **kwargs):
+            if path == branch_workspace / "scope-violations.log" or (
+                operation == "mkdir" and path == branch_workspace
+            ):
+                raise PermissionError("audit sink is read-only")
+            return original(path, *args, **kwargs)
+
+        with patch.object(Path, operation, fail_audit):
+            report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "warning"
+        assert "b.py" in report["unexpected"]
+        assert "audit sink is read-only" in report["audit_error"]
+        assert "scope-violations.log" in report["audit_error"]
+
     def test_warning_on_untracked_new_out_of_scope_file(
         self, branch_workspace, monkeypatch
     ):

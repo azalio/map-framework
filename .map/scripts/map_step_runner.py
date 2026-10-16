@@ -17494,16 +17494,16 @@ def validate_mutation_boundary(
 
     if unexpected:
         log_path = project_dir / ".map" / branch_name / "scope-violations.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
         try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
             entry = {
                 "at": _utc_timestamp(),
                 **report,
             }
             with log_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(entry) + "\n")
-        except OSError:
-            pass
+        except OSError as exc:
+            report["audit_error"] = f"Could not persist scope audit to {log_path}: {exc}"
 
     return report
 
