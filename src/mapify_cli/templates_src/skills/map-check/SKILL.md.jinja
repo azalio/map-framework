@@ -1,13 +1,15 @@
 ---
+[% set cmd = "/" if PROVIDER == "claude" else "$" -%]
 name: map-check
 description: |
   Run quality gates (lint, types, tests) and verify MAP workflow completion. Use when user asks to run checks, validate a workflow, or confirm a MAP run is done. Do NOT use to plan or execute new tasks; use map-plan or map-efficient.
-effort: low
+[% if PROVIDER == "claude" %]effort: low
 disable-model-invocation: true
 argument-hint: "[focus area]"
+[% else %][% endif -%]
 ---
 [% include "_partials/auto-update-preflight.md.jinja" %]
-# /map-check - Quality Gates & Verification
+# <% cmd %>map-check - Quality Gates & Verification
 
 Purpose: run quality gates and MAP workflow verification only. Do not plan, implement, or fix from this skill.
 Use [check-reference.md](check-reference.md) for command matrices, examples, and troubleshooting. When a workflow step points to a reference section, read that section before executing the step; supporting files are not assumed to be in context automatically.
@@ -20,12 +22,12 @@ parallel_tool_policy: independent_checks_only
 ```
 
 - Stay in verification mode: run the relevant gates, interpret failures, and stop with a clear pass/fail summary.
-- Do not plan or execute new work from this skill. If checks reveal missing implementation, report it and hand off to `/map-task`, `/map-efficient`, or `/map-debug`.
+- Do not plan or execute new work from this skill. If checks reveal missing implementation, report it and hand off to `<% cmd %>map-task`, `<% cmd %>map-efficient`, or `<% cmd %>map-debug`.
 - Parallelize only independent quality gates or artifact reads. Do not parallelize final-verifier, state validation, or any step that depends on previous check output.
 
 ## When Not To Expand Scope
 
-- Do not fix failures from inside `/map-check`; report the failing gate and hand off to the workflow that should own the fix.
+- Do not fix failures from inside `<% cmd %>map-check`; report the failing gate and hand off to the workflow that should own the fix.
 - Do not decompose, research, or implement new subtasks from this skill.
 - Do not run extra audits after the requested quality gates and MAP completion checks have a clear pass/fail result.
 
@@ -135,7 +137,7 @@ if [[ "$WORKFLOW_STATUS" != "WORKFLOW_COMPLETE" ]]; then
 fi
 ```
 
-If `workflow_status` is not `WORKFLOW_COMPLETE` (or any phase is still pending), STOP with `NEEDS WORK` and name the handoff command (`/map-task`, `/map-efficient`, or `/map-debug`).
+If `workflow_status` is not `WORKFLOW_COMPLETE` (or any phase is still pending), STOP with `NEEDS WORK` and name the handoff command (`<% cmd %>map-task`, `<% cmd %>map-efficient`, or `<% cmd %>map-debug`).
 
 ### Step 3: Load Original Plan
 
@@ -144,11 +146,15 @@ Read `task_plan_<branch>.md` for acceptance criteria, subtask scopes, and valida
 ### Step 4: Call Final Verifier
 
 ```text
-Task(
+[% if PROVIDER == "claude" %]Task(
   subagent_type="final-verifier",
   description="Verify all subtasks complete",
   prompt="""
-Verify all subtasks from the plan are complete.
+[% else %]spawn_agent(
+  agent_type="final-verifier",
+  task_name="verify_all_subtasks_complete",
+  message="""
+[% endif %]Verify all subtasks from the plan are complete.
 
 Read these artifacts from disk:
 - .map/<branch>/task_plan_<branch>.md
@@ -255,7 +261,7 @@ python3 .map/scripts/map_step_runner.py write_learning_handoff \
   map-check \
   "<task title>" \
   "READY FOR REVIEW|NEEDS WORK" \
-  "<run /map-review next, or rework and rerun /map-check>" \
+  "<run <% cmd %>map-review next, or rework and rerun <% cmd %>map-check>" \
   "<optional verification note>"
 ```
 
@@ -290,10 +296,10 @@ Stop after the report. If `NEEDS WORK`, do not fix it here; hand off to the owne
 
 ## Related Commands
 
-- `/map-task` resumes one incomplete subtask.
-- `/map-efficient` owns implementation fixes.
-- `/map-debug` owns root-cause investigation.
-- `/map-review` runs structured review after `READY FOR REVIEW`.
+- `<% cmd %>map-task` resumes one incomplete subtask.
+- `<% cmd %>map-efficient` owns implementation fixes.
+- `<% cmd %>map-debug` owns root-cause investigation.
+- `<% cmd %>map-review` runs structured review after `READY FOR REVIEW`.
 
 ## Examples
 
