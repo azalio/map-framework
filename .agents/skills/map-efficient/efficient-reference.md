@@ -132,23 +132,35 @@ wave-loop on every run. The wave-loop engages **only when ALL THREE hold**
 
 | `execution.wave_mode` | `worktree.isolation` | Color group ≥2? | Dispatcher selected |
 |---|---|---|---|
-| any | `off` (default) | any | Legacy sequential walker (`get_next_step`) |
+| any | `off` (opt-out) | any | Legacy sequential walker (`get_next_step`) |
 | `off` | any | any | Legacy sequential walker (`get_next_step`) |
 | `auto` / `on` | `auto` / `required` | no (all groups size 1) | Legacy sequential walker (`get_next_step`) |
 | `auto` / `on` | `auto` / `required` | yes | Wave-loop (`get_wave_step` / `validate_wave_step` / `advance_wave`) |
 
 **Defaults (canonical MapConfig):** `execution.wave_mode=auto`,
-`worktree.isolation=off`. The isolation gate fails by default, so a stock
-`mapify init` config always runs the legacy sequential walker. Even when the
-wave-loop engages, dispatch remains **sequential** in Slice 5a (`isolation_active=True`,
-`dispatch_mode` from `get_wave_step` keyed to `sequential`); concurrent fan-out
-is Slice 5b (`dispatch_mode==concurrent`, `concurrency_enabled=True`),
-**ACTIVE when opted in** via `execution.concurrent_dispatch: true`
-(gate: `dispatch_mode == 'concurrent'`).
+`worktree.isolation=auto`, `execution.concurrent_dispatch=true`.
+Parallel-ready plans select the wave-loop by default; concurrent dispatch is
+selected only for an eligible current wave with ≥2 members. A width-1 current
+wave remains sequential even if a later wave is parallel. Follow `get_wave_step`'s
+`dispatch_mode`, not the defaults alone.
+
+**Sequential off-ramps and degraded fallback:**
+- `MAP_EFFICIENT_SEQUENTIAL_ONLY=1` forces the full legacy sequential path.
+- `execution.wave_mode: off`, no parallel color groups, or `worktree.isolation: off`
+  select the sequential walker. If disabling isolation, also set
+  `execution.concurrent_dispatch: false`: concurrent dispatch with isolation off
+  is a configuration contradiction (`DispatchGateError`), not a silent fallback.
+- `execution.concurrent_dispatch: false` disables concurrent fan-out; an eligible
+  isolated wave can still use the sequential worktree flow (Slice 5a).
+- `resolve_worktree_isolation` checks git availability, worktree support, and a
+  clean merge target. In `auto` mode a failed check returns `degraded:true` and
+  `decision:sequential` with a warning: follow that sequential fallback, never
+  dispatch concurrent Actors into the shared tree. In `required` mode the same
+  failure aborts. Other structured worktree errors remain hard stops.
 
 ### Sequential walker
 
-Use `get_next_step` for all sequential (default) execution. Do not mix wave
+Use `get_next_step` for all sequential fallback execution. Do not mix wave
 APIs with the sequential cursor for the same workflow.
 
 ### Wave-loop commands
@@ -167,8 +179,9 @@ Use wave APIs only when the blueprint has multiple ready subtasks whose writes
 are low-risk and disjoint, or when the user explicitly requests parallel
 execution.
 
-When `worktree.isolation` is enabled and a wave has ≥2 disjoint subtasks
-(`isolation_active=True`), execute the **Slice 5a sequential worktree flow**:
+When `isolation_active=True`, inspect `dispatch_mode` first: `concurrent` uses
+`run_concurrent_wave` below. Only when `dispatch_mode` is `sequential`, execute
+the **Slice 5a sequential worktree flow**:
 
 1. **Create** a worktree per wave member via `create_subtask_worktree`.
 2. **Dispatch actor subagents sequentially** — one per turn (`HC-3`), each
@@ -187,18 +200,16 @@ to base on any conflict or gate failure (worktrees kept for retry). On a single
 subtask's Monitor failure, `discard_subtask_worktree` that subtask and retry it
 before calling `merge_wave_worktrees`.
 
-### Concurrent actor dispatch — **Slice 5b** (`dispatch_mode == 'concurrent'`) — **ACTIVE when opted in**
+### Concurrent actor dispatch — **Slice 5b** (`dispatch_mode == 'concurrent'`) — **default-ON, gate-controlled**
 
 > **IMPORTANT — read before using this section.**
-> Concurrent fan-out (dispatching N actor subagents in a single turn) is
-> **ACTIVE when opted in** via `execution.concurrent_dispatch: true`
-> (gate: `dispatch_mode == 'concurrent'`). With the **default config**
-> (`concurrent_dispatch=false`, Slice 5a), dispatch stays **SEQUENTIAL
-> even when a wave has `mode=="parallel"`** — one actor subagent per turn, each
-> pinned to its own worktree. Act on the instructions below **only** when
-> `get_wave_step` returns `dispatch_mode == 'concurrent'`. Use your runtime's
-> own parallel actor-subagent dispatch mechanism — this is the provider-neutral
-> shape, not a literal API call.
+> Concurrent fan-out (actor subagents in a single turn) is **default-ON, gate-controlled**
+> via `execution.concurrent_dispatch=true`. Act on this section **only** when
+> `get_wave_step` returns `dispatch_mode == 'concurrent'`. With an explicit
+> `execution.concurrent_dispatch: false`, isolated waves dispatch sequentially
+> (Slice 5a), one Actor per turn. A sequential fallback is not concurrent fan-out.
+> Use your runtime's own parallel actor-subagent dispatch mechanism — this is
+> the provider-neutral shape, not a literal API call.
 
 **Runtime wiring:** when `get_wave_step` returns `dispatch_mode == 'concurrent'`,
 call `run_concurrent_wave` (runner), which batch-splits the wave by `max_actors`
@@ -229,7 +240,7 @@ auto-restart. Never merges a successful subset — discard-all-or-merge-all (HC-
 
 ### Anti-patterns — Slice 5b concurrent dispatch only
 
-> These apply **only** under Slice 5b concurrent dispatch (`dispatch_mode == 'concurrent'`). In Slice 5a and the default sequential walker, one actor dispatch per turn **is** the correct behavior.
+> These apply **only** under Slice 5b concurrent dispatch (`dispatch_mode == 'concurrent'`). In Slice 5a and the legacy sequential walker, one actor dispatch per turn **is** the correct behavior.
 
 - One actor dispatch per turn across N turns — serial loop, no concurrency. (Slice 5b only — expected, correct behavior in 5a.)
 - Writing between dispatches (TodoWrite, etc.) — serializes the batch. (Slice 5b only.)
