@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from mapify_cli import app
@@ -21,6 +22,35 @@ HEAD_SHA = "b" * 40
 OLD_SHA = "c" * 40
 GOOD_RUN = {"status": "completed", "conclusion": "success", "headSha": BASE_SHA}
 HEADINGS = ("### Gate 11:", "### 4.1 Pre-Push")
+
+
+@pytest.mark.parametrize("doc", ["RELEASING.md", ".github/ISSUE_TEMPLATE/release-checklist.md"])
+def test_release_docs_follow_tag_triggered_automation(doc: str) -> None:
+    """Maintainers verify the automated release, not race it with a manual create."""
+    # BaseLoader preserves the GitHub Actions `on` key (SafeLoader treats it as bool).
+    workflow = yaml.load(
+        (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+    assert workflow["on"]["push"]["tags"] == ["v*.*.*"]
+    assert workflow["jobs"]["publish"]["needs"] == "ci"
+    steps = workflow["jobs"]["publish"]["steps"]
+    publish = next(i for i, step in enumerate(steps)
+                   if step.get("uses", "").startswith("pypa/gh-action-pypi-publish@"))
+    release = next(i for i, step in enumerate(steps)
+                   if step.get("uses", "").startswith("softprops/action-gh-release@"))
+    assert publish < release
+    assert steps[release]["with"]["body_path"] == "${{ steps.changelog.outputs.excerpt_file }}"
+
+    text = (ROOT / doc).read_text(encoding="utf-8")
+    assert not re.search(r"\bgh\s+release\s+create\b", text), (
+        f"{doc} must not tell maintainers to manually create the automated GitHub Release"
+    )
+    assert "automatically creates the GitHub Release" in text
+    assert "after PyPI publishing succeeds" in text
+    assert "CHANGELOG.md" in text
+    assert "gh release view" in text
+    assert "gh run watch" in text
 
 
 def bash_blocks(text: str, heading: str) -> list[str]:

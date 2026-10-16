@@ -181,6 +181,21 @@ def test_shebang_files_are_discovered() -> None:
     assert len(files) >= 60, f"expected the shebang scan to find files, got {files}"
 
 
+def test_shebang_scan_ignores_only_exclusions_below_scan_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A checkout nested in worktrees still scans its own shipped scripts."""
+    root = tmp_path / "worktrees" / "checkout" / "scripts"
+    root.mkdir(parents=True)
+    shipped = root / "runner.py"
+    shipped.write_text(SHEBANG + "\n", encoding="utf-8")
+    nested = root / "worktrees" / "nested"
+    nested.mkdir(parents=True)
+    (nested / "ignored.py").write_text(SHEBANG + "\n", encoding="utf-8")
+    monkeypatch.setitem(globals(), "SHEBANG_ROOTS", (root,))
+    assert _shebang_files() == [shipped]
+
+
 def test_shebang_scan_skips_nested_worktrees_and_venvs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
