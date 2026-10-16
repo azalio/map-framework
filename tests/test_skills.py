@@ -4467,6 +4467,120 @@ def test_non_include_twin_is_detected(tmp_path: Path) -> None:
     assert _non_include_twins(twin_dir) == [wrong_target, forked]
 
 
+
+def _provider_skill_tree_problems(templates_src: Path) -> list[str]:
+    """Discover each provider independently; neither inventory defines the other."""
+    shared_root = templates_src / "skills"
+    twin_root = templates_src / "codex/skills"
+    problems: list[str] = []
+    for root in (shared_root, twin_root):
+        if not root.is_dir():
+            problems.append(f"missing provider skill root: {root}")
+    if problems:
+        return problems
+
+    def inventory(root: Path) -> tuple[set[Path], set[Path]]:
+        directories: set[Path] = set()
+        files: set[Path] = set()
+        # Root-level README/catalog files are not skills or provider twins.
+        for skill in root.iterdir():
+            if not skill.is_dir():
+                continue
+            directories.add(skill.relative_to(root))
+            for path in skill.rglob("*"):
+                if path.is_dir():
+                    directories.add(path.relative_to(root))
+                elif path.is_file():
+                    files.add(path.relative_to(root))
+        return directories, files
+
+    shared_dirs, shared_files = inventory(shared_root)
+    twin_dirs, twin_files = inventory(twin_root)
+    for kind, shared, twin in (
+        ("directory", shared_dirs, twin_dirs), ("file", shared_files, twin_files)
+    ):
+        problems.extend(f"missing Codex {kind}: {rel}" for rel in sorted(shared - twin))
+        problems.extend(f"missing shared {kind}: {rel}" for rel in sorted(twin - shared))
+    for rel in sorted(twin_files):
+        expected = f'[% include "skills/{rel.as_posix()}" %]'
+        if (twin_root / rel).read_text(encoding="utf-8").strip() != expected:
+            problems.append(f"not a pure include: codex/skills/{rel}")
+    return problems
+
+
+def test_all_provider_skill_trees_are_shared_bidirectionally() -> None:
+    assert _provider_skill_tree_problems(_TEMPLATES_SRC) == []
+    # This independent inventory also catches removing a skill from BOTH trees.
+    for root in (_TEMPLATES_SRC / "skills", _TEMPLATES_SRC / "codex/skills"):
+        assert {path.name for path in root.iterdir() if path.is_dir()} == SINGLE_SOURCE_CODEX_SKILLS
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("fork", "not a pure include"),
+        ("wrong_include", "not a pure include"),
+        ("missing_twin_file", "missing Codex file"),
+        ("missing_shared_file", "missing shared file"),
+        ("missing_twin_skill", "missing Codex directory"),
+        ("missing_shared_skill", "missing shared directory"),
+        ("missing_twin_nested_dir", "missing Codex directory"),
+        ("missing_shared_nested_dir", "missing shared directory"),
+        ("new_twin_skill", "missing shared directory"),
+        ("new_shared_skill", "missing Codex directory"),
+        ("new_twin_file", "missing shared file"),
+        ("new_shared_file", "missing Codex file"),
+        ("new_paired_fork", "not a pure include"),
+    ],
+)
+def test_provider_skill_tree_guard_detects_drift(
+    tmp_path: Path, mutation: str, expected: str
+) -> None:
+    import shutil
+
+    shared_root, twin_root = tmp_path / "skills", tmp_path / "codex/skills"
+    for rel in ("map-fixture/SKILL.md.jinja", "map-fixture/scripts/run.sh.jinja"):
+        shared, twin = shared_root / rel, twin_root / rel
+        shared.parent.mkdir(parents=True, exist_ok=True)
+        twin.parent.mkdir(parents=True, exist_ok=True)
+        shared.write_text("shared source\n", encoding="utf-8")
+        twin.write_text(f'[% include "skills/{rel}" %]', encoding="utf-8")
+    assert _provider_skill_tree_problems(tmp_path) == []
+    shared = shared_root / "map-fixture"
+    twin = twin_root / "map-fixture"
+    if mutation == "fork":
+        (twin / "scripts/run.sh.jinja").write_text("forked script\n", encoding="utf-8")
+    elif mutation == "wrong_include":
+        (twin / "scripts/run.sh.jinja").write_text(
+            '[% include "skills/map-fixture/SKILL.md.jinja" %]', encoding="utf-8"
+        )
+    elif mutation == "missing_twin_file":
+        (twin / "SKILL.md.jinja").unlink()
+    elif mutation == "missing_shared_file":
+        (shared / "SKILL.md.jinja").unlink()
+    elif mutation == "missing_twin_skill":
+        shutil.rmtree(twin)
+    elif mutation == "missing_shared_skill":
+        shutil.rmtree(shared)
+    elif mutation == "missing_twin_nested_dir":
+        shutil.rmtree(twin / "scripts")
+    elif mutation == "missing_shared_nested_dir":
+        shutil.rmtree(shared / "scripts")
+    elif mutation in {"new_twin_skill", "new_shared_skill"}:
+        root = twin_root if mutation == "new_twin_skill" else shared_root
+        (root / "map-unlisted").mkdir()
+    elif mutation in {"new_twin_file", "new_shared_file"}:
+        root = twin if mutation == "new_twin_file" else shared
+        # Non-Jinja files must not fall outside the whole-tree check either.
+        (root / "scripts/new.txt").write_text("new fork\n", encoding="utf-8")
+    else:
+        for root in (shared_root, twin_root):
+            (root / "map-unlisted").mkdir()
+            (root / "map-unlisted/SKILL.md.jinja").write_text("new fork\n", encoding="utf-8")
+    problems = _provider_skill_tree_problems(tmp_path)
+    assert any(expected in problem for problem in problems), problems
+
+
 _CODEX_MAP_REVIEW_DIRS = (
     ".agents/skills/map-review",
     "src/mapify_cli/templates/codex/skills/map-review",
