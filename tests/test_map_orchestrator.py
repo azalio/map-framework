@@ -6488,6 +6488,7 @@ def test_vc3_flag_on_isolation_required_concurrent_and_sequential(
     import sys as _sys
 
     monkeypatch.chdir(tmp_path)
+    _init_dispatch_git_repo(tmp_path)
     branch_conc = "test-st001-vc3-concurrent"
     branch_seq = "test-st001-vc3-seq-no-parallel"
 
@@ -6571,6 +6572,7 @@ def test_vc4_mixed_plan_current_width1_later_width2_sequential(
     )
 
     # Case A: current wave is width-1 (index=0), later wave is width-2 (index=1).
+    _init_dispatch_git_repo(tmp_path)
     branch_a = "test-st001-vc4-mixed-plan-current-1"
     _write_step_state(
         branch_a,
@@ -6616,6 +6618,77 @@ def test_vc4_mixed_plan_current_width1_later_width2_sequential(
     )
     assert result_b["reason"] == map_orchestrator.WAVE_REASON_CONCURRENT_GATED, (
         f"width-2 current wave must use WAVE_REASON_CONCURRENT_GATED: {result_b}"
+    )
+
+
+def _init_dispatch_git_repo(tmp_path: Path) -> None:
+    for args in (
+        ["init", "-q"],
+        ["config", "user.email", "test@example.com"],
+        ["config", "user.name", "Test"],
+    ):
+        subprocess.run(["git", *args], check=True, capture_output=True)
+    (tmp_path / "application.py").write_text("original\n", encoding="utf-8")
+    subprocess.run(["git", "add", "application.py"], check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "initial"], check=True, capture_output=True)
+
+
+@pytest.mark.parametrize("mode", ["auto", "required"])
+@pytest.mark.parametrize("condition", ["clean", "dirty", "unsupported", "not_git"])
+def test_live_isolation_dispatch_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, condition: str
+) -> None:
+    """#516: live isolation, not configured mode, controls Actor fan-out."""
+    import importlib
+
+    runner = importlib.import_module("map_step_runner")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MAP_EFFICIENT_SEQUENTIAL_ONLY", raising=False)
+    if condition == "not_git":
+        (tmp_path / "application.py").write_text("original\n", encoding="utf-8")
+    else:
+        _init_dispatch_git_repo(tmp_path)
+    _write_config_keys(
+        tmp_path,
+        **{"worktree.isolation": mode, "execution.concurrent_dispatch": "true"},
+    )
+    branch = "live-isolation"
+    _write_step_state(branch, tmp_path, execution_waves=[["ST-001", "ST-002"]])
+    if condition == "dirty":
+        (tmp_path / "application.py").write_text("changed\n", encoding="utf-8")
+    elif condition == "unsupported":
+        def unsupported_probe(root: Path) -> dict[str, object]:
+            del root
+            return {"ok": False, "message": "unsupported"}
+
+        monkeypatch.setattr(runner, "_worktree_probe", unsupported_probe)
+    state_file = tmp_path / ".map" / branch / "step_state.json"
+    before = state_file.read_bytes()
+    resolution = runner.resolve_worktree_isolation(tmp_path)
+    if mode == "required" and condition != "clean":
+        assert resolution["decision"] == "abort"
+        for call in (
+            lambda: map_orchestrator.compute_dispatch_gate(branch, tmp_path),
+            lambda: map_orchestrator.get_wave_step(branch),
+        ):
+            with pytest.raises(map_orchestrator.DispatchGateError, match="isolation"):
+                call()
+    else:
+        expected = "concurrent" if condition == "clean" else "sequential"
+        assert resolution["decision"] == ("isolated" if condition == "clean" else "sequential")
+        for result in (
+            map_orchestrator.compute_dispatch_gate(branch, tmp_path),
+            map_orchestrator.get_wave_step(branch),
+        ):
+            assert result["dispatch_mode"] == expected
+            assert result["isolation_active"] is (condition == "clean")
+            assert result["degraded"] is (condition != "clean")
+            if condition != "clean":
+                assert result["degraded_reason"] == resolution["reason"]
+                assert result["warning"] == resolution["warning"]
+    assert state_file.read_bytes() == before
+    assert (tmp_path / "application.py").read_text() == (
+        "changed\n" if condition == "dirty" else "original\n"
     )
 
 

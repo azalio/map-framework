@@ -437,7 +437,11 @@ execution.max_wave_retries: 3          # max whole-group rollback+restart attemp
 **Requirements for concurrent dispatch:** `worktree.isolation` must be `auto` or
 `required`. Setting `execution.concurrent_dispatch: true` with isolation `off`
 produces a hard `ConfigError` abort — the gate fails closed rather than degrading
-silently.
+silently. Before fan-out, the gate also resolves live isolation: with `auto`, a
+dirty merge target, unsupported worktrees, or a non-git directory selects sequential
+dispatch and reports `isolation_active: false`, `degraded_reason`, and `warning`.
+With `required`, the same conditions raise `DispatchGateError` before Actor dispatch.
+`get_wave_step` forwards this live decision rather than the configured mode.
 
 **Off-ramps (either is sufficient):**
 1. `MAP_EFFICIENT_SEQUENTIAL_ONLY=1` — global kill-switch (env var).
