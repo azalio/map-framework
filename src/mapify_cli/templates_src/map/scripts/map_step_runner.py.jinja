@@ -22840,9 +22840,13 @@ if __name__ == "__main__":
         print(json.dumps(result, indent=2))
 
     elif func_name == "write_run_health_report":
-        workflow = sys.argv[2] if len(sys.argv) >= 3 else "map-efficient"
-        terminal_status = sys.argv[3] if len(sys.argv) >= 4 else ""
-        result = write_run_health_report(workflow, terminal_status)
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py write_run_health_report")
+        _p.add_argument("workflow", nargs="?", default="map-efficient")
+        _p.add_argument("terminal_status", nargs="?", default="")
+        _args = _p.parse_args(sys.argv[2:])
+        result = write_run_health_report(_args.workflow, _args.terminal_status)
         print(json.dumps(result, indent=2, ensure_ascii=True))
 
     elif func_name == "validate_run_health_report":

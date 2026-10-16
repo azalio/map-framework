@@ -977,7 +977,59 @@ def test_artifact_health_entry_handles_disappearing_file():
     }
 
 
-def test_map_step_runner_cli_write_run_health_report_smoke(tmp_path):
+@pytest.mark.parametrize("existing_artifacts", [False, True])
+@pytest.mark.parametrize("help_args", [["--help"], ["map-check", "--help"]])
+def test_map_step_runner_cli_write_run_health_report_help_is_read_only(
+    tmp_path, existing_artifacts, help_args
+):
+    if existing_artifacts:
+        branch_dir = tmp_path / ".map" / "default"
+        branch_dir.mkdir(parents=True)
+        for name in ("step_state.json", "run_health_report.json", "artifact_manifest.json"):
+            (branch_dir / name).write_text('{"sentinel": "preserve"}\n')
+    before = {
+        path.relative_to(tmp_path): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+
+    for _ in range(2):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS_PATH / "map_step_runner.py"),
+                "write_run_health_report",
+                *help_args,
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        after = {
+            path.relative_to(tmp_path): (path.read_bytes(), path.stat().st_mtime_ns)
+            for path in tmp_path.rglob("*")
+            if path.is_file()
+        }
+        assert after == before
+        assert (tmp_path / ".map").exists() == existing_artifacts
+        assert "usage:" in result.stdout
+        assert "workflow" in result.stdout
+        assert "terminal_status" in result.stdout
+        assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    ("args", "workflow", "terminal_status"),
+    [
+        ([], "map-efficient", "complete"),
+        (["map-check"], "map-check", "complete"),
+        (["map-debug", "blocked"], "map-debug", "blocked"),
+    ],
+)
+def test_map_step_runner_cli_write_run_health_report_smoke(
+    tmp_path, args, workflow, terminal_status
+):
     branch = "default"
     branch_dir = tmp_path / ".map" / branch
     branch_dir.mkdir(parents=True)
@@ -999,7 +1051,7 @@ def test_map_step_runner_cli_write_run_health_report_smoke(tmp_path):
             sys.executable,
             str(SCRIPTS_PATH / "map_step_runner.py"),
             "write_run_health_report",
-            "map-check",
+            *args,
         ],
         cwd=tmp_path,
         check=True,
@@ -1010,8 +1062,10 @@ def test_map_step_runner_cli_write_run_health_report_smoke(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["status"] == "success"
     report = json.loads((tmp_path / payload["path"]).read_text())
-    assert report["terminal_status"] == "complete"
-    assert report["workflow"] == "map-check"
+    assert report["terminal_status"] == terminal_status
+    assert report["workflow"] == workflow
+    manifest = json.loads((branch_dir / "artifact_manifest.json").read_text())
+    assert manifest["stages"]["run_health"]["status"] == "ready"
 
 
 def test_write_run_health_report_derives_workflow_complete(branch_workspace):
