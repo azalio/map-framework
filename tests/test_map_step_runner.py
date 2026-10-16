@@ -14525,6 +14525,7 @@ def test_cross_ai_config_echo_matches_result(tmp_path, monkeypatch, enabled, hos
         returncode=0, stdout='{"findings": []}', stderr="",
     )):
         result = map_step_runner.run_cross_ai_review("codex", host_provider=host_provider)
+    assert result["status"] == ("success" if enabled else "disabled")
     for key in ("host_provider", "host_vendor", "reviewer_vendor", "independent_vendor"):
         assert result[key] == result["config"][key]
     assert result["independent_vendor"] is (host_provider == "claude")
