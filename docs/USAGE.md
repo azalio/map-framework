@@ -159,7 +159,7 @@ Philosophically, MAP still ends with `LEARN`. Runtime keeps that step soft and t
 
 When the deliverable is the human understanding rather than new code or saved project memory, run `/map-understand [target]`. It is an opt-in, transient teaching loop: it keeps a Markdown checklist in the conversation, explains one milestone at a time, asks restatement or quiz questions, and advances only when the user demonstrates understanding or opts out. It does not write `.map/` or `.claude/rules/learned/` artifacts.
 
-For workflow diagnosis, `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review` now call `python3 .map/scripts/map_step_runner.py write_run_health_report <workflow> [terminal_status]` during closeout. This writes `.map/<branch>/run_health_report.json` and records the `run_health` stage in `artifact_manifest.json`. The report captures terminal status, current step/subtask, completed and pending step counts, artifact presence, retry counters, latest hook-injection status, skipped hook reasons for malformed input or insignificant Bash commands when state can be updated safely, Predictor skip/call flags when present, final-verifier evidence when a verification summary exists, and advisory research signals: artifact counts, parsed status/confidence/location counts, low-confidence warnings, and research-token share. To assert the report in CI or during operator handoff, run `python3 .map/scripts/map_step_runner.py validate_run_health_report [path]`; it exits non-zero when a complete report still has pending steps, lacks verification evidence, exceeds retry thresholds, has schema drift, or records hook degradation without a reason.
+For workflow diagnosis, `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review` now call `python3 .map/scripts/map_step_runner.py write_run_health_report <workflow> [terminal_status]` during closeout. This writes `.map/<branch>/run_health_report.json` and records the `run_health` stage in `artifact_manifest.json`. All `map_step_runner.py` subcommands accept standalone `--help` / `-h` before any writer runs, including positional commands such as `write_pr_draft` and `write_stage_gate`. For example, `python3 .map/scripts/map_step_runner.py write_run_health_report --help` prints usage without creating or updating branch artifacts. Help tokens are reserved before the first standalone `--`; embedded text such as `notes mention --help` is ordinary data. The help guard leaves normal arguments unchanged: legacy positional handlers still receive `--` as a positional value, while argparse handlers use it as their end-of-options marker. Both positional arguments are optional: workflow defaults to `map-efficient`, and omitted terminal status is derived from existing step state. The report captures terminal status, current step/subtask, completed and pending step counts, artifact presence, retry counters, latest hook-injection status, skipped hook reasons for malformed input or insignificant Bash commands when state can be updated safely, Predictor skip/call flags when present, final-verifier evidence when a verification summary exists, and advisory research signals: artifact counts, parsed status/confidence/location counts, low-confidence warnings, and research-token share. To assert the report in CI or during operator handoff, run `python3 .map/scripts/map_step_runner.py validate_run_health_report [path]`; it exits non-zero when a complete report still has pending steps, lacks verification evidence, exceeds retry thresholds, has schema drift, or records hook degradation without a reason.
 
 At workflow completion, the `scrub-internal-ids.py` Stop hook removes MAP-internal workflow IDs (`ST-`/`AC-`/`VC-`/`INV-`/`HC-`) that leaked into the code a run changed — in **comments** and `vc<n>` test names — and commits the result as `chore(map): strip internal workflow IDs`. It is hard-scoped to the run's git diff (IDs you wrote yourself on untouched lines are never modified) and to recognized source files (each language's comment syntax). IDs in code, string literals, docstrings, and data files (`.json`, …) are left intact and only reported, to avoid corrupting legitimate values. It runs exactly once per completed run on both Claude and Codex and can be turned off with `scrub_internal_ids: false` in `.map/config.yaml`.
 
@@ -294,12 +294,10 @@ claude /map-review --compare-orderings --detached
 
 ### Cross-AI peer review (`--cross-ai <runtime>`)
 
-`/map-review --cross-ai codex` dispatches the review to an **independent external
-AI CLI** for a true second opinion — a different model/vendor with fresh context
-and no shared session state. Same-model review is "inbred"; an independent
-reviewer catches model-specific blind spots. Supported runtimes (slice 1):
-`codex`, `gemini`, `claude`, `opencode`. The runtime arg is optional — without it
-the configured `review.cross_ai.runtime` default is used.
+`/map-review --cross-ai codex` dispatches a fresh-context review to an external
+AI CLI. Supported runtimes: `codex`, `gemini`, `claude`, `opencode`. The runtime
+arg is optional — without it the configured `review.cross_ai.runtime` default is
+used. A fresh process alone does not establish vendor independence.
 
 This sends your **git diff, spec, and review preferences to an external vendor —
 your code leaves the machine** — so it is **double-consent and off by default**:
@@ -323,9 +321,14 @@ Guardrails (all enforced in the Python step runner, not in prompt text):
   findings but ALWAYS re-emitted behind an `EXTERNAL UNTRUSTED REFERENCE` fence
   (link allowlist + injection scan), and findings are advisory-only
   (`source: cross_ai`) — never auto-applied.
-- **Honest independence labeling** — `claude` reviewing a Claude-orchestrated
-  session is labeled `independent_vendor: false` (a same-vendor sanity check, not
-  a true second opinion).
+- **Honest independence labeling** — the provider-specific skill passes
+  `--host-provider claude|codex` to the shared runner. The result and config echo
+  report `host_provider`, `host_vendor`, `reviewer_vendor`, and
+  `independent_vendor`. Canonical adapter vendors are Anthropic (Claude), OpenAI
+  (Codex), and Google (Gemini). Known different vendors are true; same vendor or
+  unknown provenance (including multi-provider `opencode`) is false. Omitting
+  the host in direct runner calls remains supported and conservatively false.
+  These labels do not verify the active model/endpoint behind custom proxies.
 - **Non-blocking degradation** — if cross-AI is disabled, the CLI is missing or
   unauthenticated, the call times out, the output is unparseable, or a secret was
   blocked, the review prints the reason and **falls back to the normal in-session
@@ -349,6 +352,9 @@ is discarded, so the working branch is never touched by a bad attempt.
    Forces the full legacy sequential path, byte-identical to pre-Slice-6, regardless
    of any config. Unset to restore default parallel behavior.
 2. **Per-repo opt-out** — set `worktree.isolation: off` in `.map/config.yaml`.
+   Actor write-attribution checks then inspect the main checkout, even if a prior
+   worktree is still recorded and on disk. The retained worktree and recovery
+   state are not deleted; writes only in that worktree do not count as main writes.
 
 The `auto` mode degrades gracefully to sequential (with a logged warning) when git
 worktrees are unavailable (non-git repo, shallow clone, detached HEAD, locked ref).
@@ -1081,6 +1087,25 @@ just to silence it. New baselines are captured through the existing RESEARCH
 flow or explicit baseline command before new Actor work. Baselines persist hashes
 and metadata, not file contents, and do not track writes that are fully undone
 to the same final working-tree and index state.
+
+### Declaring affected file paths
+
+Use repository-relative paths in blueprint `affected_files`. Absolute paths
+inside the current checkout are also accepted and normalized to those same
+Git-relative names by mutation validation and affected-files refresh. Mixed
+absolute/relative duplicates identify one entry. Filenames are literal: spaces,
+parentheses and backslashes on POSIX are not stripped or parsed as annotations.
+A symlink declaration names the link itself, not the file it points to.
+Outside-checkout paths and parent traversal are invalid declarations; correct
+the blueprint instead of broadening scope or suppressing a warning. Invalid
+refresh requests and dry-runs leave the blueprint unchanged. Refresh normalizes
+`creates_files` with the same rule, preserving its relationship to `affected_files`.
+Checkout aliases are accepted only when they resolve to the actual checkout,
+including when the supplied root traverses a symlink before `..`.
+
+Repairs performed through the supported blocker-repair protocol retain their
+own attribution evidence. Arbitrary intervening commits without that evidence
+cannot safely be excluded just because an Actor result lists fewer files.
 
 ### Checkpoint Recovery with /map-resume
 

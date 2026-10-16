@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Actor write-attribution checks honor disabled worktree isolation even when a
+  retained sidecar points to a live worktree. Main-checkout writes are recognized
+  without deleting recovery state or counting writes in the disabled tree. (#501)
 - Dirty-path baselines suppress only unchanged working-tree and index evidence,
   keeping repeated Actor edits visible to mismatch, scope and regression checks
   and affected-files refresh. The current subtask baseline takes precedence over
@@ -15,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   absent. Legacy path-only evidence is retained conservatively. Symlinked project
   roots remain supported, and distinct worktrees do not inherit main-checkout
   baseline evidence. (#504)
+- Absolute in-checkout `affected_files` declarations now match Git-relative
+  mutation paths and normalize consistently during affected-files refresh.
+  Literal filenames and symlink entry identity are preserved; invalid paths
+  fail without rewriting the blueprint. (#503)
 - Active serial workflows refuse destructive setup/resume operations. Independent
   blocker repairs use a private checkout, exact-contract approval and exact-tree
   Monitor/full-gate evidence, preserving paused progress and staged/unstaged/
