@@ -1,10 +1,12 @@
 ---
+[% set cmd = "/" if PROVIDER == "claude" else "$" -%]
 name: map-resume
 description: |
   Resume an interrupted MAP workflow from .map/<branch>/step_state.json checkpoint. Use when returning after context exhaustion, /clear, or a session crash mid-workflow. Do NOT use to start new work; use map-plan or map-efficient.
-effort: low
+[% if PROVIDER == "claude" %]effort: low
 disable-model-invocation: true
 argument-hint: "[plan ID]"
+[% else %][% endif -%]
 ---
 [% include "_partials/auto-update-preflight.md.jinja" %]
 # MAP Resume - Workflow Recovery Command
@@ -46,7 +48,7 @@ parallel_tool_policy: sequential_state_machine
 - **`step_state.json`** — Single source of truth. Tracks current step, retry counts, circuit breaker, subtask completion, and enforcement gates. Includes `tdd_mode` field (persisted across sessions).
 - **`task_plan_<branch>.md`** — Full task decomposition with validation criteria and AAG contracts.
 
-**TDD mode note:** If the interrupted workflow was using `/map-tdd` or `--tdd` flag, `tdd_mode: true` is preserved in `step_state.json`.
+**TDD mode note:** If the interrupted workflow was using `<% cmd %>map-tdd` or `--tdd` flag, `tdd_mode: true` is preserved in `step_state.json`.
 
 ---
 
@@ -77,9 +79,9 @@ Display message and exit:
 No checkpoint file found at `.map/<branch>/step_state.json`.
 
 **To start a new workflow, use:**
-- `/map-efficient "task description"` - Standard implementation workflow
-- `/map-debug "issue description"` - Debugging workflow
-- `/map-fast "task description"` - Minimal workflow
+- `<% cmd %>map-efficient "task description"` - Standard implementation workflow
+- `<% cmd %>map-debug "issue description"` - Debugging workflow
+- `<% cmd %>map-fast "task description"` - Minimal workflow
 
 No recovery needed.
 ```
@@ -95,8 +97,9 @@ Read both state files, the task plan, and branch artifacts to display a briefing
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 
-# Read state files using the Read tool
-# .map/${BRANCH}/step_state.json — orchestrator state + enforcement gates
+[% if PROVIDER == "claude" %]# Read state files using the Read tool
+[% else %]# Read state files using targeted file reads
+[% endif %]# .map/${BRANCH}/step_state.json — orchestrator state + enforcement gates
 # .map/${BRANCH}/task_plan_${BRANCH}.md — full plan with AAG contracts
 ```
 
@@ -156,25 +159,28 @@ Parse the state and display:
 
 Ask for user confirmation before resuming because this can continue a prior edit workflow.
 
-```
+[% if PROVIDER == "claude" %]```
 AskUserQuestion(questions=[
   {
     "question": "Resume workflow from last checkpoint?",
     "header": "Resume",
     "options": [
       {"label": "Resume (recommended)", "description": "Continue from last checkpoint step"},
-      {"label": "Start fresh", "description": "Delete state files and start over with /map-efficient"},
+      {"label": "Start fresh", "description": "Delete state files and start over with <% cmd %>map-efficient"},
       {"label": "Abort", "description": "Do nothing, keep state files intact"}
     ],
     "multiSelect": false
   }
 ])
 ```
-
+[% else %]Ask the user directly whether to resume, start fresh, or abort. Explain the
+checkpoint and the effect of each choice. Because starting fresh deletes state,
+do not perform it without an explicit response.
+[% endif %]
 **Handle user response:**
 
 - **Resume:** Proceed to Step 4 (resume workflow)
-- **Start fresh:** Delete `step_state.json`, exit with "State cleared. Start fresh with /map-efficient."
+- **Start fresh:** Delete `step_state.json`, exit with "State cleared. Start fresh with <% cmd %>map-efficient."
 - **Abort:** Exit without changes
 
 ---
@@ -203,7 +209,7 @@ PHASE=$(printf '%s' "$NEXT_STEP" | jq -r '.phase')
 IS_COMPLETE=$(printf '%s' "$NEXT_STEP" | jq -r '.is_complete')
 ```
 
-**Then follow the same phase routing as /map-efficient:**
+**Then follow the same phase routing as <% cmd %>map-efficient:**
 
 
 **For each remaining subtask:**
@@ -250,8 +256,8 @@ After all subtasks complete:
 ---
 
 **Optional next steps:**
-- Run `/map-learn` to extract and preserve patterns from this workflow
-- Run `/map-check` to verify all acceptance criteria
+- Run `<% cmd %>map-learn` to extract and preserve patterns from this workflow
+- Run `<% cmd %>map-check` to verify all acceptance criteria
 - Run tests to verify implementation
 - Create a commit with your changes
 ```

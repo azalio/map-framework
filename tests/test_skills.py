@@ -63,7 +63,7 @@ SUPPORTED_SKILL_CLASSES = {"reference", "task", "hybrid"}
 NEGATIVE_TRIGGER_DESCRIPTION_EXEMPT_SKILLS = {"map-upgrade"}
 # Codex twins rendered from the Claude source via [% include %] (PROVIDER-conditional).
 SINGLE_SOURCE_CODEX_SKILLS = {
-    "map-architecture", "map-auto", "map-check", "map-debug", "map-efficient", "map-explain", "map-learn", "map-plan", "map-prd-review", "map-review", "map-release", "map-fast", "map-memory-now", "map-skill-eval", "map-so-search", "map-wayfind"
+    "map-architecture", "map-auto", "map-check", "map-debug", "map-efficient", "map-explain", "map-learn", "map-plan", "map-prd-review", "map-resume", "map-review", "map-release", "map-fast", "map-memory-now", "map-skill-eval", "map-so-search", "map-wayfind"
 }
 
 WORKFLOW_EFFORT_PROFILES = {
@@ -825,10 +825,14 @@ class TestSkillStructure:
 
     def test_resume_checks_interruption_before_missing_checkpoint_exit(self):
         """Orphan repair storage must block fresh setup even without a checkpoint."""
+        from mapify_cli.delivery.template_renderer import get_environment
+
         root = Path(__file__).resolve().parents[1]
-        sources = root / "src/mapify_cli/templates_src"
-        for provider in (sources / "skills", sources / "codex/skills"):
-            content = (provider / "map-resume/SKILL.md.jinja").read_text()
+        env = get_environment(root / "src/mapify_cli/templates_src")
+        for provider, prefix in (("claude", ""), ("codex", "codex/")):
+            content = env.get_template(f"{prefix}skills/map-resume/SKILL.md.jinja").render(
+                PROVIDER=provider
+            )
             assert content.index("get_interruption_status") < content.index(
                 'test -f ".map/${BRANCH}/step_state.json"'
             )
@@ -4414,7 +4418,7 @@ def test_sofa_shared_source_preserves_provider_contract(
 
 def test_single_source_codex_skills_set_is_pinned() -> None:
     assert SINGLE_SOURCE_CODEX_SKILLS == {
-        "map-architecture", "map-auto", "map-check", "map-debug", "map-efficient", "map-explain", "map-learn", "map-plan", "map-prd-review", "map-review", "map-release", "map-fast", "map-memory-now", "map-skill-eval", "map-so-search", "map-wayfind"
+        "map-architecture", "map-auto", "map-check", "map-debug", "map-efficient", "map-explain", "map-learn", "map-plan", "map-prd-review", "map-resume", "map-review", "map-release", "map-fast", "map-memory-now", "map-skill-eval", "map-so-search", "map-wayfind"
     }
 
 

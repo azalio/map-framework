@@ -1,6 +1,7 @@
+[% set cmd = "/" if PROVIDER == "claude" else "$" -%]
 # MAP Resume Supporting Reference
 
-This file holds low-frequency examples, integration notes, and troubleshooting details for `/map-resume`. Load it only when the compact resume flow in `SKILL.md` is not enough to recover the workflow.
+This file holds low-frequency examples, integration notes, and troubleshooting details for `<% cmd %>map-resume`. Load it only when the compact resume flow in `SKILL.md` is not enough to recover the workflow.
 
 [% include "_partials/serial-blocker-repair.md.jinja" %]
 
@@ -13,10 +14,11 @@ This file holds low-frequency examples, integration notes, and troubleshooting d
 User returns after session ended mid-workflow:
 
 ```text
-User: /map-resume
+User: <% cmd %>map-resume
 
-Claude: ## Found Incomplete Workflow
-
+[% if PROVIDER == "claude" %]Claude: ## Found Incomplete Workflow
+[% else %]Codex: ## Found Incomplete Workflow
+[% endif %]
 **Task:** Implement user authentication with JWT tokens
 **Branch:** feat-user-auth
 **Current Step:** 2.3
@@ -39,8 +41,9 @@ Resume workflow from last checkpoint?
 
 User: Resume
 
-Claude: Resuming workflow from ST-004 (phase: ACTOR)...
-[Continues state machine execution for remaining subtasks]
+[% if PROVIDER == "claude" %]Claude: Resuming workflow from ST-004 (phase: ACTOR)...
+[% else %]Codex: Resuming workflow from ST-004 (phase: ACTOR)...
+[% endif %][Continues state machine execution for remaining subtasks]
 ```
 
 ### Example 2: User Starts Fresh
@@ -48,33 +51,36 @@ Claude: Resuming workflow from ST-004 (phase: ACTOR)...
 User decides to abandon current progress:
 
 ```text
-User: /map-resume
+User: <% cmd %>map-resume
 
-Claude: ## Found Incomplete Workflow
-[Shows progress summary]
+[% if PROVIDER == "claude" %]Claude: ## Found Incomplete Workflow
+[% else %]Codex: ## Found Incomplete Workflow
+[% endif %][Shows progress summary]
 
 Resume workflow from last checkpoint?
 
 User: Start fresh
 
-Claude: State cleared. Start fresh with /map-efficient.
-```
+[% if PROVIDER == "claude" %]Claude: State cleared. Start fresh with <% cmd %>map-efficient.
+[% else %]Codex: State cleared. Start fresh with <% cmd %>map-efficient.
+[% endif %]```
 
 ### Example 3: No Checkpoint
 
 User tries to resume when nothing is in progress:
 
 ```text
-User: /map-resume
+User: <% cmd %>map-resume
 
-Claude: ## No Workflow in Progress
-
+[% if PROVIDER == "claude" %]Claude: ## No Workflow in Progress
+[% else %]Codex: ## No Workflow in Progress
+[% endif %]
 No checkpoint file found at `.map/<branch>/step_state.json`.
 
 To start a new workflow, use:
-- `/map-efficient "task description"` - Standard implementation
-- `/map-debug "issue description"` - Debugging
-- `/map-fast "task description"` - Minimal workflow
+- `<% cmd %>map-efficient "task description"` - Standard implementation
+- `<% cmd %>map-debug "issue description"` - Debugging
+- `<% cmd %>map-fast "task description"` - Minimal workflow
 
 No recovery needed.
 ```
@@ -86,21 +92,21 @@ No recovery needed.
 If user runs `/clear` during a workflow:
 
 - State is preserved in `.map/<branch>/step_state.json`
-- User can resume with `/map-resume`
+- User can resume with `<% cmd %>map-resume`
 - Fresh context starts from checkpoint state
 
-### With `/map-efficient`
+### With `<% cmd %>map-efficient`
 
-`/map-efficient` uses `map_orchestrator.py` which maintains `step_state.json`:
+`<% cmd %>map-efficient` uses `map_orchestrator.py` which maintains `step_state.json`:
 
 - State is updated after each step validation
-- `/map-resume` reads this state to determine where to continue
+- `<% cmd %>map-resume` reads this state to determine where to continue
 
-### With `/map-learn`
+### With `<% cmd %>map-learn`
 
-After `/map-resume` completes a workflow:
+After `<% cmd %>map-resume` completes a workflow:
 
-- User can optionally run `/map-learn`
+- User can optionally run `<% cmd %>map-learn`
 - Patterns extracted from entire workflow (original + resumed)
 
 ## Technical Notes
@@ -162,7 +168,7 @@ Resume is designed for context efficiency:
 
 ## Token Budget
 
-Typical `/map-resume` execution:
+Typical `<% cmd %>map-resume` execution:
 
 - Checkpoint detection: ~100 tokens
 - Progress display: ~500 tokens
@@ -219,4 +225,4 @@ Total overhead for resume: ~1K tokens before continuing workflow.
 1. Trust `step_state.json` as the canonical source unless repo evidence proves it is stale
 2. Do not hand-edit `step_state.json`; direct writes bypass orchestrator validation
 3. If one subtask needs to be restarted, ask the user to confirm and run `python3 .map/scripts/map_orchestrator.py resume_single_subtask ST-003`
-4. If the whole plan state is unusable, ask the user whether to clear the checkpoint and restart with `/map-efficient`
+4. If the whole plan state is unusable, ask the user whether to clear the checkpoint and restart with `<% cmd %>map-efficient`
