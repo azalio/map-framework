@@ -1,38 +1,94 @@
 ---
+[% set cmd = "/" if PROVIDER == "claude" else "$" -%]
 name: map-explain
-description: |
+[% if PROVIDER == "claude" %]description: |
   Explain code, a diff, or the whole project the way a knowledgeable colleague would — a coherent walkthrough that builds a mental model: the practical result and main usage scenario first, then participants, data/control flow, mechanisms, rules, side effects and constraints in progressive depth, with ASCII diagrams for the key flows. For a PR, branch or diff it explains exactly the change against the base and separates new behavior from existing context, documentation clarifications and unimplemented plans. Use when learning unfamiliar code, onboarding to a system, or auditing what a PR really does. Do NOT use to plan or implement; use map-plan or map-efficient.
 effort: medium
 disable-model-invocation: true
 argument-hint: "[file path | symbol | PR ref | code snippet | empty for branch diff vs origin/main (fallback origin/master), or project overview on main/master]"
+[% else %]description: "Explain code, a diff, or the whole project the way a knowledgeable colleague would — result and main scenario first, then participants, flow, mechanisms, rules and constraints in progressive depth, with ASCII diagrams; for a PR or diff, exactly the change against the base with new behavior separated from existing context, documentation clarifications and unimplemented plans. Use when learning unfamiliar code, onboarding to a system, or auditing what a PR really does."
+[% endif -%]
 ---
 [% include "_partials/auto-update-preflight.md.jinja" %]
-# MAP Explain
+[% if PROVIDER == "claude" %]# MAP Explain
+[% else %][% endif %]
+[% if PROVIDER == "claude" %]**Target:** $ARGUMENTS
+[% else %]# <% cmd %>map-explain — Knowledgeable-Colleague Walkthrough
 
-**Target:** $ARGUMENTS
+**Purpose:** Explain a target (code, diff, or the whole repository) as a knowledgeable colleague who has worked through the topic and is helping the reader understand it. The reader is technically literate but does not know the context of this system. This skill ONLY teaches — it does NOT plan or execute.
 
+**When to use:**
+- Learning unfamiliar code or onboarding to a module
+- Understanding what a PR really changes before merge
+- Bootstrapping a new contributor on an existing project
+
+**Related skills:** `<% cmd %>map-plan` (decomposition before execution), `<% cmd %>map-fast` (small implementations), `<% cmd %>map-check` (post-execution verification).
+
+---
+[% endif %]
 ## Output language
 
-Write the explanation in the user's established language — honor the language already set in context (the conversation's language and the host/global `CLAUDE.md` language convention) rather than defaulting to English. Translate only the prose. Keep code, identifiers, commands, error messages, and `file:line` references in English.
-
-## Effort and Parallelism Policy
-
-```yaml
+[% if PROVIDER == "claude" %]Write the explanation in the user's established language — honor the language already set in context (the conversation's language and the host/global `CLAUDE.md` language convention) rather than defaulting to English. Translate only the prose. Keep code, identifiers, commands, error messages, and `file:line` references in English.
+[% else %]Write the explanation in the user's established language — honor the language already set in context (the conversation's language and the host/global `AGENTS.md` / `CLAUDE.md` language convention) rather than defaulting to English. Translate only the prose. Keep code, identifiers, commands, error messages, and `file:line` references in English.
+[% endif %]
+[% if PROVIDER == "claude" %]## Effort and Parallelism Policy
+[% else %]---
+[% endif %]
+[% if PROVIDER == "claude" %]```yaml
 thinking_policy: medium/adaptive
 parallel_tool_policy: independent_reads_only
-```
+[% else %]## Target resolution
 
-- Use adaptive reasoning to build the requested mental model, but stop at explanation: do not plan or implement changes from this skill.
+The skill takes a single argument. Resolve it as follows:
+
+- **File path** (`src/foo/bar.py`) → read the entire file with `exec_command` and treat it as the target.
+- **Symbol** (`module.function`, `ClassName.method`) → grep the repo with `exec_command` to find the definition and primary call sites.
+- **PR ref** (`#123`, branch name, commit SHA) → fetch the diff via `gh pr diff` or `git show`.
+- **Inline snippet** → treat the snippet itself as the target.
+- **Empty / no argument** → fall back to one of the two default modes below.
+
+## Default modes (when no argument is passed)
+
+Resolve the upstream base, then pick mode A or B.
+
+```
+exec_command:
+  cmd: |
+    # 1. Pick the upstream base: prefer origin/main, fall back to origin/master.
+    BASE=$(git rev-parse --verify --quiet origin/main >/dev/null && echo origin/main \
+           || (git rev-parse --verify --quiet origin/master >/dev/null && echo origin/master))
+
+    # 2. Stop early if neither base exists — avoid `git fetch origin ""`.
+    if [ -z "$BASE" ]; then
+      echo "map-explain: neither origin/main nor origin/master exists; aborting." >&2
+      exit 1
+    fi
+
+    # 3. Refresh the base so the comparison reflects what would actually merge.
+    git fetch origin "${BASE#origin/}" --quiet
+    echo "BASE=$BASE"
+    echo "CURRENT=$(git rev-parse --abbrev-ref HEAD)"
+[% endif %]```
+
+[% if PROVIDER == "claude" %]- Use adaptive reasoning to build the requested mental model, but stop at explanation: do not plan or implement changes from this skill.
 - Parallelize independent file reads, diffs, and searches when they do not require immediate synthesis.
 - Keep final synthesis sequential so the explanation is coherent and does not mix unrelated targets.
-
-## Voice and reader
-
-Explain the material as a knowledgeable colleague who has worked through the topic and is helping the reader understand it. The reader is technically literate but does not know the context of this system. Deliver a coherent narrative: what happens here, why it is needed, and which details actually matter — not a report and not a file inventory.
-
-## Default target (when $ARGUMENTS is empty)
-
-Pick mode by inspecting the current branch and its relation to the upstream base:
+[% else %]### Mode A — Project overview (current branch is `main`/`master`, OR `HEAD` == `$BASE`)
+[% endif %]
+[% if PROVIDER == "claude" %]## Voice and reader
+[% else %]No branch diff to explain — the subject is the project as a whole, so the new-versus-existing split from "Pin down the subject first" does not apply. Walk the **whole repository** with the same narrative structure:
+[% endif %]
+[% if PROVIDER == "claude" %]Explain the material as a knowledgeable colleague who has worked through the topic and is helping the reader understand it. The reader is technically literate but does not know the context of this system. Deliver a coherent narrative: what happens here, why it is needed, and which details actually matter — not a report and not a file inventory.
+[% else %]- *Result and main scenario*: what the project exists to do and for whom — derive from `README.md`, then `docs/ARCHITECTURE.md`, `docs/USAGE.md`, `CLAUDE.md` / `AGENTS.md`. Show the primary usage: the command or entry point a person runs, what they pass in, what they get back.
+- *Participants*: top-level modules / packages / services and their responsibility boundaries. Read the directory listing, entry points, and manifests (`pyproject.toml`, `package.json`, `go.mod`, `Cargo.toml`). Tie them into one end-to-end scenario, not a file list.
+- *Mechanisms*: what happens when the primary entry point runs (CLI invocation, server startup, request lifecycle). Pick the 3–6 files/functions that carry the design and walk only those. Do NOT cover every line in the repo.
+- *Rules*: configuration sources, defaults and precedence, env vars — each with a minimal example and its outcome.
+- *Constraints*: runtime, OS, language version, external services, secrets, plus the kinds of changes that routinely break this project (`CONTRIBUTING.md`, `CHANGELOG.md`, recent commits, learned-patterns docs).
+[% endif %]
+[% if PROVIDER == "claude" %]## Default target (when $ARGUMENTS is empty)
+[% else %]Bootstrap commands:
+[% endif %]
+[% if PROVIDER == "claude" %]Pick mode by inspecting the current branch and its relation to the upstream base:
 
 ```bash
 # 1. Pick the upstream base: prefer origin/main, fall back to origin/master.
@@ -50,8 +106,8 @@ fi
 git fetch origin "${BASE#origin/}" --quiet
 
 CURRENT=$(git rev-parse --abbrev-ref HEAD)
-```
-
+[% else %][% endif %]```
+[% if PROVIDER == "claude" %]
 Then choose **one** of the two modes below and follow it.
 
 ### Mode A — Project overview (current branch is `main` or `master`, OR `HEAD` == `$BASE`)
@@ -71,25 +127,48 @@ ls -la
 git --no-pager log --oneline -n 20
 # Read these in order if present:
 #   README.md, CLAUDE.md, docs/ARCHITECTURE.md, docs/USAGE.md, CONTRIBUTING.md
-```
+[% else %]exec_command:
+  cmd: |
+    ls -la
+    git --no-pager log --oneline -n 20
+    # Read these in order if present:
+    #   README.md, AGENTS.md, CLAUDE.md, docs/ARCHITECTURE.md, docs/USAGE.md, CONTRIBUTING.md
+[% endif %]```
 
 ### Mode B — Branch diff (current branch is NOT `main`/`master` and `HEAD` != `$BASE`)
 
 The target is the current branch's diff against the upstream base. Treat it exactly like a PR target: explain the change itself, and establish what is new versus what already existed in the base before writing.
 
-```bash
+[% if PROVIDER == "claude" %]```bash
 # Three-dot diff = "what this branch changed relative to base".
 git --no-pager diff --stat "$BASE"...HEAD
 git --no-pager log --oneline "$BASE"..HEAD
 git --no-pager diff "$BASE"...HEAD
 # Pre-change state of a touched file, when the diff alone does not show it:
 git --no-pager show "$BASE":path/to/file
-```
+[% else %]```
+exec_command:
+  cmd: |
+    BASE=$(git rev-parse --verify --quiet origin/main >/dev/null && echo origin/main \
+           || (git rev-parse --verify --quiet origin/master >/dev/null && echo origin/master))
+    if [ -z "$BASE" ]; then
+      echo "map-explain: neither origin/main nor origin/master exists; aborting." >&2
+      exit 1
+    fi
+    git fetch origin "${BASE#origin/}" --quiet
+    # Three-dot diff = "what this branch changed relative to base".
+    git --no-pager diff --stat "$BASE"...HEAD
+    git --no-pager log --oneline "$BASE"..HEAD
+    git --no-pager diff "$BASE"...HEAD
+    # Pre-change state of a touched file, when the diff alone does not show it:
+    # git --no-pager show "$BASE":path/to/file
+[% endif %]```
 
-### Edge cases (apply to both modes)
+[% if PROVIDER == "claude" %]### Edge cases (apply to both modes)
 
 - If the working tree has uncommitted changes you also want explained, say so and include `git diff` (unstaged) and `git diff --cached` (staged) on top of whatever the chosen mode produced.
-
+[% else %]---
+[% endif %]
 ## Pin down the subject first
 
 When the target is a PR, a branch, or a diff, explain **the change itself**. Before writing, establish what this change introduces and what already existed in the base version.
@@ -235,29 +314,38 @@ Before a diagram, briefly introduce unfamiliar participants and state the questi
 - Can a reader find a separate logical part quickly by its subheading?
 - Do the diagrams explain the main thing without mixing detail levels or duplicating the text?
 
-## How to apply
+[% if PROVIDER == "claude" %][% else %]---
 
-1. **Locate the target.** If `$ARGUMENTS` is empty, pick **Mode A** (project overview) or **Mode B** (branch diff) per the rules above. If it's a file path, read the whole file. If it's a symbol, grep the codebase for the definition and primary call sites. If it's a PR ref (`#N`, branch name, commit SHA), fetch the diff with `git show` / `gh pr diff`. If it's an inline snippet, treat the snippet itself as the target.
-2. **Read enough context to answer "why this exists."** Imports, callers, tests, and adjacent files often carry intent the target itself does not. For a change, also read the pre-change state of the touched files so the new-versus-existing split is grounded in the base, not guessed from the diff.
+[% endif %]## How to apply
+
+[% if PROVIDER == "claude" %]1. **Locate the target.** If `$ARGUMENTS` is empty, pick **Mode A** (project overview) or **Mode B** (branch diff) per the rules above. If it's a file path, read the whole file. If it's a symbol, grep the codebase for the definition and primary call sites. If it's a PR ref (`#N`, branch name, commit SHA), fetch the diff with `git show` / `gh pr diff`. If it's an inline snippet, treat the snippet itself as the target.
+[% else %]1. **Locate the target** per the rules above (file / symbol / PR ref / snippet / empty).
+[% endif %]2. **Read enough context to answer "why this exists."** Imports, callers, tests, and adjacent files often carry intent the target itself does not. For a change, also read the pre-change state of the touched files so the new-versus-existing split is grounded in the base, not guessed from the diff.
 3. **Pin down the subject and pick the diagrams before writing a word:** which behavior is new, which is context, which is a documentation clarification, which is a plan; which 3–5 diagrams carry the essence.
 4. **Write in order:** result and main scenario → participants and their interaction → the previous limitation and the new path → internal mechanisms → rules with minimal examples → constraints stated concretely. Add a subheading at every change of question.
 5. **Run the "Check before sending" list** and fix whatever fails.
 6. **Stop at the target's boundary.** Explain only what is needed to understand this target, not the whole codebase.
 
-## Examples
+[% if PROVIDER == "claude" %][% else %]---
+
+[% endif %]## Examples
 
 ```
-/map-explain                                          # on a feature branch: explain its diff vs origin/main; on main/master: explain the project
-/map-explain src/mapify_cli/orchestrator.py
-/map-explain map_step_runner.create_review_bundle
-/map-explain #108
-/map-explain HEAD~1..HEAD
+[% if PROVIDER == "claude" %]<% cmd %>map-explain                                          # on a feature branch: explain its diff vs origin/main; on main/master: explain the project
+[% else %]<% cmd %>map-explain                                          # feature branch → diff vs origin/main; on main/master → project overview
+[% endif %]<% cmd %>map-explain src/mapify_cli/orchestrator.py
+<% cmd %>map-explain map_step_runner.create_review_bundle
+<% cmd %>map-explain #108
+<% cmd %>map-explain HEAD~1..HEAD
 ```
 
-## Troubleshooting
+[% if PROVIDER == "claude" %][% else %]---
+
+[% endif %]## Troubleshooting
 
 - **"neither origin/main nor origin/master exists"** — the repo has no upstream named `origin`, or its default branch is not `main`/`master`. Either add an `origin` remote, or pass an explicit target (file path / symbol / PR ref) instead of running with no arguments.
-- **"HEAD == $BASE"** — the current branch already matches the upstream base, so there is no diff. The skill falls into Mode A (project overview); if that is not what you wanted, check `git status` and confirm your commits are on this branch.
-- **Diff is enormous and the walkthrough turns shallow** — pass a narrower target (single file, single symbol, or `HEAD~1..HEAD`) so the central mechanisms can be covered in depth instead of skimmed.
+[% if PROVIDER == "claude" %]- **"HEAD == $BASE"** — the current branch already matches the upstream base, so there is no diff. The skill falls into Mode A (project overview); if that is not what you wanted, check `git status` and confirm your commits are on this branch.
+[% else %]- **`HEAD == $BASE`** — the current branch already matches the upstream base; there is no diff. The skill falls into Mode A (project overview); if that's not what you wanted, check `git status` and confirm your commits are on this branch.
+[% endif %]- **Diff is enormous and the walkthrough turns shallow** — pass a narrower target (single file, single symbol, or `HEAD~1..HEAD`) so the central mechanisms can be covered in depth instead of skimmed.
 - **Output mixes conclusions from code with quotes from the docs or diff** — ask for a re-emit that labels each claim as a verbatim quote, a paraphrase, or a conclusion drawn from the implementation, and separates confirmed reasons from assumptions.
 - **The walkthrough of a small PR reads like a subsystem tour** — ask to restrict the context to what the change needs; every fragment of existing design must answer "how does this help understand this change?".
