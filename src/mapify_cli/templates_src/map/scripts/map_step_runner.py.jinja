@@ -605,6 +605,101 @@ PATH_HINT_RE = re.compile(
 TOKEN_RE = re.compile(r"[a-z0-9]{4,}")
 
 
+# Positional/custom-parsed commands have no ArgumentParser to answer help.
+# Keep their usage here; argparse and _cli_flags_guard commands retain rich help.
+_POSITIONAL_CLI_USAGE = {
+    "update_step_state_batch": "updates_json",
+    "update_step_state": "subtask_id step_name new_state",
+    "update_plan_status": "subtask_id status",
+    "validate_checkpoint": "subtask_id required_steps_csv",
+    "read_current_goal": "",
+    "get_current_phase": "",
+    "ensure_human_artifacts": "",
+    "next_numbered_artifact_path": "prefix",
+    "append_session_log": "event details",
+    "write_verification_summary": "verdict [task_title] [checks_run] [findings] [next_action]",
+    "write_pr_draft": "[summary] [validation] [risks_follow_up]",
+    "write_plan_review": "[summary] [high] [medium] [low] [resolved] [open_concerns] [recommendation]",
+    "write_stage_gate": "stage verdict [source_artifact] [notes]",
+    "load_artifact_manifest": "",
+    "record_workflow_fit": (
+        "workflow [diff_size has_new_invariants needs_independent_review "
+        "has_clear_acceptance_criteria test_first_required [summary]] "
+        "[--diff-size SIZE] [--has-new-invariants 0|1] [--needs-independent-review 0|1] "
+        "[--has-clear-acceptance-criteria 0|1] [--test-first-required 0|1] "
+        "[--depends-on-runtime-state 0|1] [--summary TEXT]"
+    ),
+    "record_plan_artifacts": "",
+    "validate_blueprint_contract": "[blueprint_path]",
+    "normalize_blueprint": "[blueprint_path] [--check|--dry-run]",
+    "record_test_contract_handoff": "subtask_id [failing_test_command] [test_files_csv] [contract_summary] [notes]",
+    "validate_run_health_report": "[report_path]",
+    "validate_flaky_test_triage": "[triage_path]",
+    "build_retry_quarantine": "[subtask_id] [retry_count] [monitor_feedback]",
+    "validate_retry_quarantine": "[quarantine_path]",
+    "create_review_bundle": "",
+    "build_handoff_bundle": "",
+    "build_review_handoff": "",
+    "build_acceptance_coverage_report": "",
+    "build_prior_stage_consumption_report": "[stage]",
+    "validate_prior_stage_consumption": "[stage]",
+    "write_learning_handoff": "[workflow] [task_title] [outcome] [next_action] [notes]",
+    "record_learning_consumption": "[summary_source] [workflow]",
+    "ensure_known_issues_file": "",
+    "ensure_active_issues_file": "",
+    "replace_active_issues": "stage source_artifact [issues_text]",
+    "add_known_issue": "title [status] [notes]",
+    "run_test_gate": "",
+    "snapshot_code_state": "",
+    "record_subtask_result": "< result.json",
+    "build_context_block": "step subtask_id",
+    "get_subtask": "subtask_id [--branch BRANCH]",
+    "subtask_token_usage": "branch [subtask_id] [--all] [--since-ts ISO]",
+    "list_plans": "",
+    "check_plan_resume": "[incoming_request] [--branch BRANCH]",
+    "subtask_boundary_compact_check": "branch",
+    "record_subtask_baseline": "branch subtask_id",
+    "record_scope_baseline": "branch",
+    "refresh_blueprint_affected_files": "branch subtask_id [--dry-run] [--replace]",
+    "record_token_event": (
+        "[branch] [--transcript PATH] [--agent NAME] [--phase PHASE] [--subtask ID]"
+    ),
+    "token_report": "[branch] [--dashboard] [--json] [--csv] [--history [N]] [--estimate] [--finalize]",
+    "detect_cross_subtask_regression_risk": "branch subtask_id",
+    "detect_symbol_blast_radius": "branch subtask_id",
+    "detect_research_consumption_drift": "branch subtask_id < actor_response.txt",
+    "detect_actor_files_changed_mismatch": "branch subtask_id [--declared CSV]",
+    "detect_already_done": "branch subtask_id [--since-ref REF]",
+    "validate_mutation_boundary": "branch subtask_id [base_ref]",
+    "save_research": "branch subtask_id [kind] [--attempt N] [--file PATH] < research.json",
+    "validate_research": "branch subtask_id [kind]",
+    "load_research": "branch subtask_id [kind] [--all]",
+    "record_diagnostics_baseline": "branch [--tools TOOLS] [--timeout SECONDS]",
+    "list_diagnostics_baseline": "branch",
+    "record_test_baseline": "branch [--command COMMAND] [--module-dir DIR|--cwd DIR] [--timeout SECONDS]",
+    "list_baseline_failures": "branch",
+    "acknowledge_diagnostic": "branch signature [--reason TEXT]",
+    "list_acknowledged_diagnostics": "branch",
+    "is_diagnostic_acknowledged": "branch signature",
+    "detect_truncated_agent_output": "[--agent AGENT] < response.txt",
+    "build_json_retry_prompt": "[--agent AGENT] [--errors JSON_OR_TEXT]",
+    "shuffle-sections": "mode [seed]",
+    "default-shuffle-seed": "branch [commit_sha]",
+    "compare-review-runs": "runs_json_or_dash",
+    "record-review-ordering": "mode [seed] [ordering_json_or_dash]",
+    "log_agent_failure": (
+        "--agent NAME --phase PHASE --failure-label LABEL "
+        "[--reasons JSON_OR_TEXT] [--retry] [--schema TEXT]"
+    ),
+}
+
+
+def _cli_help_requested(args: list[str]) -> bool:
+    """Recognize standalone help tokens, not prose or tokens after ``--``."""
+    option_args = args[:args.index("--")] if "--" in args else args
+    return any(arg in {"--help", "-h"} for arg in option_args)
+
+
 def _cli_flag(name: str, default: str = "") -> str:
     """Return the value following ``--name`` in ``sys.argv``, else ``default``."""
     flag = f"--{name}"
@@ -624,7 +719,7 @@ def _cli_flags_guard(known: frozenset[str], usage: str) -> None:
     are caught as errors rather than silently ignored.
     """
     args = sys.argv[2:]
-    if "--help" in args or "-h" in args:
+    if _cli_help_requested(args):
         print(usage)
         sys.exit(0)
     unknown = [a for a in args if a.startswith("--") and a[2:] not in known]
@@ -22664,6 +22759,10 @@ if __name__ == "__main__":
         sys.exit(1)
 
     func_name = sys.argv[1]
+    if func_name in _POSITIONAL_CLI_USAGE and _cli_help_requested(sys.argv[2:]):
+        usage_args = _POSITIONAL_CLI_USAGE[func_name]
+        print(f"usage: map_step_runner.py {func_name} {usage_args}".rstrip())
+        sys.exit(0)
 
     if func_name == "update_step_state_batch" and len(sys.argv) >= 3:
         updates_json = sys.argv[2]
@@ -24570,7 +24669,7 @@ if __name__ == "__main__":
         if _r.get("status") == "error":
             sys.exit(1)
 
-    elif func_name == "write_implementer_readiness_review" and len(sys.argv) >= 3:
+    elif func_name == "write_implementer_readiness_review" and (len(sys.argv) >= 3 or _cli_help_requested(sys.argv[2:])):
         # CLI: write_implementer_readiness_review <verdict>
         #        [--blocking-questions '<JSON>']
         #        [--non-blocking-risks '<JSON>']
@@ -24604,7 +24703,7 @@ if __name__ == "__main__":
         if result.get("status") == "error":
             sys.exit(1)
 
-    elif func_name == "write_prd_review" and len(sys.argv) >= 3:
+    elif func_name == "write_prd_review" and (len(sys.argv) >= 3 or _cli_help_requested(sys.argv[2:])):
         # CLI: write_prd_review <verdict>
         #        --dimension-scores '<JSON object>'
         #        [--strengths '<JSON array>']
@@ -24664,7 +24763,7 @@ if __name__ == "__main__":
         if result.get("status") == "error":
             sys.exit(1)
 
-    elif func_name == "record_prd_review_decision" and len(sys.argv) >= 3:
+    elif func_name == "record_prd_review_decision" and (len(sys.argv) >= 3 or _cli_help_requested(sys.argv[2:])):
         # CLI: record_prd_review_decision <proceed_anyway|stop_for_revision>
         #        [--rationale "..."] [--branch <branch>]
         _cli_flags_guard(
@@ -24759,7 +24858,7 @@ if __name__ == "__main__":
         if result.get("status") == "error":
             sys.exit(1)
 
-    elif func_name == "route_task" and len(sys.argv) >= 3:
+    elif func_name == "route_task" and (len(sys.argv) >= 3 or _cli_help_requested(sys.argv[2:])):
         # CLI: route_task <task> [--branch B] [--dry-run]
         import argparse as _ap
 
@@ -24778,7 +24877,7 @@ if __name__ == "__main__":
         if _r.get("status") == "error":
             sys.exit(1)
 
-    elif func_name == "record_auto_phase" and len(sys.argv) >= 4:
+    elif func_name == "record_auto_phase" and (len(sys.argv) >= 4 or _cli_help_requested(sys.argv[2:])):
         # CLI: record_auto_phase <phase> <status> [--branch B]
         #        [--evidence-refs a,b,c] [--reason "..."]
         import argparse as _ap

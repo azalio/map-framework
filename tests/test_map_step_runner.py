@@ -1019,6 +1019,133 @@ def test_map_step_runner_cli_write_run_health_report_help_is_read_only(
         assert result.stderr == ""
 
 
+CLI_COMMANDS = re.findall(
+    r'^    (?:el)?if func_name == "([^"]+)"',
+    (SCRIPTS_PATH / "map_step_runner.py").read_text(),
+    re.MULTILINE,
+)
+
+
+def test_map_step_runner_cli_command_discovery_is_nonempty():
+    assert len(CLI_COMMANDS) > 100
+    assert {"write_pr_draft", "write_stage_gate", "route_task", "record_auto_phase"} <= set(CLI_COMMANDS)
+
+
+@pytest.mark.parametrize("command", CLI_COMMANDS)
+@pytest.mark.parametrize("help_flag", ["--help", "-h"])
+@pytest.mark.parametrize("existing_artifacts", [False, True])
+def test_map_step_runner_cli_positional_help_is_read_only(
+    tmp_path, command, help_flag, existing_artifacts
+):
+    if existing_artifacts:
+        branch_dir = tmp_path / ".map" / "default"
+        branch_dir.mkdir(parents=True)
+        for name in ("pr-draft.md", "stage-gates.md", "artifact_manifest.json"):
+            (branch_dir / name).write_text('{"sentinel": "preserve"}\n')
+    before = {
+        path.relative_to(tmp_path): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), command, help_flag],
+        check=False, cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    after = {
+        path.relative_to(tmp_path): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+    assert (tmp_path / ".map").exists() == existing_artifacts
+    assert result.returncode == 0, result.stderr
+    assert "usage:" in result.stdout.lower()
+    assert command in result.stdout
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["write_pr_draft", "summary", "--help"],
+        ["write_stage_gate", "review", "pass", "-h"],
+        ["record_workflow_fit", "map-check", "--summary", "--help"],
+    ],
+)
+def test_map_step_runner_cli_help_after_arguments_leaves_artifacts_unchanged(tmp_path, args):
+    artifact = tmp_path / ".map" / "default" / "pr-draft.md"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("preserve\n")
+    before = (artifact.read_bytes(), artifact.stat().st_mtime_ns)
+    for _ in range(2):
+        result = subprocess.run(
+            [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), *args],
+            check=False, cwd=tmp_path, capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "usage:" in result.stdout.lower()
+        assert (artifact.read_bytes(), artifact.stat().st_mtime_ns) == before
+        assert list(artifact.parent.iterdir()) == [artifact]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["write_pr_draft", "notes mention --help and -h"],
+        ["write_pr_draft", "--", "--help"],
+        ["write_run_health_report", "--", "--help", "pending"],
+    ],
+)
+def test_map_step_runner_cli_help_looking_literals_preserve_normal_arguments(tmp_path, args):
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), *args],
+        check=False, cwd=tmp_path, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["status"] == "success"
+    branch_dir = tmp_path / ".map" / "default"
+    if args[0] == "write_pr_draft":
+        draft = (branch_dir / "pr-draft.md").read_text()
+        # Legacy positionals are not rewritten: the sentinel remains the summary.
+        assert f"## Summary\n{args[1]}\n" in draft
+        if len(args) > 2:
+            assert f"## Validation\n{args[2]}\n" in draft
+    else:
+        report = json.loads((branch_dir / "run_health_report.json").read_text())
+        assert report["workflow"] == "--help"
+        assert report["terminal_status"] == "pending"
+
+
+@pytest.mark.parametrize("command", ["not_a_command", "mark_subtask_complete"])
+def test_map_step_runner_cli_unknown_help_stays_an_error(tmp_path, command):
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), command, "--help"],
+        check=False, cwd=tmp_path, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 1
+    expected = "Wrong runner:" if command == "mark_subtask_complete" else "Unknown function:"
+    assert expected in result.stderr
+    assert not (tmp_path / ".map").exists()
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["write_implementer_readiness_review", "write_prd_review", "record_prd_review_decision",
+     "route_task", "record_auto_phase"],
+)
+def test_map_step_runner_cli_missing_arguments_preserve_dispatch_error(tmp_path, command):
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), command],
+        check=False, cwd=tmp_path, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 1
+    assert result.stderr == f"Unknown function: {command}\n"
+    assert not (tmp_path / ".map").exists()
+
+
 @pytest.mark.parametrize(
     ("args", "workflow", "terminal_status"),
     [
