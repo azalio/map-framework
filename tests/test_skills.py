@@ -63,7 +63,7 @@ SUPPORTED_SKILL_CLASSES = {"reference", "task", "hybrid"}
 NEGATIVE_TRIGGER_DESCRIPTION_EXEMPT_SKILLS = {"map-upgrade"}
 # Codex twins rendered from the Claude source via [% include %] (PROVIDER-conditional).
 SINGLE_SOURCE_CODEX_SKILLS = {
-    "map-architecture", "map-auto", "map-review", "map-release", "map-wayfind"
+    "map-architecture", "map-auto", "map-check", "map-debug", "map-efficient", "map-explain", "map-learn", "map-plan", "map-prd-review", "map-resume", "map-state", "map-task", "map-tdd", "map-tokenreport", "map-understand", "map-upgrade", "map-review", "map-release", "map-fast", "map-memory-now", "map-skill-eval", "map-so-search", "map-wayfind"
 }
 
 WORKFLOW_EFFORT_PROFILES = {
@@ -424,25 +424,32 @@ class TestProviderUpdateSkills:
             "Use when the user asks to update, upgrade, or check the installed "
             "MAP version."
         )
-        claude = templates_src / "skills/map-upgrade/SKILL.md.jinja"
-        codex = templates_src / "codex/skills/map-upgrade/SKILL.md.jinja"
+        from mapify_cli.delivery.template_renderer import get_environment
 
-        assert claude.read_text(encoding="utf-8") == (
+        env = get_environment(templates_src)
+        claude = env.get_template("skills/map-upgrade/SKILL.md.jinja")
+        codex = env.get_template("codex/skills/map-upgrade/SKILL.md.jinja")
+        for provider, template in (("claude", claude), ("codex", codex)):
+            flow = env.get_template("_partials/manual-upgrade-flow.md.jinja").render(
+                PROVIDER=provider
+            )
+            assert template.render(PROVIDER=provider).partition("\n---\n")[2] == flow + "\n"
+        assert MANUAL_UPGRADE_FLOW_INCLUDE in (
+            templates_src / "skills/map-upgrade/SKILL.md.jinja"
+        ).read_text(encoding="utf-8")
+
+        assert claude.render(PROVIDER="claude").partition("\n---\n")[0] == (
             "---\n"
             "name: map-upgrade\n"
             f'description: "{description}"\n'
             "effort: low\n"
             "disable-model-invocation: true\n"
-            'argument-hint: "[no arguments]"\n'
-            "---\n"
-            f"{MANUAL_UPGRADE_FLOW_INCLUDE}\n"
+            'argument-hint: "[no arguments]"'
         )
-        assert codex.read_text(encoding="utf-8") == (
+        assert codex.render(PROVIDER="codex").partition("\n---\n")[0] == (
             "---\n"
             "name: map-upgrade\n"
-            f'description: "{description}"\n'
-            "---\n"
-            f"{MANUAL_UPGRADE_FLOW_INCLUDE}\n"
+            f'description: "{description}"'
         )
 
     def test_rendered_map_upgrade_skills_share_complete_manual_status_flow(
@@ -502,10 +509,17 @@ class TestProviderUpdateSkills:
         codex = project_root / ".agents/skills" / skill / "SKILL.md"
         claude_text = claude.read_text(encoding="utf-8")
         codex_text = codex.read_text(encoding="utf-8")
-        assert not codex_cmd.search(claude_text) and claude_cmd.search(claude_text)
-        assert not claude_cmd.search(codex_text) and codex_cmd.search(codex_text)
+        assert not codex_cmd.search(claude_text)
+        assert not claude_cmd.search(codex_text)
+        # The manual-upgrade flow uses mapify directly, without slash commands.
+        assert bool(claude_cmd.search(claude_text)) == (skill != "map-upgrade")
+        assert bool(codex_cmd.search(codex_text)) == (skill != "map-upgrade")
         for key in ("effort:", "disable-model-invocation:", "argument-hint:"):
-            assert key in claude_text.partition("\n---\n")[0]
+            # Preserve existing auto-invocable and argument-free metadata.
+            expected = skill not in {"map-so-search", "map-state"} and not (
+                skill == "map-plan" and key == "disable-model-invocation:"
+            )
+            assert (key in claude_text.partition("\n---\n")[0]) == expected
             assert key not in codex_text.partition("\n---\n")[0]
 
     def test_map_upgrade_catalog_entry_is_manual_task(self, project_root: Path) -> None:
@@ -821,10 +835,14 @@ class TestSkillStructure:
 
     def test_resume_checks_interruption_before_missing_checkpoint_exit(self):
         """Orphan repair storage must block fresh setup even without a checkpoint."""
+        from mapify_cli.delivery.template_renderer import get_environment
+
         root = Path(__file__).resolve().parents[1]
-        sources = root / "src/mapify_cli/templates_src"
-        for provider in (sources / "skills", sources / "codex/skills"):
-            content = (provider / "map-resume/SKILL.md.jinja").read_text()
+        env = get_environment(root / "src/mapify_cli/templates_src")
+        for provider, prefix in (("claude", ""), ("codex", "codex/")):
+            content = env.get_template(f"{prefix}skills/map-resume/SKILL.md.jinja").render(
+                PROVIDER=provider
+            )
             assert content.index("get_interruption_status") < content.index(
                 'test -f ".map/${BRANCH}/step_state.json"'
             )
@@ -3437,7 +3455,15 @@ class TestEfficientParallelDefaults:
             path = directory / "map-efficient/efficient-reference.md"
             if "templates_src" in directory.parts:
                 path = path.with_suffix(path.suffix + ".jinja")
-            content = " ".join(path.read_text(encoding="utf-8").split())
+            if "templates_src" in directory.parts:
+                from mapify_cli.delivery.template_renderer import get_environment
+
+                source = Path(__file__).resolve().parents[1] / "src/mapify_cli/templates_src"
+                provider = "codex" if "codex" in directory.parts else "claude"
+                text = get_environment(source).get_template(path.relative_to(source).as_posix()).render(PROVIDER=provider)
+            else:
+                text = path.read_text(encoding="utf-8")
+            content = " ".join(text.split())
             for required in (
                 f"execution.wave_mode={config.execution_wave_mode}",
                 f"worktree.isolation={config.worktree_isolation}",
@@ -4360,9 +4386,57 @@ def _non_include_twins(twin_dir: Path) -> list[Path]:
     )
 
 
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_sofa_shared_source_preserves_provider_contract(
+    provider: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sharing sources must retain each provider's lookup and onboarding defaults."""
+    import importlib.util
+
+    from mapify_cli.delivery.template_renderer import get_environment
+
+    env = get_environment(_TEMPLATES_SRC)
+    body = env.get_template("skills/map-so-search/SKILL.md.jinja").render(PROVIDER=provider)
+    prefix = "$" if provider == "codex" else "/"
+    model_provider = "openai" if provider == "codex" else "anthropic"
+    assert f"{prefix}map-so-search auth" in body
+    assert f"`model_name={provider}`, `model_provider={model_provider}`" in body
+    assert ("allowed-tools: Read, Bash" in body) == (provider == "claude")
+    assert "no network calls, no credential reads" in " ".join(body.split())
+    assert "EXTERNAL UNTRUSTED REFERENCE" in body
+
+    claude_root = tmp_path / "claude"
+    codex_root = tmp_path / "codex"
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(claude_root))
+    monkeypatch.setenv("CODEX_PROJECT_DIR", str(codex_root))
+    monkeypatch.delenv("SOFA_MODEL_NAME", raising=False)
+    monkeypatch.delenv("SOFA_MODEL_PROVIDER", raising=False)
+    script = env.get_template("skills/map-so-search/scripts/sofa_search.py.jinja").render(
+        PROVIDER=provider
+    )
+    script_path = tmp_path / "sofa_search.py"
+    script_path.write_text(script, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("sofa_provider_contract", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.PROJECT_DIR == (codex_root if provider == "codex" else claude_root)
+    metadata = module._onboarding_metadata()
+    assert metadata["model_name"] == provider
+    assert metadata["model_provider"] == model_provider
+    assert module.dispatch("query") == {
+        "ok": True, "noop": True, "reason": "sofa disabled"
+    }
+    monkeypatch.setenv("SOFA_MODEL_NAME", "custom-model")
+    monkeypatch.setenv("SOFA_MODEL_PROVIDER", "custom-provider")
+    metadata = module._onboarding_metadata()
+    assert metadata["model_name"] == "custom-model"
+    assert metadata["model_provider"] == "custom-provider"
+
+
 def test_single_source_codex_skills_set_is_pinned() -> None:
     assert SINGLE_SOURCE_CODEX_SKILLS == {
-        "map-architecture", "map-auto", "map-review", "map-release", "map-wayfind"
+        "map-architecture", "map-auto", "map-check", "map-debug", "map-efficient", "map-explain", "map-learn", "map-plan", "map-prd-review", "map-resume", "map-state", "map-task", "map-tdd", "map-tokenreport", "map-understand", "map-upgrade", "map-review", "map-release", "map-fast", "map-memory-now", "map-skill-eval", "map-so-search", "map-wayfind"
     }
 
 

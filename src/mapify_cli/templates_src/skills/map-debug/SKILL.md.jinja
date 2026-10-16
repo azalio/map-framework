@@ -1,10 +1,13 @@
 ---
+[% set cmd = "/" if PROVIDER == "claude" else "$" -%]
 name: map-debug
 description: |-
-  Structured MAP debugging via task-decomposer, actor, and monitor agents. Use when reproducing a bug, isolating a regression, or diagnosing an error with specialized agents — including failing or flaky tests (pytest AssertionError), crashes and segmentation faults, memory-corruption or memory errors in native/C extensions, intermittent or load-dependent failures (e.g. 500s under load), data-corruption bugs that only appear in production, scripts or hooks that silently exit or produce no output, and any "find the root cause" / "walk me through diagnosing" / "help me investigate" request. Trigger on phrasing like "failing test", "mysterious error", "segfault", "memory error", "intermittently fails", "root cause", "isolate the cause", "debug why", "diagnose", or "investigate the error". Prefer this over generic investigation when the user wants a systematic decompose-reproduce-fix-verify workflow. Do NOT use for greenfield features; use map-plan or map-efficient.
+[% if PROVIDER == "claude" %]  Structured MAP debugging via task-decomposer, actor, and monitor agents. Use when reproducing a bug, isolating a regression, or diagnosing an error with specialized agents — including failing or flaky tests (pytest AssertionError), crashes and segmentation faults, memory-corruption or memory errors in native/C extensions, intermittent or load-dependent failures (e.g. 500s under load), data-corruption bugs that only appear in production, scripts or hooks that silently exit or produce no output, and any "find the root cause" / "walk me through diagnosing" / "help me investigate" request. Trigger on phrasing like "failing test", "mysterious error", "segfault", "memory error", "intermittently fails", "root cause", "isolate the cause", "debug why", "diagnose", or "investigate the error". Prefer this over generic investigation when the user wants a systematic decompose-reproduce-fix-verify workflow. Do NOT use for greenfield features; use map-plan or map-efficient.
 effort: medium
 disable-model-invocation: true
 argument-hint: "[bug description]"
+[% else %]  Structured MAP debugging via decomposer, actor, and monitor agents. Use when reproducing a bug, isolating a regression, or diagnosing an error with specialized agents — including failing or flaky tests (pytest AssertionError), crashes and segmentation faults, memory-corruption or memory errors in native/C extensions, intermittent or load-dependent failures (e.g. 500s under load), data-corruption bugs that only appear in production, scripts or hooks that silently exit or produce no output, and any "find the root cause" / "walk me through diagnosing" / "help me investigate" request. Trigger on phrasing like "failing test", "mysterious error", "segfault", "memory error", "intermittently fails", "root cause", "isolate the cause", "debug why", "diagnose", or "investigate the error". Prefer this over generic investigation when the user wants a systematic decompose-reproduce-fix-verify workflow. Do NOT use for greenfield features; use map-plan or map-efficient.
+[% endif -%]
 ---
 [% include "_partials/auto-update-preflight.md.jinja" %]
 # MAP Debugging Workflow
@@ -13,9 +16,11 @@ argument-hint: "[bug description]"
 
 Use the specialized MAP agents because debugging depends on isolated root-cause evidence:
 
-- Start with `task-decomposer` so investigation, fix, and verification work are separated.
+[% if PROVIDER == "claude" %]- Start with `task-decomposer` so investigation, fix, and verification work are separated.
 - Use `actor` for each investigation or fix subtask rather than a general-purpose agent.
-- Use `monitor` after each fix subtask so written code is validated before impact analysis.
+[% else %]- Start with `decomposer` so investigation, fix, and verification work are separated.
+- Use `actor` for each investigation or fix subtask rather than a default agent.
+[% endif %]- Use `monitor` after each fix subtask so written code is validated before impact analysis.
 - Use `predictor` and `evaluator` only after Monitor approves a fix, as described below.
 - Do not combine phases to save time; each phase consumes the previous phase's evidence.
 
@@ -56,8 +61,9 @@ These constraints apply to every fix subtask:
 Debugging workflow focuses on analysis before implementation:
 
 ```
-1. DECOMPOSE → task-decomposer (break down debugging steps)
-2. REPRODUCE → write an executable probe; record_repro_probe MUST witness exit 42
+[% if PROVIDER == "claude" %]1. DECOMPOSE → task-decomposer (break down debugging steps)
+[% else %]1. DECOMPOSE → decomposer (break down debugging steps)
+[% endif %]2. REPRODUCE → write an executable probe; record_repro_probe MUST witness exit 42
    ("no fix without root cause") before any fix is written
 3. FOR each fix step:
    4. IMPLEMENT → actor (edit files directly)
@@ -66,25 +72,31 @@ Debugging workflow focuses on analysis before implementation:
    7. EVALUATE → evaluator (verify fix quality)
    8. Keep Actor's already-written fix
 9. VERIFY → verify_repro_resolved: the SAME probe MUST flip to exit 0 (resolved)
-10. DONE → Suggest /map-learn if user wants to preserve patterns
+10. DONE → Suggest <% cmd %>map-learn if user wants to preserve patterns
 ```
 
 ## Step 1: Analyze the Issue
 
-Before calling task-decomposer, gather context:
-
+[% if PROVIDER == "claude" %]Before calling task-decomposer, gather context:
+[% else %]Before calling decomposer, gather context:
+[% endif %]
 1. **Read error logs/stack traces** (if provided in $ARGUMENTS)
-2. **Identify affected files**: Use Grep/Glob to find relevant code
-3. **Reproduce the issue** (if possible): Read test files or run commands
+[% if PROVIDER == "claude" %]2. **Identify affected files**: Use Grep/Glob to find relevant code
+[% else %]2. **Identify affected files**: Use rg through the command runner to find relevant code
+[% endif %]3. **Reproduce the issue** (if possible): Read test files or run commands
 
 ## Step 2: Decompose Debugging Process
 
 ```
-Task(
+[% if PROVIDER == "claude" %]Task(
   subagent_type="task-decomposer",
   description="Decompose debugging steps",
   prompt="<documents>
-  <document source='debug-request'>
+[% else %]spawn_agent(
+  agent_type="decomposer",
+  task_name="decompose_debugging_steps",
+  message="<documents>
+[% endif %]  <document source='debug-request'>
     <document_content>$ARGUMENTS</document_content>
   </document>
   <document source='error-logs'>
@@ -161,11 +173,19 @@ Debug types:
 For subtasks with `debug_type: 'investigation'`:
 
 ```
-Task(
+[% if PROVIDER == "claude" %]Task(
   subagent_type="actor",
   description="Investigate issue",
   prompt="Investigate this debugging step:
+[% else %]Derive each task name from the normalized debugging step id and attempt number
+(`investigate_<step>_<attempt>`); never spawn a second agent with an existing
+name. Use `followup_task` when continuing the same agent after feedback.
 
+spawn_agent(
+  agent_type="actor",
+  task_name=INVESTIGATION_TASK_NAME,
+  message="Investigate this debugging step:
+[% endif %]
 **Step:** [description]
 **Goal:** [acceptance_criteria]
 
@@ -176,8 +196,9 @@ Perform analysis and provide:
 - next_steps: array of recommended actions
 - code_locations: array of {file, line_range, issue_description}
 
-Use Read, Grep tools to analyze code. Do NOT make changes yet."
-)
+[% if PROVIDER == "claude" %]Use Read, Grep tools to analyze code. Do NOT make changes yet."
+[% else %]Read files and use rg through the command runner to analyze code. Do NOT make changes yet."
+[% endif %])
 ```
 
 ### Fix Steps
@@ -185,16 +206,21 @@ Use Read, Grep tools to analyze code. Do NOT make changes yet."
 For subtasks with `debug_type: 'fix'`:
 
 ```
-Task(
+[% if PROVIDER == "claude" %]Task(
   subagent_type="actor",
   description="Implement fix for [issue]",
   prompt="Implement a fix for this issue:
-
+[% else %]spawn_agent(
+  agent_type="actor",
+  task_name=FIX_TASK_NAME,
+  message="Implement a fix for this issue:
+[% endif %]
 **Issue:** [from investigation]
 **Root Cause:** [identified root cause]
 
-Apply the fix directly with Edit/Write tools.
-Do not edit unrelated files, add or upgrade dependencies, or refactor neighboring code unless the root cause evidence explicitly requires it. Report any required scope expansion as a blocker/tradeoff.
+[% if PROVIDER == "claude" %]Apply the fix directly with Edit/Write tools.
+[% else %]Apply the fix directly with `apply_patch`.
+[% endif %]Do not edit unrelated files, add or upgrade dependencies, or refactor neighboring code unless the root cause evidence explicitly requires it. Report any required scope expansion as a blocker/tradeoff.
 
 JSON contract reference: [Actor Change Summary](../../references/map-json-output-contracts.md#actor-change-summary).
 
@@ -218,11 +244,15 @@ After each fix (max 5 Actor->Monitor retry iterations per subtask):
 - On the second or later rejection for the same fix attempt, run `python3 .map/scripts/map_step_runner.py build_retry_quarantine debug-fix <retry_count> "<monitor feedback>"` and make the next Actor prompt use `.map/<branch>/retry_quarantine.json` as CLEAN_RETRY context. Do not reuse the rejected approach unless the quarantine artifact explicitly preserves it.
 
 ```
-Task(
+[% if PROVIDER == "claude" %]Task(
   subagent_type="monitor",
   description="Validate fix",
   prompt="<documents>
-  <document source='original-issue'>
+[% else %]spawn_agent(
+  agent_type="monitor",
+  task_name=MONITOR_TASK_NAME,
+  message="<documents>
+[% endif %]  <document source='original-issue'>
     <document_content>[description]</document_content>
   </document>
   <document source='written-files'>
@@ -263,11 +293,15 @@ Output JSON with:
 For approved fixes:
 
 ```
-Task(
+[% if PROVIDER == "claude" %]Task(
   subagent_type="predictor",
   description="Analyze fix impact",
   prompt="Analyze the impact of this debugging fix:
-
+[% else %]spawn_agent(
+  agent_type="predictor",
+  task_name=PREDICTOR_TASK_NAME,
+  message="Analyze the impact of this debugging fix:
+[% endif %]
 **Fix:** [paste actor JSON]
 **Monitor Verdict:** approved
 
@@ -289,11 +323,15 @@ Output JSON with:
 ### Evaluator Quality Check
 
 ```
-Task(
+[% if PROVIDER == "claude" %]Task(
   subagent_type="evaluator",
   description="Evaluate fix quality",
   prompt="Evaluate this debugging fix:
-
+[% else %]spawn_agent(
+  agent_type="evaluator",
+  task_name=EVALUATOR_TASK_NAME,
+  message="Evaluate this debugging fix:
+[% endif %]
 **Fix:** [paste actor JSON]
 **Monitor Verdict:** [verdict]
 **Predictor Analysis:** [paste predictor JSON]
@@ -319,14 +357,14 @@ If evaluator recommends proceeding:
 - Keep Actor's already-written changes
 - Run tests to verify fix
 - Check that original issue is resolved
-- Write a deferred learning handoff so `/map-learn` can reuse the debug context later:
+- Write a deferred learning handoff so `<% cmd %>map-learn` can reuse the debug context later:
 
 ```bash
 python3 .map/scripts/map_step_runner.py write_learning_handoff \
   map-debug \
   "$ARGUMENTS" \
   "Debugging workflow complete" \
-  "Ship the fix, or run /map-review if you want independent scrutiny" \
+  "Ship the fix, or run <% cmd %>map-review if you want independent scrutiny" \
   "<root cause + fix summary>"
 ```
 
@@ -365,7 +403,7 @@ Use `complete` only when the bug is fixed and verified. Use `pending` when more 
 **If you want to save debugging patterns for future use:**
 
 ```
-/map-learn
+<% cmd %>map-learn
 ```
 
 This is **completely optional**. Run it when debugging patterns are valuable for future reference.
@@ -380,19 +418,22 @@ This is **completely optional**. Run it when debugging patterns are valuable for
 - **Prove the root cause with an executable probe BEFORE any fix** (`record_repro_probe` must witness exit 42); **verify the same probe flips to exit 0 after the fix** (`verify_repro_resolved`). See Step 2.5 — the gate is a hard stop, never skipped silently.
 - Test after applying fixes.
 - Check for similar issues in other parts of the codebase when Predictor flags them or the root cause pattern is reusable.
-- Use the Task tool to call the specialized subagents in the sequence above.
-
+[% if PROVIDER == "claude" %]- Use the Task tool to call the specialized subagents in the sequence above.
+[% else %]- Use spawn_agent to call the configured specialized subagents in the sequence above.
+[% endif %]
 ## Examples
 
-User says: `/map-debug TypeError in authentication middleware`
+User says: `<% cmd %>map-debug TypeError in authentication middleware`
 
 You should:
 1. Gather context (read error logs, find middleware file)
-2. Task(subagent_type="task-decomposer") → get investigation + fix steps
+[% if PROVIDER == "claude" %]2. Task(subagent_type="task-decomposer") → get investigation + fix steps
 3. For investigation steps: Task(subagent_type="actor") to analyze
-4. For fix steps: actor → monitor → predictor → evaluator → apply
+[% else %]2. spawn_agent(agent_type="decomposer") → get investigation + fix steps
+3. For investigation steps: spawn_agent(agent_type="actor") to analyze
+[% endif %]4. For fix steps: actor → monitor → predictor → evaluator → apply
 5. Run tests, verify fix
-6. Done! Optionally run `/map-learn` to preserve debugging patterns
+6. Done! Optionally run `<% cmd %>map-learn` to preserve debugging patterns
 
 Begin debugging now.
 
@@ -402,4 +443,4 @@ Begin debugging now.
 - **Issue:** A fix is applied before the root cause is identified. **Fix:** Stop and return to investigation — the repro-probe gate (Step 2.5) requires `record_repro_probe` to witness exit 42 BEFORE any fix.
 - **Issue:** `verify_repro_resolved` returns `valid:false` after the fix. **Fix:** Hard stop — the probe still reproduces (exit 42) or is inconclusive, so the root cause is not resolved. Iterate the fix and re-verify; do not commit. A sha256-mismatch reason means the locked probe was altered — re-`record_repro_probe` from the original.
 - **Issue:** The same bug pattern may exist elsewhere. **Fix:** Check sibling code when Predictor flags it or the root cause is reusable (see "Debugging Constraints").
-- **Issue:** The session was interrupted mid-workflow. **Fix:** Run `/map-resume` to recover.
+- **Issue:** The session was interrupted mid-workflow. **Fix:** Run `<% cmd %>map-resume` to recover.

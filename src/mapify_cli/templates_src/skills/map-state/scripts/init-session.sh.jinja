@@ -7,8 +7,9 @@
 #   Idempotent: skips files that already exist.
 #
 # Usage:
-#   ${CLAUDE_PLUGIN_ROOT}/scripts/init-session.sh
-#
+[% if PROVIDER == "claude" %]#   ${CLAUDE_PLUGIN_ROOT}/scripts/init-session.sh
+[% else %]#   bash .agents/skills/map-state/scripts/init-session.sh
+[% endif %]#
 # Created files:
 #   .map/<branch>/task_plan_<branch>.md
 #   .map/<branch>/research/plan__discovery.md
@@ -28,8 +29,9 @@ if [ -z "$BRANCH" ]; then
 fi
 
 # Sanitize branch name (matches MAP orchestrator convention)
-SANITIZED_BRANCH=$(echo "$BRANCH" | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
-if [ -z "$SANITIZED_BRANCH" ]; then
+[% if PROVIDER == "claude" %]SANITIZED_BRANCH=$(echo "$BRANCH" | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+[% else %]SANITIZED_BRANCH=$(printf '%s' "$BRANCH" | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+[% endif %]if [ -z "$SANITIZED_BRANCH" ]; then
     SANITIZED_BRANCH="main"
 fi
 

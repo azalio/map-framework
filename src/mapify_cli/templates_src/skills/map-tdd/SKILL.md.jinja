@@ -1,13 +1,15 @@
 ---
+[% set cmd = "/" if PROVIDER == "claude" else "$" -%]
 name: map-tdd
 description: |
   TDD MAP workflow: write tests from the spec FIRST, then implement, so tests validate intent not implementation. Use when correctness is critical (auth, payments, data integrity). Do NOT use without a spec; use map-efficient instead.
-effort: medium
+[% if PROVIDER == "claude" %]effort: medium
 disable-model-invocation: true
 argument-hint: "[task description]"
+[% else %][% endif -%]
 ---
 [% include "_partials/auto-update-preflight.md.jinja" %]
-# /map-tdd — Test-Driven Development Workflow
+# <% cmd %>map-tdd — Test-Driven Development Workflow
 
 **Purpose:** Enforce test-first development where tests are written from the SPECIFICATION (not from implementation), ensuring tests validate intent rather than confirming implementation bugs.
 
@@ -71,7 +73,7 @@ Stop immediately and restart if you notice any of these:
 | "The existing codebase doesn't have tests" | You're adding tests now. One change at a time. |
 
 **What this command does NOT do:**
-- Does NOT replace /map-efficient — it augments the Actor/Monitor loop with test-first phases
+- Does NOT replace <% cmd %>map-efficient — it augments the Actor/Monitor loop with test-first phases
 - Does NOT work without a spec or plan — requires spec_<branch>.md or clear acceptance criteria
 
 ## Effort and Parallelism Policy
@@ -90,9 +92,9 @@ parallel_tool_policy: sequential_red_green_gate
 ## Execution Flow
 
 ```
-Non-TDD baseline:  DECOMPOSE → ACTOR (code+tests) → MONITOR   (= /map-efficient, shown for contrast — NOT a /map-tdd mode)
+Non-TDD baseline:  DECOMPOSE → ACTOR (code+tests) → MONITOR   (= <% cmd %>map-efficient, shown for contrast — NOT a <% cmd %>map-tdd mode)
 Targeted TDD:      DECOMPOSE → TEST_WRITER → TEST_FAIL_GATE → CONTRACT_HANDOFF → STOP
-Targeted Resume:   /map-task ST-001 → ACTOR (code only) → MONITOR
+Targeted Resume:   <% cmd %>map-task ST-001 → ACTOR (code only) → MONITOR
 Full-workflow TDD: DECOMPOSE → TEST_WRITER → TEST_FAIL_GATE → ACTOR (code only) → MONITOR
 ```
 
@@ -104,13 +106,14 @@ Full-workflow TDD: DECOMPOSE → TEST_WRITER → TEST_FAIL_GATE → ACTOR (code 
 
 ```bash
 TASK_ARGS="$ARGUMENTS"
-SUBTASK_ID=$(echo "$TASK_ARGS" | grep -oE 'ST-[0-9]+' | head -1)
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+[% if PROVIDER == "claude" %]SUBTASK_ID=$(echo "$TASK_ARGS" | grep -oE 'ST-[0-9]+' | head -1)
+[% else %]SUBTASK_ID=$(printf '%s' "$TASK_ARGS" | grep -m1 -oE 'ST-[0-9]+')
+[% endif %]BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 ```
 
 **Two modes:**
-- **Single-subtask mode** (`/map-tdd ST-001`): Write tests, persist a red-phase contract, then resume implementation separately
-- **Full workflow mode** (`/map-tdd "task description"`): TDD for all subtasks
+- **Single-subtask mode** (`<% cmd %>map-tdd ST-001`): Write tests, persist a red-phase contract, then resume implementation separately
+- **Full workflow mode** (`<% cmd %>map-tdd "task description"`): TDD for all subtasks
 
 ### Single-Subtask Mode (when `$SUBTASK_ID` is detected)
 
@@ -120,7 +123,7 @@ STATUS=$(printf '%s' "$RESULT" | jq -r '.status')
 
 if [ "$STATUS" = "error" ]; then
   printf '%s' "$RESULT" | jq -r '.message'
-  # If no plan: "Run /map-plan first"
+  # If no plan: "Run <% cmd %>map-plan first"
   # If subtask not found: shows available IDs
   exit 1
 fi
@@ -141,9 +144,9 @@ if [ -f ".map/${BRANCH}/step_state.json" ]; then
 fi
 ```
 
-- If **no spec and no task_plan**: Run `/map-plan` first. TDD requires clear acceptance criteria.
+- If **no spec and no task_plan**: Run `<% cmd %>map-plan` first. TDD requires clear acceptance criteria.
 - If **step_state.json EXISTS and status is COMPLETE or INITIALIZED**: Previous workflow finished or only plan exists. You MUST reinitialize for TDD by running `python3 .map/scripts/map_orchestrator.py resume_single_subtask "$SUBTASK_ID" --tdd` (single subtask) or `python3 .map/scripts/map_orchestrator.py resume_from_plan` then enable TDD mode (full workflow). Do NOT attempt edits without reinitializing — the workflow gate will block edits when current_step_phase is empty/INITIALIZED/COMPLETE.
-- If **step_state.json EXISTS and status is IN_PROGRESS**: Resume from checkpoint (same as /map-efficient resume logic). Check `current_step_phase` — if empty, reinitialize with `resume_from_plan`.
+- If **step_state.json EXISTS and status is IN_PROGRESS**: Resume from checkpoint (same as <% cmd %>map-efficient resume logic). Check `current_step_phase` — if empty, reinitialize with `resume_from_plan`.
 - If **task_plan EXISTS but no step_state**: Run `python3 .map/scripts/map_orchestrator.py resume_from_plan` then enable TDD mode.
 
 ### Enable TDD Mode (full workflow only)
@@ -181,7 +184,7 @@ When `TDD_ENFORCE=true`:
 
 ## Step 1: State Machine Loop
 
-Follow the same state machine loop as /map-efficient. The orchestrator handles phase routing.
+Follow the same state machine loop as <% cmd %>map-efficient. The orchestrator handles phase routing.
 Call `get_next_step` and execute based on the returned phase.
 
 ```bash
@@ -189,7 +192,7 @@ NEXT_STEP=$(python3 .map/scripts/map_orchestrator.py get_next_step)
 PHASE=$(printf '%s' "$NEXT_STEP" | jq -r '.phase')
 ```
 
-Route to the appropriate executor based on `$PHASE`. All phases from /map-efficient work identically.
+Route to the appropriate executor based on `$PHASE`. All phases from <% cmd %>map-efficient work identically.
 The two TDD-specific phases are described below.
 
 ---
@@ -199,11 +202,19 @@ The two TDD-specific phases are described below.
 Write tests ONLY — no implementation code. Tests are derived from the SPECIFICATION.
 
 ```python
-Task(
+[% if PROVIDER == "claude" %]Task(
   subagent_type="actor",
   description="TDD: Write tests for subtask [ID]",
   prompt=f"""You are in TDD TEST_WRITER mode.
+[% else %]Build every task name from the normalized subtask id plus the current attempt
+(`tdd_tests_<subtask>_<attempt>`). Use `followup_task` to continue an existing
+agent; do not respawn a duplicate name.
 
+spawn_agent(
+  agent_type="actor",
+  task_name=TEST_WRITER_TASK_NAME,
+  message=f"""You are in TDD TEST_WRITER mode.
+[% endif %]
 
 <MAP_Contract>
 [AAG contract from decomposition]
@@ -245,8 +256,9 @@ TEST QUALITY REQUIREMENTS — avoid "2+2=4" tests:
 - Aim for at least 60% of tests being full semantic scenarios (multi-step, multi-assert).
 
 Output:
-- Test files written via Edit/Write tools
-"""
+[% if PROVIDER == "claude" %]- Test files written via Edit/Write tools
+[% else %]- Test files written via `apply_patch`
+[% endif %]"""
 )
 ```
 
@@ -336,7 +348,7 @@ python3 .map/scripts/map_orchestrator.py mark_contract_ready "$SUBTASK_ID"
 After that, STOP and tell the user to resume implementation with:
 
 ```text
-/map-task ST-001
+<% cmd %>map-task ST-001
 ```
 
 That follow-up command will detect `test_handoff_${SUBTASK_ID}.json` and resume at `ACTOR` with the persisted contract, instead of re-running research or test writing.
@@ -350,11 +362,15 @@ When `$SUBTASK_ID` is empty (full-workflow mode), do **not** write `test_contrac
 When implementation resumes from the persisted TDD contract, Actor receives a modified prompt:
 
 ```python
-Task(
+[% if PROVIDER == "claude" %]Task(
   subagent_type="actor",
   description="TDD: Implement subtask [ID] to make tests green",
   prompt=f"""You are in TDD CODE_ONLY mode.
-
+[% else %]spawn_agent(
+  agent_type="actor",
+  task_name=ACTOR_TASK_NAME,
+  message=f"""You are in TDD CODE_ONLY mode.
+[% endif %]
 <MAP_Contract>
 [AAG contract from decomposition]
 </MAP_Contract>
@@ -386,11 +402,15 @@ Spawn this BEFORE code quality review. The two reviews cannot be swapped.
 **Adversarial framing:** The implementer finished suspiciously quickly. Do NOT trust the Actor summary. Read the actual code.
 
 ```python
-Task(
+[% if PROVIDER == "claude" %]Task(
   subagent_type="actor",
   description="Spec compliance review: subtask [ID]",
   prompt=f"""You are an adversarial spec compliance reviewer.
-
+[% else %]spawn_agent(
+  agent_type="monitor",
+  task_name=SPEC_REVIEW_TASK_NAME,
+  message=f"""You are an adversarial spec compliance reviewer.
+[% endif %]
 You have been told the implementer finished subtask [ID]. Do NOT trust their summary.
 Read the actual code diff. Compare every requirement in the spec to the actual diff.
 
@@ -420,11 +440,15 @@ Output:
 ### Code Quality Reviewer (runs ONLY after spec reviewer passes)
 
 ```python
-Task(
+[% if PROVIDER == "claude" %]Task(
   subagent_type="actor",
   description="Code quality review: subtask [ID]",
   prompt=f"""You are a code quality reviewer. Spec compliance is already verified.
-
+[% else %]spawn_agent(
+  agent_type="evaluator",
+  task_name=QUALITY_REVIEW_TASK_NAME,
+  message=f"""You are a code quality reviewer. Spec compliance is already verified.
+[% endif %]
 Review the implementation quality only.
 
 <actual_diff>
@@ -479,9 +503,9 @@ Monitor verifies both implementation correctness AND that all tests pass.
 
 ---
 
-## Differences from /map-efficient
+## Differences from <% cmd %>map-efficient
 
-| Aspect | /map-efficient | /map-tdd |
+| Aspect | <% cmd %>map-efficient | <% cmd %>map-tdd |
 |--------|---------------|----------|
 | Test authoring | Actor writes code + tests together | TEST_WRITER writes tests first, Actor writes code only |
 | Test independence | Tests may mirror implementation | Tests derived from spec only |
@@ -491,7 +515,7 @@ Monitor verifies both implementation correctness AND that all tests pass.
 
 ## Artifact Model
 
-`/map-tdd` uses the same branch-scoped execution artifacts as `/map-efficient` because it runs through the same orchestrated state machine with extra TDD phases:
+`<% cmd %>map-tdd` uses the same branch-scoped execution artifacts as `<% cmd %>map-efficient` because it runs through the same orchestrated state machine with extra TDD phases:
 
 - `code-review-00N.md`
 - `qa-001.md`
@@ -499,11 +523,11 @@ Monitor verifies both implementation correctness AND that all tests pass.
 - `test_contract_ST-00N.md`
 - `test_handoff_ST-00N.json`
 
-In TDD mode, `TEST_WRITER` and `TEST_FAIL_GATE` still write into the same branch workspace, but they must now leave behind a persisted contract that `/map-task` can resume from in a clean implementation session.
+In TDD mode, `TEST_WRITER` and `TEST_FAIL_GATE` still write into the same branch workspace, but they must now leave behind a persisted contract that `<% cmd %>map-task` can resume from in a clean implementation session.
 
 ---
 
-## When NOT to use /map-tdd
+## When NOT to use <% cmd %>map-tdd
 
 - Simple refactoring (no new behavior to test)
 - Documentation-only changes
@@ -514,22 +538,22 @@ In TDD mode, `TEST_WRITER` and `TEST_FAIL_GATE` still write into the same branch
 
 ## Related Commands
 
-- **/map-plan** — Create spec with invariants and acceptance criteria (recommended before /map-tdd)
-- **/map-task ST-001** — Resume implementation from a persisted TDD contract or execute a normal single subtask
-- **/map-efficient** — Standard workflow without test-first constraint
-- **/map-check** — Final verification after all subtasks complete
-- **/map-learn** — Extract lessons from completed TDD workflow
+- **<% cmd %>map-plan** — Create spec with invariants and acceptance criteria (recommended before <% cmd %>map-tdd)
+- **<% cmd %>map-task ST-001** — Resume implementation from a persisted TDD contract or execute a normal single subtask
+- **<% cmd %>map-efficient** — Standard workflow without test-first constraint
+- **<% cmd %>map-check** — Final verification after all subtasks complete
+- **<% cmd %>map-learn** — Extract lessons from completed TDD workflow
 
 
 ## Examples
 
 ```
-/map-tdd ST-003                         # write spec-derived tests for one planned subtask, then stop
-/map-tdd add idempotency keys to the payment capture endpoint
+<% cmd %>map-tdd ST-003                         # write spec-derived tests for one planned subtask, then stop
+<% cmd %>map-tdd add idempotency keys to the payment capture endpoint
 ```
 
 ## Troubleshooting
 
-- **Issue:** Invoked without a spec or acceptance criteria. **Fix:** Run `/map-plan` first, or use `/map-efficient` (see "What this command does NOT do").
+- **Issue:** Invoked without a spec or acceptance criteria. **Fix:** Run `<% cmd %>map-plan` first, or use `<% cmd %>map-efficient` (see "What this command does NOT do").
 - **Issue:** Tests pass trivially / mirror the implementation. **Fix:** Ensure TEST_WRITER derives tests from the spec only, before any implementation is in context (see "Key insight").
-- **Issue:** The session was interrupted between the red-phase contract and implementation. **Fix:** Resume with `/map-task ST-00N`.
+- **Issue:** The session was interrupted between the red-phase contract and implementation. **Fix:** Resume with `<% cmd %>map-task ST-00N`.

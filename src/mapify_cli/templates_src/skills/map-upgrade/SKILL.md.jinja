@@ -1,8 +1,10 @@
 ---
+[% set cmd = "/" if PROVIDER == "claude" else "$" -%]
 name: map-upgrade
 description: "Manually check and upgrade the MAP Framework for this project. Use when the user asks to update, upgrade, or check the installed MAP version."
-effort: low
+[% if PROVIDER == "claude" %]effort: low
 disable-model-invocation: true
 argument-hint: "[no arguments]"
+[% else %][% endif -%]
 ---
 [% include "_partials/manual-upgrade-flow.md.jinja" %]

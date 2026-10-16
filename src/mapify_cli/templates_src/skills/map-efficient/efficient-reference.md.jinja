@@ -1,15 +1,25 @@
-# /map-efficient Supporting Reference
+[% set cmd = "/" if PROVIDER == "claude" else "$" -%]
+# <% cmd %>map-efficient Supporting Reference
 
-This file holds low-frequency MAP Efficient details so `SKILL.md` stays focused on the active state-machine path.
-
-## Script Routing (dispatcher reference)
-
-Two CLI scripts back the workflow; calling the wrong one fails with `invalid choice`. Route by purpose, not by name prefix:
-
-- **`python3 .map/scripts/map_orchestrator.py <cmd>`** — state-machine transitions and step-state writes:
+[% if PROVIDER == "claude" %]This file holds low-frequency MAP Efficient details so `SKILL.md` stays focused on the active state-machine path.
+[% else %]This file holds lower-frequency details for the Codex `<% cmd %>map-efficient` skill.
+Load only the section needed by the active phase.
+[% endif %]
+[% if PROVIDER == "claude" %]## Script Routing (dispatcher reference)
+[% else %]## Approval-Hold Preflight
+[% endif %]
+[% if PROVIDER == "claude" %]Two CLI scripts back the workflow; calling the wrong one fails with `invalid choice`. Route by purpose, not by name prefix:
+[% else %]Resolve any pending approval hold BEFORE Step 0's `resume_from_plan`
+bootstraps execution state. A ready plan itself needs no approval —
+`<% cmd %>map-plan` no longer opens a hold.
+[% endif %]
+[% if PROVIDER == "claude" %]- **`python3 .map/scripts/map_orchestrator.py <cmd>`** — state-machine transitions and step-state writes:
   `get_next_step`, `peek_current_step`, `validate_step`, `initialize`, `set_plan_approved`, `set_execution_mode`, `set_tdd_mode`, `skip_step`, `set_subtasks`, `mark_contract_ready`, `resume_from_plan`, `resume_from_test_contract`, `check_circuit_breaker`, `set_waves`, `get_wave_step`, `validate_wave_step`, `advance_wave`, `resume_single_subtask`, `get_plan_progress`, `monitor_failed`, `wave_monitor_failed`, `defer_flaky_subtask`, `reopen_for_fixes`, `mark_workflow_complete`, `archive`, `mark_subtask_complete`, `record_subtask_result`, `backfill_subtask_ids`, `finalize_plan`, `request_repair`, `begin_repair`, `verify_repair`, `finish_repair`, `get_interruption_status`.
-
-- **`python3 .map/scripts/map_step_runner.py <cmd>`** — pure analysis/persistence helpers (no state-machine side effect). The list below names ONLY commands that have a `func_name` dispatch branch in `map_step_runner.py` and are thus invocable from the shell; the module defines additional internal helpers (`save_artifact_manifest`, `save_learning_metrics`, `load_learning_metrics`, `load_blueprint`, `record_repeated_learning_violations`, `record_token_budget_decision`, …) that are used by other dispatch branches but cannot be called directly:
+[% else %]```bash
+python3 .map/scripts/map_step_runner.py list_approval_holds --state pending
+```
+[% endif %]
+[% if PROVIDER == "claude" %]- **`python3 .map/scripts/map_step_runner.py <cmd>`** — pure analysis/persistence helpers (no state-machine side effect). The list below names ONLY commands that have a `func_name` dispatch branch in `map_step_runner.py` and are thus invocable from the shell; the module defines additional internal helpers (`save_artifact_manifest`, `save_learning_metrics`, `load_learning_metrics`, `load_blueprint`, `record_repeated_learning_violations`, `record_token_budget_decision`, …) that are used by other dispatch branches but cannot be called directly:
   - `detect_*` family: `detect_truncated_agent_output`, `detect_already_done`, `detect_cross_subtask_regression_risk`, `detect_actor_files_changed_mismatch`, `detect_symbol_blast_radius`
   - `build_*` family: `build_context_block`, `build_json_retry_prompt`, `build_acceptance_coverage_report`, `build_prior_stage_consumption_report`, `build_retry_quarantine`, `build_handoff_bundle`, `build_review_handoff`, `build_review_prompts`, `build_anti_repeat_constraint`
   - `save_*` / `load_*`: `save_research`, `load_research`, `load_artifact_manifest`
@@ -19,17 +29,63 @@ Two CLI scripts back the workflow; calling the wrong one fails with `invalid cho
   - intra-run failure memory (#253): `record_failure_signature`, `build_anti_repeat_constraint`, `set_anti_repeat_subtask_status`, `collect_anti_repeat_learn_candidates`
   - artifact writers: `write_verification_summary`, `write_run_health_report`, `write_pr_draft`, `write_plan_review`, `write_stage_gate`, `write_learning_handoff`
   - `log_*`: `log_agent_failure`
-
-Rule of thumb: anything that mutates `step_state.json` → orchestrator. Anything that reads the repo, writes a sidecar artifact, or returns a JSON verdict without touching `step_state.json` → step_runner. The two `record_subtask_result` (orchestrator) vs `record_test_baseline` (step_runner) cases are the most common confusion point — orchestrator advances the cursor, step_runner just persists a baseline file.
-
-[% include "_partials/serial-blocker-repair.md.jinja" %]
-
-### Flaky-test triage sidecar
-
-When a test/check fails inconsistently, have MAP repeat the exact failing command
+[% else %]Each pending hold's `kind` decides the branch:
+[% endif %]
+[% if PROVIDER == "claude" %]Rule of thumb: anything that mutates `step_state.json` → orchestrator. Anything that reads the repo, writes a sidecar artifact, or returns a JSON verdict without touching `step_state.json` → step_runner. The two `record_subtask_result` (orchestrator) vs `record_test_baseline` (step_runner) cases are the most common confusion point — orchestrator advances the cursor, step_runner just persists a baseline file.
+[% else %]- **`plan_approval`** (left by an older `<% cmd %>map-plan`) — not a gate. Do not
+  ask the operator; close it and continue:
+  ```bash
+  python3 .map/scripts/map_step_runner.py decide_approval_hold \
+    <hold-id> approved --note "plan_approval no longer gates execution"
+  ```
+- **`dangerous_action` / `safety_guardrail`** (hard stops) — never decide
+  these from inside the preflight. Refuse to proceed: surface the hold's
+  `reason` and `request_summary`, and stop. The operator resolves the
+  underlying issue out of band and decides the hold via `decide_approval_hold`
+  before retrying.
+[% endif %]
+[% if PROVIDER == "claude" %][% include "_partials/serial-blocker-repair.md.jinja" %]
+[% else %]If the operator already decided a hold manually (CLI) before starting
+`<% cmd %>map-efficient`, the preflight finds nothing pending and proceeds.
+[% endif %]
+[% if PROVIDER == "claude" %]### Flaky-test triage sidecar
+[% else %]## Pre-Monitor Gates
+[% endif %]
+[% if PROVIDER == "claude" %]When a test/check fails inconsistently, have MAP repeat the exact failing command
 and record the evidence instead of weakening the test or treating a later pass as
 a green gate:
+[% else %]Before Monitor, verify that Actor output and repository state agree.
 
+```bash
+python3 .map/scripts/map_step_runner.py detect_actor_files_changed_mismatch \
+  "$BRANCH" "$SUBTASK_ID" --declared "$FILES_CSV"
+python3 .map/scripts/map_step_runner.py detect_symbol_blast_radius \
+  "$BRANCH" "$SUBTASK_ID"
+```
+
+If `detect_actor_files_changed_mismatch` reports `status_mismatch=true`, finish
+the missing edits before Monitor. If `detect_symbol_blast_radius` recommends
+`validate_callers`, include external callers in Monitor's review context.
+
+## Cross-Subtask Regression Gate
+
+Before committing or recording a clean Monitor result, ask whether a scoped test
+run is safe:
+
+```bash
+python3 .map/scripts/map_step_runner.py detect_cross_subtask_regression_risk \
+  "$BRANCH" "$SUBTASK_ID"
+```
+
+If `recommended_gate == "full_suite"`, run the full suite. A focused run is
+allowed only when the detector returns `scoped` and the subtask contract does
+not require broader validation.
+
+## Flaky-Test Triage
+
+If a test/check fails inconsistently, repeat the exact failing command with the
+runner and record the outcomes before acting on the failure:
+[% endif %]
 ```bash
 python3 .map/scripts/map_step_runner.py run_flaky_test_triage \
   --check-id "pytest::test_name" \
@@ -37,21 +93,27 @@ python3 .map/scripts/map_step_runner.py run_flaky_test_triage \
   --timeout 120 \
   -- python -m pytest tests/test_file.py::test_name
 python3 .map/scripts/map_step_runner.py validate_flaky_test_triage
-# Preferred close — the verdict-path route. Monitor emits valid:false plus
-# disposition {kind: deferred_nondeterministic, check_id: ...}; close 2.4 with
-# the same disposition piped through. The orchestrator routes to deferral ONLY
+[% if PROVIDER == "claude" %]# Preferred close — the verdict-path route. Monitor emits valid:false plus
+[% else %]# Preferred close — the verdict path. Monitor emits valid:false plus
+[% endif %]# disposition {kind: deferred_nondeterministic, check_id: ...}; close 2.4 with
+[% if PROVIDER == "claude" %]# the same disposition piped through. The orchestrator routes to deferral ONLY
 # when the sidecar + envelope back it (see "Verdict-path route" below).
-printf '%s' "$MONITOR_JSON" | python3 .map/scripts/map_orchestrator.py \
+[% else %]# the same disposition piped through (see "Verdict-path route" below).
+[% endif %]printf '%s' "$MONITOR_JSON" | python3 .map/scripts/map_orchestrator.py \
   validate_step 2.4 --disposition deferred_nondeterministic \
   --check-id "pytest::test_name" --monitor-envelope -
 ```
 
-`run_flaky_test_triage` executes argv with `shell=False`; shell syntax is not
+[% if PROVIDER == "claude" %]`run_flaky_test_triage` executes argv with `shell=False`; shell syntax is not
 interpreted. If a shell is intentionally required, pass it explicitly as argv,
 for example `-- bash -lc 'python -m pytest tests/unit && echo done'`.
-
-Manual evidence remains available when the repeated runs were already collected:
-
+[% else %]The runner executes argv with `shell=False`; shell syntax is not interpreted. If
+shell behavior is intentionally needed, pass a shell explicitly as argv, for
+example `-- bash -lc 'python -m pytest tests/unit && echo done'`.
+[% endif %]
+[% if PROVIDER == "claude" %]Manual evidence remains available when the repeated runs were already collected:
+[% else %]Manual evidence remains available when repeated runs were already collected:
+[% endif %]
 ```bash
 python3 .map/scripts/map_step_runner.py record_flaky_test_triage \
   "pytest::test_name" \
@@ -61,14 +123,20 @@ python3 .map/scripts/map_step_runner.py record_flaky_test_triage \
 python3 .map/scripts/map_step_runner.py validate_flaky_test_triage
 ```
 
-Mixed pass/fail evidence is classified as `deferred_nondeterministic` and
+[% if PROVIDER == "claude" %]Mixed pass/fail evidence is classified as `deferred_nondeterministic` and
 stored in `.map/<branch>/flaky_test_triage.json` plus the `flaky_test_triage`
 manifest stage. This is an explicit recorded defer, not a pass: the artifact
 sets `monitor_verdict_policy=not_valid_without_explicit_triage`, and Monitor
 must still report the deferred evidence rather than returning a silent green.
-
+[% else %]Mixed pass/fail evidence writes `.map/<branch>/flaky_test_triage.json`, updates
+the `flaky_test_triage` manifest stage, and returns
+`disposition=deferred_nondeterministic`. This disposition is not a passing
+gate: do not weaken, skip, or delete the check, and do not return a silent
+green. Monitor must include the recorded defer evidence and
+`monitor_verdict_policy=not_valid_without_explicit_triage` in its finding.
+[% endif %]
 **Verdict-path route (preferred).** The third Monitor outcome is wired into the
-2.4 close itself: `validate_step 2.4 --disposition deferred_nondeterministic
+[% if PROVIDER == "claude" %]2.4 close itself: `validate_step 2.4 --disposition deferred_nondeterministic
 --check-id <id> --monitor-envelope -`. The deferral is honored ONLY when (a)
 the Monitor envelope is `valid:false` with a non-empty `failed_checks` and a
 structured `disposition` matching the flags, and (b) the sidecar holds mixed
@@ -78,9 +146,19 @@ check can never be deferred. A deferred run returns `valid:false` +
 `status=deferred_nondeterministic` plus evidence metadata in `step_state.json`
 and advances without requeueing Actor. `recommendation` may be omitted or
 `needs_investigation`; `revise`/`block` are rejected as contradictory.
-
+[% else %]2.4 close: `validate_step 2.4 --disposition deferred_nondeterministic --check-id
+<id> --monitor-envelope -`. The deferral is honored ONLY when (a) the Monitor
+envelope is `valid:false` with a non-empty `failed_checks` and a structured
+`disposition` matching the flags, and (b) the sidecar holds mixed pass/fail
+evidence for that `check_id` — so a deterministic failure or a green check can
+never be deferred. A deferred run returns `valid:false` + `deferred:true`
+(non-green, exit 0, not a hard-stop), records `status=deferred_nondeterministic`
+with evidence metadata, and advances without requeueing Actor. `recommendation`
+may be omitted or `needs_investigation`; `revise`/`block` are rejected as
+contradictory.
+[% endif %]
 **Lower-level command.** `defer_flaky_subtask "$SUBTASK_ID" --check-id <id>`
-performs the same close+advance directly (used when there is no Monitor
+[% if PROVIDER == "claude" %]performs the same close+advance directly (used when there is no Monitor
 envelope to verify, e.g. an operator deferral); the verdict-path route above
 calls it internally after the envelope/anti-gaming checks.
 
@@ -120,13 +198,19 @@ Validation always re-derives `converged` and `consecutive_clean_passes` from the
 pass log. A dirty pass resets the tail streak (`clean, dirty, clean` with K=2 is
 not converged), `clean=true` with critical findings is invalid, and every pass —
 including clean passes — must carry concrete evidence references.
-
+[% else %]performs the same close+advance directly (e.g. an operator deferral with no
+Monitor envelope); the verdict-path route calls it internally after the
+envelope/anti-gaming checks.
+[% endif %]
 ## Wave Execution
 
 ### Execution strategy decision table
 
-`select_execution_strategy` picks between the legacy sequential walker and the wave-loop on every run. The wave-loop engages **only when ALL THREE hold**; otherwise the legacy sequential walker (`get_next_step`) runs:
-
+[% if PROVIDER == "claude" %]`select_execution_strategy` picks between the legacy sequential walker and the wave-loop on every run. The wave-loop engages **only when ALL THREE hold**; otherwise the legacy sequential walker (`get_next_step`) runs:
+[% else %]`select_execution_strategy` picks between the legacy sequential walker and the
+wave-loop on every run. The wave-loop engages **only when ALL THREE hold**
+(otherwise the legacy sequential walker `get_next_step` runs):
+[% endif %]
 1. `execution.wave_mode` ∈ {`auto`, `on`}, **AND**
 2. `worktree.isolation` ≠ `off`, **AND**
 3. at least one color group has ≥2 members.
@@ -138,7 +222,7 @@ including clean passes — must carry concrete evidence references.
 | `auto` / `on` | `auto` / `required` | no (all groups size 1) | Legacy sequential walker (`get_next_step`) |
 | `auto` / `on` | `auto` / `required` | yes | Wave-loop (`get_wave_step` / `validate_wave_step` / `advance_wave`) |
 
-**Defaults (canonical MapConfig):** `execution.wave_mode=auto`,
+[% if PROVIDER == "claude" %]**Defaults (canonical MapConfig):** `execution.wave_mode=auto`,
 `worktree.isolation=auto`, `execution.concurrent_dispatch=true`.
 Parallel-ready plans select the wave-loop by default; concurrent dispatch is
 selected only for an eligible current wave with ≥2 members. A width-1 current
@@ -182,13 +266,93 @@ See [Parallel waves](#worktree-isolation) for the sequential worktree protocol.
 > `execution.concurrent_dispatch: false`, isolated waves dispatch sequentially
 > (Slice 5a), one Actor per turn. A sequential fallback is not concurrent fan-out.
 
-**Runtime wiring:** when `get_wave_step` returns `dispatch_mode == 'concurrent'`,
+[% else %]**Defaults (canonical MapConfig):** `execution.wave_mode=auto`,
+`worktree.isolation=auto`, `execution.concurrent_dispatch=true`.
+Parallel-ready plans select the wave-loop by default; concurrent dispatch is
+selected only for an eligible current wave with ≥2 members. A width-1 current
+wave remains sequential even if a later wave is parallel. Follow `get_wave_step`'s
+`dispatch_mode`, not the defaults alone.
+
+**Sequential off-ramps and degraded fallback:**
+- `MAP_EFFICIENT_SEQUENTIAL_ONLY=1` forces the full legacy sequential path.
+- `execution.wave_mode: off`, no parallel color groups, or `worktree.isolation: off`
+  select the sequential walker. If disabling isolation, also set
+  `execution.concurrent_dispatch: false`: concurrent dispatch with isolation off
+  is a configuration contradiction (`DispatchGateError`), not a silent fallback.
+- `execution.concurrent_dispatch: false` disables concurrent fan-out; an eligible
+  isolated wave can still use the sequential worktree flow (Slice 5a).
+- `resolve_worktree_isolation` checks git availability, worktree support, and a
+  clean merge target. In `auto` mode a failed check returns `degraded:true` and
+  `decision:sequential` with a warning: follow that sequential fallback, never
+  dispatch concurrent Actors into the shared tree. In `required` mode the same
+  failure aborts. Other structured worktree errors remain hard stops.
+
+### Sequential walker
+
+Use `get_next_step` only when `select_execution_strategy` selects the legacy
+sequential walker. `dispatch_mode=sequential` alone does not switch cursors:
+an active wave retains `get_wave_step`, `validate_wave_step`, and `advance_wave`,
+dispatching one Actor at a time. If `degraded=true` and `isolation_active=false`,
+execute the wave sequentially without creating or merging worktrees and without
+`run_concurrent_wave`. Do not switch to the legacy cursor without an explicit
+supported cursor transition.
+
+### Wave-loop commands
+
+```bash
+python3 .map/scripts/map_orchestrator.py set_waves --blueprint ".map/${BRANCH}/blueprint.json"
+python3 .map/scripts/map_orchestrator.py get_wave_step
+python3 .map/scripts/map_orchestrator.py validate_wave_step "$STEP_ID"
+python3 .map/scripts/map_orchestrator.py advance_wave
+```
+
+Do not mix wave APIs with the sequential `get_next_step` cursor for the same
+wave unless the orchestrator response explicitly tells you to fall back.
+
+Use wave APIs only when the blueprint has multiple ready subtasks whose writes
+are low-risk and disjoint, or when the user explicitly requests parallel
+execution.
+
+When `isolation_active=True`, inspect `dispatch_mode` first: `concurrent` uses
+`run_concurrent_wave` below. Only when `dispatch_mode` is `sequential`, execute
+the **Slice 5a sequential worktree flow**:
+
+1. **Create** a worktree per wave member via `create_subtask_worktree`.
+2. **Dispatch actor subagents sequentially** — one per turn (`HC-3`), each
+   pinned to its own worktree path. Do NOT dispatch all in one turn (that is
+   Slice 5b / `dispatch_mode==concurrent`).
+3. **Verify** all member worktrees with `concurrency_ready` before merge.
+4. **Accept atomically** — never merge one at a time (the first merge advances
+   HEAD and the next trips `BASE_DIVERGED`):
+
+```bash
+python3 .map/scripts/map_step_runner.py merge_wave_worktrees "$ST_A" "$ST_B"
+```
+
+It runs the post-wave gate inside the transaction and rolls the whole wave back
+to base on any conflict or gate failure (worktrees kept for retry). On a single
+subtask's Monitor failure, `discard_subtask_worktree` that subtask and retry it
+before calling `merge_wave_worktrees`.
+
+### Concurrent actor dispatch — **Slice 5b** (`dispatch_mode == 'concurrent'`) — **default-ON, gate-controlled**
+
+> **IMPORTANT — read before using this section.**
+> Concurrent fan-out (actor subagents in a single turn) is **default-ON, gate-controlled**
+> via `execution.concurrent_dispatch=true`. Act on this section **only** when
+> `get_wave_step` returns `dispatch_mode == 'concurrent'`. With an explicit
+> `execution.concurrent_dispatch: false`, isolated waves dispatch sequentially
+> (Slice 5a), one Actor per turn. A sequential fallback is not concurrent fan-out.
+> Use your runtime's own parallel actor-subagent dispatch mechanism — this is
+> the provider-neutral shape, not a literal API call.
+
+[% endif %]**Runtime wiring:** when `get_wave_step` returns `dispatch_mode == 'concurrent'`,
 call `run_concurrent_wave` (runner), which batch-splits the wave by `max_actors`
 and merges each sub-batch atomically via `merge_wave_worktrees`. For each sub-batch,
-emit all N `Task(actor)` calls in **one assistant message** — not one per turn:
-
+[% if PROVIDER == "claude" %]emit all N `Task(actor)` calls in **one assistant message** — not one per turn:
+[% else %]dispatch all N actor subagents **in one turn** — not one per turn:
+[% endif %]
 ```text
-# CORRECT (dispatch_mode=='concurrent' only) — N Task calls in one message:
+[% if PROVIDER == "claude" %]# CORRECT (dispatch_mode=='concurrent' only) — N Task calls in one message:
 Task(
   subagent_type="actor",
   description="Implement ST-003",
@@ -199,104 +363,151 @@ Task(
   description="Implement ST-004",
   prompt="..."
 )
-```
+[% else %]# CORRECT (dispatch_mode=='concurrent' only) — N actor subagents in one turn:
+dispatch actor subagent -> ST-003 (pinned to its own worktree)
+dispatch actor subagent -> ST-004 (pinned to its own worktree)
 
-```text
+# INCORRECT — one actor per turn (serial, defeats the wave):
+# Turn 1: actor -> ST-003
+# Turn 2: actor -> ST-004
+[% endif %]```
+
+[% if PROVIDER == "claude" %]```text
 # INCORRECT — one Task per turn (sequential, defeats the wave):
 # Turn 1: Task(actor, ST-003)
 # Turn 2: Task(actor, ST-004)   ← serial, not concurrent
 ```
-
-**Self-audit before dispatch:** "I will emit {n} Task(actor) calls in one message for this wave." Confirm n matches the color group size.
-
-**`max_actors` cap:** Default 4–8 concurrent actors per wave. Groups larger than `max_actors` are pre-split into sequential batches of `max_actors` before dispatch; do not emit more than `max_actors` Task calls in a single message.
+[% else %]**Self-audit before dispatch:** "I will dispatch {n} actor subagents in one turn."
+[% endif %]
+[% if PROVIDER == "claude" %]**Self-audit before dispatch:** "I will emit {n} Task(actor) calls in one message for this wave." Confirm n matches the color group size.
+[% else %]**`max_actors` cap:** Default 4–8 per wave. Groups larger than `max_actors` are
+pre-split into sequential batches before dispatch.
+[% endif %]
+[% if PROVIDER == "claude" %]**`max_actors` cap:** Default 4–8 concurrent actors per wave. Groups larger than `max_actors` are pre-split into sequential batches of `max_actors` before dispatch; do not emit more than `max_actors` Task calls in a single message.
 
 **Retry-discard on failure:** on any actor failure, timeout, or Monitor-reject within a concurrent group, the runner calls `abort_wave_group`, which discards the **entire group** (cancels siblings, resets all worktrees to base SHA, removes group branches) and reruns from base. Retries are bounded by `max_wave_retries` (default 3); on exhaustion the runner escalates to a human and does **not** auto-restart. Never merges a successful subset — discard-all-or-merge-all (HC-4).
-
+[% else %]**Retry-discard on failure:** on any actor failure, timeout, or Monitor-reject
+within a concurrent group, the runner calls `abort_wave_group`, which discards
+the **entire group** (cancels siblings, resets all worktrees to base SHA, removes
+group branches) and reruns from base. Retries are bounded by `max_wave_retries`
+(default 3); on exhaustion the runner escalates to a human and does **not**
+auto-restart. Never merges a successful subset — discard-all-or-merge-all (HC-4).
+[% endif %]
 ### Anti-patterns — Slice 5b concurrent dispatch only
 
-> These apply **only** under Slice 5b concurrent dispatch (`dispatch_mode == 'concurrent'`). In Slice 5a and the legacy sequential walker, one Task per turn **is** the correct behavior — the first three below are NOT anti-patterns there.
-
-- **One Task per turn across N turns** — serial actor loop that happens to use wave state; does not achieve concurrency. (Slice 5b only — this is the expected, correct behavior in 5a.)
+[% if PROVIDER == "claude" %]> These apply **only** under Slice 5b concurrent dispatch (`dispatch_mode == 'concurrent'`). In Slice 5a and the legacy sequential walker, one Task per turn **is** the correct behavior — the first three below are NOT anti-patterns there.
+[% else %]> These apply **only** under Slice 5b concurrent dispatch (`dispatch_mode == 'concurrent'`). In Slice 5a and the legacy sequential walker, one actor dispatch per turn **is** the correct behavior.
+[% endif %]
+[% if PROVIDER == "claude" %]- **One Task per turn across N turns** — serial actor loop that happens to use wave state; does not achieve concurrency. (Slice 5b only — this is the expected, correct behavior in 5a.)
 - **TodoWrite between actor dispatches** — a TodoWrite call between Task calls serializes the batch; emit all Task calls in one message. (Slice 5b only.)
 - **Waiting for one actor result before dispatching the next** — correct for sequential dispatch (5a), wrong for concurrent waves (5b).
 - **Mixing `get_next_step` and `get_wave_step` for the same wave** — corrupts the state-machine cursor. (Applies to both 5a and 5b.)
-
-### Actor-boundary prompt template (worktree-isolated subtasks)
-
-When a subtask runs in its own worktree, prefix the Actor prompt with:
-
-```text
+[% else %]- One actor dispatch per turn across N turns — serial loop, no concurrency. (Slice 5b only — expected, correct behavior in 5a.)
+- Writing between dispatches (TodoWrite, etc.) — serializes the batch. (Slice 5b only.)
+- Waiting for one actor result before dispatching the next. (Correct for 5a, wrong for 5b.)
+- Mixing `get_next_step` and `get_wave_step` for the same wave. (Applies to both 5a and 5b.)
+[% endif %]
+[% if PROVIDER == "claude" %]### Actor-boundary prompt template (worktree-isolated subtasks)
+[% else %]## TDD Mode
+[% endif %]
+[% if PROVIDER == "claude" %]When a subtask runs in its own worktree, prefix the Actor prompt with:
+[% else %]`--tdd` inserts `TEST_WRITER` and `TEST_FAIL_GATE` before `ACTOR`.
+[% endif %]
+[% if PROVIDER == "claude" %]```text
 You are working inside the isolated worktree for {SUBTASK_ID}.
 Worktree path: {WT_PATH}
 Frozen base SHA: {BASE_SHA}
-
-HARD CONSTRAINTS:
+[% else %]Rules:
+[% endif %]
+[% if PROVIDER == "claude" %]HARD CONSTRAINTS:
 - Write ONLY inside {WT_PATH}. Never touch the main tree or sibling worktrees.
 - Do not commit directly. Your output is merged by merge_subtask_worktree / merge_wave_worktrees.
 - On completion, return JSON: {"subtask_id": "{SUBTASK_ID}", "files_changed": [...], "tests_run": [...], "validation_notes": "...", "blocker": null}
 ```
-
-## Predictor Recovery
-
-Invoke Predictor after repeated Monitor failures, medium/high-risk subtasks, or explicit `escalation_required=true`. Predictor output should guide the next Actor attempt, not replace Monitor validation.
-
-## TDD Details
-
-`--tdd` inserts TEST_WRITER and TEST_FAIL_GATE before ACTOR. Tests must fail for the right reason before implementation starts. For clean-session TDD handoff, prefer `/map-tdd ST-001` then `/map-task ST-001`.
-
-## Final Verifier Retry Policy
-
-If final-verifier returns REVISE, fix only the missing contract evidence or failing behavior and rerun verification. If the same class of failure repeats, check the circuit breaker before another loop.
+[% else %]- Write tests before production code.
+- Run the new tests and confirm they fail for the intended reason.
+- Treat tests that pass before implementation as weak tests; revise them before
+  Actor work.
+- Do not edit production code in `TEST_WRITER`.
+[% endif %]
+[% if PROVIDER == "claude" %]## Predictor Recovery
+[% else %]## Monitor Retry Loop
+[% endif %]
+[% if PROVIDER == "claude" %]Invoke Predictor after repeated Monitor failures, medium/high-risk subtasks, or explicit `escalation_required=true`. Predictor output should guide the next Actor attempt, not replace Monitor validation.
+[% else %]Every Monitor failure needs durable evidence:
+[% endif %]
+[% if PROVIDER == "claude" %]## TDD Details
+[% else %]1. Write `.map/<branch>/code-review-N.md` with the exact issue, file path, and
+   required fix.
+2. Run `monitor_failed --feedback "$MONITOR_FEEDBACK"`.
+3. Fix only the current subtask.
+4. Re-run Monitor.
+[% endif %]
+[% if PROVIDER == "claude" %]`--tdd` inserts TEST_WRITER and TEST_FAIL_GATE before ACTOR. Tests must fail for the right reason before implementation starts. For clean-session TDD handoff, prefer `<% cmd %>map-tdd ST-001` then `<% cmd %>map-task ST-001`.
+[% else %]If retries start repeating, check the orchestrator response for retry isolation
+or circuit-breaker guidance before another Actor attempt.
+[% endif %]
+[% if PROVIDER == "claude" %]## Final Verifier Retry Policy
+[% else %]## Per-Subtask Commit Policy
+[% endif %]
+[% if PROVIDER == "claude" %]If final-verifier returns REVISE, fix only the missing contract evidence or failing behavior and rerun verification. If the same class of failure repeats, check the circuit breaker before another loop.
 
 ## Examples
 
 Standard:
 ```text
-/map-efficient implement approved checkout plan
+<% cmd %>map-efficient implement approved checkout plan
 ```
 
 TDD:
 ```text
-/map-efficient --tdd implement token refresh
+<% cmd %>map-efficient --tdd implement token refresh
 ```
 
 Resume existing plan:
 ```text
-/map-efficient continue current branch plan
+<% cmd %>map-efficient continue current branch plan
 ```
 
 ## Per-subtask commit recipe (full version)
 
 Triggered by Monitor's clean verdict. Stage named files only (no `git add .`),
 commit with the subtask id in the subject, then record the result and validate.
-
+[% else %]After a clean Monitor pass, a per-subtask commit is allowed and usually
+preferred when the repository is in a reviewable state. Stage named files only.
+[% endif %]
 ```bash
-git add <files from Monitor's files_changed>
-git commit -m "ST-NNN: <one-line summary>"
+[% if PROVIDER == "claude" %]git add <files from Monitor's files_changed>
+[% else %]git add <files from Monitor files_changed>
+[% endif %]git commit -m "ST-NNN: <one-line summary>"
 SHA=$(git log -1 --format=%H)
 python3 .map/scripts/map_orchestrator.py record_subtask_result \
   "$SUBTASK_ID" valid --files "$FILES_CSV" --summary "$ONE_LINE" \
   --commit-sha "$SHA"
-RECOMMENDATION=$(jq -r '.recommendation // empty' <<< "$MONITOR_JSON")
+[% if PROVIDER == "claude" %]RECOMMENDATION=$(jq -r '.recommendation // empty' <<< "$MONITOR_JSON")
 python3 .map/scripts/map_orchestrator.py validate_step 2.4 \
   --recommendation "$RECOMMENDATION"
 python3 .map/scripts/map_step_runner.py refresh_blueprint_affected_files \
   "$BRANCH" "$SUBTASK_ID"
-```
+[% else %][% endif %]```
 
-When NOT to commit per-subtask:
+[% if PROVIDER == "claude" %]When NOT to commit per-subtask:
 - Subtask is part of a wave whose other subtasks haven't closed AND the work
   doesn't independently compile/pass tests — finish the wave first.
 - The user explicitly asked for a single bundled commit.
 - Pre-commit hooks would block on intermediate state that's only valid after
   the wave completes. Document the deferral in the subtask summary.
-
-Never `--no-verify`. Never amend a published commit.
-
-## Truncated agent response detection (full recipes)
-
-### Monitor truncated-response gate (full)
+[% else %]Do not use `git add .`. Do not amend a published commit. Do not bypass hooks.
+If the user requested one bundled commit or the intermediate state cannot pass
+hooks, document the deferral and record the subtask result without committing.
+[% endif %]
+[% if PROVIDER == "claude" %]Never `--no-verify`. Never amend a published commit.
+[% else %]## Final Verification
+[% endif %]
+[% if PROVIDER == "claude" %]## Truncated agent response detection (full recipes)
+[% else %]Final verification must prove the full plan:
+[% endif %]
+[% if PROVIDER == "claude" %]### Monitor truncated-response gate (full)
 
 Before reading `valid`/`recommendation`, confirm Monitor returned a complete
 JSON envelope (`valid`, `summary`, `issues`). Pipe the captured response in
@@ -419,10 +630,10 @@ fi
   `outcome:"CLARIFICATION_NEEDED"`. The escalation is idempotent (re-running
   after `status:"escalated"` returns the prior outcome without rewriting it) and
   the subtask's anti-repeat status flips to `escalated`, so its armed signs still
-  feed `/map-learn` candidates.
+  feed `<% cmd %>map-learn` candidates.
 - **On a clean close**, if the subtask had armed signs, run
   `set_anti_repeat_subtask_status "$SUBTASK_ID" succeeded` so its signs are
-  excluded from the /map-learn candidates `write_learning_handoff` collects
+  excluded from the <% cmd %>map-learn candidates `write_learning_handoff` collects
   (a subtask that eventually passed is positive evidence, not a rule to mine).
 - **Thresholds** are env-tunable: `MAP_ANTI_REPEAT_ARM_THRESHOLD` (default 2),
   `MAP_ANTI_REPEAT_ESCALATE_THRESHOLD` (default 3).
@@ -490,7 +701,7 @@ It is read-only and exits 0 always; callers branch on `recommended_gate`.
 
 Resolve any pending approval hold BEFORE Step 0's `resume_from_plan`
 bootstraps execution state. A ready plan itself needs no approval —
-`/map-plan` no longer opens a hold.
+`<% cmd %>map-plan` no longer opens a hold.
 
 ```bash
 python3 .map/scripts/map_step_runner.py list_approval_holds --state pending
@@ -498,7 +709,7 @@ python3 .map/scripts/map_step_runner.py list_approval_holds --state pending
 
 Each pending hold's `kind` decides the branch:
 
-- **`plan_approval`** (left by an older `/map-plan`) — not a gate. Do not
+- **`plan_approval`** (left by an older `<% cmd %>map-plan`) — not a gate. Do not
   ask the operator; close it and continue into the pre-flight test baseline:
   ```bash
   python3 .map/scripts/map_step_runner.py decide_approval_hold \
@@ -511,7 +722,7 @@ Each pending hold's `kind` decides the branch:
   the hold via `decide_approval_hold` before retrying.
 
 If the operator already decided a hold manually (CLI) before starting
-`/map-efficient`, the preflight finds nothing pending and proceeds.
+`<% cmd %>map-efficient`, the preflight finds nothing pending and proceeds.
 
 ## Pre-flight test baseline
 
@@ -575,22 +786,30 @@ python3 .map/scripts/map_step_runner.py list_baseline_failures "$BRANCH"
 Each subtask's failing test now has a clean disposition: in baseline ⇒
 pre-existing, route to follow-up subtask; NOT in baseline ⇒ this
 plan introduced it, fix here.
-
+[% else %]- Read `.map/<branch>/task_plan_<branch>.md`.
+- Read `.map/<branch>/step_state.json`.
+- Inspect the final diff.
+- Run the verification commands required by the plan.
+- Confirm Monitor artifacts do not contain unresolved valid=false findings.
+- Write `run_health_report.json` with `write_run_health_report`.
+[% endif %]
 ## RESEARCH artifact schema (exact contract)
 
 `save_research` persists the bytes you pipe verbatim; `validate_research` then
 enforces the machine-checkable contract below before Actor consumes the artifact.
-Hand-author to this exact schema so the FIRST save validates — the loose prose in
+[% if PROVIDER == "claude" %]Hand-author to this exact schema so the FIRST save validates — the loose prose in
 `SKILL.md` only names the fields; this is the authoritative shape and types.
-
+[% else %]Hand-author to this exact schema so the FIRST save validates.
+[% endif %]
 Top-level object — strict JSON only (no markdown, no ``` code fences, ≤ 64 KiB):
 
 | field | type | rule |
 | --- | --- | --- |
 | `status` | string | exactly one of `OK`, `PARTIAL_RESULTS`, `NO_RESULTS`, `SEARCH_FAILED` (upper-case enum — NOT free text like `"complete"`/`"high"`) |
 | `confidence` | number | float in `[0, 1]` (NOT a word like `"high"`) |
-| `search_stats` | object | exactly `files_scanned` (int ≥ 0), `total_matches_found` (int ≥ 0), `results_truncated` (bool) — these exact field names, not `files_examined`/`patterns_searched` |
-| `relevant_locations` | array | ≤ 5 entries; each is `{path, lines, relevance}` |
+[% if PROVIDER == "claude" %]| `search_stats` | object | exactly `files_scanned` (int ≥ 0), `total_matches_found` (int ≥ 0), `results_truncated` (bool) — these exact field names, not `files_examined`/`patterns_searched` |
+[% else %]| `search_stats` | object | exactly `files_scanned` (int ≥ 0), `total_matches_found` (int ≥ 0), `results_truncated` (bool) — these exact field names |
+[% endif %]| `relevant_locations` | array | ≤ 5 entries; each is `{path, lines, relevance}` |
 
 Each `relevant_locations[]` entry:
 
@@ -598,8 +817,9 @@ Each `relevant_locations[]` entry:
 | --- | --- | --- |
 | `path` | string | safe relative repo path (no absolute, `~`, `\`, or `..`); must exist unless the entry is marked absent (`"exists": false`, `"absent": true`, or `"status"` ∈ `absent`/`missing`/`new`/`not_found`) |
 | `lines` | array | `[start, end]` — two positive ints, `start ≤ end`, span `end - start + 1 ≤ 200`, `end` within the file's line count (NOT a `"start-end"` string) |
-| `relevance` | string | non-empty; explain why the range matters. Never inline `content`/`file_contents`/`raw_code` — cite paths and ranges only |
-
+[% if PROVIDER == "claude" %]| `relevance` | string | non-empty; explain why the range matters. Never inline `content`/`file_contents`/`raw_code` — cite paths and ranges only |
+[% else %]| `relevance` | string | non-empty; explain why the range matters. Never inline `content`/`file_contents`/`raw_code` |
+[% endif %]
 Copy-pasteable skeleton (a valid artifact — swap in your real values):
 
 ```json
@@ -622,7 +842,7 @@ Copy-pasteable skeleton (a valid artifact — swap in your real values):
 ```
 
 `validate_research` echoes this exact skeleton in its `skeleton` field on ANY
-failure (invalid JSON, wrong types, or a missing artifact), so the first reject is
+[% if PROVIDER == "claude" %]failure (invalid JSON, wrong types, or a missing artifact), so the first reject is
 self-correcting: copy the `skeleton`, swap your values, re-save. Extra fields beyond
 the contract (e.g. `executive_summary`, `search_method`) are allowed and ignored by
 the validator; only the fields above are required and type-checked.
@@ -754,11 +974,25 @@ single wave subtask, `discard_subtask_worktree` THAT subtask and retry it; call
 `merge_wave_worktrees` only once the whole wave is green. The `overlaps` field is
 advisory telemetry (actual changed-file intersections), not a gate.
 
+[% else %]failure, so the first reject is self-correcting: copy the `skeleton`, swap your
+values, re-save. Extra fields beyond the contract are allowed and ignored.
+
+[% endif -%]
 [% include "_partials/stale-attribution-recovery.md.jinja" %]
 
 ## Troubleshooting
 
-- Blueprint validation fails: fix the decomposer output before Actor starts.
+[% if PROVIDER == "claude" %]- Blueprint validation fails: fix the decomposer output before Actor starts.
 - `step_state.json` disagrees with artifacts: use orchestrator commands, not manual state edits.
 - Monitor loops: preserve each failure in `code-review-N.md`, then invoke Predictor when escalation rules apply.
 - Final closeout lacks `run_health_report.json`: rerun the closeout command with explicit `RUN_HEALTH_STATUS`.
+[% else %]- `resume_from_plan` fails: inspect the returned JSON and fix missing plan,
+  blueprint, or branch artifacts before continuing.
+- `validate_blueprint_contract` fails: fix the blueprint before Actor work.
+- `validate_step` rejects Monitor close: obey its recovery instruction; do not
+  force-advance state.
+- `step_state.json` disagrees with artifacts: use orchestrator commands to
+  repair or resume. Do not edit the JSON manually.
+- Final closeout lacks `.map/<branch>/run_health_report.json`: rerun
+  `write_run_health_report` with an explicit status.
+[% endif %]

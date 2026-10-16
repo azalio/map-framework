@@ -1,3 +1,4 @@
+[% set cmd = "/" if PROVIDER == "claude" else "$" -%]
 ---
 paths:
   - "**/*.go"
@@ -5,7 +6,7 @@ paths:
 
 # Implementation Patterns (Learned)
 
-<!-- MAP-LEARN: populated by /map-learn. Edit freely, commit with project. -->
+<!-- MAP-LEARN: populated by <% cmd %>map-learn. Edit freely, commit with project. -->
 
 - **Re-fetch after update** (2026-03-15): When calling r.Update() on a Kubernetes resource, always re-fetch with r.Get() before reading updated fields because the in-memory object is stale after update. [workflow: map-efficient]
 

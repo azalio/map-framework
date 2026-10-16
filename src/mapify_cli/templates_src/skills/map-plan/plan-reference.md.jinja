@@ -1,6 +1,7 @@
-# /map-plan Supporting Reference
+[% set cmd = "/" if PROVIDER == "claude" else "$" -%]
+# <% cmd %>map-plan Supporting Reference
 
-This file holds templates, examples, and troubleshooting for `/map-plan` so the invoked `SKILL.md` stays focused on the active planning flow.
+This file holds templates, examples, and troubleshooting for `<% cmd %>map-plan` so the invoked `SKILL.md` stays focused on the active planning flow.
 
 ## Spec Template
 
@@ -75,11 +76,11 @@ User Request -> API boundary -> Service -> Store
 
 ## Design Rationale
 
-`/map-plan` exists to make scope and correctness reviewable before code is generated. The most important artifact is not prose; it is an executable contract that downstream Actor, Monitor, final-verifier, and reviewers can check.
+`<% cmd %>map-plan` exists to make scope and correctness reviewable before code is generated. The most important artifact is not prose; it is an executable contract that downstream Actor, Monitor, final-verifier, and reviewers can check.
 
 ## PRD-quality Preflight
 
-Offer `/map-prd-review` only for a clear PRD/requirements artifact, not an ordinary task
+Offer `<% cmd %>map-prd-review` only for a clear PRD/requirements artifact, not an ordinary task
 description. If accepted, follow that skill with the original input. A non-ready review
 must show its readiness score, top strengths, critical/major weaknesses, and
 high-priority uncovered edge cases before asking whether to proceed or revise.

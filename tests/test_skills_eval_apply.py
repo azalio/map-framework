@@ -57,6 +57,12 @@ def _read_frontmatter_description(skill_md: Path) -> str:
     from mapify_cli.skill_ir import parse_frontmatter
 
     text = skill_md.read_text(encoding="utf-8")
+    if skill_md.suffix == ".jinja":
+        from mapify_cli.delivery.template_renderer import get_environment
+
+        source_root = next(p for p in skill_md.parents if p.name == "templates_src")
+        template = skill_md.relative_to(source_root).as_posix()
+        text = get_environment(source_root).get_template(template).render(PROVIDER="claude")
     # Extract text between the two ---
     assert text.startswith("---\n"), f"No frontmatter in {skill_md}"
     close_idx = text.find("\n---", 3)
@@ -352,6 +358,10 @@ def test_vc2_rendered_trees_byte_identical_after_apply(tmp_path: Path) -> None:
 
     repo_root = _seed_templates_src(tmp_path)
     templates_src_root = repo_root / "src" / "mapify_cli" / "templates_src"
+    from mapify_cli.delivery.template_renderer import render_repo_trees
+
+    for provider in ("claude", "codex"):
+        render_repo_trees(provider, repo_root=repo_root, templates_src_root=templates_src_root)
     winner = "New description for byte-identity test."
 
     result = apply_optimized_description(
@@ -428,3 +438,269 @@ def test_vc1_skill_rules_json_description_unchanged(tmp_path: Path) -> None:
     assert winner not in str(after_desc), (
         "Winner text must NOT appear in skill-rules.json after apply"
     )
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("skill", sorted(p.parent.name for p in (_REAL / "src/mapify_cli/templates_src/skills").glob("*/SKILL.md.jinja")))
+def test_apply_provider_matrix(tmp_path: Path, provider: str, skill: str) -> None:
+    """Real production templates: exact winner, opposite bytes, include untouched."""
+    from mapify_cli.delivery.template_renderer import get_environment
+
+    root = _seed_templates_src(tmp_path)
+    source = root / "src/mapify_cli/templates_src"
+    env = get_environment(source)
+    name = f"skills/{skill}/SKILL.md.jinja"
+    opposite = "codex" if provider == "claude" else "claude"
+    before = env.get_template(name).render(PROVIDER=opposite)
+    include = source / "codex" / name
+    include_before = include.read_bytes()
+    from mapify_cli.delivery.template_renderer import render_repo_trees
+
+    for runtime in ("claude", "codex"):
+        render_repo_trees(runtime, repo_root=root, templates_src_root=source)
+    # Snapshot actual generated files for both runtimes, including modes and
+    # wrapper-specific terminal newlines, not merely common-source rendering.
+    before_files = {p: (p.read_bytes(), p.stat().st_mode & 0o777)
+                    for p in root.rglob("*") if p.is_file()}
+    winner = "Exact optimized winner.\nNo previous description tail."
+    apply_optimized_description(skill=skill, winner=winner, current_description="old",
+                                no_improvement=False, repo_root=root, stage=False, provider=provider)
+    env = get_environment(source)
+    from mapify_cli.skill_ir import parse_frontmatter
+    after = env.get_template(name).render(PROVIDER=provider)
+    assert parse_frontmatter(after.split("---", 2)[1])["description"] == winner
+    assert env.get_template(name).render(PROVIDER=opposite) == before
+    assert include.read_bytes() == include_before
+    generated = root / (".claude/skills" if provider == "claude" else ".agents/skills") / skill / "SKILL.md"
+    assert _read_frontmatter_description(generated) == winner
+    selected_roots = (".claude/skills", "src/mapify_cli/templates/skills") if provider == "claude" else (
+        ".agents/skills", "src/mapify_cli/templates/codex/skills"
+    )
+    selected_paths = {root / d / skill / "SKILL.md" for d in selected_roots}
+    from mapify_cli.skills_eval.apply_patcher import _plain_description
+
+    for path, (data, mode) in before_files.items():
+        assert path.stat().st_mode & 0o777 == mode
+        if path in selected_paths:
+            assert path.read_text() == _plain_description(data.decode(), winner)
+        elif path != _jinja_path(root, skill):
+            assert path.read_bytes() == data, f"Unrelated/opposite file changed: {path}"
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_apply_source_only_scoped_and_repeatable(tmp_path: Path, provider: str) -> None:
+    root = _seed_templates_src(tmp_path)
+    for winner in ("First winner.", "Second winner."):
+        apply_optimized_description(skill="map-debug", winner=winner, current_description="old",
+                                    no_improvement=False, repo_root=root, stage=False, provider=provider)
+    generated = root / (".claude/skills" if provider == "claude" else ".agents/skills") / "map-debug/SKILL.md"
+    assert _read_frontmatter_description(generated) == "Second winner."
+    assert not (root / ".claude/hooks").exists()
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("no_improvement", [True, False])
+def test_noop_all_sources_unchanged(tmp_path: Path, provider: str, no_improvement: bool) -> None:
+    root = _seed_templates_src(tmp_path)
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in root.rglob("*") if p.is_file()}
+    apply_optimized_description(skill="map-debug", winner="same", current_description="same",
+                                no_improvement=no_improvement, repo_root=root, stage=False, provider=provider)
+    assert before == {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in root.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("header", [
+    'description: [bad, structure]',
+    'description: &anchor old',
+    'description: |\n  old\n[% for i in [1] %]bad[% endfor %]',
+    'description: <% unknown %>',
+    'description: old\ndescription: duplicate',
+])
+def test_unsupported_header_no_live_changes(tmp_path: Path, header: str) -> None:
+    root = _seed_templates_src(tmp_path)
+    source = _jinja_path(root)
+    source.write_text("---\nname: map-skill-eval\n" + header + "\n---\nbody\n")
+    before = source.read_bytes()
+    with pytest.raises(ValueError, match="Unsupported|description"):
+        apply_optimized_description(skill=_SKILL, winner="new", current_description="old",
+                                    no_improvement=False, repo_root=root, stage=False)
+    assert source.read_bytes() == before
+    assert not (root / ".claude").exists()
+
+
+def test_partial_promotion_rolls_back_dirty_bytes_and_modes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import mapify_cli.skills_eval.apply_patcher as patcher
+
+    root = _seed_templates_src(tmp_path)
+    dirty = root / ".claude/skills/map-debug/SKILL.md"
+    dirty.parent.mkdir(parents=True)
+    from mapify_cli.delivery.template_renderer import get_environment
+
+    baseline_output = get_environment(root / "src/mapify_cli/templates_src").get_template("skills/map-debug/SKILL.md.jinja").render(PROVIDER="claude").encode()
+    dirty.write_bytes(baseline_output)
+    dirty.chmod(0o750)
+    source = _jinja_path(root, "map-debug")
+    before = source.read_bytes()
+    atomic = patcher._atomic_bytes
+    failed = False
+
+    def fail_once(path: Path, data: bytes, mode: int) -> None:
+        nonlocal failed
+        if path == dirty and not failed:
+            failed = True
+            raise OSError("injected partial promotion")
+        atomic(path, data, mode)
+
+    monkeypatch.setattr(patcher, "_atomic_bytes", fail_once)
+    with pytest.raises(OSError, match="injected"):
+        apply_optimized_description(skill="map-debug", winner="new", current_description="old",
+                                    no_improvement=False, repo_root=root, stage=False)
+    assert source.read_bytes() == before
+    assert dirty.read_bytes() == baseline_output
+    assert dirty.stat().st_mode & 0o777 == 0o750
+    assert not (root / "src/mapify_cli/templates/skills/map-debug/SKILL.md").exists()
+    assert not (root / ".map/skill-eval-apply-transaction").exists()
+
+
+def test_renderer_failure_does_not_touch_live_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from mapify_cli.delivery import template_renderer
+
+    root = _seed_templates_src(tmp_path)
+    source = _jinja_path(root)
+    before = source.read_bytes()
+
+    def fail(*args: object, **kwargs: object) -> list[Path]:
+        raise RuntimeError("injected renderer failure")
+
+    monkeypatch.setattr(template_renderer, "render_repo_trees", fail)
+    with pytest.raises(RuntimeError, match="injected"):
+        apply_optimized_description(skill=_SKILL, winner="new", current_description="old",
+                                    no_improvement=False, repo_root=root, stage=False)
+    assert source.read_bytes() == before
+    assert not (root / ".claude").exists()
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_independent_conditional_changes_only_selected_span(tmp_path: Path, provider: str) -> None:
+    from mapify_cli.skills_eval.apply_patcher import _provider_description
+
+    text = _jinja_path(_seed_templates_src(tmp_path), "map-efficient").read_text()
+    after = _provider_description(text, "new winner", provider)
+    start = text.index("description:")
+    alternate = text.index("[% else %]description:")
+    end = text.index("[% endif", alternate)
+    lo, hi = (start, alternate) if provider == "claude" else (alternate + len("[% else %]"), end)
+    assert after.startswith(text[:lo])
+    assert after.endswith(text[hi:])
+
+
+def test_recover_durable_interrupted_promotion(tmp_path: Path) -> None:
+    import json
+
+    from mapify_cli.skills_eval.apply_patcher import _recover_transaction
+
+    target = tmp_path / "dirty.txt"
+    target.write_bytes(b"partial new content")
+    journal = tmp_path / ".map/skill-eval-apply-transaction"
+    journal.mkdir(parents=True)
+    (journal / "0").write_bytes(b"original dirty content")
+    (journal / "manifest.json").write_text(json.dumps([
+        {"path": "dirty.txt", "exists": True, "mode": 0o751, "backup": "0"},
+        {"path": "new.txt", "exists": False, "mode": 0o644, "backup": "1"},
+    ]))
+    (tmp_path / "new.txt").write_text("partial new")
+    _recover_transaction(tmp_path)
+    assert target.read_bytes() == b"original dirty content"
+    assert target.stat().st_mode & 0o777 == 0o751
+    assert not (tmp_path / "new.txt").exists()
+    assert not journal.exists()
+
+
+def test_unrelated_dirty_outputs_preserved(tmp_path: Path) -> None:
+    root = _seed_templates_src(tmp_path)
+    dirty = root / ".claude/skills/map-plan/SKILL.md"
+    dirty.parent.mkdir(parents=True)
+    dirty.write_bytes(b"unrelated dirty output")
+    dirty.chmod(0o750)
+    apply_optimized_description(skill="map-debug", winner="new", current_description="old",
+                                no_improvement=False, repo_root=root, stage=False)
+    assert dirty.read_bytes() == b"unrelated dirty output"
+    assert dirty.stat().st_mode & 0o777 == 0o750
+
+
+@pytest.mark.parametrize("mutation", ["body", "terminal_newline"])
+def test_non_description_renderer_mutation_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str) -> None:
+    from mapify_cli.delivery import template_renderer
+
+    root = _seed_templates_src(tmp_path)
+    source = _jinja_path(root)
+    before = source.read_bytes()
+    render = template_renderer.render_repo_trees
+
+    def corrupt(provider: str, **kwargs: object) -> list[Path]:
+        paths = render(provider, **kwargs)  # type: ignore[arg-type]
+        for path in paths:
+            if path.parts[-2:] == (_SKILL, "SKILL.md") and provider == "claude":
+                value = path.read_bytes()
+                path.write_bytes(value + (b"body corruption" if mutation == "body" else b"\n"))
+        return paths
+
+    monkeypatch.setattr(template_renderer, "render_repo_trees", corrupt)
+    with pytest.raises(ValueError, match="non-description"):
+        apply_optimized_description(skill=_SKILL, winner="new", current_description="old",
+                                    no_improvement=False, repo_root=root, stage=False)
+    assert source.read_bytes() == before
+    assert not (root / ".claude").exists()
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("shipped", [False, True])
+def test_dirty_selected_output_rejected_without_source_write(tmp_path: Path, provider: str, shipped: bool) -> None:
+    root = _seed_templates_src(tmp_path)
+    source = _jinja_path(root)
+    before = source.read_bytes()
+    output = ("src/mapify_cli/templates/skills" if shipped else ".claude/skills") if provider == "claude" else (
+        "src/mapify_cli/templates/codex/skills" if shipped else ".agents/skills"
+    )
+    dirty = root / output / _SKILL / "SKILL.md"
+    dirty.parent.mkdir(parents=True)
+    dirty.write_bytes(b"dirty selected body")
+    dirty.chmod(0o751)
+    with pytest.raises(ValueError, match="dirty|modified|stale"):
+        apply_optimized_description(skill=_SKILL, winner="new", current_description="old",
+                                    no_improvement=False, repo_root=root, stage=False, provider=provider)
+    assert source.read_bytes() == before
+    assert dirty.read_bytes() == b"dirty selected body"
+    assert dirty.stat().st_mode & 0o777 == 0o751
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("stage", [False, True])
+def test_apply_preserves_unrelated_staged_index(tmp_path: Path, provider: str, stage: bool) -> None:
+    import subprocess
+
+    root = _seed_templates_src(tmp_path)
+
+    def git(*args: str) -> str:
+        return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True).stdout
+
+    git("init", "-q")
+    unrelated = root / "unrelated.txt"
+    unrelated.write_text("staged version\n")
+    git("add", "--", "unrelated.txt")
+    unrelated.write_text("unstaged version\n")
+    before = git("ls-files", "--stage")
+    apply_optimized_description(skill="map-debug", winner="new winner", current_description="old",
+                                no_improvement=False, repo_root=root, stage=stage, provider=provider)
+    assert git("show", ":unrelated.txt") == "staged version\n"
+    assert unrelated.read_text() == "unstaged version\n"
+    if not stage:
+        assert git("ls-files", "--stage") == before
+    else:
+        expected = {
+            "unrelated.txt",
+            "src/mapify_cli/templates_src/skills/map-debug/SKILL.md.jinja",
+            *({".claude/skills/map-debug/SKILL.md", "src/mapify_cli/templates/skills/map-debug/SKILL.md"}
+              if provider == "claude" else
+              {".agents/skills/map-debug/SKILL.md", "src/mapify_cli/templates/codex/skills/map-debug/SKILL.md"}),
+        }
+        assert set(git("diff", "--cached", "--name-only").splitlines()) == expected

@@ -1,23 +1,25 @@
 ---
+[% set cmd = "/" if PROVIDER == "claude" else "$" -%]
 name: map-task
 description: |
   Execute a single subtask from an existing MAP plan via Actor and Monitor. Use when map-plan has decomposed work and you want fine-grained control over one subtask. Do NOT use without an existing plan; run map-plan first.
-effort: medium
+[% if PROVIDER == "claude" %]effort: medium
 disable-model-invocation: true
 argument-hint: "[subtask id]"
+[% else %][% endif -%]
 ---
 [% include "_partials/auto-update-preflight.md.jinja" %]
-# /map-task — Single Subtask Execution
+# <% cmd %>map-task — Single Subtask Execution
 
 **Purpose:** Execute one specific subtask from an existing plan, without running the full workflow.
 
 **When to use:**
-- After `/map-plan` has created a decomposition — pick and run one subtask
+- After `<% cmd %>map-plan` has created a decomposition — pick and run one subtask
 - When you want fine-grained control over execution order
 - When resuming work on a specific subtask after context reset
 - When parallelizing subtasks across multiple sessions
 
-**Prerequisites:** A plan must exist (`.map/<branch>/task_plan_<branch>.md`). Run `/map-plan` first if needed.
+**Prerequisites:** A plan must exist (`.map/<branch>/task_plan_<branch>.md`). Run `<% cmd %>map-plan` first if needed.
 
 **Task:** $ARGUMENTS
 
@@ -29,7 +31,7 @@ parallel_tool_policy: single_subtask_sequential
 ```
 
 - Reason just enough to execute the selected subtask against its stored contract; avoid re-planning unrelated subtasks.
-- Follow the shared `/map-efficient` state-machine phases for the one subtask, including persisted TDD contracts when present.
+- Follow the shared `<% cmd %>map-efficient` state-machine phases for the one subtask, including persisted TDD contracts when present.
 - Do not parallelize Actor, Monitor, test-gate, or state updates for the same subtask. Parallelize only independent context reads before the next state-machine command.
 
 ## When Not To Expand Scope
@@ -54,9 +56,10 @@ These constraints apply to the selected subtask's write-capable phases:
 Extract the subtask ID from `$ARGUMENTS`:
 
 ```bash
-SUBTASK_ID=$(echo "$ARGUMENTS" | grep -oE 'ST-[0-9]+' | head -1)
-if [ -z "$SUBTASK_ID" ]; then
-  echo "ERROR: No subtask ID found. Usage: /map-task ST-001"
+[% if PROVIDER == "claude" %]SUBTASK_ID=$(echo "$ARGUMENTS" | grep -oE 'ST-[0-9]+' | head -1)
+[% else %]SUBTASK_ID=$(printf '%s' "$ARGUMENTS" | grep -m1 -oE 'ST-[0-9]+')
+[% endif %]if [ -z "$SUBTASK_ID" ]; then
+  echo "ERROR: No subtask ID found. Usage: <% cmd %>map-task ST-001"
   exit 1
 fi
 ```
@@ -69,7 +72,7 @@ fi
 python3 .map/scripts/map_step_runner.py list_approval_holds --state pending
 ```
 
-A ready plan needs no approval. Pending `plan_approval` (left by an older `/map-plan`): do not ask — close it via `decide_approval_hold <hold-id> approved --note "plan_approval no longer gates execution"` and continue to the resume call below. Pending `dangerous_action`/`safety_guardrail`: refuse to proceed — surface the hold's `reason` and stop; `/map-task` never auto-decides these.
+A ready plan needs no approval. Pending `plan_approval` (left by an older `<% cmd %>map-plan`): do not ask — close it via `decide_approval_hold <hold-id> approved --note "plan_approval no longer gates execution"` and continue to the resume call below. Pending `dangerous_action`/`safety_guardrail`: refuse to proceed — surface the hold's `reason` and stop; `<% cmd %>map-task` never auto-decides these.
 
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
@@ -89,9 +92,9 @@ if [ "$STATUS" = "error" ]; then
 fi
 ```
 
-**If error mentions "No plan found":** Run `/map-plan` first to create a decomposition.
+**If error mentions "No plan found":** Run `<% cmd %>map-plan` first to create a decomposition.
 **If error mentions "not found in plan":** The output lists available subtask IDs — pick one.
-**If persisted TDD artifacts exist:** `/map-task` resumes at `ACTOR` using `test_contract_<subtask>.md` + `test_handoff_<subtask>.json` instead of restarting research.
+**If persisted TDD artifacts exist:** `<% cmd %>map-task` resumes at `ACTOR` using `test_contract_<subtask>.md` + `test_handoff_<subtask>.json` instead of restarting research.
 
 ## Step 2: Load Subtask Context
 
@@ -122,22 +125,23 @@ Dependencies: <from blueprint>
 
 ## Step 3: State Machine Loop
 
-Follow the same state machine loop as `/map-efficient`. Call `get_next_step` and execute based on the returned phase.
+Follow the same state machine loop as `<% cmd %>map-efficient`. Call `get_next_step` and execute based on the returned phase.
 
 ```bash
 NEXT_STEP=$(python3 .map/scripts/map_orchestrator.py get_next_step)
 PHASE=$(printf '%s' "$NEXT_STEP" | jq -r '.phase')
 ```
 
-Route to the appropriate executor based on `$PHASE`. All phases from `/map-efficient` work identically:
+Route to the appropriate executor based on `$PHASE`. All phases from `<% cmd %>map-efficient` work identically:
 
-- **RESEARCH (2.2)** — Required persisted research artifact; research-agent is conditional for broad/high-risk discovery.
-- **ACTOR (2.3)** — Implement the subtask
+[% if PROVIDER == "claude" %]- **RESEARCH (2.2)** — Required persisted research artifact; research-agent is conditional for broad/high-risk discovery.
+[% else %]- **RESEARCH (2.2)** — Required persisted research artifact; researcher is conditional for broad/high-risk discovery.
+[% endif %]- **ACTOR (2.3)** — Implement the subtask
 - **MONITOR (2.4)** — Required validation before the subtask can complete.
 
 Single-subtask execution must keep using the shared branch workspace artifacts in `.map/<branch>/`
 (e.g. `code-review-00N.md`, `qa-001.md`, `pr-draft.md`) rather than creating task-local side files.
-When Monitor runs during `/map-task`, append to the next `code-review-00N.md` so targeted subtask
+When Monitor runs during `<% cmd %>map-task`, append to the next `code-review-00N.md` so targeted subtask
 execution stays aligned with the full workflow artifact model.
 
 For each step:
@@ -155,7 +159,7 @@ For each step:
 
 ## Step 4: Outcome Report
 
-Every `/map-task` run ends with **exactly one** outcome report — **COMPLETE** or **BLOCKED** —
+Every `<% cmd %>map-task` run ends with **exactly one** outcome report — **COMPLETE** or **BLOCKED** —
 carrying these required fields: `Subtask`, `Status`, `Files Modified`, `Validation` (test/Monitor
 result), and (BLOCKED only) `Blocker` + `Needed`. Never end a run without one of these reports.
 
@@ -205,7 +209,7 @@ Remaining:
 ═══════════════════════════════════════════════════
 ```
 
-4. **Suggest next subtask** using AskUserQuestion:
+[% if PROVIDER == "claude" %]4. **Suggest next subtask** using AskUserQuestion:
 
 ```
 AskUserQuestion(questions=[
@@ -213,15 +217,18 @@ AskUserQuestion(questions=[
     "question": "What would you like to do next?",
     "header": "Next subtask",
     "options": [
-      {"label": "/map-task ${SUGGESTED}", "description": "Execute next subtask: <title>"},
-      {"label": "/map-tdd ${SUGGESTED}", "description": "TDD for next subtask: <title>"},
-      {"label": "Done for now", "description": "Stop here, continue later with /map-task"}
+      {"label": "<% cmd %>map-task ${SUGGESTED}", "description": "Execute next subtask: <title>"},
+      {"label": "<% cmd %>map-tdd ${SUGGESTED}", "description": "TDD for next subtask: <title>"},
+      {"label": "Done for now", "description": "Stop here, continue later with <% cmd %>map-task"}
     ],
     "multiSelect": false
   }
 ])
 ```
-
+[% else %]4. **Suggest next subtask.** Ask the user directly whether to execute
+   `<% cmd %>map-task ${SUGGESTED}`, start `<% cmd %>map-tdd ${SUGGESTED}`, or stop for now.
+   Do not start the next subtask until the user answers.
+[% endif %]
 **If all subtasks are complete** (REMAINING == 0), skip the question and show:
 
 ```text
@@ -229,7 +236,7 @@ AskUserQuestion(questions=[
 ALL SUBTASKS COMPLETE (${TOTAL}/${TOTAL})
 ═══════════════════════════════════════════════════
 
-Run /map-check for final verification, or /map-learn to extract patterns.
+Run <% cmd %>map-check for final verification, or <% cmd %>map-learn to extract patterns.
 ```
 
 ### Blocked Outcome
@@ -255,7 +262,7 @@ Needed:  <the exact contract change to unblock — e.g. add <file> to ST-XXX
 ═══════════════════════════════════════════════════
 ```
 
-Then stop. Suggest `/map-plan` (to amend the decomposition) or ask the user for a contract decision —
+Then stop. Suggest `<% cmd %>map-plan` (to amend the decomposition) or ask the user for a contract decision —
 do not silently expand scope or mark the subtask complete.
 
 ---
@@ -265,8 +272,8 @@ do not silently expand scope or mark the subtask complete.
 ### No Plan Exists
 
 ```text
-No plan found. Run /map-plan first to create a task decomposition,
-then use /map-task ST-001 to execute individual subtasks.
+No plan found. Run <% cmd %>map-plan first to create a task decomposition,
+then use <% cmd %>map-task ST-001 to execute individual subtasks.
 ```
 
 ### Subtask Not in Plan
@@ -289,23 +296,23 @@ Proceed anyway? (The Actor will work with whatever state exists.)
 
 ## Related Commands
 
-- **/map-plan** — Create task decomposition (prerequisite)
-- **/map-efficient** — Run full workflow (all subtasks)
-- **/map-tdd ST-001** — Write tests for a specific subtask (TDD mode)
-- **/map-resume** — Resume interrupted workflow from checkpoint
-- **/map-check** — Verify all acceptance criteria
+- **<% cmd %>map-plan** — Create task decomposition (prerequisite)
+- **<% cmd %>map-efficient** — Run full workflow (all subtasks)
+- **<% cmd %>map-tdd ST-001** — Write tests for a specific subtask (TDD mode)
+- **<% cmd %>map-resume** — Resume interrupted workflow from checkpoint
+- **<% cmd %>map-check** — Verify all acceptance criteria
 
 
 ## Examples
 
 ```
-/map-task ST-003          # execute subtask ST-003 from the existing plan
+<% cmd %>map-task ST-003          # execute subtask ST-003 from the existing plan
 ```
 
 If a persisted TDD contract exists for the subtask (`test_contract_ST-003.md` +
-`test_handoff_ST-003.json`), `/map-task ST-003` automatically resumes at ACTOR against those tests.
+`test_handoff_ST-003.json`), `<% cmd %>map-task ST-003` automatically resumes at ACTOR against those tests.
 
 ## Troubleshooting
 
-- **Issue:** Workflow doesn't behave as expected. **Fix:** Confirm the **Prerequisites** (a plan must exist) and re-read the **Mutation Boundary Constraints** and **When Not To Expand Scope** sections above. Run `/map-resume` to recover from an interrupted run.
-- **Issue:** The subtask can't pass validation within its allowed files. **Fix:** Don't expand scope — emit the **BLOCKED** outcome report (Step 4) and amend the contract via `/map-plan`.
+- **Issue:** Workflow doesn't behave as expected. **Fix:** Confirm the **Prerequisites** (a plan must exist) and re-read the **Mutation Boundary Constraints** and **When Not To Expand Scope** sections above. Run `<% cmd %>map-resume` to recover from an interrupted run.
+- **Issue:** The subtask can't pass validation within its allowed files. **Fix:** Don't expand scope — emit the **BLOCKED** outcome report (Step 4) and amend the contract via `<% cmd %>map-plan`.

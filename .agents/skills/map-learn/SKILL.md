@@ -171,6 +171,11 @@ JSON contract reference: [Learning Summary](../../references/map-json-output-con
 ## Step 3: Write Rules Files
 
 Transform Reflector output into `.map/learned/` markdown files.
+After every public-rule write (including `key_insight`), synchronize all public
+bullets into root `AGENTS.md` between the `MAP-LEARNED` fence comments. Preserve
+every byte outside the managed block; append the block if absent. Never copy
+personal rules into it. Use the same synchronization for ordinary writes and
+personal-rule promotion.
 
 **Use the bundled templates** next to this skill under `templates/` as the format reference:
 - `rules-unconditional.md` for sections without `paths:` frontmatter
