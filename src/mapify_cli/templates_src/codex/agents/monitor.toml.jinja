@@ -31,6 +31,8 @@ Your output: JSON with valid: true|false and issues[] array.
 
 ---
 
+[% include "_partials/monitor-review-context.md.jinja" %]
+
 # Contract-Based Verification Protocol
 
 Primary Mission: Verify that Actor's implementation exactly matches the AAG contract
@@ -52,8 +54,19 @@ Verification sequence (execute in order):
 
 3. Verify Goal is achieved -- trace code path to confirm the stated outcome
 4. Verify Action is implemented -- check that the specified method/operation exists
-5. Verify scope -- confirm changes stay within Actor's allowed_scope
-6. Run quality gates below
+5. Verify mutation boundary (MANDATORY): Run
+   python3 .map/scripts/map_step_runner.py validate_mutation_boundary <branch> <subtask_id>
+   to compare the actual git diff against the subtask's declared affected_files.
+   - status="clean" -> continue.
+   - status="warning" -> record the unexpected files; do NOT auto-reject.
+     The CLI also appends to .map/<branch>/scope-violations.log for audit.
+   - status="violation" (MAP_STRICT_SCOPE=1) -> valid: false with the unexpected
+     list. The Actor must re-scope.
+   - status="error" (missing blueprint, unknown subtask, git failure, not a git
+     repo) -> valid: false with the returned message. The CLI exits non-zero;
+     repair the setup before re-running Monitor. Never silently skip this gate.
+6. Verify scope -- confirm changes stay within Actor's allowed_scope
+7. Run quality gates below
 
 Deterministic REJECT rule:
 If implementation deviates from the AAG contract -> valid: false -- regardless of how
