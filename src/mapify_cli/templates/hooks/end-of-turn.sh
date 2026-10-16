@@ -65,7 +65,7 @@ import re, sys
 key, default = sys.argv[1], sys.argv[2]
 try:
     text = open('.map/config.yaml', encoding='utf-8').read()
-    m = re.search(r'^\s*' + re.escape(key) + r'\s*:\s*(\S+)', text, re.MULTILINE)
+    m = re.search(r'^[ \t]*' + re.escape(key) + r'[ \t]*:[ \t]*(\S+)', text, re.MULTILINE)
     print(m.group(1).strip() if m else default)
 except Exception:
     print(default)
@@ -281,12 +281,20 @@ if command -v go &>/dev/null && [[ -f "go.mod" ]]; then
                 # developed on macOS (e.g. projects using cgroups/eBPF/netlink).
                 #   Example config:  checks.go.goos: linux
                 _go_goos="${GOOS:-$(_read_map_config_value 'checks.go.goos' '')}"
+                # Optional comma-separated build tags; keep the entire value
+                # in one argv entry, never evaluate it as shell syntax.
+                _go_tags=$(_read_map_config_value 'checks.go.tags' '')
+                _go_build_args=(build)
+                if [[ -n "$_go_tags" ]]; then
+                    _go_build_args+=(-tags "$_go_tags")
+                fi
+                _go_build_args+=(-o /dev/null ./...)
                 _go_build_ok=true
                 if [[ -n "$_go_goos" ]]; then
-                    GOOS="$_go_goos" go build -o /dev/null ./... 2>/dev/null \
+                    GOOS="$_go_goos" go "${_go_build_args[@]}" 2>/dev/null \
                         || _go_build_ok=false
                 else
-                    go build -o /dev/null ./... 2>/dev/null || _go_build_ok=false
+                    go "${_go_build_args[@]}" 2>/dev/null || _go_build_ok=false
                 fi
                 if [[ "$_go_build_ok" == "false" ]]; then
                     add_critical "Go build errors detected (run 'go build ./...' for details)"

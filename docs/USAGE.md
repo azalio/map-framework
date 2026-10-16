@@ -2311,6 +2311,19 @@ Only files the current turn changed are checked; full linting is moved to
 4. **Python syntax:** fast `ast.parse` check on changed `.py` files
 5. **Go build:** runs `go build ./...` when a Go module is present and any changed `.go` file exists
 
+**Go build configuration** (`.map/config.yaml`, flat dotted keys):
+
+```yaml
+checks.go.build: true             # false disables the build check
+checks.go.goos: linux             # optional; GOOS environment variable wins
+checks.go.tags: integration,netgo  # optional comma-separated scalar, no spaces or quotes
+```
+
+Absent or empty `checks.go.tags` preserves the default build without `-tags`.
+A non-empty value is passed literally as one `-tags` argument, with or without
+GOOS; shell variables, wildcards, and command substitutions are not expanded.
+Build failures still block the turn; tags do not suppress errors.
+
 **Blocking:** secrets, `.env` staged, Python syntax errors, and Go build errors
 are critical and block with exit 2; lint/format issues are auto-fixed silently
 and never block.
