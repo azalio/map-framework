@@ -347,6 +347,9 @@ is discarded, so the working branch is never touched by a bad attempt.
    Forces the full legacy sequential path, byte-identical to pre-Slice-6, regardless
    of any config. Unset to restore default parallel behavior.
 2. **Per-repo opt-out** — set `worktree.isolation: off` in `.map/config.yaml`.
+   Actor write-attribution checks then inspect the main checkout, even if a prior
+   worktree is still recorded and on disk. The retained worktree and recovery
+   state are not deleted; writes only in that worktree do not count as main writes.
 
 The `auto` mode degrades gracefully to sequential (with a logged warning) when git
 worktrees are unavailable (non-git repo, shallow clone, detached HEAD, locked ref).
