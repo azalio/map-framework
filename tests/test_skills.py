@@ -3393,6 +3393,68 @@ def test_stale_attribution_docs_guard_rejects_missing_guidance(required: str) ->
         _assert_stale_attribution_recovery(content.replace(required, "removed_guidance"))
 
 
+class TestEfficientParallelDefaults:
+    """#497: defaults must not override the runner's conditional dispatch gate."""
+
+    @pytest.fixture(params=["claude", "codex"])
+    def surfaces(self, request: pytest.FixtureRequest) -> list[Path]:
+        root = Path(__file__).parent.parent
+        provider = request.param
+        source = root / "src/mapify_cli/templates_src"
+        shipped = root / "src/mapify_cli/templates"
+        if provider == "codex":
+            return [source / "codex/skills", shipped / "codex/skills", root / ".agents/skills"]
+        return [source / "skills", shipped / "skills", root / ".claude/skills"]
+
+    def test_no_stale_sequential_default_claims(self, surfaces: list[Path]) -> None:
+        for directory in surfaces:
+            for name in ("SKILL.md", "efficient-reference.md"):
+                path = directory / "map-efficient" / name
+                if "templates_src" in directory.parts:
+                    path = path.with_suffix(path.suffix + ".jinja")
+                content = " ".join(path.read_text(encoding="utf-8").split())
+                for stale in (
+                    "`off` (default)",
+                    "worktree.isolation=off",
+                    "sequential (default)",
+                    "sequential walker by default",
+                    "With default config this is the sequential walker",
+                    "opt-in, off by default",
+                    "Worktree isolation (opt-in",
+                    "default disabled path",
+                    "ACTIVE when opted in",
+                    "opt-in via `execution.concurrent_dispatch: true`",
+                    "not yet active",
+                    "default sequential walker",
+                ):
+                    assert stale not in content, f"{path}: stale claim {stale!r}"
+
+    def test_reference_documents_defaults_and_fallbacks(self, surfaces: list[Path]) -> None:
+        from mapify_cli.config.project_config import MapConfig
+
+        config = MapConfig()
+        for directory in surfaces:
+            path = directory / "map-efficient/efficient-reference.md"
+            if "templates_src" in directory.parts:
+                path = path.with_suffix(path.suffix + ".jinja")
+            content = " ".join(path.read_text(encoding="utf-8").split())
+            for required in (
+                f"execution.wave_mode={config.execution_wave_mode}",
+                f"worktree.isolation={config.worktree_isolation}",
+                f"execution.concurrent_dispatch={str(config.concurrent_dispatch).lower()}",
+                "MAP_EFFICIENT_SEQUENTIAL_ONLY=1",
+                "execution.concurrent_dispatch: false",
+                "worktree.isolation: off",
+                "dispatch_mode == 'concurrent'",
+                "degraded:true",
+                "decision:sequential",
+                "required",
+                "DispatchGateError",
+                "width-1",
+            ):
+                assert required in content, f"{path}: missing {required!r}"
+
+
 class TestResearchArtifactSchemaDocumented:
     """#228: the exact hand-author research contract must be documented (not prose).
 

@@ -25,7 +25,7 @@ parallel_tool_policy: wave_mode_aware
 ```
 
 - Use deeper reasoning only when a subtask is risky, blocked, under-specified, or repeatedly failing Monitor.
-- Execution strategy is determined by `select_execution_strategy`: the wave-loop engages only when `execution.wave_mode` is `on` or `auto` AND a color group has ≥2 members; otherwise the legacy sequential walker runs. With default config this is the sequential walker. See [efficient-reference.md](efficient-reference.md#wave-execution) for the decision table and dispatch mechanics.
+- Execution strategy is determined by `select_execution_strategy`: the wave-loop engages only when `execution.wave_mode` is `on` or `auto` AND `worktree.isolation` is not `off` AND a color group has ≥2 members; otherwise the legacy sequential walker runs. Defaults enable isolated concurrent waves for eligible groups; sequential off-ramps and degraded fallback still apply. See [efficient-reference.md](efficient-reference.md#wave-execution) for the decision table and dispatch mechanics.
 - Do not parallelize state transitions, Monitor retries for the same subtask, or writes to shared branch artifacts.
 
 ## Execution Rules
@@ -33,7 +33,7 @@ parallel_tool_policy: wave_mode_aware
 1. Execute the next state-machine step only; never skip phases.
 2. Use the exact agent type for the current phase.
 3. Max 5 retry iterations per subtask.
-4. Batch mode is default. Execution strategy is selected by `select_execution_strategy` (sequential walker by default; wave-loop only when wave_mode is enabled and a color group has ≥2 members).
+4. Batch mode is default. Execution strategy is selected by `select_execution_strategy` (default-ON isolated waves for eligible groups; sequential fallback otherwise).
 5. After Monitor pass, record files changed in `step_state.json` for guard isolation.
 6. Validate planning metadata before Actor starts: `expected_diff_size`, `concern_type`, `one_logical_step`, `split_rationale`, `concern_justification`, `coverage_map`, `hard_constraints`, `soft_constraints`, `validation_criteria`, `[AC-1]` bracket tags, and `tradeoff_rationale`.
 7. Script routing: `map_orchestrator.py` owns state-machine transitions (`get_next_step`, `validate_step`, `monitor_failed`, `record_subtask_result`, `set_waves`, `resume_from_plan`, …); `map_step_runner.py` owns every `detect_*` / `build_*` / `save_*` / `load_*` / `refresh_*` / `log_*` helper plus baseline `record_*` and artifact writers. Full table + the `record_*` / `validate_*` disambiguation in [efficient-reference.md#script-routing-dispatcher-reference](efficient-reference.md#script-routing-dispatcher-reference).
@@ -216,7 +216,7 @@ else
 fi
 ```
 
-**Execution strategy:** `select_execution_strategy` chooses between the legacy sequential walker and the wave-loop. The wave-loop (`get_wave_step` / `validate_wave_step` / `advance_wave`) engages only when `execution.wave_mode ∈ {on, auto}` AND a color group has ≥2 members; otherwise `get_next_step` (sequential walker) runs. Under `isolation_active` (Slice 5a), the wave-loop creates per-member worktrees, dispatches Actors **sequentially** (one per turn, `HC-3`), verifies via `concurrency_ready`, then accepts atomically via `merge_wave_worktrees`; concurrent fan-out is Slice 5b (`dispatch_mode==concurrent`). Under `dispatch_mode==concurrent` (opt-in via `execution.concurrent_dispatch: true`), call `run_concurrent_wave`: emit N `Task(actor)` blocks in **one message** per sub-batch; on any failure `abort_wave_group` discards the whole group and reruns from base (bounded by `max_wave_retries`). See [efficient-reference.md](efficient-reference.md#wave-execution) for the decision table and full wave loop.
+**Execution strategy:** `select_execution_strategy` chooses between the legacy sequential walker and the wave-loop. The wave-loop (`get_wave_step` / `validate_wave_step` / `advance_wave`) engages only when `execution.wave_mode ∈ {on, auto}` AND `worktree.isolation` is not `off` AND a color group has ≥2 members; otherwise `get_next_step` (sequential walker) runs. Under `isolation_active` with `dispatch_mode==sequential` (Slice 5a), the wave-loop creates per-member worktrees, dispatches Actors **sequentially** (one per turn, `HC-3`), verifies via `concurrency_ready`, then accepts atomically via `merge_wave_worktrees`; concurrent fan-out is Slice 5b (`dispatch_mode==concurrent`). Under `dispatch_mode==concurrent` (default-ON, subject to the dispatch gate), call `run_concurrent_wave`: emit N `Task(actor)` blocks in **one message** per sub-batch; on any failure `abort_wave_group` discards the whole group and reruns from base (bounded by `max_wave_retries`). See [efficient-reference.md](efficient-reference.md#wave-execution) for the decision table and full wave loop.
 
 **Note on resume:** `resume_from_plan` (Step 0) now auto-invokes `set_waves`
 when `blueprint.json` is present, so resumed workflows do not need a manual
@@ -276,7 +276,7 @@ BOUNDED_MAP_CONTEXT=$(python3 .map/scripts/map_step_runner.py build_context_bloc
 
 Then substitute `$BOUNDED_MAP_CONTEXT` into the Actor prompt below.
 
-**Worktree isolation (opt-in, `worktree.isolation: true`):** when enabled, create the subtask's isolated git worktree before this dispatch and run the Actor inside it (dispatched WITHOUT harness-native isolation); the default disabled path is unchanged. Full recipe — commands, guard handling, Actor path instruction — in [efficient-reference.md](efficient-reference.md#worktree-isolation).
+**Worktree isolation (default `worktree.isolation: auto`):** when enabled, create the subtask's isolated git worktree before this dispatch and run the Actor inside it (dispatched WITHOUT harness-native isolation); honor the runner's degraded sequential fallback; `required` failures stop. Full recipe — commands, guard handling, Actor path instruction — in [efficient-reference.md](efficient-reference.md#worktree-isolation).
 
 ```text
 Task(
