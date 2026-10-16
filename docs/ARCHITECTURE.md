@@ -161,6 +161,20 @@ trees still determine the underlying diff and exclude independent repair work.
 Fingerprints describe observable final state, not an edit-event log: edits fully
 undone to identical working-tree and index state cannot be distinguished.
 
+### Mutation-boundary path identity
+
+Blueprint `affected_files` declarations use the same repository-relative entry
+identity as Git. Absolute declarations beneath the selected checkout root are
+converted to relative names before boundary comparison and affected-files
+refresh. Git-observed paths remain literal: whitespace, parentheses, Unicode
+and POSIX backslashes are not annotation syntax. Leaf symlinks name the link
+entry, not its target; outside-root and parent-traversal declarations cannot
+expand approval. Invalid declarations fail before blueprint publication.
+Refresh retains the existing atomic writer and does not reset workflow state,
+baselines, result history or repair-adjusted attribution. Independent repair
+exclusion requires the supported exact-subtask adjusted-tree evidence, not
+inference from an Actor's declared file list.
+
 ### Serial blocker-repair interruption
 
 A blocker repair is a separate execution frame, not a replacement task list or

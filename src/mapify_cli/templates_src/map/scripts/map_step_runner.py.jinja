@@ -14871,7 +14871,8 @@ def refresh_blueprint_affected_files(
     blueprint_path, dry_run, mode.
     """
     branch_name = _sanitize_branch(branch)
-    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    declaration_root = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    project_dir = declaration_root.resolve()
     bp_path = project_dir / ".map" / branch_name / "blueprint.json"
     if not bp_path.exists():
         return {"status": "error", "message": f"blueprint.json not found at {bp_path}"}
@@ -14985,11 +14986,25 @@ def refresh_blueprint_affected_files(
     actual_files = sorted(actual_set)
 
     previous_raw = subtasks[found_index].get("affected_files", []) or []
-    previous_files = sorted({
-        re.split(r"\s+\(", str(p).strip())[0]
-        for p in previous_raw
-        if isinstance(p, str) and p.strip()
-    })
+    try:
+        previous_files = sorted({
+            _normalize_mutation_declaration(p, declaration_root)
+            for p in previous_raw if isinstance(p, str)
+        })
+    except ValueError as exc:
+        return {"status": "error", "message": f"Invalid affected_files: {exc}"}
+
+    creates_raw = subtasks[found_index].get("creates_files")
+    creates_files = None
+    if creates_raw is not None:
+        if not isinstance(creates_raw, list) or not all(isinstance(p, str) for p in creates_raw):
+            return {"status": "error", "message": "Invalid creates_files: expected an array of path strings"}
+        try:
+            creates_files = sorted({
+                _normalize_mutation_declaration(p, declaration_root) for p in creates_raw
+            })
+        except ValueError as exc:
+            return {"status": "error", "message": f"Invalid creates_files: {exc}"}
 
     if replace:
         current_files = actual_files
@@ -15013,6 +15028,8 @@ def refresh_blueprint_affected_files(
         }
 
     subtasks[found_index]["affected_files"] = current_files
+    if creates_files is not None:
+        subtasks[found_index]["creates_files"] = creates_files
     if body_is_wrapped:
         bp_data["blueprint"] = target_body
     else:
@@ -17256,6 +17273,43 @@ def _resolve_subtask_diff_base(
     return None
 
 
+def _normalize_mutation_declaration(declaration: str, project_root: Path) -> str:
+    """Map a declaration to a literal Git entry, never to a symlink target.
+
+    Only the supplied checkout root and its canonical alias are accepted for
+    absolute declarations. Resolve ancestors solely to reject escapes; resolving
+    the leaf would change the identity of a tracked symlink entry.
+    """
+    path = Path(declaration)
+    if not declaration or "\x00" in declaration or ".." in path.parts:
+        raise ValueError(f"invalid mutation path {declaration!r}")
+    supplied_root = Path(os.path.abspath(project_root))
+    try:
+        canonical_root = project_root.resolve()
+        roots = [canonical_root]
+        # abspath collapses '..' before following symlinks. Its spelling is
+        # an alias only when that collapse still names the actual checkout.
+        if supplied_root.resolve() == canonical_root:
+            roots.insert(0, supplied_root)
+        if path.is_absolute():
+            for root in roots:
+                if path.is_relative_to(root):
+                    path = path.relative_to(root)
+                    break
+            else:
+                raise ValueError(f"mutation path outside checkout: {declaration!r}")
+        if not path.parts:
+            raise ValueError(f"mutation path names checkout root: {declaration!r}")
+        ancestor = canonical_root
+        for part in path.parts[:-1]:
+            ancestor = ancestor / part
+            if not ancestor.resolve().is_relative_to(canonical_root):
+                raise ValueError(f"mutation path ancestor escapes checkout: {declaration!r}")
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(f"cannot validate mutation path {declaration!r}: {exc}") from exc
+    return path.as_posix()
+
+
 def validate_mutation_boundary(
     branch: str, subtask_id: str, base_ref: str | None = None
 ) -> dict:
@@ -17313,7 +17367,16 @@ def validate_mutation_boundary(
         }
 
     expected_raw = subtask.get("affected_files", []) or []
-    expected = sorted({str(p) for p in expected_raw if isinstance(p, str)})
+    try:
+        expected = sorted({
+            _normalize_mutation_declaration(p, project_dir)
+            for p in expected_raw if isinstance(p, str)
+        })
+    except ValueError as exc:
+        return {
+            "status": "error", "subtask_id": subtask_id,
+            "message": f"Invalid affected_files: {exc}",
+        }
 
     # Pick a base_ref. Caller's explicit arg wins; otherwise auto-resolve from
     # last_subtask_commit_sha (so the diff covers only THIS subtask's work),

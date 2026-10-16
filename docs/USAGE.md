@@ -1080,6 +1080,25 @@ flow or explicit baseline command before new Actor work. Baselines persist hashe
 and metadata, not file contents, and do not track writes that are fully undone
 to the same final working-tree and index state.
 
+### Declaring affected file paths
+
+Use repository-relative paths in blueprint `affected_files`. Absolute paths
+inside the current checkout are also accepted and normalized to those same
+Git-relative names by mutation validation and affected-files refresh. Mixed
+absolute/relative duplicates identify one entry. Filenames are literal: spaces,
+parentheses and backslashes on POSIX are not stripped or parsed as annotations.
+A symlink declaration names the link itself, not the file it points to.
+Outside-checkout paths and parent traversal are invalid declarations; correct
+the blueprint instead of broadening scope or suppressing a warning. Invalid
+refresh requests and dry-runs leave the blueprint unchanged. Refresh normalizes
+`creates_files` with the same rule, preserving its relationship to `affected_files`.
+Checkout aliases are accepted only when they resolve to the actual checkout,
+including when the supplied root traverses a symlink before `..`.
+
+Repairs performed through the supported blocker-repair protocol retain their
+own attribution evidence. Arbitrary intervening commits without that evidence
+cannot safely be excluded just because an Actor result lists fewer files.
+
 ### Checkpoint Recovery with /map-resume
 
 **How it works:**
