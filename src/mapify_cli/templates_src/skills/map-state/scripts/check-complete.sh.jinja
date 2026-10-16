@@ -8,8 +8,9 @@
 #   Terminal states: complete, blocked, won't_do, superseded
 #
 # Usage:
-#   ${CLAUDE_PLUGIN_ROOT}/scripts/check-complete.sh
-#
+[% if PROVIDER == "claude" %]#   ${CLAUDE_PLUGIN_ROOT}/scripts/check-complete.sh
+[% else %]#   bash .agents/skills/map-state/scripts/check-complete.sh
+[% endif %]#
 # Exit codes:
 #   0 - All phases in terminal state (OK to stop)
 #   1 - Phases still pending/in_progress (do not stop)

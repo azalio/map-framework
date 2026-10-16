@@ -63,7 +63,7 @@ SUPPORTED_SKILL_CLASSES = {"reference", "task", "hybrid"}
 NEGATIVE_TRIGGER_DESCRIPTION_EXEMPT_SKILLS = {"map-upgrade"}
 # Codex twins rendered from the Claude source via [% include %] (PROVIDER-conditional).
 SINGLE_SOURCE_CODEX_SKILLS = {
-    "map-architecture", "map-auto", "map-check", "map-debug", "map-efficient", "map-explain", "map-learn", "map-plan", "map-prd-review", "map-resume", "map-review", "map-release", "map-fast", "map-memory-now", "map-skill-eval", "map-so-search", "map-wayfind"
+    "map-architecture", "map-auto", "map-check", "map-debug", "map-efficient", "map-explain", "map-learn", "map-plan", "map-prd-review", "map-resume", "map-state", "map-review", "map-release", "map-fast", "map-memory-now", "map-skill-eval", "map-so-search", "map-wayfind"
 }
 
 WORKFLOW_EFFORT_PROFILES = {
@@ -506,7 +506,7 @@ class TestProviderUpdateSkills:
         assert not claude_cmd.search(codex_text) and codex_cmd.search(codex_text)
         for key in ("effort:", "disable-model-invocation:", "argument-hint:"):
             # Preserve existing auto-invocable and argument-free metadata.
-            expected = skill != "map-so-search" and not (
+            expected = skill not in {"map-so-search", "map-state"} and not (
                 skill == "map-plan" and key == "disable-model-invocation:"
             )
             assert (key in claude_text.partition("\n---\n")[0]) == expected
@@ -4418,7 +4418,7 @@ def test_sofa_shared_source_preserves_provider_contract(
 
 def test_single_source_codex_skills_set_is_pinned() -> None:
     assert SINGLE_SOURCE_CODEX_SKILLS == {
-        "map-architecture", "map-auto", "map-check", "map-debug", "map-efficient", "map-explain", "map-learn", "map-plan", "map-prd-review", "map-resume", "map-review", "map-release", "map-fast", "map-memory-now", "map-skill-eval", "map-so-search", "map-wayfind"
+        "map-architecture", "map-auto", "map-check", "map-debug", "map-efficient", "map-explain", "map-learn", "map-plan", "map-prd-review", "map-resume", "map-state", "map-review", "map-release", "map-fast", "map-memory-now", "map-skill-eval", "map-so-search", "map-wayfind"
     }
 
 

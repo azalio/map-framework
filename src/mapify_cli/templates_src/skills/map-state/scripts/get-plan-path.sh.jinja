@@ -8,8 +8,9 @@
 #   Defaults to 'main' branch when not in a git repository.
 #
 # Usage:
-#   PLAN_PATH=$(bash .claude/skills/map-state/scripts/get-plan-path.sh)
-#
+[% if PROVIDER == "claude" %]#   PLAN_PATH=$(bash .claude/skills/map-state/scripts/get-plan-path.sh)
+[% else %]#   PLAN_PATH=$(bash .agents/skills/map-state/scripts/get-plan-path.sh)
+[% endif %]#
 # Output:
 #   .map/<sanitized_branch>/task_plan_<sanitized_branch>.md
 #
@@ -29,8 +30,9 @@ if [ -z "$BRANCH" ]; then
 fi
 
 # Sanitize branch name for filesystem safety (matches MAP orchestrator convention)
-SANITIZED_BRANCH=$(echo "$BRANCH" | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
-
+[% if PROVIDER == "claude" %]SANITIZED_BRANCH=$(echo "$BRANCH" | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+[% else %]SANITIZED_BRANCH=$(printf '%s' "$BRANCH" | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+[% endif %]
 # Fallback if sanitization produced empty string
 if [ -z "$SANITIZED_BRANCH" ]; then
     SANITIZED_BRANCH="main"

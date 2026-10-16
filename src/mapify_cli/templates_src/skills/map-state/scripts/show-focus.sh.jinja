@@ -8,8 +8,9 @@
 #   Shows: Goal + Current in_progress phase details.
 #
 # Usage:
-#   ${CLAUDE_PLUGIN_ROOT}/scripts/show-focus.sh
-#
+[% if PROVIDER == "claude" %]#   ${CLAUDE_PLUGIN_ROOT}/scripts/show-focus.sh
+[% else %]#   bash .agents/skills/map-state/scripts/show-focus.sh
+[% endif %]#
 # Exit codes:
 #   0 - Always (even if plan file doesn't exist)
 
@@ -30,8 +31,14 @@ GOAL=$(awk '/^## Goal/{getline; if(!/^#/ && !/^$/) print; exit}' "$PLAN_FILE")
 # Cap output by lines as a simple proxy for token budget.
 FOCUS_MAX_LINES="${FOCUS_MAX_LINES:-40}"
 IN_PROGRESS_SECTION=$(
-    awk '
-        /^### / {
+[% if PROVIDER == "claude" %]    awk '
+[% else %]    awk -v max_lines="$FOCUS_MAX_LINES" '
+        function emit(line) {
+            if (emitted >= max_lines) exit
+            print line
+            emitted++
+        }
+[% endif %]        /^### / {
             if (in_section) exit
             header = $0
             next
@@ -41,13 +48,17 @@ IN_PROGRESS_SECTION=$(
         }
         /\*\*Status:\*\* in_progress/ {
             in_section = 1
-            if (header != "") print header
+[% if PROVIDER == "claude" %]            if (header != "") print header
             print
-            next
+[% else %]            if (header != "") emit(header)
+            emit($0)
+[% endif %]            next
         }
-        in_section { print }
+[% if PROVIDER == "claude" %]        in_section { print }
     ' "$PLAN_FILE" | head -n "$FOCUS_MAX_LINES"
-)
+[% else %]        in_section { emit($0) }
+    ' "$PLAN_FILE"
+[% endif %])
 
 # Only output if we found an in_progress section
 if [ -n "$IN_PROGRESS_SECTION" ]; then

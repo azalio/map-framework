@@ -1,12 +1,13 @@
 ---
+[% set cmd = "/" if PROVIDER == "claude" else "$" -%]
 name: map-state
-version: "3.1.0"
-description: >-
+[% if PROVIDER == "claude" %]version: "3.1.0"
+[% else %][% endif %]description: >-
   Branch-scoped MAP planning in `.map/`. Use when the user needs a
   persistent task plan, progress tracking, or resume support across
   sessions. Keeps focus synced before edits. Do NOT use for tiny one-shot
   tasks.
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep
+[% if PROVIDER == "claude" %]allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 metadata:
   author: azalio
   version: 3.1.0
@@ -20,6 +21,7 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/scripts/check-complete.sh"
+[% else %][% endif -%]
 ---
 [% include "_partials/auto-update-preflight.md.jinja" %]
 
@@ -104,8 +106,9 @@ Reason: [Not yet complete]
 
 ### Initialization
 ```bash
-${CLAUDE_PLUGIN_ROOT}/scripts/init-session.sh
-```
+[% if PROVIDER == "claude" %]${CLAUDE_PLUGIN_ROOT}/scripts/init-session.sh
+[% else %]bash .agents/skills/map-state/scripts/init-session.sh
+[% endif %]```
 Creates `.map/` directory and skeleton files for current branch.
 
 ### Progress Tracking
@@ -124,15 +127,16 @@ Update `## Terminal State` with final status before exiting. Stop hook validates
 
 ## MAP Workflow Integration
 
-When `/map-efficient` runs:
+When `<% cmd %>map-efficient` runs:
 1. `init-session.sh` creates `.map/` skeleton
-2. task-decomposer populates phases from blueprint
-3. Actor implements → PreToolUse hook shows focus
+[% if PROVIDER == "claude" %]2. task-decomposer populates phases from blueprint
+[% else %]2. decomposer populates phases from blueprint
+[% endif %]3. Actor implements → PreToolUse hook shows focus
 4. Monitor validates → outputs `status_update` field
 5. Orchestrator updates task_plan using Monitor's status_update
 6. Stop hook validates terminal state before exit
 
-`/map-fast` skips planning — hooks are no-op if plan missing.
+`<% cmd %>map-fast` skips planning — hooks are no-op if plan missing.
 
 ## Single-Writer Governance
 
@@ -140,8 +144,9 @@ Only Monitor agent updates task_plan status (via `status_update` output field).
 
 | Agent | Read task_plan | Write task_plan |
 |-------|----------------|-----------------|
-| task-decomposer | No | Yes (creates) |
-| Actor | Yes | No |
+[% if PROVIDER == "claude" %]| task-decomposer | No | Yes (creates) |
+[% else %]| decomposer | No | Yes (creates) |
+[% endif %]| Actor | Yes | No |
 | Monitor | Yes | Yes (status only) |
 | Predictor | Yes | No |
 | Orchestrator | Yes | No (applies Monitor output) |
@@ -152,8 +157,9 @@ Only Monitor agent updates task_plan status (via `status_update` output field).
 
 These are hard rules — each one protects shared, persistent state. If a task seems to require violating one, STOP and ask the user.
 
-- **NEVER** write `task_plan` `**Status:**` from any agent other than Monitor. task-decomposer creates the plan; Monitor owns every subsequent status transition (see Single-Writer Governance). An agent that needs a status change must surface it, not write it.
-- **NEVER** hand-edit `step_state.json`. It is the canonical orchestrator state — mutate it only through `.map/scripts/` orchestrator calls. If the API cannot express what you need, STOP and ask; do not write the file as a fallback.
+[% if PROVIDER == "claude" %]- **NEVER** write `task_plan` `**Status:**` from any agent other than Monitor. task-decomposer creates the plan; Monitor owns every subsequent status transition (see Single-Writer Governance). An agent that needs a status change must surface it, not write it.
+[% else %]- **NEVER** write `task_plan` `**Status:**` from any agent other than Monitor. decomposer creates the plan; Monitor owns every subsequent status transition (see Single-Writer Governance). An agent that needs a status change must surface it, not write it.
+[% endif %]- **NEVER** hand-edit `step_state.json`. It is the canonical orchestrator state — mutate it only through `.map/scripts/` orchestrator calls. If the API cannot express what you need, STOP and ask; do not write the file as a fallback.
 - **NEVER** read, write, or delete another branch's `.map/<other-branch>/` tree. Scope is strictly the current branch.
 - **NEVER** set a `**Status:**` outside the defined vocabulary — phase statuses are `pending`, `in_progress`, `complete`; terminal states are listed under "Terminal States". Unknown values break the Stop-hook terminal-state check.
 - **NEVER** commit secrets, tokens, or credentials into plan / progress / research files.
@@ -222,7 +228,7 @@ These are hard rules — each one protects shared, persistent state. If a task s
 | Stop hook warns "No terminal state" | `## Terminal State` section not updated | Update Terminal State to `complete`, `blocked`, `won't_do`, or `superseded` |
 | Branch name causes file errors | Branch has `/` characters | Scripts auto-sanitize: `feature/auth` becomes `feature-auth` |
 | PreToolUse hook shows stale focus | Plan file not updated after phase completion | Update `**Status:**` to `complete` and advance `## Current Phase` |
-| `/map-fast` ignores planning | By design — `/map-fast` skips planning | Use `/map-efficient` for planning support |
+| `<% cmd %>map-fast` ignores planning | By design — `<% cmd %>map-fast` skips planning | Use `<% cmd %>map-efficient` for planning support |
 
 ---
 
