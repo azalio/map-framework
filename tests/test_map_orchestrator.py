@@ -4016,7 +4016,10 @@ class TestValidateStepAutoMutationBoundary:
         assert result["valid"] is False
         assert "Mutation-boundary violation" in result["message"]
 
-    def test_warning_routes_feedback_to_actor_once(self, branch_dir, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("audit_failure", [False, True])
+    def test_warning_routes_feedback_to_actor_once(
+        self, branch_dir, tmp_path, monkeypatch, audit_failure
+    ):
         """A non-strict scope leak never hard-fails the gate. The FIRST call with
         a warning records the subtask in scope_feedback_subtasks and surfaces the
         out-of-scope files as advisory scope_warning metadata in the success
@@ -4047,10 +4050,24 @@ class TestValidateStepAutoMutationBoundary:
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
         monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
 
+        if audit_failure:
+            original_open = Path.open
+
+            def fail_audit(path, *args, **kwargs):
+                if path.name == "scope-violations.log":
+                    raise PermissionError("audit sink is read-only")
+                return original_open(path, *args, **kwargs)
+
+            monkeypatch.setattr(Path, "open", fail_audit)
+
         r1 = map_orchestrator.validate_step("2.4", branch_dir, recommendation="proceed")
         assert r1["valid"] is True, r1  # advisory only — gate passes on first occurrence
         assert "scope_warning" in r1, r1
         assert "leak.py" in str(r1["scope_warning"].get("unexpected", [])), r1
+        if audit_failure:
+            assert "audit sink is read-only" in r1["scope_warning"]["audit_error"]
+        else:
+            assert "audit_error" not in r1["scope_warning"]
         persisted = map_orchestrator.StepState.load(state_file)
         assert "ST-001" in persisted.scope_feedback_subtasks, persisted.scope_feedback_subtasks
 

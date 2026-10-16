@@ -170,7 +170,7 @@ The DevOpsConf 2026 case study applies this process to a production Kubernetes P
 - **Daily-driver speed** — optimized for repeated use, not occasional demos. Structured enough to prevent chaos, lightweight enough to keep token and time cost under control.
 - **Reviewable diffs** — `/map-plan` and `/map-efficient` require per-subtask size, concern, and constraint metadata, then validate `blueprint.json` *before* implementation, so oversized or mixed-concern plans fail early.
 - **Gates that check the plan, not vibes** — `/map-check` and `/map-review` validate against the spec, tests, and diff instead of asking whether code "looks fine".
-- **Clean-room review** — `/map-review` auto-bundles spec, plan, tests, verification, and coverage evidence into a single durable input (`.map/<branch>/review-bundle.json`); `--detached` opens a read-only worktree for inspection without touching your branch.
+- **Clean-room review** — `/map-review` auto-bundles available spec, plan, tests, verification, and coverage evidence into a single durable input (`.map/<branch>/review-bundle.json`); standalone external-PR review needs no Actor blueprint. `--detached` opens a read-only worktree for inspection without touching your branch.
 - **Project memory** — `/map-learn` turns hard-won fixes and gotchas into reusable context, so the next session doesn't relearn them.
 
 <details>
