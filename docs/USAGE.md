@@ -292,12 +292,10 @@ claude /map-review --compare-orderings --detached
 
 ### Cross-AI peer review (`--cross-ai <runtime>`)
 
-`/map-review --cross-ai codex` dispatches the review to an **independent external
-AI CLI** for a true second opinion — a different model/vendor with fresh context
-and no shared session state. Same-model review is "inbred"; an independent
-reviewer catches model-specific blind spots. Supported runtimes (slice 1):
-`codex`, `gemini`, `claude`, `opencode`. The runtime arg is optional — without it
-the configured `review.cross_ai.runtime` default is used.
+`/map-review --cross-ai codex` dispatches a fresh-context review to an external
+AI CLI. Supported runtimes: `codex`, `gemini`, `claude`, `opencode`. The runtime
+arg is optional — without it the configured `review.cross_ai.runtime` default is
+used. A fresh process alone does not establish vendor independence.
 
 This sends your **git diff, spec, and review preferences to an external vendor —
 your code leaves the machine** — so it is **double-consent and off by default**:
@@ -321,9 +319,14 @@ Guardrails (all enforced in the Python step runner, not in prompt text):
   findings but ALWAYS re-emitted behind an `EXTERNAL UNTRUSTED REFERENCE` fence
   (link allowlist + injection scan), and findings are advisory-only
   (`source: cross_ai`) — never auto-applied.
-- **Honest independence labeling** — `claude` reviewing a Claude-orchestrated
-  session is labeled `independent_vendor: false` (a same-vendor sanity check, not
-  a true second opinion).
+- **Honest independence labeling** — the provider-specific skill passes
+  `--host-provider claude|codex` to the shared runner. The result and config echo
+  report `host_provider`, `host_vendor`, `reviewer_vendor`, and
+  `independent_vendor`. Canonical adapter vendors are Anthropic (Claude), OpenAI
+  (Codex), and Google (Gemini). Known different vendors are true; same vendor or
+  unknown provenance (including multi-provider `opencode`) is false. Omitting
+  the host in direct runner calls remains supported and conservatively false.
+  These labels do not verify the active model/endpoint behind custom proxies.
 - **Non-blocking degradation** — if cross-AI is disabled, the CLI is missing or
   unauthenticated, the call times out, the output is unparseable, or a secret was
   blocked, the review prints the reason and **falls back to the normal in-session

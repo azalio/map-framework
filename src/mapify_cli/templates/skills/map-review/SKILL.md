@@ -474,8 +474,8 @@ publishing the bare verdict.
 
 ## Phase B: Cross-AI Peer Review (--cross-ai only)
 
-When `CROSS_AI_FLAG=true`, dispatch the review to an INDEPENDENT external AI CLI
-as a second opinion; the in-session review always runs afterwards (ANY
+When `CROSS_AI_FLAG=true`, dispatch the review to an external AI CLI
+for a fresh-context check; the in-session review always runs afterwards (ANY
 dispatch failure just continues to it — do NOT hard-stop).
 Full status protocol, egress/secret-scan, and independence semantics are in
 [review-reference.md](review-reference.md#cross-ai); read that section first.
@@ -484,12 +484,13 @@ Full status protocol, egress/secret-scan, and independence semantics are in
 vendor CLI — your code leaves this machine. Double consent required: the
 `--cross-ai` flag AND `review.cross_ai.enabled: true`. The runner refuses to send
 if it finds a high-confidence secret; a `false` `independent_vendor` (e.g.
-`claude` reviewing a Claude session) is a same-vendor check, not a true second
-opinion — say so.
+`claude` reviewing a Claude session) means same-vendor or unknown provenance,
+not verified independence — say which using the returned adapter vendor fields.
 
 ```bash
 if [ "$CROSS_AI_FLAG" = "true" ]; then
   CROSS_AI_JSON=$(python3 .map/scripts/map_step_runner.py run_cross_ai_review \
+    --host-provider claude \
     ${CROSS_AI_RUNTIME:+--runtime "$CROSS_AI_RUNTIME"} \
     --review-preferences "[paste Review Preferences section above]")
   CROSS_AI_STATUS=$(printf '%s' "$CROSS_AI_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("status",""))')

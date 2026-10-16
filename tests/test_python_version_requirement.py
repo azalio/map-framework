@@ -89,7 +89,7 @@ def _shebang_files() -> list[Path]:
         for path in sorted(root.rglob("*.py*")):
             if path.suffix not in {".py", ".jinja"}:
                 continue
-            if EXCLUDED_PARTS.intersection(path.parts):
+            if EXCLUDED_PARTS.intersection(path.relative_to(root).parts):
                 continue
             try:
                 first = path.read_text(encoding="utf-8").split("\n", 1)[0]
@@ -176,7 +176,7 @@ def test_shebang_scan_skips_nested_worktrees_and_venvs(
     virtualenvs; asserting the guard against those fails on any machine that
     has ever run the worktree features, while a fresh CI clone stays green.
     """
-    root = tmp_path / "tree"
+    root = tmp_path / "worktrees" / "active" / "tree"
     (root / "hooks").mkdir(parents=True)
     shipped = root / "hooks" / "shipped.py"
     shipped.write_text(f"{SHEBANG}\n", encoding="utf-8")

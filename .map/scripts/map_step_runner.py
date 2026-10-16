@@ -12182,10 +12182,9 @@ def aggregate_adversarial_findings(
 # ---------------------------------------------------------------------------
 # Cross-AI peer review (#288)
 #
-# Dispatch the review to an INDEPENDENT external AI CLI (codex/gemini/claude/
-# opencode) for a true second opinion: a different model/vendor with fresh
-# context and no shared session state. Same-model review is "inbred" — this
-# catches model-specific blind spots.
+# Dispatch a fresh-context review to an external AI CLI (codex/gemini/claude/
+# opencode). Fresh context does not establish vendor independence; provenance
+# compares the explicit host and reviewer adapter vendors conservatively.
 #
 # Security boundary: the external CLI's output is EXTERNAL UNTRUSTED content.
 # It is parsed for findings but ALWAYS re-emitted behind an UNTRUSTED fence
@@ -12232,9 +12231,9 @@ _CROSS_AI_COMPILED_INJECTION: list[re.Pattern[str]] = [
 # "{prompt}" placeholder token (replaced wholesale — never string-substituted —
 # so shell=False argv stays injection-proof). `envelope` selects how the model's
 # text is recovered from stdout: 'claude_json' parses the result envelope,
-# 'raw_stdout' takes stdout verbatim. `independent_vendor` is honesty metadata:
-# a same-vendor reviewer (claude reviewing a Claude session) is NOT a true second
-# opinion — the orchestrator must not market it as one. This is a hardcoded
+# 'raw_stdout' takes stdout verbatim. `vendor` identifies the canonical CLI
+# adapter vendor, NOT the verified active model/endpoint (proxies can override
+# those). Multi-provider opencode has no known vendor. This is a hardcoded
 # allowlist (a new runtime is a code change, not free-form config) — that keeps
 # the step runner from becoming an arbitrary-egress gateway. Keep the key set in
 # sync with VALID_CROSS_AI_RUNTIMES in mapify_cli/config/project_config.py.
@@ -12243,25 +12242,25 @@ CROSS_AI_RUNTIMES: dict[str, dict[str, object]] = {
         "binary": "claude",
         "argv": ["claude", "-p", "{prompt}", "--output-format", "json"],
         "envelope": "claude_json",
-        "independent_vendor": False,
+        "vendor": "anthropic",
     },
     "codex": {
         "binary": "codex",
         "argv": ["codex", "exec", "{prompt}"],
         "envelope": "raw_stdout",
-        "independent_vendor": True,
+        "vendor": "openai",
     },
     "gemini": {
         "binary": "gemini",
         "argv": ["gemini", "-p", "{prompt}"],
         "envelope": "raw_stdout",
-        "independent_vendor": True,
+        "vendor": "google",
     },
     "opencode": {
         "binary": "opencode",
         "argv": ["opencode", "run", "{prompt}"],
         "envelope": "raw_stdout",
-        "independent_vendor": True,
+        "vendor": None,
     },
 }
 
@@ -12326,7 +12325,28 @@ def wrap_cross_ai_result(body: str) -> str:
     return f"```{CROSS_AI_UNTRUSTED_LABEL}\n{inner}\n```"
 
 
-def detect_cross_ai_runtime(runtime: str) -> dict[str, object]:
+def _cross_ai_provenance(runtime: str, host_provider: str | None) -> dict[str, object]:
+    """Compare canonical adapter vendors; never infer host from installed files.
+
+    This is not model provenance: a fresh process or different model does not
+    prove vendor independence. Unknown host or multi-provider reviewer fails
+    closed. The provider-specific skill supplies its host explicitly.
+    """
+    host_vendor = {"claude": "anthropic", "codex": "openai"}.get(host_provider or "")
+    reviewer_vendor = CROSS_AI_RUNTIMES.get(runtime, {}).get("vendor")
+    return {
+        "host_provider": host_provider,
+        "host_vendor": host_vendor,
+        "reviewer_vendor": reviewer_vendor,
+        "independent_vendor": bool(
+            host_vendor and reviewer_vendor and host_vendor != reviewer_vendor
+        ),
+    }
+
+
+def detect_cross_ai_runtime(
+    runtime: str, *, host_provider: str | None = None,
+) -> dict[str, object]:
     """Probe whether an external AI CLI runtime is available on PATH.
 
     Non-blocking discovery via shutil.which — never raises, never dispatches.
@@ -12334,10 +12354,12 @@ def detect_cross_ai_runtime(runtime: str) -> dict[str, object]:
     """
     import shutil  # local: module-level imports stay tidy (see file convention)
 
+    provenance = _cross_ai_provenance(runtime, host_provider)
     spec = CROSS_AI_RUNTIMES.get(runtime)
     if spec is None:
         known = ", ".join(sorted(CROSS_AI_RUNTIMES))
         return {
+            **provenance,
             "available": False,
             "runtime": runtime,
             "binary": "",
@@ -12345,7 +12367,6 @@ def detect_cross_ai_runtime(runtime: str) -> dict[str, object]:
             "reason": f"unknown cross-AI runtime '{runtime}' (known: {known})",
         }
     binary = str(spec["binary"])
-    independent = bool(spec.get("independent_vendor", True))
     path = shutil.which(binary)
     if not path:
         return {
@@ -12353,7 +12374,7 @@ def detect_cross_ai_runtime(runtime: str) -> dict[str, object]:
             "runtime": runtime,
             "binary": binary,
             "path": "",
-            "independent_vendor": independent,
+            **provenance,
             "reason": (
                 f"'{binary}' CLI not found on PATH — install it or choose another "
                 "--cross-ai runtime"
@@ -12364,7 +12385,7 @@ def detect_cross_ai_runtime(runtime: str) -> dict[str, object]:
         "runtime": runtime,
         "binary": binary,
         "path": path,
-        "independent_vendor": independent,
+        **provenance,
         "reason": "",
     }
 
@@ -12523,6 +12544,7 @@ def dispatch_cross_ai_review(
     *,
     timeout_seconds: int = 180,
     enabled: bool = False,
+    host_provider: str | None = None,
 ) -> dict[str, object]:
     """Dispatch a review prompt to an external AI CLI; return a typed result.
 
@@ -12540,10 +12562,12 @@ def dispatch_cross_ai_review(
       - 'unparsed'    : ran, but output had no parseable findings JSON.
       - 'success'     : normalized findings + untrusted_block present.
     """
+    provenance = _cross_ai_provenance(runtime, host_provider)
     if not enabled:
         return {
             "status": "disabled",
             "runtime": runtime,
+            **provenance,
             "reason": (
                 "cross-AI review is OFF — set `review.cross_ai.enabled: true` in "
                 ".map/config.yaml to permit sending the diff to an external vendor "
@@ -12551,11 +12575,12 @@ def dispatch_cross_ai_review(
             ),
         }
 
-    detection = detect_cross_ai_runtime(runtime)
+    detection = detect_cross_ai_runtime(runtime, host_provider=host_provider)
     if not detection["available"]:
         return {
             "status": "unavailable",
             "runtime": runtime,
+            **provenance,
             "reason": str(detection["reason"]),
         }
 
@@ -12566,6 +12591,7 @@ def dispatch_cross_ai_review(
         return {
             "status": "secret_blocked",
             "runtime": runtime,
+            **provenance,
             "reason": (
                 "outbound prompt contains high-confidence secret(s) "
                 f"[{', '.join(secret_hits)}] — refusing to send to an external "
@@ -12575,12 +12601,12 @@ def dispatch_cross_ai_review(
         }
 
     spec = CROSS_AI_RUNTIMES[runtime]
-    independent_vendor = bool(detection.get("independent_vendor", True))
     argv_template = spec["argv"]
     if not isinstance(argv_template, list):  # defensive; registry is well-formed
         return {
             "status": "error",
             "runtime": runtime,
+            **provenance,
             "reason": f"malformed runtime adapter for '{runtime}'",
         }
     argv = [prompt if str(token) == "{prompt}" else str(token) for token in argv_template]
@@ -12599,12 +12625,14 @@ def dispatch_cross_ai_review(
         return {
             "status": "timeout",
             "runtime": runtime,
+            **provenance,
             "reason": f"'{binary}' did not respond within {timeout_seconds}s",
         }
     except OSError as exc:
         return {
             "status": "error",
             "runtime": runtime,
+            **provenance,
             "reason": f"OSError running '{binary}': {exc}",
         }
 
@@ -12613,6 +12641,7 @@ def dispatch_cross_ai_review(
         return {
             "status": "error",
             "runtime": runtime,
+            **provenance,
             "reason": f"'{binary}' exited {proc.returncode}: {stderr_tail}",
         }
 
@@ -12624,8 +12653,8 @@ def dispatch_cross_ai_review(
         return {
             "status": "unparsed",
             "runtime": runtime,
+            **provenance,
             "source": "cross_ai",
-            "independent_vendor": independent_vendor,
             "reason": (
                 "external CLI returned no parseable findings JSON; raw output is "
                 "fenced in untrusted_block for manual reading"
@@ -12636,10 +12665,10 @@ def dispatch_cross_ai_review(
     return {
         "status": "success",
         "runtime": runtime,
+        **provenance,
         # Advisory-only discriminator: findings from cross_ai are never auto-applied
         # and never drive writes; the orchestrator presents them for verification.
         "source": "cross_ai",
-        "independent_vendor": independent_vendor,
         "normalized": normalized,
         "untrusted_block": untrusted_block,
     }
@@ -12671,6 +12700,8 @@ def run_cross_ai_review(
     runtime: str | None = None,
     branch: str | None = None,
     review_preferences: str = "",
+    *,
+    host_provider: str | None = None,
 ) -> dict[str, object]:
     """End-to-end cross-AI review: read the config gate, build the prompt,
     dispatch to the external CLI. The map-review skill calls this single verb.
@@ -12681,18 +12712,17 @@ def run_cross_ai_review(
     """
     cfg = _load_cross_ai_config(Path.cwd())
     chosen = runtime or str(cfg["runtime"])
-    chosen_spec = CROSS_AI_RUNTIMES.get(chosen, {})
     config_echo = {
         "enabled": bool(cfg["enabled"]),
         "chosen_runtime": chosen,
         "default_runtime": str(cfg["runtime"]),
-        "independent_vendor": bool(chosen_spec.get("independent_vendor", True)),
+        **_cross_ai_provenance(chosen, host_provider),
         "timeout_seconds": int(cfg["timeout_seconds"]),
     }
     # Build the (local, no-egress) review prompt only when actually dispatching —
     # the disabled gate must not depend on a git repo being present.
     if not bool(cfg["enabled"]):
-        result = dispatch_cross_ai_review(chosen, "", enabled=False)
+        result = dispatch_cross_ai_review(chosen, "", enabled=False, host_provider=host_provider)
         result["config"] = config_echo
         return result
     prompt = build_cross_ai_review_prompt(
@@ -12703,6 +12733,7 @@ def run_cross_ai_review(
         prompt,
         timeout_seconds=int(cfg["timeout_seconds"]),
         enabled=True,
+        host_provider=host_provider,
     )
     result["config"] = config_echo
     return result
@@ -23173,11 +23204,13 @@ if __name__ == "__main__":
             default=None,
             help="External AI CLI: claude|codex|gemini|opencode (default from config)",
         )
+        _p.add_argument("--host-provider", choices=("claude", "codex"), default=None)
         _p.add_argument("--branch", default=None)
         _p.add_argument("--review-preferences", default="")
         _args = _p.parse_args(sys.argv[2:])
         result = run_cross_ai_review(
             runtime=_args.runtime,
+            host_provider=_args.host_provider,
             branch=_args.branch,
             review_preferences=_args.review_preferences,
         )
