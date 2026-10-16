@@ -1957,10 +1957,12 @@ def validate_step(
                     state.save(state_file)
                     unexpected = scope_report.get("unexpected", [])
                     hint = scope_report.get("diagnostic_hint", "")
+                    audit_error = scope_report.get("audit_error", "")
                     _scope_warning_meta = {
                         "unexpected": unexpected,
                         "subtask_id": state.current_subtask_id,
                         **({"hint": hint} if hint else {}),
+                        **({"audit_error": audit_error} if audit_error else {}),
                     }
                     # Advisory-only: do NOT block the gate. The warning is surfaced
                     # as scope_warning metadata in the success response so callers
