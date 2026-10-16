@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -56,7 +57,7 @@ def write_state(repo: Path, value: Any) -> None:
 
 
 @pytest.fixture
-def repaired_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, str]:
+def repaired_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runner) -> tuple[Path, str]:
     repo = tmp_path / "repository"
     repo.mkdir()
     git(repo, "init", "-b", BRANCH)
@@ -70,9 +71,9 @@ def repaired_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path
     (repo / "existing.txt").write_text("preexisting dirty\n")
     workspace = repo / ".map" / BRANCH
     (workspace / "subtask-baselines").mkdir(parents=True)
-    (workspace / "subtask-baselines" / f"{SUBTASK}.json").write_text(
-        json.dumps({"head_sha": head, "files": ["existing.txt"]})
-    )
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+    baseline = runner.record_subtask_baseline(BRANCH, SUBTASK)
+    assert baseline["status"] == "success", baseline
     (workspace / "blueprint.json").write_text(json.dumps({"subtasks": [
         {"id": SUBTASK, "affected_files": ["actor.txt", "new.txt"]},
         {"id": "ST-003", "affected_files": []},
@@ -223,3 +224,283 @@ def test_absent_adjustment_preserves_legacy_parent_fallback(runner, repaired_rep
     # Without adjustment the existing own-commit-parent behavior includes repair.
     assert "repair.txt" in runner._current_subtask_changed_files(BRANCH, SUBTASK, repo)
     assert runner._resolve_subtask_diff_base(BRANCH, SUBTASK, repo).endswith("^")
+
+
+@pytest.mark.parametrize("record", ["record_subtask_baseline", "record_scope_baseline"])
+def test_failed_baseline_publication_preserves_previous_evidence(
+    runner, repaired_repo, monkeypatch, record,
+):
+    repo, _ = repaired_repo
+    recorder = getattr(runner, record)
+    args = (BRANCH, SUBTASK) if record == "record_subtask_baseline" else (BRANCH,)
+    report = recorder(*args)
+    assert report["status"] == "success", report
+    path = Path(report["path"])
+    original = path.read_bytes()
+    (repo / "existing.txt").write_text("Actor changed after baseline\n")
+    original_replace = Path.replace
+
+    def fail_publish(source, target):
+        if Path(target) == path:
+            raise OSError("injected baseline publication failure")
+        return original_replace(source, target)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "replace", fail_publish)
+        with pytest.raises(OSError, match="injected baseline publication failure"):
+            recorder(*args)
+    assert path.read_bytes() == original
+    assert not list(path.parent.glob(f".{path.name}.*.tmp"))
+    report = runner.detect_actor_files_changed_mismatch(BRANCH, SUBTASK, ["existing.txt"])
+    assert report["declared_not_written"] == [], report
+
+
+@pytest.fixture(params=[False, True], ids=["ordinary", "repair-adjusted"])
+def dirty_baseline_repo(runner, repaired_repo, request):
+    repo, _ = repaired_repo
+    if not request.param:
+        (repo / ".map" / BRANCH / "step_state.json").write_text(json.dumps({
+            "last_subtask_commit_sha": git(repo, "rev-parse", "HEAD"),
+            "subtask_results": {},
+        }))
+    (repo / "outside.txt").write_text("unchanged baseline control\n")
+    report = runner.record_subtask_baseline(BRANCH, SUBTASK)
+    assert report["status"] == "success", report
+    baseline = json.loads(Path(report["path"]).read_text())
+    assert {"existing.txt", "outside.txt"} <= set(baseline["files"])
+    return repo
+
+
+def test_rewritten_dirty_baseline_declared_file_is_written(runner, dirty_baseline_repo):
+    (dirty_baseline_repo / "existing.txt").write_text("Actor retry rewrite\n")
+    report = runner.detect_actor_files_changed_mismatch(BRANCH, SUBTASK, ["existing.txt"])
+    assert report["declared_not_written"] == [], report
+    assert report["status_mismatch"] is False, report
+    assert "existing.txt" in report["actual"], report
+
+
+def test_rewritten_dirty_baseline_is_mutation_boundary_violation(runner, dirty_baseline_repo):
+    (dirty_baseline_repo / "existing.txt").write_text("Actor retry rewrite\n")
+    report = runner.validate_mutation_boundary(BRANCH, SUBTASK)
+    assert "existing.txt" in report["actual"], report
+    assert "existing.txt" in report["unexpected"], report
+    assert report["status"] == "violation", report
+
+
+def test_rewritten_dirty_baseline_unchanged_control_is_excluded(runner, dirty_baseline_repo):
+    current = runner._current_subtask_changed_files(BRANCH, SUBTASK, dirty_baseline_repo)
+    assert current is not None
+    assert "existing.txt" not in current
+    assert "outside.txt" not in current
+    report = runner.validate_mutation_boundary(BRANCH, SUBTASK)
+    assert "existing.txt" not in report["actual"], report
+    assert "outside.txt" not in report["actual"], report
+
+
+def test_baseline_attribution_survives_fresh_process(runner, repaired_repo):
+    repo, _ = repaired_repo
+    script = Path(runner.__file__)
+    env = {**os.environ, "PYTHONPATH": str(SCRIPTS), "PYTHONDONTWRITEBYTECODE": "1"}
+    capture = subprocess.run(
+        [sys.executable, str(script), "record_subtask_baseline", BRANCH, SUBTASK],
+        cwd=repo, env=env, capture_output=True, text=True, timeout=20, check=True,
+    )
+    assert json.loads(capture.stdout)["status"] == "success"
+    (repo / "existing.txt").write_text("rewrite between independent processes\n")
+    verify = subprocess.run(
+        [sys.executable, str(script), "detect_actor_files_changed_mismatch", BRANCH,
+         SUBTASK, "--declared", "existing.txt"],
+        cwd=repo, env=env, capture_output=True, text=True, timeout=20, check=True,
+    )
+    report = json.loads(verify.stdout)
+    assert report["declared_not_written"] == [], report
+
+
+@pytest.mark.parametrize("payload", ["{", "null", "[]", '"not-an-object"',
+                                      '{"files":null}', '{"files":[12]}',
+                                      '{"files":["existing.txt"],"evidence_version":1,"path_evidence":[]}'])
+def test_malformed_baseline_cannot_crash_or_hide_dirty_path(runner, repaired_repo, payload):
+    repo, _ = repaired_repo
+    (repo / ".map" / BRANCH / "subtask-baselines" / f"{SUBTASK}.json").write_text(payload)
+    report = runner.detect_actor_files_changed_mismatch(BRANCH, SUBTASK, ["existing.txt"])
+    assert report["declared_not_written"] == [], report
+    assert report["status_mismatch"] is False, report
+
+
+@pytest.mark.parametrize("bad_type", [[], {}])
+@pytest.mark.parametrize("consumer", ["detector", "boundary", "refresh"])
+def test_nested_malformed_evidence_cannot_crash_or_hide_dirty_path(
+    runner, repaired_repo, bad_type, consumer
+):
+    repo, _ = repaired_repo
+    path = repo / ".map" / BRANCH / "subtask-baselines" / f"{SUBTASK}.json"
+    baseline = json.loads(path.read_text())
+    baseline["path_evidence"]["existing.txt"]["worktree"]["type"] = bad_type
+    path.write_text(json.dumps(baseline))
+    if consumer == "detector":
+        report = runner.detect_actor_files_changed_mismatch(BRANCH, SUBTASK, ["existing.txt"])
+        assert report["declared_not_written"] == [], report
+    elif consumer == "boundary":
+        report = runner.validate_mutation_boundary(BRANCH, SUBTASK)
+        assert "existing.txt" in report["unexpected"], report
+    else:
+        report = runner.refresh_blueprint_affected_files(BRANCH, SUBTASK, replace=True)
+        assert "existing.txt" in report["current"], report
+
+
+def test_work_dir_evidence_not_main_checkout_controls_attribution(runner, repaired_repo, tmp_path):
+    repo, _ = repaired_repo
+    worktree = tmp_path / "actor-worktree"
+    git(repo, "worktree", "add", "--detach", str(worktree), "HEAD")
+    # Main's dirty baseline is unchanged; only Actor's selected checkout rewrites it.
+    (worktree / "existing.txt").write_text("Actor worktree rewrite\n")
+    current = runner._current_subtask_changed_files(BRANCH, SUBTASK, repo, work_dir=worktree)
+    assert current is not None
+    assert "existing.txt" in current
+
+
+@pytest.fixture(params=["subtask", "scope"])
+def baseline_producer(request):
+    return request.param
+
+
+def record_baseline(runner, repo: Path, producer: str):
+    if producer == "scope":
+        # Scope-only tests must not inherit the fixture's legacy subtask filter.
+        (repo / ".map" / BRANCH / "subtask-baselines" / f"{SUBTASK}.json").unlink(
+            missing_ok=True
+        )
+        report = runner.record_scope_baseline(BRANCH)
+    else:
+        report = runner.record_subtask_baseline(BRANCH, SUBTASK)
+    assert report["status"] == "success", report
+
+
+@pytest.mark.parametrize("consumer", ["detector", "boundary", "refresh"])
+@pytest.mark.parametrize("transition", [
+    "unstaged", "staged_only", "reverted_to_head", "deleted", "recreated",
+    "file_to_symlink", "symlink_target", "executable_mode", "committed",
+    "untracked_to_staged",
+])
+def test_dirty_baseline_transitions_remain_visible(
+    runner, repaired_repo, baseline_producer, consumer, transition
+):
+    repo, _ = repaired_repo
+    path = repo / "existing.txt"
+    if transition == "untracked_to_staged":
+        path = repo / "previously-untracked.txt"
+        path.write_text("same bytes before and after staging\n")
+    elif transition == "recreated":
+        path.unlink()
+    elif transition == "symlink_target":
+        path.unlink()
+        path.symlink_to("baseline-target")
+    record_baseline(runner, repo, baseline_producer)
+
+    if transition == "untracked_to_staged":
+        git(repo, "add", path.name)
+    elif transition == "staged_only":
+        baseline_bytes = path.read_bytes()
+        path.write_text("Actor index-only rewrite\n")
+        git(repo, "add", "existing.txt")
+        path.write_bytes(baseline_bytes)
+    elif transition == "reverted_to_head":
+        path.write_text("original\n")
+        assert "existing.txt" not in git(repo, "status", "--porcelain")
+    elif transition == "deleted":
+        path.unlink()
+    elif transition in {"file_to_symlink", "symlink_target"}:
+        path.unlink()
+        path.symlink_to("Actor-target")
+    elif transition == "executable_mode":
+        git(repo, "config", "core.filemode", "true")
+        path.chmod(path.stat().st_mode | 0o111)
+    else:
+        path.write_text("Actor rewritten or recreated\n")
+        if transition == "committed":
+            git(repo, "add", "existing.txt")
+            git(repo, "commit", "-m", "Actor rewrite", "--", "existing.txt")
+
+    if consumer == "detector":
+        report = runner.detect_actor_files_changed_mismatch(BRANCH, SUBTASK, [path.name])
+        assert report["declared_not_written"] == [], report
+        assert report["status_mismatch"] is False, report
+        assert path.name in report["actual"], report
+    elif consumer == "boundary":
+        report = runner.validate_mutation_boundary(BRANCH, SUBTASK)
+        assert path.name in report["actual"], report
+        assert path.name in report["unexpected"], report
+        assert report["status"] == "violation", report
+    else:
+        report = runner.refresh_blueprint_affected_files(BRANCH, SUBTASK, replace=True)
+        assert report["status"] == "success", report
+        assert path.name in report["current"], report
+        blueprint = json.loads((repo / ".map" / BRANCH / "blueprint.json").read_text())
+        assert path.name in blueprint["subtasks"][0]["affected_files"]
+
+
+@pytest.mark.parametrize("consumer", ["surface", "boundary", "refresh"])
+def test_public_baseline_unchanged_path_is_excluded(
+    runner, repaired_repo, baseline_producer, consumer
+):
+    repo, _ = repaired_repo
+    record_baseline(runner, repo, baseline_producer)
+    if consumer == "surface":
+        current = runner._current_subtask_changed_files(BRANCH, SUBTASK, repo)
+        assert current is not None
+        assert "existing.txt" not in current
+    elif consumer == "boundary":
+        report = runner.validate_mutation_boundary(BRANCH, SUBTASK)
+        assert "existing.txt" not in report["actual"], report
+    else:
+        report = runner.refresh_blueprint_affected_files(BRANCH, SUBTASK, replace=True)
+        assert "existing.txt" not in report["current"], report
+
+
+@pytest.mark.parametrize("consumer", ["surface", "boundary", "refresh"])
+def test_older_scope_baseline_cannot_hide_rewrite_since_subtask(runner, repaired_repo, consumer):
+    repo, _ = repaired_repo
+    path = repo / "existing.txt"
+    older_bytes = path.read_bytes()
+    report = runner.record_scope_baseline(BRANCH)
+    assert report["status"] == "success", report
+    path.write_text("newer subtask starting bytes\n")
+    report = runner.record_subtask_baseline(BRANCH, SUBTASK)
+    assert report["status"] == "success", report
+    path.write_bytes(older_bytes)
+    if consumer == "surface":
+        current = runner._current_subtask_changed_files(BRANCH, SUBTASK, repo)
+        assert current is not None
+        assert "existing.txt" in current
+    elif consumer == "boundary":
+        report = runner.validate_mutation_boundary(BRANCH, SUBTASK)
+        assert "existing.txt" in report["unexpected"], report
+    else:
+        report = runner.refresh_blueprint_affected_files(BRANCH, SUBTASK, replace=True)
+        assert "existing.txt" in report["current"], report
+
+
+@pytest.mark.parametrize("consumer", ["surface", "boundary", "refresh"])
+@pytest.mark.parametrize("producer", ["subtask", "scope"])
+def test_legacy_path_only_baseline_cannot_suppress_dirty_evidence(
+    runner, repaired_repo, producer, consumer
+):
+    repo, _ = repaired_repo
+    workspace = repo / ".map" / BRANCH
+    subtask_path = workspace / "subtask-baselines" / f"{SUBTASK}.json"
+    if producer == "scope":
+        subtask_path.unlink()
+        legacy_path = workspace / "scope-baseline.json"
+    else:
+        legacy_path = subtask_path
+    legacy_path.write_text(json.dumps({"files": ["existing.txt"]}))
+    if consumer == "surface":
+        current = runner._current_subtask_changed_files(BRANCH, SUBTASK, repo)
+        assert current is not None
+        assert "existing.txt" in current
+    elif consumer == "boundary":
+        report = runner.validate_mutation_boundary(BRANCH, SUBTASK)
+        assert "existing.txt" in report["unexpected"], report
+    else:
+        report = runner.refresh_blueprint_affected_files(BRANCH, SUBTASK, replace=True)
+        assert "existing.txt" in report["current"], report

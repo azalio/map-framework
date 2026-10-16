@@ -135,6 +135,27 @@ Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json`
 - **Evaluate Skills**: `/map-skill-eval`, `$map-skill-eval`, and `mapify skill-eval` run trigger/cost eval sets through isolated provider workers (`claude -p` or `codex exec`), append resumable JSONL rows, aggregate pass/fail and usage, optimize frontmatter descriptions against held-out eval cases, and render stored optimization reports.
 - **Audit/Validate**: Maintainers use tests and helper modules such as `python -m mapify_cli.skill_ir ...`, `mapify check`, `mapify doctor`, template-sync tests, artifact-schema tests, workflow-gate tests, and adversarial governance violation fixtures to keep shipped provider surfaces aligned with the documented runtime contract.
 
+### Dirty-path attribution baselines
+
+The runner captures subtask and optional branch scope baselines under
+`.map/<branch>/`. A baseline records dirty paths plus per-path working-tree
+fingerprints (type, content digest and executable mode) and normalized Git index
+entries. It stores no file contents. Existing atomic JSON publication keeps the
+snapshot readable across process restarts; capture belongs before Actor work,
+not during a retry to silence a gate.
+
+Attribution reconciles raw Git paths together with baseline paths, so restoring
+a dirty file to HEAD is still a visible change. A path is excluded only when
+every baseline layer listing it has complete evidence matching its current
+working-tree and index state. A rewrite or unknown evidence in either layer
+prevents exclusion. Old path-only records cannot prove that a file is unchanged
+and are retained conservatively; this may surface additional scope warnings.
+The same reconciliation serves Actor mismatch, mutation-boundary checks,
+regression/blast-radius detection and affected-files refresh. Repair-adjusted
+trees still determine the underlying diff and exclude independent repair work.
+Fingerprints describe observable final state, not an edit-event log: edits fully
+undone to identical working-tree and index state cannot be distinguished.
+
 ### Serial blocker-repair interruption
 
 A blocker repair is a separate execution frame, not a replacement task list or

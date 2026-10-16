@@ -63,6 +63,7 @@ import random
 import re
 import shlex
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -14934,24 +14935,15 @@ def refresh_blueprint_affected_files(
     # so refresh recorded "current=[]" and dashboard reported "all
     # previous files removed". Now we ALSO diff against
     # baseline.head_sha so committed-since-baseline files are included.
-    baseline_files: set[str] = set()
     baseline_head_sha: str | None = None
-    subtask_baseline_path = _subtask_baseline_path(
-        branch_name, subtask_id, project_dir
-    )
-    for bp_baseline in (subtask_baseline_path, _scope_baseline_path(branch_name, project_dir)):
-        if bp_baseline.exists():
-            try:
-                data = json.loads(bp_baseline.read_text(encoding="utf-8"))
-                raw = data.get("files", [])
-                if isinstance(raw, list):
-                    baseline_files.update(str(p) for p in raw if isinstance(p, str))
-                if bp_baseline == subtask_baseline_path:
-                    bp_head = data.get("head_sha")
-                    if isinstance(bp_head, str) and bp_head:
-                        baseline_head_sha = bp_head
-            except (json.JSONDecodeError, OSError):
-                pass
+    try:
+        data = json.loads(_subtask_baseline_path(branch_name, subtask_id, project_dir).read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            bp_head = data.get("head_sha")
+            if isinstance(bp_head, str) and bp_head:
+                baseline_head_sha = bp_head
+    except (ValueError, OSError):
+        pass
 
     try:
         adjusted_base = _adjusted_subtask_diff_base(branch_name, subtask_id, project_dir)
@@ -15009,7 +15001,10 @@ def refresh_blueprint_affected_files(
         if current_surface is None:
             return {"status": "error", "message": "Cannot determine adjusted mutation surface"}
         actual_set = current_surface
-    actual_set -= baseline_files
+    else:
+        actual_set = _reconcile_mutation_baselines(
+            actual_set, branch_name, subtask_id, project_dir, git_cwd=project_dir,
+        )
     actual_files = sorted(actual_set)
 
     previous_raw = subtasks[found_index].get("affected_files", []) or []
@@ -15819,17 +15814,239 @@ def _git_diff_paths(output: bytes) -> set[str]:
     return {os.fsdecode(path) for path in output.split(b"\0") if path}
 
 
-def record_subtask_baseline(branch: str, subtask_id: str) -> dict:
-    """Snapshot the current ``git status --porcelain -uall`` set + HEAD SHA as
-    a per-subtask baseline that validate_mutation_boundary will subtract
-    from `actual` for THIS subtask only — independent from the
-    branch-wide scope-baseline.
+_PATH_EVIDENCE_VERSION = 1
 
-    Fires automatically at validate_step("2.2") (RESEARCH start) so each
-    subtask's mutation boundary check sees only changes since RESEARCH began,
-    not the cumulative branch diff. The branch-wide
-    .map/<branch>/scope-baseline.json still applies on top as a
-    coarse filter.
+
+def _baseline_index_entries(git_cwd: Path) -> dict[str, list[dict[str, object]]] | None:
+    """Read semantic index entries, not volatile index-file bytes or pathspecs."""
+    try:
+        proc = subprocess.run(
+            ["git", "ls-files", "--stage", "-z"], cwd=git_cwd,
+            capture_output=True, timeout=10, check=False,
+        )
+        if proc.returncode != 0:
+            return None
+        entries: dict[str, list[dict[str, object]]] = {}
+        for record in proc.stdout.split(b"\0"):
+            if not record:
+                continue
+            metadata, path = record.split(b"\t", 1)
+            mode, oid, stage = metadata.decode("ascii").split(" ")
+            if (
+                mode not in {"100644", "100755", "120000", "160000"}
+                or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", oid)
+                or stage not in {"0", "1", "2", "3"}
+                or not path
+            ):
+                return None
+            entries.setdefault(os.fsdecode(path), []).append(
+                {"stage": int(stage), "mode": mode, "oid": oid}
+            )
+        for values in entries.values():
+            values.sort(key=lambda entry: (
+                cast(int, entry["stage"]), cast(str, entry["mode"]), cast(str, entry["oid"]),
+            ))
+        return entries
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+
+
+def _baseline_stat_identity(info: os.stat_result) -> tuple[int, ...]:
+    return (
+        info.st_dev, info.st_ino, info.st_mode, info.st_size,
+        info.st_mtime_ns, info.st_ctime_ns,
+    )
+
+
+def _baseline_worktree_evidence(git_cwd: Path, path: str) -> dict[str, object] | None:
+    """Hash without following symlink ancestors, symlink targets or special files.
+
+    A descriptor-relative walk closes the ancestor-symlink race. Regular files
+    are streamed through a nonblocking, nofollow descriptor and checked before
+    and after reading; unsupported/unreadable/unstable inputs stay unknown.
+    """
+    parts = path.split("/")
+    if not path or any(part in {"", ".", "..", ".git"} for part in parts) or "\0" in path:
+        return None
+    for part in parts:
+        lower = part.casefold()
+        if (
+            lower.startswith(".env") or "credential" in lower
+            or lower in {"id_rsa", "id_ed25519", "secrets", "secrets.json"}
+            or lower.endswith((".pem", ".key", ".p12", ".pfx"))
+        ):
+            return None
+    descriptors: list[int] = []
+    try:
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        descriptors.append(os.open(git_cwd, directory_flags))
+        for part in parts[:-1]:
+            try:
+                descriptors.append(os.open(part, directory_flags, dir_fd=descriptors[-1]))
+            except FileNotFoundError:
+                return {"type": "absent"}
+        parent_fd = descriptors[-1]
+        name = parts[-1]
+        try:
+            before = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return {"type": "absent"}
+        if stat.S_ISLNK(before.st_mode):
+            target = os.readlink(name, dir_fd=parent_fd)
+            evidence: dict[str, object] = {
+                "type": "symlink", "sha256": hashlib.sha256(os.fsencode(target)).hexdigest(),
+            }
+        elif stat.S_ISREG(before.st_mode):
+            fd = os.open(
+                name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd,
+            )
+            descriptors.append(fd)
+            opened = os.fstat(fd)
+            if not stat.S_ISREG(opened.st_mode) or _baseline_stat_identity(opened) != _baseline_stat_identity(before):
+                return None
+            # Bound both huge inputs and growth races. Unknown is conservative;
+            # no path can be certified unchanged from a partial digest.
+            if before.st_size > 64 * 1024 * 1024:
+                return None
+            digest = hashlib.sha256()
+            remaining = before.st_size
+            while remaining:
+                chunk = os.read(fd, min(remaining, 1024 * 1024))
+                if not chunk:
+                    return None
+                digest.update(chunk)
+                remaining -= len(chunk)
+            if os.read(fd, 1) or _baseline_stat_identity(os.fstat(fd)) != _baseline_stat_identity(before):
+                return None
+            evidence = {
+                "type": "regular", "sha256": digest.hexdigest(),
+                "executable": bool(before.st_mode & 0o111),
+            }
+        else:
+            return None
+        after = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        return evidence if _baseline_stat_identity(before) == _baseline_stat_identity(after) else None
+    except (OSError, ValueError):
+        return None
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def _capture_baseline_path_evidence(git_cwd: Path, paths: Iterable[str]) -> dict[str, object]:
+    index = _baseline_index_entries(git_cwd)
+    evidence: dict[str, object] = {}
+    for path in paths:
+        worktree = _baseline_worktree_evidence(git_cwd, path)
+        evidence[path] = (
+            {"worktree": worktree, "index": index.get(path, [])}
+            if worktree is not None and index is not None else None
+        )
+    return evidence
+
+
+def _valid_baseline_path_evidence(value: object) -> bool:
+    """Malformed or incomplete durable evidence must never certify equality."""
+    if not isinstance(value, dict) or set(value) != {"worktree", "index"}:
+        return False
+    worktree = value["worktree"]
+    if not isinstance(worktree, dict):
+        return False
+    kind = worktree.get("type")
+    if not isinstance(kind, str):
+        return False
+    if kind == "absent":
+        if set(worktree) != {"type"}:
+            return False
+    elif kind in {"regular", "symlink"}:
+        keys = {"type", "sha256", "executable"} if kind == "regular" else {"type", "sha256"}
+        digest = worktree.get("sha256")
+        if set(worktree) != keys or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            return False
+        if kind == "regular" and not isinstance(worktree["executable"], bool):
+            return False
+    else:
+        return False
+    index = value["index"]
+    if not isinstance(index, list):
+        return False
+    previous: tuple[int, str, str] | None = None
+    for entry in index:
+        if not isinstance(entry, dict) or set(entry) != {"stage", "mode", "oid"}:
+            return False
+        stage, mode, oid = entry["stage"], entry["mode"], entry["oid"]
+        if (
+            type(stage) is not int or stage not in {0, 1, 2, 3}
+            or not isinstance(mode, str) or mode not in {"100644", "100755", "120000", "160000"}
+            or not isinstance(oid, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", oid)
+        ):
+            return False
+        current = (stage, mode, oid)
+        if previous is not None and current <= previous:
+            return False
+        previous = current
+    return True
+
+
+def _load_mutation_baselines(branch: str, subtask_id: str, project_dir: Path) -> list[dict]:
+    layers: list[dict] = []
+    for path in (
+        _subtask_baseline_path(branch, subtask_id, project_dir),
+        _scope_baseline_path(branch, project_dir),
+    ):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                layers.append(data)
+        except (OSError, ValueError):
+            pass
+    return layers
+
+
+def _reconcile_mutation_baselines(
+    candidates: set[str], branch: str, subtask_id: str, project_dir: Path, *, git_cwd: Path,
+) -> set[str]:
+    """Suppress only paths certified unchanged by EVERY layer listing that path.
+
+    Union baseline paths first: returning dirty content to HEAD can disappear
+    from Git's current candidate list, but is still a mutation since capture.
+    Layers not listing a path have no vote; legacy/unknown evidence vetoes.
+    """
+    applicable: dict[str, list[object]] = {}
+    for layer in _load_mutation_baselines(branch, subtask_id, project_dir):
+        files = layer.get("files")
+        if not isinstance(files, list):
+            continue
+        evidence = layer.get("path_evidence")
+        version = layer.get("evidence_version")
+        for path in files:
+            if not isinstance(path, str):
+                continue
+            stored = (
+                evidence.get(path) if type(version) is int and version == _PATH_EVIDENCE_VERSION
+                and isinstance(evidence, dict) else None
+            )
+            applicable.setdefault(path, []).append(stored)
+    paths = {path for path in candidates | applicable.keys() if not _is_map_internal_artifact(path)}
+    current = _capture_baseline_path_evidence(git_cwd, paths & applicable.keys())
+    return {
+        path for path in paths
+        if path not in applicable or not all(
+            _valid_baseline_path_evidence(stored) and stored == current.get(path)
+            for stored in applicable[path]
+        )
+    }
+
+
+def record_subtask_baseline(branch: str, subtask_id: str) -> dict:
+    """Snapshot dirty paths, semantic worktree/index evidence and HEAD SHA.
+
+    Fires automatically when validate_step("2.2") completes RESEARCH, before
+    Actor starts. Repeated completed-step validation does not recapture it.
+    Explicit calls are for pre-Actor capture only, never mid-Actor or retries.
+    Shared attribution suppresses a listed path only while ALL listing layers
+    (this snapshot and scope-baseline.json) certify its state is unchanged.
+    Legacy or unavailable evidence cannot hide a mutation.
 
     Added 2026-05-26: ``head_sha`` field captures the commit SHA at
     baseline time so refresh_blueprint_affected_files can resolve the
@@ -15889,6 +16106,8 @@ def record_subtask_baseline(branch: str, subtask_id: str) -> dict:
         "recorded_at": _utc_timestamp(),
         "files": sorted(set(files)),
         "head_sha": head_sha,
+        "evidence_version": _PATH_EVIDENCE_VERSION,
+        "path_evidence": _capture_baseline_path_evidence(project_dir, files),
     }
     _write_json_file(path, payload)
     return {
@@ -16866,16 +17085,13 @@ def record_auto_phase(
 
 
 def record_scope_baseline(branch: str) -> dict:
-    """Snapshot the current uncommitted / untracked file set as a baseline
-    that validate_mutation_boundary will subtract from `actual` on future
-    runs. Use when the branch carries pre-existing artifacts from prior
-    waves that would otherwise flood every subtask with `warning`.
+    """Capture pre-existing dirty paths and semantic worktree/index evidence.
 
-    Uses ``-uall`` so files inside untracked directories are recorded at file
-    granularity. This ensures the per-file subtraction in
-    validate_mutation_boundary correctly suppresses pre-existing files while
-    still surfacing new files added inside a pre-existing untracked directory
-    (#376).
+    Call only before Actor starts, never to silence a mid-Actor scope warning.
+    A path is suppressed only while every baseline listing it has complete,
+    valid evidence equal to its current state; legacy evidence is conservative.
+    Uses ``-uall`` to preserve individual files inside untracked directories
+    instead of masking new siblings behind a collapsed directory (#376).
 
     Returns dict with: status, path, files (count + list).
     """
@@ -16909,6 +17125,8 @@ def record_scope_baseline(branch: str) -> dict:
         "branch": _sanitize_branch(branch),
         "recorded_at": _utc_timestamp(),
         "files": sorted(set(files)),
+        "evidence_version": _PATH_EVIDENCE_VERSION,
+        "path_evidence": _capture_baseline_path_evidence(project_dir, files),
     }
     _write_json_file(baseline_path, payload)
     return {"status": "success", "path": str(baseline_path), "count": len(payload["files"]), "files": payload["files"]}
@@ -17162,18 +17380,6 @@ def validate_mutation_boundary(
     if diff_result is not None:
         actual_set.update(_git_diff_paths(diff_result.stdout))
 
-    # Filter framework-owned paths that are NEVER part of a subtask's mutation
-    # surface: `.map/` carries orchestrator artifacts (blueprint, step_state,
-    # research outputs, scope logs), `.codex/` mirrors Codex-side config, and
-    # `.agents/` holds Codex repository skills.
-    # Treating them as scope leaks would produce a flood of false positives.
-    actual_set = {
-        p for p in actual_set
-        if not p.startswith(".map/")
-        and not p.startswith(".codex/")
-        and not p.startswith(".agents/")
-    }
-
     if adjusted_base is not None and not base_ref_explicit:
         current_surface = _current_subtask_changed_files(branch_name, subtask_id, project_dir)
         if current_surface is None:
@@ -17182,38 +17388,16 @@ def validate_mutation_boundary(
                 "message": "Cannot determine adjusted mutation surface",
             }
         actual_set = current_surface
-
-    # Baseline filter — two layers:
-    #   1. Per-subtask baseline (auto-snapshotted at validate_step('2.2')):
-    #      everything dirty in the worktree when THIS subtask started
-    #      RESEARCH belongs to prior subtasks. Subtract it so per-subtask
-    #      mutation check only sees changes made during the current run.
-    #   2. Branch-wide baseline (operator opt-in via record_scope_baseline):
-    #      coarser filter for branches that carry pre-existing artifacts
-    #      from outside the workflow entirely.
+    else:
+        actual_set = _reconcile_mutation_baselines(
+            actual_set, branch_name, subtask_id, project_dir, git_cwd=project_dir,
+        )
+    # Used only for operator advice, never as another path-only filter.
     baseline_files: set[str] = set()
-    subtask_baseline_path = _subtask_baseline_path(
-        branch_name, subtask_id, project_dir
-    )
-    if subtask_baseline_path.exists():
-        try:
-            data = json.loads(subtask_baseline_path.read_text(encoding="utf-8"))
-            raw = data.get("files", [])
-            if isinstance(raw, list):
-                baseline_files.update(str(p) for p in raw if isinstance(p, str))
-        except (json.JSONDecodeError, OSError):
-            pass
-    branch_baseline_path = _scope_baseline_path(branch_name, project_dir)
-    if branch_baseline_path.exists():
-        try:
-            data = json.loads(branch_baseline_path.read_text(encoding="utf-8"))
-            raw = data.get("files", [])
-            if isinstance(raw, list):
-                baseline_files.update(str(p) for p in raw if isinstance(p, str))
-        except (json.JSONDecodeError, OSError):
-            pass
-    if baseline_files:
-        actual_set = {p for p in actual_set if p not in baseline_files}
+    for layer in _load_mutation_baselines(branch_name, subtask_id, project_dir):
+        listed_files = layer.get("files")
+        if isinstance(listed_files, list):
+            baseline_files.update(path for path in listed_files if isinstance(path, str))
 
     actual = sorted(actual_set)
     expected_set = set(expected)
@@ -17250,15 +17434,16 @@ def validate_mutation_boundary(
                 "If 'unexpected' includes files from prior subtasks: either "
                 "(a) commit those subtasks and re-run record_subtask_result "
                 "--commit-sha <SHA> so this check uses the right base, OR "
-                "(b) run `python3 .map/scripts/map_step_runner.py "
-                "record_scope_baseline <branch>` to lock the current "
-                "uncommitted state as the branch baseline."
+                "(b) inspect the scope and baseline evidence. Capture with "
+                "record_scope_baseline only before Actor starts; never recapture "
+                "the current dirty state during Actor or retries to hide a warning."
             )
         elif not baseline_files:
             diagnostic_hint = (
                 "No per-subtask baseline was found — RESEARCH (2.2) likely "
                 "didn't auto-snapshot. Run record_subtask_baseline "
-                f"{branch} {subtask_id} before MONITOR to filter prior work."
+                f"{branch} {subtask_id} only before Actor starts; never recapture "
+                "during Actor or a retry, because that would hide current work."
             )
 
     report = {
@@ -17450,21 +17635,9 @@ def _current_subtask_changed_files(
     if diff_result is not None:
         changed.update(_git_diff_paths(diff_result.stdout))
 
-    changed = {p for p in changed if not _is_map_internal_artifact(p)}
-
-    baseline_path = _subtask_baseline_path(branch_name, subtask_id, project_dir)
-    if baseline_path.exists():
-        try:
-            baseline_data = json.loads(baseline_path.read_text(encoding="utf-8"))
-            raw_baseline = baseline_data.get("files", [])
-            if isinstance(raw_baseline, list):
-                baseline_set = {
-                    str(p) for p in raw_baseline if isinstance(p, str)
-                }
-                changed -= baseline_set
-        except (json.JSONDecodeError, OSError):
-            pass
-    return changed
+    return _reconcile_mutation_baselines(
+        changed, branch_name, subtask_id, project_dir, git_cwd=git_cwd,
+    )
 
 
 def detect_cross_subtask_regression_risk(
