@@ -63,7 +63,7 @@ SUPPORTED_SKILL_CLASSES = {"reference", "task", "hybrid"}
 NEGATIVE_TRIGGER_DESCRIPTION_EXEMPT_SKILLS = {"map-upgrade"}
 # Codex twins rendered from the Claude source via [% include %] (PROVIDER-conditional).
 SINGLE_SOURCE_CODEX_SKILLS = {
-    "map-architecture", "map-auto", "map-review", "map-release", "map-wayfind"
+    "map-architecture", "map-auto", "map-review", "map-release", "map-so-search", "map-wayfind"
 }
 
 WORKFLOW_EFFORT_PROFILES = {
@@ -505,7 +505,8 @@ class TestProviderUpdateSkills:
         assert not codex_cmd.search(claude_text) and claude_cmd.search(claude_text)
         assert not claude_cmd.search(codex_text) and codex_cmd.search(codex_text)
         for key in ("effort:", "disable-model-invocation:", "argument-hint:"):
-            assert key in claude_text.partition("\n---\n")[0]
+            # SOFA preserves its existing auto-invocable, argument-free metadata.
+            assert (key in claude_text.partition("\n---\n")[0]) == (skill != "map-so-search")
             assert key not in codex_text.partition("\n---\n")[0]
 
     def test_map_upgrade_catalog_entry_is_manual_task(self, project_root: Path) -> None:
@@ -4360,9 +4361,57 @@ def _non_include_twins(twin_dir: Path) -> list[Path]:
     )
 
 
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_sofa_shared_source_preserves_provider_contract(
+    provider: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sharing sources must retain each provider's lookup and onboarding defaults."""
+    import importlib.util
+
+    from mapify_cli.delivery.template_renderer import get_environment
+
+    env = get_environment(_TEMPLATES_SRC)
+    body = env.get_template("skills/map-so-search/SKILL.md.jinja").render(PROVIDER=provider)
+    prefix = "$" if provider == "codex" else "/"
+    model_provider = "openai" if provider == "codex" else "anthropic"
+    assert f"{prefix}map-so-search auth" in body
+    assert f"`model_name={provider}`, `model_provider={model_provider}`" in body
+    assert ("allowed-tools: Read, Bash" in body) == (provider == "claude")
+    assert "no network calls, no credential reads" in " ".join(body.split())
+    assert "EXTERNAL UNTRUSTED REFERENCE" in body
+
+    claude_root = tmp_path / "claude"
+    codex_root = tmp_path / "codex"
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(claude_root))
+    monkeypatch.setenv("CODEX_PROJECT_DIR", str(codex_root))
+    monkeypatch.delenv("SOFA_MODEL_NAME", raising=False)
+    monkeypatch.delenv("SOFA_MODEL_PROVIDER", raising=False)
+    script = env.get_template("skills/map-so-search/scripts/sofa_search.py.jinja").render(
+        PROVIDER=provider
+    )
+    script_path = tmp_path / "sofa_search.py"
+    script_path.write_text(script, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("sofa_provider_contract", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.PROJECT_DIR == (codex_root if provider == "codex" else claude_root)
+    metadata = module._onboarding_metadata()
+    assert metadata["model_name"] == provider
+    assert metadata["model_provider"] == model_provider
+    assert module.dispatch("query") == {
+        "ok": True, "noop": True, "reason": "sofa disabled"
+    }
+    monkeypatch.setenv("SOFA_MODEL_NAME", "custom-model")
+    monkeypatch.setenv("SOFA_MODEL_PROVIDER", "custom-provider")
+    metadata = module._onboarding_metadata()
+    assert metadata["model_name"] == "custom-model"
+    assert metadata["model_provider"] == "custom-provider"
+
+
 def test_single_source_codex_skills_set_is_pinned() -> None:
     assert SINGLE_SOURCE_CODEX_SKILLS == {
-        "map-architecture", "map-auto", "map-review", "map-release", "map-wayfind"
+        "map-architecture", "map-auto", "map-review", "map-release", "map-so-search", "map-wayfind"
     }
 
 

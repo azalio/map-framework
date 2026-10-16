@@ -113,7 +113,10 @@ ungated (#164 parity). `apply_patch` header parsing is one shared partial
 (`templates_src/_partials/apply-patch-paths.py.jinja`) with a runtime twin in
 `memory/capture.py`; `codex exec --json` argv and event parsing live in
 `mapify_cli.codex_exec`; provider names and directories in
-`mapify_cli.provider_registry`. The only intentional UI-level gap is
+`mapify_cli.provider_registry`. `map-so-search` shares its skill and Python
+runner Jinja sources across providers; conditional frontmatter, command syntax,
+project-root environment variable and onboarding model defaults preserve each
+provider's existing rendered behavior. The only intentional UI-level gap is
 Claude's command-driven dynamic `statusLine` renderer. Codex does provide the
 project-level `[tui].status_line` setting, but it accepts an ordered list of
 built-in item identifiers rather than a renderer command, so MAP does not wire

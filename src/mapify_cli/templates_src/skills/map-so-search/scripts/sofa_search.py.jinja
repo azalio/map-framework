@@ -176,7 +176,7 @@ def _read_sofa_enabled(project_dir: Path) -> bool:
 # Lazy client loader (design-for-testability — importlib by path)
 # ---------------------------------------------------------------------------
 
-PROJECT_DIR: Path = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+PROJECT_DIR: Path = Path(os.environ.get("<% 'CODEX_PROJECT_DIR' if PROVIDER == 'codex' else 'CLAUDE_PROJECT_DIR' %>") or os.getcwd())
 
 
 def _load_sofa_client(project_dir: Path) -> Any:
@@ -388,8 +388,8 @@ def _onboarding_metadata() -> dict[str, str]:
     return {
         "client_name": env("SOFA_CLIENT_NAME", "map-framework"),
         "client_version": env("SOFA_CLIENT_VERSION", "0.1"),
-        "model_name": env("SOFA_MODEL_NAME", "claude"),
-        "model_provider": env("SOFA_MODEL_PROVIDER", "anthropic"),
+        "model_name": env("SOFA_MODEL_NAME", "<% 'codex' if PROVIDER == 'codex' else 'claude' %>"),
+        "model_provider": env("SOFA_MODEL_PROVIDER", "<% 'openai' if PROVIDER == 'codex' else 'anthropic' %>"),
         "model_version": env("SOFA_MODEL_VERSION", "unknown"),
         "model_selection_mode": env("SOFA_MODEL_SELECTION_MODE", "auto"),
     }
