@@ -602,3 +602,28 @@ def test_unrelated_dirty_outputs_preserved(tmp_path: Path) -> None:
                                 no_improvement=False, repo_root=root, stage=False)
     assert dirty.read_bytes() == b"unrelated dirty output"
     assert dirty.stat().st_mode & 0o777 == 0o750
+
+
+@pytest.mark.parametrize("mutation", ["body", "terminal_newline"])
+def test_non_description_renderer_mutation_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str) -> None:
+    from mapify_cli.delivery import template_renderer
+
+    root = _seed_templates_src(tmp_path)
+    source = _jinja_path(root)
+    before = source.read_bytes()
+    render = template_renderer.render_repo_trees
+
+    def corrupt(provider: str, **kwargs: object) -> list[Path]:
+        paths = render(provider, **kwargs)  # type: ignore[arg-type]
+        for path in paths:
+            if path.parts[-2:] == (_SKILL, "SKILL.md") and provider == "claude":
+                value = path.read_bytes()
+                path.write_bytes(value + (b"body corruption" if mutation == "body" else b"\n"))
+        return paths
+
+    monkeypatch.setattr(template_renderer, "render_repo_trees", corrupt)
+    with pytest.raises(ValueError, match="non-description"):
+        apply_optimized_description(skill=_SKILL, winner="new", current_description="old",
+                                    no_improvement=False, repo_root=root, stage=False)
+    assert source.read_bytes() == before
+    assert not (root / ".claude").exists()

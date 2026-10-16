@@ -254,8 +254,13 @@ def _apply_optimized_description(
         for root in roots:
             rel = Path(root) / skill / "SKILL.md"
             rendered_bytes = (sandbox / rel).read_bytes()
-            if rendered_bytes.decode() != selected:
-                raise ValueError("Unsupported provider source: generated skill differs from common source")
+            generated_text = rendered_bytes.decode()
+            if parse_frontmatter(generated_text.split("---", 2)[1]).get("description") != winner:
+                raise ValueError("Unsupported provider source: generated winner differs from common source")
+            provider_template = ("codex/" if provider == "codex" else "") + name
+            baseline = before_env.get_template(provider_template).render(PROVIDER=provider)
+            if _plain_description(baseline, winner) != generated_text:
+                raise ValueError("Unsupported provider source: non-description generated content changed")
             updates[repo_root / rel] = rendered_bytes
         changed = _commit_transaction(repo_root, updates)
     if stage and changed:

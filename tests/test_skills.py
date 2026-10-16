@@ -3455,7 +3455,15 @@ class TestEfficientParallelDefaults:
             path = directory / "map-efficient/efficient-reference.md"
             if "templates_src" in directory.parts:
                 path = path.with_suffix(path.suffix + ".jinja")
-            content = " ".join(path.read_text(encoding="utf-8").split())
+            if "templates_src" in directory.parts:
+                from mapify_cli.delivery.template_renderer import get_environment
+
+                source = Path(__file__).resolve().parents[1] / "src/mapify_cli/templates_src"
+                provider = "codex" if "codex" in directory.parts else "claude"
+                text = get_environment(source).get_template(path.relative_to(source).as_posix()).render(PROVIDER=provider)
+            else:
+                text = path.read_text(encoding="utf-8")
+            content = " ".join(text.split())
             for required in (
                 f"execution.wave_mode={config.execution_wave_mode}",
                 f"worktree.isolation={config.worktree_isolation}",
