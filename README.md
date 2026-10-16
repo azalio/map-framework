@@ -27,6 +27,10 @@ Common failure modes MAP eliminates:
 
 MAP moves engineering judgment earlier: write down the behavior, split the work into small contracts, verify each stage, review against the spec, and save lessons for the next run.
 
+Skill maintainers can use `mapify skill-eval optimize <skill> --provider claude|codex --apply`
+to update only the selected provider's description in the shared template source;
+the opposite provider stays unchanged ([details](docs/USAGE.md#skill-description-optimization)).
+
 ## Quick Start
 
 <p align="center">

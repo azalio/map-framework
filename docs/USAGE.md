@@ -22,6 +22,25 @@ Once a plan reaches `ready` (task_plan + blueprint both present, the Step 7 boun
 
 When a MAP run enters a merge/rebase conflict, the PreToolUse workflow-context hook adds a conflict-resolution discipline block to `additionalContext`. It fires before `git merge` / `git rebase` and whenever git reports unmerged paths via `git diff --name-only --diff-filter=U`. The protocol is deliberately manual and intent-preserving: list conflicted files, resolve one file or small batch at a time, preserve both sides' intended behavior, check for conflict markers, run the project's test gate after each batch, stage only resolved files, and continue the merge/rebase only after no unmerged files remain. Final verification is: branch current with `origin/main`, no conflict markers, and tests green. The hook never mutates the worktree and never auto-runs tests.
 
+## Skill description optimization
+
+`mapify skill-eval optimize <skill> --provider claude|codex --eval-set PATH --apply`
+patches the selected provider's description in the shared
+`src/mapify_cli/templates_src/skills/<skill>/SKILL.md.jinja`. Codex include-only
+sources are not edited. A provider-specific winner does not validate the other
+provider: shared descriptions become explicit provider blocks, and the opposite
+rendered skill remains byte-identical. Identical winners and no improvement write
+nothing. Unsupported header structures fail before source/output mutation.
+
+Apply renders in isolation and promotes only that source and the selected
+provider's two generated skill files. Unrelated dirty output is not refreshed or
+staged. A durable `.map/skill-eval-apply-transaction/` journal restores original
+bytes and modes on partial promotion failure; the next non-noop apply recovers an
+interrupted transaction under the installer process lock. This is recoverable
+multi-file promotion, not instantaneous crash-atomic visibility. An incomplete
+journal without a manifest fails closed for inspection. `skill-rules.json` is not
+automatically patched. Changes are staged, never committed.
+
 ## Package release workflow (`/map-release`, `$map-release`)
 
 Claude and Codex use the same release templates and CI gate policy. The workflow

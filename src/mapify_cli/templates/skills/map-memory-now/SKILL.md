@@ -2,7 +2,7 @@
 name: map-memory-now
 description: >-
   Finalize cross-session memory on demand; --finalize-all sweeps every dirty
-  scratch. Use when ending a long session or before switching branches. Do NOT
+  scratch on the current branch. Use when ending a long session or before switching branches. Do NOT
   use for routine edits — finalize auto-runs at next SessionStart. Requires
   claude + git.
 effort: low
@@ -25,7 +25,7 @@ as a maintenance sweep over multiple unfinalized scratches.
 **When to use:**
 - Before ending a long working session to ensure memory is committed
 - After a session that ended abruptly (process kill, crash) without a clean `SessionEnd`
-- Maintenance sweep: `--finalize-all` to finalize every dirty scratch across all branches
+- Maintenance sweep: `--finalize-all` to finalize every dirty scratch on the current branch
 - Before running `/map-learn` to ensure the current session's context is available
 
 **Requires:**
@@ -49,8 +49,8 @@ as a maintenance sweep over multiple unfinalized scratches.
 
 ## Arguments
 
-- `$ARGUMENTS` empty or `--finalize-all` — both run the full sweep (finalize ALL dirty
-  scratches). `finalize_dirty(None, project_dir)` treats `incoming_sid=None` as "all
+- `$ARGUMENTS` empty or `--finalize-all` — both run the current-branch sweep (finalize ALL dirty
+  scratches on this branch). `finalize_dirty(None, project_dir)` treats `incoming_sid=None` as "all
   scratches are candidates", so a single call covers both the current session and any
   older unfinalized ones.
 
@@ -76,8 +76,8 @@ PY
 ```
 
 `finalize_dirty(None, ".")` is the `--finalize-all` sweep: it finalizes every
-dirty scratch WAL found under `.map/*/sessions/scratch/` in the current project,
-regardless of which session or branch wrote it.
+dirty scratch WAL found under `.map/<current-branch>/sessions/scratch/`,
+regardless of which session wrote it.
 
 ---
 
@@ -111,11 +111,11 @@ No dirty scratches found — nothing to finalize.
 ## Examples
 
 - **End-of-session finalize (default):**
-  `/map-memory-now` — finalizes every dirty scratch in the project so the next
+  `/map-memory-now` — finalizes every dirty scratch on the current branch so the next
   session can recall this one's decisions.
 - **Maintenance sweep after several abrupt exits:**
   `/map-memory-now --finalize-all` — same behavior; explicitly sweeps all
-  outstanding dirty scratches across branches.
+  outstanding dirty scratches on the current branch.
 - **Keep digests local:** set `MAP_MEMORY_COMMIT_DIGESTS=0` before running, then
   uncomment `.map/*/sessions/` in `.gitignore` so finalized digests stay private.
 

@@ -10,6 +10,14 @@ import stat
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import TypedDict
+
+
+class _JournalEntry(TypedDict):
+    path: str
+    exists: bool
+    mode: int
+    backup: str
 
 
 def _plain_description(text: str, winner: str) -> str:
@@ -64,6 +72,7 @@ def _provider_description(text: str, winner: str, provider: str) -> str:
         raise ValueError("Unsupported winner description")
     env = get_environment()
     rendered = env.from_string("---\n" + header + "\n---\n").render(PROVIDER=provider)
+    parse_frontmatter(rendered.split("---", 2)[1])
     patched = _plain_description(rendered, winner)
     parsed = parse_frontmatter(patched.split("---", 2)[1])
     if parsed.get("description") != winner:
@@ -108,6 +117,11 @@ def _atomic_bytes(path: Path, data: bytes, mode: int) -> None:
             os.fsync(stream.fileno())
         os.chmod(name, mode)
         os.replace(name, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     finally:
         Path(name).unlink(missing_ok=True)
 
@@ -115,13 +129,18 @@ def _atomic_bytes(path: Path, data: bytes, mode: int) -> None:
 def _recover_transaction(root: Path) -> None:
     journal = root / ".map/skill-eval-apply-transaction"
     manifest = journal / "manifest.json"
+    if any(p.is_symlink() for p in (journal, journal.parent, manifest)):
+        raise ValueError(f"Unsafe apply recovery journal: {journal}")
     if not manifest.exists():
         return
     entries = json.loads(manifest.read_text(encoding="utf-8"))
     if not (journal / "complete").exists():
         for entry in entries:
             target = root / entry["path"]
-            if not target.resolve().is_relative_to(root.resolve()):
+            backup = journal / entry["backup"]
+            if (not target.resolve().is_relative_to(root.resolve())
+                    or not backup.resolve().is_relative_to(journal.resolve())
+                    or any(p.is_symlink() for p in (target, *target.parents, backup))):
                 raise ValueError(f"Unsafe recovery path in {manifest}")
             if entry["exists"]:
                 _atomic_bytes(target, (journal / entry["backup"]).read_bytes(), entry["mode"])
@@ -132,16 +151,19 @@ def _recover_transaction(root: Path) -> None:
 
 def _commit_transaction(root: Path, updates: dict[Path, bytes]) -> list[Path]:
     journal = root / ".map/skill-eval-apply-transaction"
-    journal.mkdir(parents=True, exist_ok=False)
-    entries = []
-    for i, (path, data) in enumerate(updates.items()):
-        if path.is_symlink():
+    for path in updates:
+        if any(p.is_symlink() for p in (path, *path.parents) if p != root.parent):
             raise ValueError(f"Refusing symlink output: {path}")
+    if journal.exists():
+        raise ValueError(f"Incomplete apply journal requires inspection: {journal}")
+    journal.mkdir(parents=True, exist_ok=False)
+    entries: list[_JournalEntry] = []
+    for i, (path, data) in enumerate(updates.items()):
         exists = path.exists()
         if exists and path.read_bytes() == data:
             continue
         mode = stat.S_IMODE(path.stat().st_mode) if exists else 0o644
-        entry = dict(path=str(path.relative_to(root)), exists=exists, mode=mode, backup=str(i))
+        entry: _JournalEntry = {"path": str(path.relative_to(root)), "exists": exists, "mode": mode, "backup": str(i)}
         if exists:
             _atomic_bytes(journal / str(i), path.read_bytes(), 0o600)
         entries.append(entry)
@@ -164,6 +186,27 @@ def _commit_transaction(root: Path, updates: dict[Path, bytes]) -> list[Path]:
 
 
 def apply_optimized_description(
+    *, skill: str, winner: str, current_description: str, no_improvement: bool,
+    repo_root: Path, stage: bool = True, provider: str = "claude",
+) -> str:
+    """Serialize recovery/promotion across processes using the installer barrier."""
+    if no_improvement:
+        print("No improvement found: current description already optimal on held-out test")
+        return "no_improvement"
+    if winner == current_description:
+        print("Winner identical to current description; no file changes")
+        return "identical"
+    from mapify_cli.update_state import installer_process_lock
+
+    repo_root = repo_root.resolve()
+    with installer_process_lock(repo_root, timeout_s=30):
+        return _apply_optimized_description(
+            skill=skill, winner=winner, current_description=current_description,
+            no_improvement=no_improvement, repo_root=repo_root, stage=stage, provider=provider,
+        )
+
+
+def _apply_optimized_description(
     *, skill: str, winner: str, current_description: str, no_improvement: bool,
     repo_root: Path, stage: bool = True, provider: str = "claude",
 ) -> str:
@@ -197,6 +240,11 @@ def apply_optimized_description(
         before_env = get_environment(source_root)
         if env.get_template(name).render(PROVIDER=opposite) != before_env.get_template(name).render(PROVIDER=opposite):
             raise ValueError("Unsupported description structure: opposite provider changed")
+        from mapify_cli.skill_ir import parse_frontmatter
+
+        selected = env.get_template(name).render(PROVIDER=provider)
+        if parse_frontmatter(selected.split("---", 2)[1]).get("description") != winner:
+            raise ValueError("Unsupported description structure: selected winner mismatch")
         for runtime in ("claude", "codex"):
             render_repo_trees(runtime, repo_root=sandbox, templates_src_root=source)
         roots = (".claude/skills", "src/mapify_cli/templates/skills") if provider == "claude" else (
@@ -205,7 +253,10 @@ def apply_optimized_description(
         updates = {jinja: target.read_bytes()}
         for root in roots:
             rel = Path(root) / skill / "SKILL.md"
-            updates[repo_root / rel] = (sandbox / rel).read_bytes()
+            rendered_bytes = (sandbox / rel).read_bytes()
+            if rendered_bytes.decode() != selected:
+                raise ValueError("Unsupported provider source: generated skill differs from common source")
+            updates[repo_root / rel] = rendered_bytes
         changed = _commit_transaction(repo_root, updates)
     if stage and changed:
         result = subprocess.run(

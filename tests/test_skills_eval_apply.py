@@ -465,3 +465,140 @@ def test_apply_provider_matrix(tmp_path: Path, provider: str, skill: str) -> Non
     assert include.read_bytes() == include_before
     generated = root / (".claude/skills" if provider == "claude" else ".agents/skills") / skill / "SKILL.md"
     assert _read_frontmatter_description(generated) == winner
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_apply_source_only_scoped_and_repeatable(tmp_path: Path, provider: str) -> None:
+    root = _seed_templates_src(tmp_path)
+    for winner in ("First winner.", "Second winner."):
+        apply_optimized_description(skill="map-debug", winner=winner, current_description="old",
+                                    no_improvement=False, repo_root=root, stage=False, provider=provider)
+    generated = root / (".claude/skills" if provider == "claude" else ".agents/skills") / "map-debug/SKILL.md"
+    assert _read_frontmatter_description(generated) == "Second winner."
+    assert not (root / ".claude/hooks").exists()
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("no_improvement", [True, False])
+def test_noop_all_sources_unchanged(tmp_path: Path, provider: str, no_improvement: bool) -> None:
+    root = _seed_templates_src(tmp_path)
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in root.rglob("*") if p.is_file()}
+    apply_optimized_description(skill="map-debug", winner="same", current_description="same",
+                                no_improvement=no_improvement, repo_root=root, stage=False, provider=provider)
+    assert before == {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in root.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("header", [
+    'description: [bad, structure]',
+    'description: &anchor old',
+    'description: |\n  old\n[% for i in [1] %]bad[% endfor %]',
+    'description: <% unknown %>',
+    'description: old\ndescription: duplicate',
+])
+def test_unsupported_header_no_live_changes(tmp_path: Path, header: str) -> None:
+    root = _seed_templates_src(tmp_path)
+    source = _jinja_path(root)
+    source.write_text("---\nname: map-skill-eval\n" + header + "\n---\nbody\n")
+    before = source.read_bytes()
+    with pytest.raises(ValueError, match="Unsupported|description"):
+        apply_optimized_description(skill=_SKILL, winner="new", current_description="old",
+                                    no_improvement=False, repo_root=root, stage=False)
+    assert source.read_bytes() == before
+    assert not (root / ".claude").exists()
+
+
+def test_partial_promotion_rolls_back_dirty_bytes_and_modes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import mapify_cli.skills_eval.apply_patcher as patcher
+
+    root = _seed_templates_src(tmp_path)
+    dirty = root / ".claude/skills/map-debug/SKILL.md"
+    dirty.parent.mkdir(parents=True)
+    dirty.write_bytes(b"user dirty work")
+    dirty.chmod(0o750)
+    source = _jinja_path(root, "map-debug")
+    before = source.read_bytes()
+    atomic = patcher._atomic_bytes
+    failed = False
+
+    def fail_once(path: Path, data: bytes, mode: int) -> None:
+        nonlocal failed
+        if path == dirty and not failed:
+            failed = True
+            raise OSError("injected partial promotion")
+        atomic(path, data, mode)
+
+    monkeypatch.setattr(patcher, "_atomic_bytes", fail_once)
+    with pytest.raises(OSError, match="injected"):
+        apply_optimized_description(skill="map-debug", winner="new", current_description="old",
+                                    no_improvement=False, repo_root=root, stage=False)
+    assert source.read_bytes() == before
+    assert dirty.read_bytes() == b"user dirty work"
+    assert dirty.stat().st_mode & 0o777 == 0o750
+    assert not (root / "src/mapify_cli/templates/skills/map-debug/SKILL.md").exists()
+    assert not (root / ".map/skill-eval-apply-transaction").exists()
+
+
+def test_renderer_failure_does_not_touch_live_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from mapify_cli.delivery import template_renderer
+
+    root = _seed_templates_src(tmp_path)
+    source = _jinja_path(root)
+    before = source.read_bytes()
+
+    def fail(*args: object, **kwargs: object) -> list[Path]:
+        raise RuntimeError("injected renderer failure")
+
+    monkeypatch.setattr(template_renderer, "render_repo_trees", fail)
+    with pytest.raises(RuntimeError, match="injected"):
+        apply_optimized_description(skill=_SKILL, winner="new", current_description="old",
+                                    no_improvement=False, repo_root=root, stage=False)
+    assert source.read_bytes() == before
+    assert not (root / ".claude").exists()
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_independent_conditional_changes_only_selected_span(tmp_path: Path, provider: str) -> None:
+    from mapify_cli.skills_eval.apply_patcher import _provider_description
+
+    text = _jinja_path(_seed_templates_src(tmp_path), "map-efficient").read_text()
+    after = _provider_description(text, "new winner", provider)
+    start = text.index("description:")
+    alternate = text.index("[% else %]description:")
+    end = text.index("[% endif", alternate)
+    lo, hi = (start, alternate) if provider == "claude" else (alternate + len("[% else %]"), end)
+    assert after.startswith(text[:lo])
+    assert after.endswith(text[hi:])
+
+
+def test_recover_durable_interrupted_promotion(tmp_path: Path) -> None:
+    import json
+
+    from mapify_cli.skills_eval.apply_patcher import _recover_transaction
+
+    target = tmp_path / "dirty.txt"
+    target.write_bytes(b"partial new content")
+    journal = tmp_path / ".map/skill-eval-apply-transaction"
+    journal.mkdir(parents=True)
+    (journal / "0").write_bytes(b"original dirty content")
+    (journal / "manifest.json").write_text(json.dumps([
+        {"path": "dirty.txt", "exists": True, "mode": 0o751, "backup": "0"},
+        {"path": "new.txt", "exists": False, "mode": 0o644, "backup": "1"},
+    ]))
+    (tmp_path / "new.txt").write_text("partial new")
+    _recover_transaction(tmp_path)
+    assert target.read_bytes() == b"original dirty content"
+    assert target.stat().st_mode & 0o777 == 0o751
+    assert not (tmp_path / "new.txt").exists()
+    assert not journal.exists()
+
+
+def test_unrelated_dirty_outputs_preserved(tmp_path: Path) -> None:
+    root = _seed_templates_src(tmp_path)
+    dirty = root / ".claude/skills/map-plan/SKILL.md"
+    dirty.parent.mkdir(parents=True)
+    dirty.write_bytes(b"unrelated dirty output")
+    dirty.chmod(0o750)
+    apply_optimized_description(skill="map-debug", winner="new", current_description="old",
+                                no_improvement=False, repo_root=root, stage=False)
+    assert dirty.read_bytes() == b"unrelated dirty output"
+    assert dirty.stat().st_mode & 0o777 == 0o750
