@@ -57,6 +57,12 @@ def _read_frontmatter_description(skill_md: Path) -> str:
     from mapify_cli.skill_ir import parse_frontmatter
 
     text = skill_md.read_text(encoding="utf-8")
+    if skill_md.suffix == ".jinja":
+        from mapify_cli.delivery.template_renderer import get_environment
+
+        source_root = next(p for p in skill_md.parents if p.name == "templates_src")
+        template = skill_md.relative_to(source_root).as_posix()
+        text = get_environment(source_root).get_template(template).render(PROVIDER="claude")
     # Extract text between the two ---
     assert text.startswith("---\n"), f"No frontmatter in {skill_md}"
     close_idx = text.find("\n---", 3)

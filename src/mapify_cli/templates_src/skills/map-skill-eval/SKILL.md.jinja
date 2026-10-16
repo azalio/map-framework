@@ -1,23 +1,27 @@
 ---
+[% set cmd = "/" if PROVIDER == "claude" else "$" -%]
 name: map-skill-eval
 description: |
-  Evaluate a /map-* skill's trigger accuracy and cost. Use when asked to measure skill trigger accuracy, run an eval-set, or check token/duration cost via `mapify skill-eval`. Do NOT use to plan or implement; use map-plan or map-efficient.
-effort: medium
+  Evaluate a <% cmd %>map-* skill's trigger accuracy and cost. Use when asked to measure skill trigger accuracy, run an eval-set, or check token/duration cost via `mapify skill-eval`. Do NOT use to plan or implement; use map-plan or map-efficient.
+[% if PROVIDER == "claude" %]effort: medium
 disable-model-invocation: true
 argument-hint: "[skill] [--eval-set PATH]"
+[% else %][% endif -%]
 ---
 [% include "_partials/auto-update-preflight.md.jinja" %]
-# /map-skill-eval — Skill Trigger Accuracy & Cost Evaluation
+# <% cmd %>map-skill-eval — Skill Trigger Accuracy & Cost Evaluation
 
-Purpose: measure whether a `/map-*` skill fires on the right prompts and what it costs in tokens and time. Do not plan or implement from this skill.
+Purpose: measure whether a `<% cmd %>map-*` skill fires on the right prompts and what it costs in tokens and time. Do not plan or implement from this skill.
 
-Requires the `claude` CLI (installed and on `$PATH`). The skill is skipped at install time on hosts without `claude`.
-
+[% if PROVIDER == "claude" %]Requires the `claude` CLI (installed and on `$PATH`). The skill is skipped at install time on hosts without `claude`.
+[% else %]Requires the `codex` CLI installed on `$PATH`.
+[% endif %]
 ## Constraints (NEVER)
 
-- **NEVER** plan or implement from this skill — it only measures trigger accuracy and cost. For work, use `/map-plan` or `/map-efficient`.
-- **NEVER** launch a non-dry-run `run`/`optimize` when the eval-set size or quota cost is unknown — run `--dry-run` first to see the call budget (each case spends a real `claude -p` call).
-- **NEVER** hand-edit the durable run log (`.map/eval-runs/<skill>/*.jsonl`) or `*-optimize.json` results — `--resume` and `view` depend on their integrity.
+- **NEVER** plan or implement from this skill — it only measures trigger accuracy and cost. For work, use `<% cmd %>map-plan` or `<% cmd %>map-efficient`.
+[% if PROVIDER == "claude" %]- **NEVER** launch a non-dry-run `run`/`optimize` when the eval-set size or quota cost is unknown — run `--dry-run` first to see the call budget (each case spends a real `claude -p` call).
+[% else %]- **NEVER** launch a non-dry-run `run`/`optimize` when the eval-set size or quota cost is unknown — run `--dry-run` first to see the call budget (each case spends a real `codex exec` call).
+[% endif %]- **NEVER** hand-edit the durable run log (`.map/eval-runs/<skill>/*.jsonl`) or `*-optimize.json` results — `--resume` and `view` depend on their integrity.
 - **NEVER** auto-commit an `--apply` change — `--apply` only stages the re-rendered description; review the diff, and patch `skill-rules.json` `description` by hand (it is not auto-patched).
 
 ## Before reporting (self-check)
@@ -28,20 +32,24 @@ Requires the `claude` CLI (installed and on `$PATH`). The skill is skipped at in
 ## Invocation
 
 ```bash
-mapify skill-eval run <skill> --eval-set PATH [--dry-run] [--resume] [--max-concurrency N]
-```
+[% if PROVIDER == "claude" %]mapify skill-eval run <skill> --eval-set PATH [--dry-run] [--resume] [--max-concurrency N]
+[% else %]mapify skill-eval run <skill> --provider codex --eval-set PATH [--dry-run] [--resume] [--max-concurrency N]
+[% endif %]```
 
 - `<skill>` — the skill name to evaluate (e.g. `map-plan`).
 - `--eval-set PATH` — path to a JSON eval-set file defining prompt cases and expected assertions.
 - `--dry-run` — validate the eval-set and print the planned run count without spending any quota.
 - `--resume` — continue an interrupted run from the last durable checkpoint.
-- `--max-concurrency N` — max parallel `claude -p` workers (default: 1).
-
+[% if PROVIDER == "claude" %]- `--max-concurrency N` — max parallel `claude -p` workers (default: 1).
+[% else %]- `--max-concurrency N` — max parallel `codex exec` workers (default: 1).
+[% endif %]
 ## What It Does
 
-1. **Prompts × runs matrix** — for each case in the eval-set, invokes `claude -p` in an isolated temporary working directory seeded with `.claude/` (skills, settings). Runs are independent; no shared state leaks between cases.
+[% if PROVIDER == "claude" %]1. **Prompts × runs matrix** — for each case in the eval-set, invokes `claude -p` in an isolated temporary working directory seeded with `.claude/` (skills, settings). Runs are independent; no shared state leaks between cases.
 2. **Transcript-parse trigger detection** — parses each `claude -p` transcript to determine whether the target skill fired (trigger) or did not fire (not_trigger).
-3. **Deterministic assertions** — each eval case may specify one or more assertion types:
+[% else %]1. **Prompts × runs matrix** — for each case in the eval-set, invokes `codex exec --json --ephemeral --ignore-user-config --ignore-rules` in an isolated temporary working directory seeded with `.agents/` and `.codex/`. Runs are independent; no shared config or session state leaks between cases.
+2. **Observable trigger detection** — appends a unique response marker to each temporary `SKILL.md` copy, then removes that marker from the captured answer after recording the activated skill. Production skill files are never modified.
+[% endif %]3. **Deterministic assertions** — each eval case may specify one or more assertion types:
    - `contains` / `not_contains` — substring presence in the response.
    - `regex` — pattern match against the response.
    - `valid_json` — response parses as JSON.
@@ -78,43 +86,52 @@ Assertion types: `contains`, `not_contains`, `regex`, `valid_json`, `trigger`,
 
 ## --dry-run
 
-`--dry-run` validates the eval-set schema and prints the planned case count with estimated quota usage. No `claude -p` calls are made; no `.jsonl` is written.
-
+[% if PROVIDER == "claude" %]`--dry-run` validates the eval-set schema and prints the planned case count with estimated quota usage. No `claude -p` calls are made; no `.jsonl` is written.
+[% else %]`--dry-run` validates the eval-set schema and prints the planned case count with estimated quota usage. No `codex exec` calls are made; no result `.jsonl` is written.
+[% endif %]
 ## Examples
 
 ```bash
 # Validate eval-set without spending quota
-mapify skill-eval run map-plan --eval-set .map/evals/map-plan.json --dry-run
-
+[% if PROVIDER == "claude" %]mapify skill-eval run map-plan --eval-set .map/evals/map-plan.json --dry-run
+[% else %]mapify skill-eval run map-plan --provider codex --eval-set .map/evals/map-plan.json --dry-run
+[% endif %]
 # Run full eval with up to 8 parallel workers
-mapify skill-eval run map-plan --eval-set .map/evals/map-plan.json --max-concurrency 8
-
+[% if PROVIDER == "claude" %]mapify skill-eval run map-plan --eval-set .map/evals/map-plan.json --max-concurrency 8
+[% else %]mapify skill-eval run map-plan --provider codex --eval-set .map/evals/map-plan.json --max-concurrency 8
+[% endif %]
 # Resume an interrupted run
-mapify skill-eval run map-plan --eval-set .map/evals/map-plan.json --resume
-```
+[% if PROVIDER == "claude" %]mapify skill-eval run map-plan --eval-set .map/evals/map-plan.json --resume
+[% else %]mapify skill-eval run map-plan --provider codex --eval-set .map/evals/map-plan.json --resume
+[% endif %]```
 
 ## Troubleshooting
 
-- **`claude` not found** — `map-skill-eval` requires the `claude` CLI on `$PATH`. Install it and re-run `mapify init` to activate the skill.
-- **Eval-set validation error on `--dry-run`** — check that each case has a non-empty `prompt` (the only required field); that `should_trigger` / `should_not_trigger`, if present, are strings; and that every `assertions` entry has a valid `type`. Cases carry no user-supplied `id` — `cell_id`s like `p0-v1-r2` are derived automatically.
+[% if PROVIDER == "claude" %]- **`claude` not found** — `map-skill-eval` requires the `claude` CLI on `$PATH`. Install it and re-run `mapify init` to activate the skill.
+[% else %]- **`codex` not found** — install the Codex CLI and ensure it is on `$PATH`.
+[% endif %]- **Eval-set validation error on `--dry-run`** — check that each case has a non-empty `prompt` (the only required field); that `should_trigger` / `should_not_trigger`, if present, are strings; and that every `assertions` entry has a valid `type`. Cases carry no user-supplied `id` — `cell_id`s like `p0-v1-r2` are derived automatically.
 - **Run log not found for `--resume`** — `--resume` looks for the latest `.map/eval-runs/<skill>/<timestamp>.jsonl`. If no prior run exists, omit `--resume` to start fresh.
-- **All cases report `not_trigger` unexpectedly** — verify the skill name matches exactly (e.g. `map-plan`, not `map_plan`) and that `.claude/` was seeded correctly in the temp cwd.
-
+[% if PROVIDER == "claude" %]- **All cases report `not_trigger` unexpectedly** — verify the skill name matches exactly (e.g. `map-plan`, not `map_plan`) and that `.claude/` was seeded correctly in the temp cwd.
+[% else %]- **All cases report `not_trigger` unexpectedly** — verify the skill name matches exactly (e.g. `map-plan`, not `map_plan`) and that `.agents/` plus `.codex/` were seeded correctly in the temp cwd.
+[% endif %]
 ## Optimize a skill description
 
 Anti-overfit description optimizer: deterministic 60/40 train/test split, up to N iterations (iteration 0 = baseline = current description). Selects the candidate with the highest held-out TEST pass-rate; an overfit candidate (train pass-rate up, test pass-rate down) is flagged and never selected.
 
 ```bash
-mapify skill-eval optimize <skill> --eval-set PATH [--iterations N] [--apply] [--open] [--dry-run]
-```
+[% if PROVIDER == "claude" %]mapify skill-eval optimize <skill> --eval-set PATH [--iterations N] [--apply] [--open] [--dry-run]
+[% else %]mapify skill-eval optimize <skill> --provider codex --eval-set PATH [--iterations N] [--apply] [--open] [--dry-run]
+[% endif %]```
 
 - `<skill>` — skill to optimize (e.g. `map-plan`).
 - `--eval-set PATH` — eval-set JSON with `>= 5` entries (a 60/40 split needs `n_test >= 3`; a smaller set exits with code 2, spending zero quota).
 - `--iterations N` — maximum optimization iterations (default: 5). Iteration 0 is the baseline.
-- `--apply` — patch the winning description into the SKILL.md frontmatter `description:` of `templates_src/skills/<skill>/SKILL.md.jinja` and re-render so generated trees stay byte-identical; the change is staged, not committed. `skill-rules.json` `description` is NOT auto-patched (update it by hand). Two no-op cases: "No improvement found" (baseline already optimal) and "Winner identical to current".
-- `--open` — open the HTML report in the browser after the run (best-effort; never errors the run).
-- `--dry-run` — print the planned call budget (iterations × (n_train + n_test) dispatch calls + iterations proposer calls) and `model: default (resolved by claude CLI)`, then exit 0 spending zero quota.
-
+[% if PROVIDER == "claude" %]- `--apply` — patch the winning description into the SKILL.md frontmatter `description:` of `templates_src/skills/<skill>/SKILL.md.jinja` and re-render so generated trees stay byte-identical; the change is staged, not committed. `skill-rules.json` `description` is NOT auto-patched (update it by hand). Two no-op cases: "No improvement found" (baseline already optimal) and "Winner identical to current".
+[% else %]- `--apply` — patch the winning description into the SKILL.md frontmatter `description:` of `templates_src/codex/skills/<skill>/SKILL.md.jinja` and re-render so generated trees stay byte-identical; the change is staged, not committed. `skill-rules.json` `description` is NOT auto-patched (update it by hand). Two no-op cases: "No improvement found" (baseline already optimal) and "Winner identical to current".
+[% endif %]- `--open` — open the HTML report in the browser after the run (best-effort; never errors the run).
+[% if PROVIDER == "claude" %]- `--dry-run` — print the planned call budget (iterations × (n_train + n_test) dispatch calls + iterations proposer calls) and `model: default (resolved by claude CLI)`, then exit 0 spending zero quota.
+[% else %]- `--dry-run` — print the planned call budget (iterations × (n_train + n_test) dispatch calls + iterations proposer calls) and the selected provider's default model, then exit 0 spending zero quota.
+[% endif %]
 Writes a durable `OptimizeResult` JSON and an HTML report to `.map/eval-runs/<skill>/<timestamp>-optimize.json` and `<timestamp>-optimize.html`.
 
 Default mode is propose-only: nothing outside `.map/` is modified.
@@ -123,14 +140,17 @@ Default mode is propose-only: nothing outside `.map/` is modified.
 
 ```bash
 # Preview quota usage without spending any
-mapify skill-eval optimize map-plan --eval-set .map/evals/map-plan.json --dry-run
-
+[% if PROVIDER == "claude" %]mapify skill-eval optimize map-plan --eval-set .map/evals/map-plan.json --dry-run
+[% else %]mapify skill-eval optimize map-plan --provider codex --eval-set .map/evals/map-plan.json --dry-run
+[% endif %]
 # Run 3 optimization iterations and open the HTML report
-mapify skill-eval optimize map-plan --eval-set .map/evals/map-plan.json --iterations 3 --open
-
+[% if PROVIDER == "claude" %]mapify skill-eval optimize map-plan --eval-set .map/evals/map-plan.json --iterations 3 --open
+[% else %]mapify skill-eval optimize map-plan --provider codex --eval-set .map/evals/map-plan.json --iterations 3 --open
+[% endif %]
 # Run, then auto-apply the winning description if improvement found
-mapify skill-eval optimize map-plan --eval-set .map/evals/map-plan.json --apply
-```
+[% if PROVIDER == "claude" %]mapify skill-eval optimize map-plan --eval-set .map/evals/map-plan.json --apply
+[% else %]mapify skill-eval optimize map-plan --provider codex --eval-set .map/evals/map-plan.json --apply
+[% endif %]```
 
 ## View an optimization report
 
@@ -176,6 +196,6 @@ format** and the **trigger description** (this skill). Spend effort accordingly.
 
 ## Related Commands
 
-- `/map-plan` — plan and decompose tasks.
-- `/map-efficient` — full MAP workflow execution.
-- `/map-check` — run quality gates and verify MAP workflow completion.
+- `<% cmd %>map-plan` — plan and decompose tasks.
+- `<% cmd %>map-efficient` — full MAP workflow execution.
+- `<% cmd %>map-check` — run quality gates and verify MAP workflow completion.

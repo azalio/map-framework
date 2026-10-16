@@ -63,7 +63,7 @@ SUPPORTED_SKILL_CLASSES = {"reference", "task", "hybrid"}
 NEGATIVE_TRIGGER_DESCRIPTION_EXEMPT_SKILLS = {"map-upgrade"}
 # Codex twins rendered from the Claude source via [% include %] (PROVIDER-conditional).
 SINGLE_SOURCE_CODEX_SKILLS = {
-    "map-architecture", "map-auto", "map-review", "map-release", "map-fast", "map-memory-now", "map-so-search", "map-wayfind"
+    "map-architecture", "map-auto", "map-review", "map-release", "map-fast", "map-memory-now", "map-skill-eval", "map-so-search", "map-wayfind"
 }
 
 WORKFLOW_EFFORT_PROFILES = {
@@ -4411,7 +4411,7 @@ def test_sofa_shared_source_preserves_provider_contract(
 
 def test_single_source_codex_skills_set_is_pinned() -> None:
     assert SINGLE_SOURCE_CODEX_SKILLS == {
-        "map-architecture", "map-auto", "map-review", "map-release", "map-fast", "map-memory-now", "map-so-search", "map-wayfind"
+        "map-architecture", "map-auto", "map-review", "map-release", "map-fast", "map-memory-now", "map-skill-eval", "map-so-search", "map-wayfind"
     }
 
 
