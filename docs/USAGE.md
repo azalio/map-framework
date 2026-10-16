@@ -1057,6 +1057,29 @@ recorded requires operator inspection. This is not an every-instruction,
 concurrent-writer or sudden power-loss guarantee; see
 [the binding spike](blocker-repair-spike.md).
 
+### Dirty files and Actor attribution
+
+A dirty file captured before Actor starts is excluded from the subtask's mutation
+surface only while its recorded working-tree and Git index state remain
+unchanged. Rewriting, deleting, changing its type/executable mode, or changing
+its staged content makes it visible again, including after a repair interruption.
+The current subtask baseline is authoritative when its artifact exists. The
+optional branch-wide scope baseline is used only when that artifact is absent;
+stale scope paths cannot attribute earlier subtasks' work to the current one.
+Scope evidence is not refreshed at subtask boundaries. The same rule applies to
+affected-files refresh. A distinct active worktree uses its own Git surface,
+not baseline evidence captured in the main checkout. Do not recapture a baseline
+during Actor work merely to clear a warning: that would redefine the evidence
+boundary.
+
+Legacy path-only baseline files cannot prove unchanged content, so their paths
+remain visible conservatively. Inspect any resulting scope warning and rerun
+Monitor; do not remove truthful Actor manifest entries or expand `affected_files`
+just to silence it. New baselines are captured through the existing RESEARCH
+flow or explicit baseline command before new Actor work. Baselines persist hashes
+and metadata, not file contents, and do not track writes that are fully undone
+to the same final working-tree and index state.
+
 ### Checkpoint Recovery with /map-resume
 
 **How it works:**

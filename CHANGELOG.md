@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Dirty-path baselines suppress only unchanged working-tree and index evidence,
+  keeping repeated Actor edits visible to mismatch, scope and regression checks
+  and affected-files refresh. The current subtask baseline takes precedence over
+  stale branch scope evidence; scope is used only when the subtask artifact is
+  absent. Legacy path-only evidence is retained conservatively. Symlinked project
+  roots remain supported, and distinct worktrees do not inherit main-checkout
+  baseline evidence. (#504)
 - Active serial workflows refuse destructive setup/resume operations. Independent
   blocker repairs use a private checkout, exact-contract approval and exact-tree
   Monitor/full-gate evidence, preserving paused progress and staged/unstaged/

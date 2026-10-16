@@ -8184,7 +8184,7 @@ class TestRecordScopeBaseline:
         bp = {"subtasks": [{"id": "ST-001", "title": "x", "affected_files": ["a.py"]}]}
         (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
         (repo / "a.py").write_text("x = 1")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=False)
+        subprocess.run(["git", "add", "a.py"], cwd=repo, capture_output=True, check=False)
         report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
         # old_artifact.md was in the baseline → filtered → status="clean".
         assert report["status"] == "clean", report

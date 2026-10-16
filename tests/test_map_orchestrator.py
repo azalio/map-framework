@@ -3425,6 +3425,36 @@ class TestValidateStepIdempotency:
         assert reloaded.current_step_id == "2.4"
 
 
+def test_completed_research_retry_preserves_actor_baseline(branch_dir, tmp_path, monkeypatch):
+    state = map_orchestrator.StepState()
+    state.workflow_status = "IN_PROGRESS"
+    state.subtask_sequence = ["ST-001"]
+    state.current_subtask_id = "ST-001"
+    state.current_step_id = "2.3"
+    state.current_step_phase = "ACTOR"
+    state.completed_steps = ["2.2"]
+    state.pending_steps = ["2.3", "2.4"]
+    directory = tmp_path / ".map" / branch_dir
+    state.save(directory / "step_state.json")
+    baseline = directory / "subtask-baselines" / "ST-001.json"
+    baseline.parent.mkdir(parents=True, exist_ok=True)
+    original = b'{"files":["actor.txt"],"evidence_version":1,"path_evidence":{}}\n'
+    baseline.write_bytes(original)
+    (tmp_path / "actor.txt").write_text("Actor changed after capture\n")
+
+    def reject_recapture(*args, **kwargs):
+        pytest.fail(f"Completed RESEARCH retry must not recapture Actor work: {args}, {kwargs}")
+
+    import importlib
+
+    runner = importlib.import_module("map_step_runner")
+    monkeypatch.setattr(runner, "record_subtask_baseline", reject_recapture)
+    result = map_orchestrator.validate_step("2.2", branch_dir)
+    assert result["valid"] is True and result.get("idempotent") is True
+    assert baseline.read_bytes() == original
+    assert (tmp_path / "actor.txt").read_text() == "Actor changed after capture\n"
+
+
 class TestValidateStepInterSubtaskBoundary:
     """validate_step at the boundary between subtasks must signal
     ADVANCE_SUBTASK, not COMPLETE — the workflow is NOT done while more
