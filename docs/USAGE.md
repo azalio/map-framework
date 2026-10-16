@@ -1090,7 +1090,10 @@ parentheses and backslashes on POSIX are not stripped or parsed as annotations.
 A symlink declaration names the link itself, not the file it points to.
 Outside-checkout paths and parent traversal are invalid declarations; correct
 the blueprint instead of broadening scope or suppressing a warning. Invalid
-refresh requests and dry-runs leave the blueprint unchanged.
+refresh requests and dry-runs leave the blueprint unchanged. Refresh normalizes
+`creates_files` with the same rule, preserving its relationship to `affected_files`.
+Checkout aliases are accepted only when they resolve to the actual checkout,
+including when the supplied root traverses a symlink before `..`.
 
 Repairs performed through the supported blocker-repair protocol retain their
 own attribution evidence. Arbitrary intervening commits without that evidence

@@ -14994,6 +14994,18 @@ def refresh_blueprint_affected_files(
     except ValueError as exc:
         return {"status": "error", "message": f"Invalid affected_files: {exc}"}
 
+    creates_raw = subtasks[found_index].get("creates_files")
+    creates_files = None
+    if creates_raw is not None:
+        if not isinstance(creates_raw, list) or not all(isinstance(p, str) for p in creates_raw):
+            return {"status": "error", "message": "Invalid creates_files: expected an array of path strings"}
+        try:
+            creates_files = sorted({
+                _normalize_mutation_declaration(p, declaration_root) for p in creates_raw
+            })
+        except ValueError as exc:
+            return {"status": "error", "message": f"Invalid creates_files: {exc}"}
+
     if replace:
         current_files = actual_files
     else:
@@ -15016,6 +15028,8 @@ def refresh_blueprint_affected_files(
         }
 
     subtasks[found_index]["affected_files"] = current_files
+    if creates_files is not None:
+        subtasks[found_index]["creates_files"] = creates_files
     if body_is_wrapped:
         bp_data["blueprint"] = target_body
     else:
@@ -17271,9 +17285,14 @@ def _normalize_mutation_declaration(declaration: str, project_root: Path) -> str
         raise ValueError(f"invalid mutation path {declaration!r}")
     supplied_root = Path(os.path.abspath(project_root))
     try:
-        canonical_root = supplied_root.resolve()
+        canonical_root = project_root.resolve()
+        roots = [canonical_root]
+        # abspath collapses '..' before following symlinks. Its spelling is
+        # an alias only when that collapse still names the actual checkout.
+        if supplied_root.resolve() == canonical_root:
+            roots.insert(0, supplied_root)
         if path.is_absolute():
-            for root in (supplied_root, canonical_root):
+            for root in roots:
                 if path.is_relative_to(root):
                     path = path.relative_to(root)
                     break

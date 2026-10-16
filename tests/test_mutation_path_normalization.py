@@ -191,6 +191,73 @@ def test_interior_symlink_never_authorizes_target_alias(runner, repo, external):
 
 
 @pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("replace", [False, True])
+def test_refresh_keeps_created_paths_consistent(runner, repo, dry_run, replace):
+    name = " new\\tfile.py "
+    data = declare(repo, [str(repo / name)])
+    data["blueprint"]["subtasks"][0]["creates_files"] = [str(repo / name)]
+    blueprint_path(repo).write_text(json.dumps(data))
+    (repo / name).write_text("created\n")
+    before = blueprint_path(repo).read_bytes()
+    report = runner.refresh_blueprint_affected_files(
+        BRANCH, SUBTASK, dry_run=dry_run, replace=replace,
+    )
+    assert report["status"] == ("dry_run" if dry_run else "success")
+    if dry_run:
+        assert blueprint_path(repo).read_bytes() == before
+    else:
+        refreshed = json.loads(blueprint_path(repo).read_text())
+        subtask = refreshed["blueprint"]["subtasks"][0]
+        assert subtask["creates_files"] == subtask["affected_files"] == [name]
+        contract = runner.validate_blueprint_contract(BRANCH)
+        assert not any("creates_files" in str(error) for error in contract["errors"])
+        assert runner.refresh_blueprint_affected_files(BRANCH, SUBTASK)["diff"] == {
+            "added": [], "removed": [],
+        }
+
+
+@pytest.mark.parametrize("invalid", ["../outside.py", "outside", [17]])
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("replace", [False, True])
+def test_refresh_rejects_invalid_creates_without_publishing(runner, repo, invalid, dry_run, replace):
+    data = declare(repo, [str(repo / "production.py")])
+    data["blueprint"]["subtasks"][0]["creates_files"] = (
+        [invalid] if invalid == "../outside.py" else invalid
+    )
+    blueprint_path(repo).write_text(json.dumps(data))
+    before = blueprint_path(repo).read_bytes()
+    report = runner.refresh_blueprint_affected_files(
+        BRANCH, SUBTASK, dry_run=dry_run, replace=replace,
+    )
+    assert report["status"] == "error"
+    assert "creates_files" in report["message"]
+    assert blueprint_path(repo).read_bytes() == before
+
+
+@pytest.mark.parametrize("wrong_root", [False, True])
+def test_checkout_root_symlink_before_parent_traversal(runner, repo, monkeypatch, wrong_root):
+    (repo / "nested").mkdir()
+    alias = repo.parent / "checkout-hop"
+    alias.symlink_to(repo / "nested", target_is_directory=True)
+    supplied = str(alias) + "/.."
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", supplied)
+    declaration_root = repo.parent if wrong_root else repo
+    declare(repo, [str(declaration_root / "production.py")])
+    (repo / "production.py").write_text("changed\n")
+    before = blueprint_path(repo).read_bytes()
+    checked = runner.validate_mutation_boundary(BRANCH, SUBTASK, "HEAD")
+    refreshed = runner.refresh_blueprint_affected_files(BRANCH, SUBTASK)
+    if wrong_root:
+        assert checked["status"] == refreshed["status"] == "error"
+        assert blueprint_path(repo).read_bytes() == before
+    else:
+        assert checked["status"] == "clean"
+        assert checked["expected"] == ["production.py"]
+        assert refreshed["status"] == "success"
+        assert refreshed["current"] == ["production.py"]
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
 def test_refresh_normalizes_deduplicates_and_preserves_other_state(runner, repo, dry_run):
     before_data = declare(repo, [
         str(repo / "production.py"), "production.py", "missing/deleted.py",
