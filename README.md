@@ -51,7 +51,11 @@ For Go projects requiring build tags, set `checks.go.tags: integration,netgo` in
 
 **2. Initialize your project**
 
-Claude Code is the default provider:
+Claude Code is the default provider. Cross-AI review compares explicit host and
+reviewer adapter vendors; same-vendor or unknown provenance is not labeled
+independent ([details](docs/USAGE.md#cross-ai-peer-review---cross-ai-runtime)).
+
+Claude Code:
 
 ```bash
 cd your-project
@@ -175,12 +179,12 @@ The DevOpsConf 2026 case study applies this process to a production Kubernetes P
 <summary><b>More under the hood</b> — calibrated effort, mutation boundaries, token budgets, retry quarantine, run-health diagnostics, skill IR audit</summary>
 
 - **Calibrated workflow effort** — each shipped slash skill declares a `thinking_policy` and `parallel_tool_policy`, so lightweight commands stay direct while planning, review, and release workflows reserve deeper reasoning and parallel fan-out for the stages that benefit.
-- **Mutation boundary constraints** — write-capable Claude and Codex surfaces tell agents not to edit unrelated files, add or upgrade dependencies, or refactor neighboring code unless the current subtask requires it.
+- **Mutation boundary constraints** — write-capable Claude and Codex surfaces tell agents not to edit unrelated files, add or upgrade dependencies, or refactor neighboring code unless the current subtask requires it. With `worktree.isolation: off`, Actor write checks inspect main even when a recovery worktree remains on disk.
 - **Context-first prompt envelopes** — high-context prompts wrap branch artifacts in XML-style `<documents>`, then state the `<task>` and `<expected_output>`, so specs, diffs, logs, and schemas stay separated for the model.
 - **Contract-sized subtasks** — blueprints require `expected_diff_size`, `concern_type`, `one_logical_step`, `hard_constraints`, `soft_constraints`, and `coverage_map`. Hard constraints must be owned in `coverage_map` and cited in the owning subtask.
 - **Token budget and research ROI reports** — Actor and review prompt builders append active-path budget decisions to `.map/<branch>/token_budget.json`, while `token_accounting.json` and `/map-tokenreport` separate research-agent/researcher cost from Actor/Monitor cost.
 - **Clean retry quarantine** — after repeated Monitor rejection, write-capable workflows switch the next attempt into clean-retry mode using `.map/<branch>/retry_quarantine.json` instead of raw failed-session context.
-- **Run health report** — workflows write `.map/<branch>/run_health_report.json` during closeout: terminal status, step progress, retry counters, artifact presence, hook-injection status, and advisory signals. CI can fail inconsistent closeouts with `python3 .map/scripts/map_step_runner.py validate_run_health_report`.
+- **Run health report** — workflows write `.map/<branch>/run_health_report.json` during closeout: terminal status, step progress, retry counters, artifact presence, hook-injection status, and advisory signals. CI can fail inconsistent closeouts with `python3 .map/scripts/map_step_runner.py validate_run_health_report`. All runner subcommands support read-only `--help` / `-h`; for example, `python3 .map/scripts/map_step_runner.py write_run_health_report --help`.
 - **Lossless serial blocker repair** — independently approved repairs run in a private checkout with their own Monitor and full gate, preserving the paused task's phase, results, retries and dirty files. Concurrent waves and overlapping repair paths fail closed; see [the repair protocol](docs/USAGE.md#independent-serial-blocker-repair).
 - **Compact recovery surface** — `/map-resume` keeps the active recovery flow short and moves low-frequency notes to `resume-reference.md`, so recovery after `/clear` or context exhaustion gives the next checkpoint action without loading the whole appendix.
 - **Skill IR audit** — release checks lower shipped Claude and Codex `SKILL.md` files into a typed `SkillIR`, verify content hashes, catch unsupported frontmatter, reject missing supporting-file links, and block injection-like instructions before `mapify init` copies surfaces into user repos.

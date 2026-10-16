@@ -28,12 +28,12 @@ This document describes the complete release process for the MAP Framework, from
 ### Release Workflow Summary
 
 ```
-1. Pre-release checks → 2. Version bump → 3. Push commit & tag → 4. Create GitHub release → 5. CI/CD auto-publishes → 6. Verify on PyPI
+1. Pre-release checks → 2. Local version bump & tag → 3. Push commit, wait for CI, push tag → 4. CI/CD tests & builds → 5. Publish to PyPI → 6. Automatic GitHub Release → 7. Verify
 ```
 
 The release process is **semi-automated**:
-- **Manual**: Version bumping, tagging, GitHub release creation
-- **Automated**: CI/CD testing, building, and PyPI publishing (triggered by git tag)
+- **Local / maintainer-run**: Run the version bump script (creates a commit and annotated tag locally), review and push the commit, wait for CI, then push the tag.
+- **Automated**: A `vX.Y.Z` tag push triggers `.github/workflows/release.yml`: CI tests and builds, then the `publish` job publishes to PyPI and automatically creates the GitHub Release after PyPI publishing succeeds. Release notes come from the matching version section in `CHANGELOG.md`.
 
 ### Release Artifacts
 
@@ -195,7 +195,11 @@ Use the `scripts/bump-version.sh` script to automate version bumping:
 # Push commit to main
 git push origin main
 
-# Push tag (this triggers release workflow)
+# Wait for CI on the pushed main commit; select its run ID
+gh run list --workflow=ci.yml --branch main --commit "$(git rev-parse HEAD)"
+gh run watch <ci-run-id> --exit-status
+
+# Push tag only after CI succeeds (this triggers release workflow)
 git push origin v1.0.1
 ```
 
@@ -208,24 +212,26 @@ git push origin v1.0.1
 
 ## Creating a GitHub Release
 
-After pushing the tag, create a GitHub release to make it official and notify users.
+No separate manual creation step is needed. The `publish` job in
+`.github/workflows/release.yml` automatically creates the GitHub Release
+after PyPI publishing succeeds, using `softprops/action-gh-release@v2`.
+It uses the pushed tag, the title `MAP Framework vX.Y.Z`, and release notes
+extracted from the matching version section in `CHANGELOG.md` (falling back
+to "See CHANGELOG.md for details." if the excerpt is empty).
 
-### Using GitHub CLI (Recommended)
+Wait for the tag's release workflow to finish, then verify the result:
 
 ```bash
-# Example: Create release from tag with CHANGELOG excerpt
-# Note: Uses awk (BSD/GNU compatible) instead of sed for better portability
-gh release create v1.0.1 \
-  --title "MAP Framework v1.0.1" \
-  --notes "$(awk '/## \[1.0.1\]/,/## \[/' CHANGELOG.md | sed '$d')"
-
-# Alternative: Via file (if command substitution has issues)
-awk '/## \[1.0.1\]/,/## \[/' CHANGELOG.md | sed '$d' > /tmp/release-notes.md
-gh release create v1.0.1 \
-  --title "MAP Framework v1.0.1" \
-  --notes-file /tmp/release-notes.md
-rm /tmp/release-notes.md
+# Select the run for the release tag and expected commit, not an unrelated latest run
+gh run list --workflow=release.yml --branch v1.0.1 --commit "$(git rev-parse 'v1.0.1^{commit}')"
+gh run watch <release-run-id> --exit-status
+gh release view v1.0.1
 ```
+
+If the workflow fails, inspect `gh run view <release-run-id> --log-failed`.
+A missing GitHub Release does not prove that PyPI publishing failed: the
+GitHub Release step runs afterwards. Check both steps before deciding on
+recovery; do not race the workflow by creating a duplicate release.
 
 ---
 
@@ -271,6 +277,11 @@ rm -rf .venv-test
 ## Rollback Procedures
 
 ### Scenario 1: Tag Pushed, But Release Not Created
+
+First inspect the tag's release workflow and confirm whether PyPI publishing
+succeeded. Cancel any active run before deleting a tag; deleting the tag does
+not cancel an in-flight workflow. Only use the commands below if the package
+has not been published. If it has, use Scenario 2 instead.
 
 ```bash
 # Delete remote tag
@@ -421,7 +432,7 @@ bundle as their primary context.
 git checkout main
 git pull origin main
 git status  # Verify clean
-pytest tests/ --cov  # Run tests
+make check  # Run the maintained local gate
 
 # 2. Version bump
 ./scripts/bump-version.sh patch  # or minor/major
@@ -429,15 +440,16 @@ pytest tests/ --cov  # Run tests
 # 3. Review and push
 git show  # Review commit
 git push origin main
+gh run list --workflow=ci.yml --branch main --commit "$(git rev-parse HEAD)"
+gh run watch <ci-run-id> --exit-status
 git push origin v1.0.1
 
-# 4. Create GitHub release
-gh release create v1.0.1 \
-  --title "MAP Framework v1.0.1" \
-  --notes "$(awk '/## \[1.0.1\]/,/## \[/' CHANGELOG.md | sed '$d')"
+# 4. Monitor automatic PyPI publishing and GitHub Release creation
+gh run list --workflow=release.yml --branch v1.0.1 --commit "$(git rev-parse 'v1.0.1^{commit}')"
+gh run watch <release-run-id> --exit-status
 
-# 5. Monitor CI/CD
-gh run watch
+# 5. Verify the automatically created GitHub Release
+gh release view v1.0.1
 
 # 6. Verify on PyPI
 curl -f https://pypi.org/project/mapify-cli/1.0.1/

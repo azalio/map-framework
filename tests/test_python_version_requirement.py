@@ -166,6 +166,21 @@ def test_shebang_files_are_discovered() -> None:
     assert len(files) >= 60, f"expected the shebang scan to find files, got {files}"
 
 
+def test_shebang_scan_ignores_only_exclusions_below_scan_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A checkout nested in worktrees still scans its own shipped scripts."""
+    root = tmp_path / "worktrees" / "checkout" / "scripts"
+    root.mkdir(parents=True)
+    shipped = root / "runner.py"
+    shipped.write_text(SHEBANG + "\n", encoding="utf-8")
+    nested = root / "worktrees" / "nested"
+    nested.mkdir(parents=True)
+    (nested / "ignored.py").write_text(SHEBANG + "\n", encoding="utf-8")
+    monkeypatch.setitem(globals(), "SHEBANG_ROOTS", (root,))
+    assert _shebang_files() == [shipped]
+
+
 def test_shebang_scan_skips_nested_worktrees_and_venvs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -176,9 +191,7 @@ def test_shebang_scan_skips_nested_worktrees_and_venvs(
     virtualenvs; asserting the guard against those fails on any machine that
     has ever run the worktree features, while a fresh CI clone stays green.
     """
-    # The checkout itself may live below a directory excluded only for nested
-    # content; ancestors outside the scan root must not hide shipped files.
-    root = tmp_path / "worktrees" / "checkout" / "tree"
+    root = tmp_path / "worktrees" / "active" / "tree"
     (root / "hooks").mkdir(parents=True)
     shipped = root / "hooks" / "shipped.py"
     shipped.write_text(f"{SHEBANG}\n", encoding="utf-8")

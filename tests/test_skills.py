@@ -4099,16 +4099,14 @@ class TestMapReviewSharedSourceCodexRender:
         compare = skill.split("Step A.1d")[1].split("Step A.2:")[0]
         assert "keeps incrementing across both collections" in compare
 
-    def test_codex_cross_ai_self_review_caveat(self) -> None:
-        codex = self._render("SKILL.md.jinja", "codex")
-        claude = self._render("SKILL.md.jinja", "claude")
-        assert "`--cross-ai codex` from a Codex host spawns a fresh `codex exec`" in codex
-        assert "same-vendor check even though the runner reports `independent_vendor: true`" in codex
-        assert "`--cross-ai claude` is the real cross-vendor second opinion on Codex" in codex
-        assert "`independent_vendor: false`" in codex
-        assert "neither case is a configuration error" in codex
-        assert "#490" in codex
-        assert "from a Codex host" not in claude
+    def test_cross_ai_passes_explicit_provider_and_honest_provenance(self) -> None:
+        for provider in ("claude", "codex"):
+            skill = self._render("SKILL.md.jinja", provider)
+            assert f"--host-provider {provider}" in skill
+            assert "same-vendor or unknown provenance" in skill
+            assert "adapter vendor fields" in skill
+            assert "flag is static" not in skill
+            assert "#490" not in skill
 
     def test_codex_supported_review_states_note(self) -> None:
         codex = self._render("SKILL.md.jinja", "codex")
