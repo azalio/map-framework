@@ -976,7 +976,8 @@ advisory telemetry (actual changed-file intersections), not a gate.
 
 [% else %]failure, so the first reject is self-correcting: copy the `skeleton`, swap your
 values, re-save. Extra fields beyond the contract are allowed and ignored.
-[% endif %]
+
+[% endif -%]
 [% include "_partials/stale-attribution-recovery.md.jinja" %]
 
 ## Troubleshooting

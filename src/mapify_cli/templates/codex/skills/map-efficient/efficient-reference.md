@@ -397,4 +397,3 @@ operator: existing APIs provide no general lossless rebase-attribution migration
   repair or resume. Do not edit the JSON manually.
 - Final closeout lacks `.map/<branch>/run_health_report.json`: rerun
   `write_run_health_report` with an explicit status.
-

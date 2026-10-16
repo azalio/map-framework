@@ -533,7 +533,10 @@ def test_partial_promotion_rolls_back_dirty_bytes_and_modes(tmp_path: Path, monk
     root = _seed_templates_src(tmp_path)
     dirty = root / ".claude/skills/map-debug/SKILL.md"
     dirty.parent.mkdir(parents=True)
-    dirty.write_bytes(b"user dirty work")
+    from mapify_cli.delivery.template_renderer import get_environment
+
+    baseline_output = get_environment(root / "src/mapify_cli/templates_src").get_template("skills/map-debug/SKILL.md.jinja").render(PROVIDER="claude").encode()
+    dirty.write_bytes(baseline_output)
     dirty.chmod(0o750)
     source = _jinja_path(root, "map-debug")
     before = source.read_bytes()
@@ -552,7 +555,7 @@ def test_partial_promotion_rolls_back_dirty_bytes_and_modes(tmp_path: Path, monk
         apply_optimized_description(skill="map-debug", winner="new", current_description="old",
                                     no_improvement=False, repo_root=root, stage=False)
     assert source.read_bytes() == before
-    assert dirty.read_bytes() == b"user dirty work"
+    assert dirty.read_bytes() == baseline_output
     assert dirty.stat().st_mode & 0o777 == 0o750
     assert not (root / "src/mapify_cli/templates/skills/map-debug/SKILL.md").exists()
     assert not (root / ".map/skill-eval-apply-transaction").exists()
@@ -647,3 +650,57 @@ def test_non_description_renderer_mutation_rejected(tmp_path: Path, monkeypatch:
                                     no_improvement=False, repo_root=root, stage=False)
     assert source.read_bytes() == before
     assert not (root / ".claude").exists()
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("shipped", [False, True])
+def test_dirty_selected_output_rejected_without_source_write(tmp_path: Path, provider: str, shipped: bool) -> None:
+    root = _seed_templates_src(tmp_path)
+    source = _jinja_path(root)
+    before = source.read_bytes()
+    output = ("src/mapify_cli/templates/skills" if shipped else ".claude/skills") if provider == "claude" else (
+        "src/mapify_cli/templates/codex/skills" if shipped else ".agents/skills"
+    )
+    dirty = root / output / _SKILL / "SKILL.md"
+    dirty.parent.mkdir(parents=True)
+    dirty.write_bytes(b"dirty selected body")
+    dirty.chmod(0o751)
+    with pytest.raises(ValueError, match="dirty|modified|stale"):
+        apply_optimized_description(skill=_SKILL, winner="new", current_description="old",
+                                    no_improvement=False, repo_root=root, stage=False, provider=provider)
+    assert source.read_bytes() == before
+    assert dirty.read_bytes() == b"dirty selected body"
+    assert dirty.stat().st_mode & 0o777 == 0o751
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("stage", [False, True])
+def test_apply_preserves_unrelated_staged_index(tmp_path: Path, provider: str, stage: bool) -> None:
+    import subprocess
+
+    root = _seed_templates_src(tmp_path)
+
+    def git(*args: str) -> str:
+        return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True).stdout
+
+    git("init", "-q")
+    unrelated = root / "unrelated.txt"
+    unrelated.write_text("staged version\n")
+    git("add", "--", "unrelated.txt")
+    unrelated.write_text("unstaged version\n")
+    before = git("ls-files", "--stage")
+    apply_optimized_description(skill="map-debug", winner="new winner", current_description="old",
+                                no_improvement=False, repo_root=root, stage=stage, provider=provider)
+    assert git("show", ":unrelated.txt") == "staged version\n"
+    assert unrelated.read_text() == "unstaged version\n"
+    if not stage:
+        assert git("ls-files", "--stage") == before
+    else:
+        expected = {
+            "unrelated.txt",
+            "src/mapify_cli/templates_src/skills/map-debug/SKILL.md.jinja",
+            *({".claude/skills/map-debug/SKILL.md", "src/mapify_cli/templates/skills/map-debug/SKILL.md"}
+              if provider == "claude" else
+              {".agents/skills/map-debug/SKILL.md", "src/mapify_cli/templates/codex/skills/map-debug/SKILL.md"}),
+        }
+        assert set(git("diff", "--cached", "--name-only").splitlines()) == expected

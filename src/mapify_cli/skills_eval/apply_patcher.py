@@ -259,6 +259,9 @@ def _apply_optimized_description(
                 raise ValueError("Unsupported provider source: generated winner differs from common source")
             provider_template = ("codex/" if provider == "codex" else "") + name
             baseline = before_env.get_template(provider_template).render(PROVIDER=provider)
+            destination = repo_root / rel
+            if destination.exists() and destination.read_bytes() != baseline.encode():
+                raise ValueError(f"Refusing modified or stale generated skill: {destination}; preserve your edits and render explicitly first")
             if _plain_description(baseline, winner) != generated_text:
                 raise ValueError("Unsupported provider source: non-description generated content changed")
             updates[repo_root / rel] = rendered_bytes
