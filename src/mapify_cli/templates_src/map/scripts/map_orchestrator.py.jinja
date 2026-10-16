@@ -2605,7 +2605,9 @@ def get_wave_step(branch: str) -> dict:
         from map_step_runner import (  # pyright: ignore[reportMissingImports]
             _worktree_isolation_mode,
         )
-        isolation_active = _worktree_isolation_mode(Path(".")) != "off"
+        isolation_active = gate.get(
+            "isolation_active", _worktree_isolation_mode(Path(".")) != "off"
+        )
     except ImportError:
         isolation_active = False
 
@@ -2672,6 +2674,7 @@ def get_wave_step(branch: str) -> dict:
         "dispatch_mode": dispatch_mode,
         "isolation_active": isolation_active,
         "reason": dispatch_reason,
+        **{key: gate[key] for key in ("degraded", "degraded_reason", "warning") if key in gate},
     }
 
 
@@ -2881,9 +2884,10 @@ def compute_dispatch_gate(
        return sequential with WAVE_REASON_CURRENT_WAVE_SEQUENTIAL (not an error —
        the current wave is width-1 even though a later wave is parallel).
 
-    5. If concurrent_dispatch is True AND isolation != 'off' AND concurrency_allowed
-       AND the CURRENT wave has width >= 2:
-       return concurrent with WAVE_REASON_CONCURRENT_GATED.
+    5. Before fan-out for a CURRENT wave of width >= 2, resolve live isolation.
+       Auto fallback returns sequential with the resolver's reason and warning;
+       required-isolation failure raises DispatchGateError. Only an isolated
+       decision returns concurrent with WAVE_REASON_CONCURRENT_GATED.
 
     Args:
         branch: Git branch name (sanitized).
@@ -2895,7 +2899,8 @@ def compute_dispatch_gate(
 
     Raises:
         DispatchGateError: When concurrent_dispatch=true but worktree.isolation='off'
-                           (HC-3: config contradiction must never be silently degraded).
+                           (HC-3: config contradiction must never be silently degraded),
+                           or live isolation fails before concurrent dispatch.
     """
     if project_dir is None:
         project_dir = Path(".")
@@ -2967,9 +2972,31 @@ def compute_dispatch_gate(
             "reason": WAVE_REASON_CURRENT_WAVE_SEQUENTIAL,
         }
 
+    # Config permits fan-out, but the live environment must support isolation too.
+    from map_step_runner import (  # pyright: ignore[reportMissingImports]
+        resolve_worktree_isolation,
+    )
+
+    resolution = resolve_worktree_isolation(project_dir)
+    if resolution.get("decision") == "abort" or not resolution.get("ok"):
+        raise DispatchGateError(
+            f"worktree isolation failed before dispatch: {resolution}"
+        )
+    if resolution.get("decision") != "isolated":
+        return {
+            "dispatch_mode": "sequential",
+            "reason": resolution["reason"],
+            "isolation_active": False,
+            "degraded": True,
+            "degraded_reason": resolution["reason"],
+            "warning": resolution["warning"],
+        }
+
     return {
         "dispatch_mode": "concurrent",
         "reason": WAVE_REASON_CONCURRENT_GATED,
+        "isolation_active": True,
+        "degraded": False,
     }
 
 

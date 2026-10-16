@@ -465,6 +465,12 @@ strict conjunction of four conditions: `concurrent_dispatch` is true AND
 Any single condition false → gate returns sequential. A config contradiction
 (e.g. `concurrent_dispatch: true` with isolation off) is a hard abort
 (`ConfigError`-equivalent) — fail-closed, never silent degradation.
+Before returning concurrent for an active multi-subtask wave, the gate calls
+`resolve_worktree_isolation` against the live environment. Auto fallback returns
+sequential with the resolver's reason/warning and `isolation_active: false`;
+required-isolation failure raises `DispatchGateError`. `get_wave_step` forwards
+these fields without independently reinterpreting the configured isolation mode.
+Kill-switch, disabled-dispatch, and non-parallel wave paths do not run this probe.
 
 **Group lifecycle.** `begin_wave_group` opens a dispatch group and records the
 base SHA from the sidecar. `record_group_lifecycle` appends structured events
