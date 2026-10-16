@@ -803,6 +803,7 @@ single wave subtask, `discard_subtask_worktree` THAT subtask and retry it; call
 `merge_wave_worktrees` only once the whole wave is green. The `overlaps` field is
 advisory telemetry (actual changed-file intersections), not a gate.
 
+
 ## Stale Commit Attribution Recovery
 
 If `last_subtask_commit_sha` resolves but `git diff` fails (for example, the

@@ -411,3 +411,4 @@ python3 .map/scripts/map_step_runner.py write_run_health_report \
 Report completed subtasks, files changed, checks run, final status, and any
 remaining blockers. Mention the next command only when useful, such as
 `$map-check` for a verification-only pass.
+
