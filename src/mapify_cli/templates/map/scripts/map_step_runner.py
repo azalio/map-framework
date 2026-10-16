@@ -14960,6 +14960,7 @@ def refresh_blueprint_affected_files(
         try:
             diff_proc = subprocess.run(
                 ["git", "diff", "--name-only", "--no-renames", "-z", f"{baseline_head_sha}..HEAD"],
+                env=_attribution_git_env(),
                 cwd=project_dir,
                 capture_output=True,
                 text=False,
@@ -14979,6 +14980,7 @@ def refresh_blueprint_affected_files(
     try:
         status_proc = subprocess.run(
             ["git", "status", "--porcelain", "-z", "-uall"],
+            env=_attribution_git_env(),
             cwd=project_dir,
             capture_output=True,
             text=False,
@@ -15817,11 +15819,24 @@ def _git_diff_paths(output: bytes) -> set[str]:
 _PATH_EVIDENCE_VERSION = 1
 
 
+def _attribution_git_env() -> dict[str, str]:
+    """Keep user config/auth but let cwd select the repository and its index."""
+    repository_variables = {
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+        "GIT_IMPLICIT_WORK_TREE", "GIT_PREFIX", "GIT_NAMESPACE",
+        "GIT_SHALLOW_FILE", "GIT_GRAFT_FILE",
+    }
+    return {key: value for key, value in os.environ.items() if key not in repository_variables}
+
+
 def _baseline_index_entries(git_cwd: Path) -> dict[str, list[dict[str, object]]] | None:
     """Read semantic index entries, not volatile index-file bytes or pathspecs."""
     try:
         proc = subprocess.run(
             ["git", "ls-files", "--stage", "-z"], cwd=git_cwd,
+            env=_attribution_git_env(),
             capture_output=True, timeout=10, check=False,
         )
         if proc.returncode != 0:
@@ -16070,6 +16085,7 @@ def record_subtask_baseline(branch: str, subtask_id: str) -> dict:
     try:
         proc = subprocess.run(
             ["git", "status", "--porcelain", "-z", "-uall"],
+            env=_attribution_git_env(),
             cwd=project_dir,
             capture_output=True,
             text=False,
@@ -16094,6 +16110,7 @@ def record_subtask_baseline(branch: str, subtask_id: str) -> dict:
     try:
         head_proc = subprocess.run(
             ["git", "rev-parse", "--verify", "HEAD"],
+            env=_attribution_git_env(),
             cwd=project_dir,
             capture_output=True,
             text=True,
@@ -17109,6 +17126,7 @@ def record_scope_baseline(branch: str) -> dict:
     try:
         status_proc = subprocess.run(
             ["git", "status", "--porcelain", "-z", "-uall"],
+            env=_attribution_git_env(),
             cwd=project_dir,
             capture_output=True,
             text=False,
@@ -17168,6 +17186,7 @@ def _adjusted_subtask_diff_base(
     try:
         probe = subprocess.run(
             ["git", "cat-file", "-t", base], cwd=project_dir,
+            env=_attribution_git_env(),
             capture_output=True, text=True, timeout=5, check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -17224,6 +17243,7 @@ def _resolve_subtask_diff_base(
         try:
             parent_probe = subprocess.run(
                 ["git", "rev-parse", "--verify", f"{recorded}^"],
+                env=_attribution_git_env(),
                 cwd=project_dir,
                 capture_output=True,
                 text=True,
@@ -17247,6 +17267,7 @@ def _resolve_subtask_diff_base(
     try:
         head_probe = subprocess.run(
             ["git", "rev-parse", "--verify", "HEAD"],
+            env=_attribution_git_env(),
             cwd=project_dir,
             capture_output=True,
             text=True,
@@ -17333,6 +17354,7 @@ def validate_mutation_boundary(
         if base_ref:
             diff_result = subprocess.run(
                 ["git", "diff", "--name-only", "--no-renames", "-z", base_ref],
+                env=_attribution_git_env(),
                 cwd=project_dir,
                 capture_output=True,
                 text=False,
@@ -17349,6 +17371,7 @@ def validate_mutation_boundary(
         # scope check (#376).
         status_result = subprocess.run(
             ["git", "status", "--porcelain", "-z", "-uall"],
+            env=_attribution_git_env(),
             cwd=project_dir,
             capture_output=True,
             text=False,
@@ -17609,6 +17632,7 @@ def _current_subtask_changed_files(
         if base_ref:
             diff_result = subprocess.run(
                 ["git", "diff", "--name-only", "--no-renames", "-z", base_ref],
+                env=_attribution_git_env(),
                 cwd=git_cwd,
                 capture_output=True,
                 text=False,
@@ -17621,6 +17645,7 @@ def _current_subtask_changed_files(
         # new files inside a pre-existing untracked directory are invisible (#376).
         status_result = subprocess.run(
             ["git", "status", "--porcelain", "-z", "-uall"],
+            env=_attribution_git_env(),
             cwd=git_cwd,
             capture_output=True,
             text=False,

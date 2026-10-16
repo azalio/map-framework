@@ -633,6 +633,113 @@ def test_existing_invalid_subtask_baseline_never_falls_back_to_scope(
     assert "existing.txt" in current
 
 
+@pytest.mark.parametrize("consumer", ["surface", "detector", "boundary", "refresh"])
+def test_inherited_alternate_index_cannot_hide_actor_staged_only_mutation(
+    runner, repaired_repo, baseline_producer, consumer, monkeypatch, tmp_path
+):
+    repo, _ = repaired_repo
+    alternate_index = tmp_path / "alternate-index"
+    alternate_index.write_bytes((repo / ".git" / "index").read_bytes())
+    with monkeypatch.context() as patch:
+        patch.setenv("GIT_INDEX_FILE", str(alternate_index))
+        record_baseline(runner, repo, baseline_producer)
+    path = repo / "existing.txt"
+    original = path.read_bytes()
+    path.write_text("Actor stage-only mutation\n")
+    git(repo, "add", "existing.txt")
+    path.write_bytes(original)
+    monkeypatch.setenv("GIT_INDEX_FILE", str(alternate_index))
+    if consumer == "surface":
+        current = runner._current_subtask_changed_files(BRANCH, SUBTASK, repo)
+        assert current is not None
+        assert "existing.txt" in current
+    elif consumer == "detector":
+        report = runner.detect_actor_files_changed_mismatch(BRANCH, SUBTASK, ["existing.txt"])
+        assert report["declared_not_written"] == [], report
+        assert "existing.txt" in report["actual"], report
+    elif consumer == "boundary":
+        report = runner.validate_mutation_boundary(BRANCH, SUBTASK)
+        assert "existing.txt" in report["unexpected"], report
+    else:
+        report = runner.refresh_blueprint_affected_files(BRANCH, SUBTASK, replace=True)
+        assert "existing.txt" in report["current"], report
+
+
+@pytest.mark.parametrize("consumer", ["surface", "detector", "boundary", "refresh"])
+def test_inherited_repository_routing_cannot_redirect_attribution(
+    runner, repaired_repo, baseline_producer, consumer, monkeypatch, tmp_path
+):
+    repo, _ = repaired_repo
+    other = tmp_path / "other-repository"
+    git(repo, "clone", "--quiet", str(repo), str(other))
+    git(other, "config", "user.name", "Foreign fixture")
+    git(other, "config", "user.email", "foreign@example.invalid")
+    (other / "foreign-only.txt").write_text("different foreign HEAD\n")
+    git(other, "add", "foreign-only.txt")
+    git(other, "commit", "-m", "Foreign HEAD")
+    intended_head = git(repo, "rev-parse", "HEAD")
+    write_state(repo, {})
+    with monkeypatch.context() as patch:
+        patch.setenv("GIT_DIR", str(other / ".git"))
+        patch.setenv("GIT_WORK_TREE", str(other))
+        record_baseline(runner, repo, baseline_producer)
+    baseline_path = (repo / ".map" / BRANCH / "scope-baseline.json" if baseline_producer == "scope"
+                     else repo / ".map" / BRANCH / "subtask-baselines" / f"{SUBTASK}.json")
+    baseline = json.loads(baseline_path.read_text())
+    assert "existing.txt" in baseline["files"]
+    if baseline_producer == "subtask":
+        assert baseline["head_sha"] == intended_head
+    (repo / "existing.txt").write_text("Actor local rewrite\n")
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(other))
+    if consumer == "surface":
+        current = runner._current_subtask_changed_files(BRANCH, SUBTASK, repo)
+        assert current is not None
+        assert "existing.txt" in current
+    elif consumer == "detector":
+        report = runner.detect_actor_files_changed_mismatch(BRANCH, SUBTASK, ["existing.txt"])
+        assert report["status"] == "ok", report
+        assert report["declared_not_written"] == [], report
+    elif consumer == "boundary":
+        report = runner.validate_mutation_boundary(BRANCH, SUBTASK)
+        assert "existing.txt" in report["unexpected"], report
+    else:
+        report = runner.refresh_blueprint_affected_files(BRANCH, SUBTASK, replace=True)
+        assert "existing.txt" in report["current"], report
+
+
+def test_foreign_head_cannot_supply_unborn_checkout_diff_base(
+    runner, repaired_repo, tmp_path, monkeypatch
+):
+    foreign, _ = repaired_repo
+    unborn = tmp_path / "unborn-repository"
+    unborn.mkdir()
+    git(unborn, "init", "-b", "unborn")
+    monkeypatch.setenv("GIT_DIR", str(foreign / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(foreign))
+    assert runner._resolve_subtask_diff_base(BRANCH, SUBTASK, unborn) is None
+    assert runner._current_subtask_changed_files(BRANCH, SUBTASK, unborn) == set()
+
+
+def test_attribution_git_env_preserves_user_settings(runner, monkeypatch):
+    blocked = {
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
+        "GIT_PREFIX", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+        "GIT_IMPLICIT_WORK_TREE", "GIT_SHALLOW_FILE", "GIT_GRAFT_FILE",
+    }
+    for name in blocked:
+        monkeypatch.setenv(name, "foreign-routing")
+    preserved = {"GIT_CONFIG_GLOBAL": "/fixture/user-gitconfig", "GIT_TRACE": "0",
+                 "MAP_ENV_FIXTURE": "unrelated-setting"}
+    for name, value in preserved.items():
+        monkeypatch.setenv(name, value)
+    environment = runner._attribution_git_env()
+    assert blocked.isdisjoint(environment)
+    assert all(environment[name] == value for name, value in preserved.items())
+    assert all(os.environ[name] == "foreign-routing" for name in blocked)
+
+
 def test_missing_subtask_baseline_uses_scope_without_refresh(runner, repaired_repo):
     repo, _ = repaired_repo
     record_baseline(runner, repo, "scope")
