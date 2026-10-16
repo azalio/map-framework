@@ -210,7 +210,7 @@ wave remains sequential even if a later wave is parallel. Follow `get_wave_step`
 
 ### Sequential walker
 
-Use `get_next_step` for all sequential fallback execution. One phase at a time, in `subtask_sequence` order. Do not mix wave APIs with the sequential cursor for the same workflow.
+Use `get_next_step` only when `select_execution_strategy` selects the legacy sequential walker. Execute one phase at a time in `subtask_sequence` order. `dispatch_mode=sequential` alone does not switch cursors: an active wave retains `get_wave_step`, `validate_wave_step`, and `advance_wave`, dispatching one Actor at a time. If `degraded=true` and `isolation_active=false`, execute the wave sequentially without creating or merging worktrees and without `run_concurrent_wave`. Do not switch to the legacy cursor without an explicit supported cursor transition.
 
 ### Wave-loop
 
