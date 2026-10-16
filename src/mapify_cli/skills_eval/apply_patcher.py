@@ -1,238 +1,218 @@
-"""Apply an optimized skill description to the single-source .jinja template.
-
-Invariants enforced by this module
------------------------------------
-INV-5 / source-untouched:  only the specified .jinja file is written;
-                            generated trees are updated via render_repo_trees.
-INV-9 / path-safety:       target .jinja must resolve under templates_src/;
-                            paths under .git/ are rejected.
-VC3 / no-op messages:      two distinct messages for the two no-write outcomes;
-                            baseline is NEVER written back (no_improvement guard).
-VC4 / fail-loud:           patch_skill_description raises ValueError on bad input
-                            with NO partial write; YAML block scalar format enforced.
-"""
+"""Apply a provider-specific winner without modifying the opposite skill."""
 
 from __future__ import annotations
 
+import json
+import os
+import re
+import shutil
+import stat
 import subprocess
+import tempfile
 from pathlib import Path
 
-from mapify_cli.provider_registry import template_skill_root
+
+def _plain_description(text: str, winner: str) -> str:
+    """Replace one complete, supported YAML description scalar."""
+    if not text.startswith("---\n") or "\n---" not in text:
+        raise ValueError("No YAML frontmatter found or no closing '---'")
+    end = text.index("\n---", 4)
+    lines = text[4:end].splitlines(keepends=True)
+    starts = [i for i, line in enumerate(lines) if line.startswith("description:")]
+    if len(starts) != 1:
+        raise ValueError("Expected exactly one description key")
+    i = starts[0]
+    scalar = lines[i].split(":", 1)[1].strip()
+    if not scalar or scalar.startswith(("[", "{", "&", "*")):
+        raise ValueError("Unsupported description scalar")
+    j = i + 1
+    while j < len(lines) and (not lines[j].strip() or lines[j].startswith((" ", "\t"))):
+        j += 1
+    if j > i + 1 and scalar not in ("|", "|-", "|+", ">", ">-", ">+"):
+        raise ValueError("Unsupported multiline description scalar")
+    while j > i + 1 and not lines[j - 1].strip():
+        j -= 1
+    replacement = "description: |-\n" + "".join("  " + line + "\n" for line in winner.split("\n"))
+    header = "".join(lines[:i]) + replacement + "".join(lines[j:])
+    return "---\n" + header.rstrip("\n") + text[end:]
 
 
 def patch_skill_description(skill_md_path: Path, new_description: str) -> None:
-    """Rewrite the ``description:`` block scalar in a SKILL.md.jinja frontmatter.
-
-    The file MUST begin with ``---\\n`` and contain a closing ``\\n---``.
-    The ``description:`` key MUST exist at column 0 in the frontmatter.
-
-    All computation is done in-memory; the file is written ONCE at the end.
-    On any validation error the file is left completely untouched.
-
-    Args:
-        skill_md_path: Path to the .jinja file to patch (or any SKILL.md).
-        new_description: Replacement description text (already .strip()'d).
-
-    Raises:
-        ValueError: frontmatter missing, description key absent, or path rejected.
-        FileNotFoundError: skill_md_path does not exist.
-    """
-    # Intent: read-then-compute-then-write-once; no partial write on failure.
+    """Preserved plain YAML API; validate fully before the single write."""
     text = skill_md_path.read_text(encoding="utf-8")
+    patched = _plain_description(text, new_description)
+    _atomic_bytes(skill_md_path, patched.encode(), stat.S_IMODE(skill_md_path.stat().st_mode))
 
-    # --- Validate frontmatter presence ---
-    if not text.startswith("---\n"):
-        raise ValueError(
-            f"No YAML frontmatter found in {skill_md_path}: "
-            "file must start with '---\\n'"
-        )
-    # Find closing --- (must have \n--- to be valid)
-    close_idx = text.find("\n---", 3)
-    if close_idx == -1:
-        raise ValueError(
-            f"No closing '---' found in frontmatter of {skill_md_path}"
-        )
-    # The closing marker: we want the \n--- (possibly \n---\n or \n--- at EOF)
-    # close_idx points to the '\n' before '---'
-    frontmatter_end = close_idx + 4  # len('\n---') = 4
 
-    frontmatter = text[4:close_idx]  # content between the two ---
-    rest_of_file = text[frontmatter_end:]  # everything from closing --- onward
+def _provider_description(text: str, winner: str, provider: str) -> str:
+    """Bounded provider-header contract, not a general Jinja source parser."""
+    from mapify_cli.delivery.template_renderer import get_environment
+    from mapify_cli.skill_ir import parse_frontmatter
 
-    # --- Locate description: key at column 0 ---
-    fm_lines = frontmatter.split("\n")
-    desc_line_idx: int | None = None
-    for i, line in enumerate(fm_lines):
-        if line.startswith("description:"):
-            desc_line_idx = i
-            break
+    if not text.startswith("---\n") or "\n---\n" not in text:
+        raise ValueError("Unsupported description structure: missing frontmatter")
+    header, body = text[4:].split("\n---\n", 1)
+    for directive in re.findall(r"\[%.*?%\]", header, flags=re.DOTALL):
+        token = directive[2:-2].strip().strip("-").strip()
+        if token not in ("else", "endif") and not re.fullmatch(
+            r"if PROVIDER == ([\"'])(?:claude|codex)\1|set cmd = \"/\" if PROVIDER == \"claude\" else \"\$\"", token
+        ):
+            raise ValueError(f"Unsupported description directive: {directive}")
+    if re.search(r"<%(?!\s*cmd\s*%>)|\[#", header):
+        raise ValueError("Unsupported description expression")
+    if any(t in winner for t in ("[%", "<%", "[#")) or not winner.strip():
+        raise ValueError("Unsupported winner description")
+    env = get_environment()
+    rendered = env.from_string("---\n" + header + "\n---\n").render(PROVIDER=provider)
+    patched = _plain_description(rendered, winner)
+    parsed = parse_frontmatter(patched.split("---", 2)[1])
+    if parsed.get("description") != winner:
+        raise ValueError("Unsupported description structure: winner did not round-trip")
+    opposite = "codex" if provider == "claude" else "claude"
+    original_other = env.from_string("---\n" + header + "\n---\n").render(PROVIDER=opposite)
+    # Independent provider descriptions have unambiguous scalar spans. Edit
+    # only the selected block, retaining every other source byte.
+    branches = list(re.finditer(r'\[% if PROVIDER == ([\"\'])(claude|codex)\1 %\]description:', header))
+    for branch in branches:
+        stop = header.find("[% endif", branch.end())
+        alternate = header.find("[% else %]description:", branch.end(), stop)
+        if alternate < 0:
+            continue
+        first = branch.end() - len("description:")
+        second = alternate + len("[% else %]")
+        start, limit = (first, alternate) if provider == branch.group(2) else (second, stop)
+        segment = header[start:limit]
+        patched_segment = _plain_description("---\n" + segment + "\n---\n", winner)[4:-5]
+        if segment.endswith("\n"):
+            patched_segment += "\n"
+        candidate_header = header[:start] + patched_segment + header[limit:]
+        result = "---\n" + candidate_header + "\n---\n" + body
+        if env.from_string("---\n" + candidate_header + "\n---\n").render(PROVIDER=opposite) != original_other:
+            raise ValueError("Unsupported conditional description whitespace")
+        return result
+    binding = '[% set cmd = "/" if PROVIDER == "claude" else "$" -%]'
+    combined = ("---\n" + binding + f'[% if PROVIDER == "{provider}" %]'
+                + patched[4:-4] + "[% else %]" + original_other[4:-4] + "[% endif -%]\n---\n")
+    if env.from_string(combined).render(PROVIDER=opposite) != original_other:
+        raise ValueError("Unsupported description whitespace structure")
+    return combined + body
 
-    if desc_line_idx is None:
-        raise ValueError(
-            f"No 'description:' key found at column 0 in frontmatter of {skill_md_path}"
-        )
 
-    # --- Find the indented body lines that belong to description ---
-    # A YAML block scalar body includes indented lines AND interior blank lines
-    # (blank lines are part of a multi-paragraph '|' block), ending at the first
-    # NON-blank 0-indent line (the next key) or end of frontmatter.
-    body_start = desc_line_idx + 1
-    body_end = body_start  # exclusive end index
-    for i in range(body_start, len(fm_lines)):
-        line = fm_lines[i]
-        if line == "" or line.startswith((" ", "\t")):
-            body_end = i + 1
-        else:
-            break
-    # Trim TRAILING blank lines back out of the replaced span so a blank separator
-    # between the description block and the next key is preserved (no whitespace drift).
-    # Interior blanks are kept because the trim stops at the first non-blank line.
-    while body_end > body_start and fm_lines[body_end - 1] == "":
-        body_end -= 1
+def _atomic_bytes(path: Path, data: bytes, mode: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=".mapify-apply-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(name, mode)
+        os.replace(name, path)
+    finally:
+        Path(name).unlink(missing_ok=True)
 
-    # --- Build the new description block scalar (|- strip chomping) ---
-    # Use '|-' so YAML-parsed value == new_description exactly (no trailing newline).
-    new_desc_lines = ["description: |-"]
-    for desc_line in new_description.split("\n"):
-        new_desc_lines.append(f"  {desc_line}")
 
-    # --- Reassemble frontmatter ---
-    new_fm_lines = (
-        fm_lines[:desc_line_idx]
-        + new_desc_lines
-        + fm_lines[body_end:]
-    )
-    new_frontmatter = "\n".join(new_fm_lines)
-    new_text = "---\n" + new_frontmatter + "\n---" + rest_of_file
+def _recover_transaction(root: Path) -> None:
+    journal = root / ".map/skill-eval-apply-transaction"
+    manifest = journal / "manifest.json"
+    if not manifest.exists():
+        return
+    entries = json.loads(manifest.read_text(encoding="utf-8"))
+    if not (journal / "complete").exists():
+        for entry in entries:
+            target = root / entry["path"]
+            if not target.resolve().is_relative_to(root.resolve()):
+                raise ValueError(f"Unsafe recovery path in {manifest}")
+            if entry["exists"]:
+                _atomic_bytes(target, (journal / entry["backup"]).read_bytes(), entry["mode"])
+            else:
+                target.unlink(missing_ok=True)
+    shutil.rmtree(journal)
 
-    # Intent: single atomic write after all validation passes.
-    skill_md_path.write_text(new_text, encoding="utf-8")
+
+def _commit_transaction(root: Path, updates: dict[Path, bytes]) -> list[Path]:
+    journal = root / ".map/skill-eval-apply-transaction"
+    journal.mkdir(parents=True, exist_ok=False)
+    entries = []
+    for i, (path, data) in enumerate(updates.items()):
+        if path.is_symlink():
+            raise ValueError(f"Refusing symlink output: {path}")
+        exists = path.exists()
+        if exists and path.read_bytes() == data:
+            continue
+        mode = stat.S_IMODE(path.stat().st_mode) if exists else 0o644
+        entry = dict(path=str(path.relative_to(root)), exists=exists, mode=mode, backup=str(i))
+        if exists:
+            _atomic_bytes(journal / str(i), path.read_bytes(), 0o600)
+        entries.append(entry)
+    _atomic_bytes(journal / "manifest.json", json.dumps(entries).encode(), 0o600)
+    fd = os.open(journal, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    try:
+        for entry in entries:
+            path = root / str(entry["path"])
+            _atomic_bytes(path, updates[path], int(entry["mode"]))
+        _atomic_bytes(journal / "complete", b"complete", 0o600)
+    except BaseException:
+        _recover_transaction(root)
+        raise
+    shutil.rmtree(journal)
+    return [root / str(entry["path"]) for entry in entries]
 
 
 def apply_optimized_description(
-    *,
-    skill: str,
-    winner: str,
-    current_description: str,
-    no_improvement: bool,
-    repo_root: Path,
-    stage: bool = True,
-    provider: str = "claude",
+    *, skill: str, winner: str, current_description: str, no_improvement: bool,
+    repo_root: Path, stage: bool = True, provider: str = "claude",
 ) -> str:
-    """Apply ``winner`` description to the skill's single-source .jinja template.
-
-    Prints a user-facing message and returns an outcome code string.
-
-    Outcome codes:
-        ``'no_improvement'``  — baseline wins; nothing written.
-        ``'identical'``       — winner == current; nothing written.
-        ``'applied'``         — .jinja patched and trees re-rendered.
-
-    Args:
-        skill: Skill name (e.g. ``'map-skill-eval'``).
-        winner: Candidate description text that won the eval.
-        current_description: Current description text from the .jinja.
-        no_improvement: True when baseline beat every candidate on held-out test.
-        repo_root: Absolute path to the repository root.
-        stage: If True, stage the patched .jinja + existing gate trees via a scoped
-            ``git add -- <paths>`` after rendering (warn-only on failure; never commits).
-
-    Returns:
-        Outcome code string.
-
-    Raises:
-        ValueError: Path safety violation (outside templates_src or under .git/).
-        FileNotFoundError: .jinja source file does not exist.
-    """
-    # --- VC3: no_improvement guard — NEVER write baseline back ---
+    """Render in isolation, then transactionally promote only selected skill files."""
     if no_improvement:
-        print(
-            "No improvement found: current description already optimal on held-out test"
-        )
+        print("No improvement found: current description already optimal on held-out test")
         return "no_improvement"
-
-    # --- VC3: winner identical guard ---
     if winner == current_description:
         print("Winner identical to current description; no file changes")
         return "identical"
+    if provider not in ("claude", "codex"):
+        raise ValueError(f"Unsupported provider: {provider}")
+    source_root = (repo_root / "src/mapify_cli/templates_src").resolve()
+    jinja = source_root / "skills" / skill / "SKILL.md.jinja"
+    if not jinja.resolve().is_relative_to(source_root) or ".git" in jinja.resolve().parts:
+        raise ValueError(f"Path safety violation outside templates_src or under .git: {jinja}")
+    _recover_transaction(repo_root)
+    original = jinja.read_text(encoding="utf-8")
+    candidate = _provider_description(original, winner, provider)
+    from mapify_cli.delivery.template_renderer import get_environment, render_repo_trees
 
-    # --- Resolve and validate target path BEFORE any filesystem touch (INV-9) ---
-    # Path-safety runs first so a traversal/.git target is rejected even when the
-    # file does not exist (resolve() normalises '..' without requiring existence).
-    templates_src_root = (repo_root / "src" / "mapify_cli" / "templates_src").resolve()
-    provider_root = template_skill_root(provider)
-    jinja = (
-        repo_root
-        / "src"
-        / "mapify_cli"
-        / "templates_src"
-        / provider_root
-        / skill
-        / "SKILL.md.jinja"
-    )
-    resolved = jinja.resolve()
-
-    # Intent: reject paths that escape templates_src or touch .git/
-    try:
-        resolved.relative_to(templates_src_root)
-    except ValueError:
-        raise ValueError(
-            f"Path safety violation: {resolved} is not under {templates_src_root}"
-        ) from None
-
-    if ".git" in resolved.parts:
-        raise ValueError(f"Path safety violation: {resolved} is under .git/")
-
-    if not jinja.exists():
-        raise FileNotFoundError(
-            f"SKILL.md.jinja not found for skill '{skill}': {jinja}"
+    with tempfile.TemporaryDirectory(prefix="mapify-apply-") as tmp:
+        sandbox = Path(tmp)
+        source = sandbox / "src/mapify_cli/templates_src"
+        shutil.copytree(source_root, source)
+        target = source / jinja.relative_to(source_root)
+        target.write_text(candidate, encoding="utf-8")
+        env = get_environment(source)
+        name = jinja.relative_to(source_root).as_posix()
+        opposite = "codex" if provider == "claude" else "claude"
+        before_env = get_environment(source_root)
+        if env.get_template(name).render(PROVIDER=opposite) != before_env.get_template(name).render(PROVIDER=opposite):
+            raise ValueError("Unsupported description structure: opposite provider changed")
+        for runtime in ("claude", "codex"):
+            render_repo_trees(runtime, repo_root=sandbox, templates_src_root=source)
+        roots = (".claude/skills", "src/mapify_cli/templates/skills") if provider == "claude" else (
+            ".agents/skills", "src/mapify_cli/templates/codex/skills"
         )
-
-    # --- Patch the .jinja source ---
-    patch_skill_description(jinja, winner)
-
-    # --- Re-render both providers (INV-5) ---
-    # Intent: import inline to keep module importable without jinja2 at module load time.
-    # Pass templates_src_root explicitly so that when repo_root is a temp dir
-    # the renderer reads from the temp copy, not the installed package source.
-    from mapify_cli.delivery.template_renderer import render_repo_trees
-
-    render_templates_src = repo_root / "src" / "mapify_cli" / "templates_src"
-    render_repo_trees("claude", repo_root=repo_root, templates_src_root=render_templates_src)
-    render_repo_trees("codex", repo_root=repo_root, templates_src_root=render_templates_src)
-
-    # --- Optionally stage ONLY the patched source + rendered gate trees (warn-only) ---
-    # Scoped staging (never `git add -A`): avoids sweeping unrelated dirty files
-    # (in-progress work, .map/ workflow state) into the caller's next commit.
-    if stage:
-        gate_relpaths = (
-            ".claude",
-            ".codex",
-            "src/mapify_cli/templates",
-            ".agents/skills",
-        )
-        to_stage: list[str] = [str(jinja.relative_to(repo_root))]
-        for rel in gate_relpaths:
-            if (repo_root / rel).exists():
-                to_stage.append(rel)
+        updates = {jinja: target.read_bytes()}
+        for root in roots:
+            rel = Path(root) / skill / "SKILL.md"
+            updates[repo_root / rel] = (sandbox / rel).read_bytes()
+        changed = _commit_transaction(repo_root, updates)
+    if stage and changed:
         result = subprocess.run(
-            ["git", "add", "--", *to_stage],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=False,
+            ["git", "add", "--", *(str(p.relative_to(repo_root)) for p in changed)],
+            cwd=repo_root, capture_output=True, text=True, check=False,
         )
-        if result.returncode != 0:
-            print(
-                f"Warning: 'git add' failed (exit {result.returncode}): "
-                f"{result.stderr.strip()}"
-            )
-
-    # --- Reminder: skill-rules.json is NOT auto-patched ---
-    print(
-        f"Applied new description for '{skill}'. "
-        "Note: skill-rules.json description is NOT auto-patched — "
-        "update it by hand or via ST-008."
-    )
-
+        if result.returncode:
+            print(f"Warning: 'git add' failed (exit {result.returncode}): {result.stderr.strip()}")
+    print(f"Applied new description for '{skill}'. Note: skill-rules.json description is NOT auto-patched")
     return "applied"

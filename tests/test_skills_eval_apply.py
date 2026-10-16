@@ -358,6 +358,10 @@ def test_vc2_rendered_trees_byte_identical_after_apply(tmp_path: Path) -> None:
 
     repo_root = _seed_templates_src(tmp_path)
     templates_src_root = repo_root / "src" / "mapify_cli" / "templates_src"
+    from mapify_cli.delivery.template_renderer import render_repo_trees
+
+    for provider in ("claude", "codex"):
+        render_repo_trees(provider, repo_root=repo_root, templates_src_root=templates_src_root)
     winner = "New description for byte-identity test."
 
     result = apply_optimized_description(
@@ -434,3 +438,30 @@ def test_vc1_skill_rules_json_description_unchanged(tmp_path: Path) -> None:
     assert winner not in str(after_desc), (
         "Winner text must NOT appear in skill-rules.json after apply"
     )
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("skill", sorted(p.parent.name for p in (_REAL / "src/mapify_cli/templates_src/skills").glob("*/SKILL.md.jinja")))
+def test_apply_provider_matrix(tmp_path: Path, provider: str, skill: str) -> None:
+    """Real production templates: exact winner, opposite bytes, include untouched."""
+    from mapify_cli.delivery.template_renderer import get_environment
+
+    root = _seed_templates_src(tmp_path)
+    source = root / "src/mapify_cli/templates_src"
+    env = get_environment(source)
+    name = f"skills/{skill}/SKILL.md.jinja"
+    opposite = "codex" if provider == "claude" else "claude"
+    before = env.get_template(name).render(PROVIDER=opposite)
+    include = source / "codex" / name
+    include_before = include.read_bytes()
+    winner = "Exact optimized winner.\nNo previous description tail."
+    apply_optimized_description(skill=skill, winner=winner, current_description="old",
+                                no_improvement=False, repo_root=root, stage=False, provider=provider)
+    env = get_environment(source)
+    from mapify_cli.skill_ir import parse_frontmatter
+    after = env.get_template(name).render(PROVIDER=provider)
+    assert parse_frontmatter(after.split("---", 2)[1])["description"] == winner
+    assert env.get_template(name).render(PROVIDER=opposite) == before
+    assert include.read_bytes() == include_before
+    generated = root / (".claude/skills" if provider == "claude" else ".agents/skills") / skill / "SKILL.md"
+    assert _read_frontmatter_description(generated) == winner

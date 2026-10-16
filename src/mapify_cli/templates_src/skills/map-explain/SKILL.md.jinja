@@ -43,7 +43,9 @@ The skill takes a single argument. Resolve it as follows:
 
 - **File path** (`src/foo/bar.py`) → read the entire file with `exec_command` and treat it as the target.
 - **Symbol** (`module.function`, `ClassName.method`) → grep the repo with `exec_command` to find the definition and primary call sites.
-- **PR ref** (`#123`, branch name, commit SHA) → fetch the diff via `gh pr diff` or `git show`.
+- **PR ref** (`#123`) → fetch the diff via `gh pr diff`.
+- **Branch name** → select the base as below and fetch all branch changes via `git diff "$BASE"...<branch>`.
+- **Commit SHA** → fetch that single commit via `git show <sha>`.
 - **Inline snippet** → treat the snippet itself as the target.
 - **Empty / no argument** → fall back to one of the two default modes below.
 
