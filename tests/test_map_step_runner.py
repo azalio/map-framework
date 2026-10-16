@@ -14617,6 +14617,7 @@ class TestCrossAiWrap:
         assert map_step_runner.CROSS_AI_INJECTION_LABEL not in wrapped
         assert wrapped.startswith("```")
         assert wrapped.endswith("```")
+        assert "independent" not in wrapped.lower()
 
     def test_wrap_flags_injection(self):
         wrapped = map_step_runner.wrap_cross_ai_result(
@@ -14651,6 +14652,64 @@ class TestCrossAiDetect:
         assert result["available"] is True
         assert result["path"] == "/usr/local/bin/codex"
         assert result["binary"] == "codex"
+
+
+@pytest.mark.parametrize("host_provider,host_vendor", [
+    ("claude", "anthropic"), ("codex", "openai"), (None, None), ("unknown", None),
+])
+@pytest.mark.parametrize("runtime,reviewer_vendor", [
+    ("claude", "anthropic"), ("codex", "openai"), ("gemini", "google"),
+    ("opencode", None), ("unknown", None),
+])
+def test_cross_ai_host_vendor_matrix(host_provider, host_vendor, runtime, reviewer_vendor):
+    expected = bool(host_vendor and reviewer_vendor and host_vendor != reviewer_vendor)
+    with patch("shutil.which", return_value="/fake/cli"):
+        result = map_step_runner.detect_cross_ai_runtime(runtime, host_provider=host_provider)
+    assert result["host_provider"] == host_provider
+    assert result["host_vendor"] == host_vendor
+    assert result["reviewer_vendor"] == reviewer_vendor
+    assert result["independent_vendor"] is expected
+
+
+@pytest.mark.parametrize("host_provider", ["claude", "codex", None])
+@pytest.mark.parametrize("runtime", ["claude", "codex", "opencode"])
+@pytest.mark.parametrize("parsed", [True, False])
+def test_cross_ai_provenance_survives_dispatch(host_provider, runtime, parsed):
+    text = json.dumps({"findings": []}) if parsed else "not JSON"
+    stdout = json.dumps({"result": text}) if runtime == "claude" else text
+    with patch("shutil.which", return_value="/fake/cli"), patch.object(
+        map_step_runner.subprocess, "run",
+        return_value=types.SimpleNamespace(returncode=0, stdout=stdout, stderr=""),
+    ):
+        result = map_step_runner.dispatch_cross_ai_review(
+            runtime, "prompt", enabled=True, host_provider=host_provider,
+        )
+    assert result["status"] == ("success" if parsed else "unparsed")
+    assert result["host_provider"] == host_provider
+    assert result["independent_vendor"] is bool(
+        host_provider in {"claude", "codex"}
+        and runtime in {"claude", "codex"} and host_provider != runtime
+    )
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.parametrize("host_provider", ["claude", "codex", None])
+def test_cross_ai_config_echo_matches_result(tmp_path, monkeypatch, enabled, host_provider):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".map").mkdir()
+    (tmp_path / ".map/config.yaml").write_text(
+        f"review.cross_ai.enabled: {str(enabled).lower()}\n", encoding="utf-8",
+    )
+    with patch.object(map_step_runner, "build_cross_ai_review_prompt", return_value="p"), patch(
+        "shutil.which", return_value="/fake/codex",
+    ), patch.object(map_step_runner.subprocess, "run", return_value=types.SimpleNamespace(
+        returncode=0, stdout='{"findings": []}', stderr="",
+    )):
+        result = map_step_runner.run_cross_ai_review("codex", host_provider=host_provider)
+    assert result["status"] == ("success" if enabled else "disabled")
+    for key in ("host_provider", "host_vendor", "reviewer_vendor", "independent_vendor"):
+        assert result[key] == result["config"][key]
+    assert result["independent_vendor"] is (host_provider == "claude")
 
 
 class TestCrossAiDispatch:
@@ -14693,13 +14752,13 @@ class TestCrossAiDispatch:
             map_step_runner.subprocess, "run", side_effect=fake_run
         ):
             result = map_step_runner.dispatch_cross_ai_review(
-                "codex", prompt, timeout_seconds=42, enabled=True
+                "codex", prompt, timeout_seconds=42, enabled=True, host_provider="claude"
             )
 
         assert result["status"] == "success"
         assert result["normalized"]["verdict"] == "PROCEED"
         assert result["source"] == "cross_ai"
-        assert result["independent_vendor"] is True  # codex is an independent vendor
+        assert result["independent_vendor"] is True  # OpenAI adapter vs Anthropic host
         assert map_step_runner.CROSS_AI_UNTRUSTED_LABEL in result["untrusted_block"]
         assert calls[0]["shell"] is False
         assert calls[0]["argv"] == ["codex", "exec", prompt]
@@ -14917,7 +14976,8 @@ class TestCrossAiConfigGate:
         assert result["normalized"]["verdict"] == "PROCEED"
 
 
-def test_cli_run_cross_ai_review_disabled_exit_zero(tmp_path):
+@pytest.mark.parametrize("host_provider", ["claude", "codex", None])
+def test_cli_run_cross_ai_review_disabled_exit_zero(tmp_path, host_provider):
     (tmp_path / ".map").mkdir()
     (tmp_path / ".map" / "config.yaml").write_text(
         "review.cross_ai.enabled: false\n", encoding="utf-8"
@@ -14929,6 +14989,7 @@ def test_cli_run_cross_ai_review_disabled_exit_zero(tmp_path):
             "run_cross_ai_review",
             "--runtime",
             "codex",
+            *(["--host-provider", host_provider] if host_provider else []),
         ],
         cwd=tmp_path,
         capture_output=True,
@@ -14939,6 +15000,9 @@ def test_cli_run_cross_ai_review_disabled_exit_zero(tmp_path):
     payload = json.loads(completed.stdout)
     assert payload["status"] == "disabled"
     assert payload["config"]["enabled"] is False
+    assert payload["host_provider"] == host_provider
+    assert payload["independent_vendor"] is (host_provider == "claude")
+    assert payload["config"]["independent_vendor"] == payload["independent_vendor"]
 
 
 # ---------------------------------------------------------------------------

@@ -191,7 +191,7 @@ def test_shebang_scan_skips_nested_worktrees_and_venvs(
     virtualenvs; asserting the guard against those fails on any machine that
     has ever run the worktree features, while a fresh CI clone stays green.
     """
-    root = tmp_path / "tree"
+    root = tmp_path / "worktrees" / "active" / "tree"
     (root / "hooks").mkdir(parents=True)
     shipped = root / "hooks" / "shipped.py"
     shipped.write_text(f"{SHEBANG}\n", encoding="utf-8")

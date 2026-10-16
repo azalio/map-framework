@@ -49,7 +49,11 @@ checks it up front and tells you what to fix ([details](docs/INSTALL.md#why-pyth
 
 **2. Initialize your project**
 
-Claude Code is the default provider:
+Claude Code is the default provider. Cross-AI review compares explicit host and
+reviewer adapter vendors; same-vendor or unknown provenance is not labeled
+independent ([details](docs/USAGE.md#cross-ai-peer-review---cross-ai-runtime)).
+
+Claude Code:
 
 ```bash
 cd your-project
