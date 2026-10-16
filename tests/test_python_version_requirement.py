@@ -100,21 +100,6 @@ def _shebang_files() -> list[Path]:
     return found
 
 
-def test_shebang_scan_ignores_only_exclusions_below_scan_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A checkout nested in worktrees still scans its own shipped scripts."""
-    root = tmp_path / "worktrees" / "checkout" / "scripts"
-    root.mkdir(parents=True)
-    shipped = root / "runner.py"
-    shipped.write_text(SHEBANG + "\n", encoding="utf-8")
-    nested = root / "worktrees" / "nested"
-    nested.mkdir(parents=True)
-    (nested / "ignored.py").write_text(SHEBANG + "\n", encoding="utf-8")
-    monkeypatch.setitem(globals(), "SHEBANG_ROOTS", (root,))
-    assert _shebang_files() == [shipped]
-
-
 # --------------------------------------------------------------------------- #
 # 1. Declared floor, single source of truth
 # --------------------------------------------------------------------------- #

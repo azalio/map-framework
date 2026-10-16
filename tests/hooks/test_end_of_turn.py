@@ -16,6 +16,8 @@ import tempfile
 import time
 from pathlib import Path
 
+import pytest
+
 # Path to the hook script
 HOOK_PATH = Path(__file__).parent.parent.parent / ".claude" / "hooks" / "end-of-turn.sh"
 
@@ -463,6 +465,103 @@ class TestGoCheckConfig:
                 assert exit_code == 0, (
                     f"checks.go.build: {value!r} should disable check; stderr: {stderr}"
                 )
+
+
+class TestGoBuildTags:
+    """Observe the real Stop hook at the go process boundary (#489)."""
+
+    @pytest.mark.parametrize("goos", ["", "linux"])
+    def test_configured_tags_reach_go_build(self, tmp_path, goos):
+        exit_code, _, stderr, call = self._run_build(
+            tmp_path, "checks.go.tags: integration,netgo\n", goos=goos,
+        )
+        assert call == {
+            "argv": ["build", "-tags", "integration,netgo", "-o", "/dev/null", "./..."],
+            "goos": goos,
+        }
+        assert exit_code == 0, stderr
+
+    @pytest.mark.parametrize("goos", ["", "linux"])
+    @pytest.mark.parametrize("config", ["", "checks.go.tags:\n"])
+    def test_default_build_has_no_tags_argument(self, tmp_path, goos, config):
+        exit_code, _, stderr, call = self._run_build(tmp_path, config, goos=goos)
+        assert call == {
+            "argv": ["build", "-o", "/dev/null", "./..."], "goos": goos,
+        }
+        assert exit_code == 0, stderr
+
+    def test_env_goos_still_overrides_config_with_tags(self, tmp_path):
+        exit_code, _, stderr, call = self._run_build(
+            tmp_path, "checks.go.tags: netgo\n", goos="linux", env_goos="darwin",
+        )
+        assert call == {
+            "argv": ["build", "-tags", "netgo", "-o", "/dev/null", "./..."],
+            "goos": "darwin",
+        }
+        assert exit_code == 0, stderr
+
+    @pytest.mark.parametrize("goos", ["", "linux"])
+    def test_tagged_build_errors_still_block(self, tmp_path, goos):
+        exit_code, _, stderr, call = self._run_build(
+            tmp_path, "checks.go.tags: netgo\n", goos=goos, fail=True,
+        )
+        assert call is not None
+        assert exit_code == 2
+        assert "Go build errors detected" in stderr
+
+    def test_disabled_build_does_not_invoke_go_even_with_tags(self, tmp_path):
+        exit_code, _, stderr, call = self._run_build(
+            tmp_path, "checks.go.build: false\nchecks.go.tags: netgo\n", fail=True,
+        )
+        assert call is None
+        assert exit_code == 0, stderr
+
+    @pytest.mark.parametrize("goos", ["", "linux"])
+    def test_tags_are_literal_not_shell_syntax(self, tmp_path, goos):
+        tags = "netgo,$(touch${IFS}injected);`touch${IFS}backtick`,$HOME,*"
+        exit_code, _, stderr, call = self._run_build(
+            tmp_path, f"checks.go.tags: {tags}\n", goos=goos,
+        )
+        assert call == {
+            "argv": ["build", "-tags", tags, "-o", "/dev/null", "./..."],
+            "goos": goos,
+        }
+        assert not (tmp_path / "injected").exists()
+        assert not (tmp_path / "backtick").exists()
+        assert exit_code == 0, stderr
+
+    def _run_build(self, tmp, config, *, goos="", env_goos="", fail=False):
+        _setup_git_repo(tmp)
+        (tmp / "go.mod").write_text("module example.com/hook_tags\n\ngo 1.21\n")
+        (tmp / "main.go").write_text("package main\n\nfunc main() {}\n")
+        (tmp / ".map").mkdir()
+        (tmp / ".map" / "config.yaml").write_text(
+            config + f"checks.go.goos: {goos}\n",
+        )
+        bin_dir = tmp / "bin"
+        bin_dir.mkdir()
+        capture = tmp / "go-call.json"
+        go = bin_dir / "go"
+        go.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, os, pathlib, sys\n"
+            "pathlib.Path(os.environ['GO_CAPTURE']).write_text(json.dumps({\n"
+            "    'argv': sys.argv[1:], 'goos': os.environ.get('GOOS', '')}))\n"
+            "sys.exit(int(os.environ['GO_FAIL']))\n",
+        )
+        go.chmod(0o755)
+        # Keep formatting deterministic and independent of a local Go installation.
+        gofmt = bin_dir / "gofmt"
+        gofmt.write_text("#!/bin/sh\nexit 0\n")
+        gofmt.chmod(0o755)
+        subprocess.run(["git", "add", "."], cwd=tmp, capture_output=True, check=True)
+        exit_code, stdout, stderr = run_hook(cwd=str(tmp), env={
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "GO_CAPTURE": str(capture), "GO_FAIL": "1" if fail else "0",
+            "GOOS": env_goos, "MAP_INVOKED_BY": "",
+        })
+        call = json.loads(capture.read_text()) if capture.exists() else None
+        return exit_code, stdout, stderr, call
 
 
 class TestSyntaxCheckHygiene:

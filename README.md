@@ -46,6 +46,8 @@ Requires Python 3.11+, and `python3` on your `PATH` must be that interpreter —
 installed hooks and `.map/scripts/` runners execute through a `#!/usr/bin/env
 python3` shebang, not through the interpreter that ran `mapify`. `mapify init`
 checks it up front and tells you what to fix ([details](docs/INSTALL.md#why-python3-on-path-matters)).
+For Go projects requiring build tags, set `checks.go.tags: integration,netgo` in
+`.map/config.yaml` for the Stop hook's build check ([configuration](docs/USAGE.md#end-of-turnsh-stop)).
 
 **2. Initialize your project**
 
