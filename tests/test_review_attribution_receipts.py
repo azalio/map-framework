@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+
 SCRIPTS_PATH = Path(__file__).resolve().parents[1] / "src/mapify_cli/templates/map/scripts"
 sys.path.insert(0, str(SCRIPTS_PATH))
 
@@ -84,10 +86,53 @@ def test_create_review_bundle_preserves_committed_deleted_source(tmp_path, monke
     result = runner.create_review_bundle(branch="feature")
     assert result["status"] == "success"
     bundle = json.loads(Path(result["bundle_path_json"]).read_text())
-    assert "calculator.py" not in bundle["snapshot"]["required_files"]
+    assert "calculator.py" in bundle["snapshot"]["required_files"]
     sources = {item["path"]: item for item in bundle["attribution"]["files"]}
     assert "calculator.py" in sources
     assert sources["calculator.py"]["base_content"] == base_source
     assert sources["calculator.py"]["current_content"] == ""
     assert sources["calculator.py"]["status"] == "deleted"
     assert sources["calculator.py"]["line_mapping"] == []
+
+
+@pytest.mark.parametrize("rename", [False, True], ids=["deleted", "renamed"])
+def test_review_receipt_requires_base_side_path(tmp_path, monkeypatch, rename):
+    monkeypatch.chdir(tmp_path)
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], check=True, capture_output=True, text=True,
+        ).stdout.strip()
+
+    git("init", "-b", "main")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test")
+    Path(".gitignore").write_text(".map/\n")
+    Path("guard.py").write_text("def authorize(user):\n    return user.is_admin\n")
+    profile = Path(".claude/agents/review-reader.md")
+    profile.parent.mkdir(parents=True)
+    profile.write_text("---\nname: review-reader\ntools: Read, Glob, Grep\n---\nRead only.\n")
+    git("add", ".")
+    git("commit", "-m", "base with authorization guard")
+    git("checkout", "-b", "feature")
+    if rename:
+        git("mv", "guard.py", "renamed_guard.py")
+    else:
+        git("rm", "guard.py")
+    git("commit", "-m", "remove original guard path")
+    runner = cast(Any, map_step_runner)
+    admission = runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="receipt",
+                                        branch="feature", provider="claude")
+    assert admission["status"] == "success"
+    assert admission["capability"]["status"] == "verified"
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    receipt = {"covered_files": [name for name in admission["required_files"] if name != "guard.py"],
+               "skipped_files": [], "denied_access": [], "check_evidence": []}
+    envelope = {"verdict": "approved", "issues": [], "receipt": receipt}
+    captured = runner.capture_review_output("monitor", json.dumps(envelope), "receipt", branch="feature")
+    assert captured["status"] == "success"
+    runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    ledger = json.loads(Path(".map/feature/review-verdict-ledger.json").read_text())
+    assert ledger["completeness"]["status"] == "INCOMPLETE"
+    assert ledger["code_approval"]["approved"] is False
+    assert "guard.py" in admission["required_files"]

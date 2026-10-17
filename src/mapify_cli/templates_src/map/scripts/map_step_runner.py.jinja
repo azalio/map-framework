@@ -8693,6 +8693,11 @@ def _review_target() -> dict[str, Any]:
         names = sorted({os.fsdecode(name) for name in _review_git_bytes(
             "ls-files", "-z", "--cached", "--others", "--exclude-standard",
         ).split(b"\0") if name and not name.startswith(b".map/")})
+        if base:
+            deleted = _review_git_bytes("diff", "--name-only", "--diff-filter=D", "--no-renames", "-z",
+                                        base, "--", ".", ":(exclude).map")
+            # Base-side deletions (including rename sources) must be reviewed in the bundle.
+            names = sorted(set(names) | {os.fsdecode(name) for name in deleted.split(b"\0") if name})
         manifest = [_review_file_entry(name) for name in names]
         dirty = _review_git_bytes("status", "--porcelain=v1", "-z", "--untracked-files=all",
                                   "--", ".", ":(exclude).map")
@@ -11325,11 +11330,7 @@ def _review_attribution(target: dict[str, Any]) -> dict[str, Any]:
     if not target.get("base"):
         return {"status": "unknown", "reason": "No verified review base", "files": []}
     entries = []
-    deleted = _review_git_bytes("diff", "--name-only", "--diff-filter=D", "--no-renames", "-z",
-                                target["base"], "--", ".", ":(exclude).map")
-    attribution_files = set(target.get("required_files", []))
-    attribution_files.update(os.fsdecode(name) for name in deleted.split(b"\0") if name)
-    for name in sorted(attribution_files):
+    for name in target.get("required_files", []):
         result = subprocess.run(["git", "show", f"{target['base']}:{name}"],
                                 capture_output=True, timeout=10, check=False)
         base = result.stdout if result.returncode == 0 else b""
@@ -14426,6 +14427,8 @@ def _record_review_check(check_id: str, command: list[str], *, branch: str | Non
     if not rounds or (result is None and not _review_binding_current(rounds[-1])):
         raise ValueError("A current admitted review is required for durable checks")
     row = rounds[-1]
+    if _review_round_terminal(row):
+        raise ValueError("Execution checks require an active review round; the current round is terminal")
     expected = row["binding"].get("check_specs", {}).get(check_id)
     if expected is not None and command != expected:
         raise ValueError("Check command differs from the admitted command specification")

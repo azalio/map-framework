@@ -2576,6 +2576,25 @@ def test_interrupted_check_retries_after_restart_without_losing_failed_attempt(r
         process.communicate(timeout=5)
 
 
+def test_terminal_review_rejects_check_rerun_without_revoking_approval(review_git_workspace):
+    workspace = review_git_workspace
+    runner = cast(Any, map_step_runner)
+    command = [sys.executable, "-c", "pass"]
+    admission = _admit_receipt_review(runner, required_checks=["suite"], check_specs={"suite": command})
+    assert runner.run_test_gate(command=command, check_id="suite")["passed"] is True
+    receipt = {"covered_files": admission["required_files"], "skipped_files": [],
+               "denied_access": [], "check_evidence": ["suite"]}
+    runner.capture_review_output("monitor", json.dumps({**_monitor_no_issues(), "receipt": receipt}), "receipt")
+    assert runner.write_review_verdict_ledger(current_run=True)["code_approval"]["approved"] is True
+    ledger_path = workspace / "review-verdict-ledger.json"
+    before = ledger_path.read_bytes()
+    _, rejected = _review_cli("run_test_gate", "--check-id", "suite")
+    assert rejected["status"] == "error" and rejected["passed"] is False, rejected
+    assert ledger_path.read_bytes() == before
+    _, gate = _review_cli("write_stage_gate", "review", "ready", "review.md", "clean")
+    assert gate["status"] == "success", gate
+
+
 def test_execution_completion_cannot_cross_abandoned_round(review_git_workspace):
     workspace = review_git_workspace
     runner = cast(Any, map_step_runner)
