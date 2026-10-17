@@ -27,6 +27,71 @@ BRANCH_DIR_NAME = "feat-x"
 REVIEW_FILES = ("SKILL.md", "review-reference.md", "adversarial-reference.md")
 
 
+def test_concurrent_review_admission_counts_once_and_fences_stale_capture(tmp_path):
+    _git(tmp_path, "init", "-b", "main")
+    script = REPO_ROOT / "src/mapify_cli/templates/map/scripts/map_step_runner.py"
+    command = ["python3", str(script), "begin_review_run", "--mode", "lightweight", "--branch", "test"]
+    processes = [subprocess.Popen(command, cwd=tmp_path, text=True, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE) for _ in range(3)]
+    outputs = []
+    for process in processes:
+        stdout, stderr = process.communicate(timeout=30)
+        assert process.returncode == 0, stderr
+        outputs.append(json.loads(stdout))
+    assert {item["round_id"] for item in outputs} == {"round-1"}
+    ledger = json.loads((tmp_path / ".map/test/review-verdict-ledger.json").read_text())
+    assert len(ledger["convergence"]["rounds"]) == 1
+    rejected = subprocess.run(
+        ["python3", str(script), "capture_review_output", "--reviewer", "monitor", "--round-id", "stale", "--branch", "test"],
+        input='{"issues":[]}', cwd=tmp_path, text=True, capture_output=True, check=False,
+    )
+    assert rejected.returncode == 1
+    assert not (tmp_path / ".map/test/review-agent-monitor.json").exists()
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_review_round_cli_restart_cap_and_rejected_admission_preserve_inputs(tmp_path, provider):
+    project_dir = tmp_path / provider
+    project_dir.mkdir()
+    previous_cwd = os.getcwd()
+    os.chdir(project_dir)
+    try:
+        installed = CliRunner().invoke(app, ["init", ".", "--provider", provider, "--no-git", "--force"])
+    finally:
+        os.chdir(previous_cwd)
+    assert installed.exit_code == 0, installed.output
+    _git(project_dir, "init", "-b", "main")
+    script = project_dir / ".map/scripts/map_step_runner.py"
+
+    def call(*args):
+        result = subprocess.run(
+            ["python3", str(script), *args, "--branch", "test"], cwd=project_dir,
+            text=True, capture_output=True, check=False,
+        )
+        return result.returncode, json.loads(result.stdout)
+
+    workspace = project_dir / ".map/test"
+    capture = workspace / "review-agent-monitor.json"
+    for number in range(1, 4):
+        code, admitted = call("begin_review_run", "--mode", "lightweight", "--round-id", str(number))
+        assert code == 0, admitted
+        payload = {"issues": [{"severity": "CRITICAL", "category": "correctness", "description": "loss",
+                               "reach_evidence": "reproducer", "was_present_before_pr": False}]}
+        capture = workspace / "review-agent-monitor.json"
+        capture.write_text(json.dumps(payload))
+        code, retry = call("begin_review_run", "--mode", "lightweight", "--round-id", str(number))
+        assert code == 0 and retry["resumed"]
+        code, completed = call("write_review_verdict_ledger", "--current-run", "--round-id", str(number))
+        assert code == 0, completed
+        assert completed["convergence"]["completed_rounds"] == number
+        assert call("write_review_verdict_ledger", "--current-run", "--round-id", str(number))[1]["convergence"] == completed["convergence"]
+    before = capture.read_bytes()
+    code, rejected = call("begin_review_run", "--mode", "lightweight", "--round-id", "4")
+    assert code == 1 and rejected["stop_reason"] == "reconsider_approach"
+    assert capture.read_bytes() == before
+    assert json.loads((workspace / "review-verdict-ledger.json").read_text())["convergence"]["outcome"] == "capped"
+
+
 def _git(root: Path, *args: str) -> None:
     subprocess.run(
         ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
@@ -238,9 +303,9 @@ ROSTERS = {
 def _capture_script(capture: str, envelopes: dict[str, dict]) -> str:
     """Expand the rendered A.2c block: one heredoc per role, same form as the prose."""
     lines = capture.splitlines()
-    first_cat = next(i for i, ln in enumerate(lines) if ln.startswith("cat > "))
-    header = "\n".join(lines[:first_cat])
-    template = "\n".join(lines[first_cat:])
+    first_capture = next(i for i, ln in enumerate(lines) if " capture_review_output " in ln)
+    header = "\n".join(lines[:first_capture])
+    template = "\n".join(lines[first_capture:])
     placeholder = "<paste the Monitor JSON envelope verbatim>"
     assert placeholder in template
     parts = [header]
@@ -324,7 +389,7 @@ def _start_review(root: Path, arguments: str, *, lightweight: bool = False) -> N
         _bash_blocks(text, "### Step A.0b")[0],
     ]
     for block in re.findall(r"```bash\n(.*?)\n```", text, flags=re.DOTALL):
-        if "begin_review_run" in block and block not in blocks:
+        if re.search(r"map_step_runner\.py begin_review_run\b", block) and block not in blocks:
             blocks.append(block)
     _run_block(root, f"ARGUMENTS={shlex.quote(arguments)}\n" + "\n".join(blocks))
 
@@ -332,14 +397,13 @@ def _start_review(root: Path, arguments: str, *, lightweight: bool = False) -> N
 @pytest.mark.parametrize(
     ("previous", "mode", "arguments", "current", "expected"),
     [
-        ("blocked", "adversarial", "--adversarial", "minor", "PROCEED"),
-        ("blocked", "compare_orderings", "--adversarial --compare-orderings", "minor", "PROCEED"),
-        ("adversarial", "normal", "", "monitor", "PROCEED"),
-        ("blocked", "normal", "", "peers", "REVISE"),
-        ("clean", "normal", "", "peers", "REVISE"),
+        ("blocked", "adversarial", "--adversarial", "minor", "BLOCK"),
+        ("blocked", "compare_orderings", "--adversarial --compare-orderings", "minor", "BLOCK"),
+        ("adversarial", "normal", "", "monitor", "BLOCK"),
+        ("blocked", "normal", "", "peers", "BLOCK"),
     ],
     ids=["normal-to-adversarial", "compare-orderings", "adversarial-to-lightweight",
-         "same-mode-missing-blocked-monitor", "same-mode-missing-clean-monitor"],
+         "same-mode-missing-blocked-monitor"],
 )
 def test_current_review_closeout_does_not_consume_previous_run(
     project, previous, mode, arguments, current, expected,
@@ -354,7 +418,7 @@ def test_current_review_closeout_does_not_consume_previous_run(
     minor = [{"severity": "minor", "category": "tests", "claim": "Naming nit"}]
     _start_review(project, "", lightweight=True)
     _run_block(project, _capture_script(capture, {
-        "monitor": blocked_monitor if previous == "blocked" else MONITOR_CLEAN,
+        "monitor": blocked_monitor,
     }))
     _run_block(project, ledger_block)
     _run_block(project, gate_block)
@@ -392,7 +456,7 @@ def test_current_review_closeout_does_not_consume_previous_run(
     assert ledger["input_classification"]["review_mode"] == mode
     assert ledger["journal"]["previous_verdict"] == prior
     gate = json.loads((branch_dir / "review-gate.json").read_text())
-    assert gate["verdict"] == ("ready" if expected == "PROCEED" else "needs-revision")
+    assert gate["verdict"] == {"PROCEED": "ready", "REVISE": "needs-revision", "BLOCK": "blocked"}[expected]
 
 
 @pytest.mark.parametrize("content", [None, "", "{}", '{"unrelated":true}'],

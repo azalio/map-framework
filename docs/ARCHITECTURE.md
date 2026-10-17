@@ -863,9 +863,34 @@ Current delta captured:
   carries `ledger_findings`, observed reviewer statuses and parse errors. Clean
   observed output can produce PROCEED; an empty legacy finding array alone cannot.
   A runner-owned review start archives the previous input artifacts and stale
-  gate, preserving the ledger journal and objections. The current mode and
-  scheduled roster bind closeout inputs, including missing files, so repeated
-  runs do not inherit previous reviewers. `review_verdict_ledger` manifest stage.
+  gate only for a newly admitted round, preserving the ledger journal and
+  objections. The current mode and scheduled roster bind closeout inputs,
+  including missing files, so new rounds do not inherit previous reviewers.
+  `review_verdict_ledger` manifest stage.
+
+- Bounded review convergence (#521, PR 1a): the same ledger owns durable
+  review/fix round identities, completion history, unresolved findings,
+  publication history, timestamps and stop reason. Reviewer/tool retries and
+  comparison orderings belong to one round. Admission and finalization serialize
+  canonical mutations; repeated submissions do not consume another iteration.
+  Three unsuccessful completed rounds stop automatic admission for approach
+  reconsideration, never approval. Missing reviewer collection stays incomplete;
+  success alone records rounds-to-pass. Corrupt convergence state cannot reset
+  the budget. The JSON ledger is authoritative; Markdown and manifest entries
+  are derived artifacts, not independent counters.
+  Publication identity separates the defect from its evidence/disposition
+  revision. Acknowledging a delivered revision suppresses repeat presentation,
+  not its registry row or verdict contribution; omitted unresolved findings
+  remain open. Delivery followed by a crash before acknowledgment may replay,
+  so this is not an external exactly-once protocol.
+  Re-review scope uses a prior reviewed baseline plus the delta, affected
+  dependencies and unresolved locations. Without sufficient baseline/coverage
+  evidence, it records a full-review fallback rather than assuming reuse.
+  Incremental dependency analysis is limited to clean root-level static Python
+  module graphs with full Git identity and completed-roster file coverage;
+  unsupported languages/import structures retain full review.
+  Acceptance-tag coverage alone is not file-review coverage. Snapshot-bound
+  receipts and completeness contracts are a separate PR 1b extension.
 
 - Non-English Monitor feedback preservation (#404): `_filter_blocker_retry_feedback` in
   `.map/scripts/map_orchestrator.py` now uses `BLOCKER_FEEDBACK_TERMS` as a **ranking hint**

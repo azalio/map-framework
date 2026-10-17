@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Durable bounded `/map-review` convergence in the existing verdict ledger: stable
+  review/fix round identities, restart-safe history, timing and rounds-to-pass,
+  and a reconsideration stop after three unsuccessful rounds. Exhaustion never
+  grants approval. (#521, PR 1a)
+- Review publication history distinguishes unchanged unresolved findings from new
+  evidence, dispositions and distinct defects; suppression leaves findings in the
+  ledger and verdict. Incremental re-review includes affected dependencies and
+  unresolved findings, with full-review fallback when coverage is uncertain.
+
 ## [3.33.0] - 2026-10-17
 
 ### Added

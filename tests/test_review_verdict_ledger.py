@@ -1746,6 +1746,283 @@ def test_legacy_adversarial_payload_compatibility(branch_workspace, container):
     assert result["input_errors"] == []
 
 
+@pytest.mark.parametrize("compare", [False, True])
+def test_quick_adversarial_clean_round_completes_with_unscheduled_edge(branch_workspace, compare):
+    runner = cast(Any, map_step_runner)
+    runner.begin_review_run(arguments="--adversarial --quick" + (" --compare-orderings" if compare else ""))
+    report = _all_clear_adversarial_report()
+    report["reviewer_status"]["edge_case"] = {"status": "not_run"}
+    directories = [branch_workspace] if not compare else [branch_workspace / "review-collections" / name for name in ("default", "reverse")]
+    for directory in directories:
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "review-agent-adversarial.json").write_text(json.dumps(report))
+    result = runner.write_review_verdict_ledger(current_run=True)
+    assert result["status"] == "success", result
+    assert result["computed_verdict"] == "PROCEED"
+
+
+def test_monitor_location_only_distinct_files_do_not_merge(branch_workspace):
+    runner = cast(Any, map_step_runner)
+    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="1")
+    first = {"severity": "CRITICAL", "category": "correctness", "description": "Missing authorization check",
+             "reach_evidence": "reachable", "location": "a.py:10"}
+    envelope = {"issues": [first, {**first, "severity": "LOW", "location": "b.py:20"}]}
+    (branch_workspace / "review-agent-monitor.json").write_text(json.dumps(envelope))
+    result = runner.write_review_verdict_ledger(current_run=True)
+    assert result["computed_verdict"] == "BLOCK"
+    ledger = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())
+    assert len(ledger["findings_registry"]) == 2
+
+
+@pytest.mark.parametrize("flags", ["--adversarial", "--adversarial --quick", "--adversarial --quick --compare-orderings"])
+def test_adversarial_originating_reviewer_can_resolve_prior_finding(branch_workspace, flags):
+    runner = cast(Any, map_step_runner)
+    runner.begin_review_run(arguments=flags, round_id="1")
+    report = _all_clear_adversarial_report()
+    report["ledger_findings"] = [{"severity": "critical", "category": "correctness", "reviewer": "blind",
+                                  "file_path": "a.py", "failure_mode": "data loss", "evidence": []}]
+    directories = [branch_workspace] if "--compare-orderings" not in flags else [
+        branch_workspace / "review-collections" / name for name in ("default", "reverse")]
+    for directory in directories:
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "review-agent-adversarial.json").write_text(json.dumps(report))
+    runner.write_review_verdict_ledger(current_run=True)
+    runner.begin_review_run(arguments=flags, round_id="2")
+    report = _all_clear_adversarial_report()
+    if "--quick" in flags:
+        report["reviewer_status"]["edge_case"] = {"status": "not_run"}
+    report["reviewer_status"]["blind"]["raw"]["resolved_findings"] = [
+        {"finding_id": "RVF-001", "evidence": "Regression passes on changed writer"},
+    ]
+    for directory in directories:
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "review-agent-adversarial.json").write_text(json.dumps(report))
+    assert runner.write_review_verdict_ledger(current_run=True)["computed_verdict"] == "PROCEED"
+
+
+def test_adversarial_distinct_defects_survive_round_merge(branch_workspace):
+    runner = cast(Any, map_step_runner)
+    runner.begin_review_run(arguments="--adversarial", round_id="1")
+    report = _all_clear_adversarial_report()
+    report["ledger_findings"] = [
+        {"severity": "critical", "category": "correctness", "file_path": "a.py", "failure_mode": "data loss", "evidence": []},
+        {"severity": "minor", "category": "correctness", "file_path": "a.py", "failure_mode": "small defect", "evidence": []},
+    ]
+    (branch_workspace / "review-agent-adversarial.json").write_text(json.dumps(report))
+    result = runner.write_review_verdict_ledger(current_run=True)
+    assert result["computed_verdict"] == "BLOCK"
+    ledger = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())
+    assert len(ledger["findings_registry"]) == 2
+
+
+def test_moved_finding_retains_identity_and_resolves_without_phantom(branch_workspace):
+    runner = cast(Any, map_step_runner)
+    for number, line in ((1, 10), (2, 11)):
+        runner.begin_review_run(scheduled_reviewers=["monitor"], round_id=str(number))
+        envelope = _monitor_with_critical()
+        envelope["issues"][0].update({"file": "rollback.py", "line": line})
+        (branch_workspace / "review-agent-monitor.json").write_text(json.dumps(envelope))
+        runner.write_review_verdict_ledger(current_run=True)
+    ledger = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())
+    assert len(ledger["findings_registry"]) == 1
+    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="3")
+    envelope = _monitor_no_issues()
+    envelope["resolved_findings"] = [{"finding_id": "RVF-001", "evidence": "new regression passes"}]
+    (branch_workspace / "review-agent-monitor.json").write_text(json.dumps(envelope))
+    assert runner.write_review_verdict_ledger(current_run=True)["computed_verdict"] == "PROCEED"
+
+
+@pytest.mark.parametrize("owner,other", [("maintainer", "user_experience"), ("user_experience", "maintainer")])
+def test_role_resolution_cannot_close_another_role_finding(branch_workspace, owner, other):
+    runner = cast(Any, map_step_runner)
+    runner.begin_review_run(round_id="first")
+    envelopes = {"monitor": _monitor_no_issues(), "predictor": _predictor_low_risk(),
+                 "evaluator": _evaluator_high_score(), "maintainer": {"all_clear": True, "findings": []},
+                 "user_experience": {"all_clear": True, "findings": []}}
+    finding = {"severity": "critical", "category": "correctness", "claim": "Broken workflow",
+               "proof": "call trace", "cost": "user loses state", "counterfactual": "old path retained state",
+               "failure_mode": "restart loses state", "anchor": "workflow.py:12"}
+    envelopes[owner] = {"all_clear": False, "findings": [finding]}
+    for role, envelope in envelopes.items():
+        (branch_workspace / f"review-agent-{role}.json").write_text(json.dumps(envelope))
+    runner.write_review_verdict_ledger(current_run=True)
+    ledger = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())
+    target = next(row for row in ledger["findings_registry"] if "Broken workflow" in row["claim"])
+    runner.begin_review_run(round_id="second")
+    envelopes[owner] = {"all_clear": True, "findings": []}
+    envelopes[other]["resolved_findings"] = [{"finding_id": target["id"], "evidence": "fixed"}]
+    for role, envelope in envelopes.items():
+        (branch_workspace / f"review-agent-{role}.json").write_text(json.dumps(envelope))
+    result = runner.write_review_verdict_ledger(current_run=True)
+    assert result["status"] == "error"
+    assert "originating reviewer" in result["message"]
+
+
+def test_incomplete_round_recovers_without_counting_and_rejects_stale_finalizer(branch_workspace):
+    runner = cast(Any, map_step_runner)
+    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="first")
+    result = runner.write_review_verdict_ledger(current_run=True, round_id="first")
+    assert result["convergence"]["outcome"] == "incomplete"
+    assert not result["convergence"].get("completed_rounds")
+    assert runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="second")["status"] == "error"
+    (branch_workspace / "review-agent-monitor.json").write_text(json.dumps(_monitor_with_critical()))
+    result = runner.write_review_verdict_ledger(current_run=True, round_id="first")
+    assert result["convergence"]["completed_rounds"] == 1
+    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="second")
+    assert runner.write_review_verdict_ledger(current_run=True, round_id="first")["status"] == "error"
+
+
+def test_completed_round_rejects_changed_submission_and_corrupt_history(branch_workspace):
+    runner = cast(Any, map_step_runner)
+    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="first")
+    capture = branch_workspace / "review-agent-monitor.json"
+    capture.write_text(json.dumps(_monitor_with_critical()))
+    runner.write_review_verdict_ledger(current_run=True)
+    capture.write_text(json.dumps(_monitor_no_issues()))
+    assert runner.write_review_verdict_ledger(current_run=True)["status"] == "error"
+    (branch_workspace / "review-verdict-ledger.json").write_text("{")
+    assert runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="second")["status"] == "error"
+    assert capture.exists()
+
+
+def test_archive_interruption_resumes_same_admission(branch_workspace, monkeypatch):
+    runner = cast(Any, map_step_runner)
+    marker = branch_workspace / "review-agent-monitor.json"
+    marker.write_text("old capture")
+    rename = Path.rename
+
+    def interrupt(self, target):
+        rename(self, target)
+        raise OSError("interrupted after move")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "rename", interrupt)
+        assert runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="first")["status"] == "error"
+    assert runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="first")["resumed"]
+    archives = list(branch_workspace.rglob("review-agent-monitor.json"))
+    assert len(archives) == 1 and archives[0].read_text() == "old capture"
+    ledger = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())
+    assert len(ledger["convergence"]["rounds"]) == 1
+
+
+def test_incremental_scope_includes_dependent_modules_and_falls_back(branch_workspace, monkeypatch):
+    runner = cast(Any, map_step_runner)
+    monkeypatch.chdir(branch_workspace.parents[1])
+    import subprocess
+
+    def git(*args):
+        return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()
+
+    git("init", "-b", "main")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test")
+    Path(".gitignore").write_text(".map/\n")
+    Path("core.py").write_text("VALUE = 1\n")
+    Path("consumer.py").write_text("from core import VALUE\n")
+    git("add", ".")
+    git("commit", "-m", "base")
+    git("checkout", "-b", "feature")
+    Path("core.py").write_text("VALUE = 2\n")
+    git("commit", "-am", "first")
+    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="1")
+    prompts = runner.build_review_prompts(review_bundle_text="bundle")
+    assert prompts["review_scope"]["kind"] == "full"
+    envelope = _monitor_with_critical()
+    envelope["covered_files"] = ["core.py", "consumer.py"]
+    (branch_workspace / "review-agent-monitor.json").write_text(json.dumps(envelope))
+    runner.write_review_verdict_ledger(current_run=True)
+    Path("core.py").write_text("VALUE = 3\n")
+    git("commit", "-am", "fix")
+    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="2")
+    prompts = runner.build_review_prompts(review_bundle_text="bundle")
+    assert prompts["review_scope"]["kind"] == "incremental"
+    assert prompts["review_scope"]["affected_files"] == ["consumer.py", "core.py"]
+    assert "VALUE = 3" in prompts["prompts"]["monitor"]["prompt"]
+    Path("unknown.txt").write_text("untracked impact")
+    assert runner.build_review_prompts(review_bundle_text="bundle")["review_scope"]["kind"] == "full"
+
+
+def test_publication_suppresses_only_acknowledged_unchanged_revision(branch_workspace):
+    runner = cast(Any, map_step_runner)
+    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="1")
+    capture = branch_workspace / "review-agent-monitor.json"
+    capture.write_text(json.dumps(_monitor_with_critical()))
+    runner.write_review_verdict_ledger(current_run=True)
+    first = runner.review_publication(destination="github:pr/1")
+    assert len(first["publishable"]) == 1
+    revision = first["publishable"][0]["revision_id"]
+    runner.review_publication(destination="github:pr/1", acknowledge=[revision])
+    assert runner.review_publication(destination="github:pr/1")["publishable"] == []
+    assert runner.review_publication(destination="github:pr/2")["publishable"]
+    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="2")
+    changed = _monitor_with_critical()
+    changed["issues"][0]["reach_evidence"] = "New reproducer: rollback loses both writers"
+    changed["issues"].append({**changed["issues"][0], "description": "Different rollback leak"})
+    capture.write_text(json.dumps(changed))
+    runner.write_review_verdict_ledger(current_run=True)
+    assert len(runner.review_publication(destination="github:pr/1")["publishable"]) == 2
+
+
+def test_explicit_rereview_resolution_allows_third_round_pass(branch_workspace):
+    runner = cast(Any, map_step_runner)
+    for number in (1, 2):
+        runner.begin_review_run(scheduled_reviewers=["monitor"], round_id=str(number))
+        (branch_workspace / "review-agent-monitor.json").write_text(json.dumps(_monitor_with_critical()))
+        runner.write_review_verdict_ledger(current_run=True)
+    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="3")
+    envelope = _monitor_no_issues()
+    envelope["resolved_findings"] = [{"finding_id": "RVF-001", "evidence": "Reproducer now passes on corrected rollback path"}]
+    (branch_workspace / "review-agent-monitor.json").write_text(json.dumps(envelope))
+    result = runner.write_review_verdict_ledger(current_run=True)
+    assert result["computed_verdict"] == "PROCEED"
+    assert result["convergence"]["outcome"] == "passed"
+    assert result["convergence"]["rounds_to_pass"] == 3
+    assert result["convergence"]["duration_seconds"] >= 0
+
+
+def test_round_keeps_omitted_unresolved_findings(branch_workspace):
+    runner = cast(Any, map_step_runner)
+    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="first")
+    capture = branch_workspace / "review-agent-monitor.json"
+    capture.write_text(json.dumps(_monitor_with_critical()))
+    runner.write_review_verdict_ledger(current_run=True)
+    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="second")
+    capture.write_text(json.dumps(_monitor_no_issues()))
+    result = runner.write_review_verdict_ledger(current_run=True)
+    assert result["computed_verdict"] == "BLOCK"
+    ledger = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())
+    assert ledger["findings_registry"]
+    assert len(ledger["convergence"]["rounds"]) == 2
+    prompts = runner.build_review_prompts(review_bundle_text="bundle")
+    assert prompts["review_scope"]["kind"] == "full"
+    assert "RVF-001" in prompts["prompts"]["monitor"]["prompt"]
+    assert "RVF-001" in runner.build_adversarial_review_prompts()["prompts"]["blind"]["prompt"]
+
+
+def test_review_round_retry_and_cap_are_durable(branch_workspace):
+    runner = cast(Any, map_step_runner)
+    for number in range(1, 4):
+        round_id = f"iteration-{number}"
+        admitted = runner.begin_review_run(scheduled_reviewers=["monitor"], round_id=round_id)
+        assert admitted["status"] == "success"
+        capture = branch_workspace / "review-agent-monitor.json"
+        capture.write_text(json.dumps(_monitor_with_critical()))
+        assert runner.begin_review_run(scheduled_reviewers=["monitor"], round_id=round_id)["resumed"]
+        assert capture.exists()
+        result = runner.write_review_verdict_ledger(current_run=True)
+        assert result["convergence"]["completed_rounds"] == number
+        assert runner.write_review_verdict_ledger(current_run=True)["convergence"] == result["convergence"]
+    before = {p.name: p.read_bytes() for p in branch_workspace.glob("review-*.json")}
+    rejected = runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="iteration-4")
+    assert rejected["status"] == "error"
+    assert rejected["stop_reason"] == "reconsider_approach"
+    assert {p.name: p.read_bytes() for p in branch_workspace.glob("review-*.json")} == before
+    ledger = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())
+    assert ledger["computed_verdict"] == "BLOCK"
+    assert ledger["convergence"]["outcome"] == "capped"
+    assert ledger["convergence"]["rounds_to_pass"] is None
+
+
 def test_begin_review_run_archives_only_inputs_and_gate_preserving_journal(branch_workspace):
     workspace = branch_workspace
     map_step_runner.write_review_verdict_ledger(monitor_json=json.dumps(_monitor_with_critical()))
@@ -1785,7 +2062,12 @@ def test_begin_review_run_archives_only_inputs_and_gate_preserving_journal(branc
         if name != "review-mode.json":
             assert not (workspace / name).exists(), name
     for name, content in {**preserved, **untouched}.items():
-        assert (workspace / name).read_bytes() == content
+        if name == "review-verdict-ledger.json":
+            updated = json.loads((workspace / name).read_text())
+            updated.pop("convergence")
+            assert updated == json.loads(content)
+        else:
+            assert (workspace / name).read_bytes() == content
         assert list(workspace.rglob(name)) == [workspace / name], name
     mode = json.loads((workspace / "review-mode.json").read_text())
     assert mode["review_mode"] == "adversarial"
@@ -1794,18 +2076,22 @@ def test_begin_review_run_archives_only_inputs_and_gate_preserving_journal(branc
     ]
     map_step_runner.write_review_verdict_ledger(monitor_json=json.dumps(_monitor_no_issues()))
     ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
-    assert ledger["journal"]["previous_verdict"] == "BLOCK"
+    assert ledger["computed_verdict"] == "BLOCK"
+    assert ledger["convergence"]["outcome"] == "incomplete"
 
 
 def test_same_mode_review_reruns_do_not_overwrite_archived_inputs(branch_workspace):
     workspace = branch_workspace
     begin = cast(Any, map_step_runner).begin_review_run
-    for marker in ("first", "second"):
-        (workspace / "review-agent-monitor.json").write_text(marker, encoding="utf-8")
-        begin(review_mode="normal", scheduled_reviewers=["monitor"])
+    (workspace / "review-agent-monitor.json").write_text("stale", encoding="utf-8")
+    begin(review_mode="normal", scheduled_reviewers=["monitor"], round_id="first")
+    payload = json.dumps(_monitor_with_critical())
+    (workspace / "review-agent-monitor.json").write_text(payload, encoding="utf-8")
+    map_step_runner.write_review_verdict_ledger(current_run=True)
+    begin(review_mode="normal", scheduled_reviewers=["monitor"], round_id="second")
     archives = list(workspace.rglob("review-agent-monitor.json"))
     assert len(archives) == 2
-    assert {path.read_text() for path in archives} == {"first", "second"}
+    assert {path.read_text() for path in archives} == {"stale", payload}
     assert not (workspace / "review-agent-monitor.json").exists()
 
 

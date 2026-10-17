@@ -71,6 +71,7 @@ import time
 import unicodedata
 from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
+from functools import wraps
 from pathlib import Path, PurePosixPath
 from typing import Any, TypedDict, cast
 
@@ -8615,11 +8616,184 @@ def _validate_review_run(data: Any) -> str | None:
     return None
 
 
+def _review_transaction(function: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+    """Serialize ledger read/modify/write across processes using a stable lock inode."""
+    @wraps(function)
+    def locked(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        import fcntl
+
+        directory = get_branch_dir(kwargs.get("branch") or get_branch_name())
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            with (directory / ".review-ledger.lock").open("a") as handle:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    return function(*args, **kwargs)
+                finally:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            return {"status": "error", "message": f"Review transaction failed: {exc}"}
+    return locked
+
+
+def _read_review_ledger(directory: Path) -> dict[str, Any]:
+    path = directory / "review-verdict-ledger.json"
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or data.get("schema_version") != "review_verdict_ledger.v1":
+        raise ValueError("Invalid prior review ledger; refusing to reset history")
+    convergence = data.get("convergence")
+    if convergence is not None:
+        if not isinstance(convergence, dict) or not isinstance(convergence.get("rounds"), list):
+            raise ValueError("Invalid convergence history")
+        rounds = convergence["rounds"]
+        if any(not isinstance(row, dict) or not row.get("round_id") for row in rounds):
+            raise ValueError("Invalid round history")
+        if len({row["round_id"] for row in rounds}) != len(rounds):
+            raise ValueError("Duplicate round history")
+    return data
+
+
+def _review_git(*args: str) -> str:
+    result = subprocess.run(["git", *args], capture_output=True, text=True, timeout=10, check=False)
+    if result.returncode:
+        raise ValueError(f"Cannot verify review target: git {args[0]} failed")
+    return result.stdout.strip()
+
+
+def _review_target() -> dict[str, Any]:
+    """Use full object IDs; unverifiable local inputs cannot support coverage reuse."""
+    try:
+        head = _review_git("rev-parse", "HEAD")
+        def resolve(args: list[str]) -> str:
+            try:
+                return _review_git(*args)
+            except ValueError:
+                return ""
+
+        base, _ = _resolve_review_base(resolve)
+        dirty = _review_git("status", "--porcelain", "--untracked-files=all", "--", ".", ":(exclude).map")
+        dirty = "\n".join(line for line in dirty.splitlines() if not line[3:].startswith(".map/"))
+        # Intent: dirty targets are never reused incrementally, but a retry still detects changed inputs.
+        fingerprint = _review_git("diff", "HEAD", "--", ".", ":(exclude).map") + dirty
+        for name in _review_git("ls-files", "--others", "--exclude-standard").splitlines():
+            if not name.startswith(".map/"):
+                fingerprint += name + hashlib.sha256(Path(name).read_bytes()).hexdigest()
+        return {"head": head, "base": base, "reusable": bool(base) and not dirty,
+                "local_digest": hashlib.sha256(fingerprint.encode()).hexdigest()}
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return {"reusable": False}
+
+
+def _python_review_dependencies(changed: list[str]) -> list[str]:
+    """Prove a small static root-module graph, otherwise require the full review."""
+    files = _review_git("ls-files").splitlines()
+    modules = {Path(name).stem: name for name in files if name.endswith(".py") and "/" not in name}
+    if any(name not in modules.values() for name in changed):
+        raise ValueError("Changed paths lack a verified static dependency graph")
+    # Intent: frameworks, packages and non-Python consumers require broader impact analysis.
+    if any(name != ".gitignore" and name not in modules.values() for name in files):
+        raise ValueError("Repository has consumers outside the supported static module graph")
+    dependencies: dict[str, set[str]] = {}
+    for name in modules.values():
+        tree = ast.parse(Path(name).read_text(encoding="utf-8"))
+        deps: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in {
+                "__import__", "eval", "exec", "getattr", "globals", "locals",
+            }:
+                raise ValueError("Dynamic module dependencies require full review")
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                if node.level or not node.module:
+                    raise ValueError("Relative imports require full review")
+                names = [node.module]
+            else:
+                continue
+            if any(module not in modules for module in names):
+                raise ValueError("External imports require full review")
+            deps.update(modules[module] for module in names)
+        dependencies[name] = deps
+    affected = set(changed)
+    while True:
+        expanded = affected | {name for name, deps in dependencies.items() if deps & affected}
+        if expanded == affected:
+            return sorted(affected)
+        affected = expanded
+
+
+def review_round_scope(branch: str | None = None) -> dict[str, Any]:
+    """Conservative delta scope from a complete covered baseline; never from AC citations."""
+    fallback: dict[str, Any] = {"kind": "full", "reason": "No reusable completed full-review baseline"}
+    try:
+        ledger = _read_review_ledger(get_branch_dir(branch or get_branch_name()))
+        rounds = ledger.get("convergence", {}).get("rounds", [])
+        completed = [row for row in rounds if "completed_at" in row]
+        target = _review_target()
+        if not completed or not target.get("reusable"):
+            return fallback
+        previous = completed[-1]
+        baseline = previous.get("target", {})
+        if not baseline.get("reusable") or baseline.get("base") != target.get("base"):
+            return fallback
+        _review_git("merge-base", "--is-ancestor", baseline["head"], target["head"])
+        changed = _review_git("diff", "--name-only", baseline["head"], target["head"]).splitlines()
+        affected = _python_review_dependencies(changed)
+        if not set(affected).issubset(previous.get("covered_files", [])):
+            return {"kind": "full", "reason": "Affected dependencies lack prior reviewer coverage"}
+        return {"kind": "incremental", "reason": "Static dependency closure and prior covered baseline verified",
+                "affected_files": affected, "delta_base": baseline["head"], "head": target["head"],
+                "unresolved_findings": [row for row in ledger.get("findings_registry", [])
+                                        if row.get("status") in {"active", "downgraded"}]}
+    except (OSError, ValueError, KeyError, TypeError, SyntaxError, subprocess.TimeoutExpired) as exc:
+        return {"kind": "full", "reason": f"Cannot establish reusable impact/baseline: {exc}"}
+
+
+def _scoped_review_diff(branch: str | None, supplied: str | None) -> tuple[str, dict[str, Any]]:
+    scope = review_round_scope(branch)
+    try:
+        prior = _read_review_ledger(get_branch_dir(branch or get_branch_name()))
+        unresolved = [row for row in prior.get("findings_registry", []) if row.get("status") in {"active", "downgraded"}]
+    except (OSError, ValueError, TypeError):
+        unresolved = []
+    scope["unresolved_findings"] = unresolved
+    if supplied is not None:
+        scope = {"kind": "full", "reason": "Caller-supplied diff has no reusable target proof", "unresolved_findings": unresolved}
+        return supplied + ("\n\nUnresolved findings: " + json.dumps(unresolved) if unresolved else ""), scope
+    if scope["kind"] == "incremental":
+        try:
+            diff = _review_git("diff", scope["delta_base"], scope["head"])
+            return diff + "\n\nReview delta, affected dependencies and unresolved findings only:\n" + json.dumps(scope), scope
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            scope = {"kind": "full", "reason": "Delta unavailable; full review required"}
+    return _read_git_diff_for_review() + "\n\nReview scope: " + json.dumps(scope), scope
+
+
+def _prepare_review_inputs(directory: Path, ledger: dict[str, Any], row: dict[str, Any]) -> list[str]:
+    """Replay an interrupted archive using the durable admission's fixed move list."""
+    archive = directory / "review-input-archive" / row["round_id"].encode().hex()
+    archive.mkdir(parents=True, exist_ok=True)
+    for name in row["archive_inputs"]:
+        source, target = directory / name, archive / name
+        if target.exists():
+            continue
+        if source.exists():
+            source.rename(target)
+    _write_json_file(directory / "review-mode.json", {**row["binding"], "round_id": row["round_id"]})
+    row["prepared"] = True
+    _write_json_file(directory / "review-verdict-ledger.json", ledger)
+    return row["archive_inputs"]
+
+
+@_review_transaction
 def begin_review_run(
     review_mode: str = "normal", scheduled_reviewers: list[str] | None = None,
     *, mode: str = "full", arguments: str = "", sibling_hint: str = "", branch: str | None = None,
+    round_id: str = "",
 ) -> dict[str, Any]:
-    """Archive bounded prior inputs before collection; retain ledger and objections."""
+    """Admit one review/fix iteration; retries retain captured reviewer inputs."""
     # Intent: focus text is free prose, not a shell command; detect only literal flag tokens.
     flags = arguments.split()
     if scheduled_reviewers is None:
@@ -8641,21 +8815,50 @@ def begin_review_run(
     if error:
         return {"status": "error", "message": error}
     branch_dir = get_branch_dir(branch or get_branch_name())
+    prior = _read_review_ledger(branch_dir)
+    convergence = prior.get("convergence", {"rounds": [], "started_at": time.time()})
+    rounds = convergence["rounds"]
+    pending = next((row for row in rounds if "completed_at" not in row), None)
+    if not round_id:
+        round_id = pending["round_id"] if pending else f"round-{len(rounds) + 1}"
+    if not isinstance(round_id, str) or not round_id.strip():
+        return {"status": "error", "message": "round_id must be nonempty"}
+    existing = next((row for row in rounds if row["round_id"] == round_id), None)
+    if existing:
+        if existing["binding"] != dict(payload) or existing.get("target") != _review_target():
+            return {"status": "error", "message": "Round identity already bound to different review inputs"}
+        if not existing.get("prepared"):
+            _prepare_review_inputs(branch_dir, prior, existing)
+        return {"status": "success", "resumed": True, "round_id": round_id,
+                "completed": "completed_at" in existing, **dict(payload)}
+    if pending:
+        return {"status": "error", "message": "Resume the unfinished review round first"}
+    unsuccessful = sum(row.get("verdict") != "PROCEED" for row in rounds)
+    if unsuccessful >= 3:
+        return {"status": "error", "stop_reason": "reconsider_approach",
+                "message": "Three unsuccessful review/fix rounds; reconsider the approach. No fourth automatic round."}
+    if convergence.get("outcome") == "passed":
+        return {"status": "error", "message": "Review already passed; retain this completed run"}
     archive_path = None
     try:
         branch_dir.mkdir(parents=True, exist_ok=True)
         previous = [branch_dir / name for name in REVIEW_INPUT_NAMES if (branch_dir / name).exists()]
-        if previous:
-            archive_root = branch_dir / "review-input-archive"
-            archive_root.mkdir(exist_ok=True)
-            archive_path = Path(tempfile.mkdtemp(prefix="run-", dir=archive_root))
-            for path in previous:
-                path.rename(archive_path / path.name)
-        _write_json_file(branch_dir / "review-mode.json", dict(payload))
+        row = {"round_id": round_id, "binding": dict(payload), "started_at": time.time(),
+               "archive_inputs": [path.name for path in previous], "prepared": False,
+               "target": _review_target()}
+        rounds.append(row)
+        convergence.update({"outcome": "incomplete", "stop_reason": "review_pending",
+                            "rounds_to_pass": None})
+        if not prior:
+            prior = normalize_review_verdict(monitor_result={"issues": []}, branch=branch)
+        prior["convergence"] = convergence
+        _write_json_file(branch_dir / "review-verdict-ledger.json", prior)
+        _prepare_review_inputs(branch_dir, prior, row)
+        archive_path = branch_dir / "review-input-archive" / round_id.encode().hex()
     except OSError as exc:
         return {"status": "error", "message": f"Review start failed: {exc}",
                 "archive_path": str(archive_path) if archive_path else None}
-    return {"status": "success", "review_mode": review_mode,
+    return {"status": "success", "review_mode": review_mode, "round_id": round_id, "resumed": False,
             "scheduled_reviewers": scheduled_reviewers,
             "archived_inputs": [path.name for path in previous],
             "archive_path": str(archive_path) if archive_path else None}
@@ -8800,6 +9003,9 @@ def normalize_review_verdict(
         for ev_item in (issue.get("evidence") or []):
             if isinstance(ev_item, dict):
                 evidence.append(ev_item)
+        location = {key: issue[key] for key in ("file", "path", "line", "location", "failure_scenario") if key in issue}
+        if location:
+            evidence.append({"source": "finding_location", "quote": json.dumps(location, sort_keys=True)})
         reach = str(issue.get("reach_evidence") or "").strip()
         if reach:
             evidence.append({"source": "reach_evidence", "quote": reach})
@@ -8961,6 +9167,7 @@ def normalize_review_verdict(
         findings_registry.append({
             "id": _next_id(),
             "source_agent": "role",
+            "originating_reviewer": reviewer,
             "category": _normalize_category(str(entry.get("category") or "")),
             "severity": severity,
             "claim": f"[{reviewer}] {claim}",
@@ -9011,8 +9218,13 @@ def normalize_review_verdict(
             "source_agent": raw_source if raw_source in _LEDGER_SOURCE_AGENTS else "adversarial",
             "category": _normalize_category(str(ext_finding.get("category") or "")),
             "severity": sev,
-            "claim": str(ext_finding.get("claim") or ext_finding.get("description") or ""),
-            "evidence": list(ext_finding.get("evidence") or []),
+            "originating_reviewer": str(ext_finding.get("reviewer") or raw_source),
+            "claim": str(ext_finding.get("claim") or ext_finding.get("description") or ext_finding.get("failure_mode") or ""),
+            "evidence": [*list(ext_finding.get("evidence") or []), {
+                "source": "finding_location", "quote": json.dumps({
+                    key: ext_finding[key] for key in ("file_path", "symbol", "failure_mode") if key in ext_finding
+                }, sort_keys=True),
+            }],
             "status": "active",
             "transition_reason": None,
             "transition_evidence": None,
@@ -9050,6 +9262,7 @@ def normalize_review_verdict(
         findings_registry.append({
             "id": _next_id(),
             "source_agent": "role",
+            "originating_reviewer": reviewer,
             "category": _normalize_category(str(entry.get("category") or "")),
             "severity": role_sev,
             "claim": f"[{reviewer}] {role_claim}",
@@ -9368,6 +9581,174 @@ def _load_review_objections(branch_dir: Path) -> list[dict[str, Any]]:
     return [o for o in payload if isinstance(o, dict)] if isinstance(payload, list) else []
 
 
+def _review_finding_key(finding: dict[str, Any]) -> str:
+    location = []
+    for item in finding.get("evidence", []):
+        if item.get("source") == "finding_location":
+            details = json.loads(item["quote"])
+            stable = {key: value for key, value in details.items() if key != "line"}
+            if isinstance(stable.get("location"), str):
+                stable["location"] = re.sub(r":\d+(?::\d+)?(?:-\d+(?::\d+)?)?$", "", stable["location"])
+            location.append(stable)
+    return hashlib.sha256(json.dumps(
+        [finding.get("source_agent"), finding.get("originating_reviewer"), finding.get("category"), finding.get("claim"), location],
+        sort_keys=True,
+    ).encode()).hexdigest()
+
+
+def _retain_review_findings(
+    ledger: dict[str, Any], prior: dict[str, Any], resolutions: list[dict[str, Any]] | None = None,
+) -> None:
+    """Omission is not resolution; preserve stable IDs and each evidence revision."""
+    registry = {_review_finding_key(row): dict(row) for row in prior.get("findings_registry", [])
+                if row.get("transition_reason") != "input_integrity"}
+    next_id = max((int(row["id"].removeprefix("RVF-")) for row in registry.values()), default=0)
+    history = list(prior.get("finding_history", []))
+    observed: dict[str, dict[str, Any]] = {}
+    for finding in ledger["findings_registry"]:
+        key = _review_finding_key(finding)
+        # Intent: duplicate/order-dependent reviewer rows must never overwrite stronger evidence.
+        if key in observed:
+            severity_order = {"minor": 0, "needs_investigation": 1, "important": 2, "critical": 3}
+            if severity_order.get(finding["severity"], 1) < severity_order.get(observed[key]["severity"], 1):
+                continue
+        observed[key] = finding
+        old = registry.get(key)
+        if old:
+            finding["id"] = old["id"]
+        else:
+            next_id += 1
+            finding["id"] = f"RVF-{next_id:03d}"
+        revision = hashlib.sha256(json.dumps(finding, sort_keys=True).encode()).hexdigest()
+        if not any(item["revision_id"] == revision for item in history):
+            history.append({"finding_key": key, "revision_id": revision, "finding": dict(finding)})
+        registry[key] = finding
+    for resolution in resolutions or []:
+        finding = next((row for row in registry.values() if row["id"] == resolution.get("finding_id")), None)
+        if finding is None or not str(resolution.get("evidence") or "").strip():
+            raise ValueError("Resolution requires an existing finding ID and re-review evidence")
+        if finding.get("originating_reviewer", finding["source_agent"]) != resolution.get("source_agent"):
+            raise ValueError("Only the originating reviewer may resolve an open finding")
+        finding.update({"status": "tombstoned", "transition_reason": "different_version",
+                        "transition_evidence": resolution["evidence"]})
+        history.append({"finding_key": _review_finding_key(finding),
+                        "revision_id": hashlib.sha256(json.dumps(finding, sort_keys=True).encode()).hexdigest(),
+                        "finding": dict(finding)})
+    ledger["findings_registry"] = list(registry.values())
+    ledger["finding_history"] = history
+    ledger["publication_history"] = prior.get("publication_history", [])
+    active = [row for row in registry.values() if row.get("status") in {"active", "downgraded"}]
+    ledger["computed_verdict"], ledger["verdict_basis"] = _apply_verdict_table(active)
+    if ledger.get("escalation_required") and ledger["computed_verdict"] == "PROCEED":
+        ledger["computed_verdict"] = "REVISE"
+        ledger["verdict_basis"] = "Unresolved escalation requires human follow-up"
+    ledger["active_count"] = len(active)
+    ledger["downgraded_count"] = sum(row.get("status") == "downgraded" for row in registry.values())
+    ledger["tombstoned_count"] = sum(row.get("status") == "tombstoned" for row in registry.values())
+    ledger["journal"].update({"current_verdict": ledger["computed_verdict"], "basis": ledger["verdict_basis"]})
+
+
+@_review_transaction
+def capture_review_output(
+    reviewer: str, payload: str, round_id: str, *, ordering: str = "", branch: str | None = None,
+) -> dict[str, Any]:
+    """Fence a reviewer response to the admitted iteration before replacing its capture."""
+    directory = get_branch_dir(branch or get_branch_name())
+    ledger = _read_review_ledger(directory)
+    rounds = ledger.get("convergence", {}).get("rounds", [])
+    if not rounds or rounds[-1]["round_id"] != round_id or "completed_at" in rounds[-1]:
+        raise ValueError("Stale or completed review capture")
+    row = rounds[-1]
+    run = row["binding"]
+    allowed = run["scheduled_reviewers"] if "monitor" in run["scheduled_reviewers"] else ["adversarial"]
+    if reviewer not in allowed or ordering not in {"", "default", "reverse"}:
+        raise ValueError("Capture is not part of the admitted reviewer roster")
+    if bool(ordering) != (run["review_mode"] == "compare_orderings"):
+        raise ValueError("Capture ordering does not match the admitted round")
+    data = json.loads(payload)
+    if not isinstance(data, dict):
+        raise ValueError("Reviewer capture must be a JSON object")
+    if ordering:
+        directory = directory / "review-collections" / ordering
+    directory.mkdir(parents=True, exist_ok=True)
+    _write_json_file(directory / f"review-agent-{reviewer}.json", data)
+    return {"status": "success", "round_id": round_id, "reviewer": reviewer}
+
+
+@_review_transaction
+def review_publication(
+    destination: str, acknowledge: list[str] | None = None, *, branch: str | None = None,
+) -> dict[str, Any]:
+    """Select finding revisions; acknowledge only after a successful external publication."""
+    if not destination.strip():
+        raise ValueError("Publication destination is required")
+    directory = get_branch_dir(branch or get_branch_name())
+    ledger = _read_review_ledger(directory)
+    history = ledger.setdefault("publication_history", [])
+    current = {}
+    for row in ledger.get("findings_registry", []):
+        revision = hashlib.sha256(json.dumps(row, sort_keys=True).encode()).hexdigest()
+        current[revision] = row
+    for revision in acknowledge or []:
+        if revision not in current:
+            raise ValueError("Acknowledgment does not match a current finding revision")
+        if not any(item["revision_id"] == revision and item["destination"] == destination for item in history):
+            history.append({"revision_id": revision, "destination": destination, "acknowledged_at": _utc_timestamp()})
+    if acknowledge:
+        _write_json_file(directory / "review-verdict-ledger.json", ledger)
+    published = {item["revision_id"] for item in history if item["destination"] == destination}
+    return {"status": "success", "destination": destination,
+            "publishable": [{"revision_id": revision, "finding": row} for revision, row in current.items()
+                            if revision not in published],
+            "suppressed": [revision for revision in current if revision in published]}
+
+
+def _complete_review_round(
+    ledger: dict[str, Any], prior: dict[str, Any], run: dict[str, Any], directory: Path,
+) -> dict[str, Any]:
+    convergence = prior.get("convergence")
+    if not convergence:
+        raise ValueError("Current review has no durable round admission")
+    row = next((item for item in convergence["rounds"] if item["round_id"] == run.get("round_id")), None)
+    if row is None:
+        raise ValueError("Current review round is not admitted")
+    files = sorted(path for path in directory.rglob("review-agent-*.json")
+                   if "review-input-archive" not in path.parts)
+    digest = hashlib.sha256(json.dumps(
+        [(str(path.relative_to(directory)), path.read_text(encoding="utf-8")) for path in files],
+        sort_keys=True,
+    ).encode()).hexdigest()
+    if "completed_at" in row:
+        if row["submission_digest"] != digest:
+            raise ValueError("Completed round payload changed; start the next review/fix iteration")
+        return prior
+    if row.get("target") != _review_target():
+        raise ValueError("Review target changed during this round; refusing completion")
+    coverage: list[set[str]] = []
+    for path in files:
+        envelope = json.loads(path.read_text(encoding="utf-8"))
+        covered = envelope.get("covered_files") if isinstance(envelope, dict) else None
+        if not isinstance(covered, list) or any(not isinstance(name, str) for name in covered):
+            coverage.append(set())
+        else:
+            coverage.append(set(covered))
+    row.update({"completed_at": time.time(), "submission_digest": digest,
+                "covered_files": sorted(set.intersection(*coverage)) if coverage else [],
+                "verdict": ledger["computed_verdict"]})
+    completed = [item for item in convergence["rounds"] if "completed_at" in item]
+    passed = ledger["computed_verdict"] == "PROCEED"
+    capped = not passed and len(completed) >= 3
+    convergence.update({
+        "completed_rounds": len(completed), "duration_seconds": time.time() - convergence["started_at"],
+        "rounds_to_pass": len(completed) if passed else None,
+        "outcome": "passed" if passed else ("capped" if capped else "incomplete"),
+        "stop_reason": "passed" if passed else ("reconsider_approach" if capped else "findings_or_incomplete"),
+    })
+    ledger["convergence"] = convergence
+    return ledger
+
+
+@_review_transaction
 def write_review_verdict_ledger(
     monitor_json: str = "",
     predictor_json: str = "",
@@ -9381,6 +9762,7 @@ def write_review_verdict_ledger(
     adversarial_file: str = "",
     role_files: Mapping[str, str] | None = None,
     current_run: bool = False,
+    round_id: str = "",
     review_mode: str = "normal",
     previous_verdict: str = "",
     destination: str = "unknown",
@@ -9429,11 +9811,15 @@ def write_review_verdict_ledger(
     expected_adversarial = list(ADVERSARIAL_REVIEWERS)
     collection_dirs = [branch_dir]
     roster: list[str] = []
+    resolutions: list[dict[str, Any]] = []
+    run: dict[str, Any] = {}
     if current_run:
         try:
             run = json.loads((branch_dir / "review-mode.json").read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             return {"status": "error", "message": f"Cannot load current review-mode.json: {exc}"}
+        if round_id and run.get("round_id") != round_id:
+            return {"status": "error", "message": "Stale review round finalizer"}
         run_error = _validate_review_run(run)
         if run_error:
             return {"status": "error", "message": run_error}
@@ -9496,6 +9882,11 @@ def write_review_verdict_ledger(
             if invalid:
                 input_errors.append(f"{label}: invalid scheduled reviewer envelope")
                 return {}
+            resolved = parsed.get("resolved_findings", [])
+            if not isinstance(resolved, list) or any(not isinstance(item, dict) for item in resolved):
+                input_errors.append(f"{label}: resolved_findings must be an object array")
+            else:
+                resolutions.extend({**item, "source_agent": reviewer} for item in resolved)
         return parsed
 
     def _safe_parse_list(raw: str, label: str) -> list[dict[str, Any]]:
@@ -9532,6 +9923,14 @@ def write_review_verdict_ledger(
             errors = _adversarial_aggregate_errors(parsed, expected_adversarial)
             input_errors.extend(errors)
             adversarial_inputs_supplied = not errors
+            if not errors:
+                for reviewer in expected_adversarial:
+                    status = parsed["reviewer_status"][reviewer]
+                    resolved = status["raw"].get("resolved_findings", [])
+                    if not isinstance(resolved, list) or any(not isinstance(item, dict) for item in resolved):
+                        input_errors.append(f"{reviewer}: resolved_findings must be an object array")
+                    else:
+                        resolutions.extend({**item, "source_agent": reviewer} for item in resolved)
             findings = parsed.get("ledger_findings")
             return [item for item in findings if isinstance(item, dict)] if isinstance(findings, list) else []
         if current_run:
@@ -9656,6 +10055,19 @@ def write_review_verdict_ledger(
         branch=branch_name,
     )
 
+    prior = _read_review_ledger(branch_dir)
+    if current_run:
+        _retain_review_findings(ledger, prior, resolutions if not input_errors else [])
+        completed_retry = any(row["round_id"] == run.get("round_id") and "completed_at" in row
+                              for row in prior["convergence"]["rounds"])
+        if input_errors and not completed_retry:
+            ledger["convergence"] = prior["convergence"]
+        else:
+            ledger = _complete_review_round(ledger, prior, run, branch_dir)
+    elif "convergence" in prior:
+        # Intent: legacy recomputation must not mutate a completed bounded review.
+        ledger = prior
+
     # Write JSON
     _write_json_file(json_path, ledger)
 
@@ -9758,6 +10170,7 @@ def write_review_verdict_ledger(
         "not_verified_count": len(not_verified_list),
         "escalation_required": bool(escalation_reasons_list),
         "input_errors": input_errors,
+        "convergence": ledger.get("convergence"),
     }
 
 
@@ -9846,6 +10259,9 @@ def _check_review_ledger_binding(branch_dir: Path, verdict: str) -> dict | str:
             ),
         }
 
+    convergence = ledger.get("convergence", {})
+    if verdict == "ready" and convergence and convergence.get("outcome") != "passed":
+        return {"status": "error", "message": "Incomplete/capped review rounds cannot approve the review gate"}
     computed = normalize_gate_verdict(str(ledger.get("computed_verdict") or ""))
     if computed is None:
         return {
@@ -11509,7 +11925,7 @@ def build_review_prompts(
         if review_bundle_text is not None
         else _read_review_bundle_markdown(branch_name)
     )
-    git_diff = git_diff_text if git_diff_text is not None else _read_git_diff_for_review()
+    git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text)
     minimality = _load_minimality_level(Path.cwd())
     layering = _load_prompt_layering(Path.cwd())
 
@@ -11565,6 +11981,7 @@ def build_review_prompts(
         "prompt_layering": layering,
         "budget_tokens": budget,
         "budget_env": REVIEW_PROMPT_BUDGET_ENV,
+        "review_scope": review_scope,
         "prompts": prompts,
     }
 
@@ -11899,7 +12316,7 @@ def build_role_review_prompts(
     role_ids = roles or list(ROLE_REVIEWER_IDS)
     layering = _load_prompt_layering(Path.cwd())
 
-    git_diff = git_diff_text if git_diff_text is not None else _read_git_diff_for_review()
+    git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text)
     repo_context = (
         repo_context_text
         if repo_context_text is not None
@@ -11916,6 +12333,7 @@ def build_role_review_prompts(
         "status": "success",
         "branch": branch_name,
         "prompt_layering": layering,
+        "review_scope": review_scope,
         "prompts": prompts,
         "roles_requested": role_ids,
     }
@@ -11943,7 +12361,7 @@ def build_adversarial_review_prompts(
     reviewer_ids = reviewers or ["blind", "edge_case", "acceptance", *ROLE_REVIEWER_IDS]
     layering = _load_prompt_layering(Path.cwd())
 
-    git_diff = git_diff_text if git_diff_text is not None else _read_git_diff_for_review()
+    git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text)
 
     spec_context = spec_text if spec_text is not None else _read_spec_for_review(branch_name)
     repo_context = _read_repo_summary_for_review(branch_name)
@@ -11979,6 +12397,7 @@ def build_adversarial_review_prompts(
         "status": "success",
         "branch": branch_name,
         "prompt_layering": layering,
+        "review_scope": review_scope,
         "prompts": prompts,
         "reviewers_requested": reviewer_ids,
     }
@@ -12499,7 +12918,7 @@ def build_cross_ai_review_prompt(
     """
     branch_name = _sanitize_branch(branch) if branch else get_branch_name()
     layering = _load_prompt_layering(Path.cwd())
-    git_diff = git_diff_text if git_diff_text is not None else _read_git_diff_for_review()
+    git_diff, _review_scope = _scoped_review_diff(branch_name, git_diff_text)
     spec_context = spec_text if spec_text is not None else _read_spec_for_review(branch_name)
     prefs = review_preferences.strip() or "[no project-specific review preferences provided]"
 
@@ -24905,6 +25324,34 @@ if __name__ == "__main__":
         if result.get("status") == "error":
             sys.exit(1)
 
+    elif func_name == "capture_review_output":
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py capture_review_output")
+        _p.add_argument("--reviewer", required=True)
+        _p.add_argument("--round-id", required=True)
+        _p.add_argument("--ordering", default="")
+        _p.add_argument("--branch", default=None)
+        _args = _p.parse_args(sys.argv[2:])
+        result = capture_review_output(_args.reviewer, sys.stdin.read(), _args.round_id,
+                                       ordering=_args.ordering, branch=_args.branch)
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+        if result["status"] == "error":
+            sys.exit(1)
+
+    elif func_name == "review_publication":
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py review_publication")
+        _p.add_argument("--destination", required=True)
+        _p.add_argument("--acknowledge", action="append", default=[])
+        _p.add_argument("--branch", default=None)
+        _args = _p.parse_args(sys.argv[2:])
+        result = review_publication(_args.destination, _args.acknowledge, branch=_args.branch)
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+        if result["status"] == "error":
+            sys.exit(1)
+
     elif func_name == "begin_review_run":
         import argparse as _ap
 
@@ -24912,10 +25359,11 @@ if __name__ == "__main__":
         _p.add_argument("--mode", default="full", choices=("full", "lightweight", "sibling-aware"))
         _p.add_argument("--arguments", default="")
         _p.add_argument("--sibling-hint", default="")
+        _p.add_argument("--round-id", default="")
         _p.add_argument("--branch", default=None)
         _args = _p.parse_args(sys.argv[2:])
         result = begin_review_run(mode=_args.mode, arguments=_args.arguments,
-                                  sibling_hint=_args.sibling_hint, branch=_args.branch)
+                                  sibling_hint=_args.sibling_hint, branch=_args.branch, round_id=_args.round_id)
         print(json.dumps(result, indent=2, ensure_ascii=True))
         if result["status"] == "error":
             sys.exit(1)
@@ -24941,7 +25389,7 @@ if __name__ == "__main__":
             frozenset({
                 "monitor-json", "predictor-json", "evaluator-json", "adversarial-json",
                 "monitor-file", "predictor-file", "evaluator-file", "adversarial-file",
-                "review-mode", "previous-verdict", "branch", "current-run",
+                "review-mode", "previous-verdict", "branch", "current-run", "round-id",
                 "destination", "executor-class",
             } | {f"{r.replace('_', '-')}-json" for r in ROLE_REVIEWER_IDS}
               | {f"{r.replace('_', '-')}-file" for r in ROLE_REVIEWER_IDS}),
@@ -24975,6 +25423,7 @@ if __name__ == "__main__":
             destination=_cli_flag("destination", "unknown"),
             executor_class=_cli_flag("executor-class", "unknown"),
             current_run="--current-run" in sys.argv[2:],
+            round_id=_cli_flag("round-id", ""),
             review_mode=_cli_flag("review-mode", "normal"),
             previous_verdict=_cli_flag("previous-verdict", ""),
             branch=_cli_flag("branch") or None,
