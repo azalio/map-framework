@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.33.0] - 2026-10-17
+
 ### Added
 - Optional `checks.go.tags` build tags for end-of-turn Go checks, passed as literal
   arguments while preserving default, disabled and cross-platform behavior. (#489, #512)
