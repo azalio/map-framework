@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tomllib
 
 import pytest
@@ -79,6 +80,31 @@ def test_managed_refresh_restores_capabilities_and_preserves_user_tail(installed
         assert settings["features"]["shell_tool"] is False
         assert settings["features"]["multi_agent_v2"] is False
         assert settings["agents"]["enabled"] is False
+
+
+def test_installed_check_supervisor_refresh_and_execution(installed_reader):
+    root, provider = installed_reader
+    helper = root / ".map/scripts/review_check_supervisor.py"
+    assert helper.exists()
+    original = helper.read_bytes()
+    helper.write_text("# stale helper\n")
+    refreshed = CliRunner().invoke(app, ["init", ".", "--provider", provider, "--no-git", "--force", "--mcp", "none"])
+    assert refreshed.exit_code == 0, refreshed.output
+    assert helper.read_bytes() == original
+    subprocess.run(["git", "init", "-b", "main"], check=True, capture_output=True)
+    for key, value in (("user.email", "test@example.com"), ("user.name", "Test")):
+        subprocess.run(["git", "config", key, value], check=True)
+    (root / "writer.py").write_text("VALUE = 1\n")
+    subprocess.run(["git", "add", "writer.py"], check=True)
+    subprocess.run(["git", "commit", "-m", "base"], check=True, capture_output=True)
+    runner = [sys.executable, str(root / ".map/scripts/map_step_runner.py")]
+    admission = subprocess.run([*runner, "begin_review_run", "--mode", "lightweight", "--required-check", "smoke",
+                                "--check-specs-json", json.dumps({"smoke": [sys.executable, "-c", "print('ok')"]})],
+                               capture_output=True, text=True, check=True)
+    assert json.loads(admission.stdout)["status"] == "success", admission.stdout
+    check = subprocess.run([*runner, "run_test_gate", "--check-id", "smoke"],
+                           capture_output=True, text=True, check=True)
+    assert json.loads(check.stdout)["passed"] is True, check.stdout
 
 
 def test_all_installed_review_dispatches_use_reader(installed_reader):

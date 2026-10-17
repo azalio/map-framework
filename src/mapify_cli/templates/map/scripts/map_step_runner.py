@@ -14496,7 +14496,7 @@ def _record_review_check(check_id: str, command: list[str], *, branch: str | Non
             raise ValueError("Check timeout must be positive finite seconds")
         # The caller owns the execution lease before touching ledger state. Legacy
         # attempts did not hold it, so their quiescence cannot be proved here.
-        if any(check.get("state") == "running" and check.get("lease_protocol") != "flock-v1"
+        if any(check.get("state") == "running" and check.get("lease_protocol") != "process-group-v2"
                for check in checks.values()):
             raise ValueError("Legacy execution check ownership is unknown; explicit recovery is required")
         history = ledger.setdefault("execution_check_history", [])
@@ -14511,7 +14511,7 @@ def _record_review_check(check_id: str, command: list[str], *, branch: str | Non
         checks[check_id] = {"state": "running", "passed": False, "command": command,
                             "started_at": time.time(), "before": row["target"], "timeout_seconds": timeout_seconds,
                             "policy_hash": row["policy_hash"], "owner_pid": os.getpid(),
-                            "attempt_id": attempt_id, "round_id": row["round_id"], "lease_protocol": "flock-v1"}
+                            "attempt_id": attempt_id, "round_id": row["round_id"], "lease_protocol": "process-group-v2"}
     else:
         check = checks[check_id]
         if (check.get("state") != "running" or check.get("attempt_id") != attempt_id
@@ -14525,7 +14525,7 @@ def _record_review_check(check_id: str, command: list[str], *, branch: str | Non
             handle.flush()
             os.fsync(handle.fileno())
         after = _review_target()
-        check.update({**result, "state": "finished", "after": after,
+        check.update({**result, "state": "running" if result.get("status") == "cleanup_blocked" else "finished", "after": after,
                       "duration_seconds": time.time() - check["started_at"],
                       "output_artifact": str(artifact.relative_to(directory)),
                       "output_sha256": hashlib.sha256(output).hexdigest(), "evidence": "tool_witnessed"})
@@ -14587,8 +14587,8 @@ def run_test_gate(*, command: list[str] | None = None, check_id: str = "", branc
         directory = _review_branch_dir(branch)
         try:
             directory.mkdir(parents=True, exist_ok=True)
-            # Stable inode, never unlinked. Close-only releases our reference:
-            # a surviving direct child retains the lease after runner death.
+            # Stable inode, never unlinked. Supervisor and group anchor inherit
+            # this lease before any command starts; runner death cannot release it.
             with (directory / ".review-execution.lock").open("a") as lease:
                 try:
                     fcntl.flock(lease.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -14602,14 +14602,29 @@ def run_test_gate(*, command: list[str] | None = None, check_id: str = "", branc
                 execution: dict[str, Any] = {"status": "skipped", "passed": False, "exit_code": None}
                 if test_cmd:
                     try:
-                        process = subprocess.run(test_cmd, capture_output=True, timeout=started["timeout_seconds"],
-                                                 check=False, pass_fds=(lease.fileno(),))
-                        output = process.stdout + process.stderr
-                        execution = {"status": "success", "passed": process.returncode == 0,
-                                     "exit_code": process.returncode}
-                    except subprocess.TimeoutExpired as exc:
-                        output = (exc.stdout or b"") + (exc.stderr or b"")
-                        execution = {"status": "timeout", "passed": False, "exit_code": None}
+                        attempt_dir = (directory / "review-checks" / attempt_id).resolve()
+                        attempt_dir.mkdir(parents=True)
+                        supervisor = subprocess.Popen(
+                            [sys.executable, str(Path(__file__).with_name("review_check_supervisor.py")),
+                             "supervise", str(attempt_dir), str(lease.fileno()),
+                             str(started["timeout_seconds"]), *test_cmd],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            start_new_session=True, pass_fds=(lease.fileno(),),
+                        )
+                        result_path = attempt_dir / "supervisor.json"
+                        while not result_path.exists() and supervisor.poll() is None:
+                            time.sleep(0.02)
+                        if result_path.exists():
+                            execution = json.loads(result_path.read_text())
+                            if execution["status"] != "cleanup_blocked":
+                                supervisor.wait()
+                        else:
+                            execution = {"status": "error", "passed": False, "exit_code": None,
+                                         "message": "Check supervisor exited without a result; ownership may require recovery"}
+                        for stream in ("stdout", "stderr"):
+                            path = attempt_dir / stream
+                            if path.exists():
+                                output += path.read_bytes()
                     except OSError as exc:
                         output = str(exc).encode()
                         execution = {"status": "error", "passed": False, "exit_code": None}

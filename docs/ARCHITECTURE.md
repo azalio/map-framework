@@ -911,11 +911,26 @@ Current delta captured:
   evidence, not proof of reviewer comprehension.
   The runner alone owns execution checks and durable evidence references;
   reviewers reuse current results. A stable execution lock spans claim through
-  completion and is inherited by the direct check process. After ownership is
-  released, restart recovery preserves abandoned attempts as non-passing
-  `interrupted` history before starting a new attempt; live execution remains
-  exclusive. Attempt identity fences stale completion. Check commands must stay
-  synchronous rather than detach into daemons.
+  completion and is inherited by an independent supervisor and process-group
+  anchor. The supervisor owns the admitted deadline even after runner SIGKILL;
+  ordinary nested children remain contained when they close inherited FDs or
+  redirect output. On timeout or wrapper exit it kills residual group members,
+  proves no live non-zombie members remain using portable `ps`, then reaps the
+  anchor (which reserves the PGID against reuse) and releases ownership.
+  Per-attempt output/result files live under `review-checks/<attempt_id>/`; the
+  review ledger remains authoritative. Inspection is checked before launch.
+  A cleanup inspection failure produces a durable `cleanup_blocked` diagnostic,
+  returns promptly without passing/finishing the check, and retains ownership;
+  the surviving supervisor retries inspection and releases only after quiescence.
+  Restore working `ps` inspection and retry; never delete the lock inode or
+  fabricate completion. After ownership is released, restart recovery preserves
+  abandoned attempts as non-passing `interrupted` history before starting a new
+  attempt; attempt identity fences stale completion. Running attempts from the
+  old direct-child lease protocol require explicit recovery rather than being
+  assumed quiescent. Explicit `setsid`/`setpgid` escapes and forced destruction of
+  both supervisor and anchor are outside the containment contract; killing the
+  supervisor alone can require operator recovery because the anchor keeps its
+  lease. These controls are crash containment, not a sandbox for hostile checks.
   Source-attribution bundles include base and
   current contents, the base diff and line mapping so dedicated read-only agents
   need no shell access. Context expansion belongs to the parent.
