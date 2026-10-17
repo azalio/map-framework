@@ -127,8 +127,11 @@ if [ "$QUICK_FLAG" != "true" ]; then
 EDGE_EOF
   ADV_ARGS+=(--edge-case "$BRANCH_DIR/adversarial-edge.json")
 fi
+REVIEW_ROUND_ID="${REVIEW_ROUND_ID:-$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["round_id"])' "$RUN_MODE")}"
+set -o pipefail
 python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings \
-  "${ADV_ARGS[@]}" > "$BRANCH_DIR/review-agent-adversarial.json" || exit 1
+  "${ADV_ARGS[@]}" | python3 .map/scripts/map_step_runner.py capture_review_output \
+  --reviewer adversarial --round-id "$REVIEW_ROUND_ID" --ordering "${ORDERING_LABEL:-}" || exit 1
 ```
 
 ## Step B.adversarial.4: Present unified adversarial report

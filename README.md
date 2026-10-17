@@ -177,6 +177,7 @@ The DevOpsConf 2026 case study applies this process to a production Kubernetes P
 - **Reviewable diffs** — `/map-plan` and `/map-efficient` require per-subtask size, concern, and constraint metadata, then validate `blueprint.json` *before* implementation, so oversized or mixed-concern plans fail early.
 - **Gates that check the plan, not vibes** — `/map-check` and `/map-review` validate against the spec, tests, and diff instead of asking whether code "looks fine".
 - **Clean-room review** — `/map-review` auto-bundles available spec, plan, tests, verification, and coverage evidence into a single durable input (`.map/<branch>/review-bundle.json`); standalone external-PR review needs no Actor blueprint. `--detached` opens a read-only worktree for inspection without touching your branch.
+- **Bounded review/fix cycles** — `/map-review` retains round history and unresolved findings across restarts, suppresses acknowledged repeat publications, and stops after three unsuccessful attempts for reconsideration—not approval. Explicit abandonment recovers stale pending rounds without resetting that budget. Incremental re-review falls back to full review when baseline or dependency coverage is uncertain.
 - **Project memory** — `/map-learn` turns hard-won fixes and gotchas into reusable context, so the next session doesn't relearn them.
 
 <details>
