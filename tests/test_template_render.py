@@ -1284,7 +1284,7 @@ class TestGoldenFixturesCodex:
         )
 
     @_skip_no_codex_templates_src
-    def test_codex_renders_all_nine_agent_roles_with_sandbox_intent(
+    def test_codex_renders_all_agent_roles_with_sandbox_intent(
         self, tmp_path: Path
     ) -> None:
         dest = tmp_path / "rendered"
@@ -1304,6 +1304,7 @@ class TestGoldenFixturesCodex:
             "reflector",
             "researcher",
             "decomposer",
+            "review-reader",
         }
         role_files = list((dest / "agents").glob("*.toml"))
         roles = {path.stem for path in role_files}
@@ -1321,7 +1322,13 @@ class TestGoldenFixturesCodex:
                 assert "write is permitted" not in instructions
 
         config = tomllib.loads((dest / "config.toml").read_text(encoding="utf-8"))
-        assert config["agents"] == {"max_threads": 6, "max_depth": 2}
+        assert config["agents"] == {
+            "max_threads": 6, "max_depth": 2,
+            "review-reader": {
+                "description": "Shell-free reviewer with runner-supplied source evidence",
+                "config_file": "agents/review-reader.toml",
+            },
+        }
 
     @_skip_no_codex_templates_src
     def test_vc3_negative_mutated_fixture_fails(self, tmp_path: Path) -> None:

@@ -4100,6 +4100,39 @@ class TestMapReviewSharedSourceCodexRender:
         source = (self._SRC / name).read_text(encoding="utf-8")
         return env.from_string(source).render(PROVIDER=provider)
 
+    @pytest.mark.parametrize("provider", ["claude", "codex"])
+    @pytest.mark.parametrize("specs", [{}, {"unit suite; literal": ["python3", "-m", "pytest"]}])
+    def test_review_documented_checks_use_literal_argv(self, monkeypatch, provider, specs) -> None:
+        import subprocess
+        import sys
+        from types import SimpleNamespace
+
+        skill = self._render("SKILL.md.jinja", provider)
+        blocks = re.findall(r"<<'PY'\n(.*?)\nPY", skill, re.DOTALL)
+        block = next((text for text in blocks if "begin_review_run" in text), None)
+        assert block is not None, "Admission and documented checks must use an argv-safe wrapper"
+        calls = []
+
+        def run(argv, **kwargs):
+            assert kwargs.get("check") is True
+            calls.append(argv)
+            return SimpleNamespace(stdout='{"status":"success","completed":false}')
+
+        monkeypatch.setattr(subprocess, "run", run)
+        monkeypatch.setattr(sys, "argv", ["-", json.dumps(specs), "lightweight", "focus text", "", "{}"])
+        exec(compile(block, "review-check-wrapper", "exec"), {})  # noqa: S102 - trusted rendered project snippet
+        admission = calls[0]
+        assert admission[admission.index("--provider") + 1] == provider
+        assert admission[admission.index("--capability-profile") + 1] == "review-reader"
+        assert json.loads(admission[admission.index("--check-specs-json") + 1]) == specs
+        assert admission[admission.index("--check-timeouts-json") + 1] == "{}"
+        required = [admission[i + 1] for i, value in enumerate(admission) if value == "--required-check"]
+        assert required == list(specs)
+        assert [argv[-1] for argv in calls[1:]] == list(specs)
+        assert all(argv[-2] == "--check-id" for argv in calls[1:])
+        assert "diff-only" not in skill
+        assert "admitted required_files" in skill
+
     def test_codex_frontmatter_drops_claude_only_keys(self) -> None:
         codex = self._render("SKILL.md.jinja", "codex")
         front = codex.split("---\n")[1]
@@ -4122,21 +4155,12 @@ class TestMapReviewSharedSourceCodexRender:
         assert "$map-review" in codex
         assert "/map-review" in claude and "$map-review" not in claude
 
-    _NORMAL_DISPATCH = (
-        ("monitor", "monitor"),
-        ("predictor", "predictor"),
-        ("evaluator", "evaluator"),
-        ("user_experience", "predictor"),
-        ("maintainer", "documentation-reviewer"),
-        ("complexity_lens", "evaluator"),
-    )
-    _ADVERSARIAL_DISPATCH = (
-        ("blind", "monitor"),
-        ("edge_case", "monitor"),
-        ("acceptance", "evaluator"),
-        ("user_experience", "predictor"),
-        ("maintainer", "documentation-reviewer"),
-    )
+    _NORMAL_DISPATCH = tuple((role, "review-reader") for role in (
+        "monitor", "predictor", "evaluator", "user_experience", "maintainer", "complexity_lens",
+    ))
+    _ADVERSARIAL_DISPATCH = tuple((role, "review-reader") for role in (
+        "blind", "edge_case", "acceptance", "user_experience", "maintainer",
+    ))
 
     @staticmethod
     def _spawn_line(text: str, role: str, agent_type: str) -> bool:
@@ -4157,12 +4181,8 @@ class TestMapReviewSharedSourceCodexRender:
         for role, agent_type in self._ADVERSARIAL_DISPATCH:
             assert self._spawn_line(adversarial, role, agent_type), role
         assert "as the spawn_agent messages" in skill
-        quick = (
-            "with blind→monitor, edge_case→monitor, acceptance→evaluator,\n"
-            "                   user_experience→predictor, maintainer→documentation-reviewer"
-        )
-        assert quick in skill
-        assert 'spawn_agent(agent_type=..., task_name="map_review_<role>_<n>"' in skill
+        assert 'spawn_agent(agent_type="review-reader", task_name="map_review_<role>_<n>"' in skill
+        assert "for every role" in skill
 
     def test_claude_render_keeps_task_dispatch(self) -> None:
         for name in ("SKILL.md.jinja", "adversarial-reference.md.jinja"):
@@ -4182,7 +4202,7 @@ class TestMapReviewSharedSourceCodexRender:
             assert "Wait for all dispatched reviewers and map each final JSON" in text
             assert "sequentially" in text
             assert "parent-session personas" in text
-        assert "carry their own developer instructions" in skill
+        assert "generated role prompt supplies its complete role protocol" in skill
         assert "fresh `task_name`" in skill.split("Step A.2b: Truncated-response gate")[1]
         compare = skill.split("Step A.1d")[1].split("Step A.2:")[0]
         assert "keeps incrementing across both collections" in compare

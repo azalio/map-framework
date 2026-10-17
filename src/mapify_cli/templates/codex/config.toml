@@ -8,3 +8,7 @@ hooks = true
 # Role definitions are auto-discovered from .codex/agents/*.toml.
 max_threads = 6
 max_depth = 2
+
+[agents.review-reader]
+description = "Shell-free reviewer with runner-supplied source evidence"
+config_file = "agents/review-reader.toml"

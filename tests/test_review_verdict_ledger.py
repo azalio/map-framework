@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, cast
 
@@ -527,7 +528,7 @@ def test_write_review_verdict_ledger_writes_json_and_md(branch_workspace):
     )
 
     assert result["status"] == "success"
-    assert result["computed_verdict"] == "PROCEED"
+    assert result.get("findings_verdict", result["computed_verdict"]) == "PROCEED"
 
     workspace = Path(".map/test-branch")
     json_path = workspace / "review-verdict-ledger.json"
@@ -906,7 +907,7 @@ def test_evidenced_objection_removes_a_minor_finding(branch_workspace):
     )
     result = map_step_runner.write_review_verdict_ledger(monitor_json=json.dumps(monitor))
 
-    assert result["computed_verdict"] == "PROCEED"
+    assert result.get("findings_verdict", result["computed_verdict"]) == "PROCEED"
     assert result["tombstoned_count"] == 1
     assert result["escalation_required"] is False
 
@@ -1551,7 +1552,7 @@ def test_all_clear_role_envelope_counts_as_supplied_input(branch_workspace):
         "no output was supplied" in nv for nv in payload["not_verified"]
     ), payload["not_verified"]
     assert payload["escalation_required"] is False
-    assert result["computed_verdict"] == "PROCEED"
+    assert result.get("findings_verdict", result["computed_verdict"]) == "PROCEED"
 
 
 def test_no_role_envelope_at_all_is_still_reported_as_no_input(branch_workspace):
@@ -1633,7 +1634,7 @@ def test_no_role_envelopes_at_all_is_not_flagged_as_a_partial_roster(branch_work
     assert not any(
         "fan-out is incomplete" in nv for nv in result.get("not_verified", [])
     )
-    assert result["computed_verdict"] == "PROCEED"
+    assert result.get("findings_verdict", result["computed_verdict"]) == "PROCEED"
 
 
 def test_unreadable_role_envelope_is_a_finding_not_a_clean_pass(branch_workspace):
@@ -1680,7 +1681,7 @@ def test_all_clear_adversarial_aggregate_is_an_observed_review(branch_workspace,
         adversarial_file=str(aggregate_path), review_mode=mode,
     )
 
-    assert result["computed_verdict"] == "PROCEED"
+    assert result.get("findings_verdict", result["computed_verdict"]) == "PROCEED"
     assert result["input_errors"] == []
     ledger = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())
     assert ledger["findings_registry"] == []
@@ -1759,7 +1760,7 @@ def test_quick_adversarial_clean_round_completes_with_unscheduled_edge(branch_wo
         (directory / "review-agent-adversarial.json").write_text(json.dumps(report))
     result = runner.write_review_verdict_ledger(current_run=True)
     assert result["status"] == "success", result
-    assert result["computed_verdict"] == "PROCEED"
+    assert result.get("findings_verdict", result["computed_verdict"]) == "PROCEED"
 
 
 def test_monitor_location_only_distinct_files_do_not_merge(branch_workspace):
@@ -1788,7 +1789,7 @@ def test_adversarial_originating_reviewer_can_resolve_prior_finding(branch_works
     })
     result = _capture_aggregate(report, "2", flags)
     assert result["status"] == "success", result
-    assert result["computed_verdict"] == "PROCEED"
+    assert result.get("findings_verdict", result["computed_verdict"]) == "PROCEED"
     ledger = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())
     assert ledger["findings_registry"][0]["reported_by"] == ["blind"]
 
@@ -1822,7 +1823,7 @@ def test_moved_finding_retains_identity_and_resolves_without_phantom(branch_work
     envelope = _monitor_no_issues()
     envelope["resolved_findings"] = [{"finding_id": "RVF-001", "evidence": "new regression passes"}]
     (branch_workspace / "review-agent-monitor.json").write_text(json.dumps(envelope))
-    assert runner.write_review_verdict_ledger(current_run=True)["computed_verdict"] == "PROCEED"
+    assert runner.write_review_verdict_ledger(current_run=True)["findings_verdict"] == "PROCEED"
 
 
 @pytest.mark.parametrize("owner,other", [("maintainer", "user_experience"), ("user_experience", "maintainer")])
@@ -1917,12 +1918,15 @@ def test_incremental_scope_includes_dependent_modules_and_falls_back(branch_work
     git("checkout", "-b", "feature")
     Path("core.py").write_text("VALUE = 2\n")
     git("commit", "-am", "first")
-    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="1")
+    Path(".gitignore").write_text(".map/\n.claude/\n")
+    git("commit", "-am", "ignore installed profiles")
+    admission = _admit_receipt_review(runner, round_id="baseline")
     prompts = runner.build_review_prompts(review_bundle_text="bundle")
     assert prompts["review_scope"]["kind"] == "full"
     envelope = _monitor_with_critical()
-    envelope["covered_files"] = ["core.py", "consumer.py"]
-    (branch_workspace / "review-agent-monitor.json").write_text(json.dumps(envelope))
+    envelope["receipt"] = {"covered_files": admission["required_files"], "skipped_files": [],
+                           "denied_access": [], "check_evidence": []}
+    runner.capture_review_output("monitor", json.dumps(envelope), "baseline")
     runner.write_review_verdict_ledger(current_run=True)
     Path("core.py").write_text("VALUE = 3\n")
     git("commit", "-am", "fix")
@@ -1931,6 +1935,8 @@ def test_incremental_scope_includes_dependent_modules_and_falls_back(branch_work
     assert prompts["review_scope"]["kind"] == "incremental"
     assert prompts["review_scope"]["affected_files"] == ["consumer.py", "core.py"]
     assert "VALUE = 3" in prompts["prompts"]["monitor"]["prompt"]
+    assert "Receipt coverage must still satisfy the admitted required_files scope" in prompts["prompts"]["monitor"]["prompt"]
+    assert "unresolved findings only" not in prompts["prompts"]["monitor"]["prompt"]
     Path("unknown.txt").write_text("untracked impact")
     assert runner.build_review_prompts(review_bundle_text="bundle")["review_scope"]["kind"] == "full"
 
@@ -1956,18 +1962,21 @@ def test_publication_suppresses_only_acknowledged_unchanged_revision(branch_work
     assert len(runner.review_publication(destination="github:pr/1")["publishable"]) == 2
 
 
-def test_explicit_rereview_resolution_allows_third_round_pass(branch_workspace):
+def test_explicit_rereview_resolution_allows_third_round_pass(review_git_workspace):
+    branch_workspace = review_git_workspace
     runner = cast(Any, map_step_runner)
     for number in (1, 2):
         runner.begin_review_run(scheduled_reviewers=["monitor"], round_id=str(number))
         (branch_workspace / "review-agent-monitor.json").write_text(json.dumps(_monitor_with_critical()))
         runner.write_review_verdict_ledger(current_run=True)
-    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="3")
+    admission = _admit_receipt_review(runner, round_id="3")
     envelope = _monitor_no_issues()
     envelope["resolved_findings"] = [{"finding_id": "RVF-001", "evidence": "Reproducer now passes on corrected rollback path"}]
-    (branch_workspace / "review-agent-monitor.json").write_text(json.dumps(envelope))
+    envelope["receipt"] = {"covered_files": admission["required_files"], "skipped_files": [],
+                           "denied_access": [], "check_evidence": []}
+    runner.capture_review_output("monitor", json.dumps(envelope), "3")
     result = runner.write_review_verdict_ledger(current_run=True)
-    assert result["computed_verdict"] == "PROCEED"
+    assert result.get("findings_verdict", result["computed_verdict"]) == "PROCEED"
     assert result["convergence"]["outcome"] == "passed"
     assert result["convergence"]["rounds_to_pass"] == 3
     assert result["convergence"]["duration_seconds"] >= 0
@@ -2272,7 +2281,7 @@ def test_real_aggregate_merges_reporters_without_changing_identity(branch_worksp
     }), "3")
     assert result["status"] == expected, result
     if expected == "success":
-        assert result["computed_verdict"] == "PROCEED"
+        assert result.get("findings_verdict", result["computed_verdict"]) == "PROCEED"
     else:
         assert "originating reviewer" in result["message"]
 
@@ -2353,7 +2362,7 @@ def test_legacy_write_rejected_after_admission_without_artifact_mutation(branch_
     runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="1")
     if completed:
         runner.capture_review_output("monitor", json.dumps(_monitor_no_issues()), "1")
-        assert runner.write_review_verdict_ledger(current_run=True)["computed_verdict"] == "PROCEED"
+        assert runner.write_review_verdict_ledger(current_run=True)["findings_verdict"] == "PROCEED"
     before = {path: path.read_bytes() for path in branch_workspace.rglob("*") if path.is_file()}
     result = runner.write_review_verdict_ledger(monitor_json=json.dumps(_monitor_with_critical()))
     assert result["status"] == "error", result
@@ -2372,6 +2381,312 @@ def review_git_workspace(branch_workspace):
     subprocess.run(["git", "commit", "-m", "base"], check=True, capture_output=True)
     subprocess.run(["git", "checkout", "-b", "test-branch"], check=True, capture_output=True)
     return branch_workspace
+
+
+def test_completed_review_gate_rejects_changed_snapshot_after_restart(review_git_workspace):
+    workspace = review_git_workspace
+    runner = cast(Any, map_step_runner)
+    admission = _admit_receipt_review(runner, round_id="clean")
+    envelope = {**_monitor_no_issues(), "receipt": {"covered_files": admission["required_files"],
+                "skipped_files": [], "denied_access": [], "check_evidence": []}}
+    runner.capture_review_output("monitor", json.dumps(envelope), "clean")
+    assert runner.write_review_verdict_ledger(current_run=True)["findings_verdict"] == "PROCEED"
+    Path("writer.py").write_text("VALUE = 2\n")
+    proc, result = _review_cli("write_stage_gate", "review", "ready", "review.md", "clean")
+    assert proc.returncode != 0 or result["status"] == "error", result
+    assert not (workspace / "review-gate.json").exists()
+
+
+@pytest.mark.parametrize("mutation", ["binary", "index", "policy", "base", "head", "untracked", "symlink"])
+def test_completed_binding_detects_byte_and_policy_changes(review_git_workspace, mutation):
+    del review_git_workspace
+    runner = cast(Any, map_step_runner)
+    Path("image.bin").write_bytes(b"\x00\xff\x01")
+    Path("link").symlink_to("writer.py")
+    subprocess.run(["git", "add", "."], check=True)
+    subprocess.run(["git", "commit", "-m", "inputs"], check=True, capture_output=True)
+    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="clean")
+    runner.capture_review_output("monitor", json.dumps(_monitor_no_issues()), "clean")
+    runner.write_review_verdict_ledger(current_run=True)
+    if mutation == "binary":
+        Path("image.bin").write_bytes(b"\x00\xff\x02")
+    elif mutation == "index":
+        Path("writer.py").write_text("VALUE = 2\n")
+        subprocess.run(["git", "add", "writer.py"], check=True)
+        Path("writer.py").write_text("VALUE = 1\n")
+    elif mutation == "policy":
+        Path(".map/config.yaml").write_text("review: changed\n")
+    elif mutation == "base":
+        subprocess.run(["git", "branch", "-f", "main", "HEAD"], check=True)
+    elif mutation == "head":
+        subprocess.run(["git", "commit", "--allow-empty", "-m", "new head"], check=True, capture_output=True)
+    elif mutation == "symlink":
+        Path("link").unlink()
+        Path("link").symlink_to("image.bin")
+    else:
+        Path("extra\nfile.bin").write_bytes(b"\x00\xfe")
+    result = runner.write_review_verdict_ledger(current_run=True)
+    assert result["status"] == "error", result
+    assert runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="new")["status"] == "success"
+
+
+def _admit_receipt_review(runner, *, provider="claude", required_checks=None, round_id="receipt", check_specs=None):
+    profile = Path(".claude/agents/review-reader.md")
+    profile.parent.mkdir(parents=True, exist_ok=True)
+    profile.write_text("---\nname: review-reader\ntools: Read, Glob, Grep\n---\nRead only.\n")
+    admission = runner.begin_review_run(scheduled_reviewers=["monitor"], round_id=round_id,
+                                       provider=provider, required_checks=required_checks, check_specs=check_specs)
+    if admission["status"] == "success":
+        assert runner.create_review_bundle()["status"] == "success"
+    return admission
+
+
+def test_complete_receipts_approve_after_restart(review_git_workspace):
+    workspace = review_git_workspace
+    runner = cast(Any, map_step_runner)
+    admission = _admit_receipt_review(runner)
+    assert admission["capability"]["status"] == "verified", admission
+    envelope = {**_monitor_no_issues(), "receipt": {"covered_files": admission["required_files"],
+                "skipped_files": [], "denied_access": [], "check_evidence": []}}
+    runner.capture_review_output("monitor", json.dumps(envelope), "receipt")
+    result = runner.write_review_verdict_ledger(current_run=True)
+    ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
+    assert ledger["completeness"]["status"] == "COMPLETE", result
+    assert ledger["code_approval"]["approved"] is True
+    assert ledger["human_consent"]["status"] == "not_recorded"
+    proc, gate = _review_cli("write_stage_gate", "review", "ready", "review.md", "clean")
+    assert proc.returncode == 0 and gate["status"] == "success", gate
+
+
+@pytest.mark.parametrize("defect,expected", [("missing", "INCOMPLETE"), ("scope", "INCOMPLETE"),
+    ("denied", "BLOCKED"), ("codex", "INCOMPLETE"), ("check", "INCOMPLETE"),
+    ("capability", "INCOMPLETE")])
+def test_receipt_gaps_never_approve_but_keep_findings(review_git_workspace, defect, expected):
+    workspace = review_git_workspace
+    runner = cast(Any, map_step_runner)
+    admission = _admit_receipt_review(runner, provider="codex" if defect == "codex" else "claude")
+    receipt = {"covered_files": admission["required_files"], "skipped_files": [],
+               "denied_access": [], "check_evidence": []}
+    if defect == "scope":
+        receipt["covered_files"] = []
+    elif defect == "denied":
+        receipt["denied_access"] = ["writer.py"]
+    elif defect == "check":
+        receipt["check_evidence"] = ["fabricated-pass"]
+    envelope = {**_monitor_with_critical(), "receipt": receipt}
+    if defect == "missing":
+        del envelope["receipt"]
+    if defect == "capability":
+        Path(".claude/agents/review-reader.md").write_text("---\ntools: Read, Bash\n---\n")
+        assert runner.capture_review_output("monitor", json.dumps(envelope), "receipt")["status"] == "error"
+        return
+    runner.capture_review_output("monitor", json.dumps(envelope), "receipt")
+    runner.write_review_verdict_ledger(current_run=True)
+    ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
+    assert ledger["completeness"]["status"] == expected
+    assert ledger["code_approval"]["approved"] is False
+    assert ledger["findings_registry"]
+    assert runner.review_publication("github:pr/521")["publishable"]
+
+
+@pytest.mark.parametrize("command_kind", ["pass", "fail", "mutate", "missing"])
+def test_runner_checks_are_durable_snapshot_bound_evidence(review_git_workspace, command_kind):
+    workspace = review_git_workspace
+    runner = cast(Any, map_step_runner)
+    programs = {"pass": "print('verified')", "fail": "raise SystemExit(2)",
+                "mutate": "from pathlib import Path; Path('writer.py').write_text('VALUE = 9')"}
+    command = [sys.executable, "-c", programs.get(command_kind, "")] if command_kind != "missing" else ["/no/such/check"]
+    admission = _admit_receipt_review(runner, required_checks=["suite"], check_specs={"suite": command})
+    result = runner.run_test_gate(command=command, check_id="suite")
+    assert result["passed"] is (command_kind == "pass"), result
+    ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
+    check = ledger["execution_checks"]["suite"]
+    assert check["state"] == "finished"
+    assert (workspace / check["output_artifact"]).is_file()
+    if command_kind == "mutate":
+        return
+    envelope = {**_monitor_no_issues(), "receipt": {"covered_files": admission["required_files"],
+                "skipped_files": [], "denied_access": [], "check_evidence": ["suite"]}}
+    runner.capture_review_output("monitor", json.dumps(envelope), "receipt")
+    proc, final = _review_cli("write_review_verdict_ledger", "--current-run")
+    assert proc.returncode == 0, final
+    ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
+    assert ledger["code_approval"]["approved"] is (command_kind == "pass")
+    if command_kind == "pass":
+        (workspace / check["output_artifact"]).unlink()
+        _, gate = _review_cli("write_stage_gate", "review", "ready", "review.md", "clean")
+        assert gate["status"] == "error", gate
+
+
+def test_interrupted_check_retries_after_restart_without_losing_failed_attempt(review_git_workspace):
+    workspace = review_git_workspace
+    runner = cast(Any, map_step_runner)
+    marker = workspace / "check-started"
+    release = workspace / "check-release"
+    command = [sys.executable, "-c", (
+        "from pathlib import Path; import time; "
+        f"Path({str(marker)!r}).write_text('started'); "
+        f"release = Path({str(release)!r}); "
+        "exec('while not release.exists(): time.sleep(0.02)'); "
+        "raise SystemExit(2)"
+    )]
+    admission = _admit_receipt_review(runner, required_checks=["suite"], check_specs={"suite": command})
+    process = subprocess.Popen(
+        [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), "run_test_gate", "--check-id", "suite"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert marker.exists(), process.communicate(timeout=5)
+        ledger_path = workspace / "review-verdict-ledger.json"
+        running_ledger = ledger_path.read_bytes()
+        _, blocked = _review_cli("run_test_gate", "--check-id", "suite")
+        assert blocked["status"] == "error" and blocked["passed"] is False, blocked
+        assert ledger_path.read_bytes() == running_ledger
+        process.kill()
+        process.wait(timeout=5)
+        # The direct check process is alive after its runner dies: no overlap.
+        _, blocked = _review_cli("run_test_gate", "--check-id", "suite")
+        assert blocked["status"] == "error" and blocked["passed"] is False, blocked
+        assert ledger_path.read_bytes() == running_ledger
+        release.touch()
+        deadline = time.monotonic() + 10
+        while True:
+            _, result = _review_cli("run_test_gate", "--check-id", "suite")
+            if result.get("state") == "finished" or time.monotonic() >= deadline:
+                break
+            time.sleep(0.02)
+        assert result.get("state") == "finished", result
+        ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
+        history = ledger["execution_check_history"]
+        assert len(history) == 1
+        assert history[0]["check_id"] == "suite"
+        assert history[0]["state"] == "interrupted"
+        assert history[0]["passed"] is False
+        receipt = {"covered_files": admission["required_files"], "skipped_files": [],
+                   "denied_access": [], "check_evidence": ["suite"]}
+        runner.capture_review_output("monitor", json.dumps({**_monitor_no_issues(), "receipt": receipt}), "receipt")
+        _, final = _review_cli("write_review_verdict_ledger", "--current-run")
+        assert final["code_approval"]["approved"] is False
+        assert json.loads((workspace / "review-verdict-ledger.json").read_text())["execution_check_history"] == history
+    finally:
+        release.touch()
+        if process.poll() is None:
+            process.kill()
+        process.communicate(timeout=5)
+
+
+def test_terminal_review_rejects_check_rerun_without_revoking_approval(review_git_workspace):
+    workspace = review_git_workspace
+    runner = cast(Any, map_step_runner)
+    command = [sys.executable, "-c", "pass"]
+    admission = _admit_receipt_review(runner, required_checks=["suite"], check_specs={"suite": command})
+    assert runner.run_test_gate(command=command, check_id="suite")["passed"] is True
+    receipt = {"covered_files": admission["required_files"], "skipped_files": [],
+               "denied_access": [], "check_evidence": ["suite"]}
+    runner.capture_review_output("monitor", json.dumps({**_monitor_no_issues(), "receipt": receipt}), "receipt")
+    assert runner.write_review_verdict_ledger(current_run=True)["code_approval"]["approved"] is True
+    ledger_path = workspace / "review-verdict-ledger.json"
+    before = ledger_path.read_bytes()
+    _, rejected = _review_cli("run_test_gate", "--check-id", "suite")
+    assert rejected["status"] == "error" and rejected["passed"] is False, rejected
+    assert ledger_path.read_bytes() == before
+    _, gate = _review_cli("write_stage_gate", "review", "ready", "review.md", "clean")
+    assert gate["status"] == "success", gate
+
+
+def test_execution_completion_cannot_cross_abandoned_round(review_git_workspace):
+    workspace = review_git_workspace
+    runner = cast(Any, map_step_runner)
+    marker, release = workspace / "started", workspace / "release"
+    command = [sys.executable, "-c", (
+        "from pathlib import Path; import time; "
+        f"Path({str(marker)!r}).touch(); release = Path({str(release)!r}); "
+        "exec('while not release.exists(): time.sleep(0.02)')"
+    )]
+    admission = _admit_receipt_review(runner, required_checks=["suite"], check_specs={"suite": command})
+    assert admission["status"] == "success", admission
+    process = subprocess.Popen(
+        [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), "run_test_gate", "--check-id", "suite"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert marker.exists(), process.communicate(timeout=5)
+        assert runner.abandon_review_round("receipt", reason="Replace active review")["status"] == "success"
+        replacement = _admit_receipt_review(runner, round_id="replacement", required_checks=["suite"],
+                                            check_specs={"suite": command})
+        assert replacement["status"] == "success", replacement
+        release.touch()
+        stdout, stderr = process.communicate(timeout=10)
+        result = json.loads(stdout)
+        assert result["status"] == "error", (result, stderr)
+        ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
+        assert ledger["execution_checks"]["suite"]["passed"] is False
+        _, retried = _review_cli("run_test_gate", "--check-id", "suite")
+        assert retried["passed"] is True and retried["round_id"] == "replacement", retried
+        ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
+        assert ledger["execution_check_history"][0]["round_id"] == "receipt"
+        assert ledger["execution_check_history"][0]["state"] == "interrupted"
+    finally:
+        release.touch()
+        if process.poll() is None:
+            process.kill()
+        process.communicate(timeout=5)
+
+
+def test_historical_legacy_ledger_does_not_approve_without_receipts(review_git_workspace):
+    workspace = review_git_workspace
+    runner = cast(Any, map_step_runner)
+    runner.write_review_verdict_ledger(monitor_json=json.dumps(_monitor_no_issues()))
+    _, gate = _review_cli("write_stage_gate", "review", "ready", "review.md", "legacy")
+    assert gate["status"] == "error", gate
+    assert not (workspace / "review-gate.json").exists()
+
+
+def test_required_check_rejects_substituted_command(review_git_workspace):
+    del review_git_workspace
+    runner = cast(Any, map_step_runner)
+    profile = Path(".claude/agents/review-reader.md")
+    profile.parent.mkdir(parents=True)
+    profile.write_text("---\ntools: Read, Glob, Grep\n---\n")
+    command = [sys.executable, "-c", "raise SystemExit(1)"]
+    admission = runner.begin_review_run(scheduled_reviewers=["monitor"], provider="claude", round_id="bound",
+                                       required_checks=["suite"], check_specs={"suite": command})
+    assert admission["status"] == "success", admission
+    runner.create_review_bundle()
+    rejected = runner.run_test_gate(command=[sys.executable, "-c", "pass"], check_id="suite")
+    assert rejected["status"] == "error" and rejected["passed"] is False, rejected
+    assert runner.run_test_gate(command=command, check_id="suite")["passed"] is False
+    receipt = {"covered_files": admission["required_files"], "skipped_files": [],
+               "denied_access": [], "check_evidence": ["suite"]}
+    runner.capture_review_output("monitor", json.dumps({**_monitor_no_issues(), "receipt": receipt}), "bound")
+    final = runner.write_review_verdict_ledger(current_run=True)
+    assert final["computed_verdict"] != "PROCEED"
+    assert runner.write_stage_gate("review", "ready", "review.md")["status"] == "error"
+
+
+def test_malformed_capability_profile_is_unverified_not_a_crash(review_git_workspace):
+    del review_git_workspace
+    runner = cast(Any, map_step_runner)
+    profile = Path(".claude/agents/review-reader.md")
+    profile.parent.mkdir(parents=True)
+    profile.write_text("---\ntools: [Read,\n---\n")
+    admission = runner.begin_review_run(provider="claude", mode="lightweight", round_id="malformed")
+    assert admission["status"] == "success", admission
+    assert admission["capability"]["status"] == "unverified"
+    assert "malformed" in admission["capability"]["reason"].lower()
+    runner.create_review_bundle()
+    receipt = {"covered_files": admission["required_files"], "skipped_files": [],
+               "denied_access": [], "check_evidence": []}
+    runner.capture_review_output("monitor", json.dumps({**_monitor_no_issues(), "receipt": receipt}), "malformed")
+    final = runner.write_review_verdict_ledger(current_run=True)
+    assert final["completeness"]["status"] == "INCOMPLETE"
+    assert final["code_approval"]["approved"] is False
 
 
 def _review_cli(*args, payload=""):
@@ -2418,13 +2733,16 @@ def test_explicit_abandonment_recovers_changed_target_without_reset(review_git_w
     assert runner.capture_review_output("monitor", "{}", "stuck")["status"] == "error"
     assert runner.write_review_verdict_ledger(current_run=True, round_id="stuck")["status"] == "error"
     assert runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="stuck")["status"] == "error"
-    assert runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="recovery")["status"] == "success"
+    admission = _admit_receipt_review(runner, round_id="recovery")
+    assert admission["status"] == "success"
     assert runner.write_review_verdict_ledger(current_run=True, round_id="stuck")["status"] == "error"
     clean = _monitor_no_issues()
+    clean["receipt"] = {"covered_files": admission["required_files"], "skipped_files": [],
+                        "denied_access": [], "check_evidence": []}
     clean["resolved_findings"] = [{"finding_id": "RVF-001", "evidence": "Fixed writer regression passes"}]
     runner.capture_review_output("monitor", json.dumps(clean), "recovery")
     result = runner.write_review_verdict_ledger(current_run=True)
-    assert result["computed_verdict"] == "PROCEED"
+    assert result.get("findings_verdict", result["computed_verdict"]) == "PROCEED"
     assert result["convergence"]["rounds_to_pass"] == 3
     assert result["convergence"]["completed_rounds"] == 2
     assert runner.abandon_review_round("recovery", reason="cannot abandon completed")["status"] == "error"
@@ -2514,7 +2832,7 @@ def test_explicit_resolution_supersedes_persisted_objection(branch_workspace, ch
     clean["resolved_findings"] = [{"finding_id": "RVF-001", "evidence": "Originating reviewer verified corrected rollback"}]
     runner.capture_review_output("monitor", json.dumps(clean), "3")
     result = runner.write_review_verdict_ledger(current_run=True)
-    assert result["computed_verdict"] == "PROCEED", result
+    assert result.get("findings_verdict", result["computed_verdict"]) == "PROCEED", result
     ledger = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())
     row = ledger["findings_registry"][0]
     assert row["status"] == "tombstoned"
@@ -2543,7 +2861,7 @@ def test_resolved_objection_stays_superseded_on_omission_but_observation_reopens
         {"finding_id": "RVF-002", "evidence": "Verified independent correction"},
     ]}), "3")
     result = runner.write_review_verdict_ledger(current_run=True)
-    assert result["computed_verdict"] == ("REVISE" if reported_again else "PROCEED")
+    assert result["findings_verdict"] == ("REVISE" if reported_again else "PROCEED")
     ledger = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())
     row = next(row for row in ledger["findings_registry"] if row["id"] == "RVF-001")
     assert row["status"] == ("downgraded" if reported_again else "tombstoned")

@@ -1419,6 +1419,13 @@ REVIEW_BUNDLE_SCHEMA = {
         "branch": {"type": "string"},
         "bundle_path_json": {"type": "string"},
         "bundle_path_md": {"type": "string"},
+        "snapshot": {"type": "object"},
+        "attribution": {
+            "type": "object", "properties": {
+                "status": {"enum": ["available", "unknown"]},
+                "files": {"type": "array", "items": {"type": "object"}},
+            }, "required": ["status", "files"], "additionalProperties": True,
+        },
         "generated_at": {"type": "string"},
         "artifacts": {
             "type": "object",
@@ -1899,6 +1906,43 @@ CONTEXT_USEFULNESS_SCHEMA: dict[str, Any] = {
 }
 
 
+REVIEW_COMPLETENESS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "status": {"enum": ["COMPLETE", "INCOMPLETE", "BLOCKED"]},
+        "reasons": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["status", "reasons"],
+    "additionalProperties": False,
+}
+
+REVIEW_RECEIPT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "artifact": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "snapshot_evidence": {"const": "tool_witnessed"},
+        "coverage_evidence": {"const": "self_reported"},
+        "target": {"type": "object"},
+        "policy_hash": {"type": "string"},
+        "capability_enforcement": {"enum": ["verified", "unverified"]},
+        "capability_reason": {"type": "string"},
+    },
+    "required": ["artifact", "sha256", "snapshot_evidence", "coverage_evidence", "target",
+                 "policy_hash", "capability_enforcement", "capability_reason"],
+    "additionalProperties": True,
+}
+
+REVIEW_EXECUTION_CHECK_SCHEMA: dict[str, Any] = {
+    "type": "object", "properties": {
+        "state": {"enum": ["running", "finished", "interrupted"]}, "passed": {"type": "boolean"},
+        "command": {"type": "array", "items": {"type": "string"}},
+        "attempt_id": {"type": "string"}, "round_id": {"type": "string"},
+        "lease_protocol": {"enum": ["flock-v1"]},
+    }, "required": ["state", "passed", "command"], "additionalProperties": True,
+}
+
+
 REVIEW_VERDICT_LEDGER_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://mapframework.dev/schemas/review-verdict-ledger.json",
@@ -2017,6 +2061,25 @@ REVIEW_VERDICT_LEDGER_SCHEMA: dict[str, Any] = {
             "type": ["object", "null"],
             "description": "Raw Evaluator scores — advisory signal, cannot override active findings.",
             "additionalProperties": True,
+        },
+        "completeness": REVIEW_COMPLETENESS_SCHEMA,
+        "findings_verdict": {"enum": ["PROCEED", "REVISE", "BLOCK"]},
+        "code_approval": {
+            "type": "object", "properties": {"approved": {"type": "boolean"}},
+            "required": ["approved"], "additionalProperties": True,
+        },
+        "human_consent": {"type": "object", "required": ["status"], "additionalProperties": True},
+        "execution_checks": {"type": "object", "additionalProperties": REVIEW_EXECUTION_CHECK_SCHEMA},
+        "execution_check_history": {"type": "array", "items": REVIEW_EXECUTION_CHECK_SCHEMA},
+        "convergence": {
+            "type": "object", "properties": {
+                "rounds": {"type": "array", "items": {
+                    "type": "object", "properties": {
+                        "receipts": {"type": "object", "additionalProperties": REVIEW_RECEIPT_SCHEMA},
+                        "completeness": REVIEW_COMPLETENESS_SCHEMA,
+                    }, "additionalProperties": True,
+                }},
+            }, "additionalProperties": True,
         },
         "verdict_table": {"type": "string"},
         "computed_verdict": {

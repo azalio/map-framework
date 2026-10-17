@@ -5279,7 +5279,14 @@ class TestCodexProvider:
             "Codex config must not use deprecated codex_hooks feature alias"
         )
         config = tomllib.loads(config_text)
-        assert config["agents"] == {"max_threads": 6, "max_depth": 2}
+        assert config["agents"] == {
+            "max_threads": 6,
+            "max_depth": 2,
+            "review-reader": {
+                "description": "Shell-free reviewer with runner-supplied source evidence",
+                "config_file": "agents/review-reader.toml",
+            },
+        }
         toml_files = list((codex_dir / "agents").glob("*.toml"))
         assert len(toml_files) > 0, (
             ".codex/agents/ must contain at least one *.toml file"
@@ -5765,6 +5772,7 @@ class TestCodexProvider:
             "reflector",
             "researcher",
             "decomposer",
+            "review-reader",
         }
         assert {path.stem for path in toml_files} == expected
         for toml_file in toml_files:
@@ -5776,6 +5784,11 @@ class TestCodexProvider:
                 "workspace-write" if toml_file.stem == "actor" else "read-only"
             )
             assert content["sandbox_mode"] == expected_mode
+            if toml_file.stem == "review-reader":
+                assert content["features"]["shell_tool"] is False
+                assert content["features"]["multi_agent_v2"] is False
+                assert content["agents"]["enabled"] is False
+                assert "capability_enforcement=unverified" in content["developer_instructions"]
 
     # ------------------------------------------------------------------ #
     # AC-18: hooks.json uses Codex canonical tool names                    #
