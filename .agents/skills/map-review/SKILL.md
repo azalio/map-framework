@@ -277,8 +277,9 @@ Start before any capture or fan-out. Abort on a start error; in particular
 fourth automatic round. A round is a review/fix iteration, not a reviewer/tool
 retry or an ordering collection. Pending admission resumes its stored identity;
 completed rounds are immutable. Use `--round-id <stored-id>` for an explicit retry.
-Do not dispatch reviewers when admission reports `completed: true`.
-The runner archives prior inputs/gate once and preserves findings/publication history.
+Do not dispatch reviewers when admission reports `completed: true`. For a stale pending round,
+explicitly run `abandon_review_round <round-id> --reason "<why>"` through the runner before new admission;
+abandonment preserves audit/findings and consumes an unsuccessful attempt, never resets the cap.
 After the initial full review, generated prompts carry delta + affected dependencies
 + unresolved findings only where a covered baseline and static impact are reusable;
 otherwise they explicitly request full review. Never substitute AC citation coverage.

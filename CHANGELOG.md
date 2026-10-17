@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   evidence, dispositions and distinct defects; suppression leaves findings in the
   ledger and verdict. Incremental re-review includes affected dependencies and
   unresolved findings, with full-review fallback when coverage is uncertain.
+- Explicit audited abandonment recovers stale pending review rounds without
+  resetting the three-attempt budget or losing unresolved findings. (#521)
+
+### Fixed
+- Bounded review preserves schema-native Monitor file identities and real
+  adversarial evidence/reporting reviewers, applies objections after stable-ID
+  retention, and rejects legacy writes that would silently discard new input.
 
 ## [3.33.0] - 2026-10-17
 

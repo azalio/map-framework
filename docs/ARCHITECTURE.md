@@ -866,16 +866,21 @@ Current delta captured:
   gate only for a newly admitted round, preserving the ledger journal and
   objections. The current mode and scheduled roster bind closeout inputs,
   including missing files, so new rounds do not inherit previous reviewers.
-  `review_verdict_ledger` manifest stage.
+  Each ledger write updates the `review_verdict_ledger` manifest stage.
 
 - Bounded review convergence (#521, PR 1a): the same ledger owns durable
   review/fix round identities, completion history, unresolved findings,
   publication history, timestamps and stop reason. Reviewer/tool retries and
   comparison orderings belong to one round. Admission and finalization serialize
   canonical mutations; repeated submissions do not consume another iteration.
-  Three unsuccessful completed rounds stop automatic admission for approach
-  reconsideration, never approval. Missing reviewer collection stays incomplete;
-  success alone records rounds-to-pass. Corrupt convergence state cannot reset
+  Three unsuccessful attempts (completed unsuccessful or explicitly abandoned
+  rounds) stop automatic admission for reconsideration, never approval.
+  `abandon_review_round` records a terminal audit event without reusable coverage;
+  retries preserve the budget and findings, and stale captures/finalizers fail.
+  Legacy direct writes are rejected once bounded admission is active.
+  `attempted_rounds` counts completed and abandoned rounds; `completed_rounds`
+  excludes abandonment. Missing reviewer collection stays incomplete;
+  success alone records rounds-to-pass, including consumed abandoned attempts. Corrupt convergence state cannot reset
   the budget. The JSON ledger is authoritative; Markdown and manifest entries
   are derived artifacts, not independent counters.
   Publication identity separates the defect from its evidence/disposition

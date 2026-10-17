@@ -8787,6 +8787,55 @@ def _prepare_review_inputs(directory: Path, ledger: dict[str, Any], row: dict[st
     return row["archive_inputs"]
 
 
+def _review_round_terminal(row: dict[str, Any]) -> bool:
+    return "completed_at" in row or "aborted_at" in row
+
+
+def _update_review_convergence(convergence: dict[str, Any], *, passed: bool = False) -> None:
+    rounds = convergence["rounds"]
+    attempted = sum(_review_round_terminal(row) for row in rounds)
+    unsuccessful = sum(_review_round_terminal(row) and row.get("verdict") != "PROCEED" for row in rounds)
+    capped = not passed and unsuccessful >= 3
+    convergence.update({
+        "completed_rounds": sum("completed_at" in row for row in rounds),
+        "attempted_rounds": attempted,
+        "duration_seconds": time.time() - convergence["started_at"],
+        "rounds_to_pass": attempted if passed else None,
+        "outcome": "passed" if passed else ("capped" if capped else "incomplete"),
+        "stop_reason": "passed" if passed else ("reconsider_approach" if capped else "findings_or_incomplete"),
+    })
+
+
+@_review_transaction
+def abandon_review_round(round_id: str, reason: str, *, branch: str | None = None) -> dict[str, Any]:
+    """Explicitly close an unusable admission without clearing findings or refunding its attempt."""
+    if not reason.strip():
+        raise ValueError("Abandonment requires an explicit operator reason")
+    directory = get_branch_dir(branch or get_branch_name())
+    ledger = _read_review_ledger(directory)
+    convergence = ledger.get("convergence", {})
+    rounds = convergence.get("rounds", [])
+    row = next((item for item in rounds if item["round_id"] == round_id), None)
+    if row is None:
+        raise ValueError("Review round is not admitted")
+    if "aborted_at" in row:
+        if row["abandon_reason"] != reason:
+            raise ValueError("Abandoned round audit is immutable")
+        return {"status": "success", "round_id": round_id, "abandoned": True, "convergence": convergence}
+    if _review_round_terminal(row) or row is not rounds[-1]:
+        raise ValueError("Only the pending review round may be abandoned")
+    row.update({"aborted_at": time.time(), "verdict": "ABANDONED", "abandon_reason": reason})
+    _update_review_convergence(convergence)
+    # A seed/previous clean verdict is not approval of an abandoned review.
+    if ledger.get("computed_verdict") == "PROCEED":
+        ledger["computed_verdict"] = "REVISE"
+        ledger["verdict_basis"] = "Review round explicitly abandoned; a complete review is still required"
+        ledger["journal"].update({"current_verdict": "REVISE", "basis": ledger["verdict_basis"],
+                                  "matches_previous": ledger["journal"].get("previous_verdict") == "REVISE"})
+    _write_json_file(directory / "review-verdict-ledger.json", ledger)
+    return {"status": "success", "round_id": round_id, "abandoned": True, "convergence": convergence}
+
+
 @_review_transaction
 def begin_review_run(
     review_mode: str = "normal", scheduled_reviewers: list[str] | None = None,
@@ -8818,13 +8867,15 @@ def begin_review_run(
     prior = _read_review_ledger(branch_dir)
     convergence = prior.get("convergence", {"rounds": [], "started_at": time.time()})
     rounds = convergence["rounds"]
-    pending = next((row for row in rounds if "completed_at" not in row), None)
+    pending = next((row for row in rounds if not _review_round_terminal(row)), None)
     if not round_id:
         round_id = pending["round_id"] if pending else f"round-{len(rounds) + 1}"
     if not isinstance(round_id, str) or not round_id.strip():
         return {"status": "error", "message": "round_id must be nonempty"}
     existing = next((row for row in rounds if row["round_id"] == round_id), None)
     if existing:
+        if "aborted_at" in existing:
+            return {"status": "error", "message": "Round was abandoned; use a new round ID within the remaining budget"}
         if existing["binding"] != dict(payload) or existing.get("target") != _review_target():
             return {"status": "error", "message": "Round identity already bound to different review inputs"}
         if not existing.get("prepared"):
@@ -8832,8 +8883,8 @@ def begin_review_run(
         return {"status": "success", "resumed": True, "round_id": round_id,
                 "completed": "completed_at" in existing, **dict(payload)}
     if pending:
-        return {"status": "error", "message": "Resume the unfinished review round first"}
-    unsuccessful = sum(row.get("verdict") != "PROCEED" for row in rounds)
+        return {"status": "error", "message": "Resume the unfinished review round or explicitly abandon_review_round first"}
+    unsuccessful = sum(_review_round_terminal(row) and row.get("verdict") != "PROCEED" for row in rounds)
     if unsuccessful >= 3:
         return {"status": "error", "stop_reason": "reconsider_approach",
                 "message": "Three unsuccessful review/fix rounds; reconsider the approach. No fourth automatic round."}
@@ -8904,6 +8955,75 @@ def _adversarial_aggregate_errors(report: dict[str, Any], expected: list[str]) -
             if error:
                 errors.append(f"{reviewer}: {error}")
     return errors
+
+
+def _apply_review_objections(
+    findings_registry: list[dict[str, Any]], objections: list[dict[str, Any]] | None,
+    not_verified: list[str], escalation_reasons: list[str],
+) -> bool:
+    """Apply the same objection policy to legacy rows or the durable merged registry."""
+    by_id = {f["id"]: f for f in findings_registry}
+    verdict_repeats = False
+    for objection in (objections or []):
+        finding = by_id.get(str(objection.get("finding_id") or ""))
+        channel = str(objection.get("channel") or "")
+        claim_prefix = str(objection.get("claim_prefix") or "")
+
+        # An objection is bound to the exact claim it was raised against. When the
+        # reviewer output changes, RVF ids shift; a stale objection must not land
+        # on whatever finding now holds that id.
+        if finding is None or not str(finding.get("claim") or "").startswith(claim_prefix):
+            not_verified.append(
+                f"Objection on {objection.get('finding_id')} was ignored: it was raised "
+                "against a different finding than the one now holding that id."
+            )
+            continue
+
+        # An explicit re-review supersedes objections to the old finding. A new
+        # observation replaces the tombstone, so genuinely recurring defects reopen.
+        if finding.get("status") == "tombstoned" and finding.get("resolved_by"):
+            continue
+
+        if channel in _REMOVING_CHANNELS:
+            # The retention floor applies here too. The evidence attached to an
+            # objection is free text that nothing verifies, so above `minor` it
+            # buys a downgrade and a human decision, not a silent removal.
+            if finding.get("severity") in _NON_TOMBSTONABLE_SEVERITIES:
+                original = str(finding.get("severity"))
+                finding["downgraded_from"] = finding.get("downgraded_from", original)
+                finding["severity"] = "needs_investigation"
+                finding["status"] = "downgraded"
+                finding["transition_reason"] = channel
+                finding["transition_evidence"] = str(objection.get("evidence") or "")
+                escalation_reasons.append(
+                    f"{finding['id']} ({original}) was contested via {channel}; the "
+                    "objection's evidence is unverified, so a human must confirm the removal."
+                )
+                not_verified.append(
+                    f"{finding['id']}: the objection evidence was not independently checked."
+                )
+            else:
+                finding["status"] = "tombstoned"
+                finding["transition_reason"] = channel
+                finding["transition_evidence"] = str(objection.get("evidence") or "")
+        elif channel == "unverifiable_context":
+            # The ceiling: context that is not visible in the diff cannot clear a
+            # finding, only hand it to a human.
+            finding["transition_reason"] = "human_escalation"
+            finding["transition_evidence"] = str(objection.get("evidence") or "")
+            escalation_reasons.append(
+                f"{finding['id']} was contested on context not visible in the change: "
+                f"{str(objection.get('evidence') or '')[:120]}"
+            )
+            not_verified.append(
+                f"{finding['id']}: the contested context could not be checked against the diff."
+            )
+        elif channel == "no_new_fact":
+            finding["transition_reason"] = "pressure_without_new_fact"
+            finding["transition_evidence"] = str(objection.get("evidence") or "")
+            verdict_repeats = True
+
+    return verdict_repeats
 
 
 def normalize_review_verdict(
@@ -9003,7 +9123,7 @@ def normalize_review_verdict(
         for ev_item in (issue.get("evidence") or []):
             if isinstance(ev_item, dict):
                 evidence.append(ev_item)
-        location = {key: issue[key] for key in ("file", "path", "line", "location", "failure_scenario") if key in issue}
+        location = {key: issue[key] for key in ("file", "path", "file_path", "line", "line_range", "location", "failure_scenario") if key in issue}
         if location:
             evidence.append({"source": "finding_location", "quote": json.dumps(location, sort_keys=True)})
         reach = str(issue.get("reach_evidence") or "").strip()
@@ -9219,8 +9339,9 @@ def normalize_review_verdict(
             "category": _normalize_category(str(ext_finding.get("category") or "")),
             "severity": sev,
             "originating_reviewer": str(ext_finding.get("reviewer") or raw_source),
+            "reported_by": _review_reporters(ext_finding),
             "claim": str(ext_finding.get("claim") or ext_finding.get("description") or ext_finding.get("failure_mode") or ""),
-            "evidence": [*list(ext_finding.get("evidence") or []), {
+            "evidence": [*_review_evidence(ext_finding.get("evidence")), {
                 "source": "finding_location", "quote": json.dumps({
                     key: ext_finding[key] for key in ("file_path", "symbol", "failure_mode") if key in ext_finding
                 }, sort_keys=True),
@@ -9334,62 +9455,7 @@ def normalize_review_verdict(
             "absence of a review, not its result."
         )
 
-    # --- Apply operator objections ---
-    by_id = {f["id"]: f for f in findings_registry}
-    verdict_repeats = False
-    for objection in (objections or []):
-        finding = by_id.get(str(objection.get("finding_id") or ""))
-        channel = str(objection.get("channel") or "")
-        claim_prefix = str(objection.get("claim_prefix") or "")
-
-        # An objection is bound to the exact claim it was raised against. When the
-        # reviewer output changes, RVF ids shift; a stale objection must not land
-        # on whatever finding now holds that id.
-        if finding is None or not str(finding.get("claim") or "").startswith(claim_prefix):
-            not_verified.append(
-                f"Objection on {objection.get('finding_id')} was ignored: it was raised "
-                "against a different finding than the one now holding that id."
-            )
-            continue
-
-        if channel in _REMOVING_CHANNELS:
-            # The retention floor applies here too. The evidence attached to an
-            # objection is free text that nothing verifies, so above `minor` it
-            # buys a downgrade and a human decision, not a silent removal.
-            if finding.get("severity") in _NON_TOMBSTONABLE_SEVERITIES:
-                original = str(finding.get("severity"))
-                finding["downgraded_from"] = finding.get("downgraded_from", original)
-                finding["severity"] = "needs_investigation"
-                finding["status"] = "downgraded"
-                finding["transition_reason"] = channel
-                finding["transition_evidence"] = str(objection.get("evidence") or "")
-                escalation_reasons.append(
-                    f"{finding['id']} ({original}) was contested via {channel}; the "
-                    "objection's evidence is unverified, so a human must confirm the removal."
-                )
-                not_verified.append(
-                    f"{finding['id']}: the objection evidence was not independently checked."
-                )
-            else:
-                finding["status"] = "tombstoned"
-                finding["transition_reason"] = channel
-                finding["transition_evidence"] = str(objection.get("evidence") or "")
-        elif channel == "unverifiable_context":
-            # The ceiling: context that is not visible in the diff cannot clear a
-            # finding, only hand it to a human.
-            finding["transition_reason"] = "human_escalation"
-            finding["transition_evidence"] = str(objection.get("evidence") or "")
-            escalation_reasons.append(
-                f"{finding['id']} was contested on context not visible in the change: "
-                f"{str(objection.get('evidence') or '')[:120]}"
-            )
-            not_verified.append(
-                f"{finding['id']}: the contested context could not be checked against the diff."
-            )
-        elif channel == "no_new_fact":
-            finding["transition_reason"] = "pressure_without_new_fact"
-            finding["transition_evidence"] = str(objection.get("evidence") or "")
-            verdict_repeats = True
+    verdict_repeats = _apply_review_objections(findings_registry, objections, not_verified, escalation_reasons)
 
     # --- Apply decision table ---
     # Consumes active AND downgraded findings; only tombstoned ones are excluded.
@@ -9581,23 +9647,45 @@ def _load_review_objections(branch_dir: Path) -> list[dict[str, Any]]:
     return [o for o in payload if isinstance(o, dict)] if isinstance(payload, list) else []
 
 
+def _review_reporters(finding: dict[str, Any]) -> list[str]:
+    reporters = finding.get("reported_by")
+    if isinstance(reporters, list):
+        return sorted({reviewer for reviewer in reporters if isinstance(reviewer, str) and reviewer})
+    return [str(finding.get("originating_reviewer") or finding.get("reviewer") or finding.get("source_agent") or "adversarial")]
+
+
+def _review_evidence(value: Any) -> list[dict[str, Any]]:
+    """Accept producer text and legacy object lists without splitting text into characters."""
+    if isinstance(value, str):
+        return [{"source": "evidence", "quote": value}] if value else []
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
 def _review_finding_key(finding: dict[str, Any]) -> str:
     location = []
-    for item in finding.get("evidence", []):
+    for item in _review_evidence(finding.get("evidence")):
         if item.get("source") == "finding_location":
-            details = json.loads(item["quote"])
-            stable = {key: value for key, value in details.items() if key != "line"}
+            try:
+                details = json.loads(item.get("quote", ""))
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(details, dict):
+                continue
+            stable = {key: value for key, value in details.items() if key not in {"line", "line_range"}}
             if isinstance(stable.get("location"), str):
                 stable["location"] = re.sub(r":\d+(?::\d+)?(?:-\d+(?::\d+)?)?$", "", stable["location"])
             location.append(stable)
     return hashlib.sha256(json.dumps(
-        [finding.get("source_agent"), finding.get("originating_reviewer"), finding.get("category"), finding.get("claim"), location],
+        [finding.get("source_agent"),
+         finding.get("originating_reviewer") if finding.get("source_agent") != "adversarial" else None,
+         finding.get("category"), finding.get("claim"), location],
         sort_keys=True,
     ).encode()).hexdigest()
 
 
 def _retain_review_findings(
     ledger: dict[str, Any], prior: dict[str, Any], resolutions: list[dict[str, Any]] | None = None,
+    objections: list[dict[str, Any]] | None = None,
 ) -> None:
     """Omission is not resolution; preserve stable IDs and each evidence revision."""
     registry = {_review_finding_key(row): dict(row) for row in prior.get("findings_registry", [])
@@ -9607,10 +9695,15 @@ def _retain_review_findings(
     observed: dict[str, dict[str, Any]] = {}
     for finding in ledger["findings_registry"]:
         key = _review_finding_key(finding)
+        old = registry.get(key)
+        if finding.get("source_agent") == "adversarial":
+            finding["reported_by"] = sorted(set(_review_reporters(finding)) | set(_review_reporters(old) if old else []))
         # Intent: duplicate/order-dependent reviewer rows must never overwrite stronger evidence.
         if key in observed:
             severity_order = {"minor": 0, "needs_investigation": 1, "important": 2, "critical": 3}
             if severity_order.get(finding["severity"], 1) < severity_order.get(observed[key]["severity"], 1):
+                if "reported_by" in finding:
+                    observed[key]["reported_by"] = finding["reported_by"]
                 continue
         observed[key] = finding
         old = registry.get(key)
@@ -9619,22 +9712,27 @@ def _retain_review_findings(
         else:
             next_id += 1
             finding["id"] = f"RVF-{next_id:03d}"
-        revision = hashlib.sha256(json.dumps(finding, sort_keys=True).encode()).hexdigest()
-        if not any(item["revision_id"] == revision for item in history):
-            history.append({"finding_key": key, "revision_id": revision, "finding": dict(finding)})
         registry[key] = finding
     for resolution in resolutions or []:
         finding = next((row for row in registry.values() if row["id"] == resolution.get("finding_id")), None)
         if finding is None or not str(resolution.get("evidence") or "").strip():
             raise ValueError("Resolution requires an existing finding ID and re-review evidence")
-        if finding.get("originating_reviewer", finding["source_agent"]) != resolution.get("source_agent"):
+        owners = _review_reporters(finding) if finding["source_agent"] == "adversarial" else [
+            finding.get("originating_reviewer", finding["source_agent"])
+        ]
+        if resolution.get("source_agent") not in owners:
             raise ValueError("Only the originating reviewer may resolve an open finding")
         finding.update({"status": "tombstoned", "transition_reason": "different_version",
-                        "transition_evidence": resolution["evidence"]})
-        history.append({"finding_key": _review_finding_key(finding),
-                        "revision_id": hashlib.sha256(json.dumps(finding, sort_keys=True).encode()).hexdigest(),
-                        "finding": dict(finding)})
+                        "transition_evidence": resolution["evidence"], "resolved_by": resolution["source_agent"]})
     ledger["findings_registry"] = list(registry.values())
+    repeats = _apply_review_objections(
+        ledger["findings_registry"], objections, ledger["not_verified"], ledger["escalation_reasons"],
+    )
+    ledger["escalation_required"] = bool(ledger["escalation_reasons"])
+    for finding in registry.values():
+        revision = hashlib.sha256(json.dumps(finding, sort_keys=True).encode()).hexdigest()
+        if not any(item["revision_id"] == revision for item in history):
+            history.append({"finding_key": _review_finding_key(finding), "revision_id": revision, "finding": dict(finding)})
     ledger["finding_history"] = history
     ledger["publication_history"] = prior.get("publication_history", [])
     active = [row for row in registry.values() if row.get("status") in {"active", "downgraded"}]
@@ -9645,7 +9743,13 @@ def _retain_review_findings(
     ledger["active_count"] = len(active)
     ledger["downgraded_count"] = sum(row.get("status") == "downgraded" for row in registry.values())
     ledger["tombstoned_count"] = sum(row.get("status") == "tombstoned" for row in registry.values())
-    ledger["journal"].update({"current_verdict": ledger["computed_verdict"], "basis": ledger["verdict_basis"]})
+    previous = ledger["journal"]["previous_verdict"]
+    ledger["journal"].update({
+        "current_verdict": ledger["computed_verdict"],
+        "matches_previous": previous == ledger["computed_verdict"] if previous else None,
+        "repeated_verbatim": repeats,
+        "basis": ("Objection carried no new fact; the previous verdict stands. " if repeats else "") + ledger["verdict_basis"],
+    })
 
 
 @_review_transaction
@@ -9656,8 +9760,8 @@ def capture_review_output(
     directory = get_branch_dir(branch or get_branch_name())
     ledger = _read_review_ledger(directory)
     rounds = ledger.get("convergence", {}).get("rounds", [])
-    if not rounds or rounds[-1]["round_id"] != round_id or "completed_at" in rounds[-1]:
-        raise ValueError("Stale or completed review capture")
+    if not rounds or rounds[-1]["round_id"] != round_id or _review_round_terminal(rounds[-1]):
+        raise ValueError("Stale or terminal review capture")
     row = rounds[-1]
     run = row["binding"]
     allowed = run["scheduled_reviewers"] if "monitor" in run["scheduled_reviewers"] else ["adversarial"]
@@ -9712,6 +9816,8 @@ def _complete_review_round(
     row = next((item for item in convergence["rounds"] if item["round_id"] == run.get("round_id")), None)
     if row is None:
         raise ValueError("Current review round is not admitted")
+    if "aborted_at" in row:
+        raise ValueError("Abandoned review round cannot be finalized")
     files = sorted(path for path in directory.rglob("review-agent-*.json")
                    if "review-input-archive" not in path.parts)
     digest = hashlib.sha256(json.dumps(
@@ -9735,15 +9841,7 @@ def _complete_review_round(
     row.update({"completed_at": time.time(), "submission_digest": digest,
                 "covered_files": sorted(set.intersection(*coverage)) if coverage else [],
                 "verdict": ledger["computed_verdict"]})
-    completed = [item for item in convergence["rounds"] if "completed_at" in item]
-    passed = ledger["computed_verdict"] == "PROCEED"
-    capped = not passed and len(completed) >= 3
-    convergence.update({
-        "completed_rounds": len(completed), "duration_seconds": time.time() - convergence["started_at"],
-        "rounds_to_pass": len(completed) if passed else None,
-        "outcome": "passed" if passed else ("capped" if capped else "incomplete"),
-        "stop_reason": "passed" if passed else ("reconsider_approach" if capped else "findings_or_incomplete"),
-    })
+    _update_review_convergence(convergence, passed=ledger["computed_verdict"] == "PROCEED")
     ledger["convergence"] = convergence
     return ledger
 
@@ -9805,6 +9903,10 @@ def write_review_verdict_ledger(
     branch_dir = get_branch_dir(branch_name)
     branch_dir.mkdir(parents=True, exist_ok=True)
 
+    prior = _read_review_ledger(branch_dir)
+    if not current_run and "convergence" in prior:
+        return {"status": "error", "message": "Bounded review active; use --current-run to finalize the admitted round"}
+
     # Parse failures are RECORDED, not swallowed: a truncated Monitor envelope
     # must surface as an integrity finding rather than as an absence of findings.
     input_errors: list[str] = []
@@ -9820,6 +9922,10 @@ def write_review_verdict_ledger(
             return {"status": "error", "message": f"Cannot load current review-mode.json: {exc}"}
         if round_id and run.get("round_id") != round_id:
             return {"status": "error", "message": "Stale review round finalizer"}
+        admitted = next((row for row in prior.get("convergence", {}).get("rounds", [])
+                         if row["round_id"] == run.get("round_id")), None)
+        if admitted is None or "aborted_at" in admitted:
+            return {"status": "error", "message": "Review round is not admitted or was abandoned"}
         run_error = _validate_review_run(run)
         if run_error:
             return {"status": "error", "message": run_error}
@@ -10049,7 +10155,7 @@ def write_review_verdict_ledger(
         review_mode=review_mode,
         previous_verdict=previous_verdict or None,
         input_errors=input_errors,
-        objections=_load_review_objections(branch_dir),
+        objections=None if current_run else _load_review_objections(branch_dir),
         destination=destination,
         executor_class=executor_class,
         branch=branch_name,
@@ -10057,16 +10163,13 @@ def write_review_verdict_ledger(
 
     prior = _read_review_ledger(branch_dir)
     if current_run:
-        _retain_review_findings(ledger, prior, resolutions if not input_errors else [])
+        _retain_review_findings(ledger, prior, resolutions if not input_errors else [], _load_review_objections(branch_dir))
         completed_retry = any(row["round_id"] == run.get("round_id") and "completed_at" in row
                               for row in prior["convergence"]["rounds"])
         if input_errors and not completed_retry:
             ledger["convergence"] = prior["convergence"]
         else:
             ledger = _complete_review_round(ledger, prior, run, branch_dir)
-    elif "convergence" in prior:
-        # Intent: legacy recomputation must not mutate a completed bounded review.
-        ledger = prior
 
     # Write JSON
     _write_json_file(json_path, ledger)
@@ -25322,6 +25425,19 @@ if __name__ == "__main__":
         )
         print(json.dumps(result, indent=2, ensure_ascii=True))
         if result.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "abandon_review_round":
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py abandon_review_round")
+        _p.add_argument("round_id")
+        _p.add_argument("--reason", required=True)
+        _p.add_argument("--branch", default=None)
+        _args = _p.parse_args(sys.argv[2:])
+        result = abandon_review_round(_args.round_id, _args.reason, branch=_args.branch)
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+        if result["status"] == "error":
             sys.exit(1)
 
     elif func_name == "capture_review_output":
