@@ -14,6 +14,10 @@ The current package is `mapify-cli` `3.30.1`. It ships a Typer CLI, provider del
 
 The remainder of this file contains the deeper implementation dive (workflow-specific agent sequences, artifact specs, MCP integration, template maintenance, and context engineering).
 
+## Skill invocation and routing
+
+Claude skill frontmatter blocks model invocation only for `map-release`. `skill_ir.invocation_mode` derives from that flag (`manual` for release, `automatic` for the other skills); `automatic` means model-invocable, not permission to bypass confirmation. Task skills keep `skillClass: task` and `enforcement: manual` as workflow routing metadata, alongside descriptions and negative triggers. `map-upgrade` retains version-specific major-upgrade consent. Skill-eval temp-flipping is a no-op for current non-release MAP skills and remains available for legacy/user skills and release evaluation in throwaway copies only.
+
 ## Acceptance evidence lifecycle
 
 The step runner owns acceptance contracts, execution receipts and derived status under `.map/<branch>/`; agents cannot supply a `proven` flag. The authoritative inventory is the spec Requirements Index, including ACs missing from the blueprint. Exact IDs are preserved rather than normalizing `AC-1` into `AC-001`. Citation coverage is separate from executable evidence.

@@ -92,7 +92,7 @@ def test_vc4_patch_block_scalar_body_replaced(tmp_path: Path) -> None:
 
     # Other keys must still be present
     assert "effort:" in patched
-    assert "disable-model-invocation:" in patched
+    assert "disable-model-invocation:" not in patched
     assert "argument-hint:" in patched
 
     # Body after closing --- is preserved

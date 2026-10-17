@@ -4,7 +4,6 @@ name: map-efficient
 [% if PROVIDER == "claude" %]description: |
   Token-efficient MAP workflow with state-machine orchestration over Predictor/Actor/Monitor/Evaluator/Reflector. Use when implementing a non-trivial change end-to-end. Do NOT use for tiny one-shot edits; use map-fast.
 effort: medium
-disable-model-invocation: true
 argument-hint: "[task description]"
 [% else %]description: "State-machine MAP execution workflow for Codex. Use when implementing an approved MAP plan end to end, resuming from branch MAP task_plan or step_state.json artifacts, or running non-trivial multi-subtask work. Use map-fast for tiny one-shot edits."
 [% endif -%]

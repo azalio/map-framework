@@ -3,7 +3,6 @@ name: map-tokenreport
 description: |
   Show per-subtask/agent token accounting (input, output, cache read/creation, cost, cache-hit ratio) for the current branch. Supports --dashboard (box-drawing visual), --history (trends), --estimate (cost projection), --json / --csv export, and --finalize (record session snapshot). Use when asked for token usage, run cost, or a token report. Do NOT use to plan or run work; use map-efficient.
 effort: low
-disable-model-invocation: true
 argument-hint: "[branch] [--dashboard|--history|--estimate|--json|--csv|--finalize]"
 ---
 ## MAP update preflight

@@ -3,7 +3,6 @@ name: map-prd-review
 description: |
   Use when reviewing a PRD, product brief, feature brief, or requirements document before planning or engineering handoff. Produces an evidence-backed 0-10 readiness score, strengths, weaknesses/risks, and uncovered edge cases across 13 dimensions. Do NOT use as a substitute for /map-plan, for code review, or for tiny engineering tasks with no PRD.
 effort: low
-disable-model-invocation: true
 argument-hint: "[path/to/prd.md or inline requirements text]"
 ---
 ## MAP update preflight

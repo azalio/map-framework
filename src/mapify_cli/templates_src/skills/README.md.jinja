@@ -19,7 +19,7 @@ MAP uses `skillClass` in `skill-rules.json` to make the runtime role explicit.
 | Skill | Class | Notes |
 |-------|-------|-------|
 | `map-state` | `hybrid` | Explains branch-scoped planning and ships hooks/scripts that surface focus and completion checks |
-| `map-learn` | `task` | Manual slash workflow with `disable-model-invocation: true`; writes learned rules from a completed workflow handoff |
+| `map-learn` | `task` | Model-invocable slash workflow; writes learned rules from a completed workflow handoff |
 | `map-plan`, `map-efficient`, `map-fast`, `map-debug`, `map-tdd`, `map-task`, `map-check`, `map-review`, `map-resume`, `map-release`, `map-explain` | `task` | Skill-backed slash workflows invoked directly by the user |
 
 ## Skills vs Agents
@@ -50,7 +50,7 @@ MAP uses `skillClass` in `skill-rules.json` to make the runtime role explicit.
 
 Use a `reference` skill when the content is mostly durable knowledge: conventions, decision trees, examples, troubleshooting, or domain guidance. Reference skills should be safe to load opportunistically and should avoid owning multi-step mutation procedures.
 
-Use a `task` skill when the skill behaves like a workflow: it has required steps, validation gates, agent calls, file writes, commits, releases, or other deterministic procedures. Manual slash task skills should normally use `disable-model-invocation: true` and an `argument-hint` so users see a clear invocation shape.
+Use a `task` skill when the skill behaves like a workflow: it has required steps, validation gates, agent calls, file writes, commits, releases, or other deterministic procedures. Task skills advertise an `argument-hint` and retain `enforcement: manual` as routing metadata, not a model-invocation block. All MAP skills are model-invocable except `map-release`, which alone keeps `disable-model-invocation: true`. Descriptions and negative triggers control routing; in-skill confirmation gates still apply, including version-specific major-upgrade consent in `map-upgrade`.
 
 Use `hybrid` only when both are true: the skill is useful as reference material, and it also ships runtime helpers such as hooks or scripts. Hybrid skills must list `runtimeEffects` in `skill-rules.json` so users can tell which behavior comes from reading instructions and which behavior comes from installed hooks or scripts.
 

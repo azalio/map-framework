@@ -7,7 +7,6 @@ description: >-
   implement, review, or persist lessons; use map-explain for one-shot
   walkthroughs and map-learn for saved project memory.
 effort: medium
-disable-model-invocation: true
 argument-hint: "[target | workflow artifact | --depth eli5|eli14|intern|expert]"
 ---
 ## MAP update preflight

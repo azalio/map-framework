@@ -9,6 +9,8 @@
   <a href="https://github.com/azalio/map-framework"><img src="https://img.shields.io/github/stars/azalio/map-framework?style=social" alt="GitHub stars"></a>
 </p>
 
+After `mapify upgrade`, Claude can invoke any MAP skill through the Skill tool on your behalf except `/map-release`, which remains manual-only. Workflow confirmation gates still apply; `/map-upgrade` requires explicit consent for a major version.
+
 ## Why MAP Exists
 
 Most AI agents rush straight to code — fast wrong answers, silent rework.

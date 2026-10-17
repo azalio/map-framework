@@ -2,10 +2,11 @@
 name: map-upgrade
 description: "Manually check and upgrade the MAP Framework for this project. Use when the user asks to update, upgrade, or check the installed MAP version."
 effort: low
-disable-model-invocation: true
 argument-hint: "[no arguments]"
 ---
 ## Manual MAP upgrade flow
+
+Model invocation is not consent to a major upgrade. Preserve the version-specific confirmation below regardless of who invokes this skill. Patch/minor updates retain the existing automatic update policy.
 
 From the project root, run `mapify _update --mode manual --project .` and parse its single bounded JSON object. Follow the returned status exactly:
 

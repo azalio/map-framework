@@ -3,7 +3,6 @@ name: map-skill-eval
 description: |
   Evaluate a /map-* skill's trigger accuracy and cost. Use when asked to measure skill trigger accuracy, run an eval-set, or check token/duration cost via `mapify skill-eval`. Do NOT use to plan or implement; use map-plan or map-efficient.
 effort: medium
-disable-model-invocation: true
 argument-hint: "[skill] [--eval-set PATH]"
 ---
 ## MAP update preflight

@@ -2,6 +2,8 @@
 
 Complete usage examples, best practices, and optimization strategies for the MAP Framework.
 
+Claude can invoke all MAP skills through the Skill tool except `/map-release`, which must be started manually. Run `mapify upgrade` to refresh existing installations. Model invocation does not approve gated actions: `/map-upgrade` still waits for explicit version-specific major-upgrade consent; patch/minor updates keep their existing policy.
+
 Looking for copyable prompt recipes grouped by phase and role? See **[docs/PROMPT_LIBRARY.md](PROMPT_LIBRARY.md)**.
 
 For long-running work, the canonical MAP flows maintain branch-scoped artifacts directly inside `.map/<branch>/`, so research, code-review lineage, verification summaries, PR drafts, and run dossiers survive context resets. Research artifacts live in one namespace: plan-scope discovery is `.map/<branch>/research/plan__discovery.md`, and subtask research is `.map/<branch>/research/<subtask_id>__<kind>.md`. Legacy `.map/<branch>/findings_<branch>.md` files are read only as resume/migration fallbacks.

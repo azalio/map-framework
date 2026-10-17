@@ -3,7 +3,6 @@ name: map-explain
 description: |
   Explain code, a diff, or the whole project the way a knowledgeable colleague would — a coherent walkthrough that builds a mental model: the practical result and main usage scenario first, then participants, data/control flow, mechanisms, rules, side effects and constraints in progressive depth, with ASCII diagrams for the key flows. For a PR, branch or diff it explains exactly the change against the base and separates new behavior from existing context, documentation clarifications and unimplemented plans. Use when learning unfamiliar code, onboarding to a system, or auditing what a PR really does. Do NOT use to plan or implement; use map-plan or map-efficient.
 effort: medium
-disable-model-invocation: true
 argument-hint: "[file path | symbol | PR ref | code snippet | empty for branch diff vs origin/main (fallback origin/master), or project overview on main/master]"
 ---
 ## MAP update preflight

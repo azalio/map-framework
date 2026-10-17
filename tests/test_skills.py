@@ -58,7 +58,7 @@ NEGATIVE_TRIGGER_FIXTURES = {
 SUPPORTED_SKILL_CLASSES = {"reference", "task", "hybrid"}
 
 # Task 8 requires this provider command's exact shared frontmatter description.
-# Its manual-only scope is enforced by disable-model-invocation + skill-rules,
+# Its explicit upgrade routing is enforced by skill-rules and consent gates,
 # so the generic Claude negative-trigger convention does not apply here.
 NEGATIVE_TRIGGER_DESCRIPTION_EXEMPT_SKILLS = {"map-upgrade"}
 # Codex twins rendered from the Claude source via [% include %] (PROVIDER-conditional).
@@ -443,7 +443,6 @@ class TestProviderUpdateSkills:
             "name: map-upgrade\n"
             f'description: "{description}"\n'
             "effort: low\n"
-            "disable-model-invocation: true\n"
             'argument-hint: "[no arguments]"'
         )
         assert codex.render(PROVIDER="codex").partition("\n---\n")[0] == (
@@ -516,8 +515,9 @@ class TestProviderUpdateSkills:
         assert bool(codex_cmd.search(codex_text)) == (skill != "map-upgrade")
         for key in ("effort:", "disable-model-invocation:", "argument-hint:"):
             # Preserve existing auto-invocable and argument-free metadata.
-            expected = skill not in {"map-so-search", "map-state"} and not (
-                skill == "map-plan" and key == "disable-model-invocation:"
+            expected = (
+                skill in {"map-release", "map-memory-now"} if key == "disable-model-invocation:"
+                else skill not in {"map-so-search", "map-state"}
             )
             assert (key in claude_text.partition("\n---\n")[0]) == expected
             assert key not in codex_text.partition("\n---\n")[0]
@@ -4091,7 +4091,7 @@ class TestMapReviewSharedSourceCodexRender:
     )
     _FILES = ("SKILL.md.jinja", "review-reference.md.jinja", "adversarial-reference.md.jinja")
     _BARE_SLASH_CMD = re.compile(r"(?<![A-Za-z0-9_./-])/map-")
-    _GATED_KEYS = ("effort:", "disable-model-invocation:", "argument-hint:")
+    _GATED_KEYS = ("effort:", "argument-hint:")
 
     def _render(self, name: str, provider: str) -> str:
         from mapify_cli.delivery.template_renderer import get_environment

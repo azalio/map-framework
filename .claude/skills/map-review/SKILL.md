@@ -3,7 +3,6 @@ name: map-review
 description: |
   Interactive 4-section code review using Monitor, Predictor, and Evaluator agents plus the user and maintainer role reviewers on current changes. Use when reviewing a diff, PR, or staged work before merge. Do NOT use to plan or implement; use map-plan or map-efficient.
 effort: high
-disable-model-invocation: true
 argument-hint: "[review focus] [--detached] [--ci] [--reverse-sections] [--shuffle-sections] [--seed <int>] [--compare-orderings] [--adversarial] [--quick] [--show-raw-findings] [--cross-ai <runtime>]"
 ---
 ## MAP update preflight

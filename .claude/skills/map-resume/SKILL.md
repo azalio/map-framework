@@ -3,7 +3,6 @@ name: map-resume
 description: |
   Resume an interrupted MAP workflow from .map/<branch>/step_state.json checkpoint. Use when returning after context exhaustion, /clear, or a session crash mid-workflow. Do NOT use to start new work; use map-plan or map-efficient.
 effort: low
-disable-model-invocation: true
 argument-hint: "[plan ID]"
 ---
 ## MAP update preflight
