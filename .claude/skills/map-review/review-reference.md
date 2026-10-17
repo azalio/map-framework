@@ -280,7 +280,10 @@ insufficient evidence. Positive unreachable counter-evidence may refute; unknown
 reachability may not. Pre-existing attribution remains separate from validity.
 
 Confirmed remediation requires bounded `sibling_search` (explicit paths, at most
-100), method, occurrences, checked references and dispositions. Uncertainty,
+100), method, occurrences, checked references and dispositions. Scope must cover
+original affected files; replacement citations cannot redirect it elsewhere. Preserve
+every known occurrence using file_path plus symbol/location or line_range for
+same-file sites; each needs a fresh checked disposition. Uncertainty,
 unresolved occurrences or required scope expansion prevent closure. Submit the
 structured re-review through existing `resolved_findings`; a free-text 'fixed'
 does not close. Reactions `fixed|wrong|intentional|unimportant` are separate durable

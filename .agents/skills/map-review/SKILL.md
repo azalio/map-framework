@@ -290,9 +290,9 @@ Mode semantics:
 - **`sibling-aware`**: BEFORE reviewer fan-out, identify the sibling
   (operator-supplied path or `$SIBLING_HINT` grep). Read the sibling's
   diff for the same file family. Reviewer prompts MUST receive the
-  sibling text as a comparison baseline — findings that exist in
-  sibling AND PR are pre-existing, not new (set
-  `was_present_before_pr=true`).
+  sibling text as comparison context, not proof of baseline attribution.
+  Presence in sibling AND PR does not establish `was_present_before_pr`;
+  check this branch's actual baseline and retain unknown attribution otherwise.
 
 ### Step A.1: Gather changes
 
@@ -454,10 +454,10 @@ not acceptance citations; reading claims remain `self_reported`. Check reference
 must be current runner-issued IDs, never claimed executions. Preserve each raw
 reviewer receipt in the adversarial aggregate's `reviewer_status[role].raw`;
 a top-level aggregate receipt cannot substitute for individual coverage.
-Reviewers may also report
-`resolved_findings: [{"finding_id": "RVF-001", "evidence": "specific re-review evidence"}]`.
-Only the originating reviewer may explicitly close its prior finding; omission is
-not resolution. This is reviewer evidence, not a tool-witnessed execution receipt.
+Reviewers may submit structured `resolved_findings` using the full evidence and
+sibling-remediation contract in review-reference.md § Evidence validation in the admitted round.
+Only the originating reviewer may request closure; free text or omission is not
+resolution. Fresh checked evidence is required, not a tool-witnessed execution claim.
 Preserve file/location/failure-scenario evidence so distinct defects stay distinct.
 
 ### Step A.3: Verification gate (MANDATORY before any presentation)

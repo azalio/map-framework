@@ -8458,16 +8458,16 @@ _NON_TOMBSTONABLE_SEVERITIES: frozenset[str] = frozenset(
 # verdict is not a channel — that is `no_new_fact`, which repeats the verdict.
 _OBJECTION_CHANNELS: dict[str, str] = {
     # Checkable against the artifact → may remove the finding (evidence required).
-    "quote_absent": "removes",
-    "wrong_category": "removes",
-    "different_version": "removes",
+    "quote_absent": "downgrades",
+    "wrong_category": "downgrades",
+    "different_version": "downgrades",
     # Not checkable against the artifact → finding is retained, human decides.
     "unverifiable_context": "escalates",
     # No new fact at all (insistence, authority, urgency) → verdict repeats.
     "no_new_fact": "repeats",
 }
-_REMOVING_CHANNELS = frozenset(
-    ch for ch, effect in _OBJECTION_CHANNELS.items() if effect == "removes"
+_CHECKABLE_OBJECTION_CHANNELS = frozenset(
+    ch for ch, effect in _OBJECTION_CHANNELS.items() if effect == "downgrades"
 )
 
 # Where an operator's objections are stored between runs.
@@ -8637,6 +8637,7 @@ ADVERSARIAL_AGGREGATE_SCHEMA = "adversarial_aggregate.v1"
 REVIEW_INPUT_NAMES = (
     *(f"review-agent-{role}.json" for role in (
         "monitor", "predictor", "evaluator", "adversarial", "user_experience", "maintainer",
+        "blind", "edge_case", "acceptance",
     )),
     *(f"adversarial-{role}.json" for role in (
         "blind", "edge", "acceptance", "user-experience", "maintainer",
@@ -9175,7 +9176,7 @@ def _apply_review_objections(
         if finding.get("status") == "tombstoned" and finding.get("resolved_by"):
             continue
 
-        if channel in _REMOVING_CHANNELS:
+        if channel in _CHECKABLE_OBJECTION_CHANNELS:
             # The retention floor applies here too. The evidence attached to an
             # objection is free text that nothing verifies, so above `minor` it
             # buys a downgrade and a human decision, not a silent removal.
@@ -9283,7 +9284,7 @@ def normalize_review_verdict(
                              becomes an active integrity finding, so a truncated or
                              malformed envelope can never read as a clean review.
         objections:          Operator objections recorded by record_review_objection.
-                             A checkable channel removes its finding; an unverifiable
+                             A checkable channel downgrades its finding; an unverifiable
                              one retains it and escalates; no_new_fact repeats the
                              prior verdict.
         destination:         Where the reviewed change is headed
@@ -9764,8 +9765,9 @@ def record_review_objection(
     decides what may happen to the row, and the channels are a closed list:
 
       quote_absent | wrong_category | different_version
-          Checkable against the change itself → the finding is removed on the
-          next ledger run. Evidence is REQUIRED; naming a reason is not enough.
+          Checkable against the change itself → retain the finding as needing
+          investigation on the next ledger run; only checked refutation closes it.
+          Evidence is REQUIRED; naming a reason is not enough.
       unverifiable_context
           Intent, history or agreement not visible in the change → the finding is
           RETAINED and the ledger escalates to a human. This can never clear it.
@@ -9788,11 +9790,11 @@ def record_review_objection(
             ),
         }
 
-    if channel in _REMOVING_CHANNELS and not evidence.strip():
+    if channel in _CHECKABLE_OBJECTION_CHANNELS and not evidence.strip():
         return {
             "status": "error",
             "message": (
-                f"channel {channel!r} removes a finding, so it requires evidence. "
+                f"channel {channel!r} contests a finding, so it requires evidence. "
                 "Quote the code, name the correct category, or identify the other "
                 "version. To contest without a checkable fact, use "
                 "'unverifiable_context' (escalates) or 'no_new_fact' (verdict stands)."
@@ -9915,7 +9917,12 @@ def _review_refs_checked(refs: Any, target: dict[str, Any], revisions: set[str])
         return False
 
 
-def _review_sibling_search_checked(search: Any, target: dict[str, Any]) -> bool:
+def _review_occurrence_key(occurrence: dict[str, Any]) -> str:
+    return json.dumps({key: occurrence[key] for key in
+                      ("file_path", "symbol", "location", "line", "line_range") if key in occurrence}, sort_keys=True)
+
+
+def _review_sibling_search_checked(search: Any, target: dict[str, Any], finding: dict[str, Any]) -> bool:
     if not isinstance(search, dict):
         return False
     scope, occurrences = search.get("searched_scope"), search.get("occurrences")
@@ -9923,6 +9930,13 @@ def _review_sibling_search_checked(search: Any, target: dict[str, Any]) -> bool:
             or any(not isinstance(path, str) or path not in target.get("required_files", []) for path in scope)
             or not str(search.get("method") or "").strip() or search.get("uncertainty") != ""
             or search.get("scope_expansion") != [] or not isinstance(occurrences, list) or not occurrences):
+        return False
+    affected = set(finding.get("affected_files", [])) or _review_affected_files(finding)
+    known = finding.get("known_sibling_occurrences", [])
+    identities = {_review_occurrence_key(item) for item in occurrences if isinstance(item, dict)}
+    occurrence_files = {item.get("file_path") for item in occurrences if isinstance(item, dict)}
+    if (not affected or not affected.issubset(scope) or not affected.issubset(occurrence_files)
+            or any(_review_occurrence_key(item) not in identities for item in known)):
         return False
     return all(isinstance(item, dict) and item.get("file_path") in scope
                and item.get("disposition") in {"fixed", "not_affected"}
@@ -9962,7 +9976,9 @@ def _validate_review_findings(ledger: dict[str, Any], admitted: dict[str, Any]) 
                                 for key in ("bug_class", "cause", "failure_scenario")):
                             continue
                         row = {**candidate, "id": finding["id"], "source_agent": "role", "originating_reviewer": reviewer,
-                               "resolution_requested": finding.get("resolution_requested", False), "resolution_reviewer": reviewer}
+                               "resolution_requested": finding.get("resolution_requested", False), "resolution_reviewer": reviewer,
+                               "known_sibling_occurrences": finding.get("known_sibling_occurrences", []),
+                               "affected_files": finding.get("affected_files", [])}
                         temporary = {"findings_registry": [row], "not_verified": [], "branch": ledger["branch"]}
                         _validate_review_findings(temporary, admitted)
                         outcomes.append({"reviewer": reviewer, **row["validation"]})
@@ -10020,7 +10036,11 @@ def _validate_review_findings(ledger: dict[str, Any], admitted: dict[str, Any]) 
                               payload.get("resolved_findings" if finding.get("resolution_requested") else
                                           ("issues" if owner == "monitor" else "findings"), []))
                 if any(isinstance(candidate, dict) and (
-                    candidate.get("finding_id") == finding["id"] if finding.get("resolution_requested") else
+                    (candidate.get("finding_id") == finding["id"] and all(
+                        field in candidate and candidate[field] == finding.get(field)
+                        for field in ("bug_class", "cause", "failure_scenario", "evidence_refs", "reachability",
+                                      "baseline_attribution", "sibling_search")
+                    )) if finding.get("resolution_requested") else
                     all(candidate.get(field) == finding.get(field) for field in ("bug_class", "cause", "failure_scenario"))
                 ) for candidate in candidates):
                     receipts[key] = receipt["sha256"]
@@ -10030,7 +10050,7 @@ def _validate_review_findings(ledger: dict[str, Any], admitted: dict[str, Any]) 
             reasons.append("No admitted validator capture provenance")
         if finding.get("resolution_requested"):
             search = finding.get("sibling_search")
-            if not _review_sibling_search_checked(search, target):
+            if not _review_sibling_search_checked(search, target, finding):
                 reasons.append("Remediation requires bounded sibling scope, checked occurrences and explicit disposition")
             else:
                 search.update(status="complete", snapshot=snapshot)
@@ -10054,6 +10074,8 @@ def _validate_review_findings(ledger: dict[str, Any], admitted: dict[str, Any]) 
 def _review_finding_key(finding: dict[str, Any]) -> str:
     if finding.get("identity_key"):
         return str(finding["identity_key"])
+    complete = all(isinstance(finding.get(field), str) and finding[field].strip()
+                   for field in ("bug_class", "cause", "failure_scenario"))
     location = []
     for item in _review_evidence(finding.get("evidence")):
         if item.get("source") == "finding_location":
@@ -10063,17 +10085,35 @@ def _review_finding_key(finding: dict[str, Any]) -> str:
                 continue
             if not isinstance(details, dict):
                 continue
-            stable = {key: value for key, value in details.items() if key not in {"line", "line_range"}}
+            stable = {key: value for key, value in details.items()
+                      if key not in {"line", "line_range"} and not (complete and key == "failure_mode")}
             if isinstance(stable.get("location"), str):
                 stable["location"] = re.sub(r":\d+(?::\d+)?(?:-\d+(?::\d+)?)?$", "", stable["location"])
             location.append(stable)
+    if complete and not location:
+        location = sorted({ref["file_path"] for ref in finding.get("evidence_refs", [])
+                           if isinstance(ref, dict) and isinstance(ref.get("file_path"), str)})
     return hashlib.sha256(json.dumps(
         [finding.get("source_agent"),
          finding.get("originating_reviewer") if finding.get("source_agent") != "adversarial" else None,
-         finding.get("category"), finding.get("claim"), finding.get("bug_class"),
+         finding.get("category"), None if complete else finding.get("claim"), finding.get("bug_class"),
          finding.get("cause"), finding.get("failure_scenario"), location],
         sort_keys=True,
     ).encode()).hexdigest()
+
+
+def _review_affected_files(finding: dict[str, Any]) -> set[str]:
+    return {ref["file_path"] for ref in finding.get("evidence_refs", [])
+            if isinstance(ref, dict) and isinstance(ref.get("file_path"), str)}
+
+
+def _review_known_occurrences(finding: dict[str, Any]) -> list[dict[str, Any]]:
+    search = finding.get("sibling_search")
+    occurrences = search.get("occurrences", []) if isinstance(search, dict) else []
+    known = {_review_occurrence_key(item): dict(item)
+             for item in [*finding.get("known_sibling_occurrences", []), *occurrences]
+             if isinstance(item, dict)}
+    return [known[key] for key in sorted(known)]
 
 
 def _retain_review_findings(
@@ -10104,9 +10144,21 @@ def _retain_review_findings(
         if old:
             finding["id"] = old["id"]
             finding["author_reactions"] = old.get("author_reactions", [])
+            known = _review_known_occurrences(old)
+            if known:
+                finding["known_sibling_occurrences"] = known
+            affected = set(old.get("affected_files", [])) | _review_affected_files(old) | _review_affected_files(finding)
+            if affected:
+                finding["affected_files"] = sorted(affected)
         else:
             next_id += 1
             finding["id"] = f"RVF-{next_id:03d}"
+        known = _review_known_occurrences(finding)
+        if known:
+            finding["known_sibling_occurrences"] = known
+        affected = _review_affected_files(finding) | set(finding.get("affected_files", []))
+        if affected:
+            finding["affected_files"] = sorted(affected)
         registry[key] = finding
     for resolution in resolutions or []:
         finding = next((row for row in registry.values() if row["id"] == resolution.get("finding_id")), None)
@@ -10121,10 +10173,20 @@ def _retain_review_findings(
         if any(field in resolution and finding.get(field) is not None and resolution[field] != finding[field]
                for field in ("bug_class", "cause", "failure_scenario")):
             raise ValueError("Resolution cannot substitute another finding cause or scenario")
+        known = _review_known_occurrences(finding)
+        if known:
+            finding["known_sibling_occurrences"] = known
+        affected = set(finding.get("affected_files", [])) | _review_affected_files(finding)
+        if affected:
+            finding["affected_files"] = sorted(affected)
         for field in ("bug_class", "cause", "failure_scenario", "evidence_refs", "reachability",
                       "baseline_attribution", "sibling_search"):
             if field in resolution:
                 finding[field] = resolution[field]
+            elif field not in {"bug_class", "cause", "failure_scenario"}:
+                finding.pop(field, None)
+        finding.pop("resolved_by", None)
+        finding.pop("validation", None)
         finding["resolution_requested"] = True
         finding["transition_evidence"] = resolution["evidence"]
         finding["resolution_reviewer"] = resolution["source_agent"]
@@ -10335,8 +10397,9 @@ def _complete_review_round(
     for path in files:
         envelope = json.loads(path.read_text(encoding="utf-8"))
         outputs = [envelope]
-        if "monitor" not in row["binding"]["scheduled_reviewers"]:
-            statuses = envelope.get("reviewer_status", {}) if isinstance(envelope, dict) else {}
+        if (isinstance(envelope, dict)
+                and envelope.get("schema_version") == ADVERSARIAL_AGGREGATE_SCHEMA):
+            statuses = envelope.get("reviewer_status", {})
             outputs = []
             for reviewer in row["binding"]["scheduled_reviewers"]:
                 status = statuses.get(reviewer, {}) if isinstance(statuses, dict) else {}
@@ -12513,7 +12576,8 @@ citation witnesses, not semantic proof. Pre-existing attribution is separate
 from validity. Positive unreachable counter-evidence can refute; unknown cannot.
 For re-review, submit resolved_findings with finding_id, the original cause and
 scenario, checked counter-evidence, and sibling_search: searched_scope (explicit
-paths, at most 100), method, occurrences (file_path, disposition and evidence_refs),
+paths covering original affected files, at most 100), method, occurrences (file_path,
+symbol/location or line_range to distinguish same-file sites, disposition and evidence_refs),
 uncertainty and scope_expansion. Unresolved occurrences, uncertainty or required
 scope expansion prevent closure. Author reactions ('fixed', 'wrong', 'intentional',
 'unimportant') never close findings or replace validation. Adversarial confirmation
@@ -26771,6 +26835,8 @@ if __name__ == "__main__":
         _args = _p.parse_args(sys.argv[2:])
         result = record_review_reaction(_args.finding_id, _args.reaction, _args.evidence, _args.branch)
         print(json.dumps(result, indent=2))
+        if result["status"] == "error":
+            sys.exit(1)
     elif func_name == "review_publication":
         import argparse as _ap
 

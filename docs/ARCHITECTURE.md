@@ -866,8 +866,8 @@ Current delta captured:
 - Review verdict ledger (#406): `write_review_verdict_ledger` normalizes
   Monitor/Predictor/Evaluator outputs into PROCEED/REVISE/BLOCK via a closed
   decision table and writes `.map/<branch>/review-verdict-ledger.{json,md}`.
-  The table counts `active` and `downgraded` findings; only `minor` findings may
-  be tombstoned, so neither a missing `reach_evidence` nor a self-attested
+  The table counts `active` and `downgraded` findings; admitted findings need
+  checked refutation or evidence-backed resolution to be tombstoned. Neither missing `reach_evidence` nor self-attested
   `was_present_before_pr=true` can erase a blocking finding. Missing or malformed
   reviewer input is itself an active finding. `write_stage_gate review` is refused
   when it contradicts `computed_verdict` (`MAP_REVIEW_LEDGER_ENFORCE=0` opts out).
