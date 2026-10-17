@@ -291,9 +291,9 @@ Mode semantics:
 - **`sibling-aware`**: BEFORE reviewer fan-out, identify the sibling
   (operator-supplied path or `$SIBLING_HINT` grep). Read the sibling's
   diff for the same file family. Reviewer prompts MUST receive the
-  sibling text as a comparison baseline — findings that exist in
-  sibling AND PR are pre-existing, not new (set
-  `was_present_before_pr=true`).
+  sibling text as comparison context, not proof of baseline attribution.
+  Presence in sibling AND PR does not establish `was_present_before_pr`;
+  check this branch's actual baseline and retain unknown attribution otherwise.
 
 ### Step A.1: Gather changes
 
@@ -441,16 +441,20 @@ not acceptance citations; reading claims remain `self_reported`. Check reference
 must be current runner-issued IDs, never claimed executions. Preserve each raw
 reviewer receipt in the adversarial aggregate's `reviewer_status[role].raw`;
 a top-level aggregate receipt cannot substitute for individual coverage.
-Reviewers may also report
-`resolved_findings: [{"finding_id": "RVF-001", "evidence": "specific re-review evidence"}]`.
-Only the originating reviewer may explicitly close its prior finding; omission is
-not resolution. This is reviewer evidence, not a tool-witnessed execution receipt.
+Reviewers may submit structured `resolved_findings` using the full evidence and
+sibling-remediation contract in review-reference.md § Evidence validation in the admitted round.
+Only the originating reviewer may request closure; free text or omission is not
+resolution. Fresh checked evidence is required, not a tool-witnessed execution claim.
 Preserve file/location/failure-scenario evidence so distinct defects stay distinct.
 
 ### Step A.3: Verification gate (MANDATORY before any presentation)
 
-For EVERY Monitor / Predictor finding, verify BEFORE listing it as a
-walkthrough item:
+For EVERY substantive finding, extend this gate; do not dispatch another validation layer.
+Preserve legacy findings visibly as `insufficient_evidence` until checked, never as implicit confirmation.
+
+**MANDATORY:** Read and apply review-reference.md § Evidence validation in the admitted round for evidence, remediation, independent quorum and author-reaction rules.
+
+Apply the following compatibility checks without discarding unresolved claims:
 
 1. **Evidence check.** Severity ≥ MEDIUM must carry `reach_evidence`
    (grep proving path is reached, failing test name, or linter line).
@@ -458,10 +462,9 @@ walkthrough item:
 2. **Pre-existing check.** If `was_present_before_pr=true`, route to
    backlog/follow-up file, NOT to the walkthrough's REVISE list. PR
    review covers what the PR introduces.
-3. **Sibling check (mode=sibling-aware).** If the same finding holds
-   for the sibling reference, set `was_present_before_pr=true` and
-   route to backlog. The PR can't be blocked on behavior that already
-   shipped in the twin.
+3. **Sibling check (mode=sibling-aware).** A matching twin suggests
+   baseline attribution; it does not prove this branch predates the change.
+   Check the actual baseline and preserve uncertainty in the ledger.
 4. **Precheck duplication check.** If the finding matches a precheck
    error line, cite the precheck and stop — do NOT raise a second
    instance.

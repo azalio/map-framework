@@ -269,6 +269,32 @@ dispatched and never came back is a dropped review. Supplying NEITHER is not
 flagged — `lightweight` mode legitimately runs Monitor alone under the same
 `review_mode="normal"` label.
 
+### Evidence validation in the admitted round
+
+Step A.3 consumes captured evidence, not votes or author reactions. Each source
+finding retains `bug_class`, `cause`, `failure_scenario`, `evidence_refs`,
+`reachability` and `baseline_attribution`. The durable runner checks current/base
+citations against the admitted snapshot and capture receipt. `validation.verdict`
+is `confirmed`, `refuted` or `insufficient_evidence`; a quote match is a citation
+witness, not an automated semantic proof. Legacy envelopes stay visible with
+insufficient evidence. Positive unreachable counter-evidence may refute; unknown
+reachability may not. Pre-existing attribution remains separate from validity.
+
+Confirmed remediation requires bounded `sibling_search` (explicit paths, at most
+100), method, occurrences, checked references and dispositions. Scope must cover
+original affected files; replacement citations cannot redirect it elsewhere. Preserve
+every known occurrence using file_path plus symbol/location or line_range for
+same-file sites; each needs a fresh checked disposition. Uncertainty,
+unresolved occurrences or required scope expansion prevent closure. Submit the
+structured re-review through existing `resolved_findings`; a free-text 'fixed'
+does not close. Reactions `fixed|wrong|intentional|unimportant` are separate durable
+feedback via `record_review_reaction`, never validator verdicts.
+
+Only `--adversarial` needs two distinct admitted reviewer captures with checked
+validations; aggregate agreement alone cannot confirm. Duplicate captured payloads
+do not establish independence; genuine separate reasoning may cite the same code.
+Disagreement remains insufficient and prevents approval. Normal mode has no quorum.
+
 ### What the table counts
 
 `computed_verdict` (`PROCEED`/`REVISE`/`BLOCK`) is derived from every finding
@@ -314,17 +340,16 @@ python3 .map/scripts/map_step_runner.py record_review_objection \
 
 | Channel | Checkable against the change? | Effect |
 |---|---|---|
-| `quote_absent` | yes | evidence REQUIRED; removes a `minor` finding, downgrades anything above it |
-| `wrong_category` | yes | evidence REQUIRED; removes a `minor` finding, downgrades anything above it |
-| `different_version` | yes | evidence REQUIRED; removes a `minor` finding, downgrades anything above it |
+| `quote_absent` | yes | evidence REQUIRED; requests a downgrade, never constitutes validated closure |
+| `wrong_category` | yes | evidence REQUIRED; requests a downgrade, never constitutes validated closure |
+| `different_version` | yes | evidence REQUIRED; requests a downgrade, never constitutes validated closure |
 | `unverifiable_context` | no | finding STAYS, `escalation_required` set, PROCEED unavailable |
 | `no_new_fact` | n/a | finding STAYS, previous verdict repeated (`repeated_verbatim`) |
 
-The retention floor from the status table holds here without exception: **only a
-finding proven `minor` leaves the table, by any route.** The evidence attached to
-an objection is free text that nothing verifies, so against a `critical`,
-`important` or `needs_investigation` finding a checkable channel buys a downgrade
-plus `escalation_required` — a human confirms the removal — never a silent one.
+The evidence attached to an objection is unverified free text. It may request
+re-evaluation and downgrade severity, but cannot refute any finding, including a
+minor one. Checked re-review evidence and complete bounded sibling remediation
+supersede an objection; a reaction or repeated argument does not.
 
 Insistence, authority, urgency and "it's obvious" are `no_new_fact`, not
 `unverifiable_context`. The unverifiable channel is for a concrete fact that is

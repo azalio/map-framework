@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Evidence-backed finding validation in the existing review Step A.3: explicit confirmed/refuted/insufficient-evidence outcomes, failure scenarios, source references and baseline attribution; legacy findings remain visible without implicit confirmation. Bounded bug-class remediation records search scope, sibling occurrences and disposition. Adversarial quorum counts independent evidence-backed validations, not discovery votes; author reactions remain separate from validator verdicts. (#522)
 - Runner-witnessed acceptance proofs: freeze independent test-first commands and proof files before Actor; execute snapshot-bound proofs and derive per-spec-AC `proven`/`failed`/`unproven`/`stale` status. Audited revisions preserve author, reason, command/assertion differences and invalidations; weakening requires justification. Completion revalidates evidence instead of trusting checked ACs. Unproven is warn-first by default (`acceptance.strict` / `MAP_STRICT_ACCEPTANCE` enables blocking); failed/stale evidence and integrity failures always block. (#524)
 - Snapshot/policy-bound review receipts and explicit COMPLETE/INCOMPLETE/BLOCKED
   completeness, separate from findings, execution checks and human consent.
@@ -31,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resetting the three-attempt budget or losing unresolved findings. (#521)
 
 ### Fixed
+- Review check cleanup inspects process-group quiescence before signalling, allowing a zombie-only group to release its lease even when signalling would return EPERM. Live descendants or failed inspection remain fail-closed; ownership and deadlines are unchanged. (#531)
 - Bounded review preserves schema-native Monitor file identities and real
   adversarial evidence/reporting reviewers, applies objections after stable-ID
   retention, and rejects legacy writes that would silently discard new input.
