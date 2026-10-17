@@ -48,7 +48,7 @@ from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from functools import wraps
 from pathlib import Path, PurePosixPath
-from typing import Any, TypedDict, cast
+from typing import Any, NotRequired, TypedDict, cast
 
 # Keep in sync with workflow-context-injector.py GOAL_HEADING_RE
 GOAL_HEADING_RE = r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)"
@@ -8573,6 +8573,7 @@ class ReviewRun(TypedDict):
     policy_files: list[str]
     required_checks: list[str]
     check_specs: dict[str, list[str]]
+    check_timeouts: NotRequired[dict[str, float]]
 
 
 def _validate_review_run(data: Any) -> str | None:
@@ -8596,6 +8597,11 @@ def _validate_review_run(data: Any) -> str | None:
     return None
 
 
+def _review_branch_dir(branch: str | None = None) -> Path:
+    """Resolve every review artifact and lock through the same branch namespace."""
+    return get_branch_dir(_sanitize_branch(branch) if branch else get_branch_name())
+
+
 def _review_transaction(function: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
     """Serialize ledger read/modify/write across processes using a stable lock inode."""
     @wraps(function)
@@ -8605,7 +8611,7 @@ def _review_transaction(function: Callable[..., dict[str, Any]]) -> Callable[...
         explicit_branch = kwargs.get("branch")
         if function.__name__ == "create_review_bundle" and args:
             explicit_branch = args[0]
-        directory = get_branch_dir(_sanitize_branch(explicit_branch) if explicit_branch else get_branch_name())
+        directory = _review_branch_dir(explicit_branch)
         try:
             directory.mkdir(parents=True, exist_ok=True)
             with (directory / ".review-ledger.lock").open("a") as handle:
@@ -8757,7 +8763,7 @@ def review_round_scope(branch: str | None = None) -> dict[str, Any]:
     """Conservative delta scope from a complete covered baseline; never from AC citations."""
     fallback: dict[str, Any] = {"kind": "full", "reason": "No reusable completed full-review baseline"}
     try:
-        ledger = _read_review_ledger(get_branch_dir(branch or get_branch_name()))
+        ledger = _read_review_ledger(_review_branch_dir(branch))
         rounds = ledger.get("convergence", {}).get("rounds", [])
         completed = [row for row in rounds if "completed_at" in row]
         target = _review_target()
@@ -8786,7 +8792,7 @@ def review_round_scope(branch: str | None = None) -> dict[str, Any]:
 def _scoped_review_diff(branch: str | None, supplied: str | None) -> tuple[str, dict[str, Any]]:
     scope = review_round_scope(branch)
     try:
-        prior = _read_review_ledger(get_branch_dir(branch or get_branch_name()))
+        prior = _read_review_ledger(_review_branch_dir(branch))
         unresolved = [row for row in prior.get("findings_registry", []) if row.get("status") in {"active", "downgraded"}]
     except (OSError, ValueError, TypeError):
         unresolved = []
@@ -8797,7 +8803,10 @@ def _scoped_review_diff(branch: str | None, supplied: str | None) -> tuple[str, 
     if scope["kind"] == "incremental":
         try:
             diff = _review_git("diff", scope["delta_base"], scope["head"])
-            return diff + "\n\nReview delta, affected dependencies and unresolved findings only:\n" + json.dumps(scope), scope
+            return (diff + "\n\nPrioritize the delta, affected dependencies and unresolved findings. "
+                    "Receipt coverage must still satisfy the admitted required_files scope; incremental prioritization "
+                    "does not exempt remaining required paths. Report unread paths as skipped; "
+                    "never claim coverage from prioritization alone.\n" + json.dumps(scope)), scope
         except (OSError, ValueError, subprocess.TimeoutExpired):
             scope = {"kind": "full", "reason": "Delta unavailable; full review required"}
     return _read_git_diff_for_review() + "\n\nReview scope: " + json.dumps(scope), scope
@@ -8843,7 +8852,7 @@ def abandon_review_round(round_id: str, reason: str, *, branch: str | None = Non
     """Explicitly close an unusable admission without clearing findings or refunding its attempt."""
     if not reason.strip():
         raise ValueError("Abandonment requires an explicit operator reason")
-    directory = get_branch_dir(branch or get_branch_name())
+    directory = _review_branch_dir(branch)
     ledger = _read_review_ledger(directory)
     convergence = ledger.get("convergence", {})
     rounds = convergence.get("rounds", [])
@@ -8883,7 +8892,11 @@ def _review_capability(binding: dict[str, Any]) -> dict[str, Any]:
     content = path.read_bytes()
     result["profile_hash"] = hashlib.sha256(content).hexdigest()
     if provider == "claude":
-        import yaml
+        try:
+            import yaml
+        except ImportError:
+            result["reason"] = "PyYAML is unavailable; reviewer capability cannot be verified"
+            return result
 
         text = content.decode("utf-8")
         parts = text.split("---", 2)
@@ -8912,6 +8925,7 @@ def begin_review_run(
     round_id: str = "", provider: str = "unknown", capability_profile: str = "review-reader",
     policy_files: list[str] | None = None, required_checks: list[str] | None = None,
     check_specs: dict[str, list[str]] | None = None,
+    check_timeouts: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Admit one review/fix iteration; retries retain captured reviewer inputs."""
     # Intent: focus text is free prose, not a shell command; detect only literal flag tokens.
@@ -8937,6 +8951,14 @@ def begin_review_run(
         or any(not isinstance(arg, str) for arg in argv) for name, argv in check_specs.items()
     )):
         raise ValueError("check_specs must map check IDs to nonempty argv string arrays")
+    if check_timeouts is not None and (not isinstance(check_timeouts, dict) or any(
+        name not in (check_specs or {}) or isinstance(seconds, bool)
+        or not isinstance(seconds, (int, float)) or not 0 < seconds < math.inf
+        for name, seconds in check_timeouts.items()
+    )):
+        raise ValueError("check_timeouts must map admitted check IDs to positive finite seconds")
+    if check_timeouts:
+        payload["check_timeouts"] = check_timeouts
     if provider not in {"unknown", "claude", "codex"}:
         raise ValueError("Unknown review provider")
     if any(not isinstance(name, str) or not name for name in [*(policy_files or []), *(required_checks or [])]):
@@ -8944,7 +8966,7 @@ def begin_review_run(
     error = _validate_review_run(payload)
     if error:
         return {"status": "error", "message": error}
-    branch_dir = get_branch_dir(branch or get_branch_name())
+    branch_dir = _review_branch_dir(branch)
     prior = _read_review_ledger(branch_dir)
     convergence = prior.get("convergence", {"rounds": [], "started_at": time.time()})
     rounds = convergence["rounds"]
@@ -9642,7 +9664,7 @@ def record_review_objection(
     The objection is bound to the claim it was raised against, so it cannot drift
     onto a different finding if the reviewer output changes.
     """
-    branch_name = branch or get_branch_name()
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
     branch_dir = get_branch_dir(branch_name)
 
     if channel not in _OBJECTION_CHANNELS:
@@ -9842,7 +9864,7 @@ def capture_review_output(
     reviewer: str, payload: str, round_id: str, *, ordering: str = "", branch: str | None = None,
 ) -> dict[str, Any]:
     """Fence a reviewer response to the admitted iteration before replacing its capture."""
-    directory = get_branch_dir(branch or get_branch_name())
+    directory = _review_branch_dir(branch)
     ledger = _read_review_ledger(directory)
     rounds = ledger.get("convergence", {}).get("rounds", [])
     if not rounds or rounds[-1]["round_id"] != round_id or _review_round_terminal(rounds[-1]):
@@ -9864,7 +9886,7 @@ def capture_review_output(
     directory.mkdir(parents=True, exist_ok=True)
     artifact = directory / f"review-agent-{reviewer}.json"
     _write_json_file(artifact, data)
-    root = get_branch_dir(branch or get_branch_name())
+    root = _review_branch_dir(branch)
     row.setdefault("receipts", {})[f"{ordering or 'default'}:{reviewer}"] = {
         "artifact": str(artifact.relative_to(root)), "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
         "snapshot_evidence": "tool_witnessed", "coverage_evidence": "self_reported",
@@ -9882,7 +9904,7 @@ def review_publication(
     """Select finding revisions; acknowledge only after a successful external publication."""
     if not destination.strip():
         raise ValueError("Publication destination is required")
-    directory = get_branch_dir(branch or get_branch_name())
+    directory = _review_branch_dir(branch)
     ledger = _read_review_ledger(directory)
     history = ledger.setdefault("publication_history", [])
     current = {}
@@ -9990,11 +10012,20 @@ def _complete_review_round(
     coverage: list[set[str]] = []
     for path in files:
         envelope = json.loads(path.read_text(encoding="utf-8"))
-        covered = envelope.get("receipt", {}).get("covered_files") if isinstance(envelope, dict) else None
-        if not isinstance(covered, list) or any(not isinstance(name, str) for name in covered):
-            coverage.append(set())
-        else:
-            coverage.append(set(covered))
+        outputs = [envelope]
+        if "monitor" not in row["binding"]["scheduled_reviewers"]:
+            statuses = envelope.get("reviewer_status", {}) if isinstance(envelope, dict) else {}
+            outputs = []
+            for reviewer in row["binding"]["scheduled_reviewers"]:
+                status = statuses.get(reviewer, {}) if isinstance(statuses, dict) else {}
+                outputs.append(status.get("raw", {}) if isinstance(status, dict) else {})
+        for output in outputs:
+            receipt = output.get("receipt") if isinstance(output, dict) else None
+            covered = receipt.get("covered_files") if isinstance(receipt, dict) else None
+            if not isinstance(covered, list) or any(not isinstance(name, str) for name in covered):
+                coverage.append(set())
+            else:
+                coverage.append(set(covered))
     row.update({"completed_at": time.time(), "submission_digest": digest,
                 "covered_files": sorted(set.intersection(*coverage)) if coverage else [],
                 "verdict": ledger["computed_verdict"]})
@@ -10070,7 +10101,7 @@ def write_review_verdict_ledger(
     Returns:
         Status dict with ``status``, ``computed_verdict``, ``json_path``, ``md_path``.
     """
-    branch_name = branch or get_branch_name()
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
     branch_dir = get_branch_dir(branch_name)
     branch_dir.mkdir(parents=True, exist_ok=True)
 
@@ -10476,7 +10507,7 @@ def write_stage_gate(
     verdict = normalized_verdict
 
     normalized_stage = stage.strip().lower().replace("_", "-")
-    branch_dir = get_branch_dir(branch)
+    branch_dir = _review_branch_dir(branch) if normalized_stage == "review" else get_branch_dir(branch)
     gate_file = branch_dir / f"{normalized_stage}-gate.json"
     gate_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -10955,7 +10986,7 @@ def build_handoff_bundle(branch: str | None = None) -> dict:
 
 def build_review_handoff(branch: str | None = None) -> dict:
     """Build final review context from planning, execution, and verification artifacts."""
-    branch_name = branch or get_branch_name()
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
     branch_dir = get_branch_dir(branch_name)
 
     plan_review_next = next_numbered_artifact_path("plan-review", branch_name)
@@ -11520,7 +11551,7 @@ def create_review_bundle(branch: str | None = None) -> dict:
     ledger = _read_review_ledger(branch_dir)
     rounds = ledger.get("convergence", {}).get("rounds", [])
     target = _review_target()
-    row = rounds[-1] if rounds else None
+    row = next((item for item in rounds if not _review_round_terminal(item)), None)
     if row and not _review_binding_current(row):
         raise ValueError("Review snapshot or policy changed before bundle creation")
     result["snapshot"] = {"target": target, "policy_hash": row.get("policy_hash") if row else _review_policy(),
@@ -14421,7 +14452,7 @@ def get_current_phase(branch: str | None = None) -> str | None:
 def _record_review_check(check_id: str, command: list[str], *, branch: str | None = None,
                          result: dict[str, Any] | None = None, output: bytes = b"",
                          attempt_id: str = "") -> dict[str, Any]:
-    directory = get_branch_dir(branch or get_branch_name())
+    directory = _review_branch_dir(branch)
     ledger = _read_review_ledger(directory)
     rounds = ledger.get("convergence", {}).get("rounds", [])
     if not rounds or (result is None and not _review_binding_current(rounds[-1])):
@@ -14434,6 +14465,10 @@ def _record_review_check(check_id: str, command: list[str], *, branch: str | Non
         raise ValueError("Check command differs from the admitted command specification")
     checks = ledger.setdefault("execution_checks", {})
     if result is None:
+        timeout_seconds = row["binding"].get("check_timeouts", {}).get(check_id, 300)
+        if (isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float))
+                or not 0 < timeout_seconds < math.inf):
+            raise ValueError("Check timeout must be positive finite seconds")
         # The caller owns the execution lease before touching ledger state. Legacy
         # attempts did not hold it, so their quiescence cannot be proved here.
         if any(check.get("state") == "running" and check.get("lease_protocol") != "flock-v1"
@@ -14449,7 +14484,7 @@ def _record_review_check(check_id: str, command: list[str], *, branch: str | Non
             history.append({**checks[check_id], "check_id": check_id})
         ledger["code_approval"] = {"approved": False}
         checks[check_id] = {"state": "running", "passed": False, "command": command,
-                            "started_at": time.time(), "before": row["target"],
+                            "started_at": time.time(), "before": row["target"], "timeout_seconds": timeout_seconds,
                             "policy_hash": row["policy_hash"], "owner_pid": os.getpid(),
                             "attempt_id": attempt_id, "round_id": row["round_id"], "lease_protocol": "flock-v1"}
     else:
@@ -14507,11 +14542,13 @@ def run_test_gate(*, command: list[str] | None = None, check_id: str = "", branc
         if test_cmd:
             break
 
-    if check_id and command is None:
+    if check_id:
         try:
-            ledger = _read_review_ledger(get_branch_dir(branch or get_branch_name()))
+            ledger = _read_review_ledger(_review_branch_dir(branch))
             rounds = ledger.get("convergence", {}).get("rounds", [])
-            command = rounds[-1]["binding"].get("check_specs", {}).get(check_id) if rounds else None
+            binding = rounds[-1]["binding"] if rounds else {}
+            if command is None:
+                command = binding.get("check_specs", {}).get(check_id)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             return {"status": "error", "passed": False, "message": str(exc)}
     if command is not None:
@@ -14522,7 +14559,7 @@ def run_test_gate(*, command: list[str] | None = None, check_id: str = "", branc
         import fcntl
         import uuid
 
-        directory = get_branch_dir(branch or get_branch_name())
+        directory = _review_branch_dir(branch)
         try:
             directory.mkdir(parents=True, exist_ok=True)
             # Stable inode, never unlinked. Close-only releases our reference:
@@ -14540,8 +14577,8 @@ def run_test_gate(*, command: list[str] | None = None, check_id: str = "", branc
                 execution: dict[str, Any] = {"status": "skipped", "passed": False, "exit_code": None}
                 if test_cmd:
                     try:
-                        process = subprocess.run(test_cmd, capture_output=True, timeout=300, check=False,
-                                                 pass_fds=(lease.fileno(),))
+                        process = subprocess.run(test_cmd, capture_output=True, timeout=started["timeout_seconds"],
+                                                 check=False, pass_fds=(lease.fileno(),))
                         output = process.stdout + process.stderr
                         execution = {"status": "success", "passed": process.returncode == 0,
                                      "exit_code": process.returncode}
@@ -25866,9 +25903,11 @@ if __name__ == "__main__":
         _p.add_argument("--policy-file", action="append", default=[])
         _p.add_argument("--required-check", action="append", default=[])
         _p.add_argument("--check-specs-json", default="{}")
+        _p.add_argument("--check-timeouts-json", default="{}")
         _args = _p.parse_args(sys.argv[2:])
         try:
             _check_specs = json.loads(_args.check_specs_json)
+            _check_timeouts = json.loads(_args.check_timeouts_json)
         except json.JSONDecodeError:
             print(json.dumps({"status": "error", "message": "Invalid check specification JSON"}))
             sys.exit(1)
@@ -25876,7 +25915,7 @@ if __name__ == "__main__":
                                   sibling_hint=_args.sibling_hint, branch=_args.branch, round_id=_args.round_id,
                                   provider=_args.provider, capability_profile=_args.capability_profile,
                                   policy_files=_args.policy_file, required_checks=_args.required_check,
-                                  check_specs=_check_specs)
+                                  check_specs=_check_specs, check_timeouts=_check_timeouts)
         print(json.dumps(result, indent=2, ensure_ascii=True))
         if result["status"] == "error":
             sys.exit(1)

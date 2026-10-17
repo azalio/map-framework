@@ -89,7 +89,7 @@ def test_all_installed_review_dispatches_use_reader(installed_reader):
     assert len(dispatches) >= 11
     assert set(dispatches) == {"review-reader"}
     skill = texts[0]
-    assert f"--provider {provider} --capability-profile review-reader" in skill
+    assert f'"--provider", "{provider}", "--capability-profile", "review-reader"' in skill
     assert "run_test_gate" in skill
     assert "make -k test" not in skill
     assert "receipt" in skill and "self_reported" in skill

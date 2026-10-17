@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dedicated read-only review profiles and runner-provided base/current source
   attribution bundles. Codex findings remain available with explicit unverified
   capability enforcement and INCOMPLETE status until enforcement is verified;
-  no silent reviewer shell fallback. (#526)
+  no silent reviewer shell fallback. (#521, PR 1b; enforcement follow-up #526)
 - Durable bounded `/map-review` convergence in the existing verdict ledger: stable
   review/fix round identities, restart-safe history, timing and rounds-to-pass,
   and a reconsideration stop after three unsuccessful rounds. Exhaustion never

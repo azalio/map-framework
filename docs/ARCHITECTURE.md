@@ -888,9 +888,10 @@ Current delta captured:
   not its registry row or verdict contribution; omitted unresolved findings
   remain open. Delivery followed by a crash before acknowledgment may replay,
   so this is not an external exactly-once protocol.
-  Re-review scope uses a prior reviewed baseline plus the delta, affected
-  dependencies and unresolved locations. Without sufficient baseline/coverage
-  evidence, it records a full-review fallback rather than assuming reuse.
+  Re-review prioritizes the delta, affected dependencies and unresolved locations
+  against a verified baseline; receipt coverage still requires every admitted
+  `required_files` path. Without sufficient baseline/coverage evidence, it records
+  a full-scope fallback rather than assuming reuse.
   Incremental dependency analysis is limited to clean root-level static Python
   module graphs with full Git identity and completed-roster file coverage;
   unsupported languages/import structures retain full review.

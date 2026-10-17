@@ -47,23 +47,12 @@ parallel_tool_policy: single_review_fanout
 ## Execution Rules
 
 1. Execute all phases in order.
-2. **Lint/test precheck FIRST** (Step A.0 below) — reviewer findings the
-   project's existing automation already catches do NOT belong in the
-   walkthrough. Linter/test output is primary signal.
-3. **Detect review mode** (Step A.0b): empty review-bundle.md ⇒
-   `lightweight` (diff-only, single Monitor pass with stricter
-   evidence). "twin of X" / "sibling controller" language in the
-   PR/commit/diff ⇒ `sibling-aware` (read X first, compare). MAP-full
-   bundle present ⇒ `full` (default).
+2. **Lint/test precheck FIRST** (Step A.0) — linter/test output is primary signal; findings already caught by project automation do NOT belong in the walkthrough.
+3. **Detect review mode** (Step A.0b): empty review-bundle.md ⇒ `lightweight` (single Monitor, stricter evidence; unknown impact retains full scope). "twin of X" / "sibling controller" in PR/commit/diff ⇒ `sibling-aware` (read X first, compare). MAP-full bundle ⇒ `full` (default).
 4. Build the review bundle before launching reviewer agents.
 5. Build bounded review prompts before launching reviewer agents.
-6. Launch reviewer agents exactly once per review run: full mode runs
-   monitor + predictor + evaluator + the two role reviewers
-   (`user_experience`, `maintainer`); lightweight mode runs monitor only.
-7. **Monitor `valid=false` requires verification, not immediate
-   publication** — Step A.3 verifies each finding has evidence and is
-   bug-introduced-here BEFORE Phase B. Bare claims without evidence are
-   downgraded to `needs_investigation` and not published as issues.
+6. Launch reviewer agents exactly once per review run: full mode runs monitor + predictor + evaluator + `user_experience` + `maintainer`; lightweight runs monitor only.
+7. **Monitor `valid=false` requires verification, not immediate publication** — Step A.3 verifies evidence and bug-introduced-here BEFORE Phase B. Bare claims become `needs_investigation`, not published issues.
 8. Present options neutrally as A/B/C. Append `(Recommended)` after the option label, not by position.
 
 ## Review Preferences (Customize per project)
@@ -242,12 +231,32 @@ if git log -1 --format=%B | grep -iE 'twin of |sibling |mirror of |port of ' >/d
   REVIEW_MODE="sibling-aware"
   SIBLING_HINT=$(git log -1 --format=%B | grep -oiE '(twin of|sibling|mirror of|port of)[^.]*' | sed -n '1p')
 fi
-# Set CHECK_SPECS_JSON to {"tests":[...],"lint":[...]} using actual documented project argv, not generic examples.
-: "${CHECK_SPECS_JSON:?Set CHECK_SPECS_JSON to the project test and lint argv specifications before admission}"
-python3 .map/scripts/map_step_runner.py begin_review_run \
-  --provider claude --capability-profile review-reader \
-  --required-check tests --required-check lint --check-specs-json "$CHECK_SPECS_JSON" \
-  --mode "$REVIEW_MODE" --arguments="$ARGUMENTS" --sibling-hint "$SIBLING_HINT" || exit 1
+# Include only documented project checks as {"<id>":[argv...]}; never invent placeholder passes.
+# Record absent automation as a limitation in the review summary; use {} if no checks exist.
+: "${CHECK_SPECS_JSON:?Set CHECK_SPECS_JSON to documented project check argv specifications}"
+# Optional positive seconds per admitted check; default 300.
+if [ -z "${CHECK_TIMEOUTS_JSON:-}" ]; then CHECK_TIMEOUTS_JSON='{}'; fi
+python3 - "$CHECK_SPECS_JSON" "$REVIEW_MODE" "$ARGUMENTS" "$SIBLING_HINT" "$CHECK_TIMEOUTS_JSON" <<'PY'
+import json
+import subprocess
+import sys
+
+specs_json, mode, arguments, sibling_hint, timeouts_json = sys.argv[1:]
+specs = json.loads(specs_json)
+runner = [sys.executable, ".map/scripts/map_step_runner.py"]
+argv = runner + ["begin_review_run", "--provider", "claude", "--capability-profile", "review-reader",
+                 "--check-specs-json", specs_json, "--check-timeouts-json", timeouts_json,
+                 "--mode", mode, "--arguments=" + arguments, "--sibling-hint", sibling_hint]
+for check_id in specs:
+    argv.extend(["--required-check", check_id])
+admission = subprocess.run(argv, check=True, capture_output=True, text=True)
+print(admission.stdout, end="")
+if json.loads(admission.stdout).get("completed"):
+    raise SystemExit("Review already completed; do not dispatch reviewers")
+for check_id in specs:
+    subprocess.run(runner + ["run_test_gate", "--check-id", check_id], check=True)
+PY
+[ "$?" -eq 0 ] || exit 1
 ```
 
 Start before any capture or fan-out. Abort on a start error; in particular
@@ -258,19 +267,16 @@ completed rounds are immutable. Use `--round-id <stored-id>` for an explicit ret
 Do not dispatch reviewers when admission reports `completed: true`. For a stale pending round,
 explicitly run `abandon_review_round <round-id> --reason "<why>"` through the runner before new admission;
 abandonment preserves audit/findings and consumes an unsuccessful attempt, never resets the cap.
-After the initial full review, generated prompts carry delta + affected dependencies
-+ unresolved findings only where a covered baseline and static impact are reusable;
-otherwise they explicitly request full review. Never substitute AC citation coverage.
+After the initial full review, verified baseline/static impact enables incremental
+prioritization of delta + affected dependencies + unresolved findings, not exemption
+from admitted required_files coverage. Unknown impact retains full-scope fallback.
+Report unread paths as skipped; never substitute prioritization or AC citation coverage.
 Keep the admitted round ID with the dispatched work and use it for finalization.
 
-After successful pending admission, run the parent-owned precheck once before
-bundle creation and reviewer fan-out:
-
-```bash
-python3 .map/scripts/map_step_runner.py run_test_gate --check-id tests
-python3 .map/scripts/map_step_runner.py run_test_gate --check-id lint
-```
-
+The wrapper executes each documented check once after pending admission, before
+bundle creation and reviewer fan-out. It uses the same literal IDs for admission and execution.
+Optional `--check-timeouts-json '{"suite":1200}'` binds positive finite seconds to an
+admitted check; omitted IDs default to 300 seconds. Timeouts are frozen, not execution overrides.
 The runner executes exact admitted `--check-specs-json` argv; `--command-json` substitutions are rejected.
 Require every check with `--required-check <id>` and its command specification; use this runner, never a second executor.
 Skipped, interrupted or stale checks cannot pass. If a check changes reviewed inputs, explicitly abandon and re-admit;
@@ -278,10 +284,10 @@ never approve from its old receipt. Preserve runner IDs/output in prompts.
 
 Mode semantics:
 - **`full`** (default): five reviewers TOTAL — Monitor, Predictor, Evaluator + both roles (`complexity_lens` is advisory, extra), all four sections.
-- **`lightweight`**: Monitor only, diff-only, two sections (Code Quality
-  + Tests), every finding must carry `reach_evidence`. Omit optional synthesis
-  sections, but always retain the snapshot attribution bundle and runner check
-  evidence; minimal scope must not hide reviewed source or execution provenance.
+- **`lightweight`**: Monitor only, two sections (Code Quality + Tests), every
+  finding must carry `reach_evidence`. Fewer reviewers/sections do not narrow
+  admitted required_files; unknown impact retains full-scope fallback. Omit optional
+  synthesis, but retain the snapshot attribution bundle and runner check evidence.
 - **`sibling-aware`**: BEFORE reviewer fan-out, identify the sibling
   (operator-supplied path or `$SIBLING_HINT` grep). Read the sibling's
   diff for the same file family. Reviewer prompts MUST receive the
@@ -564,11 +570,8 @@ The runner normalizes `PROCEED` -> `ready`, `REVISE` -> `needs-revision`, `BLOCK
 
 ## Write Review Verdict Ledger (MANDATORY)
 
-Run this BEFORE the stage gate: the review gate is refused when its verdict
-contradicts the computed one.
-
-Use the persisted scheduled roster, not file discovery. The runner passes every
-expected path even when missing or empty; those failures are integrity findings.
+Run this BEFORE the stage gate: the gate refuses verdicts contradicting the computed one.
+Use the persisted scheduled roster, not file discovery. The runner passes every expected path, even missing/empty ones; those failures are integrity findings.
 
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
@@ -583,16 +586,10 @@ LEDGER=$(python3 .map/scripts/map_step_runner.py write_review_verdict_ledger --c
 FINAL_VERDICT=$(printf '%s' "$LEDGER" | python3 -c 'import json,sys; print(json.load(sys.stdin)["computed_verdict"])')
 ```
 
-`REVIEW_MODE_LABEL` is set by the phase that ran: `normal`, `adversarial` or
-`compare_orderings` (`cross_ai` is reserved; no phase sets it). Every phase feeds the ledger — none of them
-assigns its own verdict.
-
-The stage gate below reads `computed_verdict` from `review-verdict-ledger.json` —
-do not retype a verdict of your own. Report `not_verified` and any `escalation_reasons` from
-`.map/<branch>/review-verdict-ledger.md` in the walkthrough.
-
-Before presentation, select revisions for the stable destination (for example a
-PR URL, or `local:<branch>` for the operator walkthrough).
+`REVIEW_MODE_LABEL` comes from the phase: `normal`, `adversarial` or
+`compare_orderings` (`cross_ai` is reserved; no phase sets it). Every phase feeds the ledger; none assigns a verdict.
+The stage gate reads `computed_verdict` from `review-verdict-ledger.json`; never retype your own verdict. Report `not_verified` and any `escalation_reasons` from `.map/<branch>/review-verdict-ledger.md` in the walkthrough.
+Before presentation, select revisions for the stable destination (a PR URL or `local:<branch>` for the operator walkthrough).
 
 ```bash
 python3 .map/scripts/map_step_runner.py review_publication \

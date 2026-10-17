@@ -1935,6 +1935,8 @@ def test_incremental_scope_includes_dependent_modules_and_falls_back(branch_work
     assert prompts["review_scope"]["kind"] == "incremental"
     assert prompts["review_scope"]["affected_files"] == ["consumer.py", "core.py"]
     assert "VALUE = 3" in prompts["prompts"]["monitor"]["prompt"]
+    assert "Receipt coverage must still satisfy the admitted required_files scope" in prompts["prompts"]["monitor"]["prompt"]
+    assert "unresolved findings only" not in prompts["prompts"]["monitor"]["prompt"]
     Path("unknown.txt").write_text("untracked impact")
     assert runner.build_review_prompts(review_bundle_text="bundle")["review_scope"]["kind"] == "full"
 
