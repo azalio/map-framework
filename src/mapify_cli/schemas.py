@@ -2038,6 +2038,40 @@ REVIEW_VERDICT_LEDGER_SCHEMA: dict[str, Any] = {
                         ],
                     },
                     "transition_evidence": {"type": ["string", "null"]},
+                    "bug_class": {"type": "string"},
+                    "cause": {"type": "string"},
+                    "failure_scenario": {"type": "string"},
+                    "evidence_refs": {"type": "array", "items": {
+                        "type": "object", "properties": {
+                            "file_path": {"type": "string"},
+                            "revision": {"enum": ["current", "baseline"]},
+                            "quote": {"type": "string", "minLength": 1},
+                            "absent": {"const": True},
+                        }, "required": ["file_path", "revision"],
+                        "anyOf": [{"required": ["quote"]}, {"required": ["absent"]}],
+                    }},
+                    "reachability": {"type": "object", "properties": {
+                        "status": {"enum": ["reachable", "unreachable", "unknown"]},
+                    }, "required": ["status"], "additionalProperties": True},
+                    "baseline_attribution": {"type": "object", "properties": {
+                        "status": {"enum": ["introduced", "pre_existing", "unknown"]},
+                    }, "required": ["status"], "additionalProperties": True},
+                    "validation": {"type": "object", "properties": {
+                        "verdict": {"enum": ["confirmed", "refuted", "insufficient_evidence"]},
+                        "snapshot": {"type": "string"},
+                        "reasons": {"type": "array", "items": {"type": "string"}},
+                    }, "required": ["verdict", "reasons"], "additionalProperties": True},
+                    "sibling_search": {"type": "object", "properties": {
+                        "status": {"enum": ["required", "complete"]},
+                        "searched_scope": {"type": "array", "maxItems": 100, "items": {"type": "string"}},
+                        "occurrences": {"type": "array", "items": {"type": "object"}},
+                    }, "additionalProperties": True},
+                    "author_reactions": {"type": "array", "items": {
+                        "type": "object", "properties": {
+                            "reaction": {"enum": ["fixed", "wrong", "intentional", "unimportant"]},
+                            "evidence": {"type": "string"}, "finding_key": {"type": "string"},
+                        }, "required": ["reaction", "evidence"],
+                    }},
                     "was_present_before_pr": {"type": ["boolean", "null"]},
                     "downgraded_from": {
                         "type": "string",

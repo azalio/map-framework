@@ -486,8 +486,12 @@ Preserve file/location/failure-scenario evidence so distinct defects stay distin
 
 ### Step A.3: Verification gate (MANDATORY before any presentation)
 
-For EVERY Monitor / Predictor finding, verify BEFORE listing it as a
-walkthrough item:
+For EVERY substantive finding, extend this gate; do not dispatch another validation layer.
+Preserve legacy findings visibly as `insufficient_evidence` until checked, never as implicit confirmation.
+
+**MANDATORY:** Read and apply review-reference.md § Evidence validation in the admitted round for evidence, remediation, independent quorum and author-reaction rules.
+
+Apply the following compatibility checks without discarding unresolved claims:
 
 1. **Evidence check.** Severity ≥ MEDIUM must carry `reach_evidence`
    (grep proving path is reached, failing test name, or linter line).
@@ -495,10 +499,9 @@ walkthrough item:
 2. **Pre-existing check.** If `was_present_before_pr=true`, route to
    backlog/follow-up file, NOT to the walkthrough's REVISE list. PR
    review covers what the PR introduces.
-3. **Sibling check (mode=sibling-aware).** If the same finding holds
-   for the sibling reference, set `was_present_before_pr=true` and
-   route to backlog. The PR can't be blocked on behavior that already
-   shipped in the twin.
+3. **Sibling check (mode=sibling-aware).** A matching twin suggests
+   baseline attribution; it does not prove this branch predates the change.
+   Check the actual baseline and preserve uncertainty in the ledger.
 4. **Precheck duplication check.** If the finding matches a precheck
    error line, cite the precheck and stop — do NOT raise a second
    instance.
