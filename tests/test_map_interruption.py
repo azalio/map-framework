@@ -67,8 +67,8 @@ def engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return module
 
 
-@pytest.fixture
-def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, engine: Any):
+@pytest.fixture(params=["standalone", "linked"])
+def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, engine: Any, request: pytest.FixtureRequest):
     root = tmp_path / "main"
     root.mkdir()
     git(root, "init", "-b", "feature")
@@ -81,6 +81,11 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, engine: Any):
     (root / "link").symlink_to("feature.txt")
     git(root, "add", ".")
     git(root, "commit", "-m", "base")
+    if request.param == "linked":
+        linked = tmp_path / "linked"
+        git(root, "worktree", "add", "-b", "linked", str(linked))
+        root = linked
+    gitdir = Path(git(root, "rev-parse", "--absolute-git-dir"))
     head = git(root, "rev-parse", "HEAD")
     (root / "feature.txt").write_text("staged")
     git(root, "add", "feature.txt")
@@ -105,7 +110,91 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, engine: Any):
     dump(directory / "blueprint.json", {"subtasks": [contract]})
     monkeypatch.chdir(root)
     return SimpleNamespace(root=root, directory=directory, state=state, contract=contract,
-                           engine=engine, head=head, branch=branch)
+                           engine=engine, head=head, branch=branch, gitdir=gitdir)
+
+
+def test_fresh_linked_workflow_guard(workspace: Any, monkeypatch: pytest.MonkeyPatch):
+    w = workspace
+    fresh = w.root.parent / "fresh"
+    git(w.root, "worktree", "add", "-b", "fresh", str(fresh))
+    monkeypatch.chdir(fresh)
+    assert w.engine.interruption_guard("fresh") is None
+    assert w.engine.get_interruption_status("fresh") == {"status": "idle"}
+    assert not (fresh / ".map").exists()
+
+
+def test_linked_worktrees_do_not_share_repair_journals(workspace: Any, monkeypatch: pytest.MonkeyPatch):
+    w = workspace
+    other = w.root.parent / "other"
+    git(w.root, "worktree", "add", "-b", "other", str(other))
+    other_gitdir = Path(git(other, "rev-parse", "--absolute-git-dir"))
+    operation = start(w)
+    assert (w.gitdir / "map-repairs" / operation["operation_id"] / "journal.json").is_file()
+    assert not (other_gitdir / "map-repairs").exists()
+    monkeypatch.chdir(other)
+    # Matching runtime identifiers prove isolation does not rely on branch names.
+    assert w.engine.interruption_guard(w.branch) is None
+    dump(other / ".map" / w.branch / "step_state.json", w.state)
+    assert w.engine.interruption_guard(w.branch) is None
+    dump(other / ".map" / w.branch / "step_state.json",
+         json.loads((w.directory / "step_state.json").read_text()))
+    assert w.engine.interruption_guard(w.branch)["status"] == "error"
+    monkeypatch.chdir(w.root)
+    assert w.engine.interruption_guard(w.branch)["status"] == "interrupted"
+
+
+@pytest.mark.parametrize("fault", ["map_symlink", "branch_symlink", "unsafe_branch", "missing_state",
+                                   "dangling_storage", "missing_objects", "bad_gitfile",
+                                   "bad_backlink", "bad_commondir"])
+def test_linked_guard_fail_closed(workspace: Any, monkeypatch: pytest.MonkeyPatch, fault: str):
+    w = workspace
+    linked = w.root.parent / "guard-linked"
+    git(w.root, "worktree", "add", "-b", "guard-linked", str(linked))
+    gitdir = Path(git(linked, "rev-parse", "--absolute-git-dir"))
+    common = Path(git(linked, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    branch = w.branch
+    if fault == "map_symlink":
+        (linked / ".map").symlink_to(w.root / ".map", target_is_directory=True)
+    elif fault == "branch_symlink":
+        (linked / ".map").mkdir()
+        (linked / ".map" / branch).symlink_to(w.directory, target_is_directory=True)
+    elif fault == "unsafe_branch":
+        branch = "../escape"
+    elif fault == "missing_state":
+        (gitdir / "map-repairs").mkdir()
+    elif fault == "dangling_storage":
+        (gitdir / "map-repairs").symlink_to(linked / "absent")
+    elif fault == "missing_objects":
+        (common / "objects").rename(common / "saved-objects")
+    elif fault == "bad_backlink":
+        (gitdir / "gitdir").write_text(str(w.root / ".git"))
+    elif fault == "bad_commondir":
+        (gitdir / "commondir").write_text("../missing\n")
+    else:
+        (linked / ".git").write_text("gitdir: nonexistent\n")
+    monkeypatch.chdir(linked)
+    assert w.engine.interruption_guard(branch)["status"] == "error"
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_guard_refuses_dangling_git_metadata(engine: Any, tmp_path: Path,
+                                           monkeypatch: pytest.MonkeyPatch, nested: bool):
+    root = tmp_path / "dangling"
+    root.mkdir()
+    (root / ".git").symlink_to(tmp_path / "missing-git")
+    cwd = root / "child" if nested else root
+    cwd.mkdir(exist_ok=True)
+    monkeypatch.chdir(cwd)
+    assert engine.interruption_guard("feature")["status"] == "error"
+
+
+def test_guard_allows_genuine_pre_git_workspace(engine: Any, tmp_path: Path,
+                                              monkeypatch: pytest.MonkeyPatch):
+    root = tmp_path / "pre-git"
+    root.mkdir()
+    monkeypatch.chdir(root)
+    assert engine.interruption_guard("feature") is None
+    assert not (root / ".map").exists()
 
 
 def start(w: Any) -> dict[str, Any]:
@@ -216,7 +305,7 @@ def test_lossless_lifecycle_preserves_exact_paused_frame(workspace: Any, phase: 
     assert w.engine.finish_repair(operation["operation_id"], w.branch)["stage"] == "done"
     assert json.loads((w.directory / "step_state.json").read_text())["retry_count"] == state["retry_count"]
     assert git(w.root, "rev-parse", "HEAD") == commit
-    journal = json.loads((w.root / ".git/map-repairs" / operation["operation_id"] / "journal.json").read_text())
+    journal = json.loads((w.gitdir / "map-repairs" / operation["operation_id"] / "journal.json").read_text())
     probe = subprocess.run(["git", "cat-file", "-e", journal["snapshot"]], cwd=w.root, check=False, capture_output=True)
     assert probe.returncode != 0
 
@@ -236,7 +325,7 @@ def test_begin_refusals_do_not_mutate_checkout(workspace: Any, fault: str):
         w.contract.pop("repair_checks")
     dump(w.directory / "blueprint.json", {"subtasks": [w.contract]})
     dump(w.directory / "step_state.json", w.state)
-    before = (git(w.root, "rev-parse", "HEAD"), (w.root / ".git/index").read_bytes(),
+    before = (git(w.root, "rev-parse", "HEAD"), (w.gitdir / "index").read_bytes(),
               (w.directory / "step_state.json").read_bytes())
     request = w.engine.request_repair("REPAIR", w.branch)
     if request["status"] != "error":
@@ -246,7 +335,7 @@ def test_begin_refusals_do_not_mutate_checkout(workspace: Any, fault: str):
             dump(w.directory / "approval_holds.json", holds)
         result = w.engine.begin_repair("REPAIR", w.branch, "hold-001")
         assert result["status"] == "error", result
-    assert before == (git(w.root, "rev-parse", "HEAD"), (w.root / ".git/index").read_bytes(),
+    assert before == (git(w.root, "rev-parse", "HEAD"), (w.gitdir / "index").read_bytes(),
                       (w.directory / "step_state.json").read_bytes())
 
 
@@ -292,11 +381,11 @@ def test_finish_rejects_external_drift(workspace: Any, fault: str):
     else:
         w.contract["repair_checks"] = [["false"]]
         dump(w.directory / "blueprint.json", {"subtasks": [w.contract]})
-    before = (git(w.root, "rev-parse", "HEAD"), (w.root / ".git/index").read_bytes(),
+    before = (git(w.root, "rev-parse", "HEAD"), (w.gitdir / "index").read_bytes(),
               (w.root / "feature.txt").read_bytes())
     result = w.engine.finish_repair(operation["operation_id"], w.branch)
     assert result["status"] == "error", result
-    assert before == (git(w.root, "rev-parse", "HEAD"), (w.root / ".git/index").read_bytes(),
+    assert before == (git(w.root, "rev-parse", "HEAD"), (w.gitdir / "index").read_bytes(),
                       (w.root / "feature.txt").read_bytes())
 
 
@@ -363,7 +452,7 @@ def test_hidden_index_flag_mutation_cannot_certify(workspace: Any, when: str):
 def test_guard_detects_missing_corrupt_journal(workspace: Any):
     w = workspace
     operation = start(w)
-    journal_path = w.root / ".git/map-repairs" / operation["operation_id"] / "journal.json"
+    journal_path = w.gitdir / "map-repairs" / operation["operation_id"] / "journal.json"
     journal_path.write_text("{")
     assert w.engine.interruption_guard(w.branch)["status"] == "error"
     journal_path.unlink()
@@ -378,7 +467,7 @@ def test_begin_initialization_failure_unblocks_parent(workspace: Any, fault: str
     holds = json.loads(path.read_text())
     holds["holds"]["hold-001"]["state"] = "approved"
     dump(path, holds)
-    before = ((w.root / ".git/index").read_bytes(), (w.directory / "step_state.json").read_bytes(),
+    before = ((w.gitdir / "index").read_bytes(), (w.directory / "step_state.json").read_bytes(),
               {p: w.engine._image(w.root, p) for p in w.engine._paths(w.root)})
     original_git = w.engine._git
 
@@ -397,16 +486,16 @@ def test_begin_initialization_failure_unblocks_parent(workspace: Any, fault: str
         result = w.engine.begin_repair("REPAIR", w.branch, request["hold_id"])
     assert result["status"] == "error", result
     assert w.engine.interruption_guard(w.branch) is None
-    assert not (w.root / ".git/map-repairs" / request["operation_id"]).exists()
-    archives = list((w.root / ".git").glob("map-failed-" + request["operation_id"] + "-*"))
+    assert not (w.gitdir / "map-repairs" / request["operation_id"]).exists()
+    archives = list(w.gitdir.glob("map-failed-" + request["operation_id"] + "-*"))
     assert len(archives) == 1
     assert archives[0].stat().st_mode & 0o777 == 0o700
     assert not archives[0].is_symlink()
-    assert f".git/{archives[0].name}" in result["reasons"][0]
+    assert archives[0].name in result["reasons"][0]
     assert (archives[0] / "checkout").is_dir()
     if fault == "prepared":
         assert json.loads((archives[0] / "journal.json").read_text())["stage"] == "prepared"
-    assert before == ((w.root / ".git/index").read_bytes(), (w.directory / "step_state.json").read_bytes(),
+    assert before == ((w.gitdir / "index").read_bytes(), (w.directory / "step_state.json").read_bytes(),
                       {p: w.engine._image(w.root, p) for p in w.engine._paths(w.root)})
     assert git(w.root, "rev-parse", "HEAD") == w.head
     assert w.engine.begin_repair("REPAIR", w.branch, request["hold_id"])["stage"] == "active"
@@ -420,7 +509,7 @@ def test_begin_failure_preserves_drifted_recovery_storage(workspace: Any, drift:
     holds = json.loads(path.read_text())
     holds["holds"]["hold-001"]["state"] = "approved"
     dump(path, holds)
-    directory = w.root / ".git/map-repairs" / request["operation_id"]
+    directory = w.gitdir / "map-repairs" / request["operation_id"]
 
     def checkpoint(name: str) -> None:
         if name != "prepared":
@@ -449,7 +538,7 @@ def test_begin_failure_preserves_drifted_recovery_storage(workspace: Any, drift:
     result = w.engine.begin_repair("REPAIR", w.branch, request["hold_id"])
     assert result["status"] == "error" and "cleanup refused" in result["reasons"][0], result
     assert directory.is_dir()
-    assert not list((w.root / ".git").glob("map-failed-*"))
+    assert not list(w.gitdir.glob("map-failed-*"))
     if drift == "directory":
         assert (directory / "unfamiliar").read_text() == "preserve"
         assert (directory.with_name("saved-private") / "checkout").is_dir()
@@ -465,13 +554,13 @@ def test_begin_does_not_archive_preexisting_unfamiliar_storage(workspace: Any):
     holds = json.loads(path.read_text())
     holds["holds"]["hold-001"]["state"] = "approved"
     dump(path, holds)
-    directory = w.root / ".git/map-repairs" / request["operation_id"]
+    directory = w.gitdir / "map-repairs" / request["operation_id"]
     directory.mkdir(parents=True)
     (directory / "unfamiliar").write_text("preserve")
     result = w.engine.begin_repair("REPAIR", w.branch, request["hold_id"])
     assert result["status"] == "error", result
     assert (directory / "unfamiliar").read_text() == "preserve"
-    assert not list((w.root / ".git").glob("map-failed-*"))
+    assert not list(w.gitdir.glob("map-failed-*"))
 
 
 def test_begin_ordinary_failure_after_marker_retains_recovery(workspace: Any, monkeypatch: pytest.MonkeyPatch):
@@ -491,7 +580,7 @@ def test_begin_ordinary_failure_after_marker_retains_recovery(workspace: Any, mo
         result = w.engine.begin_repair("REPAIR", w.branch, request["hold_id"])
     assert result["status"] == "error", result
     assert w.engine.interruption_guard(w.branch)["operation_id"] == request["operation_id"]
-    assert not list((w.root / ".git").glob("map-failed-*"))
+    assert not list(w.gitdir.glob("map-failed-*"))
     assert w.engine.begin_repair("REPAIR", w.branch, request["hold_id"])["stage"] == "active"
 
 

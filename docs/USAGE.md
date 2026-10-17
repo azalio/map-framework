@@ -1101,7 +1101,10 @@ replace the task sequence or reset the checkpoint. A separately approved,
 disjoint repair can run in a private checkout while the current serial task
 keeps its phase, result ledger, retry history and staged/unstaged/untracked work.
 The parent remains paused until the repair finishes; no parent Monitor pass is
-implied.
+implied. Standalone repositories and linked Git worktrees are supported. A fresh
+linked worktree needs no interruption state before starting a workflow. Repair
+journals stay in that checkout's `git rev-parse --absolute-git-dir`, not the
+shared Git directory; another worktree cannot resume its repair.
 
 Add one independent subtask to the branch blueprint with exact `affected_files`,
 completed `dependencies`, and nonempty `repair_checks` command vectors. For

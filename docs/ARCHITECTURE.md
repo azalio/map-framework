@@ -213,6 +213,15 @@ parent feature history. Monitor and full-gate evidence must bind the exact
 repair candidate. The resulting commit is parented to the original parent HEAD
 and contains only disjoint repair paths, not the paused Actor's work.
 
+The parent can be a standalone repository or a linked Git worktree. Git
+administration is validated against the checkout backlink and shared object
+store (`--git-common-dir`). Journals, initialization archives and index locks
+use the per-worktree `--absolute-git-dir`; workflow transaction locks remain in
+the checkout-local `.map/<branch>`. Shared objects do not imply shared repair
+ownership. Symlink runtime/storage paths and inconsistent metadata fail closed.
+Dangling `.git` entries in the current directory or its ancestors count as Git
+metadata, not as a pre-Git workspace eligible to bypass repository validation.
+
 Finish uses a durable forward-recovery journal, expected-HEAD ref update and
 path-targeted index/worktree updates. It restores neither a whole saved index
 nor an old copy of parent state. Recognized partial operations resume forward;
@@ -229,7 +238,7 @@ requires exclusive runner ownership, not concurrent external writers. Its
 process-restart recovery covers recognized journaled checkpoints, not every
 instruction or sudden power loss. Ordinary initialization failures before the
 parent marker archive only the current attempt's unchanged, identity-verified
-storage to a private `.git/map-failed-<operation>-<random>` directory, preserving
+storage to a private `<gitdir>/map-failed-<operation>-<random>` directory, preserving
 the snapshot and allowing retry. Unexpected storage/state drift or an abrupt
 crash before ownership is durably recorded stops for operator inspection;
 unfamiliar storage is never removed automatically. The empirical

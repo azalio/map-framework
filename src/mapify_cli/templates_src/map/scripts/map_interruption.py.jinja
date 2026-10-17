@@ -107,9 +107,24 @@ def _context(branch: str) -> tuple[Path, Path, Path]:
     if ".." in branch:
         raise RepairError("Unsafe branch identifier")
     root = Path(_text(Path.cwd(), "rev-parse", "--show-toplevel")).resolve()
-    gitdir = Path(_text(root, "rev-parse", "--absolute-git-dir")).resolve()
-    if gitdir != root / ".git" or not gitdir.is_dir():
-        raise RepairError("Only ordinary standalone repositories are supported")
+    gitdir = Path(_text(root, "rev-parse", "--absolute-git-dir"))
+    common = Path(_text(root, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    if (gitdir.is_symlink() or common.is_symlink() or (root / ".git").is_symlink() or
+            not gitdir.is_dir() or not common.is_dir() or
+            (common / "objects").is_symlink() or not (common / "objects").is_dir()):
+        raise RepairError("Invalid Git administration or shared object storage")
+    gitdir, common = gitdir.resolve(), common.resolve()
+    if gitdir == common:
+        if gitdir != root / ".git":
+            raise RepairError("Unsupported separate Git directory")
+    else:
+        # Linked worktrees share objects, never repair journals or index locks.
+        backlink = gitdir / "gitdir"
+        if (gitdir.parent != common / "worktrees" or gitdir.parent.is_symlink() or
+                not (root / ".git").is_file() or backlink.is_symlink() or
+                (gitdir / "commondir").is_symlink() or
+                (gitdir / backlink.read_text(encoding="utf-8").strip()).resolve() != root / ".git"):
+            raise RepairError("Invalid linked worktree administration")
     branch_dir = root / ".map" / branch
     if branch_dir.is_symlink() or (root / ".map").is_symlink():
         raise RepairError("Symlink runtime directory refused")
@@ -338,7 +353,7 @@ def interruption_guard(branch: str) -> dict[str, Any] | None:
         # Ordinary workflows also support pre-Git planning. Only a clean,
         # marker-free state may bypass repository resolution in that case.
         cwd = Path.cwd()
-        if not any((ancestor / ".git").exists() for ancestor in (cwd, *cwd.parents)):
+        if not any(os.path.lexists(ancestor / ".git") for ancestor in (cwd, *cwd.parents)):
             if not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*", branch) or ".." in branch:
                 raise RepairError("Unsafe branch identifier")
             state_path = cwd / ".map" / branch / "step_state.json"
@@ -347,7 +362,7 @@ def interruption_guard(branch: str) -> dict[str, Any] | None:
             return None
         root, gitdir, branch_dir = _context(branch)
         if not (branch_dir / "step_state.json").exists():
-            if (gitdir / "map-repairs").exists():
+            if os.path.lexists(gitdir / "map-repairs"):
                 raise RepairError("Repair storage exists but workflow state is missing")
             return None
         with _lock(branch_dir):
@@ -430,7 +445,7 @@ def _initialization(gitdir: Path, branch_dir: Path, path: Path,
             os.replace(path.parent, archive)
         except (RepairError, OSError, ValueError, KeyError, TypeError) as cleanup_error:
             raise RepairError(f"{exc}; initialization cleanup refused: {cleanup_error}") from exc
-        raise RepairError(f"{exc}; failed initialization preserved at .git/{archive.name}") from exc
+        raise RepairError(f"{exc}; failed initialization preserved at {archive}") from exc
 
 
 def begin_repair(repair_id: str, branch: str, approval_hold_id: str) -> dict[str, Any]:
