@@ -53,6 +53,55 @@ def _make_fixture(
 # ---------------------------------------------------------------------------
 
 
+def test_acceptance_authoring_and_verifier_contract_delivered(tmp_path: Path) -> None:
+    """Both providers ship the runner protocol, not agent-owned proof checkboxes."""
+    from typer.testing import CliRunner
+
+    from mapify_cli import app
+
+    for provider in ("claude", "codex"):
+        project = tmp_path / provider
+        result = CliRunner().invoke(
+            app,
+            ["init", str(project), "--no-git", "--mcp", "none", "--provider", provider],
+        )
+        assert result.exit_code == 0, result.output
+        root = project / (".claude/skills" if provider == "claude" else ".agents/skills")
+        tdd = (root / "map-tdd/SKILL.md").read_text(encoding="utf-8")
+        assert "freeze_acceptance_contract" in tdd
+        assert "batch" in tdd and "before Actor" in tdd
+        assert "continues directly into `ACTOR`" not in tdd
+        reference = (root / "map-plan/plan-reference.md").read_text(encoding="utf-8")
+        for api in ("revise_acceptance_contract", "run_acceptance_proofs", "evaluate_acceptance"):
+            assert api in reference
+        assert "weakening_justification" in reference
+        assert "AC-1" in reference and "AC-001" in reference
+        if provider == "claude":
+            verifier = (project / ".claude/agents/final-verifier.md").read_text(encoding="utf-8")
+            assert "evaluate_acceptance" in verifier
+            assert "Change `[ ]` to `[x]`" not in verifier
+        else:
+            assert not (project / ".claude").exists()
+            verifier = tomllib.loads(
+                (project / ".codex/agents/final-verifier.toml").read_text(encoding="utf-8")
+            )["developer_instructions"]
+            assert "evaluate_acceptance" in verifier
+            assert "run_acceptance_proofs" in verifier
+        actor_path = project / (
+            ".claude/agents/actor.md" if provider == "claude" else ".codex/agents/actor.toml"
+        )
+        actor = actor_path.read_text(encoding="utf-8")
+        assert actor.index("request_acceptance_revision") < actor.index("begin_acceptance_authoring")
+        assert actor.index("begin_acceptance_authoring") < actor.index("revise_acceptance_contract")
+        decomposer_path = project / (
+            ".claude/agents/task-decomposer.md" if provider == "claude"
+            else ".codex/agents/decomposer.toml"
+        )
+        decomposer = decomposer_path.read_text(encoding="utf-8")
+        assert "freeze_acceptance_contract" in decomposer
+        assert "updated by final-verifier" not in decomposer
+
+
 class TestGetEnvironment:
     def test_vc1_block_delimiters(self) -> None:
         env = get_environment()

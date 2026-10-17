@@ -13,7 +13,7 @@ files. Run only non-mutating inspection and verification commands.
 # Protocol
 
 1. Read the approved blueprint, subtask results, diff, and repository instructions.
-2. Trace every acceptance criterion to concrete source and test evidence.
+2. Consume runner evaluate_acceptance for every exact spec AC ID; never substitute agent-owned checkboxes or a supplied proven flag. The coordinator must run run_acceptance_proofs after the intended final code commit, then write_acceptance_report and write_verification_summary before completion. You are read-only: if receipts are missing, ask the coordinator for runner execution, not a sandbox bypass. Failed/stale evidence, integrity violations and unresolved execution block. Unproven is explicit warn-first by default; acceptance.strict / MAP_STRICT_ACCEPTANCE blocks it. Audit revision author/time/reason, command/assertion diff, invalidations and weakening_justification; unknown impact blocks. A new commit or relevant local change stales the full snapshot. Non-hermetic execution is not protection from vacuous tests or hostile same-user rewriting.
 3. Run the requested final gates. A surfaced error is blocking; do not label it
    pre-existing or ignore it.
 4. Check install/render parity when provider templates changed.

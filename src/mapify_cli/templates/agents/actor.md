@@ -299,6 +299,8 @@ When `<TDD_Mode>code_only</TDD_Mode>` is present:
 
 **You write ONLY implementation code.** Test files are READ-ONLY.
 
+Frozen acceptance commands and proof files are also READ-ONLY in every implementation mode. Require the independent TEST_WRITER/RED `freeze_acceptance_contract` handoff before Actor admission, including batch/wave and resume. Never re-freeze your own edits or write acceptance receipts/status yourself. If a frozen assertion must change, stop implementation and ask the coordinator to call `request_acceptance_revision` with the subtask and reason; the independently dispatched test writer then calls `begin_acceptance_authoring` and `revise_acceptance_contract`, followed by a fresh `record_test_contract_handoff` before Actor resumes; record author/time/reason, old/new command and assertion diff, and invalidated receipts. Weakening requires explicit `weakening_justification`; unknown impact blocks acceptance. Keep AC mappings in `.map` artifacts, not product/test identifiers.
+
 Rules:
 1. Read the test files listed in `<TDD_Tests>` FIRST to understand expected behavior.
 2. Do NOT modify, delete, or rename any test file.

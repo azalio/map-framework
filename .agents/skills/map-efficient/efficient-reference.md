@@ -277,6 +277,10 @@ Every Monitor failure needs durable evidence:
 If retries start repeating, check the orchestrator response for retry isolation
 or circuit-breaker guidance before another Actor attempt.
 
+## Acceptance proof completion (MANDATORY)
+
+For single, batch and wave execution, freeze owned AC proofs after independent TEST_WRITER/RED and before Actor. Use the exact spec IDs and the contract/revision protocol in `../map-plan/plan-reference.md#runner-witnessed-acceptance-proofs`. Never silently re-freeze Actor edits. `implementation_complete` is not accepted completion: when the orchestrator returns `FINAL_VERIFICATION`, finish intended code changes/commit, run `run_acceptance_proofs`, consume `evaluate_acceptance`, generate `write_verification_summary`, then call `mark_workflow_complete`. Existing gates still apply. Do not skip the proof attempt just because explicit completion can allow warn-first `unproven`; list those ACs honestly. Failed/stale or integrity/unresolved-execution errors block; new commits/local changes require fresh proofs.
+
 ## Per-Subtask Commit Policy
 
 After a clean Monitor pass, a per-subtask commit is allowed and usually

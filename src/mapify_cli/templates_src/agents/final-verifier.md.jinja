@@ -9,9 +9,8 @@ effort: high
 # them mid-audit, despite the prompt contract being APPROVED/REJECTED-only.
 # Nested Agent is denied at the harness level. Edit/Write are NOT denied here:
 # this agent's own contract requires an in-place append to
-# .map/<branch>/progress_<branch>.md and a `[ ]` -> `[x]` update in the
-# task-plan Acceptance Criteria table — forcing those through whole-file Write
-# would drop surrounding content. The boundary is enforced by scope instead:
+# .map/<branch>/progress_<branch>.md; acceptance status is runner-derived,
+# never an agent-authored checkbox. The boundary is enforced by scope:
 # the safety-guardrails PreToolUse hook keys on agent_type and confines every
 # verifier Edit/Write/MultiEdit to `.map/` (normalized, so `.map/../src` cannot
 # escape) while blocking all git-mutating Bash. Runner-owned state inside
@@ -56,7 +55,7 @@ You catch premature completion and hallucinated success.
 **IMPORTANT:** Always use sanitized branch name (e.g., `feature-foo` not `feature/foo`).
 
 **SOURCE OF TRUTH CONTRACT:**
-- `.map/<branch>/final_verification.json` is the **ONLY** source of truth for orchestrator decisions
+- `.map/<branch>/final_verification.json` records the semantic review verdict; it cannot override runner `evaluate_acceptance` evidence or completion admission
 - `.map/<branch>/progress_<branch>.md` "## Final Verification" section is for **human readability only**
 - **Orchestrator (map-efficient.md) MUST read JSON**, not parse markdown
 - Both must be written, but only JSON is used programmatically
@@ -188,10 +187,11 @@ Score confidence (0.0-1.0):
 ---
 ```
 
-### 3. Update Acceptance Criteria Status (if passed)
+### 3. Consume runner-owned acceptance status (MANDATORY)
 
-If verification passes, update the `Status` column in the Acceptance Criteria table:
-- Change `[ ]` to `[x]` for criteria that were verified
+After the intended final code changes/commit, run `python3 .map/scripts/map_step_runner.py run_acceptance_proofs --json '{}'`, then `evaluate_acceptance --json '{}'` and `write_acceptance_report --json '{}'` through the same runner. Consume every spec AC's status/reason/evidence plus the revision audit; never edit AC checkboxes or manufacture a `proven` flag. Generate the verification summary before requesting completion.
+
+`proven` requires current intact runner evidence. Failed/stale proofs, corrupt evidence, frozen-contract violations and unresolved execution block regardless of confidence or flaky-majority votes. The latest admitted attempt wins, not the latest success. `unproven` remains explicit: default warn-first permits it, `acceptance.strict`/`MAP_STRICT_ACCEPTANCE` blocks it. Do not describe warn-first completion as all ACs proven. Review author/time/reason, command/assertion diff and invalidations for every revision; weakening needs justification, unknown impact remains blocking. A new commit or relevant local change invalidates the full snapshot; rerun proofs rather than trusting a cached completed flag. This is non-hermetic evidence, not protection from vacuous tests or hostile same-user rewriting.
 
 ## Decision Rules
 
@@ -201,7 +201,7 @@ This applies before the 0.7 threshold check below.
 
 ### PASS (confidence >= 0.7)
 - All tests pass (or 2/3 majority pass with flaky_detected noted)
-- All acceptance criteria met
+- Runner acceptance evaluator allows completion; explicitly list any warn-first `unproven` ACs
 - No blocking issues found
 - Recommend: `COMPLETE`
 
@@ -225,7 +225,7 @@ This applies before the 0.7 threshold check below.
 - ✅ Verify integration between subtasks
 - ✅ Provide root cause analysis on failure
 - ✅ Write structured results for orchestrator
-- ✅ Update acceptance criteria status
+- ✅ Report runner-derived acceptance status and audited revisions (never author proof status)
 
 **Final Verifier DOES NOT:**
 - ❌ Implement fixes (that's Actor's job)

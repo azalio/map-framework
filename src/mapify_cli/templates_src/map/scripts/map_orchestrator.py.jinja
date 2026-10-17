@@ -95,6 +95,7 @@ import os
 import re
 import sys
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -666,6 +667,7 @@ def get_resume_briefing(branch: str) -> dict:
 
     return {
         "branch": branch,
+        "acceptance": _acceptance_report(branch),
         "verification_summary_path": (
             str(verification_summary) if verification_summary.exists() else None
         ),
@@ -792,6 +794,8 @@ class StepState:
     subtask_diff_bases: dict[str, str] = field(default_factory=dict)
     last_subtask_commit_sha: str | None = None
     contract_ready_subtasks: dict[str, dict] = field(default_factory=dict)
+    acceptance_authoring: dict[str, dict] = field(default_factory=dict)
+    acceptance_authoring_history: list[dict] = field(default_factory=list)
     clean_retry_count: int = 0
     contaminated_retry_count: int = 0
     # Subtask IDs already nudged once for a (non-strict) scope warning. The
@@ -871,6 +875,8 @@ class StepState:
             "subtask_diff_bases": self.subtask_diff_bases,
             "last_subtask_commit_sha": self.last_subtask_commit_sha,
             "contract_ready_subtasks": self.contract_ready_subtasks,
+            "acceptance_authoring": self.acceptance_authoring,
+            "acceptance_authoring_history": self.acceptance_authoring_history,
             "clean_retry_count": self.clean_retry_count,
             "contaminated_retry_count": self.contaminated_retry_count,
             "scope_feedback_subtasks": self.scope_feedback_subtasks,
@@ -914,6 +920,8 @@ class StepState:
             subtask_diff_bases=data.get("subtask_diff_bases", {}),
             last_subtask_commit_sha=data.get("last_subtask_commit_sha"),
             contract_ready_subtasks=data.get("contract_ready_subtasks", {}),
+            acceptance_authoring=data.get("acceptance_authoring", {}),
+            acceptance_authoring_history=data.get("acceptance_authoring_history", []),
             clean_retry_count=data.get("clean_retry_count", 0),
             contaminated_retry_count=data.get("contaminated_retry_count", 0),
             scope_feedback_subtasks=data.get("scope_feedback_subtasks", []),
@@ -1235,6 +1243,148 @@ def _load_blueprint_deps_for_runtime(branch: str) -> dict[str, list[str]]:
     return deps
 
 
+def _open_acceptance_authoring(
+    state: StepState, subtask_id: str, author: str = "test-writer",
+    stage: str = "test_first",
+) -> dict:
+    checkpoint = state.acceptance_authoring.get(subtask_id, {})
+    if checkpoint.get("status") == "open" and checkpoint.get("stage") == stage:
+        return checkpoint
+    if checkpoint:
+        state.acceptance_authoring_history.append(dict(checkpoint))
+    checkpoint = {
+        "subtask_id": subtask_id, "author": author, "stage": stage,
+        "checkpoint_id": uuid.uuid4().hex, "status": "open",
+        "opened_at": _utc_timestamp(),
+    }
+    state.acceptance_authoring[subtask_id] = checkpoint
+    return checkpoint
+
+
+@_parent_mutation()
+def request_acceptance_revision(subtask_id: str, branch: str, reason: str) -> dict:
+    """Re-enter test writing without granting authority to alter frozen proofs."""
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+    if not reason.strip() or subtask_id not in state.subtask_sequence:
+        return {"status": "error", "message": "Known subtask and revision reason required"}
+    previous = state.acceptance_authoring.get(subtask_id)
+    if previous:
+        state.acceptance_authoring_history.append({**previous, "status": "superseded"})
+    state.acceptance_authoring[subtask_id] = {
+        "subtask_id": subtask_id, "status": "revision_requested",
+        "reason": reason, "requested_at": _utc_timestamp(),
+    }
+    state.workflow_status = "IN_PROGRESS"
+    state.completed_at = None
+    state.tdd_mode = True
+    state.current_subtask_id = subtask_id
+    state.subtask_index = state.subtask_sequence.index(subtask_id)
+    state.current_step_id = "2.25"
+    state.current_step_phase = "TEST_WRITER"
+    state.pending_steps = ["2.25", "2.26", "2.3", "2.4"]
+    state.completed_steps = [s for s in state.completed_steps if s not in state.pending_steps]
+    state.skipped_steps = [s for s in state.skipped_steps if s not in state.pending_steps]
+    state.subtask_results.pop(subtask_id, None)
+    state.contract_ready_subtasks.pop(subtask_id, None)
+    state.subtask_completion_reasons.pop(subtask_id, None)
+    state.subtask_phases[subtask_id] = "2.25"
+    if state.execution_waves:
+        for index, wave in enumerate(state.execution_waves):
+            if subtask_id in wave:
+                state.current_wave_index = index
+                break
+    state.save(state_file)
+    return {"status": "success", "phase": "TEST_WRITER", "subtask_id": subtask_id}
+
+
+@_parent_mutation()
+def begin_acceptance_authoring(
+    subtask_id: str, branch: str, author: str = "test-writer",
+    stage: str = "test_first",
+) -> dict:
+    """Open a durable checkpoint only inside the independent test-writer phase."""
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+    phase = state.subtask_phases.get(subtask_id)
+    serial_writer = (state.current_subtask_id == subtask_id
+                     and state.current_step_phase == "TEST_WRITER")
+    wave_writer = bool(state.execution_waves) and phase in {"2.25", "TEST_WRITER"}
+    if not serial_writer and not wave_writer:
+        return {"status": "error", "message": "Return to TEST_WRITER before authoring proofs"}
+    if stage not in {"test_first", "independent_test_first"} or not author.strip():
+        return {"status": "error", "message": "Author and valid test-first stage required"}
+    checkpoint = _open_acceptance_authoring(state, subtask_id, author, stage)
+    state.save(state_file)
+    return {"status": "success", "checkpoint": checkpoint}
+
+
+def _consume_acceptance_authoring(state: StepState, subtask_id: str | None) -> bool:
+    checkpoint = state.acceptance_authoring.get(str(subtask_id), {})
+    if checkpoint.get("status") == "open":
+        checkpoint["status"] = "consumed"
+        checkpoint["consumed_at"] = _utc_timestamp()
+        return True
+    return False
+
+
+def _acceptance_report(branch: str) -> dict:
+    """Use the runner's sole evidence authority; unavailable gates fail closed."""
+    try:
+        from map_step_runner import evaluate_acceptance  # pyright: ignore[reportMissingImports]
+
+        return evaluate_acceptance(branch)
+    except (ImportError, OSError, ValueError) as exc:
+        return {"status": "error", "allowed": False, "requirements": [],
+                "errors": [f"Acceptance evaluation failed: {exc}"]}
+
+
+def _acceptance_completion(branch: str, *, finalizing: bool = False) -> dict:
+    report = _acceptance_report(branch)
+    # Exhaustion schedules final proof execution. Explicit finalization uses
+    # the evaluator's warn-first policy, reporting unexecuted proofs honestly.
+    pending = not finalizing and any(
+        row.get("status") == "unproven"
+        and isinstance(row.get("contract"), dict)
+        and row["contract"].get("command")
+        for row in report.get("requirements", [])
+    )
+    complete = bool(report.get("allowed")) and not pending
+    return {
+        "step_id": "COMPLETE" if complete else "FINAL_VERIFICATION",
+        "phase": "COMPLETE" if complete else "FINAL_VERIFICATION",
+        "is_complete": complete,
+        "implementation_complete": True,
+        "instruction": (
+            "Acceptance evaluated; inspect the runner-derived report."
+            if complete else
+            "Implementation exhausted. Run run_acceptance_proofs, write the "
+            "verification summary, then call mark_workflow_complete."
+        ),
+        "acceptance": report,
+    }
+
+
+def _finish_implementation(state: StepState, branch: str, *, finalizing: bool = False) -> dict:
+    result = _acceptance_completion(branch, finalizing=finalizing)
+    state.current_step_id = result["step_id"]
+    state.current_step_phase = result["phase"]
+    state.workflow_status = (
+        "WORKFLOW_COMPLETE" if result["is_complete"] else "FINAL_VERIFICATION"
+    )
+    state.completed_at = _utc_timestamp() if result["is_complete"] else None
+    return result
+
+
+def _acceptance_integrity(branch: str, subtask_id: str | None) -> dict:
+    try:
+        from map_step_runner import verify_acceptance_contracts  # pyright: ignore[reportMissingImports]
+
+        return verify_acceptance_contracts(branch, subtask_id=subtask_id, require_handoff=True)
+    except (ImportError, OSError, ValueError) as exc:
+        return {"status": "error", "allowed": False, "errors": [str(exc)]}
+
+
 def peek_current_step(branch: str) -> dict:
     """Return the current step descriptor WITHOUT mutating state.
 
@@ -1246,13 +1396,10 @@ def peek_current_step(branch: str) -> dict:
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
 
-    if state.workflow_status == "WORKFLOW_COMPLETE":
-        return {
-            "step_id": "COMPLETE",
-            "phase": "COMPLETE",
-            "is_complete": True,
-            "current_subtask": state.current_subtask_id,
-        }
+    if state.workflow_status in {"WORKFLOW_COMPLETE", "FINAL_VERIFICATION"}:
+        return _acceptance_completion(
+            branch, finalizing=state.workflow_status == "WORKFLOW_COMPLETE"
+        )
 
     if state.workflow_status == "CONTRACT_READY":
         return {
@@ -1291,13 +1438,10 @@ def get_next_step(branch: str) -> dict:
     # got repopulated by a partial recovery path. Otherwise the function walks
     # the per-subtask branches and returns a stale "2.2 RESEARCH" instruction
     # for a workflow that already closed out.
-    if state.workflow_status == "WORKFLOW_COMPLETE":
-        return {
-            "step_id": "COMPLETE",
-            "phase": "COMPLETE",
-            "instruction": "All subtasks complete. Run final verification.",
-            "is_complete": True,
-        }
+    if state.workflow_status in {"WORKFLOW_COMPLETE", "FINAL_VERIFICATION"}:
+        return _acceptance_completion(
+            branch, finalizing=state.workflow_status == "WORKFLOW_COMPLETE"
+        )
 
     if state.workflow_status == "CONTRACT_READY":
         if state.pending_steps != ["CONTRACT_READY"]:
@@ -1346,12 +1490,7 @@ def get_next_step(branch: str) -> dict:
             for sid in state.subtask_sequence
         )
         if not has_forward_slot and not has_deferred:
-            return {
-                "step_id": "COMPLETE",
-                "phase": "COMPLETE",
-                "instruction": "All subtasks complete. Run final verification.",
-                "is_complete": True,
-            }
+            return _acceptance_completion(branch)
         ready_idx, skipped_for_deps = _find_next_ready_subtask_index(
             state, branch, start_after_index=state.subtask_index,
             treat_current_as_done=True,
@@ -1382,12 +1521,7 @@ def get_next_step(branch: str) -> dict:
                 sid for sid in state.subtask_sequence if sid not in completed
             ]
             if not remaining:
-                return {
-                    "step_id": "COMPLETE",
-                    "phase": "COMPLETE",
-                    "instruction": "All subtasks complete. Run final verification.",
-                    "is_complete": True,
-                }
+                return _acceptance_completion(branch)
             # Deadlock: subtasks remain but every one of them has an
             # unmet dep. Surface BLOCKED_ON_DEPS so the caller doesn't
             # silently spin or report COMPLETE prematurely.
@@ -1410,6 +1544,21 @@ def get_next_step(branch: str) -> dict:
 
     # Get next pending step
     next_step_id = state.pending_steps[0]
+    if (
+        next_step_id == "2.25"
+        and state.current_subtask_id
+        and state.acceptance_authoring.get(state.current_subtask_id, {}).get("status")
+        not in {"open", "revision_requested"}
+    ):
+        _open_acceptance_authoring(state, state.current_subtask_id)
+        state.save(state_file)
+    if next_step_id == "2.3":
+        integrity = _acceptance_integrity(branch, state.current_subtask_id)
+        if not integrity.get("allowed"):
+            return {"step_id": "ACCEPTANCE_BLOCKED", "phase": "ACCEPTANCE_BLOCKED",
+                    "is_complete": False, "acceptance": integrity}
+        if _consume_acceptance_authoring(state, state.current_subtask_id):
+            state.save(state_file)
 
     # Defensive RESEARCH-skip warning (added 2026-05-27): if get_next_step
     # is about to return 2.3 (ACTOR) for the current subtask but 2.2
@@ -1977,6 +2126,13 @@ def validate_step(
                 pass
     # CHOOSE_MODE is auto-skipped; execution_mode is always "batch"
 
+    if step_id in {"2.26", "2.3", "2.4"}:
+        integrity = _acceptance_integrity(branch, state.current_subtask_id)
+        if not integrity.get("allowed"):
+            return {"valid": False, "message": "Frozen acceptance contract changed",
+                    "acceptance": integrity}
+        _consume_acceptance_authoring(state, state.current_subtask_id)
+
     # Mark step complete
     state.completed_steps.append(step_id)
     if step_id in state.pending_steps:
@@ -2053,11 +2209,8 @@ def validate_step(
                 # phase=COMPLETE, silently disabling every WORKFLOW_COMPLETE-gated
                 # hook (scrub-internal-ids, teardown/archival) for the most common
                 # completion path.
-                state.current_step_id = "COMPLETE"
-                state.current_step_phase = "COMPLETE"
-                state.workflow_status = "WORKFLOW_COMPLETE"
-                state.completed_at = _utc_timestamp()
-                next_step_signal = "COMPLETE"
+                _finish_implementation(state, branch)
+                next_step_signal = state.current_step_id
             else:
                 state.current_step_id = "BLOCKED_ON_DEPS"
                 state.current_step_phase = "BLOCKED_ON_DEPS"
@@ -2065,11 +2218,8 @@ def validate_step(
     else:
         # Atomic terminal transition (see the blocked_remaining branch above):
         # workflow_status + completed_at must land together with phase=COMPLETE.
-        state.current_step_id = "COMPLETE"
-        state.current_step_phase = "COMPLETE"
-        state.workflow_status = "WORKFLOW_COMPLETE"
-        state.completed_at = _utc_timestamp()
-        next_step_signal = "COMPLETE"
+        _finish_implementation(state, branch)
+        next_step_signal = state.current_step_id
 
     # Save updated state
     state.save(state_file)
@@ -2622,6 +2772,7 @@ def get_wave_step(branch: str) -> dict:
             "isolation_active": isolation_active,
             "reason": WAVE_REASON_NO_WAVES,
             "message": "No execution waves configured. Use sequential mode.",
+            **_acceptance_completion(branch),
         }
 
     if state.current_wave_index >= len(state.execution_waves):
@@ -2634,6 +2785,7 @@ def get_wave_step(branch: str) -> dict:
             "dispatch_mode": "sequential",
             "isolation_active": isolation_active,
             "reason": WAVE_REASON_WAVE_COMPLETE,
+            **_acceptance_completion(branch),
         }
 
     wave = state.execution_waves[state.current_wave_index]
@@ -2651,7 +2803,21 @@ def get_wave_step(branch: str) -> dict:
             "phase": phase_name,
             "step_id": phase,
         }
+        if (
+            phase_name == "TEST_WRITER"
+            and state.acceptance_authoring.get(st_id, {}).get("status")
+            not in {"open", "revision_requested"}
+        ):
+            _open_acceptance_authoring(state, st_id)
+            state.save(state_file)
         if phase_name == "ACTOR":
+            integrity = _acceptance_integrity(branch, st_id)
+            if not integrity.get("allowed"):
+                return {"mode": "blocked", "is_complete": False, "acceptance": integrity,
+                        "dispatch_mode": dispatch_mode, "isolation_active": isolation_active,
+                        "reason": "acceptance_integrity"}
+            if _consume_acceptance_authoring(state, st_id):
+                state.save(state_file)
             isolation = state.retry_isolation_status.get(st_id)
             quarantine_path = state.retry_quarantine_paths.get(st_id)
             if isolation == "clean_retry_required" and quarantine_path:
@@ -2692,6 +2858,13 @@ def validate_wave_step(subtask_id: str, step_id: str, branch: str) -> dict:
     """
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
+
+    if step_id in {"2.26", "2.3", "2.4"}:
+        integrity = _acceptance_integrity(branch, subtask_id)
+        if not integrity.get("allowed"):
+            return {"valid": False, "message": "Frozen acceptance contract changed",
+                    "acceptance": integrity}
+        _consume_acceptance_authoring(state, subtask_id)
 
     # Determine next phase for this subtask
     subtask_step_order = [
@@ -2762,12 +2935,16 @@ def advance_wave(branch: str) -> dict:
             state.current_step_phase = "RESEARCH"
             state.retry_count = 0
 
+    completion = _finish_implementation(state, branch) if is_complete else {}
+    if is_complete:
+        state.pending_steps = []
     state.save(state_file)
 
     return {
         "status": "success",
+        **completion,
         "current_wave_index": state.current_wave_index,
-        "is_complete": is_complete,
+        "is_complete": completion.get("is_complete", False),
         "wave_total": len(state.execution_waves),
     }
 
@@ -3349,14 +3526,14 @@ def mark_workflow_complete(branch: str) -> dict:
             ),
         }
 
-    state.workflow_status = "WORKFLOW_COMPLETE"
-    state.current_step_id = "COMPLETE"
-    state.current_step_phase = "COMPLETE"
-    state.completed_at = _utc_timestamp()
+    completion = _finish_implementation(state, branch, finalizing=True)
+    if not completion["is_complete"]:
+        return {"status": "error", "message": "Acceptance blocks completion", **completion}
     state.save(state_file)
 
     return {
         "status": "success",
+        "acceptance": completion["acceptance"],
         "workflow_status": state.workflow_status,
         "current_step_id": state.current_step_id,
         "current_step_phase": state.current_step_phase,
@@ -3703,22 +3880,16 @@ def _advance_after_terminal_current_subtask(state: StepState, branch: str) -> di
             ]
             if not blocked_remaining:
                 state.pending_steps = []
-                state.workflow_status = "WORKFLOW_COMPLETE"
-                state.current_step_id = "COMPLETE"
-                state.current_step_phase = "COMPLETE"
-                state.completed_at = _utc_timestamp()
-                next_step_signal = "COMPLETE"
+                _finish_implementation(state, branch)
+                next_step_signal = state.current_step_id
             else:
                 state.current_step_id = "BLOCKED_ON_DEPS"
                 state.current_step_phase = "BLOCKED_ON_DEPS"
                 next_step_signal = "BLOCKED_ON_DEPS"
     else:
         state.pending_steps = []
-        state.workflow_status = "WORKFLOW_COMPLETE"
-        state.current_step_id = "COMPLETE"
-        state.current_step_phase = "COMPLETE"
-        state.completed_at = _utc_timestamp()
-        next_step_signal = "COMPLETE"
+        _finish_implementation(state, branch)
+        next_step_signal = state.current_step_id
 
     result: dict[str, object] = {"next_step": next_step_signal}
     if advanced_to_subtask is not None:
@@ -4076,11 +4247,8 @@ def mark_subtask_complete(
             advanced = True
         else:
             state.pending_steps = []
-            state.workflow_status = "WORKFLOW_COMPLETE"
-            state.current_step_id = "COMPLETE"
-            state.current_step_phase = "COMPLETE"
-            state.completed_at = _utc_timestamp()
-            closed = True
+            _finish_implementation(state, branch)
+            closed = state.workflow_status == "WORKFLOW_COMPLETE"
 
     state.save(state_file)
 
@@ -4231,6 +4399,9 @@ def archive_completed_workflow(branch: str) -> dict:
         }
 
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    completion = _acceptance_completion(branch, finalizing=True)
+    if not completion["is_complete"]:
+        return {"status": "error", "message": "Acceptance blocks archival", **completion}
     archive_file = state_file.with_name(f"step_state.completed-{timestamp}.json")
     # Guard against a same-second second archive clobbering the first.
     if archive_file.exists():
@@ -4600,6 +4771,12 @@ def mark_contract_ready(subtask_id: str, branch: str) -> dict:
             ),
         }
 
+    integrity = _acceptance_integrity(branch, subtask_id)
+    if not integrity.get("allowed"):
+        return {"status": "error", "message": "Frozen acceptance contract changed",
+                "acceptance": integrity}
+    _consume_acceptance_authoring(state, subtask_id)
+
     state.contract_ready_subtasks[subtask_id] = {
         "contract_path": str(contract_path),
         "handoff_path": str(handoff_path),
@@ -4662,6 +4839,11 @@ def resume_from_test_contract(subtask_id: str, branch: str) -> dict:
         }
 
     previous_state = StepState.load(plan_dir / "step_state.json")
+    integrity = _acceptance_integrity(branch, subtask_id)
+    if not integrity.get("allowed"):
+        return {"status": "error", "message": "Frozen acceptance contract changed",
+                "acceptance": integrity}
+    _consume_acceptance_authoring(previous_state, subtask_id)
     contract_entry = previous_state.contract_ready_subtasks.get(
         subtask_id,
         {
@@ -4684,6 +4866,8 @@ def resume_from_test_contract(subtask_id: str, branch: str) -> dict:
         tdd_mode=True,
         workflow_status="IN_PROGRESS",
         contract_ready_subtasks={subtask_id: contract_entry},
+        acceptance_authoring=previous_state.acceptance_authoring,
+        acceptance_authoring_history=previous_state.acceptance_authoring_history,
     )
     state.save(plan_dir / "step_state.json")
 
@@ -4758,7 +4942,10 @@ def resume_from_plan(branch: str) -> dict:
     execution_start = [s for s in STEP_ORDER if s not in skipped_phases]
 
     state_file = plan_dir / "step_state.json"
+    previous_state = StepState.load(state_file)
     state = StepState(
+        acceptance_authoring=previous_state.acceptance_authoring,
+        acceptance_authoring_history=previous_state.acceptance_authoring_history,
         current_subtask_id=subtask_ids[0],
         subtask_index=0,
         subtask_sequence=subtask_ids,
@@ -4911,7 +5098,10 @@ def resume_single_subtask(subtask_id: str, branch: str, tdd_mode: bool = False) 
     subtask_steps = step_order[research_idx:]
 
     state_file = plan_dir / "step_state.json"
+    previous_state = StepState.load(state_file)
     state = StepState(
+        acceptance_authoring=previous_state.acceptance_authoring,
+        acceptance_authoring_history=previous_state.acceptance_authoring_history,
         current_subtask_id=subtask_id,
         subtask_index=0,
         subtask_sequence=[subtask_id],  # Only this one subtask
@@ -5036,6 +5226,8 @@ def main():
             "skip_step",
             "set_subtasks",
             "mark_contract_ready",
+            "begin_acceptance_authoring",
+            "request_acceptance_revision",
             "resume_from_plan",
             "resume_from_test_contract",
             "check_circuit_breaker",
@@ -5067,6 +5259,8 @@ def main():
         "extra_args", nargs="*", help="Additional arguments (e.g., more subtask IDs)"
     )
     parser.add_argument("--branch", help="Git branch (auto-detected if omitted)")
+    parser.add_argument("--author", default="test-writer")
+    parser.add_argument("--authoring-stage", default="test_first")
     parser.add_argument("--approval-hold", help="Approved hold ID for begin_repair")
     parser.add_argument(
         "--monitor-file", help="Persisted Monitor JSON file path for verify_repair"
@@ -5597,6 +5791,18 @@ def main():
             result = reopen_for_fixes(branch, feedback)
             print(json.dumps(result, indent=2))
 
+        elif args.command == "request_acceptance_revision":
+            result = request_acceptance_revision(args.task_or_step or "", branch, args.reason or "")
+            print(json.dumps(result, indent=2))
+            if result.get("status") == "error":
+                sys.exit(1)
+        elif args.command == "begin_acceptance_authoring":
+            result = begin_acceptance_authoring(
+                args.task_or_step or "", branch, args.author, args.authoring_stage
+            )
+            print(json.dumps(result, indent=2))
+            if result.get("status") == "error":
+                sys.exit(1)
         elif args.command == "mark_workflow_complete":
             result = mark_workflow_complete(branch)
             print(json.dumps(result, indent=2))

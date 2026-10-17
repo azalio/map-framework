@@ -37,7 +37,6 @@ import os
 import random
 import re
 import shlex
-import signal
 import stat
 import subprocess
 import sys
@@ -5243,8 +5242,10 @@ def record_test_contract_handoff(
     contract_summary: str = "",
     notes: str = "",
     branch: str | None = None,
+    authoring_result: str = "red",
+    authoring_justification: str = "",
 ) -> dict[str, object]:
-    """Create test_handoff_<subtask>.json from an existing test_contract file."""
+    """Create checkpoint-bound handoff; authoring claims are not execution receipts."""
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
     contract_path = branch_dir / f"test_contract_{subtask_id}.md"
@@ -5259,18 +5260,49 @@ def record_test_contract_handoff(
         for item in (test_files_csv or "").split(",")
         if item.strip()
     ]
+    integrity = verify_acceptance_contracts(branch_name, subtask_id=subtask_id)
+    if not integrity["allowed"]:
+        return integrity
+    try:
+        acceptance_store = _acceptance_store(branch_dir)
+        proof_contracts = [contract for contract in acceptance_store["contracts"].values()
+                           if contract["subtask_id"] == subtask_id]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return {"status": "error", "message": str(exc)}
+    checkpoint: dict[str, Any] = {}
+    if proof_contracts:
+        state_path = branch_dir / "step_state.json"
+        state = json.loads(state_path.read_text()) if state_path.exists() else {}
+        checkpoint = state.get("acceptance_authoring", {}).get(subtask_id, {})
+        if state and checkpoint.get("status") != "open":
+            return {"status": "error", "message": "Fresh handoff requires an open authoring checkpoint"}
+        if authoring_result not in {"red", "already_green", "plan_authored"}:
+            return {"status": "error", "message": "Unknown authoring_result"}
+        if authoring_result != "red" and not authoring_justification.strip():
+            return {"status": "error", "message": "Non-RED authoring requires explicit justification"}
     handoff_payload = {
         "subtask_id": subtask_id,
+        "checkpoint_id": checkpoint.get("checkpoint_id"),
+        "test_contract_sha256": _hash_file(contract_path),
+        "authoring_result": authoring_result,
+        "authoring_justification": authoring_justification,
+        "authoring_evidence": "self_reported",
         "status": "contract_ready",
         "contract_path": str(contract_path),
         "failing_test_command": failing_test_command or None,
         "test_files": test_files,
+        "proof_contract_hashes": {contract["ac_id"]: contract["hash"] for contract in proof_contracts},
+        "proof_file_hashes": {entry["path"]: entry["sha256"] for contract in proof_contracts for entry in contract["files"]},
         "contract_summary": contract_summary or "No contract summary provided.",
         "notes": notes or "",
         "updated_at": _utc_timestamp(),
     }
     handoff_path = branch_dir / f"test_handoff_{subtask_id}.json"
     _write_json_file(handoff_path, handoff_payload)
+    if proof_contracts:
+        recorded = _record_acceptance_handoff(handoff_payload, branch=branch_name)
+        if recorded["status"] == "error":
+            return recorded
 
     manifest = load_artifact_manifest(branch_name)
     _set_manifest_stage(
@@ -5693,11 +5725,14 @@ def write_verification_summary(
         "implementation", branch_name
     )
     content += "\n" + _render_prior_stage_consumption_markdown(prior_stage_report)
+    acceptance_report = evaluate_acceptance(branch_name)
+    content += "\n" + _render_acceptance_proofs(acceptance_report)
     _write_text_file(summary_file, content)
     return {
         "status": "success",
         "path": str(summary_file),
         "acceptance_coverage": coverage_report,
+        "acceptance_proofs": acceptance_report,
         "prior_stage_consumption": prior_stage_report,
     }
 
@@ -6329,6 +6364,10 @@ def validate_run_health_report(
     verification_present = _artifact_present(report, "verification_summary")
 
     if terminal_status == "complete":
+        acceptance_report = evaluate_acceptance(branch_name)
+        if not acceptance_report["allowed"]:
+            errors.append("Acceptance evidence does not permit completion")
+            errors.extend(acceptance_report["errors"])
         if pending_step_count:
             errors.append("complete report must not have pending steps")
         if not (final_verifier_executed or verification_present):
@@ -7870,47 +7909,65 @@ def _clip_probe_output(text: str) -> str:
     return text
 
 
+def _assert_shared_execution_ownership(directory: Path) -> None:
+    ledger_path = directory / "review-verdict-ledger.json"
+    if ledger_path.exists():
+        ledger = json.loads(ledger_path.read_text())
+        if not isinstance(ledger, dict):
+            raise ValueError("Corrupt execution ownership ledger")
+        for check in ledger.get("execution_checks", {}).values():
+            if check.get("state") == "running" and check.get("lease_protocol") != "process-group-v2":
+                raise ValueError("Legacy execution check ownership is unknown; explicit recovery is required")
+
+
+_PROBE_EXECUTION_LEASE: int | None = None
+
+
+def _owned_repro_operation(function: Callable[..., dict[str, object]]) -> Callable[..., dict[str, object]]:
+    @wraps(function)
+    def owned(*args: Any, **kwargs: Any) -> dict[str, object]:
+        import fcntl
+
+        global _PROBE_EXECUTION_LEASE
+        branch = kwargs.get("branch")
+        branch_position = 2 if function.__name__ == "verify_repro_resolved" else 4
+        if branch is None and len(args) > branch_position:
+            branch = args[branch_position]
+        directory = get_branch_dir(branch or get_branch_name())
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            with (directory / ".review-execution.lock").open("a") as lease:
+                try:
+                    fcntl.flock(lease.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as exc:
+                    raise ValueError("An execution check is still running") from exc
+                _assert_shared_execution_ownership(directory)
+                _PROBE_EXECUTION_LEASE = lease.fileno()
+                try:
+                    return function(*args, **kwargs)
+                finally:
+                    _PROBE_EXECUTION_LEASE = None
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            return {"status": "error", "valid": False, "message": str(exc), "reasons": [str(exc)]}
+    return owned
+
+
 def _run_one_probe(
     snapshot: Path, timeout: int
 ) -> tuple[int | None, str, str, bool]:
-    """Run one frozen probe with a hard timeout and process-group kill.
+    """Adapt the shared surviving execution owner to the legacy 42→0 protocol."""
+    import uuid
 
-    Returns ``(returncode, stdout, stderr, timed_out)``. ``returncode`` is
-    ``None`` when the probe could not be executed (no shebang / not executable)
-    or was killed on timeout. Safety: ``shell=False`` (executes the file
-    directly via its shebang), ``stdin`` is /dev/null, output is captured (and
-    later clipped), and on timeout the whole process group is killed so forked
-    workers (pytest, go test) do not orphan.
-    """
-    use_groups = hasattr(os, "killpg") and hasattr(os, "getpgid")
-    try:
-        proc = subprocess.Popen(
-            [str(snapshot.resolve())],
-            cwd=str(Path.cwd()),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=use_groups,
-        )
-    except OSError as exc:
-        return None, "", f"probe is not executable ({exc}); add a shebang line", False
-    try:
-        out, err = proc.communicate(timeout=timeout)
-        return proc.returncode, out, err, False
-    except subprocess.TimeoutExpired:
-        if use_groups:
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                proc.kill()
-        else:
-            proc.kill()
-        try:
-            out, err = proc.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            out, err = "", ""
-        return None, out, err, True
+    directory = snapshot.resolve().parents[2]
+    if _PROBE_EXECUTION_LEASE is None:
+        return None, "", "Probe execution requires admitted shared ownership", False
+    attempt_dir = directory / "repro-checks" / uuid.uuid4().hex
+    execution, output = _execute_owned_check(
+        [str(snapshot.resolve())], attempt_dir, _PROBE_EXECUTION_LEASE, timeout,
+    )
+    streams = [(attempt_dir / name).read_text(errors="replace") if (attempt_dir / name).exists() else ""
+               for name in ("stdout", "stderr")]
+    return execution["exit_code"], streams[0], streams[1] or output.decode(errors="replace"), execution["status"] == "timeout"
 
 
 def _run_repro_snapshot(snapshot: Path, timeout: int, runs: int) -> dict[str, object]:
@@ -7960,6 +8017,7 @@ def _run_repro_snapshot(snapshot: Path, timeout: int, runs: int) -> dict[str, ob
     }
 
 
+@_owned_repro_operation
 def record_repro_probe(
     probe: str,
     root_cause_evidence: str = "",
@@ -8103,6 +8161,7 @@ def record_repro_probe(
     }
 
 
+@_owned_repro_operation
 def verify_repro_resolved(
     timeout: int | None = None,
     runs: int | None = None,
@@ -14448,6 +14507,9 @@ def get_current_phase(branch: str | None = None) -> str | None:
     return None
 
 
+[% include '_partials/acceptance-runtime.py.jinja' %]
+
+
 @_review_transaction
 def _record_review_check(check_id: str, command: list[str], *, branch: str | None = None,
                          result: dict[str, Any] | None = None, output: bytes = b"",
@@ -14576,33 +14638,10 @@ def run_test_gate(*, command: list[str] | None = None, check_id: str = "", branc
                 output = b""
                 execution: dict[str, Any] = {"status": "skipped", "passed": False, "exit_code": None}
                 if test_cmd:
-                    try:
-                        attempt_dir = (directory / "review-checks" / attempt_id).resolve()
-                        attempt_dir.mkdir(parents=True)
-                        supervisor = subprocess.Popen(
-                            [sys.executable, str(Path(__file__).with_name("review_check_supervisor.py")),
-                             "supervise", str(attempt_dir), str(lease.fileno()),
-                             str(started["timeout_seconds"]), *test_cmd],
-                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                            start_new_session=True, pass_fds=(lease.fileno(),),
-                        )
-                        result_path = attempt_dir / "supervisor.json"
-                        while not result_path.exists() and supervisor.poll() is None:
-                            time.sleep(0.02)
-                        if result_path.exists():
-                            execution = json.loads(result_path.read_text())
-                            if execution["status"] != "cleanup_blocked":
-                                supervisor.wait()
-                        else:
-                            execution = {"status": "error", "passed": False, "exit_code": None,
-                                         "message": "Check supervisor exited without a result; ownership may require recovery"}
-                        for stream in ("stdout", "stderr"):
-                            path = attempt_dir / stream
-                            if path.exists():
-                                output += path.read_bytes()
-                    except OSError as exc:
-                        output = str(exc).encode()
-                        execution = {"status": "error", "passed": False, "exit_code": None}
+                    execution, output = _execute_owned_check(
+                        test_cmd, directory / "review-checks" / attempt_id,
+                        lease.fileno(), started["timeout_seconds"],
+                    )
                 return _record_review_check(check_id, test_cmd or [], branch=branch, result=execution,
                                             output=output, attempt_id=attempt_id)
         except OSError as exc:
@@ -23831,7 +23870,23 @@ if __name__ == "__main__":
         print(f"usage: map_step_runner.py {func_name} {usage_args}".rstrip())
         sys.exit(0)
 
-    if func_name == "update_step_state_batch" and len(sys.argv) >= 3:
+    if func_name in {"freeze_acceptance_contract", "run_acceptance_proofs", "evaluate_acceptance",
+                     "verify_acceptance_contracts", "revise_acceptance_contract", "write_acceptance_report", "assess_acceptance_revision"} or (
+            func_name == "record_test_contract_handoff" and "--json" in sys.argv):
+        import argparse
+
+        parser = argparse.ArgumentParser(prog=f"map_step_runner.py {func_name}")
+        parser.add_argument("--json", default="{}", help="JSON object of public API keyword arguments")
+        options = parser.parse_args(sys.argv[2:])
+        try:
+            payload = json.loads(options.json)
+            result = globals()[func_name](**payload)
+        except (ValueError, TypeError, KeyError) as exc:
+            result = {"status": "error", "allowed": False, "message": str(exc)}
+        print(json.dumps(result))
+        sys.exit(1 if result.get("status") == "error" else 0)
+
+    elif func_name == "update_step_state_batch" and len(sys.argv) >= 3:
         updates_json = sys.argv[2]
         try:
             updates = json.loads(updates_json)
@@ -24002,6 +24057,8 @@ if __name__ == "__main__":
             test_files_csv,
             contract_summary,
             notes,
+            authoring_result=sys.argv[sys.argv.index("--authoring-result") + 1] if "--authoring-result" in sys.argv else "red",
+            authoring_justification=sys.argv[sys.argv.index("--authoring-justification") + 1] if "--authoring-justification" in sys.argv else "",
         )
         print(json.dumps(result, indent=2))
 

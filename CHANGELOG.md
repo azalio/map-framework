@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Runner-witnessed acceptance proofs: freeze independent test-first commands and proof files before Actor; execute snapshot-bound proofs and derive per-spec-AC `proven`/`failed`/`unproven`/`stale` status. Audited revisions preserve author, reason, command/assertion differences and invalidations; weakening requires justification. Completion revalidates evidence instead of trusting checked ACs. Unproven is warn-first by default (`acceptance.strict` / `MAP_STRICT_ACCEPTANCE` enables blocking); failed/stale evidence and integrity failures always block. (#524)
 - Snapshot/policy-bound review receipts and explicit COMPLETE/INCOMPLETE/BLOCKED
   completeness, separate from findings, execution checks and human consent.
   Current approval requires current reviewer/scope evidence; historical receipts

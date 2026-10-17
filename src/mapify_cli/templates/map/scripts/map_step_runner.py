@@ -62,7 +62,6 @@ import os
 import random
 import re
 import shlex
-import signal
 import stat
 import subprocess
 import sys
@@ -5268,8 +5267,10 @@ def record_test_contract_handoff(
     contract_summary: str = "",
     notes: str = "",
     branch: str | None = None,
+    authoring_result: str = "red",
+    authoring_justification: str = "",
 ) -> dict[str, object]:
-    """Create test_handoff_<subtask>.json from an existing test_contract file."""
+    """Create checkpoint-bound handoff; authoring claims are not execution receipts."""
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
     contract_path = branch_dir / f"test_contract_{subtask_id}.md"
@@ -5284,18 +5285,49 @@ def record_test_contract_handoff(
         for item in (test_files_csv or "").split(",")
         if item.strip()
     ]
+    integrity = verify_acceptance_contracts(branch_name, subtask_id=subtask_id)
+    if not integrity["allowed"]:
+        return integrity
+    try:
+        acceptance_store = _acceptance_store(branch_dir)
+        proof_contracts = [contract for contract in acceptance_store["contracts"].values()
+                           if contract["subtask_id"] == subtask_id]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return {"status": "error", "message": str(exc)}
+    checkpoint: dict[str, Any] = {}
+    if proof_contracts:
+        state_path = branch_dir / "step_state.json"
+        state = json.loads(state_path.read_text()) if state_path.exists() else {}
+        checkpoint = state.get("acceptance_authoring", {}).get(subtask_id, {})
+        if state and checkpoint.get("status") != "open":
+            return {"status": "error", "message": "Fresh handoff requires an open authoring checkpoint"}
+        if authoring_result not in {"red", "already_green", "plan_authored"}:
+            return {"status": "error", "message": "Unknown authoring_result"}
+        if authoring_result != "red" and not authoring_justification.strip():
+            return {"status": "error", "message": "Non-RED authoring requires explicit justification"}
     handoff_payload = {
         "subtask_id": subtask_id,
+        "checkpoint_id": checkpoint.get("checkpoint_id"),
+        "test_contract_sha256": _hash_file(contract_path),
+        "authoring_result": authoring_result,
+        "authoring_justification": authoring_justification,
+        "authoring_evidence": "self_reported",
         "status": "contract_ready",
         "contract_path": str(contract_path),
         "failing_test_command": failing_test_command or None,
         "test_files": test_files,
+        "proof_contract_hashes": {contract["ac_id"]: contract["hash"] for contract in proof_contracts},
+        "proof_file_hashes": {entry["path"]: entry["sha256"] for contract in proof_contracts for entry in contract["files"]},
         "contract_summary": contract_summary or "No contract summary provided.",
         "notes": notes or "",
         "updated_at": _utc_timestamp(),
     }
     handoff_path = branch_dir / f"test_handoff_{subtask_id}.json"
     _write_json_file(handoff_path, handoff_payload)
+    if proof_contracts:
+        recorded = _record_acceptance_handoff(handoff_payload, branch=branch_name)
+        if recorded["status"] == "error":
+            return recorded
 
     manifest = load_artifact_manifest(branch_name)
     _set_manifest_stage(
@@ -5718,11 +5750,14 @@ def write_verification_summary(
         "implementation", branch_name
     )
     content += "\n" + _render_prior_stage_consumption_markdown(prior_stage_report)
+    acceptance_report = evaluate_acceptance(branch_name)
+    content += "\n" + _render_acceptance_proofs(acceptance_report)
     _write_text_file(summary_file, content)
     return {
         "status": "success",
         "path": str(summary_file),
         "acceptance_coverage": coverage_report,
+        "acceptance_proofs": acceptance_report,
         "prior_stage_consumption": prior_stage_report,
     }
 
@@ -6354,6 +6389,10 @@ def validate_run_health_report(
     verification_present = _artifact_present(report, "verification_summary")
 
     if terminal_status == "complete":
+        acceptance_report = evaluate_acceptance(branch_name)
+        if not acceptance_report["allowed"]:
+            errors.append("Acceptance evidence does not permit completion")
+            errors.extend(acceptance_report["errors"])
         if pending_step_count:
             errors.append("complete report must not have pending steps")
         if not (final_verifier_executed or verification_present):
@@ -7895,47 +7934,65 @@ def _clip_probe_output(text: str) -> str:
     return text
 
 
+def _assert_shared_execution_ownership(directory: Path) -> None:
+    ledger_path = directory / "review-verdict-ledger.json"
+    if ledger_path.exists():
+        ledger = json.loads(ledger_path.read_text())
+        if not isinstance(ledger, dict):
+            raise ValueError("Corrupt execution ownership ledger")
+        for check in ledger.get("execution_checks", {}).values():
+            if check.get("state") == "running" and check.get("lease_protocol") != "process-group-v2":
+                raise ValueError("Legacy execution check ownership is unknown; explicit recovery is required")
+
+
+_PROBE_EXECUTION_LEASE: int | None = None
+
+
+def _owned_repro_operation(function: Callable[..., dict[str, object]]) -> Callable[..., dict[str, object]]:
+    @wraps(function)
+    def owned(*args: Any, **kwargs: Any) -> dict[str, object]:
+        import fcntl
+
+        global _PROBE_EXECUTION_LEASE
+        branch = kwargs.get("branch")
+        branch_position = 2 if function.__name__ == "verify_repro_resolved" else 4
+        if branch is None and len(args) > branch_position:
+            branch = args[branch_position]
+        directory = get_branch_dir(branch or get_branch_name())
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            with (directory / ".review-execution.lock").open("a") as lease:
+                try:
+                    fcntl.flock(lease.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as exc:
+                    raise ValueError("An execution check is still running") from exc
+                _assert_shared_execution_ownership(directory)
+                _PROBE_EXECUTION_LEASE = lease.fileno()
+                try:
+                    return function(*args, **kwargs)
+                finally:
+                    _PROBE_EXECUTION_LEASE = None
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            return {"status": "error", "valid": False, "message": str(exc), "reasons": [str(exc)]}
+    return owned
+
+
 def _run_one_probe(
     snapshot: Path, timeout: int
 ) -> tuple[int | None, str, str, bool]:
-    """Run one frozen probe with a hard timeout and process-group kill.
+    """Adapt the shared surviving execution owner to the legacy 42→0 protocol."""
+    import uuid
 
-    Returns ``(returncode, stdout, stderr, timed_out)``. ``returncode`` is
-    ``None`` when the probe could not be executed (no shebang / not executable)
-    or was killed on timeout. Safety: ``shell=False`` (executes the file
-    directly via its shebang), ``stdin`` is /dev/null, output is captured (and
-    later clipped), and on timeout the whole process group is killed so forked
-    workers (pytest, go test) do not orphan.
-    """
-    use_groups = hasattr(os, "killpg") and hasattr(os, "getpgid")
-    try:
-        proc = subprocess.Popen(
-            [str(snapshot.resolve())],
-            cwd=str(Path.cwd()),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=use_groups,
-        )
-    except OSError as exc:
-        return None, "", f"probe is not executable ({exc}); add a shebang line", False
-    try:
-        out, err = proc.communicate(timeout=timeout)
-        return proc.returncode, out, err, False
-    except subprocess.TimeoutExpired:
-        if use_groups:
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                proc.kill()
-        else:
-            proc.kill()
-        try:
-            out, err = proc.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            out, err = "", ""
-        return None, out, err, True
+    directory = snapshot.resolve().parents[2]
+    if _PROBE_EXECUTION_LEASE is None:
+        return None, "", "Probe execution requires admitted shared ownership", False
+    attempt_dir = directory / "repro-checks" / uuid.uuid4().hex
+    execution, output = _execute_owned_check(
+        [str(snapshot.resolve())], attempt_dir, _PROBE_EXECUTION_LEASE, timeout,
+    )
+    streams = [(attempt_dir / name).read_text(errors="replace") if (attempt_dir / name).exists() else ""
+               for name in ("stdout", "stderr")]
+    return execution["exit_code"], streams[0], streams[1] or output.decode(errors="replace"), execution["status"] == "timeout"
 
 
 def _run_repro_snapshot(snapshot: Path, timeout: int, runs: int) -> dict[str, object]:
@@ -7985,6 +8042,7 @@ def _run_repro_snapshot(snapshot: Path, timeout: int, runs: int) -> dict[str, ob
     }
 
 
+@_owned_repro_operation
 def record_repro_probe(
     probe: str,
     root_cause_evidence: str = "",
@@ -8128,6 +8186,7 @@ def record_repro_probe(
     }
 
 
+@_owned_repro_operation
 def verify_repro_resolved(
     timeout: int | None = None,
     runs: int | None = None,
@@ -14473,6 +14532,524 @@ def get_current_phase(branch: str | None = None) -> str | None:
     return None
 
 
+def _execute_owned_check(command: list[str], attempt_dir: Path, lease_fd: int,
+                         timeout: float, cwd: str = ".") -> tuple[dict[str, Any], bytes]:
+    """Shared supervised execution; callers own admission and durable receipts."""
+    output = b""
+    try:
+        attempt_dir = attempt_dir.resolve()
+        attempt_dir.mkdir(parents=True)
+        supervisor = subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve().with_name("review_check_supervisor.py")),
+             "supervise", str(attempt_dir), str(lease_fd), str(timeout), *command],
+            cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True, pass_fds=(lease_fd,),
+        )
+        result_path = attempt_dir / "supervisor.json"
+        while not result_path.exists() and supervisor.poll() is None:
+            time.sleep(0.02)
+        if result_path.exists():
+            execution = json.loads(result_path.read_text())
+            if execution["status"] != "cleanup_blocked":
+                supervisor.wait()
+        else:
+            execution = {"status": "error", "passed": False, "exit_code": None,
+                         "message": "Check supervisor exited without a result; ownership may require recovery"}
+        for stream in ("stdout", "stderr"):
+            path = attempt_dir / stream
+            if path.exists():
+                output += path.read_bytes()
+        return execution, output
+    except (OSError, ValueError) as exc:
+        return {"status": "error", "passed": False, "exit_code": None}, str(exc).encode()
+
+
+def _acceptance_hash(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
+def _acceptance_inventory(directory: Path) -> dict[str, Any]:
+    spec = directory / f"spec_{directory.name}.md"
+    text = spec.read_text(encoding="utf-8") if spec.exists() else ""
+    parsed = parse_requirements_index(text)
+    if parsed["status"] not in {"absent", "present_empty", "present_nonempty"}:
+        raise ValueError(f"Acceptance inventory {parsed['status']}")
+    entries = parsed["requirements"]
+    if not isinstance(entries, list) or any(not isinstance(row, dict) or not isinstance(row.get("id"), str)
+                                           or not row["id"] for row in entries):
+        raise ValueError("Acceptance inventory contains malformed entries")
+    ids = [row["id"] for row in entries if row.get("kind") == "acceptance_criterion"]
+    if len(ids) != len(set(ids)):
+        raise ValueError("Acceptance inventory contains duplicate IDs")
+    return {"ids": ids, "status": parsed["status"], "digest": hashlib.sha256(text.encode()).hexdigest()}
+
+
+def _acceptance_store(directory: Path) -> dict[str, Any]:
+    path = directory / "acceptance-proofs.json"
+    marker = directory / ".acceptance-established"
+    if not path.exists():
+        if marker.exists():
+            raise ValueError("Established acceptance store is missing")
+        return {"schema": "acceptance.v1", "contracts": {}, "attempts": [], "revisions": []}
+    store = json.loads(path.read_text())
+    if (not isinstance(store, dict) or store.get("integrity") != _acceptance_hash(
+            {key: value for key, value in store.items() if key != "integrity"})):
+        raise ValueError("Acceptance store integrity mismatch")
+    if (not isinstance(store, dict) or store.get("schema") != "acceptance.v1"
+            or not isinstance(store.get("contracts"), dict) or not isinstance(store.get("attempts"), list)
+            or not isinstance(store.get("revisions"), list)):
+        raise ValueError("Corrupt acceptance store")
+    for key, contract in store["contracts"].items():
+        if (not isinstance(contract, dict) or contract.get("ac_id") != key
+                or contract.get("hash") != _acceptance_hash({k: v for k, v in contract.items() if k != "hash"})):
+            raise ValueError("Corrupt acceptance contract")
+    for attempt in store["attempts"]:
+        if not isinstance(attempt, dict) or not attempt.get("attempt_id") or not attempt.get("ac_id"):
+            raise ValueError("Corrupt acceptance attempt")
+    return store
+
+
+def _save_acceptance_store(directory: Path, store: dict[str, Any]) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / ".acceptance-established").touch(exist_ok=True)
+    store["integrity"] = _acceptance_hash({key: value for key, value in store.items() if key != "integrity"})
+    _write_json_file(directory / "acceptance-proofs.json", store)
+
+
+def _acceptance_files(paths: list[str]) -> list[dict[str, Any]]:
+    import base64
+
+    if not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
+        raise ValueError("proof_files must be a path array")
+    files = []
+    root = Path.cwd().resolve()
+    for name in sorted(set(paths)):
+        path = Path(name)
+        if path.is_absolute() or ".." in path.parts or not path.resolve().is_relative_to(root) or path.is_symlink():
+            raise ValueError("Proof files must be regular repository-relative files")
+        entry = _review_file_entry(name)
+        if entry["kind"] != "file":
+            raise ValueError(f"Proof file is missing: {name}")
+        files.append({**entry, "content_base64": base64.b64encode(path.read_bytes()).decode()})
+    return files
+
+
+def _acceptance_contract(ac_id: str, command: list[str] | None, proof_files: list[str], subtask_id: str,
+                         *, author: str, authoring_stage: str, manual_reason: str, cwd: str,
+                         timeout: float, inventory: dict[str, Any], revision: int) -> dict[str, Any]:
+    if ac_id not in inventory["ids"]:
+        raise ValueError("AC ID is not in the authoritative spec inventory")
+    if not author.strip() or not subtask_id.strip():
+        raise ValueError("Author and owning subtask are required")
+    if authoring_stage not in {"test_first", "independent_test_first"}:
+        raise ValueError("Contracts require independent test-first authoring")
+    if command is not None and (not isinstance(command, list) or not command
+                               or any(not isinstance(arg, str) or not arg for arg in command)):
+        raise ValueError("command must be a nonempty argv array, not shell syntax")
+    if command is None and not manual_reason.strip():
+        raise ValueError("Manual proofs require an explicit reason")
+    if command and not proof_files:
+        raise ValueError("Executable proofs require frozen proof files")
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 0 < timeout < math.inf:
+        raise ValueError("timeout must be positive finite seconds")
+    workdir = Path(cwd)
+    if workdir.is_absolute() or ".." in workdir.parts or not workdir.is_dir():
+        raise ValueError("cwd must be a repository-relative directory")
+    contract = {"ac_id": ac_id, "revision": revision, "command": command, "cwd": cwd,
+                "timeout": timeout, "subtask_id": subtask_id, "author": author,
+                "authoring_stage": authoring_stage, "created_at": time.time(),
+                "manual_reason": manual_reason, "inventory_digest": inventory["digest"],
+                "files": _acceptance_files(proof_files)}
+    contract["hash"] = _acceptance_hash(contract)
+    return contract
+
+
+def _acceptance_authorship(directory: Path, subtask_id: str, author: str, stage: str) -> dict[str, Any]:
+    path = directory / "step_state.json"
+    if not path.exists():
+        return {"kind": "standalone_test_first", "author": author, "stage": stage}
+    state = json.loads(path.read_text())
+    checkpoint = state.get("acceptance_authoring", {}).get(subtask_id, {})
+    if (checkpoint.get("status") != "open" or checkpoint.get("author") != author
+            or checkpoint.get("stage") != stage or not checkpoint.get("checkpoint_id")):
+        raise ValueError("An open independent test-first authoring checkpoint is required before freezing")
+    return dict(checkpoint)
+
+
+@_review_transaction
+def freeze_acceptance_contract(ac_id: str, command: list[str] | None, proof_files: list[str],
+                               subtask_id: str, *, author: str, authoring_stage: str = "test_first",
+                               manual_reason: str = "", cwd: str = ".", timeout: float = 300,
+                               branch: str | None = None) -> dict[str, Any]:
+    """Freeze executable inputs before Actor; subsequent changes require a revision."""
+    directory = _review_branch_dir(branch)
+    store = _acceptance_store(directory)
+    if ac_id in store["contracts"]:
+        raise ValueError("Contract already frozen; use independent revision authoring")
+    inventory = _acceptance_inventory(directory)
+    contract = _acceptance_contract(ac_id, command, proof_files, subtask_id, author=author,
+                                   authoring_stage=authoring_stage, manual_reason=manual_reason,
+                                   cwd=cwd, timeout=timeout, inventory=inventory, revision=1)
+    contract["provenance"] = _acceptance_authorship(directory, subtask_id, author, authoring_stage)
+    contract["hash"] = _acceptance_hash({key: value for key, value in contract.items() if key != "hash"})
+    store["contracts"][ac_id] = contract
+    store["inventory"] = inventory
+    _save_acceptance_store(directory, store)
+    return {"status": "success", "contract": contract}
+
+
+@_review_transaction
+def revise_acceptance_contract(ac_id: str, command: list[str] | None, proof_files: list[str],
+                               *, author: str, reason: str, assessment: str,
+                               weakening_justification: str = "", authoring_stage: str = "independent_test_first",
+                               manual_reason: str | None = None, cwd: str = ".", timeout: float = 300,
+                               branch: str | None = None) -> dict[str, Any]:
+    """Preserve old/new frozen inputs and explicit semantic review; never silently re-freeze."""
+    import base64
+    import difflib
+    import fcntl
+
+    directory = _review_branch_dir(branch)
+    with (directory / ".review-execution.lock").open("a") as lease:
+        try:
+            fcntl.flock(lease.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ValueError("An execution check is still running") from exc
+        store = _acceptance_store(directory)
+        old = store["contracts"][ac_id]
+        if not reason.strip() or authoring_stage != "independent_test_first":
+            raise ValueError("Revision requires a reason and independent test-first authoring")
+        if assessment not in {"equivalent", "weakening", "unknown"}:
+            raise ValueError("Revision assessment must be equivalent, weakening or unknown")
+        provenance = _acceptance_authorship(directory, old["subtask_id"], author, authoring_stage)
+        if provenance.get("checkpoint_id") and provenance.get("checkpoint_id") == old["provenance"].get("checkpoint_id"):
+            raise ValueError("Revision must use a fresh independent authoring checkpoint")
+        inventory = _acceptance_inventory(directory)
+        contract = _acceptance_contract(ac_id, command, proof_files, old["subtask_id"], author=author,
+                                       authoring_stage=authoring_stage,
+                                       manual_reason=old["manual_reason"] if manual_reason is None else manual_reason,
+                                       cwd=cwd, timeout=timeout, inventory=inventory, revision=old["revision"] + 1)
+        contract["provenance"] = provenance
+        contract["hash"] = _acceptance_hash({key: value for key, value in contract.items() if key != "hash"})
+        old_files = {item["path"]: item for item in old["files"]}
+        new_files = {item["path"]: item for item in contract["files"]}
+        differences = []
+        removed = False
+        for name in sorted(old_files.keys() | new_files.keys()):
+            before = base64.b64decode(old_files.get(name, {}).get("content_base64", "")).decode("utf-8", errors="replace")
+            after = base64.b64decode(new_files.get(name, {}).get("content_base64", "")).decode("utf-8", errors="replace")
+            diff = list(difflib.unified_diff(before.splitlines(keepends=True), after.splitlines(keepends=True),
+                                           fromfile=f"old/{name}", tofile=f"new/{name}"))
+            differences.extend(diff)
+            removed = removed or any(line.startswith("-") and not line.startswith("---") for line in diff)
+        command_changed = any(old[key] != contract[key] for key in ("command", "cwd", "timeout"))
+        potential_weakening = removed or command_changed
+        effective_assessment = "unknown" if potential_weakening and assessment == "equivalent" else assessment
+        revision = {"ac_id": ac_id, "author": author, "provenance": provenance, "created_at": time.time(),
+                    "reason": reason, "assessment": effective_assessment, "declared_assessment": assessment,
+                    "weakening_justification": weakening_justification,
+                    "potential_weakening": potential_weakening, "old_contract": old, "new_contract": contract,
+                    "command_diff": {"old": old["command"], "new": command}, "proof_diff": "".join(differences),
+                    "invalidated_contracts": [old["hash"]],
+                    "invalidated_attempts": [item["attempt_id"] for item in store["attempts"]
+                                             if item["ac_id"] == ac_id and item["contract_hash"] == old["hash"]]}
+        store["revisions"].append(revision)
+        store["contracts"][ac_id] = contract
+        store["inventory"] = inventory
+        _save_acceptance_store(directory, store)
+        return {"status": "success", "contract": contract, "revision": revision}
+
+
+@_review_transaction
+def assess_acceptance_revision(ac_id: str, revision: int, *, author: str, assessment: str, reason: str,
+                               weakening_justification: str = "", branch: str | None = None) -> dict[str, Any]:
+    """Append independent semantic assessment bound to the exact preserved revision."""
+    directory = _review_branch_dir(branch)
+    store = _acceptance_store(directory)
+    if not reason.strip() or assessment not in {"equivalent", "weakening"}:
+        raise ValueError("Assessment requires an explicit reason and equivalent/weakening verdict")
+    matches = [item for item in store["revisions"]
+               if item["ac_id"] == ac_id and item["new_contract"]["revision"] == revision]
+    if len(matches) != 1:
+        raise ValueError("Assessment must name an exact existing revision")
+    record = matches[0]
+    if record["potential_weakening"] and assessment != "weakening":
+        raise ValueError("Detected removals or changed command scope cannot be relabeled equivalent")
+    if assessment == "weakening" and not weakening_justification.strip():
+        raise ValueError("Weakening assessment requires explicit justification")
+    provenance = _acceptance_authorship(directory, record["new_contract"]["subtask_id"],
+                                        author, "independent_test_first")
+    if provenance.get("checkpoint_id") and provenance.get("checkpoint_id") == record["provenance"].get("checkpoint_id"):
+        raise ValueError("Assessment requires a new independent authoring checkpoint")
+    entry = {"author": author, "created_at": time.time(), "reason": reason, "assessment": assessment,
+             "weakening_justification": weakening_justification, "provenance": provenance,
+             "contract_hash": record["new_contract"]["hash"], "proof_diff_hash": _acceptance_hash(record["proof_diff"])}
+    record.setdefault("assessments", []).append(entry)
+    _save_acceptance_store(directory, store)
+    return {"status": "success", "assessment": entry}
+
+
+def _acceptance_revision_errors(store: dict[str, Any]) -> list[str]:
+    errors = []
+    for revision in store["revisions"]:
+        assessments = revision.get("assessments", [])
+        effective = assessments[-1] if assessments else revision
+        if effective["assessment"] == "unknown" or (effective["assessment"] == "weakening"
+                                                       and not effective["weakening_justification"].strip()):
+            errors.append(f"{revision['ac_id']}: unresolved semantic weakening assessment")
+    return errors
+
+
+@_review_transaction
+def _record_acceptance_handoff(handoff: dict[str, Any], *, branch: str | None = None) -> dict[str, Any]:
+    directory = _review_branch_dir(branch)
+    store = _acceptance_store(directory)
+    store.setdefault("authoring_handoffs", []).append(handoff)
+    for revision in store["revisions"]:
+        if handoff["proof_contract_hashes"].get(revision["ac_id"]) == revision["new_contract"]["hash"]:
+            revision.setdefault("authoring_handoffs", []).append(handoff)
+    _save_acceptance_store(directory, store)
+    return {"status": "success"}
+
+
+def _acceptance_integrity(contract: dict[str, Any], inventory: dict[str, Any]) -> None:
+    if contract["ac_id"] not in inventory["ids"] or contract["inventory_digest"] != inventory["digest"]:
+        raise ValueError("Frozen requirement inventory changed")
+    current = _acceptance_files([entry["path"] for entry in contract["files"]])
+    if current != contract["files"]:
+        raise ValueError("Frozen proof file content or mode changed")
+
+
+def verify_acceptance_contracts(branch: str | None = None, *, subtask_id: str | None = None,
+                                require_handoff: bool = False) -> dict[str, Any]:
+    """Integrity-only Actor admission; unexecuted contracts are expected here."""
+    try:
+        directory = _review_branch_dir(branch)
+        store = _acceptance_store(directory)
+        inventory = _acceptance_inventory(directory)
+        revision_errors = _acceptance_revision_errors(store)
+        if revision_errors:
+            raise ValueError("; ".join(revision_errors))
+        for contract in store["contracts"].values():
+            if subtask_id is None or contract["subtask_id"] == subtask_id:
+                _acceptance_integrity(contract, inventory)
+                if require_handoff and contract.get("provenance", {}).get("checkpoint_id"):
+                    sid = contract["subtask_id"]
+                    handoff = json.loads((directory / f"test_handoff_{sid}.json").read_text())
+                    authored = json.loads((directory / "step_state.json").read_text()).get("acceptance_authoring", {}).get(sid, {})
+                    if (handoff.get("checkpoint_id") != authored.get("checkpoint_id")
+                            or handoff.get("proof_contract_hashes", {}).get(contract["ac_id"]) != contract["hash"]
+                            or handoff.get("test_contract_sha256") != _hash_file(directory / f"test_contract_{sid}.md")):
+                        raise ValueError("Test handoff does not bind current authoring checkpoint and frozen contracts")
+        return {"status": "success", "allowed": True}
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return {"status": "error", "allowed": False, "message": str(exc)}
+
+
+def evaluate_acceptance(branch: str | None = None, *, strict: bool | None = None,
+                        subtask_id: str | None = None) -> dict[str, Any]:
+    """Revalidate current evidence; neither agent assertions nor cached success prove ACs."""
+    errors: list[str] = []
+    rows: list[dict[str, Any]] = []
+    revisions: list[dict[str, Any]] = []
+    configured = _parse_boolish(os.environ.get("MAP_STRICT_ACCEPTANCE")) or _parse_boolish(
+        _map_config_str(Path.cwd(), "acceptance.strict", "false"))
+    strict = bool(strict or configured)
+    try:
+        directory = _review_branch_dir(branch)
+        _assert_shared_execution_ownership(directory)
+        inventory = _acceptance_inventory(directory)
+        store = _acceptance_store(directory)
+        revisions = store["revisions"]
+        state_path = directory / "step_state.json"
+        state = json.loads(state_path.read_text()) if state_path.exists() else {}
+        for checkpoint in state.get("acceptance_authoring", {}).values():
+            if checkpoint.get("status") == "revision_requested" or (checkpoint.get("status") == "open"
+                    and checkpoint.get("stage") == "independent_test_first"):
+                errors.append("Acceptance revision authoring is unresolved")
+        errors.extend(_acceptance_revision_errors(store))
+        if any(attempt["state"] == "running" for attempt in store["attempts"]):
+            errors.append("Unresolved acceptance execution ownership")
+        import fcntl
+
+        lease_path = directory / ".review-execution.lock"
+        if lease_path.exists():
+            with lease_path.open("a") as lease:
+                try:
+                    fcntl.flock(lease.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    errors.append("An execution check is still running")
+        target = _review_target() if store["contracts"] else {}
+        if store["contracts"] and target.get("unverified_reason"):
+            errors.append(target["unverified_reason"])
+        if store.get("inventory") and store["inventory"] != inventory:
+            errors.append("Frozen acceptance inventory changed")
+        for ac_id in inventory["ids"]:
+            contract = store["contracts"].get(ac_id)
+            if subtask_id and contract and contract["subtask_id"] != subtask_id:
+                continue
+            row: dict[str, Any] = {"id": ac_id, "status": "unproven", "reason": "missing_contract",
+                                   "contract": contract, "receipt": None}
+            rows.append(row)
+            if not contract:
+                continue
+            try:
+                _acceptance_integrity(contract, inventory)
+            except (OSError, ValueError) as exc:
+                row.update(status="stale", reason="contract_integrity")
+                errors.append(f"{ac_id}: {exc}")
+                continue
+            if contract["command"] is None:
+                row["reason"] = "manual: " + contract["manual_reason"]
+                continue
+            attempts = [item for item in store["attempts"] if item["ac_id"] == ac_id
+                        and item["contract_hash"] == contract["hash"]]
+            if not attempts:
+                row["reason"] = "not_executed"
+                continue
+            receipt = attempts[-1]
+            row["receipt"] = receipt
+            if receipt["state"] != "finished":
+                row.update(status="unproven", reason=receipt["state"])
+                errors.append(f"{ac_id}: unresolved execution {receipt['state']}")
+                continue
+            artifact = directory / receipt["output_artifact"]
+            if not artifact.is_file() or hashlib.sha256(artifact.read_bytes()).hexdigest() != receipt["output_sha256"]:
+                row.update(status="stale", reason="evidence_integrity")
+                errors.append(f"{ac_id}: missing or tampered evidence")
+            elif receipt["before"] != target or receipt["after"] != target:
+                row.update(status="stale", reason="snapshot_changed")
+            elif receipt["exit_code"] == 0 and receipt["passed"]:
+                row.update(status="proven", reason="runner_witnessed")
+            else:
+                row.update(status="failed", reason="execution_failed")
+        if inventory["status"] == "absent" and strict:
+            errors.append("Acceptance inventory is absent")
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        errors.append(str(exc))
+    summary = {state: sum(row["status"] == state for row in rows)
+               for state in ("proven", "failed", "unproven", "stale")}
+    allowed = not errors and not summary["failed"] and not summary["stale"] and not (strict and summary["unproven"])
+    return {"status": "success" if allowed else "error", "allowed": allowed, "strict": strict,
+            "requirements": rows, "revisions": revisions, "errors": errors, "summary": summary}
+
+
+def _render_acceptance_proofs(report: dict[str, Any]) -> str:
+    lines = ["## Runner-witnessed acceptance proofs", "", "| AC | Status | Reason | Revision | Attempt |",
+             "| --- | --- | --- | --- | --- |"]
+    for row in report["requirements"]:
+        contract, receipt = row.get("contract") or {}, row.get("receipt") or {}
+        lines.append(f"| {row['id']} | {row['status']} | {row['reason']} | {contract.get('revision', '-')} "
+                     f"| {receipt.get('attempt_id', '-')} |")
+    lines.extend(["", "### Contract revisions", ""])
+    for revision in report["revisions"]:
+        lines.extend([f"#### {revision['ac_id']}: revision {revision['new_contract']['revision']}",
+                      f"Author: {revision['author']}; timestamp: {revision['created_at']}",
+                      f"Provenance: {json.dumps(revision['provenance'], sort_keys=True)}",
+                      f"Reason: {revision['reason']}", f"Assessment: {revision['assessment']}",
+                      f"Weakening justification: {revision['weakening_justification'] or '(absent)'}",
+                      f"Command diff: {json.dumps(revision['command_diff'])}",
+                      f"Invalidated contracts: {', '.join(revision['invalidated_contracts'])}",
+                      f"Invalidated receipts: {', '.join(revision['invalidated_attempts']) or '(none)'}",
+                      "```diff", revision["proof_diff"], "```", ""])
+        for assessment in revision.get("assessments", []):
+            lines.append("Independent assessment: " + json.dumps(assessment, sort_keys=True))
+        for handoff in revision.get("authoring_handoffs", []):
+            lines.append("Authoring handoff (self-reported): " + json.dumps(handoff, sort_keys=True))
+    if report["errors"]:
+        lines.extend(["### Blocking integrity findings", *[f"- {error}" for error in report["errors"]]])
+    return "\n".join(lines) + "\n"
+
+
+def write_acceptance_report(branch: str | None = None) -> dict[str, Any]:
+    report = evaluate_acceptance(branch)
+    directory = _review_branch_dir(branch)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "acceptance-report.md"
+    path.write_text(_render_acceptance_proofs(report), encoding="utf-8")
+    return {"status": "success", "path": str(path), "acceptance_proofs": report}
+
+
+@_review_transaction
+def _record_acceptance_attempt(ac_id: str, attempt_id: str, *, branch: str | None = None,
+                               execution: dict[str, Any] | None = None, output: bytes = b"") -> dict[str, Any]:
+    directory = _review_branch_dir(branch)
+    store = _acceptance_store(directory)
+    contract = store["contracts"][ac_id]
+    _acceptance_integrity(contract, _acceptance_inventory(directory))
+    if execution is None:
+        for previous in store["attempts"]:
+            if previous["state"] == "running":
+                previous.update(state="interrupted", passed=False)
+        target = _review_target()
+        if target.get("unverified_reason"):
+            raise ValueError(target["unverified_reason"])
+        receipt = {"attempt_id": attempt_id, "ac_id": ac_id, "revision": contract["revision"],
+                   "contract_hash": contract["hash"], "command": contract["command"],
+                   "inventory_digest": contract["inventory_digest"], "state": "running",
+                   "started_at": time.time(), "before": target, "passed": False,
+                   "lease_protocol": "process-group-v2"}
+        store["attempts"].append(receipt)
+    else:
+        receipt = store["attempts"][-1]
+        if (receipt["attempt_id"] != attempt_id or receipt["state"] != "running"
+                or receipt["contract_hash"] != contract["hash"]):
+            raise ValueError("Acceptance completion no longer owns the admitted attempt")
+        artifact = directory / "acceptance-checks" / f"{attempt_id}.output"
+        with artifact.open("xb") as handle:
+            handle.write(output)
+            handle.flush()
+            os.fsync(handle.fileno())
+        after = _review_target()
+        receipt.update({**execution, "state": "running" if execution.get("status") == "cleanup_blocked" else "finished",
+                        "after": after, "duration_seconds": time.time() - receipt["started_at"],
+                        "output_artifact": str(artifact.relative_to(directory)),
+                        "output_sha256": hashlib.sha256(output).hexdigest()})
+        receipt["passed"] = bool(execution["passed"] and receipt["before"] == after)
+    _save_acceptance_store(directory, store)
+    return {"status": "success", "receipt": receipt, "contract": contract}
+
+
+def run_acceptance_proofs(ac_ids: list[str] | None = None, *, rerun: bool = False,
+                          branch: str | None = None) -> dict[str, Any]:
+    """Execute current frozen commands through the same surviving owner as review checks."""
+    import fcntl
+    import uuid
+
+    directory = _review_branch_dir(branch)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        with (directory / ".review-execution.lock").open("a") as lease:
+            try:
+                fcntl.flock(lease.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return {"status": "error", "allowed": False, "message": "An execution check is still running"}
+            _assert_shared_execution_ownership(directory)
+            store = _acceptance_store(directory)
+            selected = ac_ids if ac_ids is not None else list(store["contracts"])
+            if any(ac_id not in store["contracts"] for ac_id in selected):
+                raise ValueError("Selected AC has no frozen contract")
+            report = evaluate_acceptance(branch)
+            proven = {row["id"] for row in report["requirements"] if row["status"] == "proven"}
+            for ac_id in selected:
+                contract = store["contracts"][ac_id]
+                if contract["command"] is None or (ac_id in proven and not rerun):
+                    continue
+                attempt_id = uuid.uuid4().hex
+                admitted = _record_acceptance_attempt(ac_id, attempt_id, branch=branch)
+                if admitted["status"] == "error":
+                    return {**admitted, "allowed": False}
+                execution, output = _execute_owned_check(contract["command"], directory / "acceptance-checks" / attempt_id,
+                                                         lease.fileno(), contract["timeout"], contract["cwd"])
+                completed = _record_acceptance_attempt(ac_id, attempt_id, branch=branch, execution=execution, output=output)
+                if completed["status"] == "error" or execution.get("status") == "cleanup_blocked":
+                    return {**completed, "status": "error", "allowed": False}
+        return evaluate_acceptance(branch)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        return {"status": "error", "allowed": False, "message": str(exc)}
+
+
+
 @_review_transaction
 def _record_review_check(check_id: str, command: list[str], *, branch: str | None = None,
                          result: dict[str, Any] | None = None, output: bytes = b"",
@@ -14601,33 +15178,10 @@ def run_test_gate(*, command: list[str] | None = None, check_id: str = "", branc
                 output = b""
                 execution: dict[str, Any] = {"status": "skipped", "passed": False, "exit_code": None}
                 if test_cmd:
-                    try:
-                        attempt_dir = (directory / "review-checks" / attempt_id).resolve()
-                        attempt_dir.mkdir(parents=True)
-                        supervisor = subprocess.Popen(
-                            [sys.executable, str(Path(__file__).with_name("review_check_supervisor.py")),
-                             "supervise", str(attempt_dir), str(lease.fileno()),
-                             str(started["timeout_seconds"]), *test_cmd],
-                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                            start_new_session=True, pass_fds=(lease.fileno(),),
-                        )
-                        result_path = attempt_dir / "supervisor.json"
-                        while not result_path.exists() and supervisor.poll() is None:
-                            time.sleep(0.02)
-                        if result_path.exists():
-                            execution = json.loads(result_path.read_text())
-                            if execution["status"] != "cleanup_blocked":
-                                supervisor.wait()
-                        else:
-                            execution = {"status": "error", "passed": False, "exit_code": None,
-                                         "message": "Check supervisor exited without a result; ownership may require recovery"}
-                        for stream in ("stdout", "stderr"):
-                            path = attempt_dir / stream
-                            if path.exists():
-                                output += path.read_bytes()
-                    except OSError as exc:
-                        output = str(exc).encode()
-                        execution = {"status": "error", "passed": False, "exit_code": None}
+                    execution, output = _execute_owned_check(
+                        test_cmd, directory / "review-checks" / attempt_id,
+                        lease.fileno(), started["timeout_seconds"],
+                    )
                 return _record_review_check(check_id, test_cmd or [], branch=branch, result=execution,
                                             output=output, attempt_id=attempt_id)
         except OSError as exc:
@@ -23856,7 +24410,23 @@ if __name__ == "__main__":
         print(f"usage: map_step_runner.py {func_name} {usage_args}".rstrip())
         sys.exit(0)
 
-    if func_name == "update_step_state_batch" and len(sys.argv) >= 3:
+    if func_name in {"freeze_acceptance_contract", "run_acceptance_proofs", "evaluate_acceptance",
+                     "verify_acceptance_contracts", "revise_acceptance_contract", "write_acceptance_report", "assess_acceptance_revision"} or (
+            func_name == "record_test_contract_handoff" and "--json" in sys.argv):
+        import argparse
+
+        parser = argparse.ArgumentParser(prog=f"map_step_runner.py {func_name}")
+        parser.add_argument("--json", default="{}", help="JSON object of public API keyword arguments")
+        options = parser.parse_args(sys.argv[2:])
+        try:
+            payload = json.loads(options.json)
+            result = globals()[func_name](**payload)
+        except (ValueError, TypeError, KeyError) as exc:
+            result = {"status": "error", "allowed": False, "message": str(exc)}
+        print(json.dumps(result))
+        sys.exit(1 if result.get("status") == "error" else 0)
+
+    elif func_name == "update_step_state_batch" and len(sys.argv) >= 3:
         updates_json = sys.argv[2]
         try:
             updates = json.loads(updates_json)
@@ -24027,6 +24597,8 @@ if __name__ == "__main__":
             test_files_csv,
             contract_summary,
             notes,
+            authoring_result=sys.argv[sys.argv.index("--authoring-result") + 1] if "--authoring-result" in sys.argv else "red",
+            authoring_justification=sys.argv[sys.argv.index("--authoring-justification") + 1] if "--authoring-justification" in sys.argv else "",
         )
         print(json.dumps(result, indent=2))
 

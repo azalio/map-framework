@@ -418,7 +418,7 @@ When two subtasks touch disjoint `affected_files` and neither reads the other's 
 
 ### Acceptance Criteria Section (Ralph Loop Integration)
 
-When writing task plans to `.map/<branch>/task_plan_<branch>.md`, the orchestrator generates an Acceptance Criteria section from subtask validation_criteria. The format is:
+When writing task plans to `.map/<branch>/task_plan_<branch>.md`, preserve every authoritative spec AC and its exact ID, including ACs omitted from the blueprint. Do not generate replacement AC IDs from subtask validation_criteria. Plan independent TEST_WRITER/RED and `freeze_acceptance_contract` before Actor admission in single, batch and wave execution. Keep ID-to-proof mappings in `.map`, not shipped code/tests. The format is:
 
 ```markdown
 ## Acceptance Criteria
@@ -431,13 +431,13 @@ When writing task plans to `.map/<branch>/task_plan_<branch>.md`, the orchestrat
 ```
 
 **Column definitions:**
-- **ID**: Unique identifier `AC-NNN` (3-digit number, zero-padded)
+- **ID**: Exact spec identifier; never silently join `AC-1` to `AC-001` (example IDs above assume that spelling in the spec).
 - **Description**: Human-readable criterion (verb + object + condition)
 - **Verification**: Executable command from `test_strategy` OR `manual: <description>`
-- **Status**: `[ ]` unchecked or `[x]` checked (updated by final-verifier)
+- **Status**: Display only; runner `evaluate_acceptance` derives `proven`/`failed`/`unproven`/`stale`, never final-verifier checkbox edits.
 
 **Derivation rules:**
-- Primary source: `subtasks[].validation_criteria`
+- Primary source: spec Requirements Index and AC descriptions; `subtasks[].validation_criteria` supplies implementation checks, not a replacement inventory.
 - Verification column: Use executable command from `test_strategy.unit`/`test_strategy.integration`/`test_strategy.e2e` when available
 - Otherwise: `manual: <short description>`
 
