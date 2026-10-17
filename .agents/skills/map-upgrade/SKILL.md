@@ -4,6 +4,8 @@ description: "Manually check and upgrade the MAP Framework for this project. Use
 ---
 ## Manual MAP upgrade flow
 
+Model invocation is not consent to a major upgrade. Preserve the version-specific confirmation below regardless of who invokes this skill. Patch/minor updates retain the existing automatic update policy.
+
 From the project root, run `mapify _update --mode manual --project .` and parse its single bounded JSON object. Follow the returned status exactly:
 
 - `current`: report that the installed MAP version is current.

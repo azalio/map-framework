@@ -2,7 +2,6 @@
 name: map-wayfind
 description: |
   Decision-frontier wayfinding: build and work a durable map of open design decisions BEFORE planning, for large or foggy efforts where /map-plan would force premature decomposition. Use when a task is too big or too vague to decompose — many unknowns, tangled decisions, or "I'm not even sure what to build yet" — and you want to resolve the key decisions one at a time (research, prototype, grilling, task tickets) behind a claim-before-work frontier, with a "fog of war" for questions you cannot yet state sharply. Produces a handoff that /map-plan consumes. Modes are explicit: chart (start a map), work (resolve one ticket), handoff (finish). Do NOT use when scope is already clear enough to specify — go straight to /map-plan; do NOT use to implement code or to decompose an already-specifiable change.
-disable-model-invocation: true
 argument-hint: "[chart \"loose idea\" | work <slug> [ticket] | handoff <slug>]"
 effort: medium
 ---

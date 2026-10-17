@@ -3,7 +3,6 @@ name: map-fast
 description: |
   Minimal MAP workflow for small low-risk changes (40-50% token savings, no Predictor/Reflector). Use when the change is small, low-risk, and learning is not needed. Do NOT use for risky or complex work; use map-efficient.
 effort: low
-disable-model-invocation: true
 argument-hint: "[task description]"
 ---
 ## MAP update preflight

@@ -6,7 +6,6 @@ description: >-
   `.claude/rules/learned/` from a workflow summary or handoff. Do NOT use
   during active implementation.
 effort: medium
-disable-model-invocation: true
 argument-hint: "[workflow-summary]"
 ---
 ## MAP update preflight

@@ -2,7 +2,6 @@
 name: map-auto
 description: |
   Single-entry autonomous autopilot: routes a task through the existing MAP workflows via `route_task`, then drives the selected chain (map-plan -> map-efficient -> map-check -> map-review, as routed) end-to-end to a committed feature branch in one session, auto-approving routine workflow-control holds and hard-stopping on dangerous_action/safety_guardrail holds. Use when you want the whole pipeline to run unattended from a single task description, without babysitting phase-by-phase invocation. Do NOT use when you want to review or edit the plan before execution (run /map-plan then /map-efficient yourself instead), when the task is trivial (use /map-fast directly), or when you need a PR opened or merged -- the autopilot always stops at a committed branch and never creates or merges a PR.
-disable-model-invocation: true
 argument-hint: "[task description]"
 effort: high
 ---

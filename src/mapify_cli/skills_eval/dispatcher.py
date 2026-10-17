@@ -201,9 +201,9 @@ def _seed_temp_cwd(source_claude_dir: Path) -> Path:
 def _apply_temp_flip(seeded_claude_dir: Path) -> None:
     """Rewrite ``disable-model-invocation: true`` → ``false`` in seeded SKILL.md files.
 
-    Intent: allow the eval model to select any skill via description, not just
-    the three production-invocable ones.  Throwaway copy only — production
-    templates are never touched.
+    Intent: allow evaluation of legacy/user skills and the manual-only release
+    skill. Other current MAP skills are already invocable, so this is a no-op
+    for them. Throwaway copy only — production templates are never touched.
     """
     skill_files = list(seeded_claude_dir.glob("skills/*/SKILL.md"))
     for skill_file in skill_files:

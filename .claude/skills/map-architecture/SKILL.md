@@ -3,7 +3,6 @@ name: map-architecture
 description: |
   Opt-in proactive architecture-deepening report: ranks codebase areas by recent git hotspot and design friction, generates a ranked Markdown+Mermaid candidate report under .map/<branch>/architecture-report/, then waits for you to pick one candidate before any code changes. Use periodically, or when agentic complexity feels like it is accelerating, to find where a deeper module would buy future leverage. Do NOT use for current-diff code review — use /map-review; do NOT use to plan or implement changes — use /map-plan after picking a candidate here.
 effort: medium
-disable-model-invocation: true
 argument-hint: "[<module-path-or-pain-point>]"
 ---
 ## MAP update preflight
