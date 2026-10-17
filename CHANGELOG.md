@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Snapshot/policy-bound review receipts and explicit COMPLETE/INCOMPLETE/BLOCKED
+  completeness, separate from findings, execution checks and human consent.
+  Current approval requires current reviewer/scope evidence; historical receipts
+  cannot approve changed base/head or local inputs. Interrupted execution checks
+  recover on restart with non-passing attempt history; live owners still exclude
+  concurrent execution. (#521, PR 1b)
+- Dedicated read-only review profiles and runner-provided base/current source
+  attribution bundles. Codex findings remain available with explicit unverified
+  capability enforcement and INCOMPLETE status until enforcement is verified;
+  no silent reviewer shell fallback. (#526)
 - Durable bounded `/map-review` convergence in the existing verdict ledger: stable
   review/fix round identities, restart-safe history, timing and rounds-to-pass,
   and a reconsideration stop after three unsuccessful rounds. Exhaustion never

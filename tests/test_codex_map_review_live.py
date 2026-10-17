@@ -276,7 +276,7 @@ def _role_clear(role: str) -> dict:
 
 # case id -> (role -> envelope, expected ledger verdict, expected gate verdict)
 ROSTERS = {
-    "PROCEED": ({"monitor": MONITOR_CLEAN}, "PROCEED", "ready"),
+    "PROCEED": ({"monitor": MONITOR_CLEAN}, "REVISE", "needs-revision"),
     "REVISE": ({"monitor": MONITOR_FINDING}, "REVISE", "needs-revision"),
     "full_roster_PROCEED": (
         {
@@ -286,8 +286,8 @@ ROSTERS = {
             "user_experience": _role_clear("user_experience"),
             "maintainer": _role_clear("maintainer"),
         },
-        "PROCEED",
-        "ready",
+        "REVISE",
+        "needs-revision",
     ),
     "partial_roster_REVISE": (
         {
@@ -354,6 +354,11 @@ def test_envelope_ledger_gate_fresh_shell(project, case):
     gate_verdict = json.loads((branch_dir / "review-gate.json").read_text())["verdict"]
     assert computed == expected_ledger
     assert gate_verdict == expected_gate
+    # Clean findings cannot approve a Codex review with unverified capabilities.
+    assert ledger_doc["completeness"]["status"] == "INCOMPLETE"
+    assert ledger_doc["code_approval"]["approved"] is False
+    if case in {"PROCEED", "full_roster_PROCEED"}:
+        assert ledger_doc["findings_verdict"] == "PROCEED"
     if "evaluator" in envelopes:
         # Only an ingested Evaluator envelope populates evaluator_scores, so this
         # proves the rendered ledger loop passed --evaluator-file through.
@@ -391,7 +396,12 @@ def _start_review(root: Path, arguments: str, *, lightweight: bool = False) -> N
     for block in re.findall(r"```bash\n(.*?)\n```", text, flags=re.DOTALL):
         if re.search(r"map_step_runner\.py begin_review_run\b", block) and block not in blocks:
             blocks.append(block)
-    _run_block(root, f"ARGUMENTS={shlex.quote(arguments)}\n" + "\n".join(blocks))
+    check_specs = json.dumps({
+        "tests": ["python3", "-c", "print('fixture test check')"],
+        "lint": ["python3", "-c", "print('fixture lint check')"],
+    })
+    _run_block(root, f"ARGUMENTS={shlex.quote(arguments)}\n"
+               f"CHECK_SPECS_JSON={shlex.quote(check_specs)}\n" + "\n".join(blocks))
 
 
 @pytest.mark.parametrize(

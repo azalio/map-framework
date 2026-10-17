@@ -894,8 +894,36 @@ Current delta captured:
   Incremental dependency analysis is limited to clean root-level static Python
   module graphs with full Git identity and completed-roster file coverage;
   unsupported languages/import structures retain full review.
-  Acceptance-tag coverage alone is not file-review coverage. Snapshot-bound
-  receipts and completeness contracts are a separate PR 1b extension.
+  Acceptance-tag coverage alone is not file-review coverage.
+
+- Review receipts (#521, PR 1b) extend that ledger rather than creating another
+  orchestrator. Admission binds base/head, byte-sensitive local inputs, reviewed
+  diff, effective policy, roster and required scope. Captures and finalization
+  retain that binding; ready-gate consumption rechecks freshness instead of
+  trusting a previously clean verdict. Unknown dependency impact and base,
+  conflict or scope changes require coverage reassessment.
+  Completeness (`COMPLETE`, `INCOMPLETE`, `BLOCKED`) is separate from findings,
+  code approval, execution-check outcome and human consent. Missing responses
+  or coverage never mean an observed clean review. Historical/legacy data cannot
+  manufacture current receipts. Reviewer reading/coverage claims retain
+  self-reported provenance; runner snapshots and command results are witnessed
+  evidence, not proof of reviewer comprehension.
+  The runner alone owns execution checks and durable evidence references;
+  reviewers reuse current results. A stable execution lock spans claim through
+  completion and is inherited by the direct check process. After ownership is
+  released, restart recovery preserves abandoned attempts as non-passing
+  `interrupted` history before starting a new attempt; live execution remains
+  exclusive. Attempt identity fences stale completion. Check commands must stay
+  synchronous rather than detach into daemons.
+  Source-attribution bundles include base and
+  current contents, the base diff and line mapping so dedicated read-only agents
+  need no shell access. Context expansion belongs to the parent.
+  Claude's review-reader uses an explicit read/search tool allowlist. Codex
+  disables native shell/delegation where supported, but its full capability
+  boundary remains unverified: findings remain publishable while completeness
+  is INCOMPLETE and approval unavailable. This limitation is recorded, not
+  hidden behind a read-only sandbox claim; see the
+  [capability audit](spikes/review-receipt-capabilities.md) and #526.
 
 - Non-English Monitor feedback preservation (#404): `_filter_blocker_retry_feedback` in
   `.map/scripts/map_orchestrator.py` now uses `BLOCKER_FEEDBACK_TERMS` as a **ranking hint**
@@ -1121,15 +1149,16 @@ agent is classified `independent | relay`:
 | TaskDecomposer | `map-efficient:152`, `map-fast:73`, `map-debug:80`, `map-plan:204` | atomic subtask plan + coverage map | **Independent** (decomposition) |
 | ResearchAgent | `map-plan:98` (+ `map-efficient` RESEARCH phase 2.2, conditional) | discovery findings as typed artifact | **Independent** (producer) |
 | Actor | `map-efficient:282`, `map-fast:99`, `map-tdd:129/280`, `map-debug:124/148` | code diff + change manifest | **Independent** (producer — does the work, not a relay) |
-| Monitor | `map-efficient:325`, `map-fast:124`, `map-debug:181`, `map-plan:169`, `map-review:358` | pass/fail review verdict | **Independent** (adversarial) |
-| Predictor | `map-debug:226`, `map-review:359` | impact / regression risk | **Independent** (adversarial) |
-| Evaluator | `map-debug:252`, `map-review:360` | quality scores + Monitor-severity audit | **Independent** (adversarial) |
+| Monitor | `map-efficient:325`, `map-fast:124`, `map-debug:181`, `map-plan:169` | pass/fail review verdict | **Independent** (adversarial) |
+| Predictor | `map-debug:226` | impact / regression risk | **Independent** (adversarial) |
+| Evaluator | `map-debug:252` | quality scores + Monitor-severity audit | **Independent** (adversarial) |
 | FinalVerifier | `map-efficient:470`, `map-check:147` | whole-task PASS / REVISE / BLOCK | **Independent** (adversarial) |
 | Reflector | `map-learn:119` | extracted lessons / rules | **Independent** |
-| DocumentationReviewer | Claude: manual `Task(subagent_type="documentation-reviewer")`; Codex: `$map-review` via `spawn_agent(agent_type="documentation-reviewer")` | docs-vs-source-architecture verdict | **Independent**; optional in Claude, pipeline-dispatched in Codex |
+| ReviewReader | `map-review` normal and adversarial fan-out in both providers | independent role-specific findings and reading receipts | **Independent** (adversarial; receives the role protocol in its prompt) |
+| DocumentationReviewer | Manual: Claude `Task(subagent_type="documentation-reviewer")`; Codex `spawn_agent(agent_type="documentation-reviewer")` | docs-vs-source-architecture verdict | **Independent**; optional in both providers |
 
-**Conclusion — no relay hops remain.** All eight Claude pipeline-dispatched
-agents and all nine Codex pipeline-dispatched agents emit their own independent
+**Conclusion — no relay hops remain.** All shipped roles with callers —
+all nine pipeline-dispatched agents in each provider — emit their own independent
 result; none is a pure relay. The only relay hops the doctrine condemns — the
 Self-MoA `synthesizer` (which paraphrased 3× Actor/Monitor outputs into one,
 adding no new verdict) and its `debate-arbiter` sibling — were already collapsed
@@ -1141,11 +1170,11 @@ decision was *collapse*, already executed.
 **DocumentationReviewer is a deliberate keep, not dead weight.** Unlike the
 removed `synthesizer`/`debate-arbiter`, it is **not a relay**: it produces a
 unique docs-vs-source-architecture verdict (external-URL validation,
-completeness scoring, consistency checks) that no other agent duplicates. Codex
-`$map-review` dispatches it as part of the review fan-out. Claude retains it as
-an optional, user-dispatchable agent via
-`Task(subagent_type="documentation-reviewer", …)` until its Claude workflow is
-wired equivalently.
+completeness scoring, consistency checks) that no other agent duplicates. Both
+providers retain it as an optional, user-dispatchable agent: Claude via
+`Task(subagent_type="documentation-reviewer", …)` and Codex via
+`spawn_agent(agent_type="documentation-reviewer", …)`. The `map-review` fan-out
+uses `review-reader` instead; generated prompts supply each review role's protocol.
 
 ### .map/ Artifact Specifications
 

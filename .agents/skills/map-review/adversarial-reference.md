@@ -52,11 +52,11 @@ MAINTAINER_DESC=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys;
 # Dispatch all five reviewers together — they are fully independent.
 # <n> increments on every dispatch in the run.
 
-spawn_agent(agent_type="monitor", task_name="map_review_blind_<n>", message=BLIND_PROMPT)
-spawn_agent(agent_type="monitor", task_name="map_review_edge_case_<n>", message=EDGE_PROMPT)  # skip if --quick
-spawn_agent(agent_type="evaluator", task_name="map_review_acceptance_<n>", message=ACCEPTANCE_PROMPT)
-spawn_agent(agent_type="predictor", task_name="map_review_user_experience_<n>", message=USER_EXPERIENCE_PROMPT)
-spawn_agent(agent_type="documentation-reviewer", task_name="map_review_maintainer_<n>", message=MAINTAINER_PROMPT)
+spawn_agent(agent_type="review-reader", task_name="map_review_blind_<n>", message=BLIND_PROMPT)
+spawn_agent(agent_type="review-reader", task_name="map_review_edge_case_<n>", message=EDGE_PROMPT)  # skip if --quick
+spawn_agent(agent_type="review-reader", task_name="map_review_acceptance_<n>", message=ACCEPTANCE_PROMPT)
+spawn_agent(agent_type="review-reader", task_name="map_review_user_experience_<n>", message=USER_EXPERIENCE_PROMPT)
+spawn_agent(agent_type="review-reader", task_name="map_review_maintainer_<n>", message=MAINTAINER_PROMPT)
 ```
 
 Codex dispatch rules:
@@ -66,7 +66,7 @@ Codex dispatch rules:
 - Wait for all dispatched reviewers and map each final JSON back to `BLIND_OUTPUT`, `EDGE_OUTPUT`, `ACCEPTANCE_OUTPUT`, `USER_EXPERIENCE_OUTPUT`, and `MAINTAINER_OUTPUT`.
 - If concurrency is unavailable, make the same calls sequentially.
 - Never replace independent review with parent-session personas.
-- The routed Codex agent types carry their own developer instructions; the role prompt in `message` supplements them, it does not replace them.
+- Every role uses `review-reader`; its generated prompt supplies the role-specific protocol, quality rubric and schema. No general-purpose fallback or shell restoration. Codex capability enforcement remains unverified: findings remain publishable, but completeness is INCOMPLETE and cannot approve.
 
 ## Step B.adversarial.2: Validate reviewer outputs
 

@@ -52,15 +52,15 @@ MAINTAINER_DESC=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys;
 # Launch all five reviewers in parallel — they are fully independent
 # with no shared context. Wait for all to complete before aggregation.
 
-Task(subagent_type="general-purpose", description=BLIND_DESC, prompt=BLIND_PROMPT)
+Task(subagent_type="review-reader", description=BLIND_DESC, prompt=BLIND_PROMPT)
 # Save output as BLIND_OUTPUT
-Task(subagent_type="general-purpose", description=EDGE_DESC, prompt=EDGE_PROMPT)
+Task(subagent_type="review-reader", description=EDGE_DESC, prompt=EDGE_PROMPT)
 # Save output as EDGE_OUTPUT  (skip if --quick)
-Task(subagent_type="general-purpose", description=ACCEPTANCE_DESC, prompt=ACCEPTANCE_PROMPT)
+Task(subagent_type="review-reader", description=ACCEPTANCE_DESC, prompt=ACCEPTANCE_PROMPT)
 # Save output as ACCEPTANCE_OUTPUT
-Task(subagent_type="general-purpose", description=USER_EXPERIENCE_DESC, prompt=USER_EXPERIENCE_PROMPT)
+Task(subagent_type="review-reader", description=USER_EXPERIENCE_DESC, prompt=USER_EXPERIENCE_PROMPT)
 # Save output as USER_EXPERIENCE_OUTPUT
-Task(subagent_type="general-purpose", description=MAINTAINER_DESC, prompt=MAINTAINER_PROMPT)
+Task(subagent_type="review-reader", description=MAINTAINER_DESC, prompt=MAINTAINER_PROMPT)
 # Save output as MAINTAINER_OUTPUT
 ```
 

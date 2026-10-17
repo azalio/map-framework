@@ -30,6 +30,7 @@ ARCHITECTURE = REPO / "docs" / "ARCHITECTURE.md"
 # invocable manually via Task(subagent_type="<name>"). Each MUST carry a
 # "Dispatch status:" annotation in its template so the undispatched state is deliberate.
 DOCUMENTED_OPTIONAL_AGENTS = {"documentation-reviewer"}
+CODEX_DOCUMENTED_OPTIONAL_AGENTS = {"documentation-reviewer"}
 
 _DISPATCH_RE = re.compile(r'subagent_type=["\']([a-z0-9-]+)["\']')
 CODEX_SKILLS_RENDERED = REPO / ".agents" / "skills"
@@ -89,15 +90,26 @@ def test_every_agent_is_dispatched_or_documented_optional():
     )
 
 
-def test_every_codex_agent_is_dispatched_by_a_skill():
-    """Codex parity has no optional orphan roles: all nine are pipeline-wired."""
+def test_every_codex_agent_is_dispatched_or_documented_optional():
+    """Only explicitly annotated optional roles may lack a pipeline caller."""
     agents = _codex_agent_names()
     dispatched = _codex_dispatched_agent_names()
-    assert len(agents) == 9, f"expected nine Codex roles, got {sorted(agents)}"
-    assert agents <= dispatched, (
-        f"Codex role(s) have no agent_type dispatch site: {sorted(agents - dispatched)}"
+    silent_orphans = agents - dispatched - CODEX_DOCUMENTED_OPTIONAL_AGENTS
+    assert not silent_orphans, (
+        f"Codex role(s) have no agent_type dispatch site or optional annotation: {sorted(silent_orphans)}"
     )
-    assert "documentation-reviewer" in dispatched
+    assert "review-reader" in dispatched
+
+
+def test_codex_optional_agents_exist_and_are_annotated():
+    """Keep exceptions visible and reject stale optional-role registry entries."""
+    agents = _codex_agent_names()
+    for name in CODEX_DOCUMENTED_OPTIONAL_AGENTS:
+        assert name in agents, f"Optional Codex agent {name!r} has no template"
+        text = (CODEX_AGENTS_SRC / f"{name}.toml.jinja").read_text(encoding="utf-8")
+        assert "Dispatch status:" in text, (
+            f"{name}.toml.jinja must document its optional dispatch status"
+        )
 
 
 def test_documented_optional_agents_exist_and_are_annotated():
@@ -121,11 +133,12 @@ def test_doctrine_documented_in_architecture():
     assert "Agent-Boundary Doctrine" in text, (
         "docs/ARCHITECTURE.md must document the Agent-Boundary Doctrine (issue #230)."
     )
-    assert "all nine Codex pipeline-dispatched agents" in text
+    assert "all nine pipeline-dispatched agents in each provider" in text
+    assert "optional in both providers" in text
     assert "DocumentationReviewer | *(no skill dispatch" not in text
 
 
-def test_codex_agent_roster_is_exactly_the_nine_expected_roles():
+def test_codex_agent_roster_is_exactly_the_expected_roles():
     """Pin the exact roster so a dropped role cannot hide behind a count-only check."""
     assert _codex_agent_names() == {
         "actor",
@@ -137,4 +150,5 @@ def test_codex_agent_roster_is_exactly_the_nine_expected_roles():
         "predictor",
         "reflector",
         "researcher",
+        "review-reader",
     }

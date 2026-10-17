@@ -4122,21 +4122,12 @@ class TestMapReviewSharedSourceCodexRender:
         assert "$map-review" in codex
         assert "/map-review" in claude and "$map-review" not in claude
 
-    _NORMAL_DISPATCH = (
-        ("monitor", "monitor"),
-        ("predictor", "predictor"),
-        ("evaluator", "evaluator"),
-        ("user_experience", "predictor"),
-        ("maintainer", "documentation-reviewer"),
-        ("complexity_lens", "evaluator"),
-    )
-    _ADVERSARIAL_DISPATCH = (
-        ("blind", "monitor"),
-        ("edge_case", "monitor"),
-        ("acceptance", "evaluator"),
-        ("user_experience", "predictor"),
-        ("maintainer", "documentation-reviewer"),
-    )
+    _NORMAL_DISPATCH = tuple((role, "review-reader") for role in (
+        "monitor", "predictor", "evaluator", "user_experience", "maintainer", "complexity_lens",
+    ))
+    _ADVERSARIAL_DISPATCH = tuple((role, "review-reader") for role in (
+        "blind", "edge_case", "acceptance", "user_experience", "maintainer",
+    ))
 
     @staticmethod
     def _spawn_line(text: str, role: str, agent_type: str) -> bool:
@@ -4157,12 +4148,8 @@ class TestMapReviewSharedSourceCodexRender:
         for role, agent_type in self._ADVERSARIAL_DISPATCH:
             assert self._spawn_line(adversarial, role, agent_type), role
         assert "as the spawn_agent messages" in skill
-        quick = (
-            "with blind→monitor, edge_case→monitor, acceptance→evaluator,\n"
-            "                   user_experience→predictor, maintainer→documentation-reviewer"
-        )
-        assert quick in skill
-        assert 'spawn_agent(agent_type=..., task_name="map_review_<role>_<n>"' in skill
+        assert 'spawn_agent(agent_type="review-reader", task_name="map_review_<role>_<n>"' in skill
+        assert "for every role" in skill
 
     def test_claude_render_keeps_task_dispatch(self) -> None:
         for name in ("SKILL.md.jinja", "adversarial-reference.md.jinja"):
@@ -4182,7 +4169,7 @@ class TestMapReviewSharedSourceCodexRender:
             assert "Wait for all dispatched reviewers and map each final JSON" in text
             assert "sequentially" in text
             assert "parent-session personas" in text
-        assert "carry their own developer instructions" in skill
+        assert "generated role prompt supplies its complete role protocol" in skill
         assert "fresh `task_name`" in skill.split("Step A.2b: Truncated-response gate")[1]
         compare = skill.split("Step A.1d")[1].split("Step A.2:")[0]
         assert "keeps incrementing across both collections" in compare
