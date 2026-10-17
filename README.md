@@ -229,7 +229,7 @@ After a good first workflow, you should see:
 
 - a written plan or spec before implementation starts;
 - small implementation contracts instead of one giant AI diff;
-- verification and review artifacts under `.map/<branch>/`;
+- verification and review artifacts under `.map/<branch>/`, including runner-executed acceptance proofs rather than self-reported AC checkboxes;
 - review comments focused on correctness and semantics, not formatting noise;
 - `/map-learn` preserving project rules, gotchas, and handoffs for future sessions.
 

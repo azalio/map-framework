@@ -408,6 +408,8 @@ SPEC_EOF
 
 **Requirements Index (MANDATORY):** After writing the spec, populate the `mapify:requirements-index:v1` sentinel-wrapped fenced YAML block (defined in the spec template) with exactly ONE `{id, kind}` entry per acceptance criterion, invariant, hard constraint, and cross-cutting requirement. `kind` must be one of `acceptance_criterion | invariant | hard_constraint | cross_cutting`. IDs must be canonical: prefix in `{AC, INV, HC, CCR}`, no leading zeros, uppercase (e.g. `AC-1`, `INV-2`, `HC-3`). These IDs are **exactly** the keys the decomposer must map in `coverage_map` — the forward-completeness gate diffs the index IDs against `coverage_map` keys to detect uncovered requirements.
 
+**Acceptance proof planning (MANDATORY for either spec path):** preserve exact spec IDs and plan independent TEST_WRITER/RED → `freeze_acceptance_contract` before Actor in single/batch/wave flows. Read [plan-reference.md](plan-reference.md#runner-witnessed-acceptance-proofs) for argv contracts, audited revisions and final runner proof execution; citations or checked ACs are not proof.
+
 ---
 
 ## Step 2a: Write Spec (interview skipped)

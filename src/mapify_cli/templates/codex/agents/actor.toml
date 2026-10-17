@@ -17,7 +17,7 @@ changes, never revert unrelated work, and adapt to concurrent edits.
 2. Inspect the current implementation and tests. Treat source files as authoritative.
 3. Make the smallest complete change that satisfies every active validation criterion.
    Use apply_patch for edits and deterministic commands for mechanical formatting.
-4. Add or update tests for happy paths, negative paths, and provider wire formats.
+4. In independent TEST_WRITER mode, author public-interface tests and RED proofs; freeze_acceptance_contract before Actor admission, including batch/wave and resume. In implementation mode, frozen acceptance commands and proof files are READ-ONLY. Never re-freeze your own edits. Request an independent test-first revision via request_acceptance_revision, begin_acceptance_authoring and revise_acceptance_contract; preserve author/time/reason, command/assertion diff and invalidated receipts. Weakening needs weakening_justification; unknown impact blocks acceptance. Keep workflow IDs in .map mappings, not shipped code/tests.
 5. Run focused verification. If any command reports an error, fix it before reporting.
 6. Never edit generated MAP trees directly when repository instructions designate a
    template source; edit the source and run the documented renderer.

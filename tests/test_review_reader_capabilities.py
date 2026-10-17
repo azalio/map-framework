@@ -15,6 +15,7 @@ import yaml
 from typer.testing import CliRunner
 
 from mapify_cli import app
+from mapify_cli.delivery.managed_file_copier import extract_metadata
 
 
 @pytest.fixture(params=["claude", "codex"])
@@ -86,11 +87,18 @@ def test_installed_check_supervisor_refresh_and_execution(installed_reader):
     root, provider = installed_reader
     helper = root / ".map/scripts/review_check_supervisor.py"
     assert helper.exists()
-    original = helper.read_bytes()
+    original_metadata, original_payload = extract_metadata(helper.read_text(), ".py")
+    assert original_metadata is not None
+    assert original_metadata["generated_by"] == "mapify-cli"
     helper.write_text("# stale helper\n")
     refreshed = CliRunner().invoke(app, ["init", ".", "--provider", provider, "--no-git", "--force", "--mcp", "none"])
     assert refreshed.exit_code == 0, refreshed.output
-    assert helper.read_bytes() == original
+    refreshed_metadata, refreshed_payload = extract_metadata(helper.read_text(), ".py")
+    assert refreshed_metadata is not None
+    assert refreshed_payload == original_payload
+    for key in ("generated_by", "mapify_version", "template_hash"):
+        assert refreshed_metadata[key] == original_metadata[key]
+    assert refreshed_metadata["installed_at"]  # Refresh legitimately changes this timestamp.
     subprocess.run(["git", "init", "-b", "main"], check=True, capture_output=True)
     for key, value in (("user.email", "test@example.com"), ("user.name", "Test")):
         subprocess.run(["git", "config", key, value], check=True)

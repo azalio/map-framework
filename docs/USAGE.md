@@ -22,6 +22,41 @@ Once a plan reaches `ready` (task_plan + blueprint both present, the Step 7 boun
 
 When a MAP run enters a merge/rebase conflict, the PreToolUse workflow-context hook adds a conflict-resolution discipline block to `additionalContext`. It fires before `git merge` / `git rebase` and whenever git reports unmerged paths via `git diff --name-only --diff-filter=U`. The protocol is deliberately manual and intent-preserving: list conflicted files, resolve one file or small batch at a time, preserve both sides' intended behavior, check for conflict markers, run the project's test gate after each batch, stage only resolved files, and continue the merge/rebase only after no unmerged files remain. Final verification is: branch current with `origin/main`, no conflict markers, and tests green. The hook never mutates the worktree and never auto-runs tests.
 
+## Runner-witnessed acceptance proofs
+
+Acceptance status comes from runner-executed evidence, not agent-written checkboxes. Plan a public-interface proof for every spec AC and preserve its exact ID (`AC-1` is not `AC-001`). Keep ID mappings in `.map`, not product code or shipped test names. Independent TEST_WRITER authoring and RED precede freezing, including batch/wave TDD; Actor cannot silently change or re-freeze the tests.
+
+With the TEST_WRITER authoring checkpoint open, freeze each proof before Actor:
+
+```bash
+python3 .map/scripts/map_step_runner.py freeze_acceptance_contract --json '{"ac_id":"AC-1","command":["python3","-m","pytest","tests/test_login.py"],"proof_files":["tests/test_login.py"],"subtask_id":"ST-001","author":"test-writer","authoring_stage":"test_first","cwd":".","timeout":300}'
+```
+
+Use argv, or an explicit interpreter/script for shell behavior; no automatic shell-string translation. `command: null` requires `manual_reason` and remains unproven. To change a frozen command/assertion, request `request_acceptance_revision` for its subtask, dispatch independent test-first authoring, then use `begin_acceptance_authoring` and runner `revise_acceptance_contract` (full protocol in the installed `map-plan/plan-reference.md`). Revisions retain author/time/reason, old/new command and assertion content, and invalidated contracts/receipts. Narrower commands or removed assertions require `assessment: "weakening"` and `weakening_justification`; unknown semantic impact remains blocking.
+
+Before Actor admission, every freeze/revision also needs a fresh `test_contract_<subtask>.md` and `record_test_contract_handoff`, including batch/wave mode. The handoff binds the current checkpoint, contract hashes and test-contract digest, preventing stale handoff reuse. `--authoring-result red|already_green|plan_authored` records a **self-reported** authoring outcome, not runner-witnessed RED; non-red outcomes require `--authoring-justification`. There is no universal RED executor.
+
+To resolve an already-recorded unknown assessment, use `assess_acceptance_revision` with the AC ID, revision number, independent author, assessment, reason and any `weakening_justification`, under a fresh independent-test-first checkpoint. This appends an audit without replacing the original diff/verdict; detected removals/command changes cannot be relabeled equivalent.
+
+After implementation and existing gates, finish the intended code commit, then run proofs:
+
+```bash
+python3 .map/scripts/map_step_runner.py run_acceptance_proofs --json '{}'
+python3 .map/scripts/map_step_runner.py evaluate_acceptance --json '{}'
+python3 .map/scripts/map_step_runner.py write_acceptance_report --json '{}'
+```
+
+`run_acceptance_proofs` accepts `ac_ids` to select criteria and `rerun: true` to admit a new attempt. Generate `write_verification_summary` before `mark_workflow_complete`. Automatic implementation exhaustion enters `FINAL_VERIFICATION`; do not skip the proof attempt. A later commit or relevant local change makes prior full-snapshot evidence stale, including after historical completion: rerun proofs on the final intended snapshot.
+
+| Status | Meaning | Completion policy |
+|---|---|---|
+| `proven` | Current, intact successful runner receipt | Allowed |
+| `failed` | Latest admitted proof failed | Blocked |
+| `stale` | Evidence binding no longer matches | Blocked |
+| `unproven` | Missing/manual proof or no admitted attempt | Warn-first by default; blocked by `acceptance.strict: true` or `MAP_STRICT_ACCEPTANCE=1` |
+
+Corrupt/deleted established evidence, frozen-contract violations and active/unresolved execution block regardless of warn-first policy. Citation coverage remains a separate report; it does not prove execution. Frozen proofs prevent silent substitution, not vacuous tests or hostile same-user artifact rewriting. Execution is non-hermetic, with external edit/change-restore and process-group escape limitations; keep independent semantic review.
+
 ## Skill description optimization
 
 `mapify skill-eval optimize <skill> --provider claude|codex --eval-set PATH --apply`

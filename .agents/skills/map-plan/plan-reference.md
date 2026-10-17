@@ -62,6 +62,56 @@ requirements:
 - Questions that must be answered before decomposition or execution.
 ````
 
+## Runner-witnessed acceptance proofs
+
+Plan an executable public-interface proof for every spec AC, including criteria absent from the blueprint. Preserve exact spec IDs: `AC-1` and `AC-001` are not interchangeable. Keep the AC-to-test mapping in `.map` artifacts, never product code or shipped test names. Citation coverage is not execution proof.
+
+After independent TEST_WRITER authoring and RED, freeze each proof **before Actor**. This applies to single-subtask, batch, wave and resumed workflows. The orchestrator opens the initial authoring checkpoint when it returns TEST_WRITER; do not bypass it by editing state files. Example (substitute the actual spec ID, owning subtask, command and files):
+
+```bash
+python3 .map/scripts/map_step_runner.py freeze_acceptance_contract --json '{"ac_id":"AC-1","command":["python3","-m","pytest","tests/test_login.py"],"proof_files":["tests/test_login.py"],"subtask_id":"ST-001","author":"test-writer","authoring_stage":"test_first","cwd":".","timeout":300}'
+```
+
+Commands are argv arrays, not silently parsed shell strings. Use an explicit interpreter/script when shell semantics are required. Manual criteria use `command: null` with `manual_reason`; they remain `unproven`, not successful receipts. Freeze proof content, mode, command, cwd and timeout before implementation; do not re-freeze Actor edits.
+
+After each freeze/revision, write `test_contract_<subtask>.md` and record a **fresh** `record_test_contract_handoff` before `validate_step "2.26"` or Actor admission, including batch/wave flows. The handoff binds the current checkpoint, contract hashes and test-contract digest; an old handoff cannot authorize revised tests.
+
+```bash
+python3 .map/scripts/map_step_runner.py record_test_contract_handoff ST-001 'python3 -m pytest tests/test_login.py' 'tests/test_login.py' 'Login boundary contract' '' --authoring-result red
+```
+
+`--authoring-result` accepts `red`, `already_green` or `plan_authored`; non-red outcomes require `--authoring-justification` explaining why. These authoring outcomes are explicitly **self_reported**, not runner-witnessed RED. Final acceptance still requires the runner proof protocol; no universal RED executor is implied. JSON callers may supply the same handoff fields through `--json`.
+
+A legitimate test change returns to an **independent test-first** step before Actor resumes:
+
+```bash
+python3 .map/scripts/map_orchestrator.py request_acceptance_revision ST-001 --reason 'Correct the independently reviewed boundary assertion'
+python3 .map/scripts/map_orchestrator.py begin_acceptance_authoring ST-001 --author test-writer --authoring-stage independent_test_first
+python3 .map/scripts/map_step_runner.py revise_acceptance_contract --json '{"ac_id":"AC-1","command":["python3","-m","pytest","tests/test_login.py"],"proof_files":["tests/test_login.py"],"author":"test-writer","reason":"Correct the independently reviewed boundary assertion","assessment":"equivalent","authoring_stage":"independent_test_first"}'
+```
+
+`request_acceptance_revision` re-enters TEST_WRITER but grants no authoring authority. Dispatch the independent test writer before opening that revision checkpoint. Record author/provenance, timestamp, reason, old/new command and assertion/proof-file diff, and invalidated contracts/receipts. Independently assess assertion removal or narrowed command scope as `weakening`, with explicit `weakening_justification`; unknown impact remains unresolved and blocks completion. Hashes detect changes, not semantic equivalence. Never silently relabel weakening as safe or give legacy work retroactive test-first provenance.
+
+If a stored revision is unresolved, open a fresh independent-test-first checkpoint for an independent reviewer and append an assessment (do not overwrite the original revision):
+
+```bash
+python3 .map/scripts/map_step_runner.py assess_acceptance_revision --json '{"ac_id":"AC-1","revision":2,"author":"reviewer","assessment":"weakening","reason":"Independent review complete","weakening_justification":"Explain why the narrower assertion still satisfies the approved requirement"}'
+```
+
+Use the real revision number and matching checkpoint author. Detected removals/command changes cannot be relabeled `equivalent`; the report preserves the original diff/verdict and all later assessments.
+
+After implementation, existing gates and the intended final code commit, execute and consume runner evidence:
+
+```bash
+python3 .map/scripts/map_step_runner.py run_acceptance_proofs --json '{}'
+python3 .map/scripts/map_step_runner.py evaluate_acceptance --json '{}'
+python3 .map/scripts/map_step_runner.py write_acceptance_report --json '{}'
+```
+
+Use `ac_ids` to select proofs and `rerun: true` for a new attempt. Generate `write_verification_summary` and only then request `mark_workflow_complete`; implementation exhaustion alone is not accepted completion. The evaluator lists every AC as `proven`, `failed`, `unproven` or `stale` with reason and evidence binding. It consumes the latest admitted attempt, never a historical success after a failed rerun. `acceptance.strict` (or `MAP_STRICT_ACCEPTANCE`) blocks unproven ACs when enabled; the default is warn-first. Failed/stale evidence, integrity violations and unresolved executions always block.
+
+Receipts bind full HEAD/index/dirty/untracked product snapshots plus contract/inventory/policy hashes. A new commit or relevant local change makes previous proofs stale: rerun after the final intended commit, not before it. Mutable `.map` output is excluded from product snapshots and bound separately. Verifiers consume `evaluate_acceptance`; they cannot turn manual checkboxes into proof. Frozen tests prevent accidental substitution, not vacuous assertions or hostile same-user rewriting. Execution is non-hermetic; external edit/change-restore races and process-group escape limitations still apply. Keep independent semantic review.
+
 ## Architecture Graph
 
 Use a compact graph when components, state, or ownership boundaries matter:

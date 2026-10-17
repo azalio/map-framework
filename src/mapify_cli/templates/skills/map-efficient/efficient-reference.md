@@ -294,6 +294,10 @@ Invoke Predictor after repeated Monitor failures, medium/high-risk subtasks, or 
 
 `--tdd` inserts TEST_WRITER and TEST_FAIL_GATE before ACTOR. Tests must fail for the right reason before implementation starts. For clean-session TDD handoff, prefer `/map-tdd ST-001` then `/map-task ST-001`.
 
+## Acceptance proof completion (MANDATORY)
+
+For single, batch and wave execution, freeze owned AC proofs after independent TEST_WRITER/RED and before Actor. Use the exact spec IDs and the contract/revision protocol in `../map-plan/plan-reference.md#runner-witnessed-acceptance-proofs`. Never silently re-freeze Actor edits. `implementation_complete` is not accepted completion: when the orchestrator returns `FINAL_VERIFICATION`, finish intended code changes/commit, run `run_acceptance_proofs`, consume `evaluate_acceptance`, generate `write_verification_summary`, then call `mark_workflow_complete`. Existing gates still apply. Do not skip the proof attempt just because explicit completion can allow warn-first `unproven`; list those ACs honestly. Failed/stale or integrity/unresolved-execution errors block; new commits/local changes require fresh proofs.
+
 ## Final Verifier Retry Policy
 
 If final-verifier returns REVISE, fix only the missing contract evidence or failing behavior and rerun verification. If the same class of failure repeats, check the circuit breaker before another loop.

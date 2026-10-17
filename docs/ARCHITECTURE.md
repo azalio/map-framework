@@ -14,6 +14,18 @@ The current package is `mapify-cli` `3.30.1`. It ships a Typer CLI, provider del
 
 The remainder of this file contains the deeper implementation dive (workflow-specific agent sequences, artifact specs, MCP integration, template maintenance, and context engineering).
 
+## Acceptance evidence lifecycle
+
+The step runner owns acceptance contracts, execution receipts and derived status under `.map/<branch>/`; agents cannot supply a `proven` flag. The authoritative inventory is the spec Requirements Index, including ACs missing from the blueprint. Exact IDs are preserved rather than normalizing `AC-1` into `AC-001`. Citation coverage is separate from executable evidence.
+
+Independent TEST_WRITER/RED precedes `freeze_acceptance_contract`: argv or explicit interpreter/script, cwd, timeout, subtask, authoring provenance, requirement digest and proof-file content/modes are frozen before Actor. Single-subtask handoff, batch, wave and resumed admission validate that contract. An implementation agent cannot silently re-freeze its own assertions. `request_acceptance_revision` returns a subtask to independent test-first authoring; `begin_acceptance_authoring` and `revise_acceptance_contract` preserve old/new content and an audit of author, timestamp, reason, command/assertion diff and invalidated contracts/receipts. Weakening/narrowing requires explicit justification; unknown impact blocks acceptance. Hashes detect changed content, not semantic equivalence.
+
+Acceptance reuses the durable execution owner/supervisor and snapshot machinery rather than creating review rounds. An admitted attempt binds output digest/reference, exit/duration and before/after HEAD/index/dirty/untracked snapshots; contract, inventory and policy are bound separately because mutable `.map` outputs are excluded from product snapshots. The latest admitted attempt controls status, never the latest historical success. Restart, interruption and cleanup ownership remain execution lifecycle states, not successful AC outcomes.
+
+`evaluate_acceptance` is consumed by completion transitions/readers and `write_verification_summary`. Only intact, current successful receipts yield `proven`; failed/stale, contract/evidence corruption and unresolved execution block. Missing/manual evidence is `unproven` and warn-first unless `acceptance.strict` or `MAP_STRICT_ACCEPTANCE` enables strict admission. Automatic implementation exhaustion routes to final verification: intended code changes/commit → `run_acceptance_proofs` → runner summary → completion decision. Explicit warn-first completion must still list unproven ACs. Subsequent commits or relevant local changes invalidate evidence, including historically completed workflows.
+
+This is conservative full-snapshot evidence, not dependency-selective reuse or hermetic verification. Frozen files prevent silent substitution, not vacuous assertions or malicious same-user artifact edits. External edit/change-restore races and explicit process-group escape/ownership-process-kill limitations remain; independent Monitor semantic review is still required. Workflow IDs stay in `.map` mappings, not product code/tests.
+
 ## Scope
 
 ### In Scope

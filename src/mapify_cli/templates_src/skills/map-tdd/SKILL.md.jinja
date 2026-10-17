@@ -324,13 +324,11 @@ If more than 40% of tests are trivial, go back to TEST_WRITER with feedback:
 tests into richer scenarios that verify multiple consequences. Each test should catch
 a real bug, not just confirm one obvious branch."
 
-```bash
-python3 .map/scripts/map_orchestrator.py validate_step "2.26"
-```
+**MANDATORY in single-subtask, batch and wave mode:** after RED, call `freeze_acceptance_contract` for each owned spec AC before Actor or `validate_step "2.26"`. Preserve exact spec IDs; use argv and proof-file paths, not shell-string inference. Follow the authoring checkpoint and audited revision protocol in `../map-plan/plan-reference.md` (Runner-witnessed acceptance proofs). Never silently re-freeze Actor-edited assertions.
 
-**Single-subtask mode only: persist the red-phase contract before any implementation starts.**
+**All modes: persist a fresh authoring handoff before validation or implementation.**
 
-When `$SUBTASK_ID` is non-empty, write `.map/${BRANCH}/test_contract_${SUBTASK_ID}.md` with:
+Resolve the real current `$SUBTASK_ID` even in batch/wave mode; write `.map/${BRANCH}/test_contract_${SUBTASK_ID}.md` with:
 - the subtask ID and title
 - the AAG contract
 - the test files created by TEST_WRITER
@@ -338,14 +336,14 @@ When `$SUBTASK_ID` is non-empty, write `.map/${BRANCH}/test_contract_${SUBTASK_I
 - the behavior locked by the tests
 - any constraints ACTOR must preserve
 
-Then record the machine-readable handoff and stop this session:
+Record a fresh handoff after every freeze/revision, bound to the checkpoint and current contract/file hashes. `authoring_result` is self-reported, not runner-witnessed RED; `already_green` or `plan_authored` requires `--authoring-justification` (see plan reference).
 
 ```bash
-python3 .map/scripts/map_step_runner.py record_test_contract_handoff "$SUBTASK_ID" "<failing test command>" "<comma-separated test files>" "<one-sentence contract summary>" "<optional notes>"
-python3 .map/scripts/map_orchestrator.py mark_contract_ready "$SUBTASK_ID"
+python3 .map/scripts/map_step_runner.py record_test_contract_handoff "$SUBTASK_ID" "<failing test command>" "<comma-separated test files>" "<one-sentence contract summary>" "<optional notes>" --authoring-result red
+python3 .map/scripts/map_orchestrator.py validate_step "2.26"
 ```
 
-After that, STOP and tell the user to resume implementation with:
+In single-subtask mode, call `mark_contract_ready "$SUBTASK_ID"`, STOP and tell the user to resume implementation with:
 
 ```text
 <% cmd %>map-task ST-001
@@ -353,7 +351,7 @@ After that, STOP and tell the user to resume implementation with:
 
 That follow-up command will detect `test_handoff_${SUBTASK_ID}.json` and resume at `ACTOR` with the persisted contract, instead of re-running research or test writing.
 
-When `$SUBTASK_ID` is empty (full-workflow mode), do **not** write `test_contract_.md`, do **not** call `mark_contract_ready ""`, and do **not** stop the workflow here. In full-workflow mode, `TEST_FAIL_GATE` continues directly into `ACTOR` for the current subtask.
+In full-workflow/batch mode, resolve the current subtask ID from the orchestrator and freeze its contracts too; an empty CLI `$SUBTASK_ID` does not waive persistence. Do not write `test_contract_.md` or call `mark_contract_ready ""`. Continue to Actor only after `TEST_FAIL_GATE` admits the frozen proof set. At `FINAL_VERIFICATION`, run `run_acceptance_proofs` after the intended final code commit, then consume `evaluate_acceptance` and generate the verification summary before completion. Do not replace this execution with checked ACs.
 
 ---
 
