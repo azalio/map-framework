@@ -7,7 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Optional `checks.go.tags` build tags for end-of-turn Go checks, passed as literal
+  arguments while preserving default, disabled and cross-platform behavior. (#489, #512)
+
+### Changed
+- Cross-AI review independence is host-aware for Claude and Codex; same-vendor
+  checks are no longer mislabeled as independent second opinions. (#490, #514)
+- All 23 shipped skills now use shared provider-aware canonical sources, including
+  nested references, templates and scripts. Recursive bidirectional drift guards
+  enforce pure same-path Codex includes and detect missing or forked counterparts. (#488, #518, #519)
+- `map-efficient` documentation describes default-on parallel dispatch, the
+  `execution.concurrent_dispatch: false` kill-switch, and degraded sequential wave
+  behavior without reverting to the legacy cursor. (#497, #511)
+- Release instructions and checklist follow tag-triggered CI, PyPI publishing and
+  automatic GitHub Release creation. (#499, #510)
+
 ### Fixed
+- Worktree dispatch consumes live isolation resolution: `auto` degradation yields
+  sequential dispatch and `required` failures block concurrent execution. Existing
+  kill-switch and inactive/narrow-wave paths remain unchanged. (#516, #517)
+- Skill-eval optimizer `--apply` patches complete descriptions in canonical shared
+  sources for the selected provider without stale scalar tails or changes to the
+  opposite provider. Unsupported headers and modified selected outputs fail closed;
+  scoped promotion preserves unrelated staged work and supports durable rollback. (#520, #518)
+- Standalone review guidance no longer conflates review with the Actor contract
+  validation gate; Monitor context and task/subtask attribution are explicit. (#496, #513)
+- Runner CLI help remains read-only and does not enter writer dispatch. (#509)
 - Actor write-attribution checks honor disabled worktree isolation even when a
   retained sidecar points to a live worktree. Main-checkout writes are recognized
   without deleting recovery state or counting writes in the disabled tree. (#501)
