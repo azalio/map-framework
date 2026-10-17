@@ -946,9 +946,13 @@ Current delta captured:
   completion and is inherited by an independent supervisor and process-group
   anchor. The supervisor owns the admitted deadline even after runner SIGKILL;
   ordinary nested children remain contained when they close inherited FDs or
-  redirect output. On timeout or wrapper exit it kills residual group members,
-  proves no live non-zombie members remain using portable `ps`, then reaps the
-  anchor (which reserves the PGID against reuse) and releases ownership.
+  redirect output. On timeout or wrapper exit it inspects the group using
+  portable `ps` before signalling residual live members, then reaps the
+  anchor (which reserves the PGID against reuse) and releases ownership only
+  after proving no live non-zombie members remain. A zombie-only group needs
+  no signal: signalling permission errors cannot trap its lease indefinitely.
+  Failed inspection or permission errors while live members remain still
+  retain ownership and fail closed; deadlines are unchanged.
   Per-attempt output/result files live under `review-checks/<attempt_id>/`; the
   review ledger remains authoritative. Inspection is checked before launch.
   A cleanup inspection failure produces a durable `cleanup_blocked` diagnostic,

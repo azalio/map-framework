@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resetting the three-attempt budget or losing unresolved findings. (#521)
 
 ### Fixed
+- Review check cleanup inspects process-group quiescence before signalling, allowing a zombie-only group to release its lease even when signalling would return EPERM. Live descendants or failed inspection remain fail-closed; ownership and deadlines are unchanged. (#531)
 - Bounded review preserves schema-native Monitor file identities and real
   adversarial evidence/reporting reviewers, applies objections after stable-ID
   retention, and rejects legacy writes that would silently discard new input.

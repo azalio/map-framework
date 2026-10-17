@@ -151,6 +151,53 @@ def test_wrapper_exit_cleans_live_background_child(check_workspace, exit_code):
             os.kill(pid, signal.SIGKILL)
 
 
+@pytest.mark.parametrize("signal_delivered", [True, False])
+def test_signal_permission_error_releases_only_quiescent_group(check_workspace, monkeypatch, signal_delivered):
+    directory = check_workspace.parent
+    fault = directory / "signal-fault"
+    directory.mkdir(parents=True)
+    fault.touch()
+    injection = directory / "python-fault"
+    injection.mkdir()
+    (injection / "sitecustomize.py").write_text(
+        "import os, sys, time\nfrom pathlib import Path\n"
+        "if sys.argv[0].endswith('review_check_supervisor.py') and 'supervise' in sys.argv:\n"
+        "    original = os.killpg\n"
+        "    def denied(group, sig):\n"
+        f"        if Path({str(fault)!r}).exists():\n"
+        f"            if {signal_delivered!r}:\n"
+        "                original(group, sig)\n"
+        "                time.sleep(0.05)\n"
+        "            raise PermissionError(1, 'injected signal permission error')\n"
+        "        return original(group, sig)\n"
+        "    os.killpg = denied\n"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(injection))
+    assert _admit(2)["status"] == "success"
+    try:
+        result = _cli("run_test_gate", "--check-id", "suite")
+        if signal_delivered:
+            assert result["passed"] is True and result["state"] == "finished", result
+            retried = _cli("run_test_gate", "--check-id", "suite")
+            assert retried["passed"] is True, retried
+            assert retried["attempt_id"] != result["attempt_id"]
+        else:
+            assert result["status"] == "cleanup_blocked" and result["passed"] is False, result
+            assert result["state"] == "running"
+            blocked = _cli("run_test_gate", "--check-id", "suite")
+            assert blocked["status"] == "error" and "still running" in blocked["message"], blocked
+    finally:
+        fault.unlink(missing_ok=True)
+        deadline = time.monotonic() + 5
+        recovered = {"passed": False}
+        while time.monotonic() < deadline:
+            recovered = _cli("run_test_gate", "--check-id", "suite")
+            if recovered.get("passed"):
+                break
+            time.sleep(.05)
+        assert recovered["passed"] is True, recovered
+
+
 def test_cleanup_inspection_failure_is_visible_and_recovers(check_workspace, monkeypatch):
     directory = check_workspace.parent
     fault = directory / "inspection-fault"

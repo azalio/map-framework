@@ -73,9 +73,16 @@ def _supervise(directory: Path, lease_fd: int, timeout: float, command: list[str
             signalled = False
             while True:
                 try:
+                    # Intent: a dead group needs no signal, even if signalling would be denied.
+                    if not _live_group(anchor.pid):
+                        break
                     if not signalled:
                         try:
                             os.killpg(anchor.pid, signal.SIGKILL)
+                        except PermissionError:
+                            if not _live_group(anchor.pid):
+                                break
+                            raise
                         except ProcessLookupError:
                             pass
                         signalled = True
