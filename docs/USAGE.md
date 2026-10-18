@@ -912,6 +912,22 @@ Include validation, error handling, and tests.
 
 `/map-debug` enforces a **repro-probe root-cause gate**: before writing a fix you author a small executable probe under `.map/<branch>/repro/` (gitignored) that exits `42` while the bug reproduces and `0` once it is gone. `record_repro_probe` executes a frozen, immutable snapshot of the probe and only proceeds when the runner witnesses exit 42; after the fix, `verify_repro_resolved` re-runs the same snapshot and passes only on the 42→0 flip. This turns "I found the root cause" from a claim into evidence the runner observed — no fix is written until the bug is empirically reproduced.
 
+Legacy installations (including reported 3.20.0 Codex layouts) may have the skill
+but lack its three canonical documents: `map-output-examples.md`,
+`map-xml-prompt-envelopes.md`, and `map-json-output-contracts.md`. Current installs
+include them under `.agents/references/` for Codex and `.claude/references/` for
+Claude, resolving `../../references/` relative to the skill directory. To repair
+an existing project after upgrading the CLI, run:
+
+```bash
+mapify init . --force --no-git --provider codex --refresh-existing
+# For Claude, replace codex with claude.
+```
+
+This refresh preserves project configuration and unrelated user reference files,
+restores missing managed documents, and registers them in `.map/mapify.lock.json`.
+`mapify upgrade` alone updates the CLI, not installed project files.
+
 ### Refactoring
 
 ```bash

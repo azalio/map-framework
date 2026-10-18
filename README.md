@@ -128,6 +128,12 @@ manual checks report errors explicitly. The public `mapify upgrade` command is
 separate and unchanged: it upgrades only the CLI and does not refresh project
 files. See [Automatic and manual framework updates](docs/USAGE.md#automatic-and-manual-framework-updates).
 
+If a legacy `map-debug` skill cannot load its `../../references/` documents, refresh
+the project after upgrading the CLI:
+`mapify init . --force --no-git --provider codex --refresh-existing`
+(use `--provider claude` for Claude). This restores missing managed references;
+upgrading the CLI alone does not.
+
 ## Case Study: 90 days → 7 days
 
 The DevOpsConf 2026 case study applies this process to a production Kubernetes Project Operator:
