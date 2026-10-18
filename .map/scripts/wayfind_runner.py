@@ -877,7 +877,7 @@ def _validate_assessment(state: dict[str, Any], ticket_id: str, data: dict[str, 
     assert isinstance(bindings, list)
     generation = research.get("evidence_generation", 0)
     current_attempts = [a for a in research["attempts"] if a.get("generation", 0) == generation]
-    if not current_attempts:
+    if not current_attempts and ((research.get("correction") or {}).get("active") or state["tickets"][ticket_id].get("status") == "resolved"):
         current_attempts = [a for a in research["attempts"] if a.get("generation", 0) == research.get("accepted_generation", 0)]
     completed = {a["attempt_id"]: a for a in current_attempts if a["outcome"] == "completed"}
     seen = set()
@@ -939,6 +939,32 @@ def record_research_assessment(slug: str, ticket_id: str, session: str, assessme
         research["accepted_generation"] = next(a.get("generation", 0) for a in research["attempts"] if a["attempt_id"] in bound_ids)
     _save_state(state)
     return _ok(created=True, assessment_id=data["assessment_id"], verdict=data["verdict"], revision=state["revision"])
+
+
+@_research_api
+def refresh_open_research(slug: str, ticket_id: str, session: str, reason: str, expected_revision: int | None = None) -> dict[str, Any]:
+    """Retire stale open-ticket evidence without rewriting history or resetting spend."""
+    state, ticket, research = _research_owner(slug, ticket_id, session, expected_revision)
+    _require(ticket.get("status") == "open" and not (research.get("correction") or {}).get("active"), "only open research without an active correction can be refreshed")
+    _require(_text(reason), "refresh reason required")
+    generation = research.get("evidence_generation", 0)
+    current = [a for a in research["attempts"] if a.get("generation", 0) == generation]
+    _require(not any(a["outcome"] in {"reserved", "unknown"} for a in current), "in-flight or unknown work blocks refresh")
+    stale = []
+    for attempt in current:
+        if attempt["outcome"] != "completed":
+            continue
+        try:
+            _current_report(state, ticket_id, attempt)
+        except (ResearchInputError, OSError, UnicodeError, json.JSONDecodeError) as exc:
+            stale.append({"attempt_id": attempt["attempt_id"], "error": str(exc)})
+    _require(bool(stale), "no stale completed report in current generation; refresh not needed")
+    entry = {"refresh_id": uuid.uuid4().hex, "session": session, "reason": reason, "from_generation": generation, "to_generation": generation + 1, "stale_attempts": stale, "prior_accepted_assessment_id": research["accepted_assessment_id"], "recorded_at": _now()}
+    research.setdefault("evidence_refresh_history", []).append(entry)
+    research["evidence_generation"] = generation + 1
+    research["accepted_assessment_id"] = None
+    _save_state(state)
+    return _ok(created=True, refresh=entry, budget_limit=research["budget_limit"], spent_attempts=len(research["attempts"]), revision=state["revision"])
 
 
 @_research_api
@@ -2187,6 +2213,7 @@ def build_parser() -> argparse.ArgumentParser:
         "record_research_attempt": ("slug", "ticket_id", "session", "attempt_id", "outcome"),
         "extend_research_budget": ("slug", "ticket_id", "session", "extension_id", "additional_attempts", "approval_path", "reason"),
         "record_research_assessment": ("slug", "ticket_id", "session", "assessment_path"),
+        "refresh_open_research": ("slug", "ticket_id", "session", "reason"),
         "begin_research_correction": ("slug", "ticket_id", "session", "reason"),
         "release_research_correction": ("slug", "ticket_id", "session"),
         "claim_research_correction": ("slug", "ticket_id", "session"),
@@ -2217,6 +2244,7 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
         "record_research_attempt": record_research_attempt,
         "extend_research_budget": extend_research_budget,
         "record_research_assessment": record_research_assessment,
+        "refresh_open_research": refresh_open_research,
         "begin_research_correction": begin_research_correction,
         "release_research_correction": release_research_correction,
         "claim_research_correction": claim_research_correction,

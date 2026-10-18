@@ -657,6 +657,17 @@ sources record their observation/version and remain observed-only: validation do
 not fetch URLs or claim universal freshness. Structured validation checks integrity
 and coverage, not truth or independent thought. Non-research HITL rules are unchanged.
 
+For an open ticket, owner-only `refresh_open_research` audits stale completed
+current-generation reports and advances the evidence generation atomically with
+its history entry. Reserved/unknown work blocks refresh. Historical attempts,
+artifacts and hashes are not rewritten; lifetime spend and the budget limit are
+unchanged. Prior acceptance is revoked and open-ticket assessments cannot fall
+back to retired generations, even if source bytes later revert. An empty new
+generation permits a blocked assessment, not resolution. Repeating refresh
+without newly stale completed evidence fails closed; inspect the durable history
+after a lost response. Existing resolved editorial corrections may still reuse
+current accepted evidence. Revision guards and ownership checks apply unchanged.
+
 A correction has a separate owner record, preserves the previous resolution and
 spent budget, and invalidates its evidence until a matching reassessment is accepted.
 It does not reopen unrelated tickets or resume frozen claims. Handoffs retain the
