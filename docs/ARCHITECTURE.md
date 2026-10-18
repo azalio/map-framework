@@ -18,6 +18,41 @@ The remainder of this file contains the deeper implementation dive (workflow-spe
 
 Claude skill frontmatter blocks model invocation only for `map-release`. `skill_ir.invocation_mode` derives from that flag (`manual` for release, `automatic` for the other skills); `automatic` means model-invocable, not permission to bypass confirmation. Task skills keep `skillClass: task` and `enforcement: manual` as workflow routing metadata, alongside descriptions and negative triggers. `map-upgrade` retains version-specific major-upgrade consent. Skill-eval temp-flipping is a no-op for current non-release MAP skills and remains available for legacy/user skills and release evaluation in throwaway copies only.
 
+## Lossless pending-order mutation
+
+`map_orchestrator.resequence_pending(sequence, branch, reason)` locks the entire
+read/validate/write transaction, including direct Python callers. It reads raw
+`step_state.json` rather than rebuilding `StepState`, preserving unknown JSON
+fields and all execution-frame values. The only mutable fields are the full
+sequence, future execution waves when configured, and embedded
+`resequence_history`. Typed load/save retains this audit field for subsequent
+normal workflow transitions.
+
+Validation pins the prefix through the cursor, completed IDs, started per-subtask
+phases/retries, and every current/earlier wave member at its existing position.
+A required flat or nested blueprint supplies dependency and file-conflict data;
+invalid order is rejected rather than repaired. Current/earlier waves remain
+unchanged; a dependency graph schedules future nodes, sorting ready peers by the
+requested sequence before existing greedy file-conflict splitting. Active group
+records in `worktrees.json` must belong to the current wave and are read-only.
+This is not an active-group reset/reconciliation path; inconsistent parallel
+state blocks resequencing.
+
+Explicitly forced sequential runs with no active groups have no admitted wave
+frame: rebuild all inactive wave metadata, preserving the actual serial cursor
+and every protected value, including `current_wave_index`. Reject if the rebuilt
+wave list cannot accommodate that unchanged index. Isolation-off, wave-mode-off
+or the sequential-only environment switch remains binding, so recomputation
+cannot implicitly enable parallel execution. Width-only sequential selection
+keeps the conservative active-frame rules.
+
+The authoritative durable order and audit live together in one atomic
+`step_state.json` replacement using `map_utils.atomic_write_text`. Readers see
+either the old state or the new order plus audit, not a half-published pair.
+No-op/error paths do not write the state. The branch advisory lock coordinates
+participating state transactions, not arbitrary external edits or independent
+sidecar writers; this does not claim power-loss durability or filesystem fsync.
+
 ## Acceptance evidence lifecycle
 
 The step runner owns acceptance contracts, execution receipts and derived status under `.map/<branch>/`; agents cannot supply a `proven` flag. The authoritative inventory is the spec Requirements Index, including ACs missing from the blueprint. Exact IDs are preserved rather than normalizing `AC-1` into `AC-001`. Citation coverage is separate from executable evidence.

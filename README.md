@@ -97,6 +97,10 @@ $map-plan → $map-efficient → $map-check → $map-review → $map-learn
 
 That's the whole golden path.
 
+Need to reorder unstarted work in an active run? Use the audited
+[`resequence_pending` command](docs/USAGE.md#reorder-pending-subtasks)
+without resetting the current step, retries, results or baselines.
+
 - **Start with `/map-plan`** for anything non-trivial — it clarifies behavior and splits the work into contract-sized subtasks.
 - **Starting from a PRD?** Run `/map-prd-review` directly, or accept `/map-plan`'s optional readiness preflight. A non-ready result shows the gaps and asks whether to revise or continue planning anyway.
 - **Already scoped?** Go straight to `/map-efficient`.

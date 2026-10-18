@@ -24,6 +24,49 @@ Once a plan reaches `ready` (task_plan + blueprint both present, the Step 7 boun
 
 When a MAP run enters a merge/rebase conflict, the PreToolUse workflow-context hook adds a conflict-resolution discipline block to `additionalContext`. It fires before `git merge` / `git rebase` and whenever git reports unmerged paths via `git diff --name-only --diff-filter=U`. The protocol is deliberately manual and intent-preserving: list conflicted files, resolve one file or small batch at a time, preserve both sides' intended behavior, check for conflict markers, run the project's test gate after each batch, stage only resolved files, and continue the merge/rebase only after no unmerged files remain. Final verification is: branch current with `origin/main`, no conflict markers, and tests green. The hook never mutates the worktree and never auto-runs tests.
 
+## Reorder pending subtasks
+
+Use `resequence_pending` instead of `set_subtasks` or `resume_from_plan` when
+changing the execution order of an active run. Pass the **full** sequence, not
+just the pending suffix, and a reason:
+
+```bash
+python3 .map/scripts/map_orchestrator.py resequence_pending my-branch \
+  --sequence ST-001,ST-002,ST-004,ST-003 --reason "Run documentation before cleanup"
+```
+
+`--branch my-branch` also works; omit both branch forms to use the current Git
+branch. The direct Python API is `resequence_pending(sequence, branch, reason)`.
+Refresh installed scripts with `mapify upgrade` first.
+
+The ID set and cardinality must stay unchanged. The prefix through the current
+subtask, completed subtasks and admitted current-wave siblings cannot move.
+The requested order must already satisfy blueprint dependencies; the command
+rejects violations rather than silently sorting. Missing/malformed blueprint or
+inconsistent active parallel state also rejects the change.
+
+A successful change preserves all other JSON values, including unknown fields,
+while it may reformat `step_state.json`. Current/earlier waves stay fixed; future
+waves are recomputed using dependencies and file conflicts, with the requested
+order as the tie-breaker. Existing active-group `worktrees.json` is never edited.
+In an explicitly forced sequential run (`worktree.isolation: off`, wave mode off,
+or `MAP_EFFICIENT_SEQUENTIAL_ONLY=1`) with no active groups, all inactive wave
+metadata is recomputed instead. Stale wave membership does not freeze unstarted
+serial peers. `current_wave_index` stays unchanged; if it would be out of range
+after recomputation, the command rejects atomically. This cannot enable parallel
+execution. Sequential-by-width-only runs retain the conservative active-wave
+rules rather than silently switching execution strategy.
+
+Cursor, step, results, retries, baselines and receipts are not reset. Restart
+normally with `/map-efficient`; `peek_current_step` shows the same current step.
+
+The order and embedded `resequence_history` entry (`old_order`, `new_order`,
+`reason`) are published in one atomic state-file replacement under the branch
+transaction lock. A valid identical order writes nothing, including no audit
+entry. Rejection or publication failure leaves the state file byte-identical;
+CLI failures return nonzero. This is not a plan/blueprint editor: keep the plan
+consistent separately, and never hand-edit `step_state.json`.
+
 ## Runner-witnessed acceptance proofs
 
 Acceptance status comes from runner-executed evidence, not agent-written checkboxes. Plan a public-interface proof for every spec AC and preserve its exact ID (`AC-1` is not `AC-001`). Keep ID mappings in `.map`, not product code or shipped test names. Independent TEST_WRITER authoring and RED precede freezing, including batch/wave TDD; Actor cannot silently change or re-freeze the tests.
