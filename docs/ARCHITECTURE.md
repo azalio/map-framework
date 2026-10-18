@@ -95,6 +95,17 @@ This is conservative full-snapshot evidence, not dependency-selective reuse or h
 - `tests/`: Unit and integration coverage for CLI behavior, generated templates, hooks, workflow artifacts, SkillIR, provider frontmatter, and artifact schemas
 - `docs/`: Workflow docs, deep dives, and planning history
 
+### Static-analysis diagnostic parser
+
+Shared `.map/static-analysis/handlers/common.sh` parses Go vet and mypy text
+without Bash namerefs, supporting macOS Bash 3.2 and modern Bash. It validates
+four output identifiers and uses `printf -v` with a reserved `__map_parse_*`
+local namespace to avoid shadowing caller variables. Output names must be
+writable scalars, not `BASH_REMATCH` or reserved names. Malformed input returns
+nonzero without changing outputs; failed assignments cannot return success.
+Pytest exercises the shipped parser and real handlers with fixture linter output
+under each available supported Bash, including non-diagnostic/no-finding paths.
+
 ### On-disk Artifacts (target repo)
 
 - `.claude/skills/`: Skill-backed slash surfaces that define MAP sequences for Claude Code

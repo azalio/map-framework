@@ -111,6 +111,19 @@ brew install python@3.12   # macOS; or: uv python install 3.12 / pyenv install 3
 mapify check               # confirms the hook interpreter
 ```
 
+## Static-analysis Bash compatibility
+
+The installed Go and Python handlers parse colon-delimited `go vet` and `mypy`
+diagnostics with Bash 3.2-compatible builtins (also tested on modern Bash).
+They accept `file:line:column:message` and `file:line:message`, preserving spaces
+and colons in filenames; missing columns become zero. Non-diagnostic lines are
+ignored. The handlers still require `jq`, `timeout`, and the relevant linters.
+
+If an older installation prints `local: -n: invalid option`, do not accept its
+empty findings as a successful quality gate. Update the CLI, then refresh the
+project with `mapify init . --refresh-existing` (add `--provider codex` for Codex)
+and rerun analysis. Updating the CLI alone does not rewrite installed handlers.
+
 ## Decision-frontier wayfinding (`/map-wayfind`)
 
 For a large or foggy effort where `/map-plan` would force premature decomposition,
