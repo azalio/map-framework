@@ -11,6 +11,8 @@ import pytest
 
 from tests.review_process_lifecycle import ReviewProcessLifecycle
 
+pytestmark = pytest.mark.timeout(120)
+
 RUNNER = Path(__file__).resolve().parents[1] / "src/mapify_cli/templates/map/scripts/map_step_runner.py"
 
 

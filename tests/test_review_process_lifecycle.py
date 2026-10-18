@@ -10,6 +10,8 @@ import pytest
 
 from tests.review_process_lifecycle import ReviewProcessLifecycle
 
+pytestmark = pytest.mark.timeout(120)
+
 SUPERVISOR = (Path(__file__).resolve().parents[1]
               / "src/mapify_cli/templates/map/scripts/review_check_supervisor.py")
 

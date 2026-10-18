@@ -8782,11 +8782,18 @@ def _review_source_status(paths: list[str]) -> bytes:
     return b"".join(record + b"\0" for record in kept)
 
 
-def _review_trusted_policy() -> dict[str, Any]:
+class _ReviewTargetInputs(TypedDict):
+    base: str | None
+    names: list[str]
+    changed: set[bytes]
+
+
+def _review_trusted_policy(*, inputs: _ReviewTargetInputs | None = None) -> dict[str, Any]:
     """Read additive area guidance from default-ref Git objects, never head files.
 
     Authority is the operator-maintained default ref, not a caller-provided SHA.
     Local refs are trusted repository metadata, not a hostile-same-user boundary.
+    Optional inputs belong only to the enclosing target calculation, never a cache.
     """
     result: dict[str, Any] = {"status": "unverified", "revision": "", "ref": "", "files": []}
     try:
@@ -8798,18 +8805,24 @@ def _review_trusted_policy() -> dict[str, Any]:
 
         # Fully qualified refs prevent a PR-created tag named main/origin/main
         # from substituting an arbitrary commit for the operator's default branch.
-        ref = next((name for name in _REVIEW_BASE_CANDIDATE_REFS
-                    if resolve(["rev-parse", "--verify", f"{name}^{{commit}}"])), "")
+        ref, revision = "", ""
+        for name in _REVIEW_BASE_CANDIDATE_REFS:
+            revision = resolve(["rev-parse", "--verify", f"{name}^{{commit}}"])
+            if revision:
+                ref = name
+                break
         if not ref:
             raise ValueError("Trusted default policy revision is unavailable")
-        revision = _review_git("rev-parse", "--verify", f"{ref}^{{commit}}")
         # Authority survives failures in HEAD ancestry or policy discovery.
         result.update({"revision": revision, "ref": ref})
         base = _review_git("merge-base", revision, "HEAD")
         result["base"] = base
         changed = set(_review_git_bytes("diff", "--no-renames", "--name-only", "-z", base, "--").split(b"\0"))
         changed.update(_review_git_bytes("ls-files", "--others", "--exclude-standard", "-z").split(b"\0"))
-        sources = set(_review_source_paths(base))
+        names = _review_source_paths(base)
+        if inputs is not None:
+            inputs.update({"base": base, "names": names, "changed": changed})
+        sources = set(names)
         policies = {"REVIEW.md"}
         for raw in changed:
             if not raw or os.fsdecode(raw) not in sources:
@@ -8842,15 +8855,21 @@ def _review_trusted_policy() -> dict[str, Any]:
     return result
 
 
-def _review_shadow_risk(base: str, policy: dict[str, Any]) -> dict[str, Any]:
+def _review_shadow_risk(
+    base: str, policy: dict[str, Any], *, inputs: _ReviewTargetInputs | None = None,
+) -> dict[str, Any]:
     """Observe only: risk cannot change roster, execution checks or coverage."""
     reasons: list[str] = []
     sensitive = False
     unknown = policy["status"] != "verified" or not base
     try:
-        changed = set(_review_git_bytes("diff", "--no-renames", "--name-only", "-z", base or "HEAD", "--").split(b"\0"))
-        changed.update(_review_git_bytes("ls-files", "--others", "--exclude-standard", "-z").split(b"\0"))
-        sources = set(_review_source_paths(base or "HEAD"))
+        if inputs is not None and inputs.get("base") == base:
+            changed = inputs["changed"]
+            sources = set(inputs["names"])
+        else:
+            changed = set(_review_git_bytes("diff", "--no-renames", "--name-only", "-z", base or "HEAD", "--").split(b"\0"))
+            changed.update(_review_git_bytes("ls-files", "--others", "--exclude-standard", "-z").split(b"\0"))
+            sources = set(_review_source_paths(base or "HEAD"))
         for raw in sorted(changed):
             if not raw or os.fsdecode(raw) not in sources:
                 continue
@@ -8895,7 +8914,9 @@ def _review_shadow_risk(base: str, policy: dict[str, Any]) -> dict[str, Any]:
             "uncertain": unknown, "reasons": reasons, "relaxation_authorized": False}
 
 
-def _review_policy(binding: dict[str, Any] | None = None) -> str:
+def _review_policy(
+    binding: dict[str, Any] | None = None, *, trusted_policy: dict[str, Any] | None = None,
+) -> str:
     binding = binding or {}
     names = {"CLAUDE.md", "AGENTS.md", ".map/config.yaml", ".map/config.yml", ".map/config.json"}
     names.update(binding.get("policy_files", []))
@@ -8906,19 +8927,21 @@ def _review_policy(binding: dict[str, Any] | None = None) -> str:
         names.update(str(path) for path in Path(".").glob(pattern) if path.is_file())
     policy = {"schema": "review_receipt.v1", "criteria": _VERDICT_TABLE_ID,
               "binding": binding, "files": [_review_file_entry(name) for name in sorted(names)],
-              "trusted_policy": _review_trusted_policy()}
+              "trusted_policy": _review_trusted_policy() if trusted_policy is None else trusted_policy}
     return hashlib.sha256(json.dumps(policy, sort_keys=True).encode()).hexdigest()
 
 
 def _review_target() -> dict[str, Any]:
     """Bind bytes, modes, index, local inputs and merge state without decoding Git paths."""
-    trusted_policy = _review_trusted_policy()
+    # Reuse only observations from this calculation; every caller starts fresh.
+    inputs: _ReviewTargetInputs = {"base": None, "names": [], "changed": set()}
+    trusted_policy = _review_trusted_policy(inputs=inputs)
     security_policy = _review_security_policy(trusted_policy)
     try:
         head = _review_git("rev-parse", "HEAD")
         base = trusted_policy.get("base", "")
         base_ref = trusted_policy.get("ref", "")
-        names = _review_source_paths(base or "HEAD")
+        names = inputs["names"] if inputs.get("base") == base else _review_source_paths(base or "HEAD")
         pathspec = _review_source_pathspec(names)
         manifest = [_review_file_entry(name) for name in names]
         dirty = _review_source_status(names)
@@ -8927,12 +8950,13 @@ def _review_target() -> dict[str, Any]:
         conflicts = bool(_review_git_bytes("ls-files", "-u", "-z"))
         fingerprint = json.dumps(manifest, sort_keys=True).encode() + index + diff
         return {"head": head, "base": base, "base_ref": base_ref,
-                "trusted_policy": trusted_policy, "shadow_risk": _review_shadow_risk(base, trusted_policy),
+                "trusted_policy": trusted_policy, "shadow_risk": _review_shadow_risk(base, trusted_policy, inputs=inputs),
                 "security_gate_policy": security_policy,
                 "base_tip": trusted_policy.get("revision", ""),
                 "reusable": bool(base) and not dirty and not conflicts,
                 "local_digest": hashlib.sha256(fingerprint).hexdigest(),
-                "diff_digest": hashlib.sha256(diff).hexdigest(), "policy_hash": _review_policy(),
+                "diff_digest": hashlib.sha256(diff).hexdigest(),
+                "policy_hash": _review_policy(trusted_policy=trusted_policy),
                 "required_files": names, "conflicts": conflicts}
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         return {"reusable": False, "unverified_reason": str(exc),
@@ -9191,9 +9215,10 @@ def begin_review_run(
     if error:
         return {"status": "error", "message": error}
     branch_dir = _review_branch_dir(branch)
+    policy_hash = _review_policy(dict(payload), trusted_policy=target["trusted_policy"])
     consent: dict[str, Any] = {"status": "not_required"}
     if _review_requires_consent(target):
-        consent = _ensure_review_consent({"target": target, "policy_hash": _review_policy(dict(payload))},
+        consent = _ensure_review_consent({"target": target, "policy_hash": policy_hash},
                                          branch=branch_dir.name)
         if consent["status"] == "error" and _review_gates_strict(target):
             return consent
@@ -9243,7 +9268,7 @@ def begin_review_run(
         previous = [branch_dir / name for name in REVIEW_INPUT_NAMES if (branch_dir / name).exists()]
         row = {"round_id": round_id, "binding": dict(payload), "started_at": time.time(),
                "archive_inputs": [path.name for path in previous], "prepared": False,
-               "target": _review_target(), "policy_hash": _review_policy(dict(payload)),
+               "target": target, "policy_hash": policy_hash,
                "capability": _review_capability(dict(payload)), "receipts": {}}
         row["required_files"] = row["target"].get("required_files", [])
         rounds.append(row)

@@ -13,6 +13,25 @@ from tests.test_review_trusted_policy import policy_repo as _policy_repo
 policy_repo = _policy_repo
 
 
+def test_admission_reads_source_inventory_once_and_rechecks_live_changes(policy_repo, monkeypatch):
+    del policy_repo
+    calls = []
+    original = runner._review_git_bytes
+
+    def record(*args):
+        calls.append(args)
+        return original(*args)
+
+    monkeypatch.setattr(runner, "_review_git_bytes", record)
+    admitted = runner.begin_review_run(branch="feature")
+    assert admitted["status"] == "success", admitted
+    inventories = [args for args in calls if args[:3] == ("ls-files", "-z", "--cached")]
+    assert len(inventories) == 1, inventories
+    Path("old/code.py").write_text("value = 3\n")
+    resumed = runner.begin_review_run(branch="feature")
+    assert resumed["status"] == "error", resumed
+
+
 @pytest.fixture
 def strict_repo(policy_repo):
     del policy_repo
