@@ -72,6 +72,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v6
+      with:
+        # Corpus tests verify pinned introducing/base/fixing Git objects.
+        fetch-depth: 0
 
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v6

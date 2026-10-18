@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "audit_cutoff": {"commit": "e3b8035e58e49dd6d1570d504bf638a962f2601a", "timestamp": "2026-10-18T20:48:40Z"},
+  "dispositions": [
+    {"issue": 501, "status": "admitted", "case_ids": ["c-41be"], "reason": "User-run pinned base/head/fix public CLI observations inspected and adjudicated; retained sidecar selects wrong tree only at introducing head. Raw output, normalized observations and executed script identity retained. #515 shares this case; curator did not rerun historical code."},
+    {"issue": 502, "status": "excluded", "case_ids": [], "reason": "Missing lossless suspend/select/resume capability; no unambiguous introducing regression established. Fix #506 is feature addition, not a suitable introducing bug input."},
+    {"issue": 503, "status": "excluded", "case_ids": [], "reason": "Absolute-path mismatch and repair-attribution contamination share issue text. Fix #508 is known, but precise causal introducing boundary and parent/head/fix public reproduction not verified. Do not substitute fixing diff."},
+    {"issue": 504, "status": "excluded", "case_ids": [], "reason": "Dirty-baseline helper versus consumer introduction is ambiguous; #507 fixing change does not establish which historical diff first made this scenario faulty."},
+    {"issue": 505, "status": "excluded", "case_ids": [], "reason": "Later #539 is tests/docs protection for behavior already corrected by #458, not a new runtime fix proving an introducing diff."},
+    {"issue": 506, "status": "excluded", "case_ids": [], "reason": "Implements missing blocker-repair feature from #502; no verified prior regression or unique faulty introducing snapshot."},
+    {"issue": 507, "status": "excluded", "case_ids": [], "reason": "Fix for #504; helper-versus-consumer causal ambiguity unresolved, so fixing diff is not admitted as bug input."},
+    {"issue": 508, "status": "excluded", "case_ids": [], "reason": "Fix d5325f27d3335ef454ec6fe941824939ebfdf4e4 addresses #503. Introducing boundary and independent historical behavioral evidence remain unverified."},
+    {"issue": 509, "status": "admitted", "case_ids": ["c-93f0"], "reason": "User-run exact base/head/fix public CLI observations inspected: introducing help invocation creates two artifacts, fixed help creates none. Parent lacks command, explicitly an absence boundary rather than successful help. Curator did not execute historical code."},
+    {"issue": 510, "status": "excluded", "case_ids": [], "reason": "Release-process documentation alignment, not an independently verified introducing runtime defect."},
+    {"issue": 511, "status": "excluded", "case_ids": [], "reason": "Documentation alignment with default-on parallel execution; not a verified introducing bug snapshot."},
+    {"issue": 512, "status": "excluded", "case_ids": [], "reason": "Optional Go build-tag configuration support (#489), fix 70ef39b7b73dcc9d533870cf66c74f955d668f01. No independently established introducing regression; absent feature alone is insufficient."},
+    {"issue": 513, "status": "excluded", "case_ids": [], "reason": "Standalone-versus-Actor review prompt-contract correction (#496), fix f8ca62028b859de5199907970fa0f8e4aad2ebeb. No reproduced historical introducing boundary; deterministic prompt assertions alone do not establish causal failure."},
+    {"issue": 514, "status": "excluded", "case_ids": [], "reason": "Host-aware vendor-independence correction (#490), fix ed0d1035a6394a12e56c7d8b304905a68c0c68e6. Host/provider capability chronology and causal introducing boundary not independently verified."},
+    {"issue": 515, "status": "admitted", "case_ids": ["c-41be"], "reason": "Fixing PR for #501 maps to the same independently adjudicated causal case, not an additional sample. Reviewer input is introducing diff, not this fixing commit. User-run public CLI results retained with exact artifact hashes."},
+    {"issue": 516, "status": "excluded", "case_ids": [], "reason": "Configured isolation versus live fallback contract has competing attribution boundaries; original report explicitly says dynamic reproduction was not run. Cannot infer introducing causality from fix #517."},
+    {"issue": 517, "status": "excluded", "case_ids": [], "reason": "Fix for #516; config-contract introducing attribution remains ambiguous, so no admitted label."},
+    {"issue": 518, "status": "excluded", "case_ids": [], "reason": "Migration and optimizer correction were combined before mainline merge; development-branch introduction versus merged behavior ambiguous. Do not label the fixing merge as a faulty introduction."},
+    {"issue": 519, "status": "admitted", "case_ids": ["c-7d2a"], "reason": "Bounded tests/docs control: exact parent/head and changed blobs inspected; later file history, revert subjects and linked issue attribution audited through cutoff. No attributable regression found; not proof of bug freedom or runtime representativeness."},
+    {"issue": 520, "status": "excluded", "case_ids": [], "reason": "Optimizer regression reported on development branch 4b34d4f during #518 migration; corrected before combined mainline merge. Unique admissible mainline introducing boundary not established."}
+  ],
+  "cases": [
+    {
+      "id": "c-41be", "kind": "bug", "group": "retained-isolation-attribution",
+      "base": "8a01f713d2b3239e845c91c4d1811b3f34d227a0",
+      "head": "89303b798a7a54e82c3069a388100c847ba3f2cd",
+      "fix": "206de516f1a144940dbf8e699ecedefddb3d3d48",
+      "files": [{"path": "src/mapify_cli/templates/map/scripts/map_step_runner.py", "base_blob": "f12d1a22290256e2bdc9fc020f7bcb6819e882ff", "head_blob": "1f03a0941daf929cbf1ef17ea31c08751bd0c762"}],
+      "labels": [{"path": "src/mapify_cli/templates/map/scripts/map_step_runner.py", "blob": "1f03a0941daf929cbf1ef17ea31c08751bd0c762", "start_line": 17087, "end_line": 17089, "description": "Reads retained worktree sidecar without checking current isolation mode. With isolation off and Actor writes in main, attribution incorrectly reports target.py as unwritten by inspecting retained worktree.", "fix_mapping": {"path": "src/mapify_cli/templates/map/scripts/map_step_runner.py", "blob": "f41629a5b4c661889e15dbcdb83d04c3d50c867d", "start_line": 17742, "end_line": 17746, "explanation": "Same helper and sidecar-read site: fix inserts _wt_isolation_enabled early return immediately before the corresponding read. Returning None selects main for disabled isolation. Introducing head added this helper; parent correctly observes main in the supplied scenario."}}],
+      "scenario": "Record public baseline in real Git main checkout; retain worktree sidecar; switch isolation off; modify target.py only in main; invoke public detect_actor_files_changed_mismatch CLI. User-run base/head/fix observations show false mismatch only at introducing head. Curator inspected supplied output, did not rerun. Scope limited to this deterministic scenario.",
+      "evidence": [
+        {"path": "evidence/manual_repro.py", "sha256": "c4a5af1a85fd9a94fe3c1458997033dfcce0153bf89d8483c09629bcdd03b7bc"},
+        {"path": "evidence/manual-run.log", "sha256": "da4d307f7971796e63a8f02d864d58202bd6fc9c7aaca991197fdf78722518e5"},
+        {"path": "evidence/manual-run.json", "sha256": "ed91415ff95351e1c8c8c070287701dfdf05d871e33c6401a8d18bf78caee79c"},
+        {"path": "evidence/adjudication.json", "sha256": "a6d024b342438432ac7eafb543eae84bed2f4cd1c43053ef9d8dc9518e1cb26c"}
+      ],
+      "control_audit": null
+    },
+    {
+      "id": "c-93f0", "kind": "bug", "group": "run-health-help-dispatch",
+      "base": "4ec2235bfa46a1a8c3521c819f4804269c9726ce",
+      "head": "ec9d4b31e7cff67be781e841034a2098f21c6192",
+      "fix": "de241e279805c18afaf017fbcdaa5cee8cd390f9",
+      "files": [{"path": "src/mapify_cli/templates/map/scripts/map_step_runner.py", "base_blob": "0ae9e19f5be5d991752488296563c5835d2fff99", "head_blob": "0053f29bfb540736c4fde49254c549cffb28439b"}],
+      "labels": [{"path": "src/mapify_cli/templates/map/scripts/map_step_runner.py", "blob": "0053f29bfb540736c4fde49254c549cffb28439b", "start_line": 3654, "end_line": 3657, "description": "New positional dispatch treats --help as workflow and invokes artifact writer, so requesting help mutates an empty working directory.", "fix_mapping": {"path": "src/mapify_cli/templates/map/scripts/map_step_runner.py", "blob": "1143b9b55935b9c09978e4b332dfc7bd0783f34c", "start_line": 23029, "end_line": 23036, "explanation": "Fixed counterpart replaces raw positional extraction with argparse before writer invocation. Help exits with usage and no files. Introducing snapshot predates Jinja; mapping consistently uses shipped Python path. Parent has no command: absence is not a successful help implementation."}}],
+      "scenario": "Invoke public runner write_run_health_report --help in empty disposable directory. User-run parent exit1 unknown-command/no files; introducing head exit0 writes artifact_manifest.json and run_health_report.json; fix exit0 usage/no files. Curator inspected supplied output, did not rerun. No assertion about existing-artifact overwrite or file contents.",
+      "evidence": [
+        {"path": "evidence/manual_repro.py", "sha256": "c4a5af1a85fd9a94fe3c1458997033dfcce0153bf89d8483c09629bcdd03b7bc"},
+        {"path": "evidence/manual-run.log", "sha256": "da4d307f7971796e63a8f02d864d58202bd6fc9c7aaca991197fdf78722518e5"},
+        {"path": "evidence/manual-run.json", "sha256": "ed91415ff95351e1c8c8c070287701dfdf05d871e33c6401a8d18bf78caee79c"},
+        {"path": "evidence/adjudication.json", "sha256": "a6d024b342438432ac7eafb543eae84bed2f4cd1c43053ef9d8dc9518e1cb26c"}
+      ],
+      "control_audit": null
+    },
+    {
+      "id": "c-7d2a",
+      "kind": "control",
+      "group": "provider-tree-guard",
+      "base": "3b4c168678f3d849c605929e64532dd98aff2c26",
+      "head": "bfc5e047571325d2d41e4a6186b7fead17e33b37",
+      "fix": null,
+      "files": [
+        {"path": "tests/test_skills.py", "base_blob": "0eb88c38da76f1ec77b859760c7ec824c007bdc1", "head_blob": "7a113d5e3e0f9f7a396c8564c6f9342b0f4166a7"},
+        {"path": "docs/ARCHITECTURE.md", "base_blob": "4af6a5c8d84b999dff587fa9044e868c097b42c9", "head_blob": "919ad2dc5008671d647f36de405f207b9ae98f02"}
+      ],
+      "labels": [],
+      "scenario": "Tests/docs change adds independent recursive inventories for shared/Codex skill trees, pure-include validation, pinned skill names and thirteen negative filesystem fixtures. No runtime source changes. Audit-only provisional clean control; historical tests not re-executed during curation.",
+      "evidence": [{"path": "evidence/control-audit.json", "sha256": "3bb4f5cb359739b90c4d67c7a498d6639f8f73379995d4f67408655db70f822a"}],
+      "control_audit": {
+        "cutoff": "e3b8035e58e49dd6d1570d504bf638a962f2601a",
+        "examined_commits": ["e3b8035e58e49dd6d1570d504bf638a962f2601a", "686871520e69533efe417bb3758795a5af7bf8bb", "1ce2ff8b0d9ee3aa34c5704e3310c4dd076e7be8", "991476f2f94a076743f3df0867cdbc52dd3abe56", "740b88ba7bfeb8328ca56a47cf3f8dfb804615be", "9e654ac5f2a8b966fc8c93d54cf0ca204e64a2f6", "94645f7dc96cc484548c39f45d318074da4e6260", "98dc5810e855530c9122b19212728912a966d98d", "488fc16eff35172db7c4b97c2d745d1c361ecdd9", "d3ca7a51aacd86d58ac1182dfe71384a2e5718a4", "f19c0b57299d1890e7d7763605e700938972307b", "c3293de9b5c6a0313d87bb1639b0683e35d176a9", "04cc84d24542cbaf56b23096d54ecf224cc41f41", "c0cd4f0e421f4cdc9ae6904fd4a6c5f993be23f6", "dfd00740f0789f8d5bb29efa595f7fac7c01fd85", "edadcf0017185996355d9b65565a2e9c7c1aff7c"],
+        "limitations": "Tests/docs-only stratum; short follow-up; finite issue searches and targeted patch audit cannot establish bug freedom; no fresh historical test execution or representative runtime coverage.",
+        "audited_at": "2026-10-18T21:04:59Z",
+        "attribution": "Inspected all three later tests/test_skills.py patches (#527, #535, #540): none modifies the added guard. No revert-subject commits. All-state issue searches and #488/#482 discussions yielded no attributable regression. #488 completion comment distinguishes #518 migration from #519 guard and reports exact-head tests/CI; that report is not a fresh execution. Full commands, results, URLs and limits are in evidence/control-audit.json."
+      }
+    }
+  ]
+}

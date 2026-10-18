@@ -14,6 +14,37 @@ The current package is `mapify-cli` `3.30.1`. It ships a Typer CLI, provider del
 
 The remainder of this file contains the deeper implementation dive (workflow-specific agent sequences, artifact specs, MCP integration, template maintenance, and context engineering).
 
+## Offline curated review corpus
+
+`skills_eval/review_corpus.py` owns the offline load/validate, reviewer-input export
+and correction/freshness boundaries. It imports no dispatcher and does not alter
+the operational review ledger. `tests/skills_eval/review_corpus/corpus.json` is
+version-controlled adjudicator authority: exact introducing parent/head/fix SHAs,
+allowlisted blob IDs, mapped faulty/fixed line spans, hashed reproduction evidence,
+related-case groups and complete #501–#520 dispositions. Controls record cutoff,
+examined history, audit time, attribution and limitations; audit is not proof of
+bug freedom. The two admitted bug scenarios use retained user-run evidence, with
+raw/normalized provenance explicitly separated.
+
+Validation rejects ambiguous/non-direct parents, fixing-input substitution,
+wrong blobs/ranges, unsupported source modes, unsafe paths and corrupt evidence.
+The export reads only pinned Git objects and writes plain allowlisted source and
+diff plus content hashes. It copies no Git database, fixing metadata or labels.
+This prevents artifact leakage, not same-user access: it is not an OS sandbox.
+Future live evaluation must separately isolate repository/network/adjudicator
+access, and remains unauthorized by this stage.
+
+Corrections are one strict JSON document with embedded revision-ordered history,
+content hashes and expected-revision compare-and-swap under a stable advisory
+lock. Unique sibling temporary files and atomic replacement prevent partial
+publication; this does not promise power-loss durability. Locks coordinate
+participants, not arbitrary same-user writes; hashes prove integrity, not human
+authority. Evidence consumption binds the full corpus (including groups,
+provenance, dispositions and cutoff), input, labels and correction state. Changed
+bindings fail closed after restart while original raw evidence remains historical.
+State is separate from author reactions and runtime review receipts. Stage 4
+model evaluation/policy promotion needs an explicit budgeted authorization.
+
 ## Skill invocation and routing
 
 Claude skill frontmatter blocks model invocation only for `map-release`. `skill_ir.invocation_mode` derives from that flag (`manual` for release, `automatic` for the other skills); `automatic` means model-invocable, not permission to bypass confirmation. Task skills keep `skillClass: task` and `enforcement: manual` as workflow routing metadata, alongside descriptions and negative triggers. `map-upgrade` retains version-specific major-upgrade consent. Skill-eval temp-flipping is a no-op for current non-release MAP skills and remains available for legacy/user skills and release evaluation in throwaway copies only.

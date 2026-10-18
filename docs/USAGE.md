@@ -319,6 +319,53 @@ Two additional structural checks run unconditionally: an **entry-point existence
 
 Implementation note: `/map-learn` is now maintained skill-first. The canonical slash surface lives in `.claude/skills/map-learn/SKILL.md`; MAP no longer ships a duplicate `.claude/commands/map-learn.md`, so there is only one place to update the learning workflow. The slash surface now advertises an optional `[workflow-summary]` argument, but zero-argument mode still auto-loads `.map/<branch>/learning-handoff.md` when present.
 
+## Offline historical review corpus
+
+Stage 3 of #523 is an offline corpus, not a second review orchestrator. From a
+repository checkout with the pinned historical Git objects available:
+
+```bash
+python -m mapify_cli.skills_eval.review_corpus validate tests/skills_eval/review_corpus --repo .
+python -m mapify_cli.skills_eval.review_corpus export tests/skills_eval/review_corpus --repo . --case c-41be --out /tmp/reviewer-c-41be
+```
+
+The destination must not exist. Export contains only allowlisted `base/` and
+`head/` source, `review.diff` and `input.json` with opaque case ID and SHA-256
+content hashes. It excludes `.git`, remotes, labels, fixing metadata, evidence,
+issue text and operational handoffs. Historical source is untrusted data: this
+is **not an OS sandbox**. Any future live reviewer must run isolated from the
+source repository, adjudicator material and network, receiving only the export.
+These commands start no reviewer, execute no historical code and use no model.
+
+`tests/skills_eval/review_corpus/corpus.json` records all #501–#520 dispositions,
+two introducing-diff bug cases and one tests/docs control. Evidence preserves the
+user-executed probe's raw output, normalized observations and attribution; it
+is not a claim that the automated curator reran that probe. The control is audited
+through a pinned cutoff, not proven bug-free or representative of runtime changes.
+Related cases carry split groups for future evaluation, without tuning here.
+
+Corrections use a separate, version-controlled JSON state with embedded history:
+
+```bash
+python -m mapify_cli.skills_eval.review_corpus bind tests/skills_eval/review_corpus --repo . --case c-41be --state /path/to/corrections.json > /tmp/binding.json
+python -m mapify_cli.skills_eval.review_corpus correct tests/skills_eval/review_corpus --repo . --case c-41be --state /path/to/corrections.json --id correction-1 --expected-revision 0 --reason 'Verified label correction' --labels /path/to/replacement-labels.json
+python -m mapify_cli.skills_eval.review_corpus freshness tests/skills_eval/review_corpus --repo . --case c-41be --state /path/to/corrections.json --binding /tmp/binding.json
+```
+
+`--labels` supplies the complete replacement label list in the manifest's schema,
+including head blob/line ranges and fix mappings. Missing state means revision 0;
+corrupt existing state is never reset. Identical correction IDs/payloads replay
+idempotently; conflicting IDs or stale expected revisions fail. Commit correction
+state alongside curated authority; retain the stable `.lock` file while processes
+are active. Corpus, group, provenance, label or correction changes invalidate old
+derived bindings, including after restart. Old raw outputs remain historical;
+`freshness` exits 2 rather than silently treating them as current. Author reactions
+and operational review ledgers are unchanged.
+
+Stage 4 evaluation and promotion remain deferred. Live runs require separate
+explicit approval of cases × policies × repeats, model, token/cost assumptions
+and spending ceiling; no safeguard relaxation is implied by this corpus.
+
 ## Review Workflow: Context Persistence and Detached Mode
 
 Standalone `/map-review` (Codex: `$map-review`) can review an external PR without an Actor AAG contract, blueprint, or subtask ID. Monitor reviews the diff and available requirements; missing planning artifacts limit context rather than constitute PR defects. This does not exempt an explicit Actor subtask validation assignment: its mutation-boundary check still rejects setup errors and strict-scope violations. Do not synthesize a blueprint or reset workflow state to run a review. Non-strict mutation-boundary warnings remain advisory; if writing `scope-violations.log` fails, the runner reports `audit_error` in its JSON response rather than silently losing the audit record.

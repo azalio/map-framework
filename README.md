@@ -60,6 +60,9 @@ For Go projects requiring build tags, set `checks.go.tags: integration,netgo` in
 Claude Code is the default provider. Cross-AI review compares explicit host and
 reviewer adapter vendors; same-vendor or unknown provenance is not labeled
 independent ([details](docs/USAGE.md#cross-ai-peer-review---cross-ai-runtime)).
+An [offline historical review corpus](docs/USAGE.md#offline-historical-review-corpus)
+provides pinned introducing diffs, adjudicator-only labels and audited controls.
+It starts no reviewers and makes no evaluation or policy-promotion claims.
 
 Claude Code:
 
