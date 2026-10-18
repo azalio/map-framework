@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Make Wayfind research attempt caps opt-in with `configure_research --budget-limit N` before work starts. New tickets have no default cap for authorized read-only evidence checks; persisted limits and scoped extension approvals remain binding. Preserve independent evidence, immutable reports, lifetime spend across refresh/recovery and separate consequential-action consent. (#500)
+
 ### Fixed
 - Add audited `refresh_open_research` for stale evidence on open research tickets, including after budget exhaustion. Preserve historical artifacts and lifetime spend, revoke stale acceptance, and allow honest blocked assessments in the fresh generation without weakening source checks or human-approved budget extensions. (#528)
 - Support fresh workflows and lossless serial blocker repair in linked Git worktrees. Validate shared object storage while keeping journals, recovery archives and index locks in the per-worktree Git directory; preserve fail-closed metadata and symlink checks, including dangling `.git` entries that must not bypass validation as pre-Git workspaces. (#533)

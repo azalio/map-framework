@@ -4262,7 +4262,8 @@ def _assert_wayfind_research_policy(body: str, reference: str) -> None:
     for required in (
         "narrow factual lookup", "two completed independent initial reports",
         "reserve_research_attempt", "created: true", "created: false",
-        "four lifetime attempts", "failed/unknown/cancelled", "unknown", "never blindly redispatch",
+        "no default attempt cap", "--budget-limit N", "Existing caps remain binding",
+        "separate explicit consent", "failed/unknown/cancelled", "unknown", "never blindly redispatch",
         "actual user authorization", "one-use", "general-purpose",
         "no sibling outputs", "no opt-in flag", "restart/reclaim never resets",
         "No recursive research rounds", "code-writing experiments",
