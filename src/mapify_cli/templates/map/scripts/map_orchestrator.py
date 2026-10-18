@@ -785,6 +785,7 @@ class StepState:
     current_subtask_id: str | None = None
     subtask_index: int = 0
     subtask_sequence: list[str] = field(default_factory=list)
+    resequence_history: list[dict] = field(default_factory=list)
     current_step_id: str = "1.0"
     current_step_phase: str = "DECOMPOSE"
     completed_steps: list[str] = field(default_factory=list)
@@ -876,6 +877,7 @@ class StepState:
             "current_subtask_id": self.current_subtask_id,
             "subtask_index": self.subtask_index,
             "subtask_sequence": self.subtask_sequence,
+            "resequence_history": self.resequence_history,
             "current_step_id": self.current_step_id,
             "current_step_phase": self.current_step_phase,
             "completed_steps": self.completed_steps,
@@ -921,6 +923,7 @@ class StepState:
             current_subtask_id=data.get("current_subtask_id"),
             subtask_index=data.get("subtask_index", 0),
             subtask_sequence=data.get("subtask_sequence", []),
+            resequence_history=data.get("resequence_history", []),
             current_step_id=data.get("current_step_id", "1.0"),
             current_step_phase=data.get("current_step_phase", "DECOMPOSE"),
             completed_steps=data.get("completed_steps", []),
@@ -2610,21 +2613,8 @@ def set_tdd_mode(value: str, branch: str) -> dict:
     return {"status": "success", "tdd_mode": state.tdd_mode}
 
 
-@_parent_mutation()
-def set_waves(branch: str, blueprint_path: str | None = None) -> dict:
-    """Compute execution waves from blueprint DAG and store in step_state.json.
-
-    Reads the blueprint JSON, builds a DependencyGraph, computes topological
-    waves, and splits waves by file conflicts. Stores the result in
-    step_state.execution_waves.
-
-    Args:
-        branch: Git branch name (sanitized)
-        blueprint_path: Path to blueprint JSON (default: .map/<branch>/blueprint.json)
-
-    Returns:
-        Dict with status and computed waves
-    """
+def _dependency_graph_types():
+    """Resolve graph types from the package or existing standalone install paths."""
     # Import here to avoid circular deps at module level
     try:
         from mapify_cli.dependency_graph import DependencyGraph, SubtaskNode
@@ -2667,16 +2657,23 @@ def set_waves(branch: str, blueprint_path: str | None = None) -> dict:
                     loaded = True
                     break
         if not loaded:
-            return {
-                "status": "error",
-                "message": (
-                    "Cannot import dependency_graph module. "
-                    "If mapify-cli was installed via 'uv tool install', invoke this "
-                    "script with the uv-tool Python interpreter directly: "
-                    "~/.local/share/uv/tools/mapify-cli/bin/python3 "
-                    ".map/scripts/map_orchestrator.py ..."
-                ),
-            }
+            raise ImportError(
+                "Cannot import dependency_graph module. "
+                "If mapify-cli was installed via 'uv tool install', invoke this "
+                "script with the uv-tool Python interpreter directly: "
+                "~/.local/share/uv/tools/mapify-cli/bin/python3 "
+                ".map/scripts/map_orchestrator.py ..."
+            )
+    return DependencyGraph, SubtaskNode  # pyright: ignore[reportPossiblyUnboundVariable]
+
+
+@_parent_mutation()
+def set_waves(branch: str, blueprint_path: str | None = None) -> dict:
+    """Compute dependency/file-conflict waves and initialize their execution cursor."""
+    try:
+        DependencyGraph, SubtaskNode = _dependency_graph_types()
+    except ImportError as exc:
+        return {"status": "error", "message": str(exc)}
 
     if blueprint_path is None:
         blueprint_path = f".map/{branch}/blueprint.json"
@@ -2702,12 +2699,7 @@ def set_waves(branch: str, blueprint_path: str | None = None) -> dict:
     if not subtasks:
         return {"status": "error", "message": "No subtasks in blueprint"}
 
-    # Build graph. The DependencyGraph / SubtaskNode symbols are bound either
-    # by the top-level `from mapify_cli.dependency_graph import ...` in the try
-    # block above OR by the importlib-spec fallback in the except block. Pyright
-    # cannot follow the dynamic spec path so the names look possibly-unbound;
-    # the except branch returns early when neither import succeeds.
-    graph = DependencyGraph()  # pyright: ignore[reportPossiblyUnboundVariable]
+    graph = DependencyGraph()
     affected_files_map: dict[str, set] = {}
     for st in subtasks:
         st_id = st.get("id", "")
@@ -4755,6 +4747,188 @@ def set_subtasks(subtask_ids: list[str], branch: str) -> dict:
     return response
 
 
+def _resequence_blueprint(branch: str, sequence: list[str]) -> dict[str, dict]:
+    """Load a complete dependency contract; never infer safety from missing data."""
+    payload = json.loads(Path(f".map/{branch}/blueprint.json").read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Blueprint must be an object")
+    body = payload.get("blueprint", payload)
+    subtasks = body.get("subtasks") if isinstance(body, dict) else None
+    if not isinstance(subtasks, list):
+        raise ValueError("Blueprint subtasks must be a list")
+    by_id: dict[str, dict] = {}
+    for subtask in subtasks:
+        if not isinstance(subtask, dict) or not isinstance(subtask.get("id"), str):
+            raise ValueError("Malformed blueprint subtask")
+        sid = subtask["id"]
+        deps = subtask.get("dependencies", [])
+        files = subtask.get("affected_files", [])
+        if (sid in by_id or not isinstance(deps, list)
+                or any(not isinstance(dep, str) for dep in deps)
+                or not isinstance(files, list)
+                or any(not isinstance(path, str) for path in files)):
+            raise ValueError("Malformed blueprint dependencies or affected_files")
+        by_id[sid] = subtask
+    if not set(sequence) <= set(by_id):
+        raise ValueError("Sequence IDs missing from blueprint")
+    deps_map = {sid: subtask.get("dependencies", []) for sid, subtask in by_id.items()}
+    if any(dep not in by_id or dep == sid for sid, deps in deps_map.items() for dep in deps):
+        raise ValueError("Unknown or self-referencing blueprint dependency")
+    if any(dep not in sequence for sid in sequence for dep in deps_map[sid]):
+        raise ValueError("Scheduled subtask dependency is missing from the sequence")
+    _, cycle = _topological_sort_subtasks(list(by_id), deps_map)
+    sorted_ids, error = _topological_sort_subtasks(sequence, deps_map)
+    if cycle or error or sorted_ids != sequence:
+        raise ValueError(cycle or error or "Requested sequence violates blueprint dependencies")
+    return by_id
+
+
+def _resequence_waves(
+    state: dict, sequence: list[str], subtasks: dict[str, dict], branch: str,
+) -> list[list[str]]:
+    """Keep the admitted wave frame and schedule only unstarted future work."""
+    waves = state.get("execution_waves", [])
+    old_order = state["subtask_sequence"]
+    protected: set[str] = set()
+    retained: list[list[str]] = []
+    strategy = select_execution_strategy(branch)
+    # Intent: Inactive waves are not admission authority only when explicit off prevents a mode flip.
+    inactive_serial = (
+        strategy["strategy"] == "sequential"
+        and (strategy["worktree_isolation"] == "off" or strategy["wave_mode"] == "off")
+    )
+    if waves:
+        index = state.get("current_wave_index", 0)
+        if (not isinstance(waves, list) or type(index) is not int
+                or not 0 <= index < len(waves)
+                or any(not isinstance(wave, list) or not wave for wave in waves)):
+            raise ValueError("Inconsistent execution wave cursor")
+        flat = [sid for wave in waves for sid in wave]
+        if (any(not isinstance(sid, str) for sid in flat)
+                or len(flat) != len(set(flat)) or set(flat) != set(old_order)):
+            raise ValueError("Execution waves do not match the active sequence")
+        if not inactive_serial:
+            if state["current_subtask_id"] not in waves[index]:
+                raise ValueError("Current subtask is not in the active wave")
+            retained = waves[:index + 1]
+            protected = {sid for wave in retained for sid in wave}
+            if any(sequence.index(sid) != old_order.index(sid) for sid in protected):
+                raise ValueError("Cannot move an admitted current-wave sibling")
+            future = set(old_order) - protected
+            if any(sid in future for sid in state.get("subtask_phases", {})):
+                raise ValueError("Future wave already has started subtask phases")
+            earlier: set[str] = set()
+            for wave in retained:
+                if any(dep not in earlier for sid in wave
+                       for dep in subtasks[sid].get("dependencies", [])):
+                    raise ValueError("Retained wave dependency is not in an earlier wave")
+                earlier.update(wave)
+    sidecar = Path(f".map/{branch}/worktrees.json")
+    if sidecar.exists():
+        worktrees = json.loads(sidecar.read_text(encoding="utf-8"))
+        groups = worktrees.get("wave_groups", {}) if isinstance(worktrees, dict) else None
+        if not isinstance(groups, dict):
+            raise ValueError("Malformed active wave groups")
+        if groups and inactive_serial:
+            raise ValueError("Forced sequential run still has active parallel groups")
+        for group in groups.values():
+            ids = group.get("subtask_ids") if isinstance(group, dict) else None
+            if (not isinstance(ids, list) or not ids
+                    or any(not isinstance(sid, str) for sid in ids)
+                    or not waves or not set(ids) <= set(waves[state["current_wave_index"]])):
+                raise ValueError("Active parallel group is inconsistent with current wave")
+    if not waves:
+        return []
+    DependencyGraph, SubtaskNode = _dependency_graph_types()
+    graph = DependencyGraph()
+    pending = [sid for sid in sequence if sid not in protected]
+    for sid in pending:
+        graph.add_node(SubtaskNode(id=sid, dependencies=subtasks[sid].get("dependencies", [])))
+    raw_waves = graph.compute_waves()
+    if raw_waves is None:
+        raise ValueError("Cycle in pending wave graph")
+    files = {sid: set(subtasks[sid].get("affected_files", [])) for sid in pending}
+    positions = {sid: index for index, sid in enumerate(sequence)}
+    for wave in raw_waves:
+        retained.extend(graph.split_wave_by_file_conflicts(sorted(wave, key=positions.__getitem__), files))
+    if state.get("current_wave_index", 0) >= len(retained):
+        raise ValueError("Recomputed waves cannot preserve the existing wave cursor")
+    return retained
+
+
+def resequence_pending(sequence: list[str], branch: str, reason: str) -> dict:
+    """Atomically change pending order without reconstructing the execution frame."""
+    branch = sanitize_branch_name(branch)
+    state_file = Path(f".map/{branch}/step_state.json")
+    try:
+        with branch_transaction(state_file.parent):
+            refusal = _interruption_guard(branch)
+            if refusal is not None:
+                return {**refusal, "status": "error"}
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            if not isinstance(state, dict):
+                raise ValueError("State must be an object")
+            for key in ("subtask_results", "subtask_phases", "subtask_retry_counts"):
+                if not isinstance(state.get(key, {}), dict):
+                    raise ValueError(f"Malformed state field: {key}")
+            if (any(not isinstance(value, dict) for value in state.get("subtask_results", {}).values())
+                    or any(not isinstance(value, str) for value in state.get("subtask_phases", {}).values())):
+                raise ValueError("Malformed subtask results or phases")
+            counts = [state.get("retry_count", 0), *state.get("subtask_retry_counts", {}).values()]
+            if any(type(value) is not int or value < 0 for value in counts):
+                raise ValueError("Malformed retry counts")
+            if not isinstance(state.get("resequence_history", []), list):
+                raise ValueError("Malformed resequence audit history")
+            step_id = state.get("current_step_id")
+            if (not isinstance(step_id, str) or step_id not in {*STEP_PHASES, "CONTRACT_READY", "COMPLETE", "BLOCKED_ON_DEPS"}
+                    or not isinstance(state.get("current_step_phase"), str)):
+                raise ValueError("Malformed current step")
+            for key in ("pending_steps", "completed_steps", "skipped_steps"):
+                steps = state.get(key, [])
+                if not isinstance(steps, list) or any(not isinstance(step, str) for step in steps):
+                    raise ValueError(f"Malformed state field: {key}")
+            if type(state.get("current_wave_index", 0)) is not int or state.get("current_wave_index", 0) < 0:
+                raise ValueError("Malformed wave cursor")
+            old_order = state["subtask_sequence"]
+            if (
+                not isinstance(sequence, list) or not isinstance(old_order, list)
+                or not old_order
+                or any(not isinstance(sid, str) or not _SUBTASK_ID_FULL_RE.fullmatch(sid)
+                       for sid in old_order + sequence)
+                or len(set(old_order)) != len(old_order)
+                or len(sequence) != len(old_order)
+                or set(sequence) != set(old_order)
+            ):
+                raise ValueError("Sequence must contain the same unique subtask IDs")
+            cursor = state["subtask_index"]
+            if (type(cursor) is not int or not 0 <= cursor < len(old_order)
+                    or old_order[cursor] != state["current_subtask_id"]):
+                raise ValueError("Inconsistent current subtask cursor")
+            protected = set(old_order[:cursor + 1])
+            protected.update(_completed_subtask_ids_for_deps(StepState.from_dict(state)))
+            protected.update(state.get("subtask_phases", {}))
+            protected.update(state.get("subtask_retry_counts", {}))
+            if any(sequence.index(sid) != old_order.index(sid)
+                   for sid in protected if sid in old_order):
+                raise ValueError("Cannot move completed or current subtasks")
+            if not isinstance(reason, str) or not reason.strip():
+                raise ValueError("A non-empty reason is required")
+            subtasks = _resequence_blueprint(branch, sequence)
+            waves = _resequence_waves(state, sequence, subtasks, branch)
+            if old_order == sequence:
+                return {"status": "success", "changed": False}
+            if state.get("execution_waves"):
+                state["execution_waves"] = waves
+            state["subtask_sequence"] = sequence
+            state.setdefault("resequence_history", []).append(
+                {"old_order": old_order, "new_order": sequence, "reason": reason}
+            )
+            atomic_write_text(state_file, json.dumps(state, indent=2, ensure_ascii=True))
+            return {"status": "success", "changed": True, "subtask_sequence": sequence}
+    except (OSError, ValueError, KeyError, TypeError, ImportError) as exc:
+        return {"status": "error", "message": f"Cannot resequence pending subtasks: {exc}"}
+
+
 def _contract_artifact_paths(branch: str, subtask_id: str) -> tuple[Path, Path]:
     """Return the expected persisted TDD contract artifact paths."""
     plan_dir = Path(f".map/{branch}")
@@ -5250,6 +5424,7 @@ def main():
             "set_tdd_mode",
             "skip_step",
             "set_subtasks",
+            "resequence_pending",
             "mark_contract_ready",
             "begin_acceptance_authoring",
             "request_acceptance_revision",
@@ -5284,6 +5459,7 @@ def main():
         "extra_args", nargs="*", help="Additional arguments (e.g., more subtask IDs)"
     )
     parser.add_argument("--branch", help="Git branch (auto-detected if omitted)")
+    parser.add_argument("--sequence", help="Full comma-separated sequence for resequence_pending")
     parser.add_argument("--author", default="test-writer")
     parser.add_argument("--authoring-stage", default="test_first")
     parser.add_argument("--approval-hold", help="Approved hold ID for begin_repair")
@@ -5467,6 +5643,10 @@ def main():
     # cannot escape the ``.map/<branch>/`` directory via ``..`` or differ
     # from the auto-detected directory for the same logical branch
     # (``feature/foo`` vs ``feature-foo``).
+    if args.command == "resequence_pending" and args.task_or_step:
+        if args.branch or args.extra_args:
+            parser.error("Use either positional branch or --branch, not both")
+        args.branch = args.task_or_step
     branch = sanitize_branch_name(args.branch) if args.branch else get_branch_name()
 
     # Provider-agnostic context-budget warning. No-op when no transcript is
@@ -5648,6 +5828,15 @@ def main():
                 sys.exit(1)
             result = skip_step(args.task_or_step, branch)
             print(json.dumps(result, indent=2))
+
+        elif args.command == "resequence_pending":
+            result = resequence_pending(
+                args.sequence.split(",") if args.sequence is not None else [],
+                branch, args.reason,
+            )
+            print(json.dumps(result, indent=2))
+            if result.get("status") == "error":
+                sys.exit(1)
 
         elif args.command == "set_subtasks":
             if not args.task_or_step:
