@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Add audited `refresh_open_research` for stale evidence on open research tickets, including after budget exhaustion. Preserve historical artifacts and lifetime spend, revoke stale acceptance, and allow honest blocked assessments in the fresh generation without weakening source checks or human-approved budget extensions. (#528)
 - Support fresh workflows and lossless serial blocker repair in linked Git worktrees. Validate shared object storage while keeping journals, recovery archives and index locks in the per-worktree Git directory; preserve fail-closed metadata and symlink checks, including dangling `.git` entries that must not bypass validation as pre-Git workspaces. (#533)
 - Allow Claude to invoke all MAP skills through the Skill tool except `map-release`, which remains manual-only. Refresh with `mapify upgrade`; task routing metadata and `map-upgrade` major-version confirmation gates are preserved. (#529)
 

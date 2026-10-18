@@ -92,15 +92,15 @@ def test_reservations_are_durable_idempotent_and_spent_after_reclaim() -> None:
     assert cli("research_context", "demo", ticket)["context"]["spent_attempts"] == 4
 
 
-def completed(ticket: str, request: str = "request-1", investigator: str = "worker-a", phase: str = "initial", target: Any = None) -> dict[str, Any]:
+def completed(ticket: str, request: str = "request-1", investigator: str = "worker-a", phase: str = "initial", target: Any = None, source: str = "Present") -> dict[str, Any]:
     path = brief(ticket, f"{request}.brief.json", target)
     attempt = reserve(ticket, request, phase, investigator, path)["attempt"]
-    Path("answer.txt").write_text("Present")
+    Path("answer.txt").write_text(source)
     report = {
         "protocol_version": 1, "ticket_id": ticket, "attempt_id": attempt["attempt_id"],
         "brief_sha256": attempt["brief_sha256"], "answer": "Present",
         "claims": [{"id": "present", "text": "Present", "evidence": ["source"]}],
-        "sources": [{"id": "source", "kind": "local_code", "path": "answer.txt", "sha256": hashlib.sha256(b"Present").hexdigest()}],
+        "sources": [{"id": "source", "kind": "local_code", "path": "answer.txt", "sha256": hashlib.sha256(source.encode()).hexdigest()}],
         "decisive_assumptions": [], "falsification_conditions": ["Source absent"], "uncertainty": [],
     }
     report_path = write_artifact(ticket, f"{attempt['attempt_id']}/report.json", report)
@@ -253,6 +253,8 @@ def test_editorial_correction_reuses_current_evidence_without_spending() -> None
     result = cli("amend_resolution", "demo", ticket, "--gist", "Present, clarified", "--resolution-path", f"research/{ticket}/editorial.resolution.md", "--assessment-path", path, "--session", "owner")
     assert result["status"] == "success", result
     assert cli("research_context", "demo", ticket)["context"]["spent_attempts"] == 1
+    assert cli("emit_wayfind_handoff", "demo")["status"] == "success"
+    assert cli("validate_wayfind_handoff", "demo")["status"] == "success"
 
 
 def test_independent_initials_cannot_use_different_settling_criteria() -> None:
@@ -383,4 +385,108 @@ def test_unknown_can_be_explicitly_cancelled_without_resetting_spend() -> None:
     attempt = reserve(ticket)["attempt"]
     assert cli("record_research_attempt", "demo", ticket, "owner", attempt["attempt_id"], "unknown", "--reason", "No response")["status"] == "success"
     assert cli("record_research_attempt", "demo", ticket, "owner", attempt["attempt_id"], "cancelled", "--reason", "Confirmed abandoned")["status"] == "success"
+    assert cli("research_context", "demo", ticket)["context"]["spent_attempts"] == 1
+
+
+def test_open_research_refresh_after_exhaustion_preserves_history_and_budget() -> None:
+    ticket = research_ticket("independent")
+    attempts = [completed(ticket, f"old-{i}", f"worker-{i}") for i in range(4)]
+    blocked = assessment(ticket, attempts, "stale-blocked", verdict="blocked")
+    Path("answer.txt").write_text("Changed")
+    state_path = Path(".map/wayfind/demo/state.json")
+    before = state_path.read_bytes()
+    assert "source content changed" in cli("record_research_assessment", "demo", ticket, "owner", blocked)["message"]
+    assert cli("begin_research_correction", "demo", ticket, "owner", "Refresh stale source")["status"] == "error"
+    assert state_path.read_bytes() == before
+    artifacts = {p: p.read_bytes() for p in state_path.parent.rglob("*") if p.is_file() and "research" in p.parts}
+    refreshed = cli("refresh_open_research", "demo", ticket, "owner", "Source evolved")
+    assert refreshed["status"] == "success", refreshed
+    assert refreshed["budget_limit"] == refreshed["spent_attempts"] == 4
+    entry = refreshed["refresh"]
+    assert entry["from_generation"] == 0 and entry["to_generation"] == 1
+    assert {a["attempt_id"] for a in entry["stale_attempts"]} == {a["attempt_id"] for a in attempts}
+    assert all("source content changed" in a["error"] for a in entry["stale_attempts"])
+    ledger = cli("show_ticket", "demo", ticket)["ticket"]["research"]
+    assert ledger["attempts"] == attempts
+    assert ledger["evidence_refresh_history"] == [entry]
+    assert all(p.read_bytes() == contents for p, contents in artifacts.items())
+    assert reserve(ticket, "fresh-0")["code"] == "research_budget_exhausted"
+    blocked = assessment(ticket, [], "fresh-blocked", verdict="blocked")
+    assert cli("record_research_assessment", "demo", ticket, "owner", blocked)["status"] == "success"
+    assert cli("resolve_ticket", "demo", ticket, "owner", "Present", f"research/{ticket}/fresh-blocked.resolution.md")["code"] == "research_assessment_required"
+    approval = write_artifact(ticket, "refresh-approval.json", {"protocol_version": 1, "ticket_id": ticket, "extension_id": "refresh-extra", "additional_attempts": 2, "current_budget_limit": 4, "human_approval": "Yes, authorize two fresh investigations", "reason": "Source evolved"})
+    assert cli("extend_research_budget", "demo", ticket, "owner", "refresh-extra", "2", approval, "Source evolved")["budget_limit"] == 6
+    fresh = [completed(ticket, f"fresh-{i}", f"fresh-worker-{i}", source="Changed") for i in range(2)]
+    assert accept(ticket, fresh, "fresh-accepted")["status"] == "success"
+    ledger = cli("show_ticket", "demo", ticket)["ticket"]["research"]
+    assert ledger["attempts"][:4] == attempts
+    assert len(ledger["attempts"]) == ledger["budget_limit"] == 6
+    assert all(a["generation"] == 1 for a in ledger["attempts"][4:])
+    assert cli("emit_wayfind_handoff", "demo")["status"] == "success"
+    assert cli("validate_wayfind_handoff", "demo")["status"] == "success"
+
+
+@pytest.mark.parametrize("condition", ["current", "empty", "stranger", "reserved", "unknown", "resolved", "correction", "revision", "reason"])
+def test_open_research_refresh_rejects_without_mutation(condition: str) -> None:
+    ticket = research_ticket()
+    attempt = completed(ticket) if condition != "empty" else None
+    if condition in {"resolved", "correction"}:
+        assert attempt is not None
+        assert accept(ticket, [attempt])["status"] == "success"
+        if condition == "correction":
+            assert cli("begin_research_correction", "demo", ticket, "owner", "Correct")["status"] == "success"
+    if condition not in {"current", "empty"}:
+        Path("answer.txt").write_text("Changed")
+    if condition in {"reserved", "unknown"}:
+        pending = reserve(ticket, "pending")["attempt_id"]
+        if condition == "unknown":
+            assert cli("record_research_attempt", "demo", ticket, "owner", pending, "unknown", "--reason", "No response")["status"] == "success"
+    state_path = Path(".map/wayfind/demo/state.json")
+    before = state_path.read_bytes()
+    result = wr.refresh_open_research("demo", ticket, "stranger" if condition == "stranger" else "owner", " " if condition == "reason" else "Changed", expected_revision=-1 if condition == "revision" else None)
+    assert result["status"] == "error", result
+    assert state_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("boundary", ["before_replace", "after_replace", "views"])
+def test_open_research_refresh_restart_is_atomic_and_replay_cannot_advance(boundary: str) -> None:
+    ticket = research_ticket()
+    original = completed(ticket)
+    Path("answer.txt").write_text("Changed")
+    injection = {
+        "before_replace": "wr.Path.replace = lambda self, target: (_ for _ in ()).throw(OSError('before replace'))",
+        "after_replace": "original = wr.Path.replace\ndef replace(self, target):\n original(self, target)\n raise OSError('after replace')\nwr.Path.replace = replace",
+        "views": "wr.refresh_open_research.__wrapped__.__globals__['_render_views'] = lambda state: (_ for _ in ()).throw(OSError('views'))",
+    }[boundary]
+    code = "import runpy, types\nwr=types.SimpleNamespace(**runpy.run_path(" + repr(str(SOURCE)) + "))\n" + injection + "\nwr.refresh_open_research('demo', '" + ticket + "', 'owner', 'Changed')\n"
+    subprocess.run([sys.executable, "-c", code], check=True, capture_output=True, text=True)
+    replay = cli("refresh_open_research", "demo", ticket, "owner", "Changed")
+    assert replay["status"] == ("success" if boundary == "before_replace" else "error")
+    ledger = cli("show_ticket", "demo", ticket)["ticket"]["research"]
+    assert ledger["evidence_generation"] == 1
+    assert len(ledger["evidence_refresh_history"]) == 1
+    assert ledger["attempts"] == [original]
+    assert ledger["budget_limit"] == 4
+    before = Path(".map/wayfind/demo/state.json").read_bytes()
+    assert cli("refresh_open_research", "demo", ticket, "owner", "Changed again")["status"] == "error"
+    assert Path(".map/wayfind/demo/state.json").read_bytes() == before
+
+
+def test_open_research_refresh_revokes_acceptance_and_cannot_reuse_retired_generation() -> None:
+    ticket = research_ticket()
+    attempt = completed(ticket)
+    old_path = assessment(ticket, [attempt], "old-accepted")
+    assert cli("record_research_assessment", "demo", ticket, "owner", old_path)["status"] == "success"
+    Path("answer.txt").write_text("Changed")
+    assert cli("refresh_open_research", "demo", ticket, "owner", "Changed")["status"] == "success"
+    Path("answer.txt").write_text("Present")
+    before = Path(".map/wayfind/demo/state.json").read_bytes()
+    assert cli("record_research_assessment", "demo", ticket, "owner", old_path)["status"] == "error"
+    assert cli("resolve_ticket", "demo", ticket, "owner", "Present", f"research/{ticket}/old-accepted.resolution.md")["code"] == "research_assessment_required"
+    assert Path(".map/wayfind/demo/state.json").read_bytes() == before
+    ledger = cli("show_ticket", "demo", ticket)["ticket"]["research"]
+    assert ledger["assessments"][0]["assessment_id"] == "old-accepted"
+    assert ledger["evidence_refresh_history"][0]["prior_accepted_assessment_id"] == "old-accepted"
+    assert ledger["accepted_assessment_id"] is None
+    assert reserve(ticket, path=attempt["brief_path"])["attempt"] == attempt
     assert cli("research_context", "demo", ticket)["context"]["spent_attempts"] == 1
