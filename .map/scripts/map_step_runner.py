@@ -532,6 +532,7 @@ APPROVAL_HOLD_KINDS = frozenset(
         "template_overwrite",  # risky managed-file overwrite decision
         "plan_approval",       # legacy plan approval gate (no longer produced)
         "dangerous_action",    # generic risky action not otherwise categorised
+        "review_consent",      # snapshot-bound human review consent; never auto-approved
     }
 )
 APPROVAL_HOLD_TERMINAL_STATES = frozenset({"approved", "denied", "expired", "cancelled"})
@@ -541,7 +542,7 @@ APPROVAL_HOLD_ALL_STATES = frozenset({"pending"}) | APPROVAL_HOLD_TERMINAL_STATE
 # routing outright -- route_task blocks the chain rather than proceeding
 # when either is pending. The complementary AUTO_APPROVABLE_HOLD_KINDS
 # set is defined immediately alongside this one.
-HARD_STOP_HOLD_KINDS = frozenset({"dangerous_action", "safety_guardrail"})
+HARD_STOP_HOLD_KINDS = frozenset({"dangerous_action", "safety_guardrail", "review_consent"})
 
 # /map-auto (issue #414): hold kinds auto_decide_holds may decide
 # without a human -- workflow-control gates, never safety gates. Together
@@ -8675,6 +8676,7 @@ def _validate_review_run(data: Any) -> str | None:
         valid_rosters = valid_rosters[:2]
     elif data["review_mode"] == "adversarial":
         valid_rosters = valid_rosters[2:]
+    valid_rosters += [roster | {"security"} for roster in valid_rosters]
     if len(set(roster)) != len(roster) or set(roster) not in valid_rosters:
         return "invalid scheduled reviewer roster"
     if not isinstance(data.get("arguments"), str) or not isinstance(data.get("mode"), str):
@@ -8777,8 +8779,10 @@ def _review_trusted_policy() -> dict[str, Any]:
         if not ref:
             raise ValueError("Trusted default policy revision is unavailable")
         revision = _review_git("rev-parse", "--verify", f"{ref}^{{commit}}")
+        # Authority survives failures in HEAD ancestry or policy discovery.
+        result.update({"revision": revision, "ref": ref})
         base = _review_git("merge-base", revision, "HEAD")
-        result.update({"revision": revision, "ref": ref, "base": base})
+        result["base"] = base
         changed = set(_review_git_bytes("diff", "--no-renames", "--name-only", "-z", base, "--").split(b"\0"))
         changed.update(_review_git_bytes("ls-files", "--others", "--exclude-standard", "-z").split(b"\0"))
         policies = {"REVIEW.md"}
@@ -8881,9 +8885,10 @@ def _review_policy(binding: dict[str, Any] | None = None) -> str:
 
 def _review_target() -> dict[str, Any]:
     """Bind bytes, modes, index, local inputs and merge state without decoding Git paths."""
+    trusted_policy = _review_trusted_policy()
+    security_policy = _review_security_policy(trusted_policy)
     try:
         head = _review_git("rev-parse", "HEAD")
-        trusted_policy = _review_trusted_policy()
         base = trusted_policy.get("base", "")
         base_ref = trusted_policy.get("ref", "")
         names = sorted({os.fsdecode(name) for name in _review_git_bytes(
@@ -8903,13 +8908,15 @@ def _review_target() -> dict[str, Any]:
         fingerprint = json.dumps(manifest, sort_keys=True).encode() + index + diff
         return {"head": head, "base": base, "base_ref": base_ref,
                 "trusted_policy": trusted_policy, "shadow_risk": _review_shadow_risk(base, trusted_policy),
+                "security_gate_policy": security_policy,
                 "base_tip": trusted_policy.get("revision", ""),
                 "reusable": bool(base) and not dirty and not conflicts,
                 "local_digest": hashlib.sha256(fingerprint).hexdigest(),
                 "diff_digest": hashlib.sha256(diff).hexdigest(), "policy_hash": _review_policy(),
                 "required_files": names, "conflicts": conflicts}
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
-        return {"reusable": False, "unverified_reason": str(exc)}
+        return {"reusable": False, "unverified_reason": str(exc),
+                "trusted_policy": trusted_policy, "security_gate_policy": security_policy}
 
 
 def _python_review_dependencies(changed: list[str]) -> list[str]:
@@ -8958,6 +8965,8 @@ def review_round_scope(branch: str | None = None) -> dict[str, Any]:
         rounds = ledger.get("convergence", {}).get("rounds", [])
         completed = [row for row in rounds if "completed_at" in row]
         target = _review_target()
+        if _review_requires_consent(target) and _review_gates_strict(target):
+            return {"kind": "full", "reason": "Sensitive/unknown changes require full security review"}
         if not completed or not target.get("reusable"):
             return fallback
         previous = completed[-1]
@@ -9131,6 +9140,10 @@ def begin_review_run(
         ))
         if adversarial and "--quick" in flags:
             scheduled_reviewers.remove("edge_case")
+    target = _review_target()
+    if _review_requires_consent(target) and _review_gates_strict(target):
+        mode = "full"
+        scheduled_reviewers = [*(NORMAL_REVIEWERS if "monitor" in scheduled_reviewers else ADVERSARIAL_REVIEWERS), "security"]
     payload: ReviewRun = {
         "schema_version": REVIEW_RUN_SCHEMA, "review_mode": review_mode,
         "scheduled_reviewers": scheduled_reviewers, "arguments": arguments, "mode": mode,
@@ -9158,8 +9171,20 @@ def begin_review_run(
     if error:
         return {"status": "error", "message": error}
     branch_dir = _review_branch_dir(branch)
+    consent: dict[str, Any] = {"status": "not_required"}
+    if _review_requires_consent(target):
+        consent = _ensure_review_consent({"target": target, "policy_hash": _review_policy(dict(payload))},
+                                         branch=branch_dir.name)
+        if consent["status"] == "error" and _review_gates_strict(target):
+            return consent
     prior = _read_review_ledger(branch_dir)
     convergence = prior.get("convergence", {"rounds": [], "started_at": time.time()})
+    if (convergence.get("outcome") == "awaiting_human" and convergence.get("rounds")
+            and _review_binding_current(convergence["rounds"][-1])):
+        return {"status": "success", "resumed": True, "completed": True,
+                "round_id": convergence["rounds"][-1]["round_id"], **dict(payload),
+                "human_consent": consent, "stop_reason": "human_consent_pending"}
+
     rounds = convergence["rounds"]
     pending = next((row for row in rounds if not _review_round_terminal(row)), None)
     if not round_id:
@@ -9172,10 +9197,17 @@ def begin_review_run(
             return {"status": "error", "message": "Round was abandoned; use a new round ID within the remaining budget"}
         if existing["binding"] != dict(payload) or not _review_binding_current(existing):
             return {"status": "error", "message": "Round identity already bound to different review inputs"}
+        prior["human_consent"] = consent
+        try:
+            _write_json_file(branch_dir / "review-verdict-ledger.json", prior)
+        except OSError as exc:
+            consent = {**consent, "persistence_error": str(exc)}
+            if _review_gates_strict(target):
+                return {"status": "error", "human_consent": consent}
         if not existing.get("prepared"):
             _prepare_review_inputs(branch_dir, prior, existing)
         return {"status": "success", "resumed": True, "round_id": round_id,
-                "completed": "completed_at" in existing, **dict(payload),
+                "completed": "completed_at" in existing, "human_consent": consent, **dict(payload),
                 **{key: existing.get(key) for key in ("target", "required_files", "policy_hash", "capability")}}
     if pending:
         return {"status": "error", "message": "Resume the unfinished review round or explicitly abandon_review_round first"}
@@ -9200,6 +9232,7 @@ def begin_review_run(
         if not prior:
             prior = normalize_review_verdict(monitor_result={"issues": []}, branch=branch)
         prior["convergence"] = convergence
+        prior["human_consent"] = consent
         _write_json_file(branch_dir / "review-verdict-ledger.json", prior)
         _prepare_review_inputs(branch_dir, prior, row)
         archive_path = branch_dir / "review-input-archive" / round_id.encode().hex()
@@ -9207,7 +9240,7 @@ def begin_review_run(
         return {"status": "error", "message": f"Review start failed: {exc}",
                 "archive_path": str(archive_path) if archive_path else None}
     return {"status": "success", "review_mode": review_mode, "round_id": round_id, "resumed": False,
-            "scheduled_reviewers": scheduled_reviewers,
+            "human_consent": consent, "scheduled_reviewers": scheduled_reviewers,
             "archived_inputs": [path.name for path in previous],
             "archive_path": str(archive_path) if archive_path else None,
             **{key: row[key] for key in ("target", "required_files", "policy_hash", "capability")}}
@@ -10415,6 +10448,32 @@ def review_publication(
             "suppressed": [revision for revision in current if revision in published]}
 
 
+def _review_security_gate(row: dict[str, Any], directory: Path) -> dict[str, Any]:
+    """Security has its own captured role receipt, never an execution-check substitute."""
+    if not _review_requires_consent(row.get("target", {})):
+        return {"status": "NOT_REQUIRED", "reasons": []}
+    reasons: list[str] = []
+    if row.get("capability", {}).get("status") != "verified" or not _review_binding_current(row):
+        reasons.append("Security capability or snapshot/policy binding is unverified")
+    orderings = ("default", "reverse") if row["binding"]["review_mode"] == "compare_orderings" else ("default",)
+    for ordering in orderings:
+        witness = row.get("receipts", {}).get(f"{ordering}:security", {})
+        path = directory / witness.get("artifact", "missing-security")
+        if (witness.get("target") != row.get("target") or witness.get("policy_hash") != row.get("policy_hash")
+                or not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != witness.get("sha256")):
+            reasons.append(f"{ordering}: missing, stale or changed independent security receipt")
+            continue
+        output = json.loads(path.read_text(encoding="utf-8"))
+        receipt = output.get("receipt", {})
+        covered = receipt.get("covered_files")
+        if (not isinstance(covered, list) or set(row.get("required_files", [])) - set(covered)
+                or receipt.get("skipped_files") != [] or receipt.get("denied_access") != []):
+            reasons.append(f"{ordering}: incomplete security coverage")
+        if output.get("all_clear") is not True or output.get("findings") != []:
+            reasons.append(f"{ordering}: security review is not clear")
+    return {"status": "INCOMPLETE" if reasons else "COMPLETE", "reasons": reasons}
+
+
 def _review_completeness(row: dict[str, Any], directory: Path) -> dict[str, Any]:
     reasons: list[str] = []
     blocked = bool(row.get("target", {}).get("conflicts"))
@@ -10464,6 +10523,11 @@ def _review_completeness(row: dict[str, Any], directory: Path) -> dict[str, Any]
                 for check_id in set(receipt["check_evidence"]) | set(binding.get("required_checks", [])):
                     if not _review_check_valid(directory, check_id, row):
                         reasons.append(f"{ordering}:{name}: check evidence {check_id!r} is missing, stale or unsuccessful")
+    security = _review_security_gate(row, directory)
+    if _review_gates_strict(row.get("target", {})):
+        reasons.extend(security["reasons"])
+        if row.get("target", {}).get("security_gate_policy", {}).get("error"):
+            reasons.append("Trusted security gate policy is invalid")
     return {"status": "BLOCKED" if blocked else ("INCOMPLETE" if reasons else "COMPLETE"), "reasons": reasons}
 
 
@@ -10536,8 +10600,13 @@ def _complete_review_round(
     ledger["code_approval"] = {"approved": approved, "target": row["target"], "policy_hash": row["policy_hash"]}
     ledger["execution_check_history"] = prior.get("execution_check_history", [])
     ledger["execution_checks"] = prior.get("execution_checks", {})
-    ledger["human_consent"] = prior.get("human_consent", {"status": "not_recorded"})
+    ledger["human_consent"] = {"status": "not_required"}
+    ledger["security_gate"] = _review_security_gate(row, directory)
+    if _review_requires_consent(row["target"]):
+        ledger["human_consent"] = _ensure_review_consent(row, branch=directory.name)
     _update_review_convergence(convergence, passed=approved)
+    if approved and _review_gates_strict(row["target"]) and ledger["human_consent"]["status"] != "not_required":
+        convergence.update({"outcome": "awaiting_human", "stop_reason": "human_consent_pending"})
     ledger["convergence"] = convergence
     return ledger
 
@@ -10821,8 +10890,10 @@ def write_review_verdict_ledger(
     # cross-AI paths feed the ledger through other channels. Demanding the full
     # roster whenever `review_mode == "normal"` would hard-fail every
     # legitimate Monitor-only review. One-of-two cannot be explained that way.
-    if roles_seen and len(roles_seen) < len(ROLE_REVIEWER_IDS):
-        for missing_role in ROLE_REVIEWER_IDS:
+    required_roles = [role for role in ROLE_REVIEWER_IDS if role != "security"
+                      or (current_run and role in run["scheduled_reviewers"])]
+    if roles_seen and set(required_roles) - set(roles_seen):
+        for missing_role in required_roles:
             if missing_role not in roles_seen:
                 input_errors.append(
                     f"{missing_role}: no envelope supplied while "
@@ -11040,6 +11111,28 @@ def _check_review_ledger_binding(branch_dir: Path, verdict: str) -> dict | str:
     Returns an error dict when the gate must be refused, otherwise a short
     status string describing what was enforced.
     """
+    if verdict == "ready":
+        try:
+            target = _review_target()
+            try:
+                ledger = _read_review_ledger(branch_dir)
+            except (OSError, ValueError, TypeError, KeyError):
+                # Preserve the legacy bypass only in shadow mode. A readable
+                # retained strict round still participates in the gate below.
+                if (_review_gates_strict(target)
+                        or os.environ.get("MAP_REVIEW_LEDGER_ENFORCE", "1").strip() != "0"):
+                    raise
+                ledger = {}
+            rounds = ledger.get("convergence", {}).get("rounds", [])
+            if target.get("security_gate_policy", {}).get("error"):
+                return {"status": "error", "message": "Trusted security gate configuration is invalid"}
+            if ((_review_requires_consent(target) and _review_gates_strict(target))
+                    or (rounds and _review_requires_consent(rounds[-1].get("target", {}))
+                        and _review_gates_strict(rounds[-1].get("target", {})))):
+                return {"status": "error", "message": "Sensitive/unknown review requires independent security evidence "
+                        "and verified snapshot-bound human consent; human provenance is unavailable, hold remains pending"}
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            return {"status": "error", "message": f"Cannot verify review safety gates: {exc}"}
     if os.environ.get("MAP_REVIEW_LEDGER_ENFORCE", "1").strip() == "0":
         return "disabled_by_env"
 
@@ -12201,6 +12294,20 @@ ROLE_FINDING_OUTPUT_CONTRACT: str = """OUTPUT CONTRACT — mandatory for EVERY f
 If the contract is incomplete, do NOT emit the finding: research it further or withdraw it. Never create a finding to fill a checklist row."""
 
 ROLE_REVIEWER_SPECS: dict[str, dict[str, str]] = {
+    "security": {
+        "subagent_type": "general-purpose",
+        "description": "Independent security boundary review",
+        "task": "Review security boundaries independently of ordinary code approval and execution checks.",
+        "instructions": (
+            "Trace untrusted inputs through authentication, authorization, subprocesses, filesystem writes, "
+            "secret handling and prompt/tool authority. Inspect every required file and trusted policy. "
+            "Report concrete exploit prerequisites and evidence, not speculative alarms. "
+            "A passing test or another reviewer's approval is not security evidence. "
+            "Use the role finding contract and an explicit coverage receipt even when all_clear is true. "
+            "Never claim to grant human consent."
+        ),
+        "context_access": "diff_plus_repo_read",
+    },
     "user_experience": {
         "subagent_type": "general-purpose",
         "description": "User-perspective regression review",
@@ -12290,8 +12397,9 @@ HOW TO REVIEW:
 # The roster IS the spec keys: one declaration, so a role cannot exist for the
 # prompt builder while staying invisible to the ledger, the aggregator and the CLI.
 ROLE_REVIEWER_IDS: tuple[str, ...] = tuple(ROLE_REVIEWER_SPECS)
-NORMAL_REVIEWERS = ("monitor", "predictor", "evaluator", *ROLE_REVIEWER_IDS)
-ADVERSARIAL_REVIEWERS = ("blind", "edge_case", "acceptance", *ROLE_REVIEWER_IDS)
+BASE_ROLE_REVIEWERS = tuple(role for role in ROLE_REVIEWER_IDS if role != "security")
+NORMAL_REVIEWERS = ("monitor", "predictor", "evaluator", *BASE_ROLE_REVIEWERS)
+ADVERSARIAL_REVIEWERS = ("blind", "edge_case", "acceptance", *BASE_ROLE_REVIEWERS)
 
 # The five parts every role finding must carry. Presence is checked
 # mechanically here; wording quality is the reviewer prompt's job.
@@ -13248,7 +13356,7 @@ def build_role_review_prompts(
     {subagent_type, description, prompt, context_access}.
     """
     branch_name = _sanitize_branch(branch) if branch else get_branch_name()
-    role_ids = roles or list(ROLE_REVIEWER_IDS)
+    role_ids = roles or list(BASE_ROLE_REVIEWERS)
     layering = _load_prompt_layering(Path.cwd())
 
     git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text)
@@ -13293,7 +13401,7 @@ def build_adversarial_review_prompts(
     Returns dict with 'prompts' key mapping reviewer_id to {subagent_type, description, prompt}.
     """
     branch_name = _sanitize_branch(branch) if branch else get_branch_name()
-    reviewer_ids = reviewers or ["blind", "edge_case", "acceptance", *ROLE_REVIEWER_IDS]
+    reviewer_ids = reviewers or list(ADVERSARIAL_REVIEWERS)
     layering = _load_prompt_layering(Path.cwd())
 
     git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text)
@@ -13504,7 +13612,8 @@ def aggregate_adversarial_findings(
         ("blind", blind_json),
         ("edge_case", edge_case_json),
         ("acceptance", acceptance_json),
-        *((role_id, (role_json or {}).get(role_id)) for role_id in ROLE_REVIEWER_IDS),
+        *((role_id, (role_json or {}).get(role_id)) for role_id in ROLE_REVIEWER_IDS
+          if role_id in BASE_ROLE_REVIEWERS or (role_json or {}).get(role_id) is not None),
     ]
 
     parse_errors: list[str] = []
@@ -21949,14 +22058,113 @@ def _approval_hold_report_path(hold_id: str, branch: str | None = None) -> Path:
     return get_branch_dir(branch) / f"approval_hold_{safe}.md"
 
 
+def _hold_transaction(function: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+    """Serialize hold read-modify-write transactions on a persistent lock inode."""
+    @wraps(function)
+    def locked(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        import fcntl
+        import inspect
+
+        branch = inspect.signature(function).bind(*args, **kwargs).arguments.get("branch")
+        directory = get_branch_dir(branch)
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            with (directory / ".approval-holds.lock").open("a") as handle:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    return function(*args, **kwargs)
+                finally:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            return {"status": "error", "message": f"Approval hold transaction failed: {exc}"}
+    return locked
+
+
 def _load_approval_holds(path: Path, branch_name: str) -> dict[str, Any]:
-    """Load the approval-holds store, returning a fresh skeleton on missing/corrupt."""
-    loaded = _read_json_file(path)
-    if isinstance(loaded, dict) and loaded.get("branch") == branch_name:
-        loaded.setdefault("holds", {})
-        loaded.setdefault("next_id", 1)
-        return loaded
-    return {"branch": branch_name, "holds": {}, "next_id": 1, "updated_at": ""}
+    """Only a missing store is new; malformed persisted evidence fails closed."""
+    if not path.exists():
+        return {"branch": branch_name, "holds": {}, "next_id": 1, "updated_at": ""}
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    if (not isinstance(loaded, dict) or loaded.get("branch") != branch_name
+            or not isinstance(loaded.get("holds"), dict)
+            or type(loaded.get("next_id")) is not int or loaded["next_id"] < 1):
+        raise ValueError("Invalid approval hold store; refusing to reset history")
+    for key, hold in loaded["holds"].items():
+        if (not isinstance(hold, dict) or hold.get("id") != key
+                or hold.get("kind") not in APPROVAL_HOLD_KINDS
+                or hold.get("state") not in APPROVAL_HOLD_ALL_STATES):
+            raise ValueError("Invalid approval hold record")
+        if (not re.fullmatch(r"hold-\d+", key)
+                or int(key.removeprefix("hold-")) >= loaded["next_id"]):
+            raise ValueError("Approval hold sequence would overwrite history")
+    return loaded
+
+
+def _review_requires_consent(target: dict[str, Any]) -> bool:
+    return target.get("shadow_risk", {}).get("tier", "unknown") in {"sensitive", "unknown"}
+
+
+def _review_gates_strict(target: dict[str, Any]) -> bool:
+    return target.get("security_gate_policy", {}).get("mode", "shadow") == "strict"
+
+
+def _review_security_policy(policy: dict[str, Any]) -> dict[str, Any]:
+    """Only operator-maintained default Git config may opt into strict enforcement."""
+    result: dict[str, Any] = {"mode": "shadow", "source": ".map/config.yaml", "revision": policy.get("revision", "")}
+    # Policy content validation is independent of the already pinned authority.
+    # A malformed REVIEW.md must not hide that revision's strict configuration.
+    if not policy.get("revision"):
+        return result
+    try:
+        revision = policy["revision"]
+        tree = _review_git_bytes("ls-tree", "-z", revision, "--", ".map/config.yaml")
+        if tree:
+            metadata = tree.split(b"\t", 1)[0].split()
+            if metadata[0] not in {b"100644", b"100755"} or metadata[1] != b"blob":
+                raise ValueError("Review gate config must be a regular trusted blob")
+            content = _review_git_bytes("cat-file", "blob", metadata[2].decode("ascii"))
+            import yaml
+            try:
+                config = yaml.safe_load(content.decode("utf-8")) or {}
+            except yaml.YAMLError as exc:
+                raise ValueError(f"Invalid trusted review gate YAML: {exc}") from exc
+            mode = config.get("review", {}).get("security_gates", "shadow")
+            if mode not in {"shadow", "strict"}:
+                raise ValueError("review.security_gates must be shadow or strict")
+            result.update({"mode": mode, "sha256": hashlib.sha256(content).hexdigest()})
+    except (OSError, ValueError, TypeError, AttributeError, ImportError, subprocess.TimeoutExpired) as exc:
+        result.update({"mode": "strict", "error": str(exc)})
+    return result
+
+
+@_hold_transaction
+def _ensure_review_consent(row: dict[str, Any], *, branch: str | None = None) -> dict[str, Any]:
+    """Retain snapshot-bound pending consent; no verified host ingress exists yet."""
+    branch_name = branch or get_branch_name()
+    path = _approval_holds_path(branch_name)
+    store = _load_approval_holds(path, branch_name)
+    binding = {"target": row["target"], "policy_hash": row["policy_hash"], "action": "review-ready"}
+    for hold in store["holds"].values():
+        if hold.get("kind") == "review_consent" and hold.get("review_binding") == binding:
+            if hold["state"] != "pending":
+                raise ValueError("Review consent has no supported verified human authority")
+            return {"status": "pending", "hold_id": hold["id"], "reason": hold["reason"]}
+    now = _utc_timestamp()
+    hold_id = f"hold-{store['next_id']:03d}"
+    if hold_id in store["holds"]:
+        raise ValueError("Approval hold sequence would overwrite history")
+    reason = "Verified human provenance unavailable; host UI/transcript answers are not human attestation"
+    hold = {"id": hold_id, "kind": "review_consent", "state": "pending", "branch": branch_name,
+            "reason": reason, "request_summary": "Approve review-ready for this exact snapshot and policy",
+            "source": "review admission", "created_at": now, "decision": None,
+            "review_binding": binding, "enforcement": "strict" if _review_gates_strict(row["target"]) else "shadow",
+            "history": [{"state": "pending", "at": now, "reason": reason}]}
+    store["holds"][hold_id] = hold
+    store["next_id"] += 1
+    store["updated_at"] = now
+    _write_json_file(path, store)
+    _write_text_file(_approval_hold_report_path(hold_id, branch_name), _render_approval_hold_report(hold))
+    return {"status": "pending", "hold_id": hold_id, "reason": reason}
 
 
 def _render_approval_hold_report(hold: dict[str, Any]) -> str:
@@ -21997,6 +22205,7 @@ def _render_approval_hold_report(hold: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+@_hold_transaction
 def create_approval_hold(
     kind: str,
     reason: str,
@@ -22084,6 +22293,7 @@ def create_approval_hold(
     return {**base, "hold_id": hold_id, "hold": hold, "idempotent": False}
 
 
+@_hold_transaction
 def decide_approval_hold(
     hold_id: str,
     decision: str,
@@ -22120,6 +22330,10 @@ def decide_approval_hold(
     if not isinstance(hold, dict):
         return {**base, "status": "error", "reasons": [f"hold {hold_id!r} not found"]}
 
+    if hold.get("kind") == "review_consent":
+        return {**base, "status": "error", "reasons": [
+            "Review consent requires verified human provenance; CLI and agent decisions cannot discharge it"
+        ]}
     current_state = hold.get("state", "")
     if current_state != "pending":
         if current_state == decision:
@@ -22165,7 +22379,13 @@ def list_approval_holds(
     branch: str | None = None,
     state: str | None = None,
 ) -> dict[str, Any]:
-    """List all approval holds for a branch, optionally filtered by state."""
+    """Read one atomic store snapshot without creating directories or lock files.
+
+    Writers serialize read-modify-write transactions and replace the JSON store
+    atomically. Listing reads only that store (not reports or the manifest), so
+    either the old or new complete snapshot is sufficient; it grants no consent.
+    Never unlink a writer lock to make a read-only call appear side-effect-free.
+    """
     branch_name = branch or get_branch_name()
     path = _approval_holds_path(branch_name)
     base: dict[str, Any] = {"status": "ok", "branch": branch_name, "path": str(path)}
@@ -22179,7 +22399,10 @@ def list_approval_holds(
             ],
         }
 
-    store = _load_approval_holds(path, branch_name)
+    try:
+        store = _load_approval_holds(path, branch_name)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        return {**base, "status": "error", "message": f"Approval hold snapshot failed: {exc}"}
     holds = cast(dict[str, Any], store["holds"])
     result = [h for h in holds.values() if isinstance(h, dict)]
     if state is not None:
@@ -22192,9 +22415,13 @@ def list_approval_holds(
 def get_pending_holds(branch: str | None = None) -> dict[str, Any]:
     """Return pending holds for a branch; ``resume_blocked`` signals /map-resume."""
     result = list_approval_holds(branch=branch, state="pending")
-    pending = cast(list[Any], result.get("holds", []))
+    if result.get("status") == "error":
+        return {**result, "has_pending": True, "resume_blocked": True}
+    pending = [hold for hold in result.get("holds", [])
+               if not (hold.get("kind") == "review_consent" and hold.get("enforcement") == "shadow")]
     return {
         **result,
+        "holds": pending,
         "has_pending": bool(pending),
         "pending_count": len(pending),
         "resume_blocked": bool(pending),
@@ -22221,6 +22448,8 @@ def auto_decide_holds(branch: str | None = None) -> dict[str, Any]:
     """
     branch_name = branch or get_branch_name()
     pending = get_pending_holds(branch_name)
+    if pending.get("status") == "error":
+        return {**pending, "auto_approved": [], "hard_stops": [{"reason": pending.get("message", "Invalid holds")}]}
     auto_approved: list[dict[str, str]] = []
     hard_stops: list[dict[str, str]] = []
 
@@ -25306,7 +25535,7 @@ if __name__ == "__main__":
         elif _args.quick:
             # --quick drops the Edge Case Hunter only. The role reviewers stay:
             # they are the perspectives nobody else in the fan-out covers.
-            reviewer_ids = ["blind", "acceptance", *ROLE_REVIEWER_IDS]
+            reviewer_ids = ["blind", "acceptance", *BASE_ROLE_REVIEWERS]
         result = build_adversarial_review_prompts(
             branch=_args.branch,
             reviewers=reviewer_ids,
