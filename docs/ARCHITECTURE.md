@@ -649,10 +649,17 @@ straight to the provider's `map-plan` entry point.
 
 Research tickets carry a versioned ledger in canonical state: routing rationale,
 reservations, outcomes, budget extensions, assessments and the accepted evidence
-binding. The default budget is four lifetime investigation attempts per ticket;
-failures and unknown dispatches remain spent. Reservations precede dispatch, and
+binding. New ledgers use `budget_limit: null` (no default attempt cap).
+`configure_research --budget-limit N` accepts a positive integer before the first
+reservation and only when no cap exists. Omission never clears a cap; persisted
+numeric limits, including the former default four, remain binding. Legacy tickets
+without a ledger adopt the uncapped default when claimed, not during reads.
+Failures and unknown dispatches remain spent in either policy. Reservations precede dispatch, and
 request IDs make retries idempotent without authorizing duplicate work. Extending
-the budget requires a one-use, recorded human authorization for a finite increment.
+an opted-in budget requires a one-use, recorded human authorization for a finite
+increment. Evidence refresh/correction retain the policy and lifetime spend.
+No cap does not authorize consequential or genuinely expensive actions; those
+still require separate explicit user consent.
 
 Both `chart` and `work` use the same shared Claude/Codex procedure. A factual lookup
 can be direct; an ambiguous or consequential decision needs two completed initial

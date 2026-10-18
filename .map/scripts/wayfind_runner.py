@@ -681,7 +681,7 @@ def _research_resolution_gate(state: dict[str, Any], ticket_id: str, gist: str, 
 
 
 def _ensure_research(ticket: dict[str, Any]) -> dict[str, Any]:
-    return ticket.setdefault("research", {"protocol_version": 1, "mode": "independent", "mode_reason": "Ambiguous until classified by coordinator", "budget_limit": 4, "extensions": [], "attempts": [], "assessments": [], "accepted_assessment_id": None})
+    return ticket.setdefault("research", {"protocol_version": 1, "mode": "independent", "mode_reason": "Ambiguous until classified by coordinator", "budget_limit": None, "extensions": [], "attempts": [], "assessments": [], "accepted_assessment_id": None})
 
 
 def _dependency_bindings(state: dict[str, Any], ticket: dict[str, Any]) -> dict[str, str]:
@@ -701,7 +701,7 @@ def research_context(slug: str, ticket_id: str) -> dict[str, Any]:
         return _err("map or ticket not found", code="not_found")
     ticket = state["tickets"][ticket_id]
     research = ticket.get("research") or {}
-    return _ok(context={"protocol_version": 1, "ticket_id": ticket_id, "question": ticket["question"], "dependency_bindings": _dependency_bindings(state, ticket), "mode": research.get("mode"), "budget_limit": research.get("budget_limit", 4), "spent_attempts": len(research.get("attempts", [])), "correction": research.get("correction")})
+    return _ok(context={"protocol_version": 1, "ticket_id": ticket_id, "question": ticket["question"], "dependency_bindings": _dependency_bindings(state, ticket), "mode": research.get("mode"), "budget_limit": research.get("budget_limit"), "spent_attempts": len(research.get("attempts", [])), "correction": research.get("correction")})
 
 
 @_research_api
@@ -734,12 +734,18 @@ def _research_owner(slug: str, ticket_id: str, session: str, expected_revision: 
 
 
 @_research_api
-def configure_research(slug: str, ticket_id: str, session: str, mode: str, reason: str, expected_revision: int | None = None) -> dict[str, Any]:
+def configure_research(slug: str, ticket_id: str, session: str, mode: str, reason: str, expected_revision: int | None = None, budget_limit: int | None = None) -> dict[str, Any]:
     state, _ticket, research = _research_owner(slug, ticket_id, session, expected_revision)
     _require(mode in {"direct", "independent"} and _text(reason), "mode and route rationale required")
     _require(not research["attempts"] or mode == research["mode"] or (research["mode"] == "direct" and mode == "independent"), "research mode is frozen")
-    if research["mode"] == mode and research["mode_reason"] == reason:
+    budget_changed = budget_limit is not None and budget_limit != research["budget_limit"]
+    if budget_limit is not None:
+        _require(type(budget_limit) is int and budget_limit > 0, "budget limit must be a positive integer")
+        _require(not budget_changed or (research["budget_limit"] is None and not research["attempts"]), "budget is frozen; use an authorized extension for an existing cap")
+    if research["mode"] == mode and research["mode_reason"] == reason and not budget_changed:
         return _ok(created=False, mode=mode)
+    if budget_changed:
+        research["budget_limit"] = budget_limit
     research.update(mode=mode, mode_reason=reason)
     _save_state(state)
     return _ok(mode=mode, revision=state["revision"])
@@ -760,7 +766,7 @@ def reserve_research_attempt(slug: str, ticket_id: str, session: str, request_id
             if any(attempt[k] != v for k, v in payload.items()):
                 return _err("request reused with different payload", code="conflicting_replay")
             return _ok(created=False, attempt_id=attempt["attempt_id"], attempt=attempt)
-    if len(research["attempts"]) >= research["budget_limit"]:
+    if research["budget_limit"] is not None and len(research["attempts"]) >= research["budget_limit"]:
         return _err("research budget exhausted; obtain bounded human authorization", code="research_budget_exhausted")
     attempt = {"attempt_id": uuid.uuid4().hex, "request_id": request_id, "generation": research.get("evidence_generation", 0), "session": session, "reserved_at": _now(), "outcome": "reserved", "context": {"question": data["question"], "constraints": data["constraints"], "settling_criteria": data["settling_criteria"], "dependency_bindings": data["dependency_bindings"], "verification_target": target}, **payload}
     research["attempts"].append(attempt)
@@ -840,6 +846,8 @@ def record_research_attempt(slug: str, ticket_id: str, session: str, attempt_id:
 @_research_api
 def extend_research_budget(slug: str, ticket_id: str, session: str, extension_id: str, additional_attempts: int, approval_path: str, reason: str, expected_revision: int | None = None) -> dict[str, Any]:
     state, _ticket, research = _research_owner(slug, ticket_id, session, expected_revision)
+    if research["budget_limit"] is None:
+        return _err("research has no attempt cap to extend", code="research_budget_not_bounded")
     _require(type(additional_attempts) is int and additional_attempts > 0 and _text(extension_id) and _text(reason), "finite positive integer extension and reason required")
     approval, digest = _artifact_json(slug, ticket_id, approval_path)
     _require(_text(approval.get("human_approval")), "actual verbatim human approval required")
@@ -2225,6 +2233,8 @@ def build_parser() -> argparse.ArgumentParser:
         p = sub.add_parser(command)
         for argument in arguments:
             p.add_argument(argument, type=int if argument == "additional_attempts" else str)
+        if command == "configure_research":
+            p.add_argument("--budget-limit", type=int, default=None, help="Opt in to a positive lifetime attempt cap before the first reservation")
         if command == "record_research_attempt":
             p.add_argument("--result-path", default=None)
             p.add_argument("--reason", default=None)

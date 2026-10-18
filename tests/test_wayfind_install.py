@@ -215,7 +215,7 @@ def test_fresh_install_persists_research_and_rejects_stale_handoff(
     assert rejected["code"] == "research_assessment_required"
     resolution_path = _record_evidence(tmp_path, slug, ticket_id, mode)
     research = _run(tmp_path, "show_ticket", slug, ticket_id)["ticket"]["research"]
-    assert research["budget_limit"] == 4
+    assert research["budget_limit"] is None
     assert len(research["attempts"]) == (1 if mode == "direct" else 2)
     assert all(attempt["outcome"] == "completed" for attempt in research["attempts"])
     _run(tmp_path, "resolve_ticket", slug, ticket_id, SESSION, GIST, resolution_path)
@@ -334,7 +334,7 @@ def test_upgrade_preserves_old_maps_and_gates_old_open_research(
     _run(tmp_path, "claim_ticket", "old-open", "T-1", SESSION)
     research = _run(tmp_path, "show_ticket", "old-open", "T-1")["ticket"]["research"]
     assert research["protocol_version"] == 1
-    assert research["budget_limit"] == 4
+    assert research["budget_limit"] is None
     assert research["attempts"] == []
     rejected = _run(
         tmp_path,

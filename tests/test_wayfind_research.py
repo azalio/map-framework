@@ -71,11 +71,79 @@ def test_default_on_research_cannot_resolve_without_assessment() -> None:
     assert result["code"] == "research_assessment_required"
     ledger = cli("show_ticket", "demo", ticket)["ticket"]["research"]
     assert ledger["protocol_version"] == 1
-    assert ledger["budget_limit"] == 4
+    assert ledger["budget_limit"] is None
+
+
+@pytest.mark.parametrize("outcome", ["failed", "unknown", "cancelled"])
+def test_explicit_budget_is_configured_before_work_and_cannot_be_replaced(outcome: str) -> None:
+    ticket = research_ticket()
+    command = ("configure_research", "demo", ticket, "owner", "direct", "Task budget", "--budget-limit", "2")
+    assert cli(*command)["status"] == "success"
+    assert cli(*command)["created"] is False
+    assert cli("research_context", "demo", ticket)["context"]["budget_limit"] == 2
+    assert cli(*command[:-1], "3")["status"] == "error"
+    for index in range(2):
+        attempt = reserve(ticket, f"bounded-{index}")
+        assert attempt["status"] == "success"
+        assert cli("record_research_attempt", "demo", ticket, "owner", attempt["attempt_id"], outcome, "--reason", "Unavailable")["status"] == "success"
+    assert reserve(ticket, "over-limit")["code"] == "research_budget_exhausted"
+    assert cli("configure_research", "demo", ticket, "owner", "independent", "Escalate")["status"] == "success"
+    assert cli("research_context", "demo", ticket)["context"]["budget_limit"] == 2
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, False, 2.5, "4", [], {}])
+def test_invalid_budget_does_not_mutate_state(limit: Any) -> None:
+    ticket = research_ticket()
+    path = Path(".map/wayfind/demo/state.json")
+    before = path.read_bytes()
+    result = wr.configure_research("demo", ticket, "owner", "direct", "Task cap", budget_limit=limit)
+    assert result["status"] == "error"
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("limit", [4, 7])
+def test_persisted_budget_remains_binding(limit: int) -> None:
+    ticket = research_ticket()
+    path = Path(".map/wayfind/demo/state.json")
+    state = json.loads(path.read_text())
+    state["tickets"][ticket]["research"]["budget_limit"] = limit
+    path.write_text(json.dumps(state))  # Pre-upgrade persisted protocol-v1 fixture.
+    assert cli("configure_research", "demo", ticket, "owner", "direct", "Resume")["status"] == "success"
+    assert cli("configure_research", "demo", ticket, "owner", "direct", "Replace", "--budget-limit", str(limit + 1))["status"] == "error"
+    for index in range(limit):
+        assert reserve(ticket, f"legacy-{index}")["status"] == "success"
+    assert reserve(ticket, "legacy-extra")["code"] == "research_budget_exhausted"
+    assert cli("research_context", "demo", ticket)["context"]["budget_limit"] == limit
+
+
+def test_budget_cannot_be_added_after_unbounded_work_starts() -> None:
+    ticket = research_ticket()
+    assert reserve(ticket)["status"] == "success"
+    before = Path(".map/wayfind/demo/state.json").read_bytes()
+    assert cli("configure_research", "demo", ticket, "owner", "direct", "Late cap", "--budget-limit", "8")["status"] == "error"
+    assert Path(".map/wayfind/demo/state.json").read_bytes() == before
+
+
+def test_unbounded_research_rejects_budget_extension_cleanly() -> None:
+    ticket = research_ticket()
+    result = cli("extend_research_budget", "demo", ticket, "owner", "extra", "2", "missing.json", "More")
+    assert result["code"] == "research_budget_not_bounded"
+
+
+def test_default_research_continues_past_four_attempts() -> None:
+    ticket = research_ticket()
+    for index in range(6):
+        attempt = reserve(ticket, f"request-{index}")
+        assert attempt["status"] == "success", attempt
+        assert cli("record_research_attempt", "demo", ticket, "owner", attempt["attempt_id"], "failed", "--reason", "Source unavailable")["status"] == "success"
+    context = cli("research_context", "demo", ticket)["context"]
+    assert context["budget_limit"] is None
+    assert context["spent_attempts"] == 6
 
 
 def test_reservations_are_durable_idempotent_and_spent_after_reclaim() -> None:
     ticket = research_ticket()
+    assert cli("configure_research", "demo", ticket, "owner", "direct", "Task cap", "--budget-limit", "4")["status"] == "success"
     path = brief(ticket)
     first = reserve(ticket, path=path)
     assert first["created"] is True
@@ -158,6 +226,7 @@ def test_independent_pair_can_converge_without_forced_disagreement() -> None:
 
 def test_human_authorization_is_one_use_even_with_different_extension_id() -> None:
     ticket = research_ticket()
+    assert cli("configure_research", "demo", ticket, "owner", "direct", "Task cap", "--budget-limit", "4")["status"] == "success"
     approval = {"protocol_version": 1, "ticket_id": ticket, "extension_id": "extra-1", "additional_attempts": 2, "current_budget_limit": 4, "human_approval": "Yes, authorize exactly two more attempts", "reason": "Verify conflict"}
     path = write_artifact(ticket, "approval.json", approval)
     command = ("extend_research_budget", "demo", ticket, "owner", "extra-1", "2", path, "Verify conflict")
@@ -194,7 +263,7 @@ def test_post_handoff_correction_owns_session_and_early_omits_old_decision() -> 
     assert result["status"] == "success", result
     ledger = cli("show_ticket", "demo", ticket)["ticket"]["research"]
     assert len(ledger["attempts"]) == 2
-    assert ledger["budget_limit"] == 4
+    assert ledger["budget_limit"] is None
     assert ledger["correction"]["active"] is False
     assert cli("emit_wayfind_handoff", "demo")["status"] == "success"
     assert json.loads(Path(".map/wayfind/demo/handoff.json").read_text())["remaining_risks"] == ["Operational risk"]
@@ -388,8 +457,11 @@ def test_unknown_can_be_explicitly_cancelled_without_resetting_spend() -> None:
     assert cli("research_context", "demo", ticket)["context"]["spent_attempts"] == 1
 
 
-def test_open_research_refresh_after_exhaustion_preserves_history_and_budget() -> None:
+@pytest.mark.parametrize("bounded", [True, False])
+def test_open_research_refresh_after_exhaustion_preserves_history_and_budget(bounded: bool) -> None:
     ticket = research_ticket("independent")
+    if bounded:
+        assert cli("configure_research", "demo", ticket, "owner", "independent", "Task cap", "--budget-limit", "4")["status"] == "success"
     attempts = [completed(ticket, f"old-{i}", f"worker-{i}") for i in range(4)]
     blocked = assessment(ticket, attempts, "stale-blocked", verdict="blocked")
     Path("answer.txt").write_text("Changed")
@@ -401,7 +473,8 @@ def test_open_research_refresh_after_exhaustion_preserves_history_and_budget() -
     artifacts = {p: p.read_bytes() for p in state_path.parent.rglob("*") if p.is_file() and "research" in p.parts}
     refreshed = cli("refresh_open_research", "demo", ticket, "owner", "Source evolved")
     assert refreshed["status"] == "success", refreshed
-    assert refreshed["budget_limit"] == refreshed["spent_attempts"] == 4
+    assert refreshed["spent_attempts"] == 4
+    assert refreshed["budget_limit"] == (4 if bounded else None)
     entry = refreshed["refresh"]
     assert entry["from_generation"] == 0 and entry["to_generation"] == 1
     assert {a["attempt_id"] for a in entry["stale_attempts"]} == {a["attempt_id"] for a in attempts}
@@ -410,17 +483,20 @@ def test_open_research_refresh_after_exhaustion_preserves_history_and_budget() -
     assert ledger["attempts"] == attempts
     assert ledger["evidence_refresh_history"] == [entry]
     assert all(p.read_bytes() == contents for p, contents in artifacts.items())
-    assert reserve(ticket, "fresh-0")["code"] == "research_budget_exhausted"
+    if bounded:
+        assert reserve(ticket, "fresh-0")["code"] == "research_budget_exhausted"
     blocked = assessment(ticket, [], "fresh-blocked", verdict="blocked")
     assert cli("record_research_assessment", "demo", ticket, "owner", blocked)["status"] == "success"
     assert cli("resolve_ticket", "demo", ticket, "owner", "Present", f"research/{ticket}/fresh-blocked.resolution.md")["code"] == "research_assessment_required"
     approval = write_artifact(ticket, "refresh-approval.json", {"protocol_version": 1, "ticket_id": ticket, "extension_id": "refresh-extra", "additional_attempts": 2, "current_budget_limit": 4, "human_approval": "Yes, authorize two fresh investigations", "reason": "Source evolved"})
-    assert cli("extend_research_budget", "demo", ticket, "owner", "refresh-extra", "2", approval, "Source evolved")["budget_limit"] == 6
+    if bounded:
+        assert cli("extend_research_budget", "demo", ticket, "owner", "refresh-extra", "2", approval, "Source evolved")["budget_limit"] == 6
     fresh = [completed(ticket, f"fresh-{i}", f"fresh-worker-{i}", source="Changed") for i in range(2)]
     assert accept(ticket, fresh, "fresh-accepted")["status"] == "success"
     ledger = cli("show_ticket", "demo", ticket)["ticket"]["research"]
     assert ledger["attempts"][:4] == attempts
-    assert len(ledger["attempts"]) == ledger["budget_limit"] == 6
+    assert len(ledger["attempts"]) == 6
+    assert ledger["budget_limit"] == (6 if bounded else None)
     assert all(a["generation"] == 1 for a in ledger["attempts"][4:])
     assert cli("emit_wayfind_handoff", "demo")["status"] == "success"
     assert cli("validate_wayfind_handoff", "demo")["status"] == "success"
@@ -466,7 +542,7 @@ def test_open_research_refresh_restart_is_atomic_and_replay_cannot_advance(bound
     assert ledger["evidence_generation"] == 1
     assert len(ledger["evidence_refresh_history"]) == 1
     assert ledger["attempts"] == [original]
-    assert ledger["budget_limit"] == 4
+    assert ledger["budget_limit"] is None
     before = Path(".map/wayfind/demo/state.json").read_bytes()
     assert cli("refresh_open_research", "demo", ticket, "owner", "Changed again")["status"] == "error"
     assert Path(".map/wayfind/demo/state.json").read_bytes() == before
