@@ -122,8 +122,9 @@ def test_runtime_cleanup_precedes_fixture_teardown(tmp_path, outcome):
     ready = tmp_path / "supervisor.pid"
     release = tmp_path / "release"
     lease_path = tmp_path / "lease"
-    # Success/failure exercise cleanup, not startup speed under CI scheduling.
-    check_timeout = 15 if outcome in {"success", "failure"} else 2
+    # Exercise cleanup, not startup speed under CI scheduling. Deadline cases
+    # also need headroom for four interpreter starts and pre-timeout lease checks.
+    check_timeout = 15 if outcome in {"success", "failure"} else 5
     # An ordinary grandchild closes inherited FDs. Keep it alive past wrapper
     # success/failure so command completion alone cannot satisfy the assertion.
     child = (
