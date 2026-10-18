@@ -362,6 +362,15 @@ audits both catalogs with `providers: ["claude", "codex"]` and deduplicates shar
 `.map/scripts` entries. Legacy single-provider manifests remain readable through
 the retained compatibility field.
 
+Shared `map-debug` reference documents are delivered with their provider: Claude
+uses `.claude/references/`, Codex uses `.agents/references/`, so skill-relative
+`../../references/` links resolve in either layout. Provider refresh installs
+missing reference files even when a legacy manifest never listed them, then
+records ownership in the aggregate manifest. Unrelated user reference files are
+not claimed or removed. Repeating refresh preserves reference bodies and ownership
+hashes without backups for unchanged documents; the managed `installed_at` stamp
+and its manifest entry are refreshed on each write, so whole-file bytes can change.
+
 ## Source of Truth
 
 - **Generated provider surfaces**: `.claude/skills/`, optional `.claude/commands/` custom-command scaffolding, and `.codex/` are the operational "runtime spec" consumed by providers.
