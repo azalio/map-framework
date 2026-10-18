@@ -195,16 +195,21 @@ class TestCreateApprovalHold:
         assert stage.get("status") == "pending"
 
     def test_all_valid_kinds_accepted(self, branch_dir: Path) -> None:
-        del branch_dir  # fixture used for chdir side effect only
+        store = _map_dir(branch_dir) / "approval_holds.json"
         kinds = list(map_step_runner.APPROVAL_HOLD_KINDS)
         for i, kind in enumerate(kinds):
+            before = store.read_bytes() if store.exists() else None
             result = map_step_runner.create_approval_hold(
                 kind=kind,
                 reason=f"Reason {i}",
                 request_summary=f"Summary {i}",
                 branch="test-branch",
             )
-            assert result["status"] == "ok", f"kind {kind!r} rejected: {result}"
+            if kind == "review_consent":
+                assert result["status"] == "error", result
+                assert (store.read_bytes() if store.exists() else None) == before
+            else:
+                assert result["status"] == "ok", f"kind {kind!r} rejected: {result}"
 
 
 # ---------------------------------------------------------------------------

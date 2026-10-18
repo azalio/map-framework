@@ -2102,7 +2102,22 @@ def test_begin_review_run_archives_only_inputs_and_gate_preserving_journal(branc
     for name, content in {**preserved, **untouched}.items():
         if name == "review-verdict-ledger.json":
             updated = json.loads((workspace / name).read_text())
-            updated.pop("convergence")
+            convergence = updated.pop("convergence")
+            consent = updated.pop("human_consent")
+            assert consent == result["human_consent"]
+            assert consent["status"] == "pending"
+            holds = json.loads((workspace / "approval_holds.json").read_text())
+            hold = holds["holds"][consent["hold_id"]]
+            assert hold["kind"] == "review_consent"
+            assert hold["state"] == "pending"
+            assert hold["enforcement"] == "shadow"
+            assert hold["review_binding"] == {
+                "target": result["target"], "policy_hash": result["policy_hash"],
+                "action": "review-ready",
+            }
+            assert convergence["outcome"] == "incomplete"
+            assert convergence["stop_reason"] == "review_pending"
+            assert not map_step_runner.get_pending_holds()["resume_blocked"]
             assert updated == json.loads(content)
         else:
             assert (workspace / name).read_bytes() == content
@@ -2657,7 +2672,9 @@ def test_complete_receipts_approve_after_restart(review_git_workspace):
     ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
     assert ledger["completeness"]["status"] == "COMPLETE", result
     assert ledger["code_approval"]["approved"] is True
-    assert ledger["human_consent"]["status"] == "not_recorded"
+    assert ledger["human_consent"]["status"] == "pending"
+    assert admission["target"]["security_gate_policy"]["mode"] == "shadow"
+    assert runner.get_pending_holds()["resume_blocked"] is False
     proc, gate = _review_cli("write_stage_gate", "review", "ready", "review.md", "clean")
     assert proc.returncode == 0 and gate["status"] == "success", gate
 

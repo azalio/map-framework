@@ -13,7 +13,7 @@ For `updated`, re-read this invoked skill's installed `SKILL.md`, skip its alrea
 
 # MAP Review Workflow
 
-Interactive, structured code review of current changes using Monitor, Predictor, and Evaluator agents, plus two role reviewers — `user_experience` (did the already-shipped path get worse?) and `maintainer` (what rot survives the merge?).
+Interactive, structured code review of current changes using Monitor, Predictor, and Evaluator agents, plus two default role reviewers — `user_experience` (did the already-shipped path get worse?) and `maintainer` (what rot survives the merge?). Strict sensitive/unknown admission adds `security` (independent trust-boundary review).
 
 Task: `$ARGUMENTS`
 
@@ -38,7 +38,7 @@ parallel_tool_policy: single_review_fanout
 - `--shuffle-sections`: randomize section order with a branch+commit derived seed.
 - `--seed <int>`: override shuffle seed with a non-negative integer.
 - `--compare-orderings`: run default and reverse ordering reviews, then aggregate drift. Cannot be combined with `--shuffle-sections` (EC-1/EC-17).
-- `--adversarial`: run five independent reviewers (Blind Hunter, Edge Case Hunter, Acceptance Auditor, plus the `user_experience` and `maintainer` roles) in parallel, then aggregate with deduplication and convergence analysis. Each reviewer operates in an isolated context with only its permitted inputs.
+- `--adversarial`: run five default independent reviewers (Blind Hunter, Edge Case Hunter, Acceptance Auditor, plus the `user_experience` and `maintainer` roles; strict sensitive/unknown admission adds `security`) in parallel, then aggregate with deduplication and convergence analysis. Each reviewer operates in an isolated context with only its permitted inputs.
 - `--quick`: used with `--adversarial` to skip the Edge Case Hunter (Blind + Acceptance + both roles). Reduces token cost for routine changes.
 - `--show-raw-findings`: used with `--adversarial` to include raw reviewer outputs in the report. Useful for debugging or verifying aggregation.
 - `--cross-ai <runtime>`: dispatch the review to an external AI CLI (`claude`, `codex`, `gemini`, `opencode`) for a fresh-context check; vendor independence depends on the returned provenance. Off by default and **double-consent** (the flag AND `review.cross_ai.enabled: true`) — your diff/code leaves the machine. Runtime optional (configured default used). See the Cross-AI phase below and [review-reference.md](review-reference.md#cross-ai).
@@ -50,7 +50,7 @@ parallel_tool_policy: single_review_fanout
 3. **Detect review mode** (Step A.0b): empty review-bundle.md ⇒ `lightweight` (single Monitor, stricter evidence; unknown impact retains full scope). "twin of X" / "sibling controller" in PR/commit/diff ⇒ `sibling-aware` (read X first, compare). MAP-full bundle ⇒ `full` (default).
 4. Build the review bundle before launching reviewer agents.
 5. Build bounded review prompts before launching reviewer agents.
-6. Launch reviewer agents exactly once per review run: full mode runs monitor + predictor + evaluator + `user_experience` + `maintainer`; lightweight runs monitor only.
+6. Launch reviewer agents exactly once per review run: dispatch the admitted roster (default full: monitor + predictor + evaluator + `user_experience` + `maintainer`; strict sensitive/unknown adds `security`). Strict sensitive/unknown admission overrides lightweight/quick reductions; shadow preserves the existing roster. Dispatch security only when admitted. Read review-reference.md § Sensitive and Unknown Review Gates before dispatch.
 7. **Monitor `valid=false` requires verification, not immediate publication** — Step A.3 verifies evidence and bug-introduced-here BEFORE Phase B. Bare claims become `needs_investigation`, not published issues.
 8. Present options neutrally as A/B/C. Append `(Recommended)` after the option label, not by position.
 
@@ -344,7 +344,6 @@ If `DETACHED_STATUS` is `success`, tell reviewer agents to read source files fro
 When compare mode is active, run two review collections with `ordering_label='default'` and `ordering_label='reverse'`, then call `compare-review-runs` and `record-review-ordering` to stage the drift summary. See [review-reference.md](review-reference.md#compare-orderings) for the detailed loop.
 
 ### Step A.2: Launch all parallel calls
-
 Before launching agents, build the reviewer prompts with `build_review_prompts`. Prompts are NOT truncated: each reviewer receives the whole bundle, the review preferences and the full diff. `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is reported in the output for reference only — it clips nothing. If a prompt outgrows the context window, that is an operator decision (`/compact`), not a silent drop.
 
 ```bash
@@ -357,6 +356,7 @@ EVALUATOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,
 COMPLEXITY_LENS_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("prompts",{}).get("complexity_lens",{}).get("prompt", ""))')
 COMPLEXITY_LENS_ENABLED=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); print("true" if data.get("prompts",{}).get("complexity_lens") else "false")')
 USER_EXPERIENCE_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["user_experience"]["prompt"])')
+SECURITY_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("prompts", {}).get("security", {}).get("prompt", ""))')
 MAINTAINER_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["maintainer"]["prompt"])')
 ```
 
@@ -368,6 +368,7 @@ Task(subagent_type="review-reader", description="Predict integration risk", prom
 Task(subagent_type="review-reader", description="Score review quality", prompt=EVALUATOR_PROMPT)
 Task(subagent_type="review-reader", description="User-perspective regression review", prompt=USER_EXPERIENCE_PROMPT)
 Task(subagent_type="review-reader", description="Maintainer-perspective rot review", prompt=MAINTAINER_PROMPT)
+If security is in admitted roster: Task(subagent_type="review-reader", description="Independent security review", prompt=SECURITY_PROMPT)
 If COMPLEXITY_LENS_ENABLED=true: Task(subagent_type="review-reader", description="Find deletable complexity", prompt=COMPLEXITY_LENS_PROMPT)
 ```
 
@@ -398,7 +399,7 @@ Role → `--agent` kind for the truncation check:
   evidence/valid/summary/verdict/issues/passed_checks/failed_checks)
 - predictor reviewer → `--agent predictor`
 - evaluator reviewer → `--agent evaluator`
-- role reviewers → `--agent user_experience` / `--agent maintainer`
+- role reviewers → `--agent user_experience` / `--agent maintainer` / `--agent security`
 
 The optional complexity lens returns plain text, not JSON. Do not run the JSON truncation gate on it; if it is empty or visibly cut off, rerun only that lens prompt once.
 
@@ -406,8 +407,8 @@ The optional complexity lens returns plain text, not JSON. Do not run the JSON t
 
 Once a reviewer clears the truncation gate, write its JSON envelope verbatim to
 `.map/<branch>/review-agent-<role>.json` (`monitor`, `predictor`, `evaluator`,
-`user_experience`, `maintainer`; plus `adversarial` in
-adversarial/compare-orderings mode). The verdict ledger is
+`user_experience`, `maintainer`; include `security` only when it is in the
+admitted roster, plus `adversarial` in adversarial/compare-orderings mode). The verdict ledger is
 computed from these files — a role whose file is missing is recorded as an
 unobserved review, not as a clean one.
 
@@ -428,7 +429,7 @@ MONITOR_EOF
 
 The quoted heredoc marker (`<<'MONITOR_EOF'`, quotes included) is what stops the
 shell expanding anything inside the payload. Repeat for `predictor`,
-`evaluator`, `user_experience` and `maintainer`. In adversarial or
+`evaluator`, `user_experience` and `maintainer`; repeat for `security` only when it is in the admitted roster. In adversarial or
 compare-orderings mode write the complete tagged aggregate to
 `review-agent-adversarial.json` instead, including `ledger_findings`,
 `reviewer_status` and `parse_errors`; an empty findings array alone cannot prove review.
@@ -516,11 +517,11 @@ When `--adversarial` is set (with `--cross-ai`: present cross-AI first, then thi
 ### Quick reference
 
 ```text
-1. Build prompts:  python3 .map/scripts/map_step_runner.py build_adversarial_review_prompts [--quick]
-2. Fan-out:        Task(subagent_type="review-reader", ...) for blind, edge_case, acceptance,
-                   user_experience, maintainer — parallel, then wait for all (--quick drops edge_case)
+1. Build prompts:  python3 .map/scripts/map_step_runner.py build_adversarial_review_prompts --reviewers <comma-separated admitted roster>
+2. Fan-out:        Task(subagent_type="review-reader", ...) for every role in the admitted roster
+                   (edge_case absent under non-strict --quick; security only when admitted) — wait for all
 3. Validate:       Each must return valid JSON per adversarial finding schema; retry ONCE on failure
-4. Aggregate:      python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings --blind <path> --edge-case <path> --acceptance <path> --user-experience <path> --maintainer <path>
+4. Aggregate:      python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings --blind <path> [--edge-case <path> when admitted] --acceptance <path> --user-experience <path> --maintainer <path> [--security <path> when admitted]
 5. Present:        Unified report: CRITICAL/IMPORTANT/MINOR, convergence section, all-clear statements (--show-raw-findings for debug)
 6. Feed ledger:    persist the complete tagged aggregate to "$BRANCH_DIR/review-agent-adversarial.json"
                    including ledger_findings, reviewer_status and parse_errors

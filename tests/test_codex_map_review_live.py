@@ -20,6 +20,7 @@ import pytest
 from typer.testing import CliRunner
 
 from mapify_cli import app
+from tests.review_process_lifecycle import ReviewProcessLifecycle
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BRANCH = "feat/x"
@@ -121,11 +122,12 @@ def codex_install(tmp_path_factory) -> Path:
 
 
 @pytest.fixture()
-def project(codex_install, tmp_path) -> Path:
-    """Fresh copy of the install so ledger/gate artifacts never leak between tests."""
+def project(codex_install, tmp_path):
+    """Fresh install whose detached check owners must finish before teardown."""
     dest = tmp_path / "proj"
     shutil.copytree(codex_install, dest, symlinks=True)
-    return dest
+    with ReviewProcessLifecycle(dest):
+        yield dest
 
 
 def _bash_blocks(text: str, heading: str) -> list[str]:
@@ -319,13 +321,7 @@ def _capture_script(capture: str, envelopes: dict[str, dict]) -> str:
 
 
 def _run_block(root: Path, script: str) -> str:
-    proc = subprocess.run(
-        ["bash", "-c", script],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    proc = ReviewProcessLifecycle(root / ".map").run(["bash", "-c", script], cwd=root)
     assert proc.returncode == 0, (proc.stdout, proc.stderr)
     assert '"status": "error"' not in proc.stdout + proc.stderr, proc.stdout
     return proc.stdout
@@ -401,7 +397,8 @@ def _start_review(root: Path, arguments: str, *, lightweight: bool = False) -> N
         "lint": ["python3", "-c", "print('fixture lint check')"],
     })
     _run_block(root, f"ARGUMENTS={shlex.quote(arguments)}\n"
-               f"CHECK_SPECS_JSON={shlex.quote(check_specs)}\n" + "\n".join(blocks))
+               f"CHECK_SPECS_JSON={shlex.quote(check_specs)}\n"
+               "CHECK_TIMEOUTS_JSON='{\"tests\": 5, \"lint\": 5}'\n" + "\n".join(blocks))
 
 
 @pytest.mark.parametrize(

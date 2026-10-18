@@ -726,6 +726,14 @@ updates.auto: true
 # review.cross_ai.runtime: codex          # default target: claude|codex|gemini|opencode
 # review.cross_ai.timeout_seconds: 180
 
+# Security/human review gates (#523): shadow records evidence without new blockers.
+# Strict requires independent security coverage and verified human consent.
+# Human provenance is not supported yet, so strict sensitive reviews stay pending.
+# This option is read ONLY from .map/config.yaml committed on the trusted default
+# branch, never from PR-head or mutable local config. Existing review gates remain.
+# review:
+#   security_gates: shadow  # shadow (default) | strict
+
 # Per-subtask git worktree isolation (#284). Controls filesystem isolation for
 # each Actor run in `/map-efficient`. Enum values:
 #   off      — never create worktrees; sequential execution always.

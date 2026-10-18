@@ -2466,9 +2466,90 @@ def test_auto_approvable_and_hard_stop_kinds_partition_approval_hold_kinds():
     assert auto_approvable == frozenset(
         {"autonomy_posture", "plan_approval", "template_overwrite"}
     )
-    assert hard_stop == frozenset({"dangerous_action", "safety_guardrail"})
+    assert hard_stop == frozenset({"dangerous_action", "safety_guardrail", "review_consent"})
     assert auto_approvable.isdisjoint(hard_stop)
     assert auto_approvable | hard_stop == map_step_runner.APPROVAL_HOLD_KINDS
+
+
+@pytest.mark.parametrize("store_state", ["absent_directory", "absent", "legacy", "locked", "corrupt"])
+def test_list_approval_holds_is_a_read_only_snapshot(tmp_path, branch_workspace, store_state):
+    branch = branch_workspace.name
+    directory = branch_workspace
+    if store_state == "absent_directory":
+        branch = "uncreated-branch"
+        directory = tmp_path / ".map" / branch
+    elif store_state in {"legacy", "locked"}:
+        created = map_step_runner.create_approval_hold(
+            "dangerous_action", "read-only snapshot test", "keep pending", branch=branch,
+        )
+        assert created["status"] == "ok"
+        if store_state == "legacy":
+            # Fixture models a store written before writer locks existed;
+            # no concurrent writer is running here.
+            (directory / ".approval-holds.lock").unlink()
+    elif store_state == "corrupt":
+        (directory / "approval_holds.json").write_text("{broken", encoding="utf-8")
+    before = _snapshot_tree(tmp_path)
+    lock = directory / ".approval-holds.lock"
+    lock_inode = lock.stat().st_ino if lock.exists() else None
+
+    listed = map_step_runner.list_approval_holds(branch=branch)
+    pending = map_step_runner.get_pending_holds(branch=branch)
+
+    assert _snapshot_tree(tmp_path) == before
+    assert (lock.stat().st_ino if lock.exists() else None) == lock_inode
+    if store_state == "corrupt":
+        assert listed["status"] == "error"
+        assert pending["resume_blocked"] is True
+    else:
+        assert listed["status"] == "ok"
+        assert listed["count"] == (1 if store_state in {"legacy", "locked"} else 0)
+        assert pending["resume_blocked"] == (store_state in {"legacy", "locked"})
+    if store_state == "absent_directory":
+        assert not directory.exists()
+
+
+def test_hold_listing_during_writer_transaction_keeps_committed_snapshot_and_lock(
+    branch_workspace, monkeypatch,
+):
+    branch = branch_workspace.name
+    first = map_step_runner.create_approval_hold(
+        "dangerous_action", "first reason", "first request", branch=branch,
+    )
+    assert first["status"] == "ok"
+    lock = branch_workspace / ".approval-holds.lock"
+    inode = lock.stat().st_ino
+    write_json = map_step_runner._write_json_file
+    snapshots = []
+    import fcntl
+
+    flock = fcntl.flock
+
+    def nonblocking_flock(descriptor, operation):
+        # A regression to locking readers must fail, not hang on the outer lock.
+        flock(descriptor, operation | fcntl.LOCK_NB)
+
+    monkeypatch.setattr(fcntl, "flock", nonblocking_flock)
+
+    def inspect_before_publish(path, payload):
+        if path.name == "approval_holds.json":
+            snapshots.append(map_step_runner.list_approval_holds(branch=branch))
+            assert lock.stat().st_ino == inode
+        write_json(path, payload)
+
+    monkeypatch.setattr(map_step_runner, "_write_json_file", inspect_before_publish)
+    second = map_step_runner.create_approval_hold(
+        "dangerous_action", "second reason", "second request", branch=branch,
+    )
+
+    assert second["status"] == "ok"
+    assert len(snapshots) == 1
+    assert snapshots[0]["status"] == "ok"
+    assert [hold["id"] for hold in snapshots[0]["holds"]] == [first["hold_id"]]
+    assert {hold["id"] for hold in map_step_runner.list_approval_holds(branch=branch)["holds"]} == {
+        first["hold_id"], second["hold_id"],
+    }
+    assert lock.stat().st_ino == inode
 
 
 def test_auto_decide_holds_with_nothing_pending_returns_empty_lists(branch_workspace):
@@ -2516,12 +2597,19 @@ def test_auto_decide_holds_leaves_hard_stop_kinds_pending(branch_workspace):
     branch = branch_workspace.name
     hold_ids: dict[str, str] = {}
     for kind in sorted(map_step_runner.HARD_STOP_HOLD_KINDS):
-        created = map_step_runner.create_approval_hold(
-            kind=kind,
-            reason=f"synthetic {kind} hold for auto_decide_holds test",
-            request_summary=f"synthetic request for {kind}",
-            branch=branch,
-        )
+        if kind == "review_consent":
+            created = map_step_runner._ensure_review_consent(
+                {"target": {"security_gate_policy": {"mode": "strict"}}, "policy_hash": "test-policy"},
+                branch=branch,
+            )
+            assert created["status"] == "pending"
+        else:
+            created = map_step_runner.create_approval_hold(
+                kind=kind,
+                reason=f"synthetic {kind} hold for auto_decide_holds test",
+                request_summary=f"synthetic request for {kind}",
+                branch=branch,
+            )
         hold_ids[kind] = created["hold_id"]
 
     result = map_step_runner.auto_decide_holds(branch=branch)
@@ -2544,12 +2632,19 @@ def test_auto_decide_holds_never_invokes_decide_approval_hold_on_hard_stop_kind(
     branch = branch_workspace.name
     hard_stop_hold_ids: set[str] = set()
     for kind in sorted(map_step_runner.APPROVAL_HOLD_KINDS):
-        created = map_step_runner.create_approval_hold(
-            kind=kind,
-            reason=f"synthetic {kind} hold for the mixed-population VC3 test",
-            request_summary=f"synthetic request for {kind}",
-            branch=branch,
-        )
+        if kind == "review_consent":
+            created = map_step_runner._ensure_review_consent(
+                {"target": {"security_gate_policy": {"mode": "strict"}}, "policy_hash": "test-policy"},
+                branch=branch,
+            )
+            assert created["status"] == "pending"
+        else:
+            created = map_step_runner.create_approval_hold(
+                kind=kind,
+                reason=f"synthetic {kind} hold for the mixed-population VC3 test",
+                request_summary=f"synthetic request for {kind}",
+                branch=branch,
+            )
         if kind in map_step_runner.HARD_STOP_HOLD_KINDS:
             hard_stop_hold_ids.add(created["hold_id"])
 
@@ -10225,8 +10320,9 @@ class TestCreateReviewBundle:
             "monitor",
             "predictor",
             "evaluator",
-            *map_step_runner.ROLE_REVIEWER_IDS,
+            *map_step_runner.BASE_ROLE_REVIEWERS,
         }
+        assert "security" not in result["prompts"]
 
     def test_build_review_prompts_adds_complexity_lens_when_minimality_enabled(
         self, branch_workspace
@@ -18899,7 +18995,8 @@ class TestRoleReviewers:
         )
         prompts = result["prompts"]
         assert {"monitor", "predictor", "evaluator"} <= set(prompts)
-        for role in map_step_runner.ROLE_REVIEWER_IDS:
+        assert "security" not in prompts
+        for role in map_step_runner.BASE_ROLE_REVIEWERS:
             assert role in prompts, f"{role} must run in the default fan-out"
             assert prompts[role]["prompt"], f"{role} prompt must not be empty"
 
@@ -18935,19 +19032,24 @@ class TestRoleReviewers:
         assert "BUNDLE" in maintainer
         assert "diff --git a/x b/x" in maintainer
 
+    @pytest.mark.parametrize("include_security", [False, True])
     def test_both_role_prompts_share_one_scope_and_one_contract(
-        self, tmp_path, monkeypatch
+        self, tmp_path, monkeypatch, include_security
     ):
-        """The review scope and the output contract are rendered from shared
-        constants, exactly once per prompt — the two roles cannot disagree on
-        what "the change" is or on what a finding must carry."""
+        """Default and explicitly requested security roles share one contract."""
         monkeypatch.chdir(tmp_path)
+        roles = list(map_step_runner.ROLE_REVIEWER_IDS) if include_security else None
         prompts = map_step_runner.build_role_review_prompts(
             branch="test-branch",
             git_diff_text="diff --git a/x b/x",
             repo_context_text="BUNDLE",
+            roles=roles,
         )["prompts"]
-        for role in map_step_runner.ROLE_REVIEWER_IDS:
+        expected = {"user_experience", "maintainer"}
+        if include_security:
+            expected.add("security")
+        assert set(prompts) == expected
+        for role in expected:
             prompt = prompts[role]["prompt"]
             assert map_step_runner.ROLE_REVIEWER_SHARED_SCOPE in prompt, role
             assert map_step_runner.ROLE_FINDING_OUTPUT_CONTRACT in prompt, role

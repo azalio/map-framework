@@ -2,13 +2,16 @@
 
 import json
 import os
-import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 import pytest
+
+from tests.review_process_lifecycle import ReviewProcessLifecycle
+
+pytestmark = pytest.mark.timeout(120)
 
 RUNNER = Path(__file__).resolve().parents[1] / "src/mapify_cli/templates/map/scripts/map_step_runner.py"
 
@@ -23,11 +26,16 @@ def check_workspace(tmp_path, monkeypatch):
     Path("writer.py").write_text("VALUE = 1\n")
     subprocess.run(["git", "add", "."], check=True)
     subprocess.run(["git", "commit", "-m", "base"], check=True, capture_output=True)
-    return tmp_path / ".map/main/review-verdict-ledger.json"
+    with ReviewProcessLifecycle(tmp_path) as lifecycle:
+        lifecycle.recover(lambda: (tmp_path / ".map/main/signal-fault").unlink(missing_ok=True))
+        lifecycle.recover(lambda: (tmp_path / ".map/main/inspection-fault").unlink(missing_ok=True))
+        lifecycle.recover(lambda: (tmp_path / ".map/main/release").touch()
+                          if (tmp_path / ".map/main").exists() else None)
+        yield tmp_path / ".map/main/review-verdict-ledger.json"
 
 
 def _cli(*args):
-    process = subprocess.run([sys.executable, str(RUNNER), *args], capture_output=True, text=True, check=False)
+    process = ReviewProcessLifecycle(Path.cwd() / ".map").run([sys.executable, str(RUNNER), *args])
     assert process.stdout, process.stderr
     return json.loads(process.stdout)
 
@@ -69,7 +77,8 @@ def test_invalid_check_timeout_rejected_without_admission(check_workspace, timeo
 
 
 def _alive(pid):
-    result = subprocess.run(["ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True, check=False)
+    result = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "stat="], capture_output=True,
+                            text=True, check=False, timeout=2)
     return bool(result.stdout.strip()) and not result.stdout.strip().startswith("Z")
 
 
@@ -122,10 +131,6 @@ def test_nested_check_keeps_lease_until_descendant_stops(check_workspace, kill_r
             assert any(row["attempt_id"] == first and row["state"] == "interrupted" for row in history)
     finally:
         release.touch()
-        if marker.exists():
-            pid = int(marker.read_text())
-            if _alive(pid):
-                os.kill(pid, signal.SIGKILL)
         if process.poll() is None:
             process.kill()
         process.communicate(timeout=5)
@@ -139,16 +144,13 @@ def test_wrapper_exit_cleans_live_background_child(check_workspace, exit_code):
                f"subprocess.Popen([sys.executable,'-c',{child!r}], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
                f"\nwhile not Path({str(marker)!r}).exists(): time.sleep(.01)\nsys.exit({exit_code})")
     assert _cli("begin_review_run", "--mode", "lightweight", "--required-check", "suite", "--check-specs-json",
-                json.dumps({"suite": [sys.executable, "-c", wrapper]}))["status"] == "success"
+                json.dumps({"suite": [sys.executable, "-c", wrapper]}),
+                "--check-timeouts-json", '{"suite": 5}')["status"] == "success"
     result = _cli("run_test_gate", "--check-id", "suite")
     pid = int(marker.read_text())
-    try:
-        assert result["exit_code"] == exit_code, result
-        assert result["passed"] == (exit_code == 0), result
-        assert not _alive(pid)
-    finally:
-        if _alive(pid):
-            os.kill(pid, signal.SIGKILL)
+    assert result["exit_code"] == exit_code, result
+    assert result["passed"] == (exit_code == 0), result
+    assert not _alive(pid)
 
 
 @pytest.mark.parametrize("signal_delivered", [True, False])
@@ -188,14 +190,14 @@ def test_signal_permission_error_releases_only_quiescent_group(check_workspace, 
             assert blocked["status"] == "error" and "still running" in blocked["message"], blocked
     finally:
         fault.unlink(missing_ok=True)
-        deadline = time.monotonic() + 5
-        recovered = {"passed": False}
-        while time.monotonic() < deadline:
-            recovered = _cli("run_test_gate", "--check-id", "suite")
-            if recovered.get("passed"):
-                break
-            time.sleep(.05)
-        assert recovered["passed"] is True, recovered
+    deadline = time.monotonic() + 5
+    recovered = {"passed": False}
+    while time.monotonic() < deadline:
+        recovered = _cli("run_test_gate", "--check-id", "suite")
+        if recovered.get("passed"):
+            break
+        time.sleep(.05)
+    assert recovered["passed"] is True, recovered
 
 
 def test_cleanup_inspection_failure_is_visible_and_recovers(check_workspace, monkeypatch):
@@ -209,7 +211,7 @@ def test_cleanup_inspection_failure_is_visible_and_recovers(check_workspace, mon
     monkeypatch.setenv("PATH", str(shim) + os.pathsep + os.environ["PATH"])
     command = [sys.executable, "-c", f"from pathlib import Path; Path({str(fault)!r}).touch()"]
     assert _cli("begin_review_run", "--mode", "lightweight", "--required-check", "suite", "--check-specs-json",
-                json.dumps({"suite": command}))["status"] == "success"
+                json.dumps({"suite": command}), "--check-timeouts-json", '{"suite": 5}')["status"] == "success"
     try:
         result = _cli("run_test_gate", "--check-id", "suite")
         assert result["status"] == "cleanup_blocked" and result["passed"] is False, result
@@ -244,7 +246,7 @@ def test_inspection_preflight_failure_does_not_launch_check(check_workspace, mon
     marker = directory / "must-not-run"
     command = [sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"]
     assert _cli("begin_review_run", "--mode", "lightweight", "--required-check", "suite", "--check-specs-json",
-                json.dumps({"suite": command}))["status"] == "success"
+                json.dumps({"suite": command}), "--check-timeouts-json", '{"suite": 5}')["status"] == "success"
     result = _cli("run_test_gate", "--check-id", "suite")
     assert result["passed"] is False and result["state"] == "finished", result
     assert not marker.exists()

@@ -2,6 +2,14 @@
 
 This file contains lower-frequency review details. Keep `SKILL.md` focused on the active review sequence.
 
+## Sensitive and Unknown Review Gates
+
+New gates default to shadow diagnostics: no new blockers, no reduced existing safeguards. Strict opt-in is `review: {security_gates: strict}` in `.map/config.yaml` on the pinned trusted default branch, never PR-head/local config. In strict mode admission overrides quick/lightweight or reduced explicit rosters for sensitive/unknown changes. Dispatch every admitted reviewer, including the independent `security` role, and capture its own envelope for each ordering. Normal approval and execution checks cannot replace security coverage.
+
+Human consent is a separate snapshot/policy/action-bound `review_consent` hold in the existing durable store. Verified human provenance is currently unavailable: host UI answers, transcripts and caller JSON do not establish it. Never call `decide_approval_hold` to discharge review consent, or reinterpret auto mode, agent votes or successful checks as consent. Report the pending hold in both modes. In strict mode stop before review-ready; do not burn additional review rounds waiting. The strict ready gate remains blocked even when legacy ledger enforcement is disabled. Shadow holds do not add blockers and must never be reported as consent. Positive human ingress remains incomplete under #523; Codex capability remains unverified under #526.
+
+Shadow consent-store errors are reported in admission output and persisted in the review ledger when writable; they do not deny admission or ready. Never reset a corrupt hold store: existing generic hold blockers remain enforced. Strict consent-store errors still fail closed. Gate configuration is read from the pinned trusted revision independently of `REVIEW.md` content validation; invalid root/area policy cannot downgrade a strict configuration.
+
 ## Section Rubrics
 
 - Architecture: boundaries, lifecycle, coupling, public API behavior, stage consumption.
