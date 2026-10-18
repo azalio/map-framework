@@ -125,6 +125,79 @@ def test_security_capture_passes_independently_but_consent_stays_pending(sensiti
                                         branch="feature")["status"] == "error"
 
 
+@pytest.mark.parametrize("receipt", [None, [], "invalid", {"covered_files": [{}]}, {"covered_files": [[]]}])
+def test_security_gate_rejects_malformed_legitimately_captured_receipt(sensitive_repo, receipt):
+    del sensitive_repo
+    profile = Path(".claude/agents/review-reader.md")
+    profile.parent.mkdir(parents=True)
+    profile.write_text("---\nname: review-reader\ntools: Read, Glob, Grep\n---\nRead only.\n")
+    admitted = runner.begin_review_run(branch="feature", provider="claude")
+    payload = {"reviewer": "security", "all_clear": True, "findings": [], "receipt": receipt}
+    capture = runner.capture_review_output("security", json.dumps(payload), admitted["round_id"], branch="feature")
+    assert capture["status"] == "success", capture
+    directory = Path(".map/feature")
+    row = json.loads((directory / "review-verdict-ledger.json").read_text())["convergence"]["rounds"][-1]
+    gate = runner._review_security_gate(row, directory)
+    assert gate["status"] == "INCOMPLETE", gate
+    assert gate["reasons"]
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("defect", ["corrupt", "wrong_branch"])
+def test_route_task_blocks_on_invalid_hold_store(policy_repo, dry_run, defect):
+    del policy_repo
+    path = Path(".map/feature/approval_holds.json")
+    path.parent.mkdir(parents=True)
+    content = "{broken" if defect == "corrupt" else json.dumps({
+        "branch": "other-branch", "holds": {}, "next_id": 1, "updated_at": "",
+    })
+    path.write_text(content)
+    pending = runner.get_pending_holds(branch="feature")
+    assert pending["status"] == "error"
+    result = runner.route_task("recommend a workflow", branch="feature", dry_run=dry_run)
+    assert result["status"] == "blocked", result
+    assert result["executed"] is False
+    artifact = json.loads(Path(".map/feature/auto-route.json").read_text())
+    assert artifact["chain_status"] == "blocked"
+    assert artifact["executed"] is False
+    assert pending["message"] in artifact["block_reason"]
+    assert path.read_text() == content
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_normal_prompt_builder_matches_security_admission(policy_repo, strict):
+    del policy_repo
+    if strict:
+        git("checkout", "main")
+        Path(".map").mkdir(exist_ok=True)
+        Path(".map/config.yaml").write_text("review:\n  security_gates: strict\n")
+        git("add", "-f", ".map/config.yaml")
+        git("commit", "-m", "strict security admission")
+        git("checkout", "feature")
+    Path("old/code.py").write_text("import subprocess\nsubprocess.run(command, shell=True)\n")
+    admission = runner.begin_review_run(branch="feature")
+    assert admission["status"] == "success", admission
+    prompts = runner.build_review_prompts(branch="feature", review_bundle_text="BUNDLE", git_diff_text="DIFF")["prompts"]
+    assert ("security" in prompts) == ("security" in admission["scheduled_reviewers"])
+    assert set(admission["scheduled_reviewers"]) <= set(prompts)
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_review_skill_capture_and_quick_dispatch_follow_admitted_roster(provider):
+    root = Path(__file__).resolve().parents[1] / "src/mapify_cli/templates"
+    skill = root / ("skills" if provider == "claude" else "codex/skills") / "map-review/SKILL.md"
+    text = skill.read_text()
+    capture = text.split("Repeat for `predictor`,", 1)[1].split("In adversarial", 1)[0]
+    assert "`maintainer` and `security`" not in capture
+    assert "security" in capture and "only when" in capture and "admitted roster" in capture
+    assert "`user_experience`, `maintainer`, `security`; plus" not in text
+    fanout = text.split("2. Fan-out:", 1)[1].split("3. Validate:", 1)[0]
+    assert "for every role in the admitted roster" in fanout
+    aggregate = text.split("4. Aggregate:", 1)[1].splitlines()[0]
+    assert "[--edge-case <path> when admitted]" in aggregate
+    assert "[--security <path> when admitted]" in aggregate
+
+
 def test_hold_restart_and_changed_snapshot_preserve_pending_history(sensitive_repo):
     del sensitive_repo
     admitted = runner.begin_review_run(branch="feature")

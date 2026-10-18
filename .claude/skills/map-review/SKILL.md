@@ -407,8 +407,8 @@ The optional complexity lens returns plain text, not JSON. Do not run the JSON t
 
 Once a reviewer clears the truncation gate, write its JSON envelope verbatim to
 `.map/<branch>/review-agent-<role>.json` (`monitor`, `predictor`, `evaluator`,
-`user_experience`, `maintainer`, `security`; plus `adversarial` in
-adversarial/compare-orderings mode). The verdict ledger is
+`user_experience`, `maintainer`; include `security` only when it is in the
+admitted roster, plus `adversarial` in adversarial/compare-orderings mode). The verdict ledger is
 computed from these files — a role whose file is missing is recorded as an
 unobserved review, not as a clean one.
 
@@ -429,7 +429,7 @@ MONITOR_EOF
 
 The quoted heredoc marker (`<<'MONITOR_EOF'`, quotes included) is what stops the
 shell expanding anything inside the payload. Repeat for `predictor`,
-`evaluator`, `user_experience`, `maintainer` and `security`. In adversarial or
+`evaluator`, `user_experience` and `maintainer`; repeat for `security` only when it is in the admitted roster. In adversarial or
 compare-orderings mode write the complete tagged aggregate to
 `review-agent-adversarial.json` instead, including `ledger_findings`,
 `reviewer_status` and `parse_errors`; an empty findings array alone cannot prove review.
@@ -518,10 +518,10 @@ When `--adversarial` is set (with `--cross-ai`: present cross-AI first, then thi
 
 ```text
 1. Build prompts:  python3 .map/scripts/map_step_runner.py build_adversarial_review_prompts --reviewers <comma-separated admitted roster>
-2. Fan-out:        Task(subagent_type="review-reader", ...) for blind, edge_case, acceptance,
-                   user_experience, maintainer; security only when admitted — wait for all (strict overrides --quick)
+2. Fan-out:        Task(subagent_type="review-reader", ...) for every role in the admitted roster
+                   (edge_case absent under non-strict --quick; security only when admitted) — wait for all
 3. Validate:       Each must return valid JSON per adversarial finding schema; retry ONCE on failure
-4. Aggregate:      python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings --blind <path> --edge-case <path> --acceptance <path> --user-experience <path> --maintainer <path> [--security <path> when admitted]
+4. Aggregate:      python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings --blind <path> [--edge-case <path> when admitted] --acceptance <path> --user-experience <path> --maintainer <path> [--security <path> when admitted]
 5. Present:        Unified report: CRITICAL/IMPORTANT/MINOR, convergence section, all-clear statements (--show-raw-findings for debug)
 6. Feed ledger:    persist the complete tagged aggregate to "$BRANCH_DIR/review-agent-adversarial.json"
                    including ledger_findings, reviewer_status and parse_errors

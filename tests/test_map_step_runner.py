@@ -10306,8 +10306,9 @@ class TestCreateReviewBundle:
             "monitor",
             "predictor",
             "evaluator",
-            *map_step_runner.ROLE_REVIEWER_IDS,
+            *map_step_runner.BASE_ROLE_REVIEWERS,
         }
+        assert "security" not in result["prompts"]
 
     def test_build_review_prompts_adds_complexity_lens_when_minimality_enabled(
         self, branch_workspace
@@ -18980,7 +18981,8 @@ class TestRoleReviewers:
         )
         prompts = result["prompts"]
         assert {"monitor", "predictor", "evaluator"} <= set(prompts)
-        for role in map_step_runner.ROLE_REVIEWER_IDS:
+        assert "security" not in prompts
+        for role in map_step_runner.BASE_ROLE_REVIEWERS:
             assert role in prompts, f"{role} must run in the default fan-out"
             assert prompts[role]["prompt"], f"{role} prompt must not be empty"
 

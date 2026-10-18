@@ -10439,9 +10439,13 @@ def _review_security_gate(row: dict[str, Any], directory: Path) -> dict[str, Any
             reasons.append(f"{ordering}: missing, stale or changed independent security receipt")
             continue
         output = json.loads(path.read_text(encoding="utf-8"))
-        receipt = output.get("receipt", {})
+        if not isinstance(output, dict) or not isinstance(output.get("receipt"), dict):
+            reasons.append(f"{ordering}: invalid security reviewer envelope")
+            continue
+        receipt = output["receipt"]
         covered = receipt.get("covered_files")
-        if (not isinstance(covered, list) or set(row.get("required_files", [])) - set(covered)
+        if (not isinstance(covered, list) or any(not isinstance(name, str) for name in covered)
+                or set(row.get("required_files", [])) - set(covered)
                 or receipt.get("skipped_files") != [] or receipt.get("denied_access") != []):
             reasons.append(f"{ordering}: incomplete security coverage")
         if output.get("all_clear") is not True or output.get("findings") != []:
@@ -12955,7 +12959,11 @@ def build_review_prompts(
     # output — the diff and the bundle are their given context, and read-only
     # repo access is granted (`diff_plus_repo_read`) because both roles must
     # run `git show <default-branch>:<file>` and grep the whole base.
+    admission = _read_json_file(get_branch_dir(branch_name) / "review-mode.json")
+    admitted_roles = admission.get("scheduled_reviewers", []) if admission else []
     for role_id in ROLE_REVIEWER_IDS:
+        if role_id == "security" and (not isinstance(admitted_roles, list) or role_id not in admitted_roles):
+            continue
         role_entry = _role_prompt_entry(role_id, git_diff, review_bundle, layering)
         if role_entry is None:
             continue
@@ -18562,7 +18570,11 @@ def route_task(
         for hold in cast(list[Any], pending_holds.get("holds", []))
         if isinstance(hold, dict) and hold.get("kind") in HARD_STOP_HOLD_KINDS
     ]
-    if hard_stop_ids:
+    if pending_holds.get("status") == "error":
+        chain_status = "blocked"
+        executed = False
+        block_reason = pending_holds.get("message", "Cannot read approval hold store")
+    elif hard_stop_ids:
         chain_status = "blocked"
         executed = False
         blocked_by = hard_stop_ids
