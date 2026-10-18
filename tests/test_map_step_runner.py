@@ -5582,7 +5582,7 @@ class TestSnapshotCodeState:
                 return ok("deadbeefcafebabe\n")
             if "--verify" in cmd:
                 # only origin/main resolves
-                return ok("base000\n") if "origin/main^{commit}" in cmd else \
+                return ok("base000\n") if "refs/remotes/origin/main^{commit}" in cmd else \
                     real_subprocess.CompletedProcess(cmd, 1, "", "")
             if "merge-base" in cmd:
                 return ok("base0000000000\n")
@@ -5598,7 +5598,7 @@ class TestSnapshotCodeState:
         result = map_step_runner.snapshot_code_state(branch="feat-x")
 
         assert result["files_changed"] == ["a.py", "b.py"]
-        assert result["diff_base_ref"] == "origin/main"
+        assert result["diff_base_ref"] == "refs/remotes/origin/main"
         assert result["diff_base"] == "base00000000"
         assert result["diff_range"] == "base00000000..HEAD"
         # Uncommitted diff is retained as the secondary work-in-progress signal.
@@ -5643,7 +5643,7 @@ class TestSnapshotCodeState:
                 return real_subprocess.CompletedProcess(cmd, 0, out, "")
 
             if "--verify" in cmd:
-                return ok("base000\n") if "origin/main^{commit}" in cmd else \
+                return ok("base000\n") if "refs/remotes/origin/main^{commit}" in cmd else \
                     real_subprocess.CompletedProcess(cmd, 1, "", "")
             if "merge-base" in cmd:
                 return ok("headsha000000\n")
