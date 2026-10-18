@@ -14,8 +14,33 @@ SUPERVISOR = (Path(__file__).resolve().parents[1]
               / "src/mapify_cli/templates/map/scripts/review_check_supervisor.py")
 
 
-@pytest.mark.parametrize("outcome", ["normal", "assertion", "timeout", "noop-finalizer"])
-def test_review_finalizer_restores_fault_and_waits_for_owned_processes(tmp_path, outcome, monkeypatch):
+def test_process_inspection_requests_unlimited_command_width(tmp_path, monkeypatch):
+    lifecycle = ReviewProcessLifecycle(tmp_path / ("long-workspace-" * 10))
+    command = ("/very/long/interpreter/" + "nested/" * 40
+               + f"python {SUPERVISOR} supervise {lifecycle.root}/attempt 3 5 python -c pass")
+
+    def snapshot(argv, **kwargs):
+        assert kwargs["timeout"] == 2
+        # Deterministically model Linux ps width truncation on every platform.
+        visible_command = command if "-ww" in argv else command[:80]
+        output = (f"900 1 900 Ss {visible_command}\n"
+                  "901 900 901 Ss python anchor\n"
+                  "902 901 901 S python worker\n")
+        return subprocess.CompletedProcess(argv, 0, output, "")
+
+    monkeypatch.setattr(subprocess, "run", snapshot)
+    found = lifecycle.live_processes()
+    assert {row.split()[0] for row in found} == {"900", "901", "902"}
+
+
+@pytest.mark.parametrize(("outcome", "long_root"), [
+    ("normal", False), ("assertion", False), ("timeout", False),
+    ("noop-finalizer", False), ("noop-finalizer", True),
+])
+def test_review_finalizer_restores_fault_and_waits_for_owned_processes(tmp_path, outcome, long_root, monkeypatch):
+    if long_root:
+        tmp_path = tmp_path / ("long-workspace-" * 10) / ("long-attempt-parent-" * 8)
+        tmp_path.mkdir(parents=True)
     fault = tmp_path / "inspection-fault"
     shim = tmp_path / "bin"
     shim.mkdir()

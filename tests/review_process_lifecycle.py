@@ -51,7 +51,7 @@ class ReviewProcessLifecycle:
                                                stderr_path.read_text(errors="replace"))
 
     def live_processes(self) -> list[str]:
-        result = subprocess.run(["/bin/ps", "-axo", "pid=,ppid=,pgid=,stat=,command="],
+        result = subprocess.run(["/bin/ps", "-ww", "-axo", "pid=,ppid=,pgid=,stat=,command="],
                                 capture_output=True, text=True, timeout=2, check=True)
         rows = [line.split(None, 4) for line in result.stdout.splitlines() if line.strip()]
         if not rows or any(len(row) != 5 or not all(value.isdigit() for value in row[:3]) for row in rows):
