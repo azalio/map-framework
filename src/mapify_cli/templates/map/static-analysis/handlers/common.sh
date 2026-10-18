@@ -79,30 +79,39 @@ json_escape() {
 }
 
 # Parse tool output line with robust handling of colons in filenames
-# Usage: parse_colon_delimited "file:line:col:message" -> sets FILE, LINE, COL, MESSAGE
+# Usage: parse_colon_delimited "file:line:col:message" file line col message
+# Output names must be writable scalar identifiers, not BASH_REMATCH or __map_parse_*.
 parse_colon_delimited() {
-    local input="$1"
-    local -n out_file="$2"
-    local -n out_line="$3"
-    local -n out_col="$4"
-    local -n out_msg="$5"
+    [[ $# -eq 5 ]] || return 1
+    local __map_parse_name __map_parse_decl
+    for __map_parse_name in "$2" "$3" "$4" "$5"; do
+        [[ "$__map_parse_name" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || return 1
+        [[ "$__map_parse_name" != __map_parse_* && "$__map_parse_name" != BASH_REMATCH ]] || return 1
+        # Bash 3.2 printf -v can report success for readonly targets. Reject
+        # attributes that prevent or transform scalar writes before any assignment.
+        __map_parse_decl=$(declare -p "$__map_parse_name" 2>/dev/null) || __map_parse_decl=""
+        if [[ "$__map_parse_decl" =~ ^declare\ -[^\ ]*[aAirnlu] ]]; then
+            return 1
+        fi
+    done
 
-    # Try file:line:col:message pattern first
-    if [[ "$input" =~ ^(.+):([0-9]+):([0-9]+):(.*)$ ]]; then
-        out_file="${BASH_REMATCH[1]}"
-        out_line="${BASH_REMATCH[2]}"
-        out_col="${BASH_REMATCH[3]}"
-        out_msg="${BASH_REMATCH[4]}"
-        return 0
+    # printf -v supports Bash 3.2; reserved locals avoid shadowing caller outputs.
+    # Chain assignments so a failed write cannot report successful parsing.
+    if [[ "$1" =~ ^(.+):([0-9]+):([0-9]+):(.*)$ ]]; then
+        printf -v "$2" '%s' "${BASH_REMATCH[1]}" &&
+        printf -v "$3" '%s' "${BASH_REMATCH[2]}" &&
+        printf -v "$4" '%s' "${BASH_REMATCH[3]}" &&
+        printf -v "$5" '%s' "${BASH_REMATCH[4]}"
+        return $?
     fi
 
     # Fallback to file:line:message (no column)
-    if [[ "$input" =~ ^(.+):([0-9]+):(.*)$ ]]; then
-        out_file="${BASH_REMATCH[1]}"
-        out_line="${BASH_REMATCH[2]}"
-        out_col=0
-        out_msg="${BASH_REMATCH[3]}"
-        return 0
+    if [[ "$1" =~ ^(.+):([0-9]+):(.*)$ ]]; then
+        printf -v "$2" '%s' "${BASH_REMATCH[1]}" &&
+        printf -v "$3" '%s' "${BASH_REMATCH[2]}" &&
+        printf -v "$4" '%s' 0 &&
+        printf -v "$5" '%s' "${BASH_REMATCH[3]}"
+        return $?
     fi
 
     return 1

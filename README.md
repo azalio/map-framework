@@ -300,6 +300,8 @@ mapify init . --no-autonomy     # remove the autonomy posture
 
 ## Trouble?
 
+- **Static analysis reports `local: -n: invalid option` on macOS** → Update MAP and refresh your provider's installed project files (`mapify init . --refresh-existing`, adding `--provider codex` for Codex). The Go/mypy diagnostic parser supports system Bash 3.2; upgrading Bash is not required for this parser. Re-run analysis rather than trusting an earlier empty report.
+
 - **Command not found** → Run `mapify init` in your project first.
 - **`init` stops on a Python version** → `python3` on your `PATH` is older than 3.11; the hooks run under it. Install 3.11+ (`brew install python@3.12` / `uv python install 3.12`), then `mapify check`. To install anyway, pass `--skip-python-check` or set `MAPIFY_SKIP_PYTHON_CHECK=1` — hooks stay non-functional until `python3` is upgraded ([details](docs/INSTALL.md#why-python3-on-path-matters)).
 - **A hook printed "MAP requires Python 3.11 or newer"** → same cause, detected at run time; the message names the interpreter it ran under. Context hooks report and let the session continue; the two PreToolUse gates (`safety-guardrails.py`, `workflow-gate.py`) deny the tool call instead of allowing it unguarded, so fix `python3` in another terminal to unblock.
