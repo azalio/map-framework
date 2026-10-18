@@ -2597,12 +2597,19 @@ def test_auto_decide_holds_leaves_hard_stop_kinds_pending(branch_workspace):
     branch = branch_workspace.name
     hold_ids: dict[str, str] = {}
     for kind in sorted(map_step_runner.HARD_STOP_HOLD_KINDS):
-        created = map_step_runner.create_approval_hold(
-            kind=kind,
-            reason=f"synthetic {kind} hold for auto_decide_holds test",
-            request_summary=f"synthetic request for {kind}",
-            branch=branch,
-        )
+        if kind == "review_consent":
+            created = map_step_runner._ensure_review_consent(
+                {"target": {"security_gate_policy": {"mode": "strict"}}, "policy_hash": "test-policy"},
+                branch=branch,
+            )
+            assert created["status"] == "pending"
+        else:
+            created = map_step_runner.create_approval_hold(
+                kind=kind,
+                reason=f"synthetic {kind} hold for auto_decide_holds test",
+                request_summary=f"synthetic request for {kind}",
+                branch=branch,
+            )
         hold_ids[kind] = created["hold_id"]
 
     result = map_step_runner.auto_decide_holds(branch=branch)
@@ -2625,12 +2632,19 @@ def test_auto_decide_holds_never_invokes_decide_approval_hold_on_hard_stop_kind(
     branch = branch_workspace.name
     hard_stop_hold_ids: set[str] = set()
     for kind in sorted(map_step_runner.APPROVAL_HOLD_KINDS):
-        created = map_step_runner.create_approval_hold(
-            kind=kind,
-            reason=f"synthetic {kind} hold for the mixed-population VC3 test",
-            request_summary=f"synthetic request for {kind}",
-            branch=branch,
-        )
+        if kind == "review_consent":
+            created = map_step_runner._ensure_review_consent(
+                {"target": {"security_gate_policy": {"mode": "strict"}}, "policy_hash": "test-policy"},
+                branch=branch,
+            )
+            assert created["status"] == "pending"
+        else:
+            created = map_step_runner.create_approval_hold(
+                kind=kind,
+                reason=f"synthetic {kind} hold for the mixed-population VC3 test",
+                request_summary=f"synthetic request for {kind}",
+                branch=branch,
+            )
         if kind in map_step_runner.HARD_STOP_HOLD_KINDS:
             hard_stop_hold_ids.add(created["hold_id"])
 

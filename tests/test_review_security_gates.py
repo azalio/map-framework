@@ -198,6 +198,302 @@ def test_review_skill_capture_and_quick_dispatch_follow_admitted_roster(provider
     assert "[--security <path> when admitted]" in aggregate
 
 
+@pytest.mark.parametrize("document", [
+    "README.md", "docs/ARCHITECTURE.md",
+    "src/mapify_cli/templates_src/skills/map-review/review-reference.md.jinja",
+])
+def test_strict_gate_documentation_uses_nested_yaml_example(document):
+    text = (Path(__file__).resolve().parents[1] / document).read_text()
+    assert "`review.security_gates: strict`" not in text
+    assert "`review: {security_gates: strict}`" in text
+
+
+@pytest.mark.parametrize("control", [".map/config.yaml", ".map/scripts/control.py"])
+@pytest.mark.parametrize("operation", ["modify", "delete", "rename"])
+def test_tracked_map_control_changes_are_bound_and_security_reviewed(policy_repo, control, operation):
+    del policy_repo
+    git("checkout", "main")
+    Path(".map/scripts").mkdir(parents=True)
+    Path(".map/config.yaml").write_text("review:\n  security_gates: strict\n")
+    Path(".map/scripts/control.py").write_text("value = 1\n")
+    git("add", "-f", ".map/config.yaml", ".map/scripts/control.py")
+    git("commit", "-m", "trusted control files")
+    git("checkout", "feature")
+    git("merge", "--ff-only", "main")
+    expected = {control}
+    if operation == "modify":
+        with Path(control).open("a") as stream:
+            stream.write("# changed control\n")
+    elif operation == "delete":
+        git("rm", control)
+    else:
+        destination = ".map/scripts/renamed-control.py"
+        git("mv", control, destination)
+        expected.add(destination)
+    admitted = runner.begin_review_run(branch="feature")
+    assert admitted["status"] == "success", admitted
+    assert admitted["target"]["security_gate_policy"]["mode"] == "strict"
+    assert admitted["target"]["shadow_risk"]["tier"] == "sensitive"
+    assert "security" in admitted["scheduled_reviewers"]
+    assert expected <= set(admitted["required_files"])
+    attribution = runner._review_attribution(admitted["target"])
+    assert expected <= {entry["path"] for entry in attribution["files"]}
+    for name in expected:
+        assert name in attribution["diff"]
+    assert attribution["diff_sha256"] == admitted["target"]["diff_digest"]
+    before = runner._review_target()
+    runtime = Path(".map/feature/runtime-noise.json")
+    runtime.write_text('{"runtime": true}')
+    git("add", "-f", str(runtime))
+    # Even accidentally tracked runtime evidence is not control-plane source.
+    assert runner._review_target() == before
+    # Existing policy separately fingerprints executable Python/shell runtime;
+    # ordinary untracked control-directory noise must not enter source scope.
+    Path(".map/scripts").mkdir(parents=True, exist_ok=True)
+    Path(".map/scripts/untracked-notes.txt").write_text("untracked notes\n")
+    assert runner._review_target() == before
+    ledger = json.loads(Path(".map/feature/review-verdict-ledger.json").read_text())
+    row = ledger["convergence"]["rounds"][-1]
+    assert runner._review_binding_current(row)
+    Path(".map/scripts/untracked-control.py").write_text("untracked = True\n")
+    after = runner._review_target()
+    assert after["required_files"] == before["required_files"]
+    assert after["diff_digest"] == before["diff_digest"]
+    assert after["local_digest"] == before["local_digest"]
+    assert after["policy_hash"] != before["policy_hash"]
+    assert not runner._review_binding_current(row)
+
+
+def test_review_target_and_bundle_use_bounded_git_argv(policy_repo, monkeypatch):
+    del policy_repo
+    import errno
+    import os
+
+    # A small supported argv ceiling models E2BIG without stressing the OS.
+    # Each ordinary Git call fits; expanding the inventory into argv does not.
+    names = [f"source_{index:03d}_with_a_long_descriptive_name.py" for index in range(48)]
+    for name in names:
+        Path(name).write_text("value = 1\n")
+    git("add", ".")
+    git("commit", "-m", "ordinary source inventory")
+    Path(names[0]).write_text("value = 2\n")
+    real_run = subprocess.run
+    limit = 1024
+    oversized_calls = []
+
+    def bounded_run(args, *positional, **kwargs):
+        if not isinstance(args, str):
+            size = sum(len(os.fsencode(argument)) + 1 for argument in args)
+            if size > limit:
+                oversized_calls.append(size)
+                raise OSError(errno.E2BIG, "simulated supported argv limit")
+        return real_run(args, *positional, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", bounded_run)
+    admitted = runner.begin_review_run(branch="feature")
+    assert admitted["status"] == "success", admitted
+    assert "unverified_reason" not in admitted["target"], admitted["target"]
+    assert set(names) <= set(admitted["required_files"])
+    bundle = runner.create_review_bundle(branch="feature")
+    assert bundle["status"] == "success", bundle
+    persisted = json.loads(Path(".map/feature/review-bundle.json").read_text())
+    assert persisted["snapshot"]["target"] == admitted["target"]
+    assert persisted["attribution"]["diff_sha256"] == admitted["target"]["diff_digest"]
+    assert set(names) <= {entry["path"] for entry in persisted["attribution"]["files"]}
+    assert not oversized_calls
+
+
+@pytest.mark.parametrize("name", ["plain.py", "space tab\tnewline\ndiff --git [*].py"])
+def test_review_diff_preserves_cross_control_rename_identity(policy_repo, name):
+    del policy_repo
+    git("checkout", "main")
+    Path(name).write_text("value = 1\n" * 20)
+    git("add", "--", name)
+    git("commit", "-m", "rename source")
+    git("checkout", "feature")
+    git("merge", "--ff-only", "main")
+    Path(".map/scripts").mkdir(parents=True)
+    destination = ".map/scripts/" + name
+    git("mv", "--", name, destination)
+    target = runner._review_target()
+    assert "unverified_reason" not in target, target
+    attribution = runner._review_attribution(target)
+    assert "similarity index 100%" in attribution["diff"]
+    assert "rename from " in attribution["diff"] and "rename to " in attribution["diff"]
+    assert {name, destination} <= set(target["required_files"])
+    assert attribution["diff_sha256"] == target["diff_digest"]
+
+
+def test_review_diff_binary_and_mode_changes_ignore_runtime_noise(policy_repo):
+    del policy_repo
+    git("checkout", "main")
+    Path("data.bin").write_bytes(b"\x00before\xff")
+    git("add", "data.bin")
+    git("commit", "-m", "binary base")
+    git("checkout", "feature")
+    git("merge", "--ff-only", "main")
+    Path("data.bin").write_bytes(b"\x00after\xfe")
+    Path("old/code.py").chmod(0o755)
+    target = runner._review_target()
+    assert "unverified_reason" not in target, target
+    attribution = runner._review_attribution(target)
+    assert "GIT binary patch" in attribution["diff"]
+    assert "old mode 100644" in attribution["diff"]
+    assert "new mode 100755" in attribution["diff"]
+    runtime = Path(".map/feature/noise.txt")
+    runtime.parent.mkdir(parents=True)
+    runtime.write_text("diff --git fake header\n")
+    git("add", "-f", str(runtime))
+    assert runner._review_target() == target
+    assert runner._review_attribution(target) == attribution
+
+
+def test_review_positive_pathspec_filters_before_rename(policy_repo):
+    del policy_repo
+    # Proposal only: prove Git's pathname/glob semantics before production use.
+    positive = (
+        ":(top,glob)*", ":(top,glob)[!.]*/**", ":(top,glob).[!m]*/**",
+        ":(top,glob).m[!a]*/**", ":(top,glob).ma[!p]*/**",
+        ":(top,glob).map?*/**", ":(top,glob).m/**", ":(top,glob).ma/**",
+        ":(top,literal).map/config.yaml", ":(top,glob).map/scripts/**",
+    )
+    selected = {
+        "root.txt", ".root", ".m/short.txt", ".ma/short.txt", ".mapX/long.txt",
+        ".github/workflows/check.yml", "ordinary/deep/code.py", "ordinary/.map/nested.txt",
+        "odd space\ttab\nline[*].txt", ".map/config.yaml", ".map/scripts/control.py",
+        "rename-source.py",
+    }
+    runtime = ".map/feature/runtime.txt"
+    git("checkout", "main")
+    for name in selected | {runtime}:
+        path = Path(name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("same rename content\n" * 20 if name == "rename-source.py" else f"original {name}\n")
+    git("add", "-f", "--", *sorted(selected | {runtime}))
+    git("commit", "-m", "pathspec oracle base")
+    git("checkout", "feature")
+    git("merge", "--ff-only", "main")
+    base = git("rev-parse", "HEAD")
+
+    def output(*args):
+        return subprocess.run(["git", *args], check=True, capture_output=True).stdout
+
+    root_matches = set(output("ls-files", "-z", "--", ":(top,glob)*").split(b"\0")) - {b""}
+    assert runtime.encode() not in root_matches, "root glob must not recursively include .map runtime"
+    assert b"root.txt" in root_matches and b".root" in root_matches
+    assert b".map/scripts/control.py" not in root_matches
+    inventory = set(output("ls-files", "-z").split(b"\0")) - {b""}
+    expected = {name for name in inventory if not name.startswith(b".map/")
+                or name == b".map/config.yaml" or name.startswith(b".map/scripts/")}
+    actual = set(output("ls-files", "-z", "--", *positive).split(b"\0")) - {b""}
+    assert actual == expected
+    production = runner._review_source_pathspec([name.decode() for name in sorted(expected)])
+    assert output("ls-files", "-z", "--", *production) == output("ls-files", "-z", "--", *positive)
+
+    destination = ".map/scripts/renamed.py"
+    git("mv", "rename-source.py", destination)
+    # An equally good excluded candidate must not compete for the rename.
+    excluded = Path(".map/feature/identical-candidate.py")
+    excluded.write_text("same rename content\n" * 20)
+    git("add", "-f", str(excluded))
+    Path(runtime).write_text("changed runtime\n")
+    Path("root.txt").write_text("changed source\n")
+    oracle_names = expected | {destination.encode()}
+    oracle = [f":(top,literal){name.decode()}" for name in sorted(oracle_names)]
+    actual_diff = output("diff", "--binary", "--find-renames", base, "--", *positive)
+    oracle_diff = output("diff", "--binary", "--find-renames", base, "--", *oracle)
+    assert actual_diff == oracle_diff
+    assert output("diff", "--binary", "--find-renames", base, "--", *production) == oracle_diff
+    assert output("ls-files", "--stage", "-z", "--", *production) == output(
+        "ls-files", "--stage", "-z", "--", *oracle,
+    )
+    assert b"similarity index 100%" in actual_diff
+    assert b"rename from rename-source.py" in actual_diff
+    assert b"rename to .map/scripts/renamed.py" in actual_diff
+    assert b"identical-candidate" not in actual_diff and runtime.encode() not in actual_diff
+    assert output("ls-files", "--stage", "-z", "--", *positive) == output(
+        "ls-files", "--stage", "-z", "--", *oracle,
+    )
+
+    untracked = Path(".map/scripts/untracked.txt")
+    untracked.write_text("untracked noise\n")
+    git("config", "status.renames", "true")
+    # .map is ignored by the fixture; force enumeration to exercise ?? filtering.
+    with Path(".gitignore").open("a") as stream:
+        stream.write("!.map/\n!.map/scripts/\n!.map/scripts/untracked.txt\n")
+    status = output("status", "--porcelain=v1", "-z", "--untracked-files=all", "--", *positive)
+    assert b"?? .map/scripts/untracked.txt\0" in status
+    filtered = []
+    records = status.split(b"\0")
+    index = 0
+    while index < len(records) - 1:
+        record = records[index]
+        index += 1
+        group = [record]
+        if b"R" in record[:2] or b"C" in record[:2]:
+            group.append(records[index])
+            index += 1
+        if record[:2] == b"??" and record[3:] not in oracle_names:
+            continue
+        filtered.extend(group)
+    expected_status = output("status", "--porcelain=v1", "-z", "--untracked-files=all", "--", *oracle)
+    assert b"".join(record + b"\0" for record in filtered) == expected_status
+    assert runner._review_source_status([name.decode() for name in sorted(oracle_names)]) == expected_status
+
+
+def test_review_config_directory_is_not_a_control_subtree(policy_repo):
+    del policy_repo
+    directory = Path(".map/config.yaml")
+    directory.mkdir(parents=True)
+    (directory / "not-config.txt").write_text("excluded subtree\n")
+    git("add", "-f", str(directory))
+    paths = runner._review_source_paths("HEAD")
+    assert ".map/config.yaml/not-config.txt" not in paths
+    pathspec = runner._review_source_pathspec(paths)
+    for args in [("ls-files", "-z"), ("ls-files", "--stage", "-z"), ("diff", "--binary", "HEAD")]:
+        output = subprocess.run(["git", *args, "--", *pathspec], check=True, capture_output=True).stdout
+        assert b"not-config.txt" not in output
+    target = runner._review_target()
+    assert "unverified_reason" not in target, target
+    assert ".map/config.yaml/not-config.txt" not in target["required_files"]
+
+
+@pytest.mark.parametrize("to_runtime", [False, True])
+def test_review_pathspec_excluded_rename_endpoints_match_literal_oracle(policy_repo, to_runtime):
+    del policy_repo
+    selected = "ordinary/source.txt"
+    excluded = ".map/feature/runtime.txt"
+    git("checkout", "main")
+    original = selected if to_runtime else excluded
+    destination = excluded if to_runtime else selected
+    Path(original).parent.mkdir(parents=True)
+    Path(original).write_text("identical content\n" * 20)
+    git("add", "-f", original)
+    git("commit", "-m", "boundary rename source")
+    git("checkout", "feature")
+    git("merge", "--ff-only", "main")
+    Path(destination).parent.mkdir(parents=True, exist_ok=True)
+    git("mv", original, destination)
+    names = runner._review_source_paths("HEAD")
+    actual = runner._review_git_bytes("diff", "--binary", "--find-renames", "HEAD", "--",
+                                    *runner._review_source_pathspec(names))
+    oracle = runner._review_git_bytes("diff", "--binary", "--find-renames", "HEAD", "--",
+                                    *(f":(top,literal){name}" for name in names))
+    assert actual == oracle
+    assert excluded.encode() not in actual
+    assert selected.encode() in actual
+
+
+def test_generic_hold_creation_rejects_reserved_review_consent(policy_repo):
+    del policy_repo
+    result = runner.create_approval_hold(
+        "review_consent", "operator selected reserved kind", "unbound consent", branch="feature",
+    )
+    assert result["status"] == "error", result
+    assert not Path(".map/feature/approval_holds.json").exists()
+    assert runner.get_pending_holds(branch="feature")["resume_blocked"] is False
+
+
 def test_hold_restart_and_changed_snapshot_preserve_pending_history(sensitive_repo):
     del sensitive_repo
     admitted = runner.begin_review_run(branch="feature")

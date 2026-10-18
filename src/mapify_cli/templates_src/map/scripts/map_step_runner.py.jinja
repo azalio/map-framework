@@ -8733,6 +8733,55 @@ def _review_file_entry(name: str) -> dict[str, Any]:
     return {"path": name, "kind": kind, "mode": mode, "sha256": hashlib.sha256(content).hexdigest()}
 
 
+def _review_control_path(name: str) -> bool:
+    return name == ".map/config.yaml" or name.startswith(".map/scripts/")
+
+
+def _review_source_paths(base: str) -> list[str]:
+    """Include tracked controls, never branch artifacts or untracked .map noise."""
+    tracked = set(_review_git_bytes("ls-files", "-z", "--cached").split(b"\0"))
+    for revision in {base, "HEAD"}:
+        tracked.update(_review_git_bytes("ls-tree", "-r", "--name-only", "-z", revision).split(b"\0"))
+    local = set(_review_git_bytes("ls-files", "-z", "--others", "--exclude-standard").split(b"\0"))
+    return sorted(os.fsdecode(name) for name in tracked | local if name and (
+        not name.startswith(b".map/") or (name in tracked and _review_control_path(os.fsdecode(name)))
+    ))
+
+
+def _review_source_pathspec(paths: list[str]) -> list[str]:
+    """Bound argv size and filter runtime artifacts before global rename matching."""
+    del paths  # Inventory size must not determine subprocess argv size.
+    return [
+        ":(top,glob)*", ":(top,glob)[!.]*/**", ":(top,glob).[!m]*/**",
+        ":(top,glob).m[!a]*/**", ":(top,glob).ma[!p]*/**",
+        ":(top,glob).map?*/**", ":(top,glob).m/**", ":(top,glob).ma/**",
+        ":(top,glob).map/config.yaml", ":(top,glob).map/scripts/**",
+        # Git may recurse into a directory matched by an exact pathspec.
+        # config.yaml is a single file, never a subtree of review inputs.
+        ":(top,glob,exclude).map/config.yaml/**",
+    ]
+
+
+def _review_source_status(paths: list[str]) -> bytes:
+    """Drop only untracked out-of-inventory controls; retain whole rename records."""
+    selected = {os.fsencode(name) for name in paths}
+    records = _review_git_bytes("status", "--porcelain=v1", "-z", "--untracked-files=all",
+                              "--", *_review_source_pathspec(paths)).split(b"\0")
+    kept: list[bytes] = []
+    index = 0
+    while index < len(records) - 1:
+        record = records[index]
+        index += 1
+        group = [record]
+        if b"R" in record[:2] or b"C" in record[:2]:
+            group.append(records[index])
+            index += 1
+        if record[:2] == b"??" and record[3:] not in selected:
+            continue
+        kept.extend(group)
+    return b"".join(record + b"\0" for record in kept)
+
+
 def _review_trusted_policy() -> dict[str, Any]:
     """Read additive area guidance from default-ref Git objects, never head files.
 
@@ -8760,9 +8809,10 @@ def _review_trusted_policy() -> dict[str, Any]:
         result["base"] = base
         changed = set(_review_git_bytes("diff", "--no-renames", "--name-only", "-z", base, "--").split(b"\0"))
         changed.update(_review_git_bytes("ls-files", "--others", "--exclude-standard", "-z").split(b"\0"))
+        sources = set(_review_source_paths(base))
         policies = {"REVIEW.md"}
         for raw in changed:
-            if not raw or raw.startswith(b".map/"):
+            if not raw or os.fsdecode(raw) not in sources:
                 continue
             for parent in Path(os.fsdecode(raw)).parents:
                 policies.add((parent / "REVIEW.md").as_posix())
@@ -8800,13 +8850,15 @@ def _review_shadow_risk(base: str, policy: dict[str, Any]) -> dict[str, Any]:
     try:
         changed = set(_review_git_bytes("diff", "--no-renames", "--name-only", "-z", base or "HEAD", "--").split(b"\0"))
         changed.update(_review_git_bytes("ls-files", "--others", "--exclude-standard", "-z").split(b"\0"))
+        sources = set(_review_source_paths(base or "HEAD"))
         for raw in sorted(changed):
-            if not raw or raw.startswith(b".map/"):
+            if not raw or os.fsdecode(raw) not in sources:
                 continue
             name = os.fsdecode(raw)
             path = Path(name)
             parts = {part.lower() for part in path.parts}
-            if (parts & {"skills", "agents", "hooks", ".github", ".claude", ".codex", "security", "auth", "rbac"}
+            if (_review_control_path(name)
+                    or parts & {"skills", "agents", "hooks", ".github", ".claude", ".codex", "security", "auth", "rbac"}
                     or path.name.lower() in {"review.md", "claude.md", "agents.md"}):
                 sensitive = True
                 reasons.append(f"Sensitive review/control path: {name}")
@@ -8866,19 +8918,12 @@ def _review_target() -> dict[str, Any]:
         head = _review_git("rev-parse", "HEAD")
         base = trusted_policy.get("base", "")
         base_ref = trusted_policy.get("ref", "")
-        names = sorted({os.fsdecode(name) for name in _review_git_bytes(
-            "ls-files", "-z", "--cached", "--others", "--exclude-standard",
-        ).split(b"\0") if name and not name.startswith(b".map/")})
-        if base:
-            deleted = _review_git_bytes("diff", "--name-only", "--diff-filter=D", "--no-renames", "-z",
-                                        base, "--", ".", ":(exclude).map")
-            # Base-side deletions (including rename sources) must be reviewed in the bundle.
-            names = sorted(set(names) | {os.fsdecode(name) for name in deleted.split(b"\0") if name})
+        names = _review_source_paths(base or "HEAD")
+        pathspec = _review_source_pathspec(names)
         manifest = [_review_file_entry(name) for name in names]
-        dirty = _review_git_bytes("status", "--porcelain=v1", "-z", "--untracked-files=all",
-                                  "--", ".", ":(exclude).map")
-        diff = _review_git_bytes("diff", "--binary", base or "HEAD", "--", ".", ":(exclude).map")
-        index = _review_git_bytes("ls-files", "--stage", "-z", "--", ".", ":(exclude).map")
+        dirty = _review_source_status(names)
+        diff = _review_git_bytes("diff", "--binary", base or "HEAD", "--", *pathspec)
+        index = _review_git_bytes("ls-files", "--stage", "-z", "--", *pathspec)
         conflicts = bool(_review_git_bytes("ls-files", "-u", "-z"))
         fingerprint = json.dumps(manifest, sort_keys=True).encode() + index + diff
         return {"head": head, "base": base, "base_ref": base_ref,
@@ -11949,7 +11994,8 @@ def _review_attribution(target: dict[str, Any]) -> dict[str, Any]:
         entries.append({"path": name, "base_content": base_text, "current_content": current_text,
                         "encoding": encoding, "line_mapping": mapping,
                         "status": "added" if result.returncode else ("deleted" if not path.exists() else "present")})
-    diff = _review_git_bytes("diff", "--binary", target["base"], "--", ".", ":(exclude).map")
+    diff = _review_git_bytes("diff", "--binary", target["base"], "--",
+                            *_review_source_pathspec(target.get("required_files", [])))
     return {"status": "available", "base": target["base"], "head": target["head"],
             "diff": diff.decode("utf-8", errors="replace"), "diff_sha256": hashlib.sha256(diff).hexdigest(),
             "files": entries, "attribution_limit": "Line presence is not proof of behavioral pre-existence"}
@@ -21696,6 +21742,10 @@ def create_approval_hold(
     path = _approval_holds_path(branch_name)
     base: dict[str, Any] = {"status": "ok", "branch": branch_name, "path": str(path)}
 
+    if kind == "review_consent":
+        return {**base, "status": "error", "reasons": [
+            "review_consent is reserved for snapshot-bound review admission"
+        ]}
     if kind not in APPROVAL_HOLD_KINDS:
         return {
             **base,
