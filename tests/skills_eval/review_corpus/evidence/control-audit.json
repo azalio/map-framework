@@ -1,0 +1,34 @@
+{
+  "audit_cutoff": {"commit": "e3b8035e58e49dd6d1570d504bf638a962f2601a", "timestamp": "2026-10-18T20:48:40Z"},
+  "audited_at": "2026-10-18T21:04:59Z",
+  "control": "bfc5e047571325d2d41e4a6186b7fead17e33b37",
+  "parent": "3b4c168678f3d849c605929e64532dd98aff2c26",
+  "method": "Read-only git parent/blob/diff/history inspection and GitHub all-state issue searches. No historical tests or model evaluation executed.",
+  "examined_commits": [
+    "e3b8035e58e49dd6d1570d504bf638a962f2601a", "686871520e69533efe417bb3758795a5af7bf8bb",
+    "1ce2ff8b0d9ee3aa34c5704e3310c4dd076e7be8", "991476f2f94a076743f3df0867cdbc52dd3abe56",
+    "740b88ba7bfeb8328ca56a47cf3f8dfb804615be", "9e654ac5f2a8b966fc8c93d54cf0ca204e64a2f6",
+    "94645f7dc96cc484548c39f45d318074da4e6260", "98dc5810e855530c9122b19212728912a966d98d",
+    "488fc16eff35172db7c4b97c2d745d1c361ecdd9", "d3ca7a51aacd86d58ac1182dfe71384a2e5718a4",
+    "f19c0b57299d1890e7d7763605e700938972307b", "c3293de9b5c6a0313d87bb1639b0683e35d176a9",
+    "04cc84d24542cbaf56b23096d54ecf224cc41f41", "c0cd4f0e421f4cdc9ae6904fd4a6c5f993be23f6",
+    "dfd00740f0789f8d5bb29efa595f7fac7c01fd85", "edadcf0017185996355d9b65565a2e9c7c1aff7c"
+  ],
+  "file_history": [
+    {"commit": "04cc84d24542cbaf56b23096d54ecf224cc41f41", "url": "https://github.com/azalio/map-framework/pull/527", "observation": "Changes review dispatch tests, not the bidirectional provider-tree guard."},
+    {"commit": "d3ca7a51aacd86d58ac1182dfe71384a2e5718a4", "url": "https://github.com/azalio/map-framework/pull/535", "observation": "Changes invocation frontmatter assertions, not the guard."},
+    {"commit": "9e654ac5f2a8b966fc8c93d54cf0ca204e64a2f6", "url": "https://github.com/azalio/map-framework/pull/540", "observation": "Changes research-cap assertions, not the guard."}
+  ],
+  "searches": [
+    {"command": "gh issue list --repo azalio/map-framework --state all --search '\"519\"' --limit 100", "results": [488, 482], "assessment": "Read both issue bodies/comments. #488 records successful migration/guard completion; #482 concerns blueprint validation, not this guard."},
+    {"command": "gh issue list --repo azalio/map-framework --state all --search '\"provider\" \"drift\"' --limit 100", "results": [488, 313, 415, 416, 314, 342, 353, 378, 284, 180], "assessment": "Search titles/scopes show earlier governance proposals; no attributable guard regression found. Not an exhaustive semantic search."},
+    {"command": "git log --format='%H %s' bfc5e04..e3b8035 --grep=revert -i", "results": [], "assessment": "No revert-subject commits; subject search alone cannot rule out unmarked reversions."}
+  ],
+  "linked_evidence": [
+    {"url": "https://github.com/azalio/map-framework/pull/519", "observation": "PR scope and Git diff agree: only tests/test_skills.py and docs/ARCHITECTURE.md. Base migration is #518; this control adds the exhaustive guard, not runtime changes."},
+    {"url": "https://github.com/azalio/map-framework/issues/488", "comment_timestamp": "2026-10-16T23:42:21Z", "observation": "Completion comment separates #518 migrations/optimizer fix from #519 guard/docs. Reports independent approval, 7319 passing tests, and successful exact-head Actions run 38981289030 at reviewed head 2e5b6baced83b2e9487cdbcdcf066e668f959f9c. These are historical reported results, not a fresh execution."},
+    {"url": "https://github.com/azalio/map-framework/issues/482", "observation": "Blueprint shape/ID validator issue predates the control and supplies no attribution to its provider-tree guard."}
+  ],
+  "conclusion": "No attributable subsequent fix or revert found within the bounded audit. Treat as a provisionally clean tests/docs control, not proof of bug freedom.",
+  "limitations": "Single tests/docs stratum; short follow-up interval; searches can miss unattributed defects; no runtime representativeness; no fresh historical test execution. Commit subjects were inspected across the full descendant interval, while detailed patch inspection targeted the control and all later tests/test_skills.py changes. Later architecture-document edits are not evidence of a guard defect."
+}

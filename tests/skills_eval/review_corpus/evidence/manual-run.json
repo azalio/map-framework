@@ -1,0 +1,66 @@
+{
+  "admission": "requires manual adjudication",
+  "observations": {
+    "health_help": {
+      "base": {
+        "observation": {
+          "boundary": "Base predates command: unknown-command is not a fixed help response.",
+          "created_files": [],
+          "returncode": 1,
+          "stderr": "",
+          "stdout": "Unknown function: write_run_health_report\n"
+        },
+        "revision": "4ec2235bfa46a1a8c3521c819f4804269c9726ce"
+      },
+      "fix": {
+        "observation": {
+          "boundary": "Base predates command: unknown-command is not a fixed help response.",
+          "created_files": [],
+          "returncode": 0,
+          "stderr": "",
+          "stdout": "usage: map_step_runner.py write_run_health_report [-h]\n                                                  [workflow] [terminal_status]\n\npositional arguments:\n  workflow\n  terminal_status\n\noptions:\n  -h, --help       show this help message and exit\n"
+        },
+        "revision": "de241e279805c18afaf017fbcdaa5cee8cd390f9"
+      },
+      "head": {
+        "observation": {
+          "boundary": "Base predates command: unknown-command is not a fixed help response.",
+          "created_files": [
+            ".map/default/artifact_manifest.json",
+            ".map/default/run_health_report.json"
+          ],
+          "returncode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"status\": \"success\",\n  \"path\": \".map/default/run_health_report.json\",\n  \"manifest_path\": \".map/default/artifact_manifest.json\",\n  \"terminal_status\": \"pending\"\n}\n"
+        },
+        "revision": "ec9d4b31e7cff67be781e841034a2098f21c6192"
+      }
+    },
+    "retained_worktree": {
+      "base": {
+        "observation": {
+          "returncode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"status\": \"ok\",\n  \"subtask_id\": \"ST-002\",\n  \"declared\": [\n    \"target.py\"\n  ],\n  \"actual\": [\n    \"target.py\"\n  ],\n  \"declared_not_written\": [],\n  \"status_mismatch\": false,\n  \"recovery_instruction\": \"\",\n  \"reason\": \"\"\n}\n"
+        },
+        "revision": "8a01f713d2b3239e845c91c4d1811b3f34d227a0"
+      },
+      "fix": {
+        "observation": {
+          "returncode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"status\": \"ok\",\n  \"subtask_id\": \"ST-002\",\n  \"declared\": [\n    \"target.py\"\n  ],\n  \"actual\": [\n    \"target.py\"\n  ],\n  \"declared_not_written\": [],\n  \"status_mismatch\": false,\n  \"recovery_instruction\": \"\",\n  \"reason\": \"\",\n  \"checked_in\": \"main\"\n}\n"
+        },
+        "revision": "206de516f1a144940dbf8e699ecedefddb3d3d48"
+      },
+      "head": {
+        "observation": {
+          "returncode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"status\": \"ok\",\n  \"subtask_id\": \"ST-002\",\n  \"declared\": [\n    \"target.py\"\n  ],\n  \"actual\": [],\n  \"declared_not_written\": [\n    \"target.py\"\n  ],\n  \"status_mismatch\": true,\n  \"recovery_instruction\": \"Actor declared git-tracked files it did not write: ['target.py']. Its previous response was likely truncated mid-edit \\u2014 re-invoke the Actor to finish those files. Do NOT record the subtask until every declared file is written (git diff --name-only covers git-tracked files; MAP artifacts must exist on disk with content).\",\n  \"reason\": \"\",\n  \"checked_in\": \"worktree\"\n}\n"
+        },
+        "revision": "89303b798a7a54e82c3069a388100c847ba3f2cd"
+      }
+    }
+  }
+}
