@@ -267,6 +267,32 @@ def export_case(
     return manifest
 
 
+def introducing_diff(corpus_dir: Path, repo: Path, case_id: str) -> bytes:
+    """Return the complete literal-allowlisted introducing diff with 30 context lines.
+
+    Unlike export_case, this narrow profile never materializes full source snapshots.
+    Historical parent/blob and corpus checks remain identical to the full exporter.
+    """
+    data = load_corpus(corpus_dir, repo)
+    case = next((c for c in data["cases"] if c["id"] == case_id), None)
+    if case is None:
+        raise ValueError("unknown case")
+    return _git(
+        repo,
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-renames",
+        "--src-prefix=base/",
+        "--dst-prefix=head/",
+        "-U30",
+        case["base"],
+        case["head"],
+        "--",
+        *(file["path"] for file in case["files"]),
+    )
+
+
 def _digest(value: Any) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode()

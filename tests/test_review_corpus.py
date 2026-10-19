@@ -11,6 +11,38 @@ import pytest
 from mapify_cli.skills_eval.review_corpus import export_case, load_corpus
 
 
+def test_narrow_diff_matches_complete_literal_u30_and_keeps_full_export(
+    tmp_path: Path,
+) -> None:
+    from mapify_cli.skills_eval.review_corpus import introducing_diff
+
+    repo = Path(__file__).resolve().parents[1]
+    root = repo / "tests/skills_eval/review_corpus"
+    for case in load_corpus(root, repo)["cases"]:
+        expected = subprocess.check_output(
+            [
+                "git",
+                "--literal-pathspecs",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-renames",
+                "--src-prefix=base/",
+                "--dst-prefix=head/",
+                "-U30",
+                case["base"],
+                case["head"],
+                "--",
+                *(f["path"] for f in case["files"]),
+            ],
+            cwd=repo,
+        )
+        assert introducing_diff(root, repo, case["id"]) == expected
+        exported = export_case(root, repo, case["id"], tmp_path / case["id"])
+        assert exported["schema_version"] == 1
+        assert any(name.startswith("head/") for name in exported["files"])
+
+
 def git(repo: Path, *args: str) -> str:
     return subprocess.check_output(["git", *args], cwd=repo, text=True).strip()
 
