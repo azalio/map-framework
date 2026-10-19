@@ -3,7 +3,7 @@ name: map-review
 description: |
   Interactive 4-section code review using Monitor, Predictor, and Evaluator agents plus the user and maintainer role reviewers on current changes. Use when reviewing a diff, PR, or staged work before merge. Do NOT use to plan or implement; use map-plan or map-efficient.
 effort: high
-argument-hint: "[review focus] [--detached] [--ci] [--reverse-sections] [--shuffle-sections] [--seed <int>] [--compare-orderings] [--adversarial] [--quick] [--show-raw-findings] [--cross-ai <runtime>]"
+argument-hint: "[review focus] [--base-ref <ref>] [--detached] [--ci] [--reverse-sections] [--shuffle-sections] [--seed <int>] [--compare-orderings] [--adversarial] [--quick] [--show-raw-findings] [--cross-ai <runtime>]"
 ---
 ## MAP update preflight
 
@@ -31,7 +31,7 @@ parallel_tool_policy: single_review_fanout
 - Wait for all reviewer agents before section presentation. Do not parallelize interactive decisions, ordering comparisons that share state, or review-bundle writes.
 
 ## Flags
-
+- `--base-ref <ref>` / `--base-ref=<ref>`: admit stacked code scope against this ref's merge-base; trusted policy stays on the default branch (Step A.1).
 - `--ci` / `--auto`: non-interactive mode; auto-select the line whose text contains the `(Recommended)` marker substring.
 - `--detached`: prepare `.map/<branch>/detached-review/` so reviewer agents can read an isolated worktree. The source branch is never mutated. If detached prep is unavailable, review still proceeds from the in-place bundle as graceful degradation.
 - `--reverse-sections`: present review sections in reverse canonical order.
@@ -246,6 +246,20 @@ runner = [sys.executable, ".map/scripts/map_step_runner.py"]
 argv = runner + ["begin_review_run", "--provider", "claude", "--capability-profile", "review-reader",
                  "--check-specs-json", specs_json, "--check-timeouts-json", timeouts_json,
                  "--mode", mode, "--arguments=" + arguments, "--sibling-hint", sibling_hint]
+# Parse only literal option tokens; free prose (including apostrophes) is not shell syntax.
+tokens = arguments.split()
+base_ref = None
+for index, token in enumerate(tokens):
+    if token == "--base-ref" or token.startswith("--base-ref="):
+        if base_ref is not None:
+            raise ValueError("Repeated --base-ref is not allowed")
+        value = (token.split("=", 1)[1] if "=" in token else
+                 tokens[index + 1] if index + 1 < len(tokens) else "")
+        if not value or value.startswith("-"):
+            raise ValueError("--base-ref requires a nonempty Git ref")
+        base_ref = value
+if base_ref is not None:
+    argv.extend(["--base-ref", base_ref])
 for check_id in specs:
     argv.extend(["--required-check", check_id])
 admission = subprocess.run(argv, check=True, capture_output=True, text=True)
@@ -296,22 +310,8 @@ Mode semantics:
 
 ### Step A.1: Gather changes
 
-Diff against the **merge-base with the default branch**, not `HEAD`. On a
-fully-committed branch — the normal `/map-check` → `/map-review` state —
-`git diff HEAD` is empty and under-reports the review scope to zero (#426).
-
-```bash
-BASE=""
-for ref in origin/main origin/master main master; do
-  git rev-parse --verify --quiet "$ref" >/dev/null && { BASE="$ref"; break; }
-done
-# No default-branch ref: diff the working tree. NEVER "HEAD...HEAD" — that range
-# is always empty and re-creates the very bug this step fixes.
-[ -n "$BASE" ] && RANGE="$BASE...HEAD" || RANGE="HEAD"
-git --no-pager diff --stat "$RANGE"
-git --no-pager diff "$RANGE"
-git status          # uncommitted work in progress — secondary signal
-```
+Use the runner's admitted **merge-base**, not `HEAD` or a separate shell-selected base. For stacked branches, `/map-review --base-ref runtime` (also `--base-ref=runtime`) selects the parent's code scope; omission preserves defaults. Invalid explicit refs/ancestry are fatal, never fallback. Repeat the flag on admission retry. Target tip movement requires abandonment/re-admission even with unchanged merge-base. Trusted `REVIEW.md` remains default-branch authoritative.
+Read Step A.1b's canonical bundle: `code_state` records committed/dirty changes, `attribution.base` is the full baseline SHA, and `attribution.diff` includes working-tree changes. Prompts include both committed and dirty work; never substitute empty `git diff HEAD` for a committed branch (#426) or omit dirty work.
 
 ### Step A.1b: Load canonical review context (bundle + handoff)
 
