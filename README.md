@@ -63,6 +63,9 @@ independent ([details](docs/USAGE.md#cross-ai-peer-review---cross-ai-runtime)).
 An [offline historical review corpus](docs/USAGE.md#offline-historical-review-corpus)
 provides pinned introducing diffs, adjudicator-only labels and audited controls.
 It starts no reviewers and makes no evaluation or policy-promotion claims.
+An opt-in [bounded subscription pilot](docs/USAGE.md#bounded-subscription-review-pilot)
+adds offline preparation/reporting and a separately acknowledged six-invocation
+Claude CLI runner; generation results require manual adjudication.
 
 Claude Code:
 

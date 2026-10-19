@@ -31,8 +31,9 @@ wrong blobs/ranges, unsupported source modes, unsafe paths and corrupt evidence.
 The export reads only pinned Git objects and writes plain allowlisted source and
 diff plus content hashes. It copies no Git database, fixing metadata or labels.
 This prevents artifact leakage, not same-user access: it is not an OS sandbox.
-Future live evaluation must separately isolate repository/network/adjudicator
-access, and remains unauthorized by this stage.
+The corpus alone does not authorize live evaluation. The separate bounded
+subscription pilot uses this export without giving the model repository,
+adjudicator or network tools; provider/auth traffic is still necessary.
 
 Corrections are one strict JSON document with embedded revision-ordered history,
 content hashes and expected-revision compare-and-swap under a stable advisory
@@ -42,6 +43,25 @@ participants, not arbitrary same-user writes; hashes prove integrity, not human
 authority. Evidence consumption binds the full corpus (including groups,
 provenance, dispositions and cutoff), input, labels and correction state. Changed
 bindings fail closed after restart while original raw evidence remains historical.
+
+`skills_eval/review_pilot.py` adds independent prepare/run/report seams without
+reusing the context-inheriting, retrying evaluation dispatcher. Preparation freezes
+one baseline, six ordered slots, corpus/freshness bindings, exact model/CLI version,
+prompt/export hashes, heuristic estimates and accepted limitations. The executor
+boundary receives explicit argv/env/stdin and raw-output paths; CI injects offline
+fake executors, never live inference. The live adapter has no wrapper retry.
+
+The pilot's canonical ledger uses a separate stable advisory lock, reserve-before-
+spawn, atomic replacement, file fsync and parent-directory fsync. Unknown outcomes
+remain consumed reservations, preventing restart replay. Corrupt state blocks;
+state deletion or arbitrary same-user tampering is outside this guarantee.
+Strict JSON/counter/model checks account cache input and preserve raw evidence
+before accepting outcomes. Admission uses observed spend plus the next reservation;
+unknown usage blocks further dispatch rather than becoming zero spend. Input
+estimates include fixed framing but are not tokenizer measurements. Internal CLI
+retries and in-flight overshoot are disclosed limitations, not provider-enforced
+caps. Safe/restricted/no-tools mode is not an OS sandbox, and managed policy stays
+in force. Reports support manual adjudication only; there is no judge or promotion.
 State is separate from author reactions and runtime review receipts. Stage 4
 model evaluation/policy promotion needs an explicit budgeted authorization.
 
