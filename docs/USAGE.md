@@ -887,6 +887,39 @@ On reinstall or upgrade, MAP removes stale MAP-owned `.codex/hooks/` handlers,
 merges the current registrations, and preserves unrelated project hooks. The
 installed `hooks.json` keeps Codex's strict top-level schema: only `hooks`.
 
+### Session memory
+
+Session capture works without an active MAP workflow: `prompt_ref` remains null,
+while native Claude/Codex transcripts can contribute a SHA-256 prompt identifier,
+a redacted topic prefix, conservative tool targets, and observed PR/issue references.
+References describe mentions, not achieved merge/close outcomes. Missing numeric
+exit metadata stays unknown; an error flag or arbitrary output text is not a numeric
+exit status. Tool calls/results retain exact bounded IDs when available, without
+joining unrelated calls by adjacency or retaining raw script/edit/result bodies.
+
+Prompt prefixes are limited to 512 characters, tool names to 80 and targets to 240.
+New observation JSONL is capped at 16 KiB per capture; projected evidence, including
+legacy turns and omission notices, is capped at 48 KiB per finalization. Selection
+is deterministic and omissions are indicated. URLs used as tool targets drop
+userinfo, query and fragment. Supported credential syntax and secret paths are
+redacted before truncation, but redaction cannot identify every natural-language
+secret. Prompt hashes are identifiers, not anonymization. Provider input explicitly
+labels observations as untrusted, incomplete evidence rather than instructions.
+
+The provider owns its native transcript. MAP owns the captured scratch WAL under
+`.map/<branch>/sessions/scratch/`; the existing `.offset` sidecar records scan
+progress and `current-session` supports session continuity. Capture appends context
+before the unchanged legacy turn marker, flushes and fsyncs the WAL, then advances
+the cursor. Incomplete trailing transcript lines are retried. Failed writes leave
+the cursor unchanged; a crash after WAL persistence but before cursor advancement
+may replay observations. This is best-effort at-least-once capture, not an
+exactly-once transaction or a new workflow event store.
+
+Digests are derived output. Session-start finalization or `/map-memory-now` uses the
+existing provider invocation and cleanup lifecycle: provider failure retains scratch
+for retry; success publishes the digest and cleans up scratch. Old turn-only WALs
+remain readable, and no migration or extra model call is required.
+
 ### Using MAP with Codex
 
 ```bash
