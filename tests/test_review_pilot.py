@@ -1,12 +1,40 @@
 """Offline public-seam tests for the bounded subscription pilot."""
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from mapify_cli.skills_eval import review_corpus
 from mapify_cli.skills_eval.review_pilot import prepare
+from tests.review_pilot_git_cache import GitRead, historical_git_cache
+
+
+@pytest.fixture(scope="module")
+def historical_reads() -> Iterator[tuple[GitRead, GitRead]]:
+    real = review_corpus._git
+    with historical_git_cache(real) as cached:
+        yield real, cached
+
+
+@pytest.fixture(autouse=True)
+def use_historical_reads(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    historical_reads: tuple[GitRead, GitRead],
+) -> None:
+    # These full integration paths (including parent-side preparation) stay real.
+    uncached = {
+        "test_prepare_and_cli_report_are_offline",
+        "test_restart_after_process_death_never_replays",
+        "test_concurrent_process_is_excluded_by_stable_lock",
+    }
+    real, cached = historical_reads
+    monkeypatch.setattr(
+        review_corpus, "_git", real if request.node.name in uncached else cached
+    )
 
 REPO = Path(__file__).resolve().parents[1]
 CORPUS = REPO / "tests/skills_eval/review_corpus"
@@ -42,6 +70,27 @@ def test_prepare_freezes_six_slots_and_clean_historical_prompts(tmp_path: Path) 
     for case in manifest["cases"]:
         root = run / "exports" / case["case_id"]
         assert {p.name for p in root.iterdir()} == {"input.json", "review.diff"}
+
+
+def test_repeated_historical_validation_reuses_git_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mapify_cli.skills_eval import review_corpus
+
+    calls = []
+    real_run = review_corpus.subprocess.run
+
+    def counted_run(*args: Any, **kwargs: Any) -> Any:
+        calls.append(args[0])
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(review_corpus.subprocess, "run", counted_run)
+    first = review_corpus.load_corpus(CORPUS, REPO)
+    first_count = len(calls)
+    second = review_corpus.load_corpus(CORPUS, REPO)
+    print(f"real Git spawns: first={first_count}, repeated={len(calls) - first_count}")
+    assert first == second
+    assert len(calls) == first_count, "repeated immutable reads must not spawn Git"
 
 
 def result_bytes(input_tokens: int = 100, output_tokens: int = 20) -> bytes:
