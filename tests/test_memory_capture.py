@@ -355,7 +355,8 @@ class TestVC3SecurityRedaction:
         )
 
         scratch = _scratch_dir(tmp_path)
-        record = _read_jsonl(next(iter(scratch.glob("*.jsonl"))))[0]
+        records = _read_jsonl(next(iter(scratch.glob("*.jsonl"))))
+        record = next(record for record in records if record["event"] == "turn")
         assert record["files_touched"] == ["src/parser.py", "tests/test_parser.py"]
 
     def test_vc3_codex_transcript_file_change_is_captured(

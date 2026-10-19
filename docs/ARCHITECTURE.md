@@ -261,9 +261,42 @@ Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json`
 - **Persist Artifacts**: Each workflow stage records durable artifacts under `.map/<branch>/`, including specs, blueprints, test contracts, verification summaries, review bundles, learning handoffs, token-budget reports, run-health reports, and retry quarantine state. Research/discovery uses a single namespace: plan-scope discovery is `.map/<branch>/research/plan__discovery.md`, and subtask-scope artifacts are `.map/<branch>/research/<subtask_id>__<kind>.md`; legacy `findings_<branch>.md` files are compatibility fallbacks, not the primary source.
 - **Pause for Human Approval**: Framework components can call `create_approval_hold(kind, reason, request_summary, source, safe_continuation)` from the step runner when a risky action needs an explicit decision. Holds are idempotent by kind+summary, store only redacted summaries, block resume while pending, and transition through `decide_approval_hold` into terminal states (`approved`, `denied`, `expired`, `cancelled`).
 - **Close or Reuse Completed Runs**: Sequential completion now sets `current_step_phase=COMPLETE`, `workflow_status=WORKFLOW_COMPLETE`, and `completed_at` atomically. `map_orchestrator.py archive` retires a completed branch state by renaming `step_state.json` to `step_state.completed-<timestamp>.json`; `initialize_workflow` auto-archives a prior completed run when a new workflow starts on the same branch. For workflows that cannot complete normally (stuck `INITIALIZED` with an empty `subtask_sequence`, failed mid-DECOMPOSE, or otherwise abandoned), `map_orchestrator.py abandon` provides a forcible escape hatch: it retires any workflow regardless of terminal status, renaming the state file to `step_state.abandoned-<timestamp>.json` (or delegating to the archive path if the run is already terminal). After either command the edit gate fail-opens. (#360)
-- **Capture/Recall Memory**: Generated memory hooks capture session scratch records under `.map/<branch>/sessions/scratch/`, finalize them into `.map/<branch>/sessions/<session-id>.md`, and recall branch/session digests at the next session start. Codex memory hook files are thin wrappers around the hidden installed-runtime `mapify _memory-hook` adapter, so an isolated `uv tool` installation does not depend on importing `mapify_cli` from the system `python3`. `/map-memory-now` can finalize dirty scratches immediately.
+- **Capture/Recall Memory**: Generated memory hooks capture session scratch records under `.map/<branch>/sessions/scratch/`, finalize them into `.map/<branch>/sessions/YYYY-MM-DD-<slug>.md`, and recall branch/session digests at the next session start. Codex memory hook files are thin wrappers around the hidden installed-runtime `mapify _memory-hook` adapter, so an isolated `uv tool` installation does not depend on importing `mapify_cli` from the system `python3`. `/map-memory-now` can finalize dirty scratches immediately.
 - **Evaluate Skills**: `/map-skill-eval`, `$map-skill-eval`, and `mapify skill-eval` run trigger/cost eval sets through isolated provider workers (`claude -p` or `codex exec`), append resumable JSONL rows, aggregate pass/fail and usage, optimize frontmatter descriptions against held-out eval cases, and render stored optimization reports.
 - **Audit/Validate**: Maintainers use tests and helper modules such as `python -m mapify_cli.skill_ir ...`, `mapify check`, `mapify doctor`, template-sync tests, artifact-schema tests, workflow-gate tests, and adversarial governance violation fixtures to keep shipped provider surfaces aligned with the documented runtime contract.
+
+### Session-memory evidence ownership and recovery
+
+`memory/capture.py` incrementally scans native provider transcripts; the narrow
+`memory/evidence.py` parser recognizes human-message and tool envelopes rather
+than recursively treating arbitrary tool arguments or result bodies as context.
+`memory/digest_schema.py` owns event allowlists, limits and redaction. New
+`user_prompt`, `tool_used`, `outcome` and `capture_truncated` observations precede
+the compatible `turn` marker. Prompt topics remain useful when no workflow exists
+and `prompt_ref` is null. References mean observed mentions, not authoritative
+achievement; missing status stays unknown and correlation uses exact bounded IDs.
+
+The provider transcript is provider-owned input; MAP's scratch WAL is the durable
+record of captured observations. The existing offset sidecar is progress metadata,
+not another event store. WAL append, flush and fsync finish before advancing that
+cursor; partial transcript tails and failed writes retry. A restart reconstructs
+progress from the existing session identity/pointer and cursor. A crash between
+WAL persistence and cursor update can replay observations: there is no exactly-once
+claim or new pending-call store.
+
+New context is limited to a 16 KiB ASCII-serialized batch per capture, including
+omission metadata. Prompt/name/target limits are 512/80/240 characters. Targets
+are conservative argv/scalar projections; URL userinfo/query/fragment and raw
+script/edit/result bodies are not retained. Supported credential syntax and secret
+paths are redacted before truncation; hashes do not anonymize prompts and arbitrary
+natural-language secrets cannot be guaranteed detectable.
+
+`memory/finalize.py` independently validates known fields/types and sanitizes
+persisted evidence, including legacy turns, before bounded 48 KiB provider stdin
+evidence framed as untrusted and incomplete. Truncation is visible. Digests remain
+derived output, using the existing single provider call, atomic publication,
+finalized marker and cleanup protocol. Provider failures retain scratch for retry;
+old turn-only WALs still work and empty/ended-only WALs do not create digests.
 
 ### Dirty-path attribution baselines
 

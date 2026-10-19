@@ -45,6 +45,36 @@ SCRATCH_ENDED_FIELDS: tuple[str, ...] = (
 # Event-type literals for the "event" field.
 EVENT_TURN: str = "turn"
 EVENT_ENDED: str = "ended"
+EVENT_USER_PROMPT = "user_prompt"
+EVENT_TOOL_USED = "tool_used"
+EVENT_OUTCOME = "outcome"
+EVENT_CAPTURE_TRUNCATED = "capture_truncated"
+PROMPT_PREFIX_CHARS = 512
+TOOL_NAME_CHARS = 80
+TOOL_TARGET_CHARS = 240
+TOOL_CALL_ID_CHARS = 128
+CAPTURE_EVENT_BYTES = 16 * 1024
+PROVIDER_EVIDENCE_BYTES = 48 * 1024
+SCRATCH_EVENT_FIELDS: dict[str, tuple[str, ...]] = {
+    EVENT_TURN: SCRATCH_TURN_FIELDS,
+    EVENT_USER_PROMPT: (
+        "event", "ts", "session_id", "turn", "prompt_hash", "prefix", "truncated",
+    ),
+    EVENT_TOOL_USED: (
+        "event", "ts", "session_id", "turn", "name", "target", "tool_call_id", "truncated",
+    ),
+    EVENT_OUTCOME: (
+        "event", "ts", "session_id", "turn", "tool_call_id", "exit_status", "references",
+    ),
+    EVENT_CAPTURE_TRUNCATED: (
+        "event", "ts", "session_id", "turn", "omitted_events",
+    ),
+}
+
+
+def bounded_text(text: str, limit: int) -> str:
+    """Redact the complete value before imposing a character limit."""
+    return sanitize_value(redact_text(text))[:limit]
 
 # ---------------------------------------------------------------------------
 # Finalized digest frontmatter field names (LLM-produced)
@@ -73,6 +103,10 @@ REDACTION_TOKEN: str = "«redacted»"  # «redacted»
 # the same "openai" key via alternation — the ant variant is the first
 # branch in the alternation group.
 REDACTION_PATTERNS: dict[str, str] = {
+    "pem": r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)",
+    "assignment": r"(?i)\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|password|passwd|secret)\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)",
+    "bearer": r"(?i)\bBearer\s+[^\s,;]+",
+    "url_userinfo": r"(?i)(?<=://)[^\s/@]+(?::[^\s/@]*)?@",
     # Anthropic/OpenAI API keys.
     # sk-ant-... first (longer, more specific), then generic sk-...
     "openai": r"sk-ant-[A-Za-z0-9-]+|sk-[A-Za-z0-9]{16,}",

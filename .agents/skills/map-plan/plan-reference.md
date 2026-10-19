@@ -100,6 +100,8 @@ python3 .map/scripts/map_step_runner.py assess_acceptance_revision --json '{"ac_
 
 Use the real revision number and matching checkpoint author. Detected removals/command changes cannot be relabeled `equivalent`; the report preserves the original diff/verdict and all later assessments.
 
+For a strictly additive pytest revision, request `assessment: "additive"` in either revision API. The runner, not the author, must prove that every previous frozen file entry (bytes, mode and recorded hash) and argv argument remains unchanged, cwd is identical, timeout does not decrease, and the only extra argv tokens are distinct new test-file targets backed exactly by added frozen proofs. Recognized commands are `pytest` or a Python executable with `-m pytest`, explicit repository-relative `test_*.py` / `*_test.py` files, and unchanged verbosity flags (`-q`, `--quiet`, `-v`, `--verbose`). New targets must be beside existing targets and have distinct basenames to avoid expanding pytest configuration/conftest discovery or import-name collisions. Selectors, directories, shell wrappers and other options are unsupported and stay blocked. This is a mechanical target-superset proof, not semantic equivalence: test imports/plugins can still affect execution. Stored runner evidence and live frozen files are revalidated at handoff, admission and completion. A previously `unknown` revision can be recovered with `assess_acceptance_revision` using its exact revision number and `assessment: "additive"`; no re-freeze or state-file edits are needed.
+
 After implementation, existing gates and the intended final code commit, execute and consume runner evidence:
 
 ```bash

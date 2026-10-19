@@ -14,21 +14,30 @@ exceptions and no-op silently — a hook must never block Claude.
 from __future__ import annotations
 
 import functools
+import hashlib
 import json
 import logging
+import os
 import re
 from datetime import UTC, datetime
+from itertools import chain
 from pathlib import Path
 from typing import Any
 
 from mapify_cli.memory.digest_schema import (
+    CAPTURE_EVENT_BYTES,
+    EVENT_CAPTURE_TRUNCATED,
     EVENT_ENDED,
     EVENT_TURN,
+    EVENT_USER_PROMPT,
+    PROMPT_PREFIX_CHARS,
     SCRATCH_ENDED_FIELDS,
     SCRATCH_TURN_FIELDS,
+    bounded_text,
     redact_secret_path,
     sanitize_value,
 )
+from mapify_cli.memory.evidence import native_tool_events
 from mapify_cli.ralph_state import sanitize_branch_name
 
 logger = logging.getLogger(__name__)
@@ -328,8 +337,44 @@ def _extract_edit_paths(obj: Any, out: list[str]) -> None:
             _extract_edit_paths(value, out)
 
 
+def _prompt_event(record: object) -> dict[str, Any] | None:
+    """Select human text only, never assistant prose or user-carried results."""
+    if not isinstance(record, dict):
+        return None
+    if record.get("isMeta") or record.get("isCompactSummary"):
+        return None
+    if record.get("type") == "response_item":
+        message = record.get("payload")
+        if not isinstance(message, dict) or message.get("type") != "message":
+            return None
+    elif record.get("type") == "user":
+        message = record.get("message")
+    else:
+        return None
+    if not isinstance(message, dict) or message.get("role") != "user":
+        return None
+    content = message.get("content")
+    if isinstance(content, list):
+        if any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content):
+            return None
+        content = "\n".join(
+            block["text"] for block in content
+            if isinstance(block, dict) and block.get("type") in {"text", "input_text"}
+            and isinstance(block.get("text"), str)
+        )
+    if not isinstance(content, str) or not content.strip():
+        return None
+    cleaned = bounded_text(content, len(content))
+    return {
+        "event": EVENT_USER_PROMPT,
+        "prompt_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "prefix": cleaned[:PROMPT_PREFIX_CHARS],
+        "truncated": len(cleaned) > PROMPT_PREFIX_CHARS,
+    }
+
+
 def _files_from_transcript(
-    transcript_path: Path, start: int
+    transcript_path: Path, start: int, events: list[dict[str, Any]] | None = None
 ) -> tuple[list[str], int]:
     """Recover files edited since transcript line *start*.
 
@@ -353,13 +398,17 @@ def _files_from_transcript(
     start = max(start, 0)
 
     raw_paths: list[str] = []
+    event_bytes = 0
+    omitted = 0
     total = start
     try:
         with open(transcript_path, encoding="utf-8", errors="replace") as fh:
             for idx, line in enumerate(fh):
-                total = idx + 1
                 if idx < start:
                     continue  # already consumed by a prior turn
+                if not line.endswith("\n"):
+                    break  # retry a partially written trailing record next time
+                total = idx + 1
                 line = line.strip()
                 if not line:
                     continue
@@ -368,9 +417,23 @@ def _files_from_transcript(
                 except json.JSONDecodeError:
                     continue
                 _extract_edit_paths(rec, raw_paths)
+                if events is not None:
+                    prompt = _prompt_event(rec)
+                    candidates = chain([prompt] if prompt is not None else [], native_tool_events(rec))
+                    for event in candidates:
+                        size = len(json.dumps(event, ensure_ascii=True)) + 512
+                        if event_bytes + size <= CAPTURE_EVENT_BYTES - 1024:
+                            events.append(event)
+                            event_bytes += size
+                        else:
+                            omitted += 1
     except OSError:
+        if events is not None:
+            events.clear()
         return [], start
 
+    if omitted and events is not None:
+        events.append({"event": EVENT_CAPTURE_TRUNCATED, "omitted_events": omitted})
     return _redact_and_dedup(raw_paths), total
 
 
@@ -378,6 +441,7 @@ def _derive_files_touched(
     stdin_data: dict[str, Any],
     scratch_dir: Path | None = None,
     sid: str | None = None,
+    events: list[dict[str, Any]] | None = None,
 ) -> tuple[list[str], int | None]:
     """Extract the file paths touched this turn, from one of two sources.
 
@@ -419,7 +483,7 @@ def _derive_files_touched(
         except (OSError, ValueError):
             start = 0
 
-    files, total = _files_from_transcript(Path(str(transcript)), start)
+    files, total = _files_from_transcript(Path(str(transcript)), start, events)
     return files, (total if track_offset else None)
 
 
@@ -477,8 +541,9 @@ def append_turn(stdin_data: dict[str, Any], project_dir: Path | str) -> None:
 
         turn_number = _highest_turn_number(scratch_path) + 1
 
+        events: list[dict[str, Any]] = []
         files_touched, new_offset = _derive_files_touched(
-            stdin_data, scratch_dir, effective_sid
+            stdin_data, scratch_dir, effective_sid, events
         )
 
         # Build the record using field names from SCRATCH_TURN_FIELDS.
@@ -492,8 +557,13 @@ def append_turn(stdin_data: dict[str, Any], project_dir: Path | str) -> None:
             SCRATCH_TURN_FIELDS[5]: EVENT_TURN,                    # event
         }
 
+        for event in events:
+            event.update(ts=record["ts"], session_id=record["session_id"], turn=turn_number)
+        batch = "".join(json.dumps(event, ensure_ascii=True) + "\n" for event in events)
         with open(scratch_path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, ensure_ascii=True) + "\n")
+            fh.write(batch + json.dumps(record, ensure_ascii=True) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
 
         # Advance the transcript offset ONLY AFTER the record is durably
         # written — so a crash between the two never skips a transcript range.

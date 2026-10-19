@@ -164,6 +164,79 @@ def freeze_acceptance_contract(ac_id: str, command: list[str] | None, proof_file
     return {"status": "success", "contract": contract}
 
 
+def _acceptance_pytest_targets(contract: dict[str, Any]) -> list[str]:
+    """Recognize file-only pytest argv, not shell syntax or selection options."""
+    command = contract["command"]
+    if not isinstance(command, list) or not command:
+        raise ValueError("Additive proof requires a recognized pytest argv")
+    executable = Path(command[0]).name
+    if executable == "pytest":
+        arguments = command[1:]
+    elif re.fullmatch(r"python(?:3(?:\.\d+)?)?", executable) and command[1:3] == ["-m", "pytest"]:
+        arguments = command[3:]
+    else:
+        raise ValueError("Additive proof requires a recognized pytest argv")
+    targets = []
+    for argument in arguments:
+        if argument in {"-q", "--quiet", "-v", "--verbose"}:
+            continue
+        path = Path(argument)
+        if (not re.fullmatch(r"[A-Za-z0-9_./-]+\.py", argument)
+                or argument.startswith("-") or path.is_absolute() or ".." in path.parts
+                or path.as_posix() != argument
+                or not (path.name.startswith("test_") or path.name.endswith("_test.py"))):
+            raise ValueError("Additive proof supports only explicit pytest test files and verbosity flags")
+        targets.append(argument)
+    if not targets or len(targets) != len(set(targets)):
+        raise ValueError("Additive proof requires distinct explicit pytest targets")
+    return targets
+
+
+def _acceptance_additive_evidence(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
+    """Prove a mechanical target superset; this does not assert semantic equivalence."""
+    import base64
+
+    for contract in (old, new):
+        if contract["hash"] != _acceptance_hash({k: v for k, v in contract.items() if k != "hash"}):
+            raise ValueError("Additive proof contract hash mismatch")
+        for entry in contract["files"]:
+            content = base64.b64decode(entry["content_base64"], validate=True)
+            if entry["kind"] != "file" or hashlib.sha256(content).hexdigest() != entry["sha256"]:
+                raise ValueError("Additive proof file hash mismatch")
+    if (old["cwd"] != new["cwd"] or new["timeout"] < old["timeout"]
+            or any(old[key] != new[key] for key in ("ac_id", "subtask_id", "inventory_digest", "manual_reason"))):
+        raise ValueError("Additive proof cannot change execution context or decrease timeout")
+    old_targets = _acceptance_pytest_targets(old)
+    new_targets = _acceptance_pytest_targets(new)
+    added = [target for target in new_targets if target not in old_targets]
+    if len({Path(target).name for target in new_targets}) != len(new_targets):
+        raise ValueError("Additive proof rejects pytest import-name collisions")
+    # Intent: do not expand pytest root/config/conftest discovery into another directory.
+    if any(Path(target).parent not in {Path(item).parent for item in old_targets} for target in added):
+        raise ValueError("Additive proof requires new targets beside existing targets")
+    if not added or [arg for arg in new["command"] if arg not in added] != old["command"]:
+        raise ValueError("Additive proof must retain every original argv argument in order")
+    old_files = {entry["path"]: entry for entry in old["files"]}
+    new_files = {entry["path"]: entry for entry in new["files"]}
+    if (len(old_files) != len(old["files"]) or len(new_files) != len(new["files"])
+            or any(new_files.get(name) != entry for name, entry in old_files.items())):
+        raise ValueError("Additive proof must preserve all previous frozen file entries")
+    root = Path.cwd().resolve()
+    workdir = root / new["cwd"]
+    target_paths = [(workdir / target).resolve() for target in new_targets]
+    if len(set(target_paths)) != len(target_paths) or any(not path.is_relative_to(root) for path in target_paths):
+        raise ValueError("Additive proof targets must be distinct repository files")
+    paths = {str(path.relative_to(root)) for path in target_paths}
+    added_paths = {str((workdir / target).resolve().relative_to(root)) for target in added}
+    if not paths <= new_files.keys() or new_files.keys() - old_files.keys() != added_paths:
+        raise ValueError("Additive targets must correspond exactly to added frozen proof files")
+    if _acceptance_files(list(new_files)) != new["files"]:
+        raise ValueError("Additive frozen proof file content or mode changed")
+    return {"kind": "pytest_file_superset.v1", "old_contract_hash": old["hash"],
+            "new_contract_hash": new["hash"], "added_targets": added,
+            "file_hashes": {name: entry["sha256"] for name, entry in new_files.items()}}
+
+
 @_review_transaction
 def revise_acceptance_contract(ac_id: str, command: list[str] | None, proof_files: list[str],
                                *, author: str, reason: str, assessment: str,
@@ -185,8 +258,8 @@ def revise_acceptance_contract(ac_id: str, command: list[str] | None, proof_file
         old = store["contracts"][ac_id]
         if not reason.strip() or authoring_stage != "independent_test_first":
             raise ValueError("Revision requires a reason and independent test-first authoring")
-        if assessment not in {"equivalent", "weakening", "unknown"}:
-            raise ValueError("Revision assessment must be equivalent, weakening or unknown")
+        if assessment not in {"equivalent", "weakening", "unknown", "additive"}:
+            raise ValueError("Revision assessment must be equivalent, weakening, unknown or additive")
         provenance = _acceptance_authorship(directory, old["subtask_id"], author, authoring_stage)
         if provenance.get("checkpoint_id") and provenance.get("checkpoint_id") == old["provenance"].get("checkpoint_id"):
             raise ValueError("Revision must use a fresh independent authoring checkpoint")
@@ -211,6 +284,9 @@ def revise_acceptance_contract(ac_id: str, command: list[str] | None, proof_file
         command_changed = any(old[key] != contract[key] for key in ("command", "cwd", "timeout"))
         potential_weakening = removed or command_changed
         effective_assessment = "unknown" if potential_weakening and assessment == "equivalent" else assessment
+        additive_evidence = None
+        if assessment == "additive":
+            additive_evidence = _acceptance_additive_evidence(old, contract)
         revision = {"ac_id": ac_id, "author": author, "provenance": provenance, "created_at": time.time(),
                     "reason": reason, "assessment": effective_assessment, "declared_assessment": assessment,
                     "weakening_justification": weakening_justification,
@@ -219,6 +295,8 @@ def revise_acceptance_contract(ac_id: str, command: list[str] | None, proof_file
                     "invalidated_contracts": [old["hash"]],
                     "invalidated_attempts": [item["attempt_id"] for item in store["attempts"]
                                              if item["ac_id"] == ac_id and item["contract_hash"] == old["hash"]]}
+        if additive_evidence is not None:
+            revision["additive_evidence"] = additive_evidence
         store["revisions"].append(revision)
         store["contracts"][ac_id] = contract
         store["inventory"] = inventory
@@ -232,14 +310,17 @@ def assess_acceptance_revision(ac_id: str, revision: int, *, author: str, assess
     """Append independent semantic assessment bound to the exact preserved revision."""
     directory = _review_branch_dir(branch)
     store = _acceptance_store(directory)
-    if not reason.strip() or assessment not in {"equivalent", "weakening"}:
-        raise ValueError("Assessment requires an explicit reason and equivalent/weakening verdict")
+    if not reason.strip() or assessment not in {"equivalent", "weakening", "additive"}:
+        raise ValueError("Assessment requires an explicit reason and equivalent/weakening/additive verdict")
     matches = [item for item in store["revisions"]
                if item["ac_id"] == ac_id and item["new_contract"]["revision"] == revision]
     if len(matches) != 1:
         raise ValueError("Assessment must name an exact existing revision")
     record = matches[0]
-    if record["potential_weakening"] and assessment != "weakening":
+    additive_evidence = None
+    if assessment == "additive":
+        additive_evidence = _acceptance_additive_evidence(record["old_contract"], record["new_contract"])
+    if record["potential_weakening"] and assessment == "equivalent":
         raise ValueError("Detected removals or changed command scope cannot be relabeled equivalent")
     if assessment == "weakening" and not weakening_justification.strip():
         raise ValueError("Weakening assessment requires explicit justification")
@@ -250,6 +331,8 @@ def assess_acceptance_revision(ac_id: str, revision: int, *, author: str, assess
     entry = {"author": author, "created_at": time.time(), "reason": reason, "assessment": assessment,
              "weakening_justification": weakening_justification, "provenance": provenance,
              "contract_hash": record["new_contract"]["hash"], "proof_diff_hash": _acceptance_hash(record["proof_diff"])}
+    if additive_evidence is not None:
+        entry["additive_evidence"] = additive_evidence
     record.setdefault("assessments", []).append(entry)
     _save_acceptance_store(directory, store)
     return {"status": "success", "assessment": entry}
@@ -260,6 +343,13 @@ def _acceptance_revision_errors(store: dict[str, Any]) -> list[str]:
     for revision in store["revisions"]:
         assessments = revision.get("assessments", [])
         effective = assessments[-1] if assessments else revision
+        if effective["assessment"] == "additive":
+            try:
+                evidence = _acceptance_additive_evidence(revision["old_contract"], revision["new_contract"])
+                if effective.get("additive_evidence") != evidence:
+                    raise ValueError("Missing or stale runner additive evidence")
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                errors.append(f"{revision['ac_id']}: invalid additive evidence: {exc}")
         if effective["assessment"] == "unknown" or (effective["assessment"] == "weakening"
                                                        and not effective["weakening_justification"].strip()):
             errors.append(f"{revision['ac_id']}: unresolved semantic weakening assessment")
