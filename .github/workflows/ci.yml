@@ -65,6 +65,7 @@ jobs:
   test:
     needs: validate-version
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]  # Skip Windows for now
@@ -102,13 +103,13 @@ jobs:
 
     - name: Run Codex provider regression checks
       run: |
-        python -m pytest -v \
+        python -m pytest -v --timeout=300 --timeout-method=thread \
           tests/test_template_render.py::TestRenderRepoTreesCodex \
           tests/test_mapify_cli.py::TestCodexProvider
 
     - name: Run tests
       run: |
-        python -m pytest -v -m "not slow" --cov=mapify_cli --cov-report=xml
+        python -m pytest -v -m "not slow" --timeout=300 --timeout-method=thread --durations=20 --cov=mapify_cli --cov-report=xml
 
     - name: Upload coverage to Codecov
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
