@@ -20,12 +20,12 @@ def test_prepare_freezes_six_slots_and_clean_historical_prompts(tmp_path: Path) 
     assert [
         (s["case_id"], s["repeat"], s["input_reservation"]) for s in manifest["slots"]
     ] == [
-        ("c-41be", 1, 650000),
-        ("c-93f0", 1, 100000),
-        ("c-7d2a", 1, 300000),
-        ("c-41be", 2, 650000),
-        ("c-93f0", 2, 100000),
-        ("c-7d2a", 2, 300000),
+        ("c-41be", 1, 60000),
+        ("c-93f0", 1, 60000),
+        ("c-7d2a", 1, 60000),
+        ("c-41be", 2, 60000),
+        ("c-93f0", 2, 60000),
+        ("c-7d2a", 2, 60000),
     ]
     for slot in manifest["slots"]:
         assert slot["output_reservation"] == 8166
@@ -37,6 +37,11 @@ def test_prepare_freezes_six_slots_and_clean_historical_prompts(tmp_path: Path) 
         assert slot["prompt_bytes"] == len(prompt.encode())
     assert manifest["slots"][0]["prompt_hash"] == manifest["slots"][3]["prompt_hash"]
     assert "heuristic" in manifest["estimator"]
+    assert manifest["schema_version"] == 2
+    assert manifest["excluded_cases"] == []
+    for case in manifest["cases"]:
+        root = run / "exports" / case["case_id"]
+        assert {p.name for p in root.iterdir()} == {"input.json", "review.diff"}
 
 
 def result_bytes(input_tokens: int = 100, output_tokens: int = 20) -> bytes:
@@ -359,7 +364,7 @@ def test_observed_usage_blocks_next_reservation(tmp_path: Path) -> None:
         request.stderr.write_bytes(b"")
         return 0
 
-    with pytest.raises(ValueError, match="admission budget"):
+    with pytest.raises(ValueError, match="stopped"):
         run(directory, execute)
     assert len(calls) == 1
 
@@ -496,7 +501,146 @@ def test_stopped_raw_evidence_is_verified(
 
     with pytest.raises(ValueError, match="stopped"):
         run(directory, execute)
-    assert report(directory)["accounting_complete"] is (outcome == "overrun")
+    assert report(directory)["accounting_complete"] is True
     (directory / "raw" / f"0.{channel}").write_bytes(b"truncated")
     with pytest.raises(ValueError, match="raw evidence"):
         report(directory)
+
+
+def test_error_envelope_usage_is_retained(tmp_path: Path) -> None:
+    from mapify_cli.skills_eval.review_pilot import report, run
+
+    directory = tmp_path / "pilot"
+    prepare(CORPUS, REPO, tmp_path / "corrections.json", directory, "fixture")
+    # Captured first authorized run: .map/review-pilot-523-approved/raw/0.stdout.
+    # Only session_id and uuid removed; every other field/counter is unchanged.
+    # Original SHA256: 14ffed0905c904794f07fbdd3d873d6fa1a62fe8985313ae35cf0a7a27ecdc7d
+    raw = (
+        REPO / "tests/skills_eval/review_pilot_error_max_budget.sanitized.json"
+    ).read_bytes()
+    data = json.loads(raw)
+    assert "session_id" not in data and "uuid" not in data
+    assert data["subtype"] == "error_max_budget_usd"
+    calls = []
+
+    def execute(request: Any) -> int:
+        calls.append(request)
+        request.stdout.write_bytes(raw)
+        request.stderr.write_bytes(b"")
+        return 1
+
+    with pytest.raises(ValueError, match="stopped"):
+        run(directory, execute)
+    with pytest.raises(ValueError, match="never resend"):
+        run(directory, execute)
+    assert len(calls) == 1
+    assert (directory / "raw/0.stdout").read_bytes() == raw
+    summary = report(directory)
+    assert summary["attempts"][0]["status"] == "stopped"
+    assert summary["attempts"][0]["usage"]["raw_usage"] == data["usage"]
+    assert (
+        summary["attempts"][0]["usage"]["raw_model_usage"]
+        == data["modelUsage"]["claude-opus-5-5"]
+    )
+    assert summary["totals"]["input"] == 870324
+    assert summary["totals"]["output"] == 2358
+    assert summary["accounting_complete"] is True
+    assert summary["review_complete"] is False
+    assert summary["attempts"][0]["usage"]["accounting_source"] == "modelUsage"
+
+
+@pytest.mark.parametrize("admitted", [0, 1, 2, 3])
+def test_admission_boundary_excludes_both_repeats(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, admitted: int
+) -> None:
+    from mapify_cli.skills_eval import review_pilot as pilot
+
+    # Exercise the full encoded prompt boundary, including baseline/JSON framing.
+    base_bytes = len(pilot._prompt(b""))
+    maximum_bytes = (60000 - 4096) * 4
+    ids = list(pilot.ALLOCATIONS)
+
+    def diff(_corpus: Path, _repo: Path, case_id: str) -> bytes:
+        return b"x" * (maximum_bytes - base_bytes + (ids.index(case_id) >= admitted))
+
+    monkeypatch.setattr(pilot, "introducing_diff", diff)
+    directory = tmp_path / "pilot"
+    manifest = prepare(
+        CORPUS, REPO, tmp_path / "corrections.json", directory, "fixture"
+    )
+    assert len(manifest["slots"]) == 2 * admitted
+    assert len(manifest["excluded_cases"]) == 3 - admitted
+    for case in manifest["cases"]:
+        included = ids.index(case["case_id"]) < admitted
+        assert case["estimated_input"] == (60000 if included else 60001)
+        assert bool(case["exclusion_reason"]) is not included
+    calls = []
+
+    def execute(request: Any) -> int:
+        calls.append(request)
+        assert request.argv[request.argv.index("--max-budget-usd") + 1] == "15"
+        request.stdout.write_bytes(result_bytes())
+        request.stderr.write_bytes(b"")
+        return 0
+
+    pilot.run(directory, execute)
+    summary = pilot.report(directory)
+    assert len(calls) == 2 * admitted
+    assert summary["status"] == ("complete" if admitted else "no_evaluation")
+    assert summary["review_complete"] is bool(admitted)
+    assert summary["accounting_complete"] is bool(admitted)
+
+
+@pytest.mark.parametrize("version", [1, 3, True, "2", None])
+def test_unsupported_version_does_not_mutate_or_dispatch(
+    tmp_path: Path, version: Any
+) -> None:
+    from mapify_cli.skills_eval.review_pilot import report, run
+
+    directory = tmp_path / "pilot"
+    directory.mkdir()
+    (directory / "manifest.json").write_text(json.dumps({"schema_version": version}))
+    before = (directory / "manifest.json").read_bytes()
+    with pytest.raises(ValueError, match="unsupported.*version"):
+        run(directory, lambda _: pytest.fail("no dispatch"))
+    with pytest.raises(ValueError, match="unsupported.*version"):
+        report(directory)
+    assert list(directory.iterdir()) == [directory / "manifest.json"]
+    assert (directory / "manifest.json").read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "mutation", ["contradiction", "missing", "bool", "negative", "extra_model"]
+)
+def test_usage_fallback_is_strict(tmp_path: Path, mutation: str) -> None:
+    from mapify_cli.skills_eval.review_pilot import _usage
+
+    data = json.loads(result_bytes())
+    data["usage"] = dict.fromkeys(data["usage"], 0)
+    if mutation == "contradiction":
+        data["usage"]["input_tokens"] = 1
+    elif mutation == "missing":
+        del data["usage"]["output_tokens"]
+    elif mutation == "bool":
+        data["usage"]["output_tokens"] = False
+    elif mutation == "negative":
+        data["modelUsage"]["claude-opus-5-5"]["inputTokens"] = -1
+    else:
+        data["modelUsage"]["other"] = data["modelUsage"]["claude-opus-5-5"]
+    path = tmp_path / "result.json"
+    path.write_text(json.dumps(data))
+    with pytest.raises(ValueError):
+        _usage(path)
+
+
+@pytest.mark.parametrize("key", ["tool_calls", "subagent_calls", "subagentCalls"])
+def test_activity_stops_review_even_with_known_usage(tmp_path: Path, key: str) -> None:
+    from mapify_cli.skills_eval.review_pilot import _review_success, _usage
+
+    data = json.loads(result_bytes())
+    data["usage"][key] = 1
+    path = tmp_path / "result.json"
+    path.write_text(json.dumps(data))
+    assert _usage(path)["input"] == 170
+    with pytest.raises(ValueError, match="activity"):
+        _review_success(path)

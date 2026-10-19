@@ -64,8 +64,10 @@ An [offline historical review corpus](docs/USAGE.md#offline-historical-review-co
 provides pinned introducing diffs, adjudicator-only labels and audited controls.
 It starts no reviewers and makes no evaluation or policy-promotion claims.
 An opt-in [bounded subscription pilot](docs/USAGE.md#bounded-subscription-review-pilot)
-adds offline preparation/reporting and a separately acknowledged six-invocation
-Claude CLI runner; generation results require manual adjudication.
+adds offline preparation/reporting and a separately acknowledged, at-most-six-call
+Claude CLI runner. Its v2 inputs are complete allowlisted `-U30` diffs; prompts
+estimated above 60,000 tokens are excluded, never truncated. Results require
+manual adjudication; historical v1 runs cannot be resumed.
 
 Claude Code:
 

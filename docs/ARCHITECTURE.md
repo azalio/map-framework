@@ -32,7 +32,8 @@ The export reads only pinned Git objects and writes plain allowlisted source and
 diff plus content hashes. It copies no Git database, fixing metadata or labels.
 This prevents artifact leakage, not same-user access: it is not an OS sandbox.
 The corpus alone does not authorize live evaluation. The separate bounded
-subscription pilot uses this export without giving the model repository,
+subscription pilot uses the narrow `introducing_diff` API (complete literal
+allowlist, `-U30`, no full-source materialization) without giving the model repository,
 adjudicator or network tools; provider/auth traffic is still necessary.
 
 Corrections are one strict JSON document with embedded revision-ordered history,
@@ -46,17 +47,29 @@ bindings fail closed after restart while original raw evidence remains historica
 
 `skills_eval/review_pilot.py` adds independent prepare/run/report seams without
 reusing the context-inheriting, retrying evaluation dispatcher. Preparation freezes
-one baseline, six ordered slots, corpus/freshness bindings, exact model/CLI version,
+the unchanged baseline, up to six ordered slots, corpus/freshness bindings, exact model/CLI version,
 prompt/export hashes, heuristic estimates and accepted limitations. The executor
 boundary receives explicit argv/env/stdin and raw-output paths; CI injects offline
 fake executors, never live inference. The live adapter has no wrapper retry.
+
+The v2 manifest binds the diff-only profile, 30-line context width, estimator,
+$15 defensive CLI budget and all three candidates, including measured exclusions.
+The complete prompt estimate (`ceil(UTF-8 bytes / 4) + 4096`) must fit 60,000;
+otherwise both repeats are excluded without truncation or replacement. Every
+reservation revalidates measurements and exact pinned Git input. Full `export_case`
+remains backward compatible. Version 1 runs are explicitly unsupported, not
+migrated or resumed; their original bytes remain historical evidence.
 
 The pilot's canonical ledger uses a separate stable advisory lock, reserve-before-
 spawn, atomic replacement, file fsync and parent-directory fsync. Unknown outcomes
 remain consumed reservations, preventing restart replay. Corrupt state blocks;
 state deletion or arbitrary same-user tampering is outside this guarantee.
 Strict JSON/counter/model checks account cache input and preserve raw evidence
-before accepting outcomes. Admission uses observed spend plus the next reservation;
+before accepting outcomes. Accounting is independent of review success: all-zero
+explicit top-level counters permit validated single-model `modelUsage` fallback;
+nonzero disagreements fail closed. Valid usage survives CLI errors, which still
+stop the run. Raw counters/source/thinking remain auditable without double counting.
+Admission uses observed spend plus the next 60,000-input/8,166-output reservation;
 unknown usage blocks further dispatch rather than becoming zero spend. Input
 estimates include fixed framing but are not tokenizer measurements. Internal CLI
 retries and in-flight overshoot are disclosed limitations, not provider-enforced

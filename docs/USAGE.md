@@ -380,14 +380,20 @@ python -m mapify_cli.skills_eval.review_pilot report --run-dir /path/to/new-pilo
 python -m mapify_cli.skills_eval.review_pilot run --run-dir /path/to/new-pilot --acknowledge-live-after-merge
 ```
 
-The frozen baseline reviews only introducing diffs and allowlisted historical
-base/head source. Labels, fixes, scenarios and corpus bindings stay host-side.
-The matrix is three cases × one policy × two repeats, exact `claude-opus-5-5`,
+The v2 input contract supplies only the complete introducing diff with 30 context
+lines (`-U30`) for the existing literal source allowlist. It adds no full source
+snapshots, label-selected excerpts or truncation. Labels, fixes, scenarios and
+corpus bindings stay host-side. The frozen baseline is unchanged.
+The candidate matrix is three cases × one policy × two repeats, exact `claude-opus-5-5`,
 at most six wrapper invocations, with zero wrapper retries, repairs, warmups,
 fallbacks, model tools, subagents or automated judge. Repeats are correlated
 observations; the user adjudicates recall, false positives and harmful suggestions.
 
-Input allocations are 650,000 / 100,000 / 300,000 tokens per case per repeat;
+Admission requires the complete explicit prompt estimate to be at most 60,000
+tokens. Over-limit cases retain measured bytes, estimate and exclusion reason in
+the manifest/report; both repeats are removed without replacement. All excluded
+means zero calls and `no_evaluation`, not a successful evaluation.
+Each admitted invocation reserves 60,000 input tokens;
 aggregate observed input (including cache creation/read) is limited to 2,100,000,
 output to 49,000. Each invocation reserves 8,166 output tokens and sets
 `CLAUDE_CODE_MAX_OUTPUT_TOKENS=8166`. The offline premeasurement is explicitly
@@ -395,7 +401,7 @@ output to 49,000. Each invocation reserves 8,166 output tokens and sets
 or full-context upper bound. CLI-internal retries and in-flight hidden-context
 or output overruns are accepted limitations; the wrapper stops subsequent calls
 when observed usage or next-slot admission exceeds limits. Six subprocesses do
-not imply six provider requests. `--max-budget-usd 3` is defensive CLI accounting,
+not imply six provider requests. `--max-budget-usd 15` is defensive CLI accounting,
 not subscription billing or provider-side aggregate enforcement.
 
 The adapter uses safe/restricted mode, empty tools and strict empty MCP, disabled
@@ -409,9 +415,20 @@ A stable advisory lock serializes starts. Atomic ledger replacement with file
 and directory fsync reserves each slot before spawn. Interrupted, unknown or
 failed attempts consume their slot and block continuation; there is no automatic
 resend or repair. Missing/malformed usage, model mismatch or detected tool activity
-stops the run. Reports distinguish known usage totals from unknown slots. Corpus
+stops the run. All four top-level counters must be explicit nonnegative integers.
+If they are all zero, validated exact-single-model `modelUsage` supplies accounting;
+matching nonzero counters are accepted, contradictions fail closed. Reports retain
+raw counters, accounting source and thinking counters without adding thinking twice.
+A CLI error can have known usage but is never a successful review or retry permission.
+Reports distinguish accounting completeness, review completeness and invocation
+outcome. Exclusions introduce selection bias; missing surrounding context and this
+small single-baseline sample prevent comparative or promotion claims. Corpus
 or correction changes invalidate report consumption but retain raw history.
 Do not edit state to clear a stop: resolve evidence manually with the owner.
+Version 1 directories are unsupported for execution and reporting by this revision;
+inspect preserved raw artifacts read-only. Never migrate, reset or reuse the old
+`.map/review-pilot-523-approved` directory. A newly authorized run requires a distinct
+directory, after the revision is merged with green CI.
 
 ## Review Workflow: Context Persistence and Detached Mode
 
