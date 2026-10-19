@@ -362,9 +362,56 @@ derived bindings, including after restart. Old raw outputs remain historical;
 `freshness` exits 2 rather than silently treating them as current. Author reactions
 and operational review ledgers are unchanged.
 
-Stage 4 evaluation and promotion remain deferred. Live runs require separate
+The corpus itself authorizes no live inference or promotion. Live runs require
 explicit approval of cases × policies × repeats, model, token/cost assumptions
 and spending ceiling; no safeguard relaxation is implied by this corpus.
+
+### Bounded subscription review pilot
+
+Stage 4 adds an opt-in runner, not an evaluation result or policy promotion.
+Preparation and reporting are offline. Use a durable, private host-side run path;
+never delete/recreate its ledger to retry a failed run.
+
+```bash
+claude --version  # no inference; record the exact output below
+python -m mapify_cli.skills_eval.review_pilot prepare --corpus tests/skills_eval/review_corpus --repo . --corrections /path/to/corrections.json --run-dir /path/to/new-pilot --cli-version '2.1.301 (Claude Code)'
+python -m mapify_cli.skills_eval.review_pilot report --run-dir /path/to/new-pilot
+# LIVE: only after explicit approval, independent review, merge and final-SHA CI:
+python -m mapify_cli.skills_eval.review_pilot run --run-dir /path/to/new-pilot --acknowledge-live-after-merge
+```
+
+The frozen baseline reviews only introducing diffs and allowlisted historical
+base/head source. Labels, fixes, scenarios and corpus bindings stay host-side.
+The matrix is three cases × one policy × two repeats, exact `claude-opus-5-5`,
+at most six wrapper invocations, with zero wrapper retries, repairs, warmups,
+fallbacks, model tools, subagents or automated judge. Repeats are correlated
+observations; the user adjudicates recall, false positives and harmful suggestions.
+
+Input allocations are 650,000 / 100,000 / 300,000 tokens per case per repeat;
+aggregate observed input (including cache creation/read) is limited to 2,100,000,
+output to 49,000. Each invocation reserves 8,166 output tokens and sets
+`CLAUDE_CODE_MAX_OUTPUT_TOKENS=8166`. The offline premeasurement is explicitly
+`ceil(UTF-8 prompt bytes / 4) + 4096` framing tokens, **not a Claude tokenizer**
+or full-context upper bound. CLI-internal retries and in-flight hidden-context
+or output overruns are accepted limitations; the wrapper stops subsequent calls
+when observed usage or next-slot admission exceeds limits. Six subprocesses do
+not imply six provider requests. `--max-budget-usd 3` is defensive CLI accounting,
+not subscription billing or provider-side aggregate enforcement.
+
+The adapter uses safe/restricted mode, empty tools and strict empty MCP, disabled
+skills/suggestions/session persistence, a fresh empty cwd and an environment
+allowlist. Existing subscription auth remains available to the CLI through HOME;
+the runner does not read/copy credentials or bypass managed policy. This is
+model-input/tool isolation, **not an OS sandbox**; provider/auth traffic remains
+necessary. Raw stdout/stderr stay in the private host-side `raw/` directory.
+
+A stable advisory lock serializes starts. Atomic ledger replacement with file
+and directory fsync reserves each slot before spawn. Interrupted, unknown or
+failed attempts consume their slot and block continuation; there is no automatic
+resend or repair. Missing/malformed usage, model mismatch or detected tool activity
+stops the run. Reports distinguish known usage totals from unknown slots. Corpus
+or correction changes invalidate report consumption but retain raw history.
+Do not edit state to clear a stop: resolve evidence manually with the owner.
 
 ## Review Workflow: Context Persistence and Detached Mode
 
