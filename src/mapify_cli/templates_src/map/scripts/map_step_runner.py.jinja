@@ -5445,7 +5445,7 @@ def _extract_acceptance_tags(text: object) -> set[str]:
     }
 
 
-def _branch_commit_messages() -> str:
+def _branch_commit_messages(branch: str | None = None) -> str:
     """Return the branch's commit messages (merge-base..HEAD), or "" on any failure.
 
     Commit messages are upstream-owned evidence: the Actor writes them at the moment
@@ -5466,7 +5466,7 @@ def _branch_commit_messages() -> str:
         except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
             return ""
 
-    base_sha, _ = _resolve_review_base(_run_git)
+    base_sha, _ = _resolve_review_base(_run_git, _review_admitted_binding(branch))
     if not base_sha:
         return ""
     return _run_git(["log", "--format=%B", f"{base_sha}..HEAD"])
@@ -5500,7 +5500,7 @@ def _collect_acceptance_evidence_texts(
         if isinstance(text, str) and text:
             evidence[label] = text
 
-    commit_messages = _branch_commit_messages()
+    commit_messages = _branch_commit_messages(branch_dir.name)
     if commit_messages:
         evidence["commit_messages"] = _sanitize_for_json(commit_messages)
 
@@ -8635,6 +8635,7 @@ class ReviewRun(TypedDict):
     required_checks: list[str]
     check_specs: dict[str, list[str]]
     check_timeouts: NotRequired[dict[str, float]]
+    base_ref: NotRequired[str]
 
 
 def _validate_review_run(data: Any) -> str | None:
@@ -8656,6 +8657,11 @@ def _validate_review_run(data: Any) -> str | None:
         return "invalid scheduled reviewer roster"
     if not isinstance(data.get("arguments"), str) or not isinstance(data.get("mode"), str):
         return "invalid review-run arguments or mode"
+    if "base_ref" in data:
+        try:
+            _validate_explicit_review_ref(data["base_ref"])
+        except ValueError as exc:
+            return str(exc)
     return None
 
 
@@ -8711,6 +8717,14 @@ def _review_git(*args: str) -> str:
     if result.returncode:
         raise ValueError(f"Cannot verify review target: git {args[0]} failed")
     return result.stdout.strip()
+
+
+def _review_git_optional(args: list[str]) -> str:
+    """Tolerate missing default refs; explicit resolution never uses this path."""
+    try:
+        return _review_git(*args)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return ""
 
 
 def _review_git_bytes(*args: str) -> bytes:
@@ -8931,16 +8945,70 @@ def _review_policy(
     return hashlib.sha256(json.dumps(policy, sort_keys=True).encode()).hexdigest()
 
 
-def _review_target() -> dict[str, Any]:
+def _validate_explicit_review_ref(ref: Any) -> None:
+    if (not isinstance(ref, str) or not ref or ref.startswith("-")
+            or any(character.isspace() or ord(character) < 32 for character in ref)):
+        raise ValueError("base_ref must be a nonempty Git ref, not an option or whitespace")
+
+
+def _review_explicit_base(ref: str) -> tuple[str, str]:
+    """Resolve once, then derive ancestry from the immutable tip."""
+    _validate_explicit_review_ref(ref)
+    tip = _review_git("rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}")
+    base = _review_git("merge-base", tip, "HEAD")
+    if not tip or not base:
+        raise ValueError("Explicit review base has no resolvable commit or merge-base")
+    return base, tip
+
+
+def _review_admitted_binding(branch: str | None = None) -> dict[str, Any]:
+    """Read ledger-owned scope; torn publication requires admission replay.
+
+    Transaction callers already hold the non-reentrant ledger lock. Other
+    readers fail closed on an incoherent publication instead of selecting defaults.
+    """
+    directory = _review_branch_dir(branch)
+    ledger = _read_review_ledger(directory)
+    rounds = ledger.get("convergence", {}).get("rounds", [])
+    mode_path = directory / "review-mode.json"
+    if not rounds:
+        if mode_path.exists():
+            raise ValueError("Review mode has no admitted round")
+        return {}
+    row = rounds[-1]
+    binding = row.get("binding")
+    if not row.get("prepared") or _validate_review_run(binding):
+        raise ValueError("Review admission is incomplete or invalid; retry admission")
+    try:
+        mode = json.loads(mode_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError("Review mode is missing or malformed") from exc
+    if mode != {**binding, "round_id": row["round_id"]}:
+        raise ValueError("Review mode does not match the admitted round binding")
+    target = row.get("target", {})
+    base, ref, tip = _resolve_review_scope(_review_git_optional, binding)
+    if (base, ref, tip) != tuple(target.get(key, "") for key in ("base", "base_ref", "base_tip")):
+        raise ValueError("Admitted review base changed; abandon and re-admit the round")
+    _, policy_ref, policy_tip = _resolve_review_scope(_review_git_optional, {})
+    policy = target.get("trusted_policy", {})
+    if (policy_ref, policy_tip) != (policy.get("ref", ""), policy.get("revision", "")):
+        raise ValueError("Admitted trusted policy revision changed; abandon and re-admit the round")
+    return binding
+
+
+def _review_target(binding: dict[str, Any] | None = None) -> dict[str, Any]:
     """Bind bytes, modes, index, local inputs and merge state without decoding Git paths."""
     # Reuse only observations from this calculation; every caller starts fresh.
     inputs: _ReviewTargetInputs = {"base": None, "names": [], "changed": set()}
+    binding = {} if binding is None else binding
+    explicit = "base_ref" in binding
+    explicit_base, explicit_tip = _review_explicit_base(binding["base_ref"]) if explicit else ("", "")
     trusted_policy = _review_trusted_policy(inputs=inputs)
     security_policy = _review_security_policy(trusted_policy)
     try:
         head = _review_git("rev-parse", "HEAD")
-        base = trusted_policy.get("base", "")
-        base_ref = trusted_policy.get("ref", "")
+        base = explicit_base if explicit else trusted_policy.get("base", "")
+        base_ref = binding["base_ref"] if explicit else trusted_policy.get("ref", "")
         names = inputs["names"] if inputs.get("base") == base else _review_source_paths(base or "HEAD")
         pathspec = _review_source_pathspec(names)
         manifest = [_review_file_entry(name) for name in names]
@@ -8952,13 +9020,15 @@ def _review_target() -> dict[str, Any]:
         return {"head": head, "base": base, "base_ref": base_ref,
                 "trusted_policy": trusted_policy, "shadow_risk": _review_shadow_risk(base, trusted_policy, inputs=inputs),
                 "security_gate_policy": security_policy,
-                "base_tip": trusted_policy.get("revision", ""),
+                "base_tip": explicit_tip if explicit else trusted_policy.get("revision", ""),
                 "reusable": bool(base) and not dirty and not conflicts,
                 "local_digest": hashlib.sha256(fingerprint).hexdigest(),
                 "diff_digest": hashlib.sha256(diff).hexdigest(),
                 "policy_hash": _review_policy(trusted_policy=trusted_policy),
                 "required_files": names, "conflicts": conflicts}
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        if explicit:
+            raise ValueError(f"Cannot verify explicit review target: {exc}") from exc
         return {"reusable": False, "unverified_reason": str(exc),
                 "trusted_policy": trusted_policy, "security_gate_policy": security_policy}
 
@@ -9008,14 +9078,16 @@ def review_round_scope(branch: str | None = None) -> dict[str, Any]:
         ledger = _read_review_ledger(_review_branch_dir(branch))
         rounds = ledger.get("convergence", {}).get("rounds", [])
         completed = [row for row in rounds if "completed_at" in row]
-        target = _review_target()
+        binding = _review_admitted_binding(branch)
+        target = _review_target(binding)
         if _review_requires_consent(target) and _review_gates_strict(target):
             return {"kind": "full", "reason": "Sensitive/unknown changes require full security review"}
         if not completed or not target.get("reusable"):
             return fallback
         previous = completed[-1]
         baseline = previous.get("target", {})
-        if (not baseline.get("reusable") or baseline.get("base") != target.get("base")
+        if (previous.get("binding", {}).get("base_ref") != binding.get("base_ref")
+                or not baseline.get("reusable") or baseline.get("base") != target.get("base")
                 or baseline.get("base_tip") != target.get("base_tip")
                 or baseline.get("policy_hash") != target.get("policy_hash")
                 or previous.get("completeness", {}).get("status") != "COMPLETE"):
@@ -9034,6 +9106,7 @@ def review_round_scope(branch: str | None = None) -> dict[str, Any]:
 
 
 def _scoped_review_diff(branch: str | None, supplied: str | None) -> tuple[str, dict[str, Any]]:
+    _review_admitted_binding(branch)
     scope = review_round_scope(branch)
     try:
         prior = _read_review_ledger(_review_branch_dir(branch))
@@ -9053,7 +9126,7 @@ def _scoped_review_diff(branch: str | None, supplied: str | None) -> tuple[str, 
                     "never claim coverage from prioritization alone.\n" + json.dumps(scope)), scope
         except (OSError, ValueError, subprocess.TimeoutExpired):
             scope = {"kind": "full", "reason": "Delta unavailable; full review required"}
-    return _read_git_diff_for_review() + "\n\nReview scope: " + json.dumps(scope), scope
+    return _read_git_diff_for_review(branch) + "\n\nReview scope: " + json.dumps(scope), scope
 
 
 def _prepare_review_inputs(directory: Path, ledger: dict[str, Any], row: dict[str, Any]) -> list[str]:
@@ -9159,7 +9232,11 @@ def _review_capability(binding: dict[str, Any]) -> dict[str, Any]:
 
 
 def _review_binding_current(row: dict[str, Any]) -> bool:
-    return row.get("target") == _review_target() and row.get("policy_hash") == _review_policy(row["binding"])
+    try:
+        return (row.get("target") == _review_target(row["binding"])
+                and row.get("policy_hash") == _review_policy(row["binding"]))
+    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
+        return False
 
 
 @_review_transaction
@@ -9169,7 +9246,7 @@ def begin_review_run(
     round_id: str = "", provider: str = "unknown", capability_profile: str = "review-reader",
     policy_files: list[str] | None = None, required_checks: list[str] | None = None,
     check_specs: dict[str, list[str]] | None = None,
-    check_timeouts: dict[str, float] | None = None,
+    check_timeouts: dict[str, float] | None = None, base_ref: str | None = None,
 ) -> dict[str, Any]:
     """Admit one review/fix iteration; retries retain captured reviewer inputs."""
     # Intent: focus text is free prose, not a shell command; detect only literal flag tokens.
@@ -9184,7 +9261,7 @@ def begin_review_run(
         ))
         if adversarial and "--quick" in flags:
             scheduled_reviewers.remove("edge_case")
-    target = _review_target()
+    target = _review_target({"base_ref": base_ref} if base_ref is not None else {})
     if _review_requires_consent(target) and _review_gates_strict(target):
         mode = "full"
         scheduled_reviewers = [*(NORMAL_REVIEWERS if "monitor" in scheduled_reviewers else ADVERSARIAL_REVIEWERS), "security"]
@@ -9205,6 +9282,8 @@ def begin_review_run(
         for name, seconds in check_timeouts.items()
     )):
         raise ValueError("check_timeouts must map admitted check IDs to positive finite seconds")
+    if base_ref is not None:
+        payload["base_ref"] = base_ref
     if check_timeouts:
         payload["check_timeouts"] = check_timeouts
     if provider not in {"unknown", "claude", "codex"}:
@@ -9225,6 +9304,8 @@ def begin_review_run(
     prior = _read_review_ledger(branch_dir)
     convergence = prior.get("convergence", {"rounds": [], "started_at": time.time()})
     if (convergence.get("outcome") == "awaiting_human" and convergence.get("rounds")
+            and convergence["rounds"][-1]["binding"] == dict(payload)
+            and (not round_id or round_id == convergence["rounds"][-1]["round_id"])
             and _review_binding_current(convergence["rounds"][-1])):
         return {"status": "success", "resumed": True, "completed": True,
                 "round_id": convergence["rounds"][-1]["round_id"], **dict(payload),
@@ -9260,7 +9341,8 @@ def begin_review_run(
     if unsuccessful >= 3:
         return {"status": "error", "stop_reason": "reconsider_approach",
                 "message": "Three unsuccessful review/fix rounds; reconsider the approach. No fourth automatic round."}
-    if convergence.get("outcome") == "passed" and _review_binding_current(rounds[-1]):
+    if (convergence.get("outcome") == "passed" and rounds[-1]["binding"] == dict(payload)
+            and _review_binding_current(rounds[-1])):
         return {"status": "error", "message": "Review already passed; retain this completed run"}
     archive_path = None
     try:
@@ -11162,7 +11244,8 @@ def _check_review_ledger_binding(branch_dir: Path, verdict: str) -> dict | str:
     """
     if verdict == "ready":
         try:
-            target = _review_target()
+            # Default authority decides whether the pre-admission legacy bypass exists.
+            target = _review_target({})
             try:
                 ledger = _read_review_ledger(branch_dir)
             except (OSError, ValueError, TypeError, KeyError):
@@ -11173,6 +11256,8 @@ def _check_review_ledger_binding(branch_dir: Path, verdict: str) -> dict | str:
                     raise
                 ledger = {}
             rounds = ledger.get("convergence", {}).get("rounds", [])
+            if rounds or (branch_dir / "review-mode.json").exists():
+                target = _review_target(_review_admitted_binding(branch_dir.name))
             if target.get("security_gate_policy", {}).get("error"):
                 return {"status": "error", "message": "Trusted security gate configuration is invalid"}
             if ((_review_requires_consent(target) and _review_gates_strict(target))
@@ -12092,6 +12177,8 @@ def create_review_bundle(branch: str | None = None) -> dict:
     artifacts["test_handoffs"] = test_handoffs
     artifacts["test_contracts"] = test_contracts
 
+    # Validate durable scope before any legacy artifact fallback can hide corruption.
+    binding = _review_admitted_binding(branch_name)
     # --- Code state ---
     try:
         code_state = snapshot_code_state(branch_name)
@@ -12187,7 +12274,7 @@ def create_review_bundle(branch: str | None = None) -> dict:
 
     ledger = _read_review_ledger(branch_dir)
     rounds = ledger.get("convergence", {}).get("rounds", [])
-    target = _review_target()
+    target = _review_target(binding)
     row = next((item for item in rounds if not _review_round_terminal(item)), None)
     if row and not _review_binding_current(row):
         raise ValueError("Review snapshot or policy changed before bundle creation")
@@ -12320,7 +12407,7 @@ ROLE_REVIEWER_SHARED_SCOPE: str = """Review the change (or the code named for re
 
 If requirements or a plan are attached, use them to check the expected behavior and the completeness of the implementation. The architecture they propose is under review too: matching the plan does not prove the implementation is a good one.
 
-When there is no diff (code reviewed as it stands), judge the whole named scope. When there is a diff, compare against the base version (`git show <default-branch>:<file>`) to tell problems this change introduced from inherited ones, and charge the diff only for its own.
+When there is no diff (code reviewed as it stands), judge the whole named scope. When there is a diff, compare against the admitted code baseline identified in the instructions below to tell problems this change introduced from inherited ones, and charge the diff only for its own.
 
 Conduct, for both roles:
 - Do not modify the working tree. The result of the review is findings with ready patches.
@@ -12369,7 +12456,7 @@ You are not auditing the new feature's internals. You are checking what the chan
 
 IMPORTANT: If the old path still works exactly as before and the new surface is unambiguous, state that explicitly with reasoning. A clean review is signal, not absence of output.""",
         "instructions": """Check:
-- Convenience regression: take the scenarios that worked BEFORE the diff (read the pre-change surface with `git show <default-branch>:<file>`). Do they still work with the same number of steps? Did the old path gain a mandatory new flag, field, argument or ordering constraint?
+- Convenience regression: take the scenarios that worked BEFORE the diff (read the pre-change surface with `git show <review-base>:<file>`). Do they still work with the same number of steps? Did the old path gain a mandatory new flag, field, argument or ordering constraint?
 - Interface distinguishability: are there two similar flags/options/fields that are easy to confuse (`--release` vs `--from-release`)? Does the name alone say what it does, without reading the source?
 - Explicit input beats a default: when the user EXPLICITLY passes a value that is incompatible with the new mode, is it rejected with a clear error — or silently overridden? Silently overriding an explicitly supplied value is always a finding. Where the code has a defaults-and-overrides system, does the change keep the established priority contract (which layer wins over which)?
 - Interface for the real goal: do not accept the current flag/option set as given. If it confuses, propose the final set for the real goal, even when that means renaming or splitting existing flags.
@@ -12431,7 +12518,7 @@ M. File structure and consistency with the project. Where a new file lives is un
 
 HOW TO REVIEW:
 - As a separate FIRST step, grep for the A1 triggers. It is mechanical — do not skip it.
-- Establish the boundaries of the change: read the base version with `git show <default-branch>:<file>`; count new, still-untracked implementation and test files as part of the change.
+- Establish the boundaries of the change: read the base version with `git show <review-base>:<file>`; count new, still-untracked implementation and test files as part of the change.
 - Make four separate passes: (1) correctness, compatibility and completeness of the implementation; (2) minimal propagation of settings, where decisions are sourced, and the distribution of responsibilities; (3) accuracy of names and boundaries of new abstractions (K, L); (4) structure of new and moved files, uniform entry points, local conventions (M). A clean pass does not stand in for the others; passing tests prove neither a good split of responsibilities nor accurate names.
 - Read the main entrypoint files line by line, in full — not only the diff. A2, A3, D, F and the setting-application questions need the surrounding flow.
 - For B, C and H one site is not enough: grep the WHOLE codebase for the topic and collect the related sites together; the finding IS their number and the point where they collapse.
@@ -12757,7 +12844,7 @@ def _read_review_bundle_markdown(branch_name: str) -> str:
         return "[review-bundle.md missing; run create_review_bundle before launching reviewers]"
 
 
-def _read_git_diff_for_review() -> str:
+def _read_git_diff_for_review(branch: str | None = None) -> str:
     """Return the diff every reviewer prompt carries: the branch's review target.
 
     Same rule as snapshot_code_state (#426): the target is the merge-base with
@@ -12788,7 +12875,7 @@ def _read_git_diff_for_review() -> str:
         code, out, _ = _git(args)
         return out if code == 0 else ""
 
-    base_sha, base_ref = _resolve_review_base(_quiet)
+    base_sha, base_ref = _resolve_review_base(_quiet, _review_admitted_binding(branch))
     committed = ""
     if base_sha:
         code, out, _ = _git(["diff", f"{base_sha}..HEAD"])
@@ -13029,13 +13116,13 @@ def build_review_prompts(
     # inherits rot. Isolation here means no access to any other reviewer's
     # output — the diff and the bundle are their given context, and read-only
     # repo access is granted (`diff_plus_repo_read`) because both roles must
-    # run `git show <default-branch>:<file>` and grep the whole base.
+    # run `git show <review-base>:<file>` and grep the whole base.
     admission = _read_json_file(get_branch_dir(branch_name) / "review-mode.json")
     admitted_roles = admission.get("scheduled_reviewers", []) if admission else []
     for role_id in ROLE_REVIEWER_IDS:
         if role_id == "security" and (not isinstance(admitted_roles, list) or role_id not in admitted_roles):
             continue
-        role_entry = _role_prompt_entry(role_id, git_diff, review_bundle, layering)
+        role_entry = _role_prompt_entry(role_id, git_diff, review_bundle, layering, branch_name)
         if role_entry is None:
             continue
         prompts[role_id] = {
@@ -13368,6 +13455,7 @@ def _role_prompt_entry(
     git_diff: str,
     repo_context: str,
     layering: str,
+    branch: str | None = None,
 ) -> dict[str, object] | None:
     """Build the fan-out entry for one role reviewer, or None for an unknown id.
 
@@ -13378,6 +13466,9 @@ def _role_prompt_entry(
     spec = ROLE_REVIEWER_SPECS.get(role_id)
     if spec is None:
         return None
+    baseline, _ = _resolve_review_base(_review_git_optional, _review_admitted_binding(branch))
+    baseline_instruction = (f"git show {baseline}:<file>" if baseline else
+                            "[no verified code baseline; do not infer change attribution]")
     return {
         "subagent_type": spec["subagent_type"],
         "description": spec["description"],
@@ -13387,7 +13478,7 @@ def _role_prompt_entry(
             git_diff=git_diff,
             repo_context=repo_context,
             layering=layering,
-        ),
+        ).replace("git show <review-base>:<file>", baseline_instruction),
         "context_access": spec["context_access"],
     }
 
@@ -13422,7 +13513,7 @@ def build_role_review_prompts(
 
     prompts: dict[str, dict[str, object]] = {}
     for role_id in role_ids:
-        role_entry = _role_prompt_entry(role_id, git_diff, repo_context, layering)
+        role_entry = _role_prompt_entry(role_id, git_diff, repo_context, layering, branch_name)
         if role_entry is not None:
             prompts[role_id] = role_entry
 
@@ -13468,7 +13559,7 @@ def build_adversarial_review_prompts(
         # Role reviewers run in this phase too, but they carry their own output
         # contract — dispatch them through their own renderer rather than
         # flattening both schemas into one.
-        role_entry = _role_prompt_entry(reviewer_id, git_diff, repo_context, layering)
+        role_entry = _role_prompt_entry(reviewer_id, git_diff, repo_context, layering, branch_name)
         if role_entry is not None:
             prompts[reviewer_id] = role_entry
             continue
@@ -15210,7 +15301,10 @@ def _record_review_check(check_id: str, command: list[str], *, branch: str | Non
             handle.write(output)
             handle.flush()
             os.fsync(handle.fileno())
-        after = _review_target()
+        try:
+            after = _review_target(row["binding"])
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            after = {"reusable": False, "unverified_reason": str(exc)}
         check.update({**result, "state": "running" if result.get("status") == "cleanup_blocked" else "finished", "after": after,
                       "duration_seconds": time.time() - check["started_at"],
                       "output_artifact": str(artifact.relative_to(directory)),
@@ -15358,7 +15452,9 @@ _REVIEW_BASE_CANDIDATE_REFS = (
 )
 
 
-def _resolve_review_base(run_git: Callable[[list[str]], str]) -> tuple[str, str]:
+def _resolve_review_base(
+    run_git: Callable[[list[str]], str], binding: dict[str, Any] | None = None,
+) -> tuple[str, str]:
     """Return ``(base_sha, base_ref)`` for the branch's review target.
 
     The review target is the merge-base with the default branch, NOT ``HEAD``:
@@ -15369,15 +15465,25 @@ def _resolve_review_base(run_git: Callable[[list[str]], str]) -> tuple[str, str]
     Returns ``("", "")`` when no default-branch ref resolves (fresh repo, no
     remote, shallow clone) — callers then fall back to the uncommitted diff.
     """
+    base, ref, _ = _resolve_review_scope(run_git, binding)
+    return (base, ref) if base else ("", "")
+
+
+def _resolve_review_scope(
+    run_git: Callable[[list[str]], str], binding: dict[str, Any] | None = None,
+) -> tuple[str, str, str]:
+    """Return merge-base, requested/default identity and tip, without reading source."""
+    if binding is not None and "base_ref" in binding:
+        base, tip = _review_explicit_base(binding["base_ref"])
+        return base, binding["base_ref"], tip
     for ref in _REVIEW_BASE_CANDIDATE_REFS:
         revision = run_git(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"])
         if not revision:
             continue
         base = run_git(["merge-base", revision, "HEAD"])
-        # A selected authority with unavailable ancestry must not fall through
-        # to a different, potentially stale local default branch.
-        return (base, ref) if base else ("", "")
-    return "", ""
+        # Retain authority even without ancestry; never select another default.
+        return base, ref, revision
+    return "", "", ""
 
 
 def snapshot_code_state(branch: str | None = None) -> dict:
@@ -15424,7 +15530,7 @@ def snapshot_code_state(branch: str | None = None) -> dict:
     uncommitted_stat = _run_git(["diff", "--stat", "HEAD"])
     uncommitted_files = _names(_run_git(["diff", "--name-only", "HEAD"]))
 
-    base_sha, base_ref = _resolve_review_base(_run_git)
+    base_sha, base_ref = _resolve_review_base(_run_git, _review_admitted_binding(branch))
     if base_sha:
         diff_range = f"{base_sha[:12]}..HEAD"
         diff_stat = _run_git(["diff", "--stat", base_sha, "HEAD"])
@@ -26757,6 +26863,7 @@ if __name__ == "__main__":
         import argparse as _ap
 
         _p = _ap.ArgumentParser(prog="map_step_runner.py begin_review_run")
+        _p.add_argument("--base-ref", default=None)
         _p.add_argument("--mode", default="full", choices=("full", "lightweight", "sibling-aware"))
         _p.add_argument("--arguments", default="")
         _p.add_argument("--sibling-hint", default="")
@@ -26779,7 +26886,7 @@ if __name__ == "__main__":
                                   sibling_hint=_args.sibling_hint, branch=_args.branch, round_id=_args.round_id,
                                   provider=_args.provider, capability_profile=_args.capability_profile,
                                   policy_files=_args.policy_file, required_checks=_args.required_check,
-                                  check_specs=_check_specs, check_timeouts=_check_timeouts)
+                                  check_specs=_check_specs, check_timeouts=_check_timeouts, base_ref=_args.base_ref)
         print(json.dumps(result, indent=2, ensure_ascii=True))
         if result["status"] == "error":
             sys.exit(1)

@@ -189,6 +189,8 @@ The DevOpsConf 2026 case study applies this process to a production Kubernetes P
 | `/map-release` | Package release workflow; Codex `$map-release` shares the same commit-bound CI gates |
 | `/map-resume` | Resume interrupted workflows |
 
+For stacked PRs, use `/map-review --base-ref runtime` (Codex: `$map-review --base-ref runtime`) to review only the child branch's changes against its parent's merge-base, including dirty work. Trusted review policy still comes from the default branch.
+
 [Detailed usage and options →](docs/USAGE.md)
 
 ## Why Engineers Stick With It
