@@ -8,10 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- Remove the fixed per-subtask size cap from Actor, task-decomposer (Claude and Codex) and Codex `map-plan` prompts: the 50-300 line / ~4000-token limits no longer trigger `SCOPE_EXCEEDED` or force a split. Subtask boundaries follow approved scope and cohesive, testable responsibilities; the ~100-line per-function guideline stays.
+- Remove the fixed per-subtask size cap from Actor, task-decomposer (Claude and Codex) and Codex `map-plan` prompts: the 50-300 line / ~4000-token limits no longer trigger `SCOPE_EXCEEDED` or force a split. Subtask boundaries follow approved scope and cohesive, testable responsibilities; the ~100-line per-function guideline stays. (#566)
 - Make Wayfind research attempt caps opt-in with `configure_research --budget-limit N` before work starts. New tickets have no default cap for authorized read-only evidence checks; persisted limits and scoped extension approvals remain binding. Preserve independent evidence, immutable reports, lifetime spend across refresh/recovery and separate consequential-action consent. (#500)
 
 ### Fixed
+- Deflake two timing-sensitive tests that failed under a loaded full `make check`: the release CI-gate block subprocess ceiling rises from 10 s to 60 s, and review-check recovery/wait loops get a 30 s deadline with a 5 s check timeout. Loops still exit as soon as their condition holds; asserted behavior is unchanged.
 - Support stacked review with round-bound `--base-ref`: preserve the chosen code baseline across fresh-process snapshots, bundles, prompts and checks while keeping trusted policy on the default branch. Reject invalid explicit refs and incoherent admission state, invalidate moved targets, and retain dirty changes and full coverage requirements. (#557)
 - Reduce review-pilot test overhead with a module-scoped cache of successful, pinned historical Git reads. Keep mutable evidence validation and durable run state real and isolated, with uncached CLI, process-death and lock integration paths; production behavior is unchanged. (#558)
 - Capture bounded, redacted prompt topics and conservative tool/outcome observations for useful session memory outside workflows, including native Codex numeric exit metadata. Revalidate persisted evidence before bounded provider input; preserve legacy digest file metadata, durable cursor retry and visible truncation without retaining raw command/result bodies or inferring achievements. (#551)

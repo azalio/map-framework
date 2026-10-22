@@ -190,7 +190,7 @@ def run_block(
     }
     result = subprocess.run(
         ["/bin/bash", "-c", block], cwd=tmp_path, env=environment,
-        text=True, capture_output=True, check=False, timeout=10,
+        text=True, capture_output=True, check=False, timeout=60,
     )
     calls = (
         [json.loads(line) for line in calls_file.read_text().splitlines()]

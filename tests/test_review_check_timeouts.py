@@ -64,7 +64,7 @@ def test_custom_check_timeout_is_enforced_and_frozen(check_workspace):
 
 def test_custom_check_timeout_allows_success(check_workspace):
     del check_workspace
-    assert _admit(2)["status"] == "success"
+    assert _admit(5)["status"] == "success"
     result = _cli("run_test_gate", "--check-id", "suite")
     assert result["passed"] is True and result["exit_code"] == 0, result
 
@@ -101,7 +101,7 @@ def test_nested_check_keeps_lease_until_descendant_stops(check_workspace, kill_r
     process = subprocess.Popen([sys.executable, str(RUNNER), "run_test_gate", "--check-id", "suite"],
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 30
         while not marker.exists() and time.monotonic() < deadline:
             time.sleep(.02)
         assert marker.exists()
@@ -113,7 +113,7 @@ def test_nested_check_keeps_lease_until_descendant_stops(check_workspace, kill_r
             assert _alive(pid)
             blocked = _cli("run_test_gate", "--check-id", "suite")
             assert blocked["status"] == "error" and "still running" in blocked["message"], blocked
-            deadline = time.monotonic() + 5
+            deadline = time.monotonic() + 30
             while _alive(pid) and time.monotonic() < deadline:
                 time.sleep(.02)
         else:
@@ -175,7 +175,7 @@ def test_signal_permission_error_releases_only_quiescent_group(check_workspace, 
         "    os.killpg = denied\n"
     )
     monkeypatch.setenv("PYTHONPATH", str(injection))
-    assert _admit(2)["status"] == "success"
+    assert _admit(5)["status"] == "success"
     try:
         result = _cli("run_test_gate", "--check-id", "suite")
         if signal_delivered:
@@ -190,7 +190,7 @@ def test_signal_permission_error_releases_only_quiescent_group(check_workspace, 
             assert blocked["status"] == "error" and "still running" in blocked["message"], blocked
     finally:
         fault.unlink(missing_ok=True)
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 30
     recovered = {"passed": False}
     while time.monotonic() < deadline:
         recovered = _cli("run_test_gate", "--check-id", "suite")
@@ -223,7 +223,7 @@ def test_cleanup_inspection_failure_is_visible_and_recovers(check_workspace, mon
     finally:
         fault.unlink(missing_ok=True)
         ps.write_text('#!/bin/sh\nexec /bin/ps "$@"\n')
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 30
     retried = {"passed": False, "message": "Retry deadline expired"}
     while time.monotonic() < deadline:
         retried = _cli("run_test_gate", "--check-id", "suite")
