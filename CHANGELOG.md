@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.0] - 2026-10-22
+
 ### Changed
 - Remove the fixed per-subtask size cap from Actor, task-decomposer (Claude and Codex) and Codex `map-plan` prompts: the 50-300 line / ~4000-token limits no longer trigger `SCOPE_EXCEEDED` or force a split. Subtask boundaries follow approved scope and cohesive, testable responsibilities; the ~100-line per-function guideline stays. (#566)
 - Make Wayfind research attempt caps opt-in with `configure_research --budget-limit N` before work starts. New tickets have no default cap for authorized read-only evidence checks; persisted limits and scoped extension approvals remain binding. Preserve independent evidence, immutable reports, lifetime spend across refresh/recovery and separate consequential-action consent. (#500)
