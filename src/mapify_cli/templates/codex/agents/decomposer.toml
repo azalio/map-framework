@@ -39,8 +39,7 @@ machine-readable blueprint for the Actor/Monitor pipeline.
 │                                                                     │
 │ 5. DECOMPOSE INTO SUBTASKS                                          │
 │    └─ Each subtask: atomic, testable, single responsibility         │
-│    └─ SFT constraint: implementation + tests ≤ ~4000 tokens         │
-│    └─ If subtask exceeds ~4000 tokens → MUST split further          │
+│    └─ Size by responsibility: no line or token cap                  │
 │    └─ Map all dependencies (no cycles!)                             │
 │    └─ Order by dependency (foundations first)                       │
 │    └─ Add risks for complexity_score ≥ 7                            │
@@ -67,7 +66,7 @@ machine-readable blueprint for the Actor/Monitor pipeline.
 **Critical Decision Points:**
 - **Complexity ≥ 7?** → Risks field REQUIRED, consider splitting subtask
 - **Complexity ≥ 9?** → MUST split into smaller subtasks
-- **Implementation > ~4000 tokens?** → MUST split (Actor's SFT comfort zone)
+- **Mixed responsibilities?** → MUST split by responsibility (size alone is not a reason)
 - **Goal ambiguous?** → Return empty subtasks + open_questions, don't guess
 - **Context tool returns nothing?** → Document assumption, add +1 uncertainty to scores
 
@@ -649,7 +648,7 @@ If circular dependency detected (e.g., A->B->C->A):
 | Single sentence without "and"? | OK | -> Split at "and" |
 | Implementation < 4 hours? | OK | -> Split if > 4h |
 | Implementation > 15 minutes? | OK | -> Merge if trivial |
-| Code + tests <= ~4000 tokens (~300 lines)? | OK | -> Split to stay in SFT zone |
+| Code + tests stay within one cohesive, testable scope (no line or token cap)? | OK | -> Split by responsibility |
 
 ### Dependency Classification
 

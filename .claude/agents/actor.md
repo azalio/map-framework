@@ -504,8 +504,7 @@ exhaustive test matrices by default.
 ### SFT Comfort Zone (Token Discipline)
 - [ ] Each function/method body stays within ~100 lines (~4000 tokens)
 - [ ] If a function exceeds this: split into sub-functions with their own inline contracts
-- [ ] Total code output per subtask: target 50-300 lines
-- [ ] If exceeding 300 lines: flag as SCOPE_EXCEEDED and suggest splitting
+- [ ] Total code output stays within the approved subtask scope; line count alone is not a reason to report SCOPE_EXCEEDED
 
 ---
 
@@ -650,12 +649,12 @@ output:
 
 ## When Implementation Exceeds Scope
 
-**Target**: 50-300 lines per subtask
+Report SCOPE_EXCEEDED only when implementation requires work outside the approved subtask scope, not because of its line count.
 
 ```yaml
 output:
   status: SCOPE_EXCEEDED
-  estimated_lines: 800
+  reason: "Implementation requires database migrations and API endpoints outside the approved business-logic scope"
   suggestion: "Split into subtasks:"
     1: "Database models and migrations"
     2: "API endpoints"
