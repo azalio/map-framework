@@ -583,7 +583,7 @@ Output requirements per subtask:
 - hard_constraints: [{id: "HC-1", description: "non-negotiable requirement"}]
 - soft_constraints: [{id: "SC-1", description: "preference", tradeoff_rationale: "if not covered"}]
 
-Target subtask size: completable within ~4000 tokens (SFT comfort zone).
+Target subtask size: one cohesive, testable responsibility (no line or token cap).
 Aim for 3-7 subtasks; flag if more than 10 are needed.
 LIGHT mode: target 2-5 minimal bite-sized subtasks; prefer merging related concerns over splitting.
 

@@ -157,7 +157,7 @@ This is conservative full-snapshot evidence, not dependency-selective reuse or h
 
 ## Quality Goals
 
-1. **Reviewable Diffs**: Prefer small, contract-sized implementation steps with explicit gates over “one big AI diff”.
+1. **Reviewable Diffs**: Prefer small, contract-sized implementation steps with explicit gates over “one big AI diff”. There is no line or token cap per subtask: size alone does not trigger `SCOPE_EXCEEDED` or force a split; approved scope and cohesive, testable responsibilities determine boundaries.
 2. **Artifact Traceability**: Every run produces durable, human-readable artifacts (plans, checks, reviews, learnings) tied to the current git branch.
 3. **Provider Portability**: Keep workflow intent stable while allowing provider-specific orchestration surfaces (`.claude/skills/` for Claude, `.agents/skills/` plus `.codex/` config for Codex).
 4. **Deterministic Guardrails**: Enforce token budgets, workflow-fit exits, clean retry, mutation boundaries, prior-stage consumption, run-health checks, and verification gates consistently.
