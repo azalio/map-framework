@@ -558,9 +558,11 @@ Design decisions (llm-council-reviewed, conv `461b92f9`):
   isolation + atomic accept/reject*, which is the foundation Phase 2 (wave/DAG
   parallelism) needs.
 - **Provider-specific storage.** Claude Code uses the gitignored
-  `.claude/worktrees/map/<branch>/<slug>-<attempt>` path so its Actor can enter
+  `.claude/worktrees/map/<branch-key>/<slug>-<attempt>` path so its Actor can enter
   the worktree. Codex uses the repo's git common dir
-  (`<git-common-dir>/map-framework/worktrees/<branch>/<slug>-<attempt>`).
+  (`<git-common-dir>/map-framework/worktrees/<branch-key>/<slug>-<attempt>`).
+  The branch key includes a SHA-256 digest so distinct Git branch names cannot
+  collide after path sanitization. Legacy recorded paths remain usable.
   The installed `.gitignore` excludes Claude worktrees from scans and commits;
   avoid `git clean -fdx` in the main checkout while they are active. Branches are
   `map-wt/<slug>-<attempt>`, unique per (subtask, attempt) so Phase 2 never

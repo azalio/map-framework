@@ -237,15 +237,68 @@ class TestWorktreeLifecycle:
         (repo / ".gitignore").write_text(".claude/worktrees/\n")
         _git(["add", ".gitignore"], repo)
         _git(["commit", "-q", "-m", "ignore Claude worktrees"], repo)
-        created = m.create_subtask_worktree(
-            "ST-OTHER", branch="feat/other", provider="claude"
-        )
+        _git(["branch", "feat/other"], repo)
+        _git(["checkout", "-q", "feat/other"], repo)
+        created = m.create_subtask_worktree("ST-OTHER", provider="claude")
         wt = Path(str(created["worktree_path"]))
         (wt / "uncommitted.txt").write_text("keep\n")
+        _git(["checkout", "-q", "feat/x"], repo)
         result = m.cleanup_orphan_worktrees("feat/x")
         assert result["ok"] is True
         assert wt.exists()
         assert (wt / "uncommitted.txt").read_text() == "keep\n"
+
+    def test_colliding_branch_names_have_distinct_storage(self, repo: Path) -> None:
+        (repo / ".gitignore").write_text(".claude/worktrees/\n")
+        _git(["add", ".gitignore"], repo)
+        _git(["commit", "-q", "-m", "ignore Claude worktrees"], repo)
+        _git(["branch", "feat-x"], repo)
+        first = m.create_subtask_worktree("ST-X", provider="claude")
+        _git(["checkout", "-q", "feat-x"], repo)
+        second = m.create_subtask_worktree("ST-Y", provider="claude")
+        first_path = Path(str(first["worktree_path"]))
+        second_path = Path(str(second["worktree_path"]))
+        assert first["status"] == second["status"] == "success"
+        assert first_path.parent != second_path.parent
+        (second_path / "keep.txt").write_text("keep\n")
+        _git(["checkout", "-q", "feat/x"], repo)
+        m.cleanup_orphan_worktrees("feat/x")
+        assert (second_path / "keep.txt").read_text() == "keep\n"
+
+    def test_ambiguous_legacy_orphan_is_preserved(self, repo: Path) -> None:
+        _git(["branch", "feat-x"], repo)
+        legacy = m._wt_legacy_path_for("feat-x", "ST-OLD", 0)
+        assert legacy is not None
+        legacy.parent.mkdir(parents=True)
+        add = _git(["worktree", "add", "-b", "map-wt/ST-OLD-0", str(legacy), "HEAD"], repo)
+        assert add.returncode == 0, add.stderr
+        (legacy / "keep.txt").write_text("keep\n")
+        m.cleanup_orphan_worktrees("feat/x")
+        assert (legacy / "keep.txt").read_text() == "keep\n"
+
+    def test_claude_migration_rejects_ambiguous_legacy_path(self, repo: Path) -> None:
+        (repo / ".gitignore").write_text(".claude/worktrees/\n")
+        _git(["add", ".gitignore"], repo)
+        _git(["commit", "-q", "-m", "ignore Claude worktrees"], repo)
+        _git(["branch", "feat-x"], repo)
+        legacy = m._wt_legacy_path_for("feat-x", "ST-OLD", 0)
+        assert legacy is not None
+        legacy.parent.mkdir(parents=True)
+        add = _git(["worktree", "add", "-b", "map-wt/ST-OLD-0", str(legacy), "HEAD"], repo)
+        assert add.returncode == 0, add.stderr
+        (legacy / "keep.txt").write_text("keep\n")
+        result = m.create_subtask_worktree("ST-OLD", branch="feat/x", provider="claude")
+        assert result["kind"] == "AMBIGUOUS_LEGACY_WORKTREE"
+        assert (legacy / "keep.txt").read_text() == "keep\n"
+
+    def test_unambiguous_legacy_orphan_is_cleaned(self, repo: Path) -> None:
+        legacy = m._wt_legacy_path_for("feat/x", "ST-OLD", 0)
+        assert legacy is not None
+        legacy.parent.mkdir(parents=True)
+        add = _git(["worktree", "add", "-b", "map-wt/ST-OLD-0", str(legacy), "HEAD"], repo)
+        assert add.returncode == 0, add.stderr
+        m.cleanup_orphan_worktrees("feat/x")
+        assert not legacy.exists()
 
     def test_cleanup_rejects_symlinked_claude_candidate(self, repo: Path, tmp_path: Path) -> None:
         outside = tmp_path / "outside"
@@ -263,7 +316,7 @@ class TestWorktreeLifecycle:
         _git(["add", ".gitignore"], repo)
         _git(["commit", "-q", "-m", "ignore Claude worktrees"], repo)
         created = m.create_subtask_worktree("ST-CLAUDE", provider="claude")
-        assert created["status"] == "success"
+        assert created["status"] == "success", created
         wt = Path(str(created["worktree_path"]))
         assert wt.is_relative_to(repo / ".claude" / "worktrees" / "map")
         assert _git(["status", "--porcelain", "--", ".claude/worktrees"], repo).stdout.strip() == ""
@@ -273,7 +326,7 @@ class TestWorktreeLifecycle:
         assert (repo / "b.txt").read_text() == "claude\n"
         assert not wt.exists()
 
-    def test_claude_recreate_cleans_legacy_worktree(self, repo: Path) -> None:
+    def test_claude_recreate_cleans_codex_worktree(self, repo: Path) -> None:
         (repo / ".gitignore").write_text(".claude/worktrees/\n")
         _git(["add", ".gitignore"], repo)
         _git(["commit", "-q", "-m", "ignore Claude worktrees"], repo)
@@ -283,6 +336,20 @@ class TestWorktreeLifecycle:
         created = m.create_subtask_worktree("ST-LEGACY", provider="claude")
         assert created["status"] == "success"
         assert not old_path.exists()
+        assert Path(str(created["worktree_path"])).exists()
+
+    def test_claude_recreate_cleans_legacy_worktree(self, repo: Path) -> None:
+        (repo / ".gitignore").write_text(".claude/worktrees/\n")
+        _git(["add", ".gitignore"], repo)
+        _git(["commit", "-q", "-m", "ignore Claude worktrees"], repo)
+        legacy = m._wt_legacy_path_for("feat/x", "ST-LEGACY", 0)
+        assert legacy is not None
+        legacy.parent.mkdir(parents=True)
+        add = _git(["worktree", "add", "-b", "map-wt/ST-LEGACY-0", str(legacy), "HEAD"], repo)
+        assert add.returncode == 0, add.stderr
+        created = m.create_subtask_worktree("ST-LEGACY", provider="claude")
+        assert created["status"] == "success", created
+        assert not legacy.exists()
         assert Path(str(created["worktree_path"])).exists()
 
     def test_claude_requires_ignored_storage(self, repo: Path) -> None:
