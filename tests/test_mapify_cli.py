@@ -416,6 +416,7 @@ class TestInitCommand:
             ".map/provider-refresh.lock\n"
             ".map/installer.lock\n"
             ".map/gitignore.lock\n"
+            ".claude/worktrees/\n"
             "!docs/generated/index.md\n"
         )
         gitignore = tmp_path / ".gitignore"

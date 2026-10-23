@@ -707,8 +707,8 @@ When to call:
 Per-subtask git worktree isolation (#284) is **default-ON in auto mode**. Configure
 `worktree.isolation: auto`, `required`, or `off` in `.map/config.yaml` (`worktree.max_deletions: N`
 caps the bulk-deletion guard, 0 = off). When enabled, each subtask's Actor runs
-in a dedicated throwaway git worktree (stored out of the working tree under the
-repo's `.git` common dir); the result is squash-merged back into the working
+in a dedicated throwaway git worktree (Claude: `.claude/worktrees/map/`;
+Codex: the repo's `.git` common dir); the result is squash-merged back into the working
 branch ONLY after the configured `verification_checks` pass IN the worktree
 (pre-merge gate), and a rejected attempt is discarded so the working branch is
 never touched. The step runner owns the lifecycle + every safety guard
@@ -718,7 +718,7 @@ runner owns isolation; the two mechanisms must never both be active.
 **Before ACTOR — create the worktree (no-ops when disabled):**
 
 ```bash
-WT_JSON=$(python3 .map/scripts/map_step_runner.py create_subtask_worktree "$SUBTASK_ID")
+WT_JSON=$(python3 .map/scripts/map_step_runner.py create_subtask_worktree "$SUBTASK_ID" --provider claude)
 WT_STATUS=$(printf '%s' "$WT_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("status",""))')
 WT_PATH=""
 if [ "$WT_STATUS" = "success" ]; then

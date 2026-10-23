@@ -22784,10 +22784,8 @@ def auto_decide_holds(branch: str | None = None) -> dict[str, Any]:
 # --- Per-subtask git worktree isolation (#284) ---------------------------------
 # Runner-owned explicit worktrees (NOT the harness-native isolation="worktree").
 # llm-council-reviewed design (conv 461b92f9):
-#   * Storage lives OUT of the working tree, under the repo's common git dir
-#     (`<git-common-dir>/map-framework/worktrees/<branch>/<slug>-<attempt>`), so
-#     `git clean -fdx`, recursive scanners (rg, test runners, IDEs), and
-#     accidental commits can never touch it.
+#   * Claude storage lives under the gitignored `.claude/worktrees/map/` so
+#     Claude Code can enter it. Codex and legacy worktrees use the common git dir.
 #   * Branches are `map-wt/<slug>-<attempt>` — unique per (subtask, attempt) so
 #     Phase-2 parallelism never collides; `--attempt` is threaded from day one.
 #   * The runner is invoked from the MAIN checkout (orchestrator side); only the
@@ -22800,6 +22798,7 @@ def auto_decide_holds(branch: str | None = None) -> dict[str, Any]:
 WORKTREE_ARTIFACT_NAME = "worktrees.json"
 WORKTREE_BRANCH_PREFIX = "map-wt/"
 WORKTREE_STORAGE_SUBDIR = "map-framework/worktrees"
+WORKTREE_CLAUDE_STORAGE_SUBDIR = ".claude/worktrees/map"
 WORKTREE_PROTECTED_REFS = frozenset({"main", "master", "develop", "release"})
 WORKTREE_VERIFY_TIMEOUT = 1800  # 30 min hard cap on the pre-merge verify gate
 WORKTREE_GIT_TIMEOUT = 120  # per git invocation
@@ -22883,7 +22882,10 @@ def _wt_cwd_is_managed_worktree() -> bool:
     top = _wt_toplevel()
     if top is None:
         return False
-    return WORKTREE_STORAGE_SUBDIR.replace("/", os.sep) in str(top)
+    return (
+        WORKTREE_STORAGE_SUBDIR.replace("/", os.sep) in str(top)
+        or WORKTREE_CLAUDE_STORAGE_SUBDIR.replace("/", os.sep) in str(top)
+    )
 
 
 def _wt_active_git_operation() -> str | None:
@@ -22928,22 +22930,49 @@ def _wt_branch_path_component(branch: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", branch).strip("-._") or "branch"
 
 
+def _wt_branch_storage_component(branch: str) -> str:
+    """Use a stable, collision-resistant key even for similarly named branches."""
+    readable = _wt_branch_path_component(branch)[:48]
+    digest = hashlib.sha256(branch.encode("utf-8")).hexdigest()
+    return f"{readable}-{digest}"
+
+
 def _wt_branch_name(slug: str, attempt: int) -> str:
     return f"{WORKTREE_BRANCH_PREFIX}{slug}-{attempt}"
 
 
-def _wt_storage_root() -> Path | None:
+def _wt_storage_root(provider: str = "codex") -> Path | None:
+    if provider == "claude":
+        top = _wt_toplevel()
+        return top / WORKTREE_CLAUDE_STORAGE_SUBDIR if top is not None else None
     common = _wt_git_common_dir()
     if common is None:
         return None
     return common / WORKTREE_STORAGE_SUBDIR
 
 
-def _wt_path_for(branch: str, slug: str, attempt: int) -> Path | None:
+def _wt_path_for(branch: str, slug: str, attempt: int, provider: str = "codex") -> Path | None:
+    root = _wt_storage_root(provider)
+    if root is None:
+        return None
+    return root / _wt_branch_storage_component(branch) / f"{slug}-{attempt}"
+
+
+def _wt_legacy_path_for(branch: str, slug: str, attempt: int) -> Path | None:
     root = _wt_storage_root()
     if root is None:
         return None
     return root / _wt_branch_path_component(branch) / f"{slug}-{attempt}"
+
+
+def _wt_legacy_storage_unambiguous(branch: str) -> bool:
+    """Old sanitized storage is safe to sweep only for a unique local branch."""
+    refs = _wt_git(["branch", "--list", "--format=%(refname:short)"], timeout=15)
+    component = _wt_branch_path_component(branch)
+    return refs.returncode == 0 and sum(
+        _wt_branch_path_component(ref) == component
+        for ref in refs.stdout.splitlines()
+    ) <= 1
 
 
 def _worktree_artifact_path(branch: str | None = None) -> Path:
@@ -23457,17 +23486,54 @@ def cleanup_orphan_worktrees(branch: str) -> dict[str, object]:
     # Enumerate candidates from storage root + git worktree list
     candidate_paths: set[Path] = set()
 
-    storage = _wt_storage_root()
-    if storage is not None and storage.exists():
+    current = _wt_git(["rev-parse", "--abbrev-ref", "HEAD"], timeout=10)
+    current_ref = current.stdout.strip() if current.returncode == 0 else ""
+    storage_branch = (
+        current_ref
+        if current_ref and _wt_branch_path_component(current_ref) == _wt_branch_path_component(branch)
+        else branch
+    )
+    branch_component = _wt_branch_storage_component(storage_branch)
+    storage_roots = [
+        root / branch_component
+        for provider in ("codex", "claude")
+        if (root := _wt_storage_root(provider)) is not None
+    ]
+
+    # Old installations used a lossy sanitized branch key. Sweep that location
+    # only when no other local branch maps to it; otherwise ownership is
+    # ambiguous and deleting any candidate could destroy another branch's work.
+    old_root = _wt_storage_root()
+    legacy_component = _wt_branch_path_component(branch)
+    if old_root is not None and _wt_legacy_storage_unambiguous(branch):
+        storage_roots.append(old_root / legacy_component)
+
+    def safe_candidate(path: Path, storage: Path) -> Path | None:
+        """Reject symlinks and paths escaping this branch's storage directory."""
+        if storage.resolve() != storage:
+            return None
         try:
-            for entry in storage.iterdir():
-                if entry.is_dir() and not entry.name.startswith(".probe-"):
-                    # Recurse one level: storage/<branch-slug>/<subtask-slug>
-                    for sub in entry.iterdir():
-                        if sub.is_dir():
-                            candidate_paths.add(sub.resolve())
-        except OSError:
-            pass
+            relative = path.relative_to(storage)
+        except ValueError:
+            return None
+        current = storage
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink():
+                return None
+        resolved = path.resolve()
+        return resolved if resolved.is_relative_to(storage) else None
+
+    for storage in storage_roots:
+        if storage.is_dir() and storage.resolve() == storage:
+            try:
+                for sub in storage.iterdir():
+                    if sub.is_dir() and not sub.name.startswith(".probe-"):
+                        candidate = safe_candidate(sub, storage)
+                        if candidate is not None:
+                            candidate_paths.add(candidate)
+            except OSError:
+                pass
 
     # Also enumerate from `git worktree list --porcelain`
     wl = _wt_git(["worktree", "list", "--porcelain"], timeout=15)
@@ -23477,18 +23543,15 @@ def cleanup_orphan_worktrees(branch: str) -> dict[str, object]:
             if line.startswith("worktree "):
                 wt_raw = line[len("worktree "):]
                 wt_path = Path(wt_raw.strip())
-                try:
-                    wt_path = wt_path.resolve()
-                except OSError:
-                    pass
                 # Include only map-managed worktrees: real resolved-path ancestry
                 # under the storage root, NOT a substring match (a substring check
                 # can misclassify e.g. `<root>/worktrees-backup/...` as managed and
                 # destroy an unrelated worktree).
-                if storage is not None:
+                for storage in storage_roots:
                     try:
-                        if wt_path.is_relative_to(storage.resolve()):
-                            candidate_paths.add(wt_path)
+                        candidate = safe_candidate(wt_path, storage)
+                        if candidate is not None:
+                            candidate_paths.add(candidate)
                     except (OSError, ValueError):
                         pass
 
@@ -23822,6 +23885,7 @@ def create_subtask_worktree(
     attempt: int = 0,
     branch: str | None = None,
     allow_dirty: bool = False,
+    provider: str = "codex",
 ) -> dict[str, object]:
     """Create an isolated git worktree for a subtask (#284).
 
@@ -23832,6 +23896,8 @@ def create_subtask_worktree(
     attempt) is force-removed and recreated, so a recovered run always starts
     from a clean checkout (council Q4 #4: remove-and-recreate over reuse).
     """
+    if provider not in {"claude", "codex"}:
+        return _wt_error("INVALID_PROVIDER", f"unsupported worktree provider: {provider!r}")
     project_dir = _wt_project_dir()
     if not _wt_isolation_enabled(project_dir):
         return {"status": "disabled", "ok": False, "reason": "worktree.isolation is off"}
@@ -23880,14 +23946,39 @@ def create_subtask_worktree(
                 dirty=dirty[:20],
             )
 
-    storage = _wt_path_for(branch_name, slug, attempt)
+    storage_branch = cur_branch or branch_name
+    storage = _wt_path_for(storage_branch, slug, attempt, provider)
     if storage is None:
         return _wt_error("NO_GIT_COMMON_DIR", "could not resolve git common dir")
+    if provider == "claude":
+        if storage.parent.resolve() != storage.parent or storage.is_symlink():
+            return _wt_error("UNSAFE_WORKTREE_PATH", "Claude worktree storage must not contain symlinks")
+        ignored = _wt_git(["check-ignore", "-q", str(storage)])
+        if ignored.returncode != 0:
+            return _wt_error("WORKTREE_PATH_NOT_IGNORED", ".claude/worktrees/ must be gitignored before creating a Claude worktree")
     wt_branch = _wt_branch_name(slug, attempt)
     base_sha = _wt_head_sha()
     if base_sha is None:
         return _wt_error("NO_HEAD", "could not resolve HEAD sha (empty repo?)")
 
+    # A provider switch or upgrade may leave the same attempt at another MAP
+    # path. Remove only a worktree actually checked out on this attempt's ref.
+    alternate = _wt_path_for(
+        storage_branch, slug, attempt, "codex" if provider == "claude" else "claude"
+    )
+    legacy_path = _wt_legacy_path_for(branch_name, slug, attempt)
+    for previous in (alternate, legacy_path):
+        if previous is None or previous == storage or not previous.exists():
+            continue
+        actual_ref = _wt_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=previous)
+        if actual_ref.returncode != 0 or actual_ref.stdout.strip() != wt_branch:
+            continue
+        if previous == legacy_path and not _wt_legacy_storage_unambiguous(branch_name):
+            return _wt_error(
+                "AMBIGUOUS_LEGACY_WORKTREE",
+                "legacy worktree path is shared by multiple branch names; resolve it before recreating",
+            )
+        _wt_force_remove(previous, wt_branch)
     _wt_force_remove(storage, wt_branch)  # crash-safe clean slate
     storage.parent.mkdir(parents=True, exist_ok=True)
     add = _wt_git(["worktree", "add", "-b", wt_branch, str(storage), base_sha])
@@ -26860,9 +26951,10 @@ if __name__ == "__main__":
         _p.add_argument("--attempt", type=int, default=0)
         _p.add_argument("--branch", default=None)
         _p.add_argument("--allow-dirty", action="store_true")
+        _p.add_argument("--provider", choices=("claude", "codex"), default="codex")
         _a = _p.parse_args(sys.argv[2:])
         _wt_r = create_subtask_worktree(
-            _a.subtask_id, _a.attempt, _a.branch, _a.allow_dirty
+            _a.subtask_id, _a.attempt, _a.branch, _a.allow_dirty, _a.provider
         )
         print(json.dumps(_wt_r, indent=2))
         if _wt_r.get("status") == "error":

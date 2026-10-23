@@ -503,7 +503,7 @@ _SETTINGS_LOCAL_GITIGNORE_BLOCK = (
 
 
 _UPDATE_RUNTIME_GITIGNORE_MARKER = (
-    "# map:update-runtime — local automatic-update state; never commit."
+    "# map:update-runtime — local MAP runtime state; never commit."
 )
 _UPDATE_RUNTIME_GITIGNORE_PATHS = (
     ".map/update-state.json",
@@ -511,6 +511,7 @@ _UPDATE_RUNTIME_GITIGNORE_PATHS = (
     ".map/provider-refresh.lock",
     ".map/installer.lock",
     ".map/gitignore.lock",
+    ".claude/worktrees/",
 )
 _WINDOWS_GITIGNORE_MUTEX_TIMEOUT_MS = 30_000
 

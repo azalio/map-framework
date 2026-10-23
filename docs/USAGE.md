@@ -665,9 +665,11 @@ A concurrent second coordinator is blocked by an advisory lock.
 - **Runner-owned, not harness-native.** The runner creates explicit worktrees;
   the Actor Task must be dispatched **without** `isolation="worktree"` — the two
   mechanisms are alternatives and must never both be active.
-- **Out-of-tree storage.** Worktrees live under the repo's git common dir
-  (`<git-common-dir>/map-framework/worktrees/`), so `git clean -fdx`, recursive
-  scanners, and accidental commits can never touch them.
+- **Provider-specific storage.** Claude Code worktrees live under the gitignored
+  `.claude/worktrees/map/` path so Claude can enter them. Codex worktrees remain
+  under `<git-common-dir>/map-framework/worktrees/`. The installer adds the
+  Claude path to `.gitignore`; avoid `git clean -fdx` in the main checkout while
+  Claude worktrees are active.
 - **State stays in the main checkout.** MAP runtime state (`.map/<branch>/…`)
   always resolves against the main checkout; state-mutating commands refuse if
   invoked from inside a managed worktree (prevents silent state desync).
