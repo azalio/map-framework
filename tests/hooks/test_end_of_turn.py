@@ -203,6 +203,162 @@ class TestSecretDetection:
             assert exit_code == 0, "Should exit 0 for clean file"
 
 
+def _git(tmp: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args], cwd=tmp, capture_output=True, text=True, check=True,
+    )
+
+
+def _committed_repo(tmp: Path) -> None:
+    _git(tmp, "init")
+    _git(tmp, "config", "user.email", "test@test.com")
+    _git(tmp, "config", "user.name", "Test")
+    (tmp / "seed.txt").write_text("seed\n")
+    _git(tmp, "add", "seed.txt")
+    _git(tmp, "commit", "-m", "base")
+
+
+def _merge_with_upstream_files(tmp: Path) -> None:
+    _committed_repo(tmp)
+    base_branch = _git(tmp, "branch", "--show-current").stdout.strip()
+    _git(tmp, "checkout", "-b", "upstream")
+    (tmp / "upstream.py").write_text('API_KEY = "upstream_secret_12345"\n')
+    (tmp / "upstream.go").write_text("package upstream\n")
+    _git(tmp, "add", "upstream.py", "upstream.go")
+    _git(tmp, "commit", "-m", "upstream files")
+    _git(tmp, "checkout", base_branch)
+    (tmp / "local.txt").write_text("local\n")
+    _git(tmp, "add", "local.txt")
+    _git(tmp, "commit", "-m", "local work")
+    _git(tmp, "merge", "--no-commit", "--no-ff", "upstream")
+
+
+class TestStagedOwnership:
+    """The index and MERGE_HEAD determine what this turn actually staged."""
+
+    def test_preexisting_secret_in_changed_file_does_not_block(self, tmp_path):
+        _committed_repo(tmp_path)
+        target = tmp_path / "config.py"
+        target.write_text('API_KEY = "preexisting_secret_12345"\n')
+        _git(tmp_path, "add", "config.py")
+        _git(tmp_path, "commit", "-m", "existing secret")
+        target.write_text('API_KEY = "preexisting_secret_12345"\nvalue = 1\n')
+        _git(tmp_path, "add", "config.py")
+        code, _, stderr = run_hook(cwd=str(tmp_path))
+        assert code == 0, stderr
+
+    def test_upstream_only_secret_during_merge_does_not_block(self, tmp_path):
+        _merge_with_upstream_files(tmp_path)
+        code, _, stderr = run_hook(cwd=str(tmp_path))
+        assert code == 0, stderr
+
+    def test_local_head_secret_in_two_parent_merge_does_not_block(self, tmp_path):
+        _committed_repo(tmp_path)
+        target = tmp_path / "config.py"
+        base_lines = [f"value_{i} = {i}\n" for i in range(30)]
+        target.write_text("".join(base_lines))
+        _git(tmp_path, "add", "config.py")
+        _git(tmp_path, "commit", "-m", "shared file")
+        base_branch = _git(tmp_path, "branch", "--show-current").stdout.strip()
+        _git(tmp_path, "checkout", "-b", "upstream")
+        target.write_text("".join(base_lines + ["upstream_value = 1\n"]))
+        _git(tmp_path, "add", "config.py")
+        _git(tmp_path, "commit", "-m", "harmless upstream addition")
+        _git(tmp_path, "checkout", base_branch)
+        target.write_text(
+            "".join(base_lines[:2] + ['TOKEN = "existing_local_12345"\n'] + base_lines[2:])
+        )
+        _git(tmp_path, "add", "config.py")
+        _git(tmp_path, "commit", "-m", "existing local secret")
+        _git(tmp_path, "merge", "--no-commit", "--no-ff", "upstream")
+        assert _git(tmp_path, "diff", "--cached", "--name-only").stdout.strip() == "config.py"
+
+        code, _, stderr = run_hook(cwd=str(tmp_path))
+        assert code == 0, stderr
+
+    def test_local_staged_secret_survives_unstaged_worktree_removal(self, tmp_path):
+        _committed_repo(tmp_path)
+        target = tmp_path / "config.py"
+        target.write_text('TOKEN = "local_secret_123456"\n')
+        _git(tmp_path, "add", "config.py")
+        target.write_text("value = 1\n")
+        code, _, stderr = run_hook(cwd=str(tmp_path))
+        assert code == 2, stderr
+        assert "Possible hardcoded secret in staged file: config.py" in stderr
+
+    def test_added_line_resembling_diff_header_still_blocks(self, tmp_path):
+        _committed_repo(tmp_path)
+        target = tmp_path / "config.txt"
+        target.write_text('++ API_KEY = "local_secret_123456"\n')
+        _git(tmp_path, "add", "config.txt")
+        code, _, stderr = run_hook(cwd=str(tmp_path))
+        assert code == 2, stderr
+        assert "Possible hardcoded secret in staged file: config.txt" in stderr
+
+    def test_rename_preserves_secret_ownership_but_new_secret_blocks(self, tmp_path):
+        _committed_repo(tmp_path)
+        source = tmp_path / "old_config.txt"
+        source.write_text('API_KEY = "preexisting_secret_12345"\n')
+        _git(tmp_path, "add", "old_config.txt")
+        _git(tmp_path, "commit", "-m", "existing secret")
+        _git(tmp_path, "mv", "old_config.txt", "new_config.txt")
+
+        code, _, stderr = run_hook(cwd=str(tmp_path))
+        assert code == 0, stderr
+
+        destination = tmp_path / "new_config.txt"
+        destination.write_text(
+            destination.read_text() + 'TOKEN = "new_local_secret_12345"\n'
+        )
+        _git(tmp_path, "add", "new_config.txt")
+        code, _, stderr = run_hook(cwd=str(tmp_path))
+        assert code == 2, stderr
+        assert "Possible hardcoded secret in staged file: new_config.txt" in stderr
+
+    def test_local_staged_secret_during_merge_still_blocks(self, tmp_path):
+        _merge_with_upstream_files(tmp_path)
+        target = tmp_path / "upstream.py"
+        target.write_text(target.read_text() + 'TOKEN = "local_secret_123456"\n')
+        _git(tmp_path, "add", "upstream.py")
+        code, _, stderr = run_hook(cwd=str(tmp_path))
+        assert code == 2, stderr
+        assert "Possible hardcoded secret in staged file: upstream.py" in stderr
+
+    def test_formatters_skip_upstream_blobs_but_run_on_local_changes(self, tmp_path):
+        _merge_with_upstream_files(tmp_path)
+        local_py = tmp_path / "local.py"
+        local_go = tmp_path / "local.go"
+        local_py.write_text("value = 1\n")
+        local_go.write_text("package local\n")
+        _git(tmp_path, "add", "local.py", "local.go")
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        log = tmp_path / "formatter.log"
+        for name in ("ruff", "gofmt"):
+            tool = bin_dir / name
+            tool.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os, pathlib, sys\n"
+                "with open(os.environ['FORMAT_LOG'], 'a') as out:\n"
+                "    out.write(sys.argv[0].split('/')[-1] + ':' + sys.argv[-1] + '\\n')\n"
+                "with open(sys.argv[-1], 'a') as out:\n"
+                "    out.write('\\n')\n"
+            )
+            tool.chmod(0o755)
+        env = {
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "FORMAT_LOG": str(log),
+        }
+        code, _, stderr = run_hook(cwd=str(tmp_path), env=env)
+        assert code == 0, stderr
+        assert set(log.read_text().splitlines()) == {"ruff:local.py", "gofmt:local.go"}
+        assert (tmp_path / "upstream.py").read_text() == 'API_KEY = "upstream_secret_12345"\n'
+        assert (tmp_path / "upstream.go").read_text() == "package upstream\n"
+        assert _git(tmp_path, "diff", "--name-only").stdout.splitlines() == [
+            "local.go", "local.py",
+        ]
+
+
 # =============================================================================
 # Env File Detection Tests
 # =============================================================================

@@ -199,6 +199,27 @@ fi
 
 log "Changed files: $(echo "$CHANGED_FILES" | tr '\n' ' ')"
 
+# During a merge, Git stages the incoming tree as well as local resolutions.
+# A path whose staged blob still equals MERGE_HEAD belongs entirely to the
+# incoming side. Formatting it would silently modify code this turn did not
+# author. Keep paths with unstaged edits eligible for formatting.
+MERGE_HEAD_REF=""
+if git rev-parse --verify MERGE_HEAD &>/dev/null; then
+    MERGE_HEAD_REF=MERGE_HEAD
+fi
+
+merge_owned_staged_path() {
+    local file="$1" index_blob merge_blob
+    [[ -n "$MERGE_HEAD_REF" ]] || return 1
+    index_blob=$(git rev-parse --verify ":$file" 2>/dev/null) || return 1
+    merge_blob=$(git rev-parse --verify "MERGE_HEAD:$file" 2>/dev/null) || return 1
+    [[ "$index_blob" == "$merge_blob" ]]
+}
+
+skip_upstream_autoformat() {
+    merge_owned_staged_path "$1" && git diff --quiet -- "$1"
+}
+
 # -----------------------------------------------------------------------------
 # Auto-Fix Layer (Silent)
 # -----------------------------------------------------------------------------
@@ -206,7 +227,7 @@ log "Changed files: $(echo "$CHANGED_FILES" | tr '\n' ' ')"
 # Python: ruff auto-fix
 if command -v ruff &>/dev/null; then
     for file in $CHANGED_FILES; do
-        if [[ "$file" == *.py ]] && [[ -f "$file" ]]; then
+        if [[ "$file" == *.py ]] && [[ -f "$file" ]] && ! skip_upstream_autoformat "$file"; then
             ruff check --fix --quiet "$file" >/dev/null 2>&1 || true
         fi
     done
@@ -215,7 +236,7 @@ fi
 # Go: gofmt auto-fix
 if command -v gofmt &>/dev/null; then
     for file in $CHANGED_FILES; do
-        if [[ "$file" == *.go ]] && [[ -f "$file" ]]; then
+        if [[ "$file" == *.go ]] && [[ -f "$file" ]] && ! skip_upstream_autoformat "$file"; then
             gofmt -w "$file" 2>/dev/null || true
         fi
     done
@@ -225,14 +246,73 @@ fi
 # Critical Checks Only (on changed files)
 # -----------------------------------------------------------------------------
 
-# Check for secrets in staged files (always critical)
+# Check only added lines in staged blobs. The worktree can differ from the
+# index, and pre-existing lines in a changed file are not new secrets.
+rename_source_for_path() {
+    local parent="$1" destination="$2" status source target path
+    git rev-parse --verify "$parent" &>/dev/null || return 1
+    # -z makes rename records unambiguous even when a path contains tabs or
+    # newlines. A rename record has status, source, and destination fields.
+    while IFS= read -r -d '' status; do
+        if [[ "$status" == R* ]]; then
+            IFS= read -r -d '' source || return 1
+            IFS= read -r -d '' target || return 1
+            if [[ "$target" == "$destination" ]]; then
+                printf '%s' "$source"
+                return 0
+            fi
+        else
+            IFS= read -r -d '' path || return 1
+        fi
+    done < <(git diff --cached --name-status -z --find-renames=1% "$parent" 2>/dev/null)
+    return 1
+}
+
+parent_contains_line() {
+    local parent="$1" file="$2" line="$3" source
+    # Let grep consume the full blob so a large file does not trip pipefail
+    # via SIGPIPE. A renamed file may exist in the parent under its old path.
+    if git show "$parent:$file" 2>/dev/null | grep -Fx -- "$line" >/dev/null; then
+        return 0
+    fi
+    source=$(rename_source_for_path "$parent" "$file") || return 1
+    git show "$parent:$source" 2>/dev/null | grep -Fx -- "$line" >/dev/null
+}
+
 STAGED_FILES=$(git diff --cached --name-only 2>/dev/null || true)
 if [[ -n "$STAGED_FILES" ]]; then
     SECRET_PATTERN='(API_KEY|SECRET|TOKEN|PASSWORD|PRIVATE_KEY)\s*[=:]\s*["'"'"'][A-Za-z0-9_\-]{8,}'
     while IFS= read -r file; do
-        if [[ -f "$file" ]] && grep -qE "$SECRET_PATTERN" "$file" 2>/dev/null; then
-            add_critical "Possible hardcoded secret in staged file: $file"
+        [[ -z "$file" ]] && continue
+        # A merge result can contain lines authored by either parent. Diff
+        # against HEAD to find staged additions, then reject any line already
+        # present in HEAD or MERGE_HEAD. Only a secret absent from both parents
+        # is a local staged addition made during this merge.
+        if git rev-parse --verify HEAD &>/dev/null; then
+            staged_diff=$(git diff --cached --unified=0 HEAD -- "$file" 2>/dev/null || true)
+        else
+            # An unborn branch has no HEAD; Git diffs the index against the
+            # empty tree when no baseline is passed.
+            staged_diff=$(git diff --cached --unified=0 -- "$file" 2>/dev/null || true)
         fi
+        in_hunk=0
+        while IFS= read -r line; do
+            if [[ "$line" == @@* ]]; then
+                in_hunk=1
+                continue
+            fi
+            # Diff headers precede the first @@. Inside a hunk, even a line
+            # beginning "+++ " is added content (its first byte is the diff
+            # marker and the remaining "++ " belongs to the file).
+            [[ "$in_hunk" == 1 && "$line" == +* ]] || continue
+            added_line="${line:1}"
+            if printf '%s\n' "$added_line" | grep -qE "$SECRET_PATTERN" \
+                && ! parent_contains_line HEAD "$file" "$added_line" \
+                && { [[ -z "$MERGE_HEAD_REF" ]] || ! parent_contains_line MERGE_HEAD "$file" "$added_line"; }; then
+                add_critical "Possible hardcoded secret in staged file: $file"
+                break
+            fi
+        done <<< "$staged_diff"
     done <<< "$STAGED_FILES"
 
     # Check for .env files staged
