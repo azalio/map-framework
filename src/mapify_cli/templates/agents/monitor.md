@@ -63,7 +63,9 @@ subtask metadata) apply only to Actor subtask validation, not standalone review.
 ### Actor runtime preflight in linked worktrees
 
 Before invoking either Actor-specific `.map/scripts/map_step_runner.py` gate,
-resolve the checkout being reviewed with `git rev-parse --show-toplevel`. Check
+clear inherited `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, and
+`GIT_INDEX_FILE` in a subshell before resolving the checkout being reviewed
+with `git rev-parse --show-toplevel`. Check
 that **that checkout** contains `.map/scripts/map_step_runner.py` and
 `.map/<branch>/blueprint.json`. If `CLAUDE_PROJECT_DIR` is set, it must name
 the same checkout; otherwise the runner can inspect a different diff. Never
@@ -71,7 +73,8 @@ substitute a runner from another worktree or point `CLAUDE_PROJECT_DIR` at the
 initialized checkout while reviewing changes in this one.
 Run each relative runner command from the resolved checkout root, even if the
 Monitor started in a subdirectory; that root is also the runner's project
-directory when `CLAUDE_PROJECT_DIR` is unset.
+directory when `CLAUDE_PROJECT_DIR` is unset. Keep those Git variables unset
+for the runner too, so its Git calls cannot use a different checkout.
 
 If the runner or blueprint is absent, or `CLAUDE_PROJECT_DIR` names a different
 checkout, skip the two runner-dependent Actor gates and continue any independent
@@ -112,7 +115,7 @@ state-changing orchestration continues in its original checkout. A standalone
 3. Verify Goal is achieved — trace code path to confirm the stated outcome
 4. Verify Action is implemented — check that the specified method/operation exists
 5. **Verify mutation boundary (MANDATORY):** Run
-   `(cd "$(git rev-parse --show-toplevel)" && python3 .map/scripts/map_step_runner.py validate_mutation_boundary <branch> <subtask_id>)`
+   `(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; cd "$(git rev-parse --show-toplevel)" && python3 .map/scripts/map_step_runner.py validate_mutation_boundary <branch> <subtask_id>)`
    to compare the actual git diff against the subtask's declared `affected_files`.
    - `status="clean"` → continue.
    - `status="warning"` → record the `unexpected` files in your verdict; do
@@ -880,7 +883,7 @@ change to a shared pipeline file that breaks a stub/no-op path another
 subtask owns, surfacing only at the final full gate.
 
 - The orchestrator exposes the deterministic signal:
-  `(cd "$(git rev-parse --show-toplevel)" && python3 .map/scripts/map_step_runner.py detect_cross_subtask_regression_risk <branch> <subtask_id>)`.
+  `(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; cd "$(git rev-parse --show-toplevel)" && python3 .map/scripts/map_step_runner.py detect_cross_subtask_regression_risk <branch> <subtask_id>)`.
   When it returns `recommended_gate == "full_suite"` (current diff overlaps a
   prior subtask's files, or the diff couldn't be computed), the `test_output`
   you were handed MUST be from a FULL-suite run.

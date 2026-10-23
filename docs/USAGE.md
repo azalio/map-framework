@@ -682,6 +682,8 @@ A concurrent second coordinator is blocked by an advisory lock.
   `.map/`, then rerun Monitor. Copy the files; do not symlink state or run the
   main checkout's runner against a different checkout. Run both Actor gates
   from the reviewed worktree's Git root, even if Monitor starts in a subdirectory.
+  Clear inherited `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, and
+  `GIT_INDEX_FILE` while resolving that root and invoking the runner.
   Standalone `/map-review`
   does not require those Actor artifacts.
 - **Accept = squash-merge.** Exactly one commit per subtask (never `--no-ff`),

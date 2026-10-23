@@ -86,14 +86,18 @@ def test_monitor_reports_missing_runtime_in_linked_worktree(provider, tmp_path, 
     assert "no mutation-boundary or cross-subtask gate" in contract
     assert "copy (do not symlink)" in contract
     assert "A standalone" in contract
+    git_root_command = (
+        'unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; '
+        'cd "$(git rev-parse --show-toplevel)" && python3 '
+    )
     assert (
-        '(cd "$(git rev-parse --show-toplevel)" && python3 '
-        '.map/scripts/map_step_runner.py validate_mutation_boundary <branch> <subtask_id>)'
+        f'({git_root_command}.map/scripts/map_step_runner.py '
+        'validate_mutation_boundary <branch> <subtask_id>)'
     ) in contract
     if provider == "claude":
         assert (
-            '(cd "$(git rev-parse --show-toplevel)" && python3 '
-            '.map/scripts/map_step_runner.py detect_cross_subtask_regression_risk '
+            f'({git_root_command}.map/scripts/map_step_runner.py '
+            'detect_cross_subtask_regression_risk '
             '<branch> <subtask_id>)'
         ) in contract
 
@@ -123,8 +127,21 @@ def test_monitor_reports_missing_runtime_in_linked_worktree(provider, tmp_path, 
     nested_env = {**git_env, "PATH": str(Path(sys.executable).parent)
                   + os.pathsep + git_env.get("PATH", "")}
     nested_env.pop("CLAUDE_PROJECT_DIR", None)
+    nested_env.update({
+        "GIT_DIR": str(primary / ".git"),
+        "GIT_WORK_TREE": str(primary),
+        "GIT_COMMON_DIR": str(primary / ".git"),
+        "GIT_INDEX_FILE": str(primary / ".git" / "index"),
+    })
+    redirected = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], cwd=nested,
+        env=nested_env, capture_output=True, text=True, check=False,
+    )
+    assert redirected.returncode == 0, redirected.stderr
+    assert Path(redirected.stdout.strip()) == primary
     nested_gate = subprocess.run(
-        ["sh", "-c", ('(cd "$(git rev-parse --show-toplevel)" && '
+        ["sh", "-c", ('(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; '
+         'cd "$(git rev-parse --show-toplevel)" && '
          ' python3 .map/scripts/map_step_runner.py '
          'validate_mutation_boundary actor ST-001)')],
         cwd=nested, env=nested_env, capture_output=True, text=True, check=False,
@@ -133,7 +150,8 @@ def test_monitor_reports_missing_runtime_in_linked_worktree(provider, tmp_path, 
     assert json.loads(nested_gate.stdout)["actual"] == ["source.py"]
     if provider == "claude":
         nested_risk = subprocess.run(
-            ["sh", "-c", ('(cd "$(git rev-parse --show-toplevel)" && '
+            ["sh", "-c", ('(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; '
+             'cd "$(git rev-parse --show-toplevel)" && '
              ' python3 .map/scripts/map_step_runner.py '
              'detect_cross_subtask_regression_risk actor ST-001)')],
             cwd=nested, env=nested_env,
