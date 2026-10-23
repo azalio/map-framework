@@ -65,9 +65,10 @@ If the runner or blueprint is absent, or `CLAUDE_PROJECT_DIR` names a different
 checkout, skip the two runner-dependent Actor gates and continue any independent
 source, build, and test checks. Return `valid: false`,
 `recommendation: "block"`, and a setup issue named
-`MAP runtime unavailable in this worktree`. State exactly which path is
-missing, that no mutation-boundary or cross-subtask gate ran, and that the
-Actor's code has **not** failed either gate. Do not turn this known setup error
+`MAP runtime unavailable in this worktree`. Name each missing path, or, for
+an environment mismatch, name both the reviewed checkout and the different
+`CLAUDE_PROJECT_DIR`. State that no mutation-boundary or cross-subtask gate
+ran and that the Actor's code has **not** failed either gate. Do not turn this known setup error
 into a source finding or a generic `needs_investigation` verdict; do not report
 `valid: true` based on informal inspection.
 

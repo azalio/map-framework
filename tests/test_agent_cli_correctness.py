@@ -21,19 +21,34 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from mapify_cli import get_templates_dir
 
 
+def _isolated_git_env(**extra: str) -> dict[str, str]:
+    """Keep test Git operations inside their disposable checkout."""
+    return {
+        **{key: value for key, value in os.environ.items()
+           if not key.startswith("GIT_")},
+        **extra,
+    }
+
+
 @pytest.mark.parametrize("provider", ["claude", "codex"])
-def test_monitor_reports_missing_runtime_in_linked_worktree(provider, tmp_path):
+def test_monitor_reports_missing_runtime_in_linked_worktree(provider, tmp_path, monkeypatch):
     """Ignored MAP state must not become a false code-review failure."""
+    monkeypatch.setenv("GIT_DIR", str(tmp_path / "wrong.git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(tmp_path / "wrong-checkout"))
     templates = get_templates_dir()
     primary = tmp_path / "primary"
     primary.mkdir()
-    subprocess.run(["git", "init", "-q"], cwd=primary, check=True)
+    git_env = _isolated_git_env()
+    subprocess.run(["git", "init", "-q"], cwd=primary, env=git_env, check=True)
     (primary / ".gitignore").write_text(".map/\n")
     (primary / "source.py").write_text("value = 1\n")
-    subprocess.run(["git", "add", ".gitignore", "source.py"], cwd=primary, check=True)
+    subprocess.run(
+        ["git", "add", ".gitignore", "source.py"],
+        cwd=primary, env=git_env, check=True,
+    )
     subprocess.run(
         ["git", "-c", "user.name=t", "-c", "user.email=t@example.com",
-         "commit", "-qm", "base"], cwd=primary, check=True,
+         "commit", "-qm", "base"], cwd=primary, env=git_env, check=True,
     )
     workspace = primary / ".map" / "actor"
     workspace.mkdir(parents=True)
@@ -43,7 +58,7 @@ def test_monitor_reports_missing_runtime_in_linked_worktree(provider, tmp_path):
     worktree = tmp_path / "worker"
     subprocess.run(
         ["git", "worktree", "add", "-q", "--detach", str(worktree)],
-        cwd=primary, check=True,
+        cwd=primary, env=git_env, check=True,
     )
     (worktree / "source.py").write_text("value = 2\n")
     assert not (worktree / ".map/scripts/map_step_runner.py").exists()
@@ -51,7 +66,7 @@ def test_monitor_reports_missing_runtime_in_linked_worktree(provider, tmp_path):
     missing = subprocess.run(
         [sys.executable, ".map/scripts/map_step_runner.py",
          "validate_mutation_boundary", "actor", "ST-001"],
-        cwd=worktree, capture_output=True, text=True, check=False,
+        cwd=worktree, env=git_env, capture_output=True, text=True, check=False,
     )
     assert missing.returncode != 0
     assert "map_step_runner.py" in missing.stderr
@@ -84,7 +99,7 @@ def test_monitor_reports_missing_runtime_in_linked_worktree(provider, tmp_path):
         [sys.executable, str(worker_scripts / "map_step_runner.py"),
          "validate_mutation_boundary", "actor", "ST-001"],
         cwd=worktree,
-        env={**os.environ, "CLAUDE_PROJECT_DIR": str(worktree)},
+        env={**git_env, "CLAUDE_PROJECT_DIR": str(worktree)},
         capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0, result.stderr
@@ -96,14 +111,14 @@ def test_standalone_review_does_not_require_actor_blueprint(provider, tmp_path):
     """Real review CLI works without Actor state; routed Monitor agrees."""
     templates = get_templates_dir()
     runner = templates / "map/scripts/map_step_runner.py"
-    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}
-    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    env = _isolated_git_env(CLAUDE_PROJECT_DIR=str(tmp_path))
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, env=env, check=True)
     source = tmp_path / "external.py"
     source.write_text("def divide(x):\n    return 1 / x\n")
-    subprocess.run(["git", "add", "external.py"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "external.py"], cwd=tmp_path, env=env, check=True)
     subprocess.run(
         ["git", "-c", "user.name=t", "-c", "user.email=t@example.com",
-         "commit", "-qm", "external base"], cwd=tmp_path, check=True,
+         "commit", "-qm", "external base"], cwd=tmp_path, env=env, check=True,
     )
     source.write_text("def divide(x):\n    return 1 / 0\n")
     result = subprocess.run(
@@ -134,7 +149,8 @@ def test_standalone_review_does_not_require_actor_blueprint(provider, tmp_path):
 def test_actor_review_boundary_remains_enforced(provider, case, tmp_path):
     """A standalone review exception never changes the actual Actor CLI gate."""
     templates = get_templates_dir()
-    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    env = _isolated_git_env(CLAUDE_PROJECT_DIR=str(tmp_path), MAP_STRICT_SCOPE="1")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, env=env, check=True)
     workspace = tmp_path / ".map/actor"
     workspace.mkdir(parents=True)
     if case != "missing_blueprint":
@@ -152,7 +168,7 @@ def test_actor_review_boundary_remains_enforced(provider, case, tmp_path):
          "validate_mutation_boundary", "actor",
          "ST-999" if case == "unknown_subtask" else "ST-001"],
         cwd=tmp_path,
-        env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path), "MAP_STRICT_SCOPE": "1"},
+        env=env,
         capture_output=True, text=True, check=False,
     )
     report = json.loads(result.stdout)
