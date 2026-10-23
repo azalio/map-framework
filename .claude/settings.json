@@ -202,7 +202,7 @@
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/end-of-turn.sh",
             "timeout": 30,
-            "description": "Auto-fixes silently, only reports secrets/syntax errors"
+            "description": "Read-only checks for staged secrets, syntax, and Go build errors"
           }
         ]
       },

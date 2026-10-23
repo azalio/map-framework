@@ -4,7 +4,7 @@ Pytest tests for .claude/hooks/end-of-turn.sh Stop hook.
 Tests the lightweight version that:
 - Only runs if there are uncommitted changes
 - Checks only changed files
-- Auto-fixes what it can
+- Never rewrites changed source files
 - Only reports critical issues (secrets, .env files, syntax errors)
 """
 
@@ -339,7 +339,7 @@ class TestStagedOwnership:
         assert code == 2, stderr
         assert "Possible hardcoded secret in staged file: upstream.py" in stderr
 
-    def test_formatters_skip_upstream_blobs_but_run_on_local_changes(self, tmp_path):
+    def test_stop_does_not_run_source_writing_formatters_during_merge(self, tmp_path):
         _merge_with_upstream_files(tmp_path)
         local_py = tmp_path / "local.py"
         local_go = tmp_path / "local.go"
@@ -366,12 +366,39 @@ class TestStagedOwnership:
         }
         code, _, stderr = run_hook(cwd=str(tmp_path), env=env)
         assert code == 0, stderr
-        assert set(log.read_text().splitlines()) == {"ruff:local.py", "gofmt:local.go"}
+        assert not log.exists()
+        assert local_py.read_text() == "value = 1\n"
+        assert local_go.read_text() == "package local\n"
         assert (tmp_path / "upstream.py").read_text() == 'API_KEY = "upstream_secret_12345"\n'
         assert (tmp_path / "upstream.go").read_text() == "package upstream\n"
-        assert _git(tmp_path, "diff", "--name-only").stdout.splitlines() == [
-            "local.go", "local.py",
-        ]
+        assert not _git(tmp_path, "diff", "--name-only").stdout.strip()
+
+    def test_stop_does_not_format_peer_session_dirty_files(self, tmp_path):
+        _committed_repo(tmp_path)
+        peer_py = tmp_path / "peer.py"
+        peer_go = tmp_path / "peer.go"
+        peer_py.write_text("value=  1\n")
+        peer_go.write_text("package peer\n\nvar Value=1\n")
+        before = {path: path.read_bytes() for path in (peer_py, peer_go)}
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        log = tmp_path / "formatter.log"
+        for name in ("ruff", "gofmt"):
+            tool = bin_dir / name
+            tool.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os, pathlib, sys\n"
+                "pathlib.Path(os.environ['FORMAT_LOG']).write_text(sys.argv[0])\n"
+                "pathlib.Path(sys.argv[-1]).write_text('rewritten\\n')\n"
+            )
+            tool.chmod(0o755)
+        code, _, stderr = run_hook(cwd=str(tmp_path), env={
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "FORMAT_LOG": str(log),
+        })
+        assert code == 0, stderr
+        assert not log.exists()
+        assert {path: path.read_bytes() for path in before} == before
 
 
 # =============================================================================

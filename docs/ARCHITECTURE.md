@@ -135,7 +135,7 @@ This is conservative full-snapshot evidence, not dependency-selective reuse or h
 
 - `mapify` CLI initialization (`mapify init`) and configuration
 - Provider scaffolding generated into a target repo (`.claude/` for Claude Code, `.codex/` for Codex CLI, plus `.map/` scripts/artifacts)
-- The shared `end-of-turn.sh` Stop hook builds Go projects using optional flat `checks.go.tags` configuration as a single literal argv value; the same Bash argument array is used with configured/environment GOOS and host-default builds, without changing persistent hook state
+- The shared `end-of-turn.sh` Stop hook inspects dirty shared-worktree files but never rewrites source; formatting belongs to the editing session. Its Go build check uses optional flat `checks.go.tags` configuration as a single literal argv value; the same Bash argument array is used with configured/environment GOOS and host-default builds, without changing persistent hook state
 - Run artifacts (plans, contracts, verification summaries, review dossiers, learning handoffs) written under `.map/<branch>/`
 - Context-budget, compression, minimality, clean-retry, run-health, review-bundle, and prior-stage-consumption contracts surfaced through MAP settings, hooks, templates, and `.map/scripts/`
 - Host-path and cross-process safety primitives, including canonical `MAP_*`/`~/.map/` reference docs and `flock_with_state` lock sidecars for serialized host-level workflows

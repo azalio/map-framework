@@ -105,7 +105,8 @@ documented per event in the official Claude Code docs.
 
 ## Hook inventory
 
-All 16 hooks (15 `.py` + `end-of-turn.sh`) are classified against the
+The 18 hooks listed below (17 `.py` + `end-of-turn.sh`), including two
+Codex-specific hooks, are classified against the
 `MAP_INVOKED_BY` recursion-guard contract. **REQUIRE_GUARD** hooks early-exit
 when MAP spawns a nested subprocess; **FORBID_GUARD** hooks must always fire
 and may not carry the guard. Full contract and per-hook rationale:
@@ -125,7 +126,7 @@ classification is enforced by `scripts/lint-hooks.py` (in `make lint` /
 | `ralph-context-pruner.py` | `PreCompact` | No | REQUIRE_GUARD | Save restore point, prune logs |
 | `pre-compact-save-transcript.py` | `PreCompact` | No | REQUIRE_GUARD | Save full conversation transcript |
 | `detect-clarification-triggers.py` | `UserPromptSubmit` | No | REQUIRE_GUARD | Detect "ask if unclear" + async/durability language |
-| `end-of-turn.sh` | `Stop` | No | REQUIRE_GUARD | Auto-fix lint/format silently |
+| `end-of-turn.sh` | `Stop` | No | REQUIRE_GUARD | Read-only source checks; never formats shared worktree files |
 | `scrub-internal-ids.py` | `Stop` | No | REQUIRE_GUARD | On `WORKFLOW_COMPLETE`, strip leaked `ST-`/`AC-`/`VC-`/`INV-`/`HC-` IDs from run-changed code and commit the cleanup (gated, runs once) |
 | `map-memory-capture.py` | `Stop` | No | REQUIRE_GUARD | Append per-turn scratch WAL record (cross-session memory) |
 | `map-memory-endmark.py` | `SessionEnd` | No | REQUIRE_GUARD | Best-effort 'ended' marker for the session WAL |
@@ -134,7 +135,8 @@ classification is enforced by `scripts/lint-hooks.py` (in `make lint` /
 | `map-memory-session.py` | `SessionStart` (Codex composite) | No | REQUIRE_GUARD | Finalize dirty memory and inject recall in deterministic order |
 | `map-stop.py` | `Stop` (Codex dispatcher) | No | REQUIRE_GUARD | Sequence scrub, checks, token metering, and memory capture |
 
-> The Codex twin `.codex/hooks/workflow-gate.py` is FORBID_GUARD like its
-> Claude counterpart; this inventory covers `.claude/hooks/` only.
+> This inventory includes Claude hooks and the two Codex-specific hooks shown
+> above. The Codex twin `.codex/hooks/workflow-gate.py` is FORBID_GUARD like its
+> Claude counterpart.
 
 Last reviewed: 2026-05-29.

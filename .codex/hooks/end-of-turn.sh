@@ -8,7 +8,7 @@
 # DESIGN (per LLM Council recommendations):
 #   - Only runs if there are uncommitted changes (dirty state)
 #   - Checks only changed files, not the entire project
-#   - Auto-fixes what it can (silent)
+#   - Never rewrites source; formatting belongs to the editing session
 #   - Only reports critical issues that need manual intervention
 #   - Full linting moved to /map-check command
 #   - Stop-hook re-entry is honored (stop_hook_active) and persistent findings
@@ -199,47 +199,9 @@ fi
 
 log "Changed files: $(echo "$CHANGED_FILES" | tr '\n' ' ')"
 
-# During a merge, Git stages the incoming tree as well as local resolutions.
-# A path whose staged blob still equals MERGE_HEAD belongs entirely to the
-# incoming side. Formatting it would silently modify code this turn did not
-# author. Keep paths with unstaged edits eligible for formatting.
 MERGE_HEAD_REF=""
 if git rev-parse --verify MERGE_HEAD &>/dev/null; then
     MERGE_HEAD_REF=MERGE_HEAD
-fi
-
-merge_owned_staged_path() {
-    local file="$1" index_blob merge_blob
-    [[ -n "$MERGE_HEAD_REF" ]] || return 1
-    index_blob=$(git rev-parse --verify ":$file" 2>/dev/null) || return 1
-    merge_blob=$(git rev-parse --verify "MERGE_HEAD:$file" 2>/dev/null) || return 1
-    [[ "$index_blob" == "$merge_blob" ]]
-}
-
-skip_upstream_autoformat() {
-    merge_owned_staged_path "$1" && git diff --quiet -- "$1"
-}
-
-# -----------------------------------------------------------------------------
-# Auto-Fix Layer (Silent)
-# -----------------------------------------------------------------------------
-
-# Python: ruff auto-fix
-if command -v ruff &>/dev/null; then
-    for file in $CHANGED_FILES; do
-        if [[ "$file" == *.py ]] && [[ -f "$file" ]] && ! skip_upstream_autoformat "$file"; then
-            ruff check --fix --quiet "$file" >/dev/null 2>&1 || true
-        fi
-    done
-fi
-
-# Go: gofmt auto-fix
-if command -v gofmt &>/dev/null; then
-    for file in $CHANGED_FILES; do
-        if [[ "$file" == *.go ]] && [[ -f "$file" ]] && ! skip_upstream_autoformat "$file"; then
-            gofmt -w "$file" 2>/dev/null || true
-        fi
-    done
 fi
 
 # -----------------------------------------------------------------------------

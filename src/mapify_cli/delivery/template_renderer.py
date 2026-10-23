@@ -64,7 +64,6 @@ _CLAUDE_SHIPPED_ONLY: frozenset[str] = frozenset(
         "CLAUDE.md",
         "workflow-rules.json",
         "ralph-loop-config.json",
-        "hooks/README.md",
         "rules/learned/README.md",
         ".gitignore",
     }
@@ -260,14 +259,14 @@ def _build_claude_resolver(
 
     Implements the destination-map from the ST-002 design doc:
 
-    * agents/**, hooks/ (except README.md), references/**, skills/**
+    * agents/**, hooks/**, references/**, skills/**
       → BOTH ``src/mapify_cli/templates/<rel>`` AND ``.claude/<rel>``
 
     * map/scripts/**, map/static-analysis/**
       → BOTH ``src/mapify_cli/templates/<rel>`` AND ``.map/<rel>``
         (``map/`` prefix remaps to ``.map/`` in the dev tree)
 
-    * hooks/README.md, rules/learned/README.md, CLAUDE.md,
+    * rules/learned/README.md, CLAUDE.md,
       workflow-rules.json, ralph-loop-config.json
       → ``src/mapify_cli/templates/<rel>`` ONLY (shipped-only — no dev dest)
 
@@ -550,8 +549,8 @@ def render_repo_trees(
     * map/ subtrees (scripts, static-analysis):
       → ``src/mapify_cli/templates/<rel>`` AND ``.map/<rel>``
 
-    * Shipped-only configs (CLAUDE.md, settings.json, workflow-rules.json,
-      ralph-loop-config.json, hooks/README.md, rules/learned/README.md):
+    * Shipped-only configs (CLAUDE.md, workflow-rules.json,
+      ralph-loop-config.json, rules/learned/README.md):
       → ``src/mapify_cli/templates/<rel>`` ONLY
 
     For CODEX provider the destination map is:
