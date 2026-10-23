@@ -22,6 +22,76 @@ from mapify_cli import get_templates_dir
 
 
 @pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_monitor_reports_missing_runtime_in_linked_worktree(provider, tmp_path):
+    """Ignored MAP state must not become a false code-review failure."""
+    templates = get_templates_dir()
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=primary, check=True)
+    (primary / ".gitignore").write_text(".map/\n")
+    (primary / "source.py").write_text("value = 1\n")
+    subprocess.run(["git", "add", ".gitignore", "source.py"], cwd=primary, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.com",
+         "commit", "-qm", "base"], cwd=primary, check=True,
+    )
+    workspace = primary / ".map" / "actor"
+    workspace.mkdir(parents=True)
+    (workspace / "blueprint.json").write_text(json.dumps({
+        "subtasks": [{"id": "ST-001", "affected_files": ["source.py"]}],
+    }))
+    worktree = tmp_path / "worker"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", "--detach", str(worktree)],
+        cwd=primary, check=True,
+    )
+    (worktree / "source.py").write_text("value = 2\n")
+    assert not (worktree / ".map/scripts/map_step_runner.py").exists()
+    assert not (worktree / ".map/actor/blueprint.json").exists()
+    missing = subprocess.run(
+        [sys.executable, ".map/scripts/map_step_runner.py",
+         "validate_mutation_boundary", "actor", "ST-001"],
+        cwd=worktree, capture_output=True, text=True, check=False,
+    )
+    assert missing.returncode != 0
+    assert "map_step_runner.py" in missing.stderr
+
+    if provider == "claude":
+        contract = (templates / "agents/monitor.md").read_text()
+    else:
+        contract = tomllib.loads(
+            (templates / "codex/agents/monitor.toml").read_text()
+        )["developer_instructions"]
+    assert "Actor runtime preflight in linked worktrees" in contract
+    assert "MAP runtime unavailable in this worktree" in contract
+    assert 'recommendation: "block"' in contract
+    assert "continue any independent" in contract
+    assert "copy (do not symlink)" in contract
+    assert "A standalone" in contract
+
+    # A checkout-local runtime and blueprint let the real gate inspect the
+    # worker diff. Using the initialized checkout as project root would miss it.
+    worker_scripts = worktree / ".map" / "scripts"
+    worker_scripts.mkdir(parents=True)
+    for name in ("map_step_runner.py", "map_utils.py"):
+        (worker_scripts / name).write_bytes((templates / "map/scripts" / name).read_bytes())
+    worker_workspace = worktree / ".map" / "actor"
+    worker_workspace.mkdir(parents=True)
+    (worker_workspace / "blueprint.json").write_bytes(
+        (workspace / "blueprint.json").read_bytes()
+    )
+    result = subprocess.run(
+        [sys.executable, str(worker_scripts / "map_step_runner.py"),
+         "validate_mutation_boundary", "actor", "ST-001"],
+        cwd=worktree,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(worktree)},
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["actual"] == ["source.py"]
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
 def test_standalone_review_does_not_require_actor_blueprint(provider, tmp_path):
     """Real review CLI works without Actor state; routed Monitor agrees."""
     templates = get_templates_dir()

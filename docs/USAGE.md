@@ -673,6 +673,15 @@ A concurrent second coordinator is blocked by an advisory lock.
 - **State stays in the main checkout.** MAP runtime state (`.map/<branch>/…`)
   always resolves against the main checkout; state-mutating commands refuse if
   invoked from inside a managed worktree (prevents silent state desync).
+- **External linked worktrees with ignored `.map/`.** A fresh worktree created
+  outside MAP's runner may lack the local scripts and branch artifacts. During
+  Actor validation, Monitor checks for both before running its formal gates.
+  If either is missing, it reports a blocking runtime setup issue, names the
+  missing path, and asks the parent/operator to copy `.map/scripts/`,
+  `.map/config.yaml`, and the matching `.map/<branch>/` into the worktree's
+  `.map/`, then rerun Monitor. Copy the files; do not symlink state or run the
+  main checkout's runner against a different checkout. Standalone `/map-review`
+  does not require those Actor artifacts.
 - **Accept = squash-merge.** Exactly one commit per subtask (never `--no-ff`),
   gated by base-divergence, runtime-state-in-diff, bulk-deletion, submodule, and
   detached-HEAD checks plus the pre-merge verify. Every guard returns a

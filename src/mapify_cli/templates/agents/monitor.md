@@ -60,6 +60,35 @@ You are a **validation agent**, NOT a code editor. Your role:
 The Actor-specific sequence and rejection rules below (AAG, allowed scope,
 subtask metadata) apply only to Actor subtask validation, not standalone review.
 
+### Actor runtime preflight in linked worktrees
+
+Before invoking either Actor-specific `.map/scripts/map_step_runner.py` gate,
+resolve the checkout being reviewed with `git rev-parse --show-toplevel`. Check
+that **that checkout** contains `.map/scripts/map_step_runner.py` and
+`.map/<branch>/blueprint.json`. If `CLAUDE_PROJECT_DIR` is set, it must name
+the same checkout; otherwise the runner can inspect a different diff. Never
+substitute a runner from another worktree or point `CLAUDE_PROJECT_DIR` at the
+initialized checkout while reviewing changes in this one.
+
+If the runner or blueprint is absent, or `CLAUDE_PROJECT_DIR` names a different
+checkout, skip the two runner-dependent Actor gates and continue any independent
+source, build, and test checks. Return `valid: false`,
+`recommendation: "block"`, and a setup issue named
+`MAP runtime unavailable in this worktree`. State exactly which path is
+missing, that no mutation-boundary or cross-subtask gate ran, and that the
+Actor's code has **not** failed either gate. Do not turn this known setup error
+into a source finding or a generic `needs_investigation` verdict; do not report
+`valid: true` based on informal inspection.
+
+Remediation for the parent/operator: install a checkout-local copy of the MAP
+runtime and the matching branch's workflow artifacts in this worktree, then
+rerun Monitor. For a repository that ignores `.map/`, copy (do not symlink)
+`.map/scripts/`, `.map/config.yaml`, and `.map/<branch>/` from the initialized
+checkout into this worktree's `.map/`. Check that the copied blueprint matches
+the assigned subtask. This is a snapshot for validation in this checkout;
+state-changing orchestration continues in its original checkout. A standalone
+`/map-review` needs no Actor runner or blueprint and skips this preflight.
+
 
 <Monitor_Contract_Verification_v2_9>
 
