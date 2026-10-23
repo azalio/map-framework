@@ -12,6 +12,7 @@ Two layers:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -232,6 +233,31 @@ class TestWorktreeDisabled:
 
 
 class TestWorktreeLifecycle:
+    def test_cleanup_does_not_delete_another_branch_worktree(self, repo: Path) -> None:
+        (repo / ".gitignore").write_text(".claude/worktrees/\n")
+        _git(["add", ".gitignore"], repo)
+        _git(["commit", "-q", "-m", "ignore Claude worktrees"], repo)
+        created = m.create_subtask_worktree(
+            "ST-OTHER", branch="feat/other", provider="claude"
+        )
+        wt = Path(str(created["worktree_path"]))
+        (wt / "uncommitted.txt").write_text("keep\n")
+        result = m.cleanup_orphan_worktrees("feat/x")
+        assert result["ok"] is True
+        assert wt.exists()
+        assert (wt / "uncommitted.txt").read_text() == "keep\n"
+
+    def test_cleanup_rejects_symlinked_claude_candidate(self, repo: Path, tmp_path: Path) -> None:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "keep.txt").write_text("keep\n")
+        branch_storage = repo / ".claude" / "worktrees" / "map" / "feat-x"
+        branch_storage.mkdir(parents=True)
+        os.symlink(outside, branch_storage / "ST-LINK-0")
+        result = m.cleanup_orphan_worktrees("feat/x")
+        assert result["ok"] is True
+        assert (outside / "keep.txt").read_text() == "keep\n"
+
     def test_claude_path_is_ignored_and_merges(self, repo: Path) -> None:
         (repo / ".gitignore").write_text(".claude/worktrees/\n")
         _git(["add", ".gitignore"], repo)
@@ -262,6 +288,15 @@ class TestWorktreeLifecycle:
     def test_claude_requires_ignored_storage(self, repo: Path) -> None:
         result = m.create_subtask_worktree("ST-CLAUDE", provider="claude")
         assert result["kind"] == "WORKTREE_PATH_NOT_IGNORED"
+
+    def test_claude_rejects_symlinked_storage(self, repo: Path, tmp_path: Path) -> None:
+        (repo / ".gitignore").write_text(".claude/worktrees/\n")
+        _git(["add", ".gitignore"], repo)
+        _git(["commit", "-q", "-m", "ignore Claude worktrees"], repo)
+        (repo / ".claude").mkdir()
+        os.symlink(tmp_path / "elsewhere", repo / ".claude" / "worktrees")
+        result = m.create_subtask_worktree("ST-LINK", provider="claude", allow_dirty=True)
+        assert result["kind"] == "UNSAFE_WORKTREE_PATH"
 
     def test_create_merge_happy_path(self, repo: Path) -> None:
         created = m.create_subtask_worktree("ST-001")

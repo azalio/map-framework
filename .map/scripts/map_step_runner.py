@@ -23462,15 +23462,37 @@ def cleanup_orphan_worktrees(branch: str) -> dict[str, object]:
     # Enumerate candidates from storage root + git worktree list
     candidate_paths: set[Path] = set()
 
-    storage_roots = [root for provider in ("codex", "claude") if (root := _wt_storage_root(provider)) is not None]
+    branch_component = _wt_branch_path_component(branch)
+    storage_roots = [
+        root / branch_component
+        for provider in ("codex", "claude")
+        if (root := _wt_storage_root(provider)) is not None
+    ]
+
+    def safe_candidate(path: Path, storage: Path) -> Path | None:
+        """Reject symlinks and paths escaping this branch's storage directory."""
+        if storage.resolve() != storage:
+            return None
+        try:
+            relative = path.relative_to(storage)
+        except ValueError:
+            return None
+        current = storage
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink():
+                return None
+        resolved = path.resolve()
+        return resolved if resolved.is_relative_to(storage) else None
+
     for storage in storage_roots:
-        if storage.exists():
+        if storage.is_dir() and storage.resolve() == storage:
             try:
-                for entry in storage.iterdir():
-                    if entry.is_dir() and not entry.name.startswith(".probe-"):
-                        for sub in entry.iterdir():
-                            if sub.is_dir():
-                                candidate_paths.add(sub.resolve())
+                for sub in storage.iterdir():
+                    if sub.is_dir() and not sub.name.startswith(".probe-"):
+                        candidate = safe_candidate(sub, storage)
+                        if candidate is not None:
+                            candidate_paths.add(candidate)
             except OSError:
                 pass
 
@@ -23482,18 +23504,15 @@ def cleanup_orphan_worktrees(branch: str) -> dict[str, object]:
             if line.startswith("worktree "):
                 wt_raw = line[len("worktree "):]
                 wt_path = Path(wt_raw.strip())
-                try:
-                    wt_path = wt_path.resolve()
-                except OSError:
-                    pass
                 # Include only map-managed worktrees: real resolved-path ancestry
                 # under the storage root, NOT a substring match (a substring check
                 # can misclassify e.g. `<root>/worktrees-backup/...` as managed and
                 # destroy an unrelated worktree).
                 for storage in storage_roots:
                     try:
-                        if wt_path.is_relative_to(storage.resolve()):
-                            candidate_paths.add(wt_path)
+                        candidate = safe_candidate(wt_path, storage)
+                        if candidate is not None:
+                            candidate_paths.add(candidate)
                     except (OSError, ValueError):
                         pass
 
@@ -23892,6 +23911,8 @@ def create_subtask_worktree(
     if storage is None:
         return _wt_error("NO_GIT_COMMON_DIR", "could not resolve git common dir")
     if provider == "claude":
+        if storage.parent.resolve() != storage.parent or storage.is_symlink():
+            return _wt_error("UNSAFE_WORKTREE_PATH", "Claude worktree storage must not contain symlinks")
         ignored = _wt_git(["check-ignore", "-q", str(storage)])
         if ignored.returncode != 0:
             return _wt_error("WORKTREE_PATH_NOT_IGNORED", ".claude/worktrees/ must be gitignored before creating a Claude worktree")
