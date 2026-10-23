@@ -264,18 +264,38 @@ rename_source_for_path() {
         else
             IFS= read -r -d '' path || return 1
         fi
-    done < <(git diff --cached --name-status -z --find-renames=1% "$parent" 2>/dev/null)
+    done < <(git diff --cached --no-color --no-ext-diff --no-textconv \
+        --name-status -z --find-renames=1% "$parent" 2>/dev/null)
     return 1
 }
 
+# Bash 3.2 has indexed arrays but no associative arrays. Cache rename lookups
+# for repeated candidate lines in the same parent/path, including misses.
+RENAME_CACHE_PARENTS=()
+RENAME_CACHE_PATHS=()
+RENAME_CACHE_SOURCES=()
+
 parent_contains_line() {
-    local parent="$1" file="$2" line="$3" source
+    local parent="$1" file="$2" line="$3" source="" i found=0
     # Let grep consume the full blob so a large file does not trip pipefail
     # via SIGPIPE. A renamed file may exist in the parent under its old path.
     if git show "$parent:$file" 2>/dev/null | grep -Fx -- "$line" >/dev/null; then
         return 0
     fi
-    source=$(rename_source_for_path "$parent" "$file") || return 1
+    for ((i=0; i<${#RENAME_CACHE_PARENTS[@]}; i++)); do
+        if [[ "${RENAME_CACHE_PARENTS[i]}" == "$parent" && "${RENAME_CACHE_PATHS[i]}" == "$file" ]]; then
+            source="${RENAME_CACHE_SOURCES[i]}"
+            found=1
+            break
+        fi
+    done
+    if [[ "$found" == 0 ]]; then
+        source=$(rename_source_for_path "$parent" "$file" || true)
+        RENAME_CACHE_PARENTS+=("$parent")
+        RENAME_CACHE_PATHS+=("$file")
+        RENAME_CACHE_SOURCES+=("$source")
+    fi
+    [[ -n "$source" ]] || return 1
     git show "$parent:$source" 2>/dev/null | grep -Fx -- "$line" >/dev/null
 }
 
@@ -289,11 +309,13 @@ if [[ -n "$STAGED_FILES" ]]; then
         # present in HEAD or MERGE_HEAD. Only a secret absent from both parents
         # is a local staged addition made during this merge.
         if git rev-parse --verify HEAD &>/dev/null; then
-            staged_diff=$(git diff --cached --unified=0 HEAD -- "$file" 2>/dev/null || true)
+            staged_diff=$(git diff --cached --no-color --no-ext-diff --no-textconv \
+                --unified=0 HEAD -- "$file" 2>/dev/null || true)
         else
             # An unborn branch has no HEAD; Git diffs the index against the
             # empty tree when no baseline is passed.
-            staged_diff=$(git diff --cached --unified=0 -- "$file" 2>/dev/null || true)
+            staged_diff=$(git diff --cached --no-color --no-ext-diff --no-textconv \
+                --unified=0 -- "$file" 2>/dev/null || true)
         fi
         in_hunk=0
         while IFS= read -r line; do

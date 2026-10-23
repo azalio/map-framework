@@ -295,10 +295,25 @@ class TestStagedOwnership:
         assert code == 2, stderr
         assert "Possible hardcoded secret in staged file: config.txt" in stderr
 
+    def test_color_diff_config_cannot_hide_staged_secret(self, tmp_path):
+        _committed_repo(tmp_path)
+        _git(tmp_path, "config", "color.diff", "always")
+        target = tmp_path / "config.txt"
+        target.write_text('API_KEY = "local_secret_123456"\n')
+        _git(tmp_path, "add", "config.txt")
+        assert "\x1b[" in _git(tmp_path, "diff", "--cached", "--unified=0").stdout
+        code, _, stderr = run_hook(cwd=str(tmp_path))
+        assert code == 2, stderr
+        assert "Possible hardcoded secret in staged file: config.txt" in stderr
+
     def test_rename_preserves_secret_ownership_but_new_secret_blocks(self, tmp_path):
         _committed_repo(tmp_path)
         source = tmp_path / "old_config.txt"
-        source.write_text('API_KEY = "preexisting_secret_12345"\n')
+        source.write_text(
+            'API_KEY = "preexisting_secret_12345"\n'
+            'TOKEN = "preexisting_token_12345"\n'
+            'PASSWORD = "preexisting_password_12345"\n'
+        )
         _git(tmp_path, "add", "old_config.txt")
         _git(tmp_path, "commit", "-m", "existing secret")
         _git(tmp_path, "mv", "old_config.txt", "new_config.txt")
