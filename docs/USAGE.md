@@ -2647,8 +2647,8 @@ Only files the current turn changed are checked; full linting is moved to
 `/map-check`.
 
 **Checks performed (changed files only):**
-1. **Auto-fix (silent):** `ruff check --fix` on changed `.py` files, `gofmt -w` on changed `.go` files
-2. **Secret scanning:** detects hardcoded secrets in staged files
+1. **Auto-fix (silent):** `ruff check --fix` on changed `.py` files, `gofmt -w` on changed `.go` files. During a merge, files whose staged blob equals `MERGE_HEAD` are skipped unless they also have unstaged edits.
+2. **Secret scanning:** detects hardcoded secrets in added staged lines. During a merge, a secret line already present in either `HEAD` or `MERGE_HEAD` is ignored; staged renames also retain the source file's history. Newly staged secrets still block even if removed from the worktree without restaging.
 3. **.env guard:** blocks staging of `.env` files
 4. **Python syntax:** fast `ast.parse` check on changed `.py` files
 5. **Go build:** runs `go build ./...` when a Go module is present and any changed `.go` file exists
