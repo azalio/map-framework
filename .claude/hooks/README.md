@@ -12,8 +12,8 @@ treated as a **non-blocking error** — Claude logs a warning and proceeds.
 
 This means:
 
-- **Never use `sys.exit(1)` to block.** It silently fails closed (the
-  blocked tool runs anyway).
+- **Never use `sys.exit(1)` to block.** It silently fails *open* — the
+  tool you meant to block runs anyway.
 - To block: emit a JSON `permissionDecision: "deny"` via stdout AND/OR
   use `sys.exit(2)`. The current MAP hooks (`safety-guardrails.py`,
   `workflow-gate.py`) use the JSON approach exclusively — follow that
@@ -25,6 +25,25 @@ This means:
 Audited 2026-04-28: every existing hook in this directory exits 0 and
 delegates blocking decisions to stdout JSON. No `sys.exit(1)` blocks
 anywhere. Keep it that way.
+
+### The one `sys.exit(1)`: the Python version guard
+
+Every hook opens with the version guard rendered from
+`templates_src/_partials/python-version-guard.py.jinja` (MAP needs Python
+3.11+, and a hook runs under PATH's `python3`, not under the interpreter
+that installed MAP). It is the single place a hook may exit non-zero, and
+it does not contradict the rule above, because it never tries to *block*
+with exit 1 — it reports a broken interpreter and steps aside:
+
+- Informational hooks **fail open**: stderr + `sys.exit(1)`, a
+  non-blocking error, so the reason reaches the user and the session
+  continues.
+- FORBID_GUARD hooks (`safety-guardrails.py`, `workflow-gate.py`) **fail
+  closed**: their `.jinja` source sets `guard_mode = "deny"` before the
+  include, so the guard emits the same `permissionDecision: "deny"` JSON
+  the hook's own `deny()` uses and exits 0. A gate that cannot run must
+  not degrade into "allow"; edits and Bash stay denied until
+  `python3 --version` reports 3.11+.
 
 ## Special case: `WorktreeCreate`
 
@@ -106,12 +125,14 @@ classification is enforced by `scripts/lint-hooks.py` (in `make lint` /
 | `ralph-context-pruner.py` | `PreCompact` | No | REQUIRE_GUARD | Save restore point, prune logs |
 | `pre-compact-save-transcript.py` | `PreCompact` | No | REQUIRE_GUARD | Save full conversation transcript |
 | `detect-clarification-triggers.py` | `UserPromptSubmit` | No | REQUIRE_GUARD | Detect "ask if unclear" + async/durability language |
-| `end-of-turn.sh` | `Stop` | No | REQUIRE_GUARD | Auto-fix lint/format silently |
+| `end-of-turn.sh` | `Stop` | No | REQUIRE_GUARD | Read-only source checks; never formats shared worktree files |
 | `scrub-internal-ids.py` | `Stop` | No | REQUIRE_GUARD | On `WORKFLOW_COMPLETE`, strip leaked `ST-`/`AC-`/`VC-`/`INV-`/`HC-` IDs from run-changed code and commit the cleanup (gated, runs once) |
 | `map-memory-capture.py` | `Stop` | No | REQUIRE_GUARD | Append per-turn scratch WAL record (cross-session memory) |
 | `map-memory-endmark.py` | `SessionEnd` | No | REQUIRE_GUARD | Best-effort 'ended' marker for the session WAL |
 | `map-memory-finalize.py` | `SessionStart` | No | REQUIRE_GUARD | Finalize prior dirty session scratches into digests (claude -p) |
 | `map-memory-recall.py` | `SessionStart` + `UserPromptSubmit` | No | REQUIRE_GUARD | Inject ranked recalled session memory (additionalContext) |
+| `map-memory-session.py` | `SessionStart` (Codex composite) | No | REQUIRE_GUARD | Finalize dirty memory and inject recall in deterministic order |
+| `map-stop.py` | `Stop` (Codex dispatcher) | No | REQUIRE_GUARD | Sequence scrub, checks, token metering, and memory capture |
 
 > The Codex twin `.codex/hooks/workflow-gate.py` is FORBID_GUARD like its
 > Claude counterpart; this inventory covers `.claude/hooks/` only.

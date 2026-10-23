@@ -2643,15 +2643,14 @@ Blocks dangerous Bash commands:
 #### end-of-turn.sh (Stop)
 
 Lightweight quality gate that runs when Claude finishes responding (Stop event).
-Only files the current turn changed are checked; full linting is moved to
-`/map-check`.
+The hook inspects dirty files in the shared worktree without rewriting source.
+Full linting lives in `/map-check`; the editing session applies formatting.
 
 **Checks performed (changed files only):**
-1. **Auto-fix (silent):** `ruff check --fix` on changed `.py` files, `gofmt -w` on changed `.go` files. During a merge, files whose staged blob equals `MERGE_HEAD` are skipped unless they also have unstaged edits.
-2. **Secret scanning:** detects hardcoded secrets in added staged lines. During a merge, a secret line already present in either `HEAD` or `MERGE_HEAD` is ignored; staged renames also retain the source file's history. Newly staged secrets still block even if removed from the worktree without restaging.
-3. **.env guard:** blocks staging of `.env` files
-4. **Python syntax:** fast `ast.parse` check on changed `.py` files
-5. **Go build:** runs `go build ./...` when a Go module is present and any changed `.go` file exists
+1. **Secret scanning:** detects hardcoded secrets in added staged lines. During a merge, a secret line already present in either `HEAD` or `MERGE_HEAD` is ignored; staged renames also retain the source file's history. Newly staged secrets still block even if removed from the worktree without restaging.
+2. **.env guard:** blocks staging of `.env` files
+3. **Python syntax:** fast `ast.parse` check on changed `.py` files
+4. **Go build:** runs `go build ./...` when a Go module is present and any changed `.go` file exists
 
 **Go build configuration** (`.map/config.yaml`, flat dotted keys):
 
@@ -2667,8 +2666,8 @@ GOOS; shell variables, wildcards, and command substitutions are not expanded.
 Build failures still block the turn; tags do not suppress errors.
 
 **Blocking:** secrets, `.env` staged, Python syntax errors, and Go build errors
-are critical and block with exit 2; lint/format issues are auto-fixed silently
-and never block.
+are critical and block with exit 2. The Stop hook never runs source-writing
+formatters, including when another session owns dirty files in the same worktree.
 
 **Livelock protection (Stop-hook contract):**
 - Honors `stop_hook_active` from the hook input: a re-invocation after a block

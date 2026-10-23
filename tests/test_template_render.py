@@ -631,7 +631,6 @@ _SHIPPED_ONLY_RELS = [
     "CLAUDE.md",
     "workflow-rules.json",
     "ralph-loop-config.json",
-    "hooks/README.md",
     "rules/learned/README.md",
 ]
 
@@ -740,9 +739,6 @@ class TestRenderRepoTreesClaude:
                 continue
             # Skip shipped-only files that should NOT be in .claude/
             if rel_str in _SHIPPED_ONLY_RELS:
-                continue
-            # hooks/README.md is shipped-only — skip if it exists in .claude/
-            if rel_str == "hooks/README.md":
                 continue
             # D11: rules/learned/*.md are unmanaged learned files (not templated)
             if (
