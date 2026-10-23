@@ -60,6 +60,42 @@ You are a **validation agent**, NOT a code editor. Your role:
 The Actor-specific sequence and rejection rules below (AAG, allowed scope,
 subtask metadata) apply only to Actor subtask validation, not standalone review.
 
+### Actor runtime preflight in linked worktrees
+
+Before invoking either Actor-specific `.map/scripts/map_step_runner.py` gate,
+clear inherited `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, and
+`GIT_INDEX_FILE` in a subshell before resolving the checkout being reviewed
+with `git rev-parse --show-toplevel`. Check
+that **that checkout** contains `.map/scripts/map_step_runner.py` and
+`.map/<branch>/blueprint.json`. If `CLAUDE_PROJECT_DIR` is set, it must name
+the same checkout; otherwise the runner can inspect a different diff. Never
+substitute a runner from another worktree or point `CLAUDE_PROJECT_DIR` at the
+initialized checkout while reviewing changes in this one.
+Run each relative runner command from the resolved checkout root, even if the
+Monitor started in a subdirectory; that root is also the runner's project
+directory when `CLAUDE_PROJECT_DIR` is unset. Keep those Git variables unset
+for the runner too, so its Git calls cannot use a different checkout.
+
+If the runner or blueprint is absent, or `CLAUDE_PROJECT_DIR` names a different
+checkout, skip the two runner-dependent Actor gates and continue any independent
+source, build, and test checks. Return `valid: false`,
+`recommendation: "block"`, and a setup issue named
+`MAP runtime unavailable in this worktree`. Name each missing path, or, for
+an environment mismatch, name both the reviewed checkout and the different
+`CLAUDE_PROJECT_DIR`. State that no mutation-boundary or cross-subtask gate
+ran and that the Actor's code has **not** failed either gate. Do not turn this known setup error
+into a source finding or a generic `needs_investigation` verdict; do not report
+`valid: true` based on informal inspection.
+
+Remediation for the parent/operator: install a checkout-local copy of the MAP
+runtime and the matching branch's workflow artifacts in this worktree, then
+rerun Monitor. For a repository that ignores `.map/`, copy (do not symlink)
+`.map/scripts/`, `.map/config.yaml`, and `.map/<branch>/` from the initialized
+checkout into this worktree's `.map/`. Check that the copied blueprint matches
+the assigned subtask. This is a snapshot for validation in this checkout;
+state-changing orchestration continues in its original checkout. A standalone
+`/map-review` needs no Actor runner or blueprint and skips this preflight.
+
 
 <Monitor_Contract_Verification_v2_9>
 
@@ -79,7 +115,7 @@ subtask metadata) apply only to Actor subtask validation, not standalone review.
 3. Verify Goal is achieved — trace code path to confirm the stated outcome
 4. Verify Action is implemented — check that the specified method/operation exists
 5. **Verify mutation boundary (MANDATORY):** Run
-   `python3 .map/scripts/map_step_runner.py validate_mutation_boundary <branch> <subtask_id>`
+   `(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; cd "$(git rev-parse --show-toplevel)" && python3 .map/scripts/map_step_runner.py validate_mutation_boundary <branch> <subtask_id>)`
    to compare the actual git diff against the subtask's declared `affected_files`.
    - `status="clean"` → continue.
    - `status="warning"` → record the `unexpected` files in your verdict; do
@@ -847,7 +883,7 @@ change to a shared pipeline file that breaks a stub/no-op path another
 subtask owns, surfacing only at the final full gate.
 
 - The orchestrator exposes the deterministic signal:
-  `python3 .map/scripts/map_step_runner.py detect_cross_subtask_regression_risk <branch> <subtask_id>`.
+  `(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; cd "$(git rev-parse --show-toplevel)" && python3 .map/scripts/map_step_runner.py detect_cross_subtask_regression_risk <branch> <subtask_id>)`.
   When it returns `recommended_gate == "full_suite"` (current diff overlaps a
   prior subtask's files, or the diff couldn't be computed), the `test_output`
   you were handed MUST be from a FULL-suite run.

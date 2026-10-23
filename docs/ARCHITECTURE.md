@@ -573,6 +573,12 @@ Design decisions (llm-council-reviewed, conv `461b92f9`):
   state-mutating worktree commands refuse if invoked from inside a managed
   worktree — closing the silent state-desync footgun where a gate-pass write
   would land in the worktree's `.map/` and evaporate on cleanup.
+  An external linked worktree whose `.map/` is ignored has no local runtime;
+  Monitor reports that missing prerequisite as a blocking setup issue instead
+  of treating the unavailable gate as a source defect. Copying a snapshot of
+  scripts and matching branch artifacts into that checkout lets its read-only
+  validation inspect the correct Git diff while orchestration remains in the
+  original checkout.
 - **Accept = squash-merge.** `merge_subtask_worktree` commits the Actor's
   worktree work, runs `verification_checks` **in the worktree** (a pre-merge
   gate — strictly stronger than the post-commit check, valid because a
