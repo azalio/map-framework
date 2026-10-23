@@ -81,8 +81,21 @@ def test_monitor_reports_missing_runtime_in_linked_worktree(provider, tmp_path, 
     assert "MAP runtime unavailable in this worktree" in contract
     assert 'recommendation: "block"' in contract
     assert "continue any independent" in contract
+    assert "skip the two runner-dependent Actor gates" in contract
+    assert "name both the reviewed checkout and the different" in contract
+    assert "no mutation-boundary or cross-subtask gate" in contract
     assert "copy (do not symlink)" in contract
     assert "A standalone" in contract
+    assert (
+        '(cd "$(git rev-parse --show-toplevel)" && python3 '
+        '.map/scripts/map_step_runner.py validate_mutation_boundary <branch> <subtask_id>)'
+    ) in contract
+    if provider == "claude":
+        assert (
+            '(cd "$(git rev-parse --show-toplevel)" && python3 '
+            '.map/scripts/map_step_runner.py detect_cross_subtask_regression_risk '
+            '<branch> <subtask_id>)'
+        ) in contract
 
     # A checkout-local runtime and blueprint let the real gate inspect the
     # worker diff. Using the initialized checkout as project root would miss it.
@@ -104,6 +117,30 @@ def test_monitor_reports_missing_runtime_in_linked_worktree(provider, tmp_path, 
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["actual"] == ["source.py"]
+
+    nested = worktree / "nested"
+    nested.mkdir()
+    nested_env = {**git_env, "PATH": str(Path(sys.executable).parent)
+                  + os.pathsep + git_env.get("PATH", "")}
+    nested_env.pop("CLAUDE_PROJECT_DIR", None)
+    nested_gate = subprocess.run(
+        ["sh", "-c", ('(cd "$(git rev-parse --show-toplevel)" && '
+         ' python3 .map/scripts/map_step_runner.py '
+         'validate_mutation_boundary actor ST-001)')],
+        cwd=nested, env=nested_env, capture_output=True, text=True, check=False,
+    )
+    assert nested_gate.returncode == 0, nested_gate.stderr
+    assert json.loads(nested_gate.stdout)["actual"] == ["source.py"]
+    if provider == "claude":
+        nested_risk = subprocess.run(
+            ["sh", "-c", ('(cd "$(git rev-parse --show-toplevel)" && '
+             ' python3 .map/scripts/map_step_runner.py '
+             'detect_cross_subtask_regression_risk actor ST-001)')],
+            cwd=nested, env=nested_env,
+            capture_output=True, text=True, check=False,
+        )
+        assert nested_risk.returncode == 0, nested_risk.stderr
+        assert json.loads(nested_risk.stdout)["subtask_id"] == "ST-001"
 
 
 @pytest.mark.parametrize("provider", ["claude", "codex"])

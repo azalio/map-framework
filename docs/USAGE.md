@@ -680,7 +680,9 @@ A concurrent second coordinator is blocked by an advisory lock.
   missing path, and asks the parent/operator to copy `.map/scripts/`,
   `.map/config.yaml`, and the matching `.map/<branch>/` into the worktree's
   `.map/`, then rerun Monitor. Copy the files; do not symlink state or run the
-  main checkout's runner against a different checkout. Standalone `/map-review`
+  main checkout's runner against a different checkout. Run both Actor gates
+  from the reviewed worktree's Git root, even if Monitor starts in a subdirectory.
+  Standalone `/map-review`
   does not require those Actor artifacts.
 - **Accept = squash-merge.** Exactly one commit per subtask (never `--no-ff`),
   gated by base-divergence, runtime-state-in-diff, bulk-deletion, submodule, and

@@ -60,6 +60,9 @@ that **that checkout** contains `.map/scripts/map_step_runner.py` and
 the same checkout; otherwise the runner can inspect a different diff. Never
 substitute a runner from another worktree or point `CLAUDE_PROJECT_DIR` at the
 initialized checkout while reviewing changes in this one.
+Run each relative runner command from the resolved checkout root, even if the
+Monitor started in a subdirectory; that root is also the runner's project
+directory when `CLAUDE_PROJECT_DIR` is unset.
 
 If the runner or blueprint is absent, or `CLAUDE_PROJECT_DIR` names a different
 checkout, skip the two runner-dependent Actor gates and continue any independent
@@ -104,7 +107,7 @@ Verification sequence (execute in order):
 3. Verify Goal is achieved -- trace code path to confirm the stated outcome
 4. Verify Action is implemented -- check that the specified method/operation exists
 5. Verify mutation boundary (MANDATORY): Run
-   python3 .map/scripts/map_step_runner.py validate_mutation_boundary <branch> <subtask_id>
+   (cd "$(git rev-parse --show-toplevel)" && python3 .map/scripts/map_step_runner.py validate_mutation_boundary <branch> <subtask_id>)
    to compare the actual git diff against the subtask's declared affected_files.
    - status="clean" -> continue.
    - status="warning" -> record the unexpected files; do NOT auto-reject.
