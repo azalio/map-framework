@@ -112,14 +112,17 @@ def test_default_control_retains_parent_diff_and_main_policy(stack):
 
 def test_learning_handoff_after_review_fix_commit_records_base_drift(stack):
     admit(base_ref="runtime")
+    Path(".map/product/verification-summary.md").write_text("ADMITTED VALIDATION\n")
     assert runner.create_review_bundle(branch="product")["status"] == "success"
     bundle_path = Path(".map/product/review-bundle.json")
     admitted_bundle = bundle_path.read_bytes()
+    admitted_pr_handoff = json.loads(admitted_bundle)["pr_handoff"]
 
     Path("product.py").write_text("PRODUCT = 575\n")
     git("commit", "-am", "review fix")
     fixed_head = git("rev-parse", "HEAD")
     git("branch", "-f", "runtime", "HEAD")
+    Path(".map/product/verification-summary.md").write_text("POST-FIX VALIDATION\n")
 
     strict_snapshot = runner.snapshot_code_state(branch="product")
     assert strict_snapshot["status"] == "error"
@@ -131,9 +134,36 @@ def test_learning_handoff_after_review_fix_commit_records_base_drift(stack):
     payload = json.loads(Path(".map/product/learning-handoff.json").read_text())
     assert payload["git_ref"] == fixed_head[:12]
     assert payload["review_binding_drift"] == runner._REVIEW_BASE_DRIFT
+    assert payload["validation"] == admitted_pr_handoff["validation"]
+    assert "POST-FIX VALIDATION" not in payload["validation"]
     assert "product.py" in payload["files_changed"]
     assert "Review Binding Drift" in Path(".map/product/learning-handoff.md").read_text()
     assert bundle_path.read_bytes() == admitted_bundle
+
+
+def test_learning_handoff_requires_admitted_bundle_after_base_drift(stack):
+    admit(base_ref="runtime")
+    assert runner.create_review_bundle(branch="product")["status"] == "success"
+    Path(".map/product/review-bundle.json").unlink()
+    git("branch", "-f", "runtime", "HEAD")
+    result = runner.write_learning_handoff("map-review", branch="product")
+    assert result["status"] == "error"
+    assert "Admitted review bundle" in result["message"]
+    assert not Path(".map/product/learning-handoff.json").exists()
+
+
+def test_incomplete_admitted_target_is_not_treated_as_base_drift(stack):
+    del stack
+    admit()
+    ledger = json.loads(ledger_path().read_text())
+    ledger["convergence"]["rounds"][-1]["target"] = {}
+    ledger_path().write_text(json.dumps(ledger))
+    snapshot = runner.snapshot_code_state(branch="product", allow_review_drift=True)
+    assert snapshot["status"] == "error"
+    assert "target is incomplete" in snapshot["message"]
+    result = runner.write_learning_handoff("map-review", branch="product")
+    assert result["status"] == "error"
+    assert "target is incomplete" in result["message"]
 
 
 def test_learning_handoff_returns_structured_error_for_corrupt_review_admission(stack):

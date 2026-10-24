@@ -8989,12 +8989,20 @@ def _review_admitted_binding(branch: str | None = None) -> dict[str, Any]:
         raise ValueError("Review mode is missing or malformed") from exc
     if mode != {**binding, "round_id": row["round_id"]}:
         raise ValueError("Review mode does not match the admitted round binding")
-    target = row.get("target", {})
+    target = row.get("target")
+    if (not isinstance(target, dict)
+            or any(key not in target or not isinstance(target[key], str)
+                   for key in ("base", "base_ref", "base_tip"))):
+        raise ValueError("Admitted review target is incomplete or invalid")
+    policy = target.get("trusted_policy")
+    if (not isinstance(policy, dict)
+            or any(key not in policy or not isinstance(policy[key], str)
+                   for key in ("ref", "revision"))):
+        raise ValueError("Admitted trusted policy target is incomplete or invalid")
     base, ref, tip = _resolve_review_scope(_review_git_optional, binding)
     if (base, ref, tip) != tuple(target.get(key, "") for key in ("base", "base_ref", "base_tip")):
         raise ValueError(_REVIEW_BASE_DRIFT)
     _, policy_ref, policy_tip = _resolve_review_scope(_review_git_optional, {})
-    policy = target.get("trusted_policy", {})
     if (policy_ref, policy_tip) != (policy.get("ref", ""), policy.get("revision", "")):
         raise ValueError("Admitted trusted policy revision changed; abandon and re-admit the round")
     return binding
@@ -14702,21 +14710,25 @@ def write_learning_handoff(
     generated_at = _utc_timestamp()
 
     review_handoff = build_review_handoff(branch_name)
-    bundle_drift = ""
-    try:
-        bundle = build_handoff_bundle(branch_name)
-    except ValueError as exc:
-        if str(exc) != _REVIEW_BASE_DRIFT:
-            return {"status": "error", "message": str(exc), "branch": branch_name}
-        # The admitted review bundle belongs to its earlier HEAD. Do not
-        # overwrite it with a post-fix target merely to write a learning note.
-        bundle_drift = str(exc)
-        bundle = read_json("review-bundle.json") or {}
     code_state = snapshot_code_state(branch_name, allow_review_drift=True)
     if code_state.get("status") != "success":
         return {"status": "error", "message": code_state.get("message", "Code snapshot failed"),
                 "branch": branch_name}
-    review_binding_drift = bundle_drift or str(code_state.get("review_binding_drift", ""))
+    review_binding_drift = str(code_state.get("review_binding_drift", ""))
+    if review_binding_drift:
+        # A completed review bundle belongs to its admitted snapshot. Keep its
+        # PR handoff fields, even if human artifacts changed after review fixes.
+        admitted_bundle = read_json("review-bundle.json")
+        pr_handoff = admitted_bundle.get("pr_handoff") if admitted_bundle else None
+        if not isinstance(pr_handoff, dict) or any(
+            not isinstance(pr_handoff.get(key), str)
+            for key in ("summary", "validation", "risks_follow_up")
+        ):
+            return {"status": "error", "message": "Admitted review bundle is unavailable or invalid",
+                    "branch": branch_name}
+        bundle = pr_handoff
+    else:
+        bundle = build_handoff_bundle(branch_name)
     workflow_fit = read_json("workflow-fit.json")
     manifest = read_json("artifact_manifest.json")
     run_health_report = read_json("run_health_report.json")
