@@ -202,10 +202,8 @@ State is managed by the orchestrator. Do not create `step_state.json` manually.
 python3 .map/scripts/map_step_runner.py record_test_baseline "$BRANCH"
 ```
 
-Snapshots pre-existing failures so later subtasks distinguish
-"introduced regression" from "was broken pre-plan". Auto-detects
-Make/pytest/go test/cargo. It captures the test run internally and prints a
-single compact JSON report at the end — read that JSON directly; do NOT pipe it
+Snapshots pre-existing failures so later subtasks distinguish "introduced regression" from "was broken pre-plan". Auto-detects Make/pytest/go test/cargo.
+It captures the test run internally and prints a single compact JSON report at the end — read that JSON directly; do NOT pipe it
 through `head`/`tail` (per the repo bash guidelines). Overrides + narrow-target
 guidance: [efficient-reference.md](efficient-reference.md#pre-flight-test-baseline).
 
@@ -279,7 +277,7 @@ BOUNDED_MAP_CONTEXT=$(python3 .map/scripts/map_step_runner.py build_context_bloc
 ```
 
 Then substitute `$BOUNDED_MAP_CONTEXT` into the Actor prompt below.
-
+For an approved baseline gate exception, pass the exact user approval and `.map/<branch>/approved-baseline-gates.md` path to both agents (or `[none]`); see [efficient-reference.md](efficient-reference.md#approved-baseline-gate-deferrals).
 **Worktree isolation (default `worktree.isolation: auto`):** when enabled, create the subtask's isolated git worktree before this dispatch and run the Actor inside it (dispatched WITHOUT harness-native isolation); honor the runner's degraded sequential fallback; `required` failures stop. Full recipe — commands, guard handling, Actor path instruction — in [efficient-reference.md](efficient-reference.md#worktree-isolation).
 
 ```text
@@ -290,6 +288,7 @@ Task(
 <documents>
   <document source="map_context"><document_content>{bounded_map_context}</document_content></document>
   <document source="research"><document_content>{research_findings}</document_content></document>
+  <document source="approved_baseline_gate_evidence"><document_content>{exact_user_approval_and_record_path_or_none}</document_content></document>
 </documents>
 <task>
 Implement exactly the current subtask. Preserve validation_criteria, coverage_map tags, hard_constraints, and soft_constraints tradeoffs. Do not expand scope.
@@ -334,6 +333,7 @@ Task(
   <document source="map_context"><document_content>{bounded_map_context}</document_content></document>
   <document source="written_files"><document_content>{files_changed}</document_content></document>
   <document source="test_output"><document_content>{test_output}</document_content></document>
+  <document source="approved_baseline_gate_evidence"><document_content>{exact_user_approval_and_record_path_or_none}</document_content></document>
 </documents>
 <task>
 Validate the implementation against the current subtask's AAG contract, validation_criteria, bracketed coverage_map tags, hard_constraints, and relevant soft_constraints/tradeoff_rationale.

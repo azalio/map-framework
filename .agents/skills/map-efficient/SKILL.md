@@ -290,6 +290,10 @@ RESEARCH_FINDINGS=$(python3 .map/scripts/map_step_runner.py load_research "$BRAN
 Implement exactly the current subtask. Preserve validation criteria,
 coverage_map tags, hard constraints, and documented tradeoffs. Keep edits
 inside the current subtask boundary.
+Resolve `APPROVED_BASELINE_GATE_EVIDENCE` before dispatch to the exact
+user-approved diagnostic and durable record path, or `[none]` if absent. Pass
+that same resolved value to Actor and Monitor (see
+[efficient-reference.md](efficient-reference.md#approved-baseline-gate-deferrals)).
 
 For isolated or wave execution, dispatch the configured Actor with the complete
 context and explicit ownership. Agents share the repository, so tell it not to
@@ -300,12 +304,14 @@ ACTOR_TASK_NAME="actor_<normalized_subtask>_<attempt>"
 spawn_agent(
   agent_type="actor",
   task_name=ACTOR_TASK_NAME,
-  message="Implement only <subtask_id>. Owned files: <files>. Consume the supplied MAP context and research. You are not alone in the codebase; preserve others' edits and return the Actor change-summary contract."
+  message="Implement only <subtask_id>. Owned files: <files>. Consume the supplied MAP context and research. Approved baseline gate evidence: <exact_user_approval_and_record_path_or_none>. You are not alone in the codebase; preserve others' edits and return the Actor change-summary contract."
 )
 ```
 
-Normalize the actual subtask id before dispatch (`ST-001` -> `st_001`), replace
-the placeholders in `ACTOR_TASK_NAME`, and include the attempt number; every
+Replace `<exact_user_approval_and_record_path_or_none>` in the Actor message
+with `APPROVED_BASELINE_GATE_EVIDENCE` before dispatch. Normalize the actual
+subtask id (`ST-001` -> `st_001`), replace the placeholders in
+`ACTOR_TASK_NAME`, and include the attempt number; every
 resolved `task_name` must match `^[a-z0-9_]+$` and be unique in the thread.
 
 Before Monitor, run the required pre-dispatch gates from
@@ -327,6 +333,22 @@ Use the configured `monitor` agent when available, or run an independent review
 pass in the current session. Validate implementation against the subtask AAG
 contract, validation criteria, coverage tags, hard constraints, and relevant
 soft constraints.
+When the configured Monitor agent is available, dispatch it with the same
+resolved value:
+
+```text
+spawn_agent(
+  agent_type="monitor",
+  task_name="monitor_<normalized_subtask>_<attempt>",
+  message="Review only <subtask_id> against its contract and actual gate results. Approved baseline gate evidence: <exact_user_approval_and_record_path_or_none>. Independently verify the approval and record; report the full gate as failed if the exception applies. Return the Monitor verdict."
+)
+```
+
+Replace `<exact_user_approval_and_record_path_or_none>` in this Monitor message
+with the same `APPROVED_BASELINE_GATE_EVIDENCE` passed to Actor. Normalize the
+Monitor task name and include the attempt number. If the configured Monitor is
+unavailable, run the independent review in the current session with that same
+resolved value.
 
 If Monitor fails:
 
