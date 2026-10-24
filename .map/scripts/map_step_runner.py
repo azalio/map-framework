@@ -9015,6 +9015,13 @@ def _review_admitted_binding(branch: str | None = None) -> dict[str, Any]:
     if mode != {**binding, "round_id": row["round_id"]}:
         raise ValueError("Review mode does not match the admitted round binding")
     target = row.get("target")
+    if (isinstance(target, dict) and target.get("reusable") is False
+            and isinstance(target.get("unverified_reason"), str)):
+        # A workspace without a usable Git target still admits a full review.
+        # Keep its unverifiable scope only while the current observation agrees.
+        if _review_target(binding) != target:
+            raise ValueError("Admitted unverified review target changed; abandon and re-admit the round")
+        return binding
     if (not isinstance(target, dict)
             or any(key not in target or not isinstance(target[key], str)
                    for key in ("base", "base_ref", "base_tip"))):
