@@ -416,22 +416,26 @@ RELEASE_SHA=$(git rev-parse "$LAST_TAG^{commit}")
 HEAD_COMMIT=$(git rev-parse HEAD)
 [[ "$RELEASE_SHA" == "$HEAD_COMMIT" ]] || { echo "ABORT: release tag does not point to HEAD"; exit 1; }
 echo "Waiting for release workflow for $LAST_TAG ($RELEASE_SHA)..."
-sleep 10
-
-for ATTEMPT in 1 2; do
-  RELEASE_RUN=$(gh run list --commit "$RELEASE_SHA" --workflow release.yml --json databaseId,status,conclusion,headSha --jq '.[0]') || { echo "ABORT: release query failed"; exit 1; }
-  if [[ "$RELEASE_RUN" == "null" && "$ATTEMPT" == 1 ]]; then
-    echo "Workflow not started yet; retrying in 30s..."
-    sleep 30
-  else
-    break
+RUN_ID=""
+for ATTEMPT in 1 2 3 4 5 6 7 8; do
+  # GitHub's --commit listing can lag the already-visible tag push run.
+  RELEASE_RUNS=$(gh run list --workflow release.yml --event push --limit=100 --json databaseId,status,conclusion,headSha,headBranch,event) || { echo "ABORT: release query failed"; exit 1; }
+  RUN_ID=$(printf '%s' "$RELEASE_RUNS" | jq -sr --arg sha "$RELEASE_SHA" --arg tag "$LAST_TAG" '
+    if length == 1 and (.[0] | type == "array") then .[0]
+    else error("invalid release run listing") end |
+    [.[] | select(type == "object" and .headSha == $sha and
+                  .headBranch == $tag and .event == "push") |
+           .databaseId | select(type == "number" and . > 0 and . == floor)] |
+    first // ""
+  ') || { echo "ABORT: invalid release run listing"; exit 1; }
+  [[ -z "$RUN_ID" ]] || break
+  if [[ "$ATTEMPT" -lt 8 ]]; then
+    WAIT_SECONDS=$((ATTEMPT * 10))
+    echo "Release run not visible yet; retrying in ${WAIT_SECONDS}s..."
+    sleep "$WAIT_SECONDS"
   fi
 done
-RUN_ID=$(printf '%s' "$RELEASE_RUN" | jq -esr --arg sha "$RELEASE_SHA" '
-  select(length == 1) | .[0] |
-  select(type == "object" and .headSha == $sha) | .databaseId |
-  select(type == "number" and . > 0 and . == floor)
-') || { echo "ABORT: missing or mismatched release workflow"; exit 1; }
+[[ "$RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo "ABORT: release run not found for $LAST_TAG ($RELEASE_SHA)"; exit 1; }
 echo "Workflow URL: https://github.com/azalio/map-framework/actions/runs/$RUN_ID"
 gh run watch "$RUN_ID" --exit-status || { echo "ABORT: release workflow watch failed"; exit 1; }
 FINAL_RUN=$(gh run view "$RUN_ID" --json status,conclusion,headSha) || { echo "ABORT: release status query failed"; exit 1; }
@@ -596,4 +600,4 @@ gh run view <run-id> --log
 - **`make check` (Gate 1) fails.** Stop — fix every lint/type/test failure before any tag or publish step; the release gates are hard stops, not warnings.
 - **`__version__` is out of sync after `bump-version.sh`.** Apply the documented `__version__` sync workaround in Phase 3 before continuing: manually edit `__init__.py`, amend the commit, re-tag.
 - **A tag or PyPI publish step failed midway.** Follow the rollback scenario for that phase; never re-run an irreversible step blindly.
-- **CI shows stale run.** Fetch `origin/main`, recompute `git merge-base HEAD origin/main`, and query `--commit "$BASE_SHA" --workflow CI`. Require matching `headSha`, completed status, and success; permit only the three release-metadata files after that base. Never substitute latest-main or require CI for the local unpushed bump commit. For release monitoring, query `release.yml` for the version-derived tag commit and validate its `headSha`.
+- **CI shows stale run.** Fetch `origin/main`, recompute `git merge-base HEAD origin/main`, and query `--commit "$BASE_SHA" --workflow CI`. Require matching `headSha`, completed status, and success; permit only the three release-metadata files after that base. Never substitute latest-main or require CI for the local unpushed bump commit. For release monitoring, list recent `release.yml` push runs without `--commit`, then match the version-derived tag, event, and exact `headSha`.
