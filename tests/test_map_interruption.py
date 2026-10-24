@@ -319,6 +319,7 @@ def test_begin_refusals_do_not_mutate_checkout(workspace: Any, fault: str):
         w.contract["dependencies"] = ["FEATURE"]
     elif fault == "waves":
         w.state["execution_waves"] = [["FEATURE", "OTHER"]]
+        w.state["subtask_phases"] = {"FEATURE": "2.3", "OTHER": "2.3"}
     elif fault == "secret":
         (w.root / ".env.private").write_text("fixture, not a credential")
     elif fault == "checks":
@@ -335,6 +336,51 @@ def test_begin_refusals_do_not_mutate_checkout(workspace: Any, fault: str):
             dump(w.directory / "approval_holds.json", holds)
         result = w.engine.begin_repair("REPAIR", w.branch, "hold-001")
         assert result["status"] == "error", result
+    assert before == (git(w.root, "rev-parse", "HEAD"), (w.gitdir / "index").read_bytes(),
+                      (w.directory / "step_state.json").read_bytes())
+
+
+@pytest.mark.parametrize("wave", [["DONE"], ["FEATURE", "LATER"]])
+def test_serial_repair_accepts_populated_wave_and_phase_history(workspace: Any, wave: list[str]):
+    w = workspace
+    w.state["execution_waves"] = [["DONE"], wave]
+    w.state["subtask_phases"] = {"DONE": "COMPLETE", "FEATURE": "2.3", "LATER": "deferred_for_deps"}
+    w.state["active_subtasks"] = ["FEATURE"]
+    dump(w.directory / "step_state.json", w.state)
+    operation = start(w)
+    certify(w, operation)
+    assert w.engine.finish_repair(operation["operation_id"], w.branch)["stage"] == "done"
+    state = json.loads((w.directory / "step_state.json").read_text())
+    assert w.engine._frame(state) == w.engine._frame(w.state)
+    assert state["execution_waves"] == w.state["execution_waves"]
+    assert state["subtask_phases"] == w.state["subtask_phases"]
+    assert w.engine.get_interruption_status(w.branch)["status"] == "idle"
+    assert w.engine.begin_repair("REPAIR", w.branch, "hold-001")["stage"] == "done"
+
+
+@pytest.mark.parametrize("concurrent", ["phase", "active_subtasks", "worktree", "wave_group"])
+def test_begin_refuses_live_parallel_work_without_mutation(workspace: Any, concurrent: str):
+    w = workspace
+    w.state["execution_waves"] = [["FEATURE", "OTHER"]]
+    w.state["subtask_phases"] = {"FEATURE": "2.3"}
+    if concurrent == "phase":
+        w.state["subtask_phases"]["OTHER"] = "2.3"
+    elif concurrent == "active_subtasks":
+        w.state["active_subtasks"] = ["FEATURE", "OTHER"]
+    elif concurrent == "worktree":
+        dump(w.directory / "worktrees.json", {"worktrees": {"OTHER": {"path": "/tmp/other"}}})
+    else:
+        dump(w.directory / "worktrees.json", {"wave_groups": {"wave-1": {"members": ["OTHER"]}}})
+    dump(w.directory / "step_state.json", w.state)
+    before = (git(w.root, "rev-parse", "HEAD"), (w.gitdir / "index").read_bytes(),
+              (w.directory / "step_state.json").read_bytes())
+    request = w.engine.request_repair("REPAIR", w.branch)
+    assert request["status"] == "ok", request
+    holds = json.loads((w.directory / "approval_holds.json").read_text())
+    holds["holds"][request["hold_id"]]["state"] = "approved"
+    dump(w.directory / "approval_holds.json", holds)
+    result = w.engine.begin_repair("REPAIR", w.branch, request["hold_id"])
+    assert result["status"] == "error", result
     assert before == (git(w.root, "rev-parse", "HEAD"), (w.gitdir / "index").read_bytes(),
                       (w.directory / "step_state.json").read_bytes())
 
