@@ -135,13 +135,20 @@ elif name == "gh":
             else:
                 payload = case["run"] if sha == case["base"] else None
         else:
-            payload = {"databaseId": 1, "status": "completed", "conclusion": "success",
-                       "headSha": case["old"], "headBranch": "main"}
+            if "release.yml" in args or "--workflow=release.yml" in args:
+                run = case.get("release_run", {"databaseId": 77, "status": "completed",
+                    "conclusion": "success", "headSha": case["head"],
+                    "headBranch": "v1.2.0", "event": "push"})
+                payload = case.get("release_runs", [] if run is None else [run])
+            else:
+                payload = {"databaseId": 1, "status": "completed", "conclusion": "success",
+                           "headSha": case["old"], "headBranch": "main"}
         if case.get("raw") is not None:
             print(case["raw"])
         else:
             selected = "--jq" in args and args[args.index("--jq") + 1] == ".[0]"
-            print(json.dumps(payload if selected else ([] if payload is None else [payload])))
+            print(json.dumps(payload if selected or isinstance(payload, list)
+                             else ([] if payload is None else [payload])))
         sys.exit(case.get("gh_exit", 0))
     elif args[:2] == ["run", "watch"]:
         sys.exit(case.get("watch_exit", 0))
@@ -286,6 +293,12 @@ def test_version_execution_requires_explicit_approved_values(
     {"release_run": None},
     {"release_run": {"databaseId": 77, "headSha": OLD_SHA}},
     {"release_run": {"headSha": HEAD_SHA}},
+    {"release_run": {"databaseId": 77, "headSha": HEAD_SHA,
+                     "headBranch": "main", "event": "push"}},
+    {"release_run": {"databaseId": 77, "headSha": HEAD_SHA,
+                     "headBranch": "v1.2.0", "event": "workflow_dispatch"}},
+    {"release_run": {"databaseId": 0, "headSha": HEAD_SHA,
+                     "headBranch": "v1.2.0", "event": "push"}},
     {"gh_exit": 9},
     {"raw": "not-json"},
     {"watch_exit": 9},
@@ -304,10 +317,28 @@ def test_monitor_selects_exact_release_commit_in_fresh_shell(
     queries = [call for call in calls if call[:3] == ["gh", "run", "list"]]
     assert queries
     for query in queries:
-        assert query[query.index("--commit") + 1] == HEAD_SHA
+        assert "--commit" not in query
         assert query[query.index("--workflow") + 1] == "release.yml"
+        assert query[query.index("--event") + 1] == "push"
+        assert query[query.index("--limit") + 1] == "100"
     if case == {}:
         assert ["gh", "run", "watch", "77", "--exit-status"] in calls
+    elif not any(key in case for key in ("watch_exit", "view_exit", "release_final")):
+        assert not any(call[:3] == ["gh", "run", "watch"] for call in calls)
+
+
+def test_monitor_finds_tag_run_among_unfiltered_runs(installed_reference: str,
+                                                     tmp_path: Path) -> None:
+    result, calls = run_block(
+        tmp_path, bash_blocks(installed_reference, "## Phase 5:")[0],
+        {"release_runs": [
+            {"databaseId": 66, "headSha": OLD_SHA, "headBranch": "v1.1.0", "event": "push"},
+            {"databaseId": 77, "headSha": HEAD_SHA, "headBranch": "v1.2.0", "event": "push"},
+        ]},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ["gh", "run", "watch", "77", "--exit-status"] in calls
+    assert not any("--commit" in call for call in calls if call[:3] == ["gh", "run", "list"])
 
 
 @pytest.mark.parametrize("case", [
