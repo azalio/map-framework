@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.1] - 2026-10-24
+
 ### Changed
 - Keep the shared Stop hook read-only for source files: it no longer runs `ruff check --fix` or `gofmt -w` on dirty files, so ending a peer session cannot rewrite an Actor's in-progress work. Staged-secret, `.env`, Python syntax and Go build checks remain. (#563)
 - Create Claude Code MAP worktrees under the gitignored `.claude/worktrees/map/` path so `EnterWorktree` can use them; Codex keeps Git common-dir storage. Storage keys use the exact branch ref (`feat/x` and `feat-x` no longer collide); registered legacy worktrees are preserved, retries migrate safely and orphan cleanup stays branch-scoped without following symlinks. Refresh with `mapify upgrade` to get the new `.gitignore` rule. (#561)
