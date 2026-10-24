@@ -110,6 +110,42 @@ def test_default_control_retains_parent_diff_and_main_policy(stack):
     assert admission["target"]["trusted_policy"]["revision"] == stack["main"]
 
 
+def test_learning_handoff_after_review_fix_commit_records_base_drift(stack):
+    admit(base_ref="runtime")
+    assert runner.create_review_bundle(branch="product")["status"] == "success"
+    bundle_path = Path(".map/product/review-bundle.json")
+    admitted_bundle = bundle_path.read_bytes()
+
+    Path("product.py").write_text("PRODUCT = 575\n")
+    git("commit", "-am", "review fix")
+    fixed_head = git("rev-parse", "HEAD")
+    git("branch", "-f", "runtime", "HEAD")
+
+    strict_snapshot = runner.snapshot_code_state(branch="product")
+    assert strict_snapshot["status"] == "error"
+    result = runner.write_learning_handoff(
+        "map-review", outcome="REVISE", next_action="Resume review",
+        notes="Record the review fix", branch="product",
+    )
+    assert result["status"] == "success", result
+    payload = json.loads(Path(".map/product/learning-handoff.json").read_text())
+    assert payload["git_ref"] == fixed_head[:12]
+    assert payload["review_binding_drift"] == runner._REVIEW_BASE_DRIFT
+    assert "product.py" in payload["files_changed"]
+    assert "Review Binding Drift" in Path(".map/product/learning-handoff.md").read_text()
+    assert bundle_path.read_bytes() == admitted_bundle
+
+
+def test_learning_handoff_returns_structured_error_for_corrupt_review_admission(stack):
+    del stack
+    admit()
+    mode_path = Path(".map/product/review-mode.json")
+    mode_path.write_text("{invalid")
+    result = runner.write_learning_handoff("map-review", branch="product")
+    assert result["status"] == "error"
+    assert "Review mode" in result["message"]
+
+
 def test_explicit_api_scope_snapshot_bundle_prompts_and_policy(stack):
     admission = admit(base_ref="runtime")
     target = admission["target"]

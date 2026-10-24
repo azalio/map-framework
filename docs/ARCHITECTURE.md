@@ -1652,6 +1652,12 @@ MAP Framework provides multiple workflow variants with different agent orchestra
 
 **Token Usage:** Baseline for production workflows
 **Learning:** Deferred via `/map-learn`, powered by branch-scoped learning handoff artifacts and learning-effectiveness metrics
+
+Learning closeout reads the current HEAD independently of an earlier admitted
+review target. If that target's base drifted after review fixes, the handoff
+records `review_binding_drift`, reuses the existing admitted bundle, and leaves
+strict review admission checks and the original bundle unchanged. Other
+admission corruption is returned as a structured error.
 **Quality Gates:** Essential agents (Monitor, conditional Predictor)
 
 **Technical Details:**
