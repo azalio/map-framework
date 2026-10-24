@@ -99,6 +99,14 @@ def test_large_changed_files_keep_full_snapshot_without_bloating_prompts(tmp_pat
     assert prompts["status"] == "success", prompts
     assert "LINE_00000_CHANGED" in prompts["prompts"]["monitor"]["prompt"]
     assert len(prompts["prompts"]["maintainer"]["prompt"].encode()) <= runner.REVIEW_PROMPT_MAX_BYTES
+    adversarial = runner.build_adversarial_review_prompts(branch="feature", reviewers=["blind", "acceptance"])
+    assert adversarial["status"] == "success", adversarial
+    receipt = json.loads((tmp_path / ".map/feature/review-verdict-ledger.json").read_text())[
+        "convergence"]["rounds"][-1]["bundle_receipt"]
+    # The acceptance reviewer can read the immutable source object without broad repo access.
+    assert "You may Read this admitted project artifact" in adversarial["prompts"]["acceptance"]["prompt"]
+    assert receipt["artifact"] in adversarial["prompts"]["acceptance"]["prompt"]
+    assert receipt["artifact"] not in adversarial["prompts"]["blind"]["prompt"]
 
 
 def test_create_review_bundle_preserves_committed_deleted_source(tmp_path, monkeypatch):

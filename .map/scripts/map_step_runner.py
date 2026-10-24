@@ -12932,6 +12932,27 @@ def _read_review_bundle_markdown(branch_name: str) -> str:
         return "[review-bundle.md missing; run create_review_bundle before launching reviewers]"
 
 
+def _review_attribution_artifact(branch_name: str) -> str:
+    """Return the admitted immutable bundle path only while its receipt matches."""
+    directory = get_branch_dir(branch_name)
+    ledger = _read_review_ledger(directory)
+    rounds = ledger.get("convergence", {}).get("rounds", [])
+    if not rounds or _review_round_terminal(rounds[-1]):
+        return ""
+    receipt = rounds[-1].get("bundle_receipt", {})
+    artifact = receipt.get("artifact")
+    if not isinstance(artifact, str):
+        return ""
+    path = directory / artifact
+    try:
+        if (path.is_symlink() or not path.resolve().is_relative_to(directory.resolve())
+                or not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != receipt.get("sha256")):
+            return ""
+    except OSError:
+        return ""
+    return str(path)
+
+
 def _read_git_diff_for_review(branch: str | None = None) -> str:
     """Return the diff every reviewer prompt carries: the branch's review target.
 
@@ -13364,6 +13385,7 @@ def _isolated_reviewer_documents(
     git_diff: str,
     repo_context: str = "",
     spec_context: str = "",
+    attribution_artifact: str = "",
 ) -> str:
     """Assemble the ``<documents>`` block one isolated reviewer may see.
 
@@ -13423,6 +13445,16 @@ def _isolated_reviewer_documents(
                     "  </document>",
                 ]
             )
+        if attribution_artifact:
+            documents.extend([
+                "  <document source='snapshot-bound attribution artifact' priority='secondary'>",
+                "    <document_content>",
+                ("You may Read this admitted project artifact to inspect complete base/current "
+                 "content and line mapping for large changed files: " + attribution_artifact +
+                 ". This grants no access to other repository files or reviewer outputs."),
+                "    </document_content>",
+                "  </document>",
+            ])
 
     documents.extend([
         "  <document source='runner-selected trusted review policy' priority='primary'>",
@@ -13444,6 +13476,7 @@ def _render_adversarial_reviewer_prompt(
     repo_context: str = "",
     spec_context: str = "",
     layering: str = DEFAULT_PROMPT_LAYERING,
+    attribution_artifact: str = "",
 ) -> str:
     """Render a self-contained prompt for one adversarial reviewer.
 
@@ -13454,6 +13487,7 @@ def _render_adversarial_reviewer_prompt(
         git_diff,
         repo_context=repo_context,
         spec_context=spec_context,
+        attribution_artifact=attribution_artifact,
     )
 
     output_schema = json.dumps(ADVERSARIAL_FINDING_SCHEMA, indent=2)
@@ -13687,6 +13721,8 @@ def build_adversarial_review_prompts(
             repo_context=repo_context,
             spec_context=spec_context,
             layering=layering,
+            attribution_artifact=(_review_attribution_artifact(branch_name)
+                                  if reviewer_id == "acceptance" else ""),
         )
         prompts[reviewer_id] = {
             "subagent_type": spec_entry["subagent_type"],
