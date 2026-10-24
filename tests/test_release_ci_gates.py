@@ -320,7 +320,7 @@ def test_monitor_selects_exact_release_commit_in_fresh_shell(
         assert "--commit" not in query
         assert query[query.index("--workflow") + 1] == "release.yml"
         assert query[query.index("--event") + 1] == "push"
-        assert query[query.index("--limit") + 1] == "100"
+        assert "--limit=100" in query
     if case == {}:
         assert ["gh", "run", "watch", "77", "--exit-status"] in calls
     elif not any(key in case for key in ("watch_exit", "view_exit", "release_final")):

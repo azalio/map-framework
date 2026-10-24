@@ -223,7 +223,7 @@ Wait for the tag's release workflow to finish, then verify the result:
 
 ```bash
 # Select the run for the release tag and expected commit, not an unrelated latest run
-gh run list --workflow=release.yml --event push --limit 100 --json databaseId,headSha,headBranch,event
+gh run list --workflow=release.yml --event push --limit=100 --json databaseId,headSha,headBranch,event
 gh run watch <release-run-id> --exit-status
 gh release view v1.0.1
 ```
@@ -446,7 +446,7 @@ git push origin v1.0.1
 
 # 4. Monitor automatic PyPI publishing and GitHub Release creation
 # Pick the run whose headBranch is v1.0.1, event is push, and headSha equals the tag commit.
-gh run list --workflow=release.yml --event push --limit 100 --json databaseId,headSha,headBranch,event
+gh run list --workflow=release.yml --event push --limit=100 --json databaseId,headSha,headBranch,event
 gh run watch <release-run-id> --exit-status
 
 # 5. Verify the automatically created GitHub Release

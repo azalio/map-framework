@@ -379,7 +379,7 @@ echo "Waiting for release workflow for $LAST_TAG ($RELEASE_SHA)..."
 RUN_ID=""
 for ATTEMPT in 1 2 3 4 5 6 7 8; do
   # GitHub's --commit listing can lag the already-visible tag push run.
-  RELEASE_RUNS=$(gh run list --workflow release.yml --event push --limit 100 --json databaseId,status,conclusion,headSha,headBranch,event) || { echo "ABORT: release query failed"; exit 1; }
+  RELEASE_RUNS=$(gh run list --workflow release.yml --event push --limit=100 --json databaseId,status,conclusion,headSha,headBranch,event) || { echo "ABORT: release query failed"; exit 1; }
   RUN_ID=$(printf '%s' "$RELEASE_RUNS" | jq -sr --arg sha "$RELEASE_SHA" --arg tag "$LAST_TAG" '
     if length == 1 and (.[0] | type == "array") then .[0]
     else error("invalid release run listing") end |
