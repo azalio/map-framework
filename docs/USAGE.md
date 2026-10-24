@@ -1349,6 +1349,9 @@ Add one independent subtask to the branch blueprint with exact `affected_files`,
 completed `dependencies`, and nonempty `repair_checks` command vectors. For
 example, `"repair_checks": [["make", "check"]]` executes the actual full gate
 without interpreting shell text. Stop all parent writers before starting.
+Recorded execution waves and subtask phases do not prevent repair when only the
+current subtask is active. Another in-progress subtask or an active managed
+worktree/wave group still prevents repair, even if the current checkout is idle.
 
 ```bash
 python3 .map/scripts/map_orchestrator.py request_repair ST-REPAIR
@@ -1387,7 +1390,7 @@ After an ordinary process restart, query `get_interruption_status` first. Repeat
 `finish_repair` only for recognized partial finish; recovery proceeds forward,
 not by whole-index restoration or reset. Unknown state/Git/file drift is a
 blocker requiring inspection. Do not remove markers, unfamiliar locks or temp
-files by hand. Serial exclusive ownership is required: concurrent waves,
+files by hand. Serial exclusive ownership is required: concurrently active subtasks,
 nested repairs, overlapping paths, unsupported Git/filesystem configurations and
 sensitive snapshot inputs fail closed. Recovery covers recognized journaled
 checkpoints; incomplete preparation or a crash before lock/temp ownership was

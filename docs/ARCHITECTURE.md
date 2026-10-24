@@ -373,8 +373,10 @@ repair evidence and resumes the original phase without advancing it or forging
 Monitor success. Diff attribution excludes repair changes from the paused
 subtask's mutation baseline.
 
-The supported boundary is **serial, quiescent, disjoint-path repair**. Concurrent
-waves, nested interruptions, overlapping paths, unsupported Git/filesystem
+The supported boundary is **serial, quiescent, disjoint-path repair**. Historical
+wave and phase metadata is allowed when only the current subtask is active;
+another in-progress subtask or active managed worktree/wave group is refused.
+Nested interruptions, overlapping paths, unsupported Git/filesystem
 layouts and unsafe snapshot inputs are refused. Ref CAS and index locks are not
 an atomic transaction across Git, filesystem and workflow state; this protocol
 requires exclusive runner ownership, not concurrent external writers. Its

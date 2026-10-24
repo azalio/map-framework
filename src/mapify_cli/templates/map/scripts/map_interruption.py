@@ -348,6 +348,36 @@ def _guard(root: Path, gitdir: Path, branch_dir: Path) -> dict[str, Any] | None:
     return None
 
 
+def _require_serial_repair_state(state: dict[str, Any], branch_dir: Path) -> None:
+    """Reject concurrent work, not historical wave/phase metadata."""
+    current = state.get("current_subtask_id")
+    phases = state.get("subtask_phases", {})
+    if not isinstance(phases, dict):
+        raise RepairError("Invalid subtask phase metadata")
+    inactive = {"complete", "completed", "skipped", "no-op", "deferred_for_deps"}
+    for subtask_id, phase in phases.items():
+        if not isinstance(subtask_id, str) or not isinstance(phase, str):
+            raise RepairError("Invalid subtask phase metadata")
+        if subtask_id != current and phase.lower() not in inactive:
+            raise RepairError("Another subtask is in progress; serial repair required")
+    active = state.get("active_subtasks", [])
+    if not isinstance(active, list) or any(not isinstance(item, str) for item in active):
+        raise RepairError("Invalid active subtask metadata")
+    if any(item != current for item in active):
+        raise RepairError("Another subtask is in progress; serial repair required")
+    sidecar = branch_dir / "worktrees.json"
+    if sidecar.is_symlink():
+        raise RepairError("Symlink worktree state refused")
+    if sidecar.exists():
+        worktree_state = _read(sidecar)
+        for key in ("worktrees", "wave_groups"):
+            records = worktree_state.get(key, {})
+            if not isinstance(records, dict):
+                raise RepairError("Invalid worktree state metadata")
+            if records:
+                raise RepairError("Active managed worktrees or wave group; serial repair required")
+
+
 def interruption_guard(branch: str) -> dict[str, Any] | None:
     try:
         # Ordinary workflows also support pre-Git planning. Only a clean,
@@ -484,10 +514,9 @@ def begin_repair(repair_id: str, branch: str, approval_hold_id: str) -> dict[str
                 return _status(journal)
             if _guard(root, gitdir, branch_dir):
                 raise RepairError("Nested repair unsupported")
-            if state.get("execution_waves") or state.get("subtask_phases"):
-                raise RepairError("Active waves unsupported; use serial interruption")
             if not state.get("current_subtask_id") or state.get("current_step_phase") in {"COMPLETE", "DECOMPOSE"}:
                 raise RepairError("An active serial subtask is required")
+            _require_serial_repair_state(state, branch_dir)
             _preflight(root, gitdir)
             head = _text(root, "rev-parse", "HEAD")
             ref = _text(root, "symbolic-ref", "HEAD")
