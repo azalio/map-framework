@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Keep the shared Stop hook read-only for source files: it no longer runs `ruff check --fix` or `gofmt -w` on dirty files, so ending a peer session cannot rewrite an Actor's in-progress work. Staged-secret, `.env`, Python syntax and Go build checks remain. (#563)
+- Create Claude Code MAP worktrees under the gitignored `.claude/worktrees/map/` path so `EnterWorktree` can use them; Codex keeps Git common-dir storage. Storage keys use the exact branch ref (`feat/x` and `feat-x` no longer collide); registered legacy worktrees are preserved, retries migrate safely and orphan cleanup stays branch-scoped without following symlinks. Refresh with `mapify upgrade` to get the new `.gitignore` rule. (#561)
+
+### Fixed
+- Stop the pre-commit secret scan from flagging secrets owned by an in-progress merge or a staged rename source: staged lines are checked against both merge parents and the rename source, and staged diffs are parsed with color, external diff and textconv disabled so Git config cannot hide a secret. (#569)
+- Report a missing checkout-local MAP runtime or branch blueprint in linked worktrees as an explicit blocking Monitor setup verdict with recovery instructions, instead of a source-code failure or generic `needs_investigation`. Independent source/build/test checks still run; standalone `/map-review` is unaffected. (#564)
+- Bound review bundles: the JSON bundle keeps the full required-file inventory while base/current attribution is inlined only for changed paths (both sides of renames); prompt-facing Markdown links to the inventory by digest. Reviewer dispatch stops with a per-role byte count when a prompt exceeds 512 KiB; no evidence is truncated. (#574)
+- Honor explicit user-approved deferrals of exact historical lint/type/test diagnostics outside the mutation boundary, but only with independent baseline/current evidence (bound to base SHA, subtask IDs and the approval record in isolated worktrees). New, changed, in-scope, security and correctness failures still block, and the full gate is still reported as failed. (#565)
+- Find the tag's `release.yml` run during `/map-release` without GitHub's lagging `--commit` index: list recent push runs, match exact tag, event and commit SHA, retry with backoff for about five minutes and refuse an empty or invalid run ID before `gh run watch`. (#568)
+- Allow `begin_repair` on a serial run whose state already holds wave/phase history when only the current subtask is active; concurrent phases, extra active subtasks and managed worktrees/wave groups are still refused before the parent checkout is touched. (#562)
+- Keep the learning handoff working after a review-fix commit moves the base: closeout snapshots the current HEAD, reads the original review from the receipt-identified immutable bundle (SHA-256 and admitted snapshot verified) and records `review_binding_drift`. Corrupt admission or missing/altered bundle metadata returns structured JSON and a nonzero CLI exit. (#575)
+
 ## [3.34.0] - 2026-10-22
 
 ### Changed
