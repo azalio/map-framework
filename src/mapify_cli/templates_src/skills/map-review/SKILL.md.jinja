@@ -355,7 +355,7 @@ Before launching agents, build the reviewer prompts with `build_review_prompts`.
 ```bash
 REVIEW_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_review_prompts \
   --review-preferences "[paste Review Preferences section above]")
-printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("status") == "success" else d.get("reason", str(d)))' || exit 1
+printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("status") == "success" else json.dumps(d, indent=2))' || exit 1
 MONITOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["monitor"]["prompt"])')
 PREDICTOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["predictor"]["prompt"])')
 EVALUATOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["evaluator"]["prompt"])')

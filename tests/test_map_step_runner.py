@@ -19027,6 +19027,16 @@ class TestRoleReviewers:
             "maintainer",
         }
 
+    @pytest.mark.parametrize("builder", ["build_role_review_prompts", "build_adversarial_review_prompts"])
+    def test_all_reviewer_builders_reject_oversized_diff(self, tmp_path, monkeypatch, builder):
+        monkeypatch.chdir(tmp_path)
+        result = getattr(map_step_runner, builder)(
+            branch="test-branch", git_diff_text="x" * (map_step_runner.REVIEW_PROMPT_MAX_BYTES + 1)
+        )
+        assert result["status"] == "error"
+        assert result["oversized_prompt_bytes"]
+        assert "prompts" not in result
+
     def test_role_prompt_carries_the_contract_and_pins_the_reviewer_id(
         self, tmp_path, monkeypatch
     ):

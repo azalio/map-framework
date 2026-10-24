@@ -53,12 +53,15 @@ def test_read_only_review_bundle_preserves_pre_existing_defect(tmp_path, monkeyp
     )
     assert "-LABEL = 'old'" in attribution["diff"]
     assert "+LABEL = 'new'" in attribution["diff"]
+    markdown = Path(result["bundle_path_md"]).read_text()
+    assert '"diff":' not in markdown
     # A shell-free reviewer consumes the persisted bundle, not git commands.
     prompts = runner.build_review_prompts(branch="feature")
     prompt = prompts["prompts"]["monitor"]["prompt"]
     assert "return 10 / value" in prompt
     assert "base_content" in prompt
     assert "line_mapping" in prompt
+    assert prompt.count("diff --git a/calculator.py b/calculator.py") == 1
 
 
 def test_create_review_bundle_preserves_committed_deleted_source(tmp_path, monkeypatch):

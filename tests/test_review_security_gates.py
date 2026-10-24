@@ -334,6 +334,22 @@ def test_review_target_and_bundle_use_bounded_git_argv(policy_repo, monkeypatch)
     assert not oversized_calls
 
 
+def test_oversized_review_prompt_cli_exits_nonzero_with_byte_counts(policy_repo):
+    del policy_repo
+    admitted = runner.begin_review_run(branch="feature")
+    assert admitted["status"] == "success", admitted
+    branch_dir = Path(".map/feature")
+    (branch_dir / "review-bundle.md").write_text("x" * (runner.REVIEW_PROMPT_MAX_BYTES + 1))
+    result = subprocess.run(
+        [sys.executable, str(Path(runner.__file__).resolve()), "build_review_prompts", "--branch", "feature"],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 1, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "error"
+    assert payload["oversized_prompt_bytes"]["monitor"] > payload["max_prompt_bytes"]
+
+
 @pytest.mark.parametrize("name", ["plain.py", "space tab\tnewline\ndiff --git [*].py"])
 def test_review_diff_preserves_cross_control_rename_identity(policy_repo, name):
     del policy_repo
