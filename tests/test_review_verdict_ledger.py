@@ -2064,6 +2064,22 @@ def test_carried_finding_requests_only_its_originator():
     assert runner._review_resolution_request("base", scope, "predictor") == "base"
 
 
+def test_reviewer_schemas_expose_checked_finding_and_resolution_fields():
+    runner = cast(Any, map_step_runner)
+    for role in ("monitor", "predictor", "evaluator", "user_experience", "maintainer"):
+        schema = runner.AGENT_OUTPUT_SCHEMAS[role]
+        assert "resolved_findings" in schema["skeleton"]
+        assert "resolved_findings" not in schema["required_keys"]
+        assert "a nonempty evidence string" in schema["skeleton"]["resolved_findings"]
+    for finding in (runner.AGENT_OUTPUT_SCHEMAS["monitor"]["skeleton"]["issues"][0],
+                    runner.ROLE_FINDING_SCHEMA["findings"][0],
+                    runner.ADVERSARIAL_FINDING_SCHEMA["findings"][0]):
+        assert set(runner.REVIEW_FINDING_EVIDENCE_SCHEMA).issubset(finding)
+    assert "resolved_findings" in runner.ADVERSARIAL_FINDING_SCHEMA
+    predictor = runner.AGENT_OUTPUT_SCHEMAS["predictor"]["skeleton"]
+    assert set(runner.REVIEW_FINDING_EVIDENCE_SCHEMA).issubset(predictor)
+
+
 def test_review_round_retry_and_cap_are_durable(branch_workspace):
     runner = cast(Any, map_step_runner)
     for number in range(1, 4):

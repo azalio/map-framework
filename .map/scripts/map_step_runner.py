@@ -12617,6 +12617,18 @@ ROLE_FINDING_CONTRACT_KEYS: tuple[str, ...] = (
     "cost",
 )
 
+REVIEW_FINDING_EVIDENCE_SCHEMA: dict[str, object] = {
+    "bug_class": "<string — defect class>",
+    "cause": "<string — concrete cause>",
+    "failure_scenario": "<string — concrete trigger and impact>",
+    "evidence_refs": [{"file_path": "<string>", "revision": "<'current' | 'baseline'>",
+                       "quote": "<string — exact source quote, or absent=true for missing baseline>"}],
+    "reachability": {"status": "<'reachable' | 'unreachable' | 'unknown'>",
+                     "reason": "<string>", "evidence_refs": ["<current evidence_ref>"]},
+    "baseline_attribution": {"status": "<'introduced' | 'pre_existing' | 'unknown'>",
+                             "reason": "<string>", "evidence_refs": ["<current and baseline evidence_refs>"]},
+}
+
 ROLE_FINDING_SCHEMA: dict[str, object] = {
     # Derived from the roster: a new role needs no edit here either.
     "reviewer": "<one of: " + " | ".join(ROLE_REVIEWER_IDS) + ">",
@@ -12637,9 +12649,11 @@ ROLE_FINDING_SCHEMA: dict[str, object] = {
             "cost": "<string — what the fix costs (perf, extra type, migration, diff noise), or 'none' when it costs nothing>",
             "evidence": "<string — grep output, call path, or the list of sites this collapses>",
             "verified_by": "<'read' | 'test_run' | 'needs_environment' — how this finding was confirmed: by reading the code, by a test you ran, or not verified because it needs a real environment>",
+            **REVIEW_FINDING_EVIDENCE_SCHEMA,
         }
     ],
     "checks_performed": ["<string — list what was actually checked>"],
+    "resolved_findings": "<array — required when closing carried findings: objects with finding_id, a nonempty evidence string, bug_class, cause, failure_scenario, evidence_refs, reachability, baseline_attribution and sibling_search>",
 }
 
 
@@ -12714,10 +12728,12 @@ AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
                     "was_present_before_pr": "<boolean — required; True => pre-existing tech debt>",
                     "reach_evidence": "<string — required when severity >= MEDIUM: grep:<pattern>:<line> | test_fail:<name> | linter:<tool>:<line>>",
                     "sibling_comparison": "<object — required when mode=sibling-aware: {sibling_path, equivalent_lines, divergences}>",
+                    **REVIEW_FINDING_EVIDENCE_SCHEMA,
                 }
             ],
             "passed_checks": ["<string>"],
             "failed_checks": ["<string>"],
+            "resolved_findings": "<array — required when closing carried findings: objects with finding_id, a nonempty evidence string, bug_class, cause, failure_scenario, evidence_refs, reachability, baseline_attribution and sibling_search>",
         },
     },
     "predictor": {
@@ -12748,6 +12764,13 @@ AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
                 "score": "<float 0.0-1.0>",
             },
             "landmine_evidence": "<string — required when raising latent-bug/future-failure claims: failing test, static-analysis line, or grep showing unreachable path is reachable>",
+            "bug_class": "<string — required when risk_assessment is not low or a concrete defect is claimed>",
+            "cause": "<string — required when risk_assessment is not low or a concrete defect is claimed>",
+            "failure_scenario": "<string — required when risk_assessment is not low or a concrete defect is claimed>",
+            "evidence_refs": "<array — required when risk_assessment is not low or a concrete defect is claimed: current source references>",
+            "reachability": "<object — required when risk_assessment is not low or a concrete defect is claimed: status, reason and current evidence_refs>",
+            "baseline_attribution": "<object — required when risk_assessment is not low or a concrete defect is claimed: status, reason, current and baseline evidence_refs>",
+            "resolved_findings": "<array — required when closing carried findings: objects with finding_id, a nonempty evidence string, bug_class, cause, failure_scenario, evidence_refs, reachability, baseline_attribution and sibling_search>",
         },
     },
     "evaluator": {
@@ -12791,6 +12814,7 @@ AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
                     "rationale": "<string>",
                 }
             ],
+            "resolved_findings": "<array — required when closing carried findings: objects with finding_id, a nonempty evidence string, bug_class, cause, failure_scenario, evidence_refs, reachability, baseline_attribution and sibling_search>",
         },
     },
     # Actor is not a review-prompt role (it has no REVIEW_PROMPT_SPECS entry),
@@ -12990,7 +13014,7 @@ def _layer_prompt_sections(
 
 
 REVIEW_EVIDENCE_CONTRACT = """<evidence_validation>
-Every new finding (or Predictor's non-low top-level risk) MUST include bug_class,
+Every new finding (including Predictor's non-low risk or concrete defect) MUST include bug_class,
 cause and a concrete failure_scenario. Include evidence_refs: objects with file_path,
 revision ('current' or 'baseline') and an exact source quote. For a file absent
 from baseline, use revision='baseline' and absent=true instead of a quote.
@@ -13002,7 +13026,7 @@ content. Report missing evidence explicitly as unknown/insufficient evidence.
 The runner checks citations against the admitted snapshot; matching quotes are
 citation witnesses, not semantic proof. Pre-existing attribution is separate
 from validity. Positive unreachable counter-evidence can refute; unknown cannot.
-For re-review, submit resolved_findings with finding_id, the original cause and
+For re-review, submit resolved_findings with finding_id, a nonempty evidence string, the original cause and
 scenario, checked counter-evidence, and sibling_search: searched_scope (explicit
 paths covering original affected files, at most 100), method, occurrences (file_path,
 symbol/location or line_range to distinguish same-file sites, disposition and evidence_refs),
@@ -13030,7 +13054,8 @@ def _review_resolution_request(prompt: str, scope: dict[str, Any], reviewer: str
     return (prompt + "\n\n<carried_findings_for_this_reviewer>\n"
             "Before this round is finalized, re-check EVERY finding_id below. "
             "For each proven fix or refutation, put a structured object in resolved_findings "
-            "with the same finding_id, original cause/scenario, checked evidence_refs, "
+            "with the same finding_id, original cause/scenario (or a checked reconstruction "
+            "for a legacy row), a nonempty evidence string, checked evidence_refs, "
             "reachability, baseline_attribution and bounded sibling_search. "
             "If it remains valid or evidence is insufficient, report it as unresolved; "
             "an all_clear verdict or prose saying fixed does not close it.\n"
@@ -13360,9 +13385,11 @@ ADVERSARIAL_FINDING_SCHEMA: dict[str, object] = {
             "failure_mode": "<string — concrete description of what goes wrong and when>",
             "evidence": "<string — concrete trace: grep output, code path, spec requirement ID>",
             "recommendation": "<string — actionable fix suggestion>",
+            **REVIEW_FINDING_EVIDENCE_SCHEMA,
         }
     ],
     "checks_performed": ["<string — list what was actually checked>"],
+    "resolved_findings": "<array — required when closing carried findings: objects with finding_id, a nonempty evidence string, bug_class, cause, failure_scenario, evidence_refs, reachability, baseline_attribution and sibling_search>",
 }
 
 
