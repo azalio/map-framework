@@ -8987,6 +8987,9 @@ def _review_explicit_base(ref: str) -> tuple[str, str]:
     return base, tip
 
 
+_REVIEW_BASE_DRIFT = "Admitted review base changed; abandon and re-admit the round"
+
+
 def _review_admitted_binding(branch: str | None = None) -> dict[str, Any]:
     """Read ledger-owned scope; torn publication requires admission replay.
 
@@ -9011,12 +9014,27 @@ def _review_admitted_binding(branch: str | None = None) -> dict[str, Any]:
         raise ValueError("Review mode is missing or malformed") from exc
     if mode != {**binding, "round_id": row["round_id"]}:
         raise ValueError("Review mode does not match the admitted round binding")
-    target = row.get("target", {})
+    target = row.get("target")
+    if (isinstance(target, dict) and target.get("reusable") is False
+            and isinstance(target.get("unverified_reason"), str)):
+        # A workspace without a usable Git target still admits a full review.
+        # Keep its unverifiable scope only while the current observation agrees.
+        if _review_target(binding) != target:
+            raise ValueError("Admitted unverified review target changed; abandon and re-admit the round")
+        return binding
+    if (not isinstance(target, dict)
+            or any(key not in target or not isinstance(target[key], str)
+                   for key in ("base", "base_ref", "base_tip"))):
+        raise ValueError("Admitted review target is incomplete or invalid")
+    policy = target.get("trusted_policy")
+    if (not isinstance(policy, dict)
+            or any(key not in policy or not isinstance(policy[key], str)
+                   for key in ("ref", "revision"))):
+        raise ValueError("Admitted trusted policy target is incomplete or invalid")
     base, ref, tip = _resolve_review_scope(_review_git_optional, binding)
     if (base, ref, tip) != tuple(target.get(key, "") for key in ("base", "base_ref", "base_tip")):
-        raise ValueError("Admitted review base changed; abandon and re-admit the round")
+        raise ValueError(_REVIEW_BASE_DRIFT)
     _, policy_ref, policy_tip = _resolve_review_scope(_review_git_optional, {})
-    policy = target.get("trusted_policy", {})
     if (policy_ref, policy_tip) != (policy.get("ref", ""), policy.get("revision", "")):
         raise ValueError("Admitted trusted policy revision changed; abandon and re-admit the round")
     return binding
@@ -14724,8 +14742,48 @@ def write_learning_handoff(
     generated_at = _utc_timestamp()
 
     review_handoff = build_review_handoff(branch_name)
-    bundle = build_handoff_bundle(branch_name)
-    code_state = snapshot_code_state(branch_name)
+    code_state = snapshot_code_state(branch_name, allow_review_drift=True)
+    if code_state.get("status") != "success":
+        return {"status": "error", "message": code_state.get("message", "Code snapshot failed"),
+                "branch": branch_name}
+    review_binding_drift = str(code_state.get("review_binding_drift", ""))
+    object_name = ""
+    if review_binding_drift:
+        # A completed review bundle belongs to its admitted snapshot. Keep its
+        # PR handoff and review documents, even if branch artifacts changed.
+        rounds = _read_review_ledger(branch_dir).get("convergence", {}).get("rounds", [])
+        row = rounds[-1] if rounds else {}
+        receipt = row.get("bundle_receipt", {}) if isinstance(row, dict) else {}
+        object_name = (f"review-bundle-objects/{row['round_id'].encode().hex()}.json"
+                       if isinstance(row, dict) and isinstance(row.get("round_id"), str) else "")
+        object_path = branch_dir / object_name
+        admitted_bundle: dict[str, Any] | None = None
+        if (object_name and isinstance(receipt, dict)
+                and receipt.get("artifact") == object_name
+                and isinstance(receipt.get("sha256"), str) and object_path.is_file()):
+            bundle_bytes = object_path.read_bytes()
+            if hashlib.sha256(bundle_bytes).hexdigest() == receipt["sha256"]:
+                try:
+                    loaded = json.loads(bundle_bytes)
+                except (UnicodeDecodeError, ValueError):
+                    loaded = None
+                if isinstance(loaded, dict) and loaded.get("snapshot") == {
+                    "target": row.get("target"), "policy_hash": row.get("policy_hash"),
+                    "required_files": row.get("required_files", []),
+                }:
+                    admitted_bundle = loaded
+        pr_handoff = admitted_bundle.get("pr_handoff") if admitted_bundle else None
+        admitted_review_handoff = admitted_bundle.get("review_handoff") if admitted_bundle else None
+        if not isinstance(pr_handoff, dict) or any(
+            not isinstance(pr_handoff.get(key), str)
+            for key in ("summary", "validation", "risks_follow_up")
+        ) or not isinstance(admitted_review_handoff, dict):
+            return {"status": "error", "message": "Admitted review bundle is unavailable or invalid",
+                    "branch": branch_name}
+        bundle = pr_handoff
+        review_handoff = admitted_review_handoff
+    else:
+        bundle = build_handoff_bundle(branch_name)
     workflow_fit = read_json("workflow-fit.json")
     manifest = read_json("artifact_manifest.json")
     run_health_report = read_json("run_health_report.json")
@@ -14750,12 +14808,13 @@ def write_learning_handoff(
             "workflow-fit.json" if workflow_fit else "",
             "artifact_manifest.json",
             "run_health_report.json" if run_health_report else "",
-            review_handoff.get("plan_review_path") or "",
-            review_handoff.get("code_review_path") or "",
-            review_handoff.get("verification_summary_path") or "",
-            review_handoff.get("qa_path") or "",
-            review_handoff.get("pr_draft_path") or "",
-            review_handoff.get("active_issues_path") or "",
+            object_name if review_binding_drift else "",
+            "" if review_binding_drift else review_handoff.get("plan_review_path") or "",
+            "" if review_binding_drift else review_handoff.get("code_review_path") or "",
+            "" if review_binding_drift else review_handoff.get("verification_summary_path") or "",
+            "" if review_binding_drift else review_handoff.get("qa_path") or "",
+            "" if review_binding_drift else review_handoff.get("pr_draft_path") or "",
+            "" if review_binding_drift else review_handoff.get("active_issues_path") or "",
             "known-issues.json" if known_issues else "",
         ]
         if path
@@ -14772,6 +14831,7 @@ def write_learning_handoff(
         "next_action": next_action_text,
         "notes": notes_text,
         "git_ref": code_state.get("git_ref", "unknown"),
+        "review_binding_drift": review_binding_drift,
         "files_changed": files_changed if isinstance(files_changed, list) else [],
         "summary": bundle.get("summary", "- [not recorded]"),
         "validation": bundle.get("validation", "- [not recorded]"),
@@ -14833,6 +14893,10 @@ def write_learning_handoff(
         )
     if notes_text:
         markdown += f"\n## Notes\n\n{notes_text}\n"
+    if review_binding_drift:
+        markdown += ("\n## Review Binding Drift\n\n"
+                     f"{review_binding_drift}. The files above describe the current HEAD; "
+                     "the admitted review remains bound to its original snapshot.\n")
 
     metrics_result = _record_learning_handoff_generation_metrics(
         workflow_name, generated_at, markdown_path, json_path, branch_name
@@ -14872,6 +14936,7 @@ def write_learning_handoff(
             "outcome": outcome_text,
             "next_action": next_action_text,
             "git_ref": code_state.get("git_ref", "unknown"),
+            "review_binding_drift": review_binding_drift,
             "learning_metrics_path": rvr_path,
             "learning_metrics_counters": dict(
                 cast(Mapping[str, int], rvr_metrics["counters"])
@@ -14900,6 +14965,7 @@ def write_learning_handoff(
         "manifest_path": manifest_result["path"],
         "learning_metrics_path": repeated_violation_result["path"],
         "generated_at": generated_at,
+        "review_binding_drift": review_binding_drift,
     }
 
 
@@ -16172,7 +16238,7 @@ def _resolve_review_scope(
     return "", "", ""
 
 
-def snapshot_code_state(branch: str | None = None) -> dict:
+def snapshot_code_state(branch: str | None = None, *, allow_review_drift: bool = False) -> dict:
     """Capture current git state for artifact-to-code verification.
 
     Records git ref, changed files, and diff stat so review artifacts
@@ -16216,7 +16282,17 @@ def snapshot_code_state(branch: str | None = None) -> dict:
     uncommitted_stat = _run_git(["diff", "--stat", "HEAD"])
     uncommitted_files = _names(_run_git(["diff", "--name-only", "HEAD"]))
 
-    base_sha, base_ref = _resolve_review_base(_run_git, _review_admitted_binding(branch))
+    review_binding_drift = ""
+    try:
+        binding = _review_admitted_binding(branch)
+    except ValueError as exc:
+        if not allow_review_drift or str(exc) != _REVIEW_BASE_DRIFT:
+            return {"status": "error", "message": str(exc), "branch": branch_name}
+        # A closeout code snapshot follows HEAD after review fixes. Keep the
+        # admitted review strict elsewhere, and disclose the fallback here.
+        binding = {}
+        review_binding_drift = str(exc)
+    base_sha, base_ref = _resolve_review_base(_run_git, binding)
     if base_sha:
         diff_range = f"{base_sha[:12]}..HEAD"
         diff_stat = _run_git(["diff", "--stat", base_sha, "HEAD"])
@@ -16260,6 +16336,7 @@ def snapshot_code_state(branch: str | None = None) -> dict:
         "diff_truncated": diff_truncated,
         "diff_base": base_sha[:12] if base_sha else "",
         "diff_base_ref": base_ref,
+        "review_binding_drift": review_binding_drift,
         "diff_range": diff_range,
         "uncommitted_files_changed": uncommitted_files,
         "uncommitted_diff_stat": uncommitted_stat,
@@ -26158,6 +26235,8 @@ if __name__ == "__main__":
             workflow, task_title, outcome, next_action, notes
         )
         print(json.dumps(result, indent=2, ensure_ascii=True))
+        if result.get("status") != "success":
+            sys.exit(1)
 
     elif func_name == "record_learning_consumption":
         summary_source = sys.argv[2] if len(sys.argv) >= 3 else "inline-summary"
