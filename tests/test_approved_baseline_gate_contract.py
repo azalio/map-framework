@@ -48,13 +48,15 @@ def test_efficient_dispatch_passes_user_decision_to_both_agents():
     for relative in ("src/mapify_cli/templates/codex/skills/map-efficient/SKILL.md",
                      ".agents/skills/map-efficient/SKILL.md"):
         contract = (ROOT / relative).read_text()
-        assert "Pass any exact user-approved baseline gate deferral" in contract
+        assert "Resolve `APPROVED_BASELINE_GATE_EVIDENCE` before dispatch" in contract
         assert "Actor and Monitor" in contract
-        assert "Approved baseline gate evidence: <exact_user_approval_and_record_path_or_none>" in contract
-        assert "Pass the same `<exact_user_approval_and_record_path_or_none>` value" in contract
+        assert contract.count("Approved baseline gate evidence: <exact_user_approval_and_record_path_or_none>") == 2
+        assert 'agent_type="monitor"' in contract
+        assert "with the same `APPROVED_BASELINE_GATE_EVIDENCE` passed to Actor" in contract
     for relative in ("src/mapify_cli/templates_src/skills/map-efficient/efficient-reference.md.jinja",
                      "src/mapify_cli/templates/skills/map-efficient/efficient-reference.md",
                      "src/mapify_cli/templates/codex/skills/map-efficient/efficient-reference.md"):
         reference = (ROOT / relative).read_text()
         assert ".map/<branch>/approved-baseline-gates.md" in reference
         assert "full gate as failed" in reference
+        assert "normalized-text digests" in reference

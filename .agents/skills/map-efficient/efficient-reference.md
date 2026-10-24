@@ -329,9 +329,11 @@ merge, save `.map/<branch>/approved-baseline-gates.json` with a `failures`
 array. Each entry binds the exact `command`, `base_sha`, sorted `subtask_ids`,
 nonzero `returncode`, SHA-256 digests of the complete baseline `stdout` and
 `stderr` (`stdout_sha256`, `stderr_sha256`), `approval_sha256` for the Markdown
-record bytes, and a nonempty `diagnostic`. Use one subtask ID for a pre-merge
+record bytes, and a nonempty `diagnostic`. Hash the UTF-8 encoding of the
+decoded command output after Python text mode normalizes `\r\n` and lone `\r`
+to `\n`; raw subprocess bytes can have a different digest. Use one subtask ID for a pre-merge
 worktree check and all wave IDs for a post-wave check. The runner compares the
-current output and exit code byte-for-byte to this evidence; changed, missing,
+exit code and normalized-text digests to this evidence; changed, missing,
 or unapproved results still fail and roll back normally. Accepted output has
 `status: approved_baseline_failed` and `full_gate_status: failed` in its check
 evidence. Keep the full command output and source comparison in the Markdown

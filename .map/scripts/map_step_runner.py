@@ -24255,7 +24255,7 @@ def _wt_freeze_and_verify(
                 return _wt_error(
                     "VERIFY_TIMEOUT", f"verification command timed out: {cmd}", command=cmd
                 )
-            except (OSError, subprocess.SubprocessError) as exc:
+            except (OSError, UnicodeError, subprocess.SubprocessError) as exc:
                 return _wt_error(
                     "VERIFY_ERROR",
                     f"verification command failed to run: {cmd}: {exc}",
@@ -24959,7 +24959,7 @@ def merge_wave_worktrees(
                         f"post-wave verification timed out: {cmd}; rolled back to base",
                         command=cmd,
                     )
-                except (OSError, subprocess.SubprocessError) as exc:
+                except (OSError, UnicodeError, subprocess.SubprocessError) as exc:
                     _wt_rollback(wave_base_sha)
                     return _wt_error(
                         "WAVE_VERIFY_ERROR",

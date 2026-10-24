@@ -483,6 +483,15 @@ class TestWorktreeGuards:
         assert result["kind"] == "VERIFY_FAILED"
         assert _git(["rev-parse", "HEAD"], repo).stdout.strip() == base
 
+    def test_non_utf8_verify_output_is_a_structured_refusal(self, repo: Path) -> None:
+        base = _git(["rev-parse", "HEAD"], repo).stdout.strip()
+        created = m.create_subtask_worktree("ST-010")
+        (Path(str(created["worktree_path"])) / "b.txt").write_text("x\n")
+        command = f'{sys.executable} -c "import os; os.write(1, bytes([255]))"'
+        result = m.merge_subtask_worktree("ST-010", verify_cmds=[command])
+        assert result["kind"] == "VERIFY_ERROR", result
+        assert _git(["rev-parse", "HEAD"], repo).stdout.strip() == base
+
     def test_verify_failure_leaves_main_untouched(self, repo: Path) -> None:
         created = m.create_subtask_worktree("ST-010")
         (Path(str(created["worktree_path"])) / "b.txt").write_text("x\n")
@@ -732,6 +741,16 @@ class TestWaveWorktreeMerge:
         assert result["status"] == "success", result
         assert result["post_wave"]["status"] == "approved_baseline_failed"
         assert result["post_wave"]["checks"][0]["approved_baseline_failure"]["full_gate_status"] == "failed"
+
+    def test_non_utf8_post_wave_output_rolls_back(self, repo: Path) -> None:
+        base = _git(["rev-parse", "HEAD"], repo).stdout.strip()
+        _wt_with_files("ST-001", {"b.txt": "x\n"})
+        command = f'{sys.executable} -c "import os; os.write(1, bytes([255]))"'
+        result = m.merge_wave_worktrees(
+            ["ST-001"], verify_cmds=[], post_wave_cmds=[command]
+        )
+        assert result["kind"] == "WAVE_VERIFY_ERROR", result
+        assert _git(["rev-parse", "HEAD"], repo).stdout.strip() == base
 
     def test_post_wave_gate_pass_accepts(self, repo: Path) -> None:
         _wt_with_files("ST-001", {"b.txt": "x\n"})
