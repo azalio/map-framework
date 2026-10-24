@@ -290,6 +290,7 @@ RESEARCH_FINDINGS=$(python3 .map/scripts/map_step_runner.py load_research "$BRAN
 Implement exactly the current subtask. Preserve validation criteria,
 coverage_map tags, hard constraints, and documented tradeoffs. Keep edits
 inside the current subtask boundary.
+Pass any exact user-approved baseline gate deferral and its durable record to Actor and Monitor; otherwise pass `[none]` (see [efficient-reference.md](efficient-reference.md#approved-baseline-gate-deferrals)).
 
 For isolated or wave execution, dispatch the configured Actor with the complete
 context and explicit ownership. Agents share the repository, so tell it not to

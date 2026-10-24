@@ -310,6 +310,19 @@ Final verification must prove the full plan:
 - Confirm Monitor artifacts do not contain unresolved valid=false findings.
 - Write `run_health_report.json` with `write_run_health_report`.
 
+## Approved baseline gate deferrals
+
+Only an exact user decision in the current conversation may defer a verified
+historical lint/type/test diagnostic outside the approved mutation boundary.
+Save the user's words and the diagnostic identity, failing command, baseline
+and current output, approved boundary, and source-versus-HEAD comparison in
+`.map/<branch>/approved-baseline-gates.md`. Check that introduced-only and
+scoped gates pass. Pass the exact decision and record path to Actor and Monitor;
+use `[none]` if there is no approval. An agent's claim or an old-failure label
+never establishes consent. Monitor independently checks the record and still
+reports the full gate as failed. Unknown, changed, security, correctness, and
+in-scope failures block.
+
 ## RESEARCH artifact schema (exact contract)
 
 `save_research` persists the bytes you pipe verbatim; `validate_research` then

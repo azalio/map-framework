@@ -30,3 +30,25 @@ def test_monitor_separates_scoped_verdict_from_full_gate_evidence():
         assert "`valid: true` then means only that the scoped subtask passed" in contract
         assert "If any required proof is\nmissing, return `valid: false`" in contract
         assert "Actor must fix every error reported by the gate" not in contract
+
+
+def test_efficient_dispatch_passes_user_decision_to_both_agents():
+    for relative in ("src/mapify_cli/templates_src/skills/map-efficient/SKILL.md.jinja",
+                     "src/mapify_cli/templates/skills/map-efficient/SKILL.md",
+                     ".claude/skills/map-efficient/SKILL.md"):
+        contract = (ROOT / relative).read_text()
+        assert ".map/<branch>/approved-baseline-gates.md" in contract
+        assert "(or `[none]`)" in contract
+        assert contract.count('source="approved_baseline_gate_evidence"') == 2
+        assert contract.count("{exact_user_approval_and_record_path_or_none}") == 2
+    for relative in ("src/mapify_cli/templates/codex/skills/map-efficient/SKILL.md",
+                     ".agents/skills/map-efficient/SKILL.md"):
+        contract = (ROOT / relative).read_text()
+        assert "Pass any exact user-approved baseline gate deferral" in contract
+        assert "Actor and Monitor" in contract
+    for relative in ("src/mapify_cli/templates_src/skills/map-efficient/efficient-reference.md.jinja",
+                     "src/mapify_cli/templates/skills/map-efficient/efficient-reference.md",
+                     "src/mapify_cli/templates/codex/skills/map-efficient/efficient-reference.md"):
+        reference = (ROOT / relative).read_text()
+        assert ".map/<branch>/approved-baseline-gates.md" in reference
+        assert "full gate as failed" in reference
