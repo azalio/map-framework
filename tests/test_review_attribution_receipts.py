@@ -64,6 +64,51 @@ def test_read_only_review_bundle_preserves_pre_existing_defect(tmp_path, monkeyp
     assert prompt.count("diff --git a/calculator.py b/calculator.py") == 1
 
 
+def test_large_changed_files_keep_full_snapshot_without_bloating_prompts(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    def git(*args: str) -> str:
+        return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()
+
+    git("init", "-b", "main")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test")
+    Path(".gitignore").write_text(".map/\n")
+    large = "".join(f"LINE_{i:05d} = '{i:05d} unique source content'\n" for i in range(2500))
+    for index in range(10):
+        Path(f"file_{index}.py").write_text(large if index < 4 else f"VALUE = {index}\n")
+    git("add", ".")
+    git("commit", "-m", "base")
+    git("checkout", "-b", "feature")
+    for index in range(10):
+        path = Path(f"file_{index}.py")
+        path.write_text(path.read_text().replace("LINE_00000", "LINE_00000_CHANGED") if index < 4
+                        else f"VALUE = {index + 1}\n")
+    git("commit", "-am", "change ten files")
+
+    runner = cast(Any, map_step_runner)
+    assert runner.begin_review_run(scheduled_reviewers=["monitor"], branch="feature")["status"] == "success"
+    bundle = runner.create_review_bundle(branch="feature")
+    source = json.loads(Path(bundle["bundle_path_json"]).read_text())["attribution"]["files"][0]
+    assert source["base_content"] == large
+    assert "LINE_00000_CHANGED" in source["current_content"]
+    markdown = Path(bundle["bundle_path_md"]).read_text()
+    assert '"full_source": "review-bundle.json attribution.files"' in markdown
+    assert "LINE_02499" not in markdown
+    prompts = runner.build_review_prompts(branch="feature")
+    assert prompts["status"] == "success", prompts
+    assert "LINE_00000_CHANGED" in prompts["prompts"]["monitor"]["prompt"]
+    assert len(prompts["prompts"]["maintainer"]["prompt"].encode()) <= runner.REVIEW_PROMPT_MAX_BYTES
+    adversarial = runner.build_adversarial_review_prompts(branch="feature", reviewers=["blind", "acceptance"])
+    assert adversarial["status"] == "success", adversarial
+    receipt = json.loads((tmp_path / ".map/feature/review-verdict-ledger.json").read_text())[
+        "convergence"]["rounds"][-1]["bundle_receipt"]
+    # The acceptance reviewer can read the immutable source object without broad repo access.
+    assert "You may Read this admitted project artifact" in adversarial["prompts"]["acceptance"]["prompt"]
+    assert receipt["artifact"] in adversarial["prompts"]["acceptance"]["prompt"]
+    assert receipt["artifact"] not in adversarial["prompts"]["blind"]["prompt"]
+
+
 def test_create_review_bundle_preserves_committed_deleted_source(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
