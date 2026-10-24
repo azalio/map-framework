@@ -117,12 +117,16 @@ def test_learning_handoff_after_review_fix_commit_records_base_drift(stack):
     bundle_path = Path(".map/product/review-bundle.json")
     admitted_bundle = bundle_path.read_bytes()
     admitted_pr_handoff = json.loads(admitted_bundle)["pr_handoff"]
+    admitted_review_handoff = json.loads(admitted_bundle)["review_handoff"]
+    assert "ADMITTED VALIDATION" in admitted_pr_handoff["validation"]
+    assert "ADMITTED VALIDATION" in admitted_review_handoff["verification_summary"]
 
     Path("product.py").write_text("PRODUCT = 575\n")
     git("commit", "-am", "review fix")
     fixed_head = git("rev-parse", "HEAD")
     git("branch", "-f", "runtime", "HEAD")
     Path(".map/product/verification-summary.md").write_text("POST-FIX VALIDATION\n")
+    bundle_path.write_text(json.dumps({"pr_handoff": {"summary": "REPLACED"}}))
 
     strict_snapshot = runner.snapshot_code_state(branch="product")
     assert strict_snapshot["status"] == "error"
@@ -135,16 +139,32 @@ def test_learning_handoff_after_review_fix_commit_records_base_drift(stack):
     assert payload["git_ref"] == fixed_head[:12]
     assert payload["review_binding_drift"] == runner._REVIEW_BASE_DRIFT
     assert payload["validation"] == admitted_pr_handoff["validation"]
+    assert payload["documents"]["verification_summary"] == admitted_review_handoff["verification_summary"]
     assert "POST-FIX VALIDATION" not in payload["validation"]
     assert "product.py" in payload["files_changed"]
     assert "Review Binding Drift" in Path(".map/product/learning-handoff.md").read_text()
-    assert bundle_path.read_bytes() == admitted_bundle
+    assert json.loads(bundle_path.read_text())["pr_handoff"]["summary"] == "REPLACED"
 
 
 def test_learning_handoff_requires_admitted_bundle_after_base_drift(stack):
     admit(base_ref="runtime")
     assert runner.create_review_bundle(branch="product")["status"] == "success"
-    Path(".map/product/review-bundle.json").unlink()
+    (Path(".map/product") / row()["bundle_receipt"]["artifact"]).unlink()
+    git("branch", "-f", "runtime", "HEAD")
+    result = runner.write_learning_handoff("map-review", branch="product")
+    assert result["status"] == "error"
+    assert "Admitted review bundle" in result["message"]
+    assert not Path(".map/product/learning-handoff.json").exists()
+    command = cli("write_learning_handoff", "map-review")
+    assert command.returncode != 0
+    assert json.loads(command.stdout)["status"] == "error"
+
+
+def test_learning_handoff_rejects_changed_admitted_bundle_object(stack):
+    admit(base_ref="runtime")
+    assert runner.create_review_bundle(branch="product")["status"] == "success"
+    object_path = Path(".map/product") / row()["bundle_receipt"]["artifact"]
+    object_path.write_text(object_path.read_text() + " ")
     git("branch", "-f", "runtime", "HEAD")
     result = runner.write_learning_handoff("map-review", branch="product")
     assert result["status"] == "error"

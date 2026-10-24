@@ -14747,18 +14747,41 @@ def write_learning_handoff(
         return {"status": "error", "message": code_state.get("message", "Code snapshot failed"),
                 "branch": branch_name}
     review_binding_drift = str(code_state.get("review_binding_drift", ""))
+    object_name = ""
     if review_binding_drift:
         # A completed review bundle belongs to its admitted snapshot. Keep its
-        # PR handoff fields, even if human artifacts changed after review fixes.
-        admitted_bundle = read_json("review-bundle.json")
+        # PR handoff and review documents, even if branch artifacts changed.
+        rounds = _read_review_ledger(branch_dir).get("convergence", {}).get("rounds", [])
+        row = rounds[-1] if rounds else {}
+        receipt = row.get("bundle_receipt", {}) if isinstance(row, dict) else {}
+        object_name = (f"review-bundle-objects/{row['round_id'].encode().hex()}.json"
+                       if isinstance(row, dict) and isinstance(row.get("round_id"), str) else "")
+        object_path = branch_dir / object_name
+        admitted_bundle: dict[str, Any] | None = None
+        if (object_name and isinstance(receipt, dict)
+                and receipt.get("artifact") == object_name
+                and isinstance(receipt.get("sha256"), str) and object_path.is_file()):
+            bundle_bytes = object_path.read_bytes()
+            if hashlib.sha256(bundle_bytes).hexdigest() == receipt["sha256"]:
+                try:
+                    loaded = json.loads(bundle_bytes)
+                except (UnicodeDecodeError, ValueError):
+                    loaded = None
+                if isinstance(loaded, dict) and loaded.get("snapshot") == {
+                    "target": row.get("target"), "policy_hash": row.get("policy_hash"),
+                    "required_files": row.get("required_files", []),
+                }:
+                    admitted_bundle = loaded
         pr_handoff = admitted_bundle.get("pr_handoff") if admitted_bundle else None
+        admitted_review_handoff = admitted_bundle.get("review_handoff") if admitted_bundle else None
         if not isinstance(pr_handoff, dict) or any(
             not isinstance(pr_handoff.get(key), str)
             for key in ("summary", "validation", "risks_follow_up")
-        ):
+        ) or not isinstance(admitted_review_handoff, dict):
             return {"status": "error", "message": "Admitted review bundle is unavailable or invalid",
                     "branch": branch_name}
         bundle = pr_handoff
+        review_handoff = admitted_review_handoff
     else:
         bundle = build_handoff_bundle(branch_name)
     workflow_fit = read_json("workflow-fit.json")
@@ -14785,12 +14808,13 @@ def write_learning_handoff(
             "workflow-fit.json" if workflow_fit else "",
             "artifact_manifest.json",
             "run_health_report.json" if run_health_report else "",
-            review_handoff.get("plan_review_path") or "",
-            review_handoff.get("code_review_path") or "",
-            review_handoff.get("verification_summary_path") or "",
-            review_handoff.get("qa_path") or "",
-            review_handoff.get("pr_draft_path") or "",
-            review_handoff.get("active_issues_path") or "",
+            object_name if review_binding_drift else "",
+            "" if review_binding_drift else review_handoff.get("plan_review_path") or "",
+            "" if review_binding_drift else review_handoff.get("code_review_path") or "",
+            "" if review_binding_drift else review_handoff.get("verification_summary_path") or "",
+            "" if review_binding_drift else review_handoff.get("qa_path") or "",
+            "" if review_binding_drift else review_handoff.get("pr_draft_path") or "",
+            "" if review_binding_drift else review_handoff.get("active_issues_path") or "",
             "known-issues.json" if known_issues else "",
         ]
         if path
@@ -26143,6 +26167,8 @@ if __name__ == "__main__":
             workflow, task_title, outcome, next_action, notes
         )
         print(json.dumps(result, indent=2, ensure_ascii=True))
+        if result.get("status") != "success":
+            sys.exit(1)
 
     elif func_name == "record_learning_consumption":
         summary_source = sys.argv[2] if len(sys.argv) >= 3 else "inline-summary"
