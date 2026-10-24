@@ -10289,6 +10289,20 @@ class TestCreateReviewBundle:
             # Tail preferences sentinel must now survive (was clipped before).
             assert "TAIL_PREFERENCES_SENTINEL" in prompt
 
+    def test_build_review_prompts_rejects_oversized_payload_before_dispatch(
+        self, branch_workspace
+    ):
+        del branch_workspace
+        result = map_step_runner.build_review_prompts(
+            branch="test-branch",
+            review_bundle_text="x" * (map_step_runner.REVIEW_PROMPT_MAX_BYTES + 1),
+            git_diff_text="small diff",
+        )
+        assert result["status"] == "error"
+        assert "monitor" in result["oversized_prompt_bytes"]
+        assert result["max_prompt_bytes"] == map_step_runner.REVIEW_PROMPT_MAX_BYTES
+        assert "prompts" not in result
+
     def test_build_review_prompts_tolerates_budget_artifact_write_error(
         self, branch_workspace, monkeypatch
     ):
@@ -19012,6 +19026,16 @@ class TestRoleReviewers:
             "user_experience",
             "maintainer",
         }
+
+    @pytest.mark.parametrize("builder", ["build_role_review_prompts", "build_adversarial_review_prompts"])
+    def test_all_reviewer_builders_reject_oversized_diff(self, tmp_path, monkeypatch, builder):
+        monkeypatch.chdir(tmp_path)
+        result = getattr(map_step_runner, builder)(
+            branch="test-branch", git_diff_text="x" * (map_step_runner.REVIEW_PROMPT_MAX_BYTES + 1)
+        )
+        assert result["status"] == "error"
+        assert result["oversized_prompt_bytes"]
+        assert "prompts" not in result
 
     def test_role_prompt_carries_the_contract_and_pins_the_reviewer_id(
         self, tmp_path, monkeypatch

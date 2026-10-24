@@ -344,12 +344,12 @@ If `DETACHED_STATUS` is `success`, tell reviewer agents to read source files fro
 When compare mode is active, run two review collections with `ordering_label='default'` and `ordering_label='reverse'`, then call `compare-review-runs` and `record-review-ordering` to stage the drift summary. See [review-reference.md](review-reference.md#compare-orderings) for the detailed loop.
 
 ### Step A.2: Launch all parallel calls
-Before launching agents, build the reviewer prompts with `build_review_prompts`. Prompts are NOT truncated: each reviewer receives the whole bundle, the review preferences and the full diff. `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is reported in the output for reference only — it clips nothing. If a prompt outgrows the context window, that is an operator decision (`/compact`), not a silent drop.
+Before launching agents, build the reviewer prompts with `build_review_prompts`. Prompts are NOT truncated: each reviewer receives the whole bundle, the review preferences and the full diff. `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is reported in the output for reference only — it clips nothing. A prompt above 512 KiB returns `status: error`; stop dispatch and report the byte counts and reason. Split the change or reduce source evidence before retrying.
 
 ```bash
 REVIEW_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_review_prompts \
   --review-preferences "[paste Review Preferences section above]")
-
+printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("status") == "success" else json.dumps(d, indent=2))' || exit 1
 MONITOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["monitor"]["prompt"])')
 PREDICTOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["predictor"]["prompt"])')
 EVALUATOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["evaluator"]["prompt"])')
