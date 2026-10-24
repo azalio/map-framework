@@ -642,6 +642,21 @@ never establishes consent. Monitor independently checks the record and still
 reports the full gate as failed. Unknown, changed, security, correctness, and
 in-scope failures block.
 
+With worktree isolation, a configured `verification_checks` command can still
+exit nonzero after Monitor accepts the scoped result. Before either worktree
+merge, save `.map/<branch>/approved-baseline-gates.json` with a `failures`
+array. Each entry binds the exact `command`, `base_sha`, sorted `subtask_ids`,
+nonzero `returncode`, SHA-256 digests of the complete baseline `stdout` and
+`stderr` (`stdout_sha256`, `stderr_sha256`), `approval_sha256` for the Markdown
+record bytes, and a nonempty `diagnostic`. Use one subtask ID for a pre-merge
+worktree check and all wave IDs for a post-wave check. The runner compares the
+current output and exit code byte-for-byte to this evidence; changed, missing,
+or unapproved results still fail and roll back normally. Accepted output has
+`status: approved_baseline_failed` and `full_gate_status: failed` in its check
+evidence. Keep the full command output and source comparison in the Markdown
+record; a digest is only the runner's exact-match guard, not independent proof
+that the failure is harmless. Monitor must verify the user decision and scope.
+
 ## RESEARCH artifact schema (exact contract)
 
 `save_research` persists the bytes you pipe verbatim; `validate_research` then

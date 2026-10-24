@@ -287,6 +287,13 @@ Alongside the quarantine, `/map-efficient` keeps **intra-run failure memory** so
 
 For a scoped Actor subtask, a failing full lint/type/test gate can contain a specific, verified baseline diagnostic outside the approved mutation boundary. Actor must preserve the original and current command output plus source-versus-HEAD comparison, and obtain an explicit user approval for that diagnostic in the current conversation. `/map-efficient` saves the exact decision and evidence in `.map/<branch>/approved-baseline-gates.md` and passes the approval and artifact path to both Actor and Monitor; with no approval it passes `[none]`. Monitor checks the durable approval and evidence independently. Only when the in-scope criteria and introduced-only checks pass can Monitor return a scoped `valid: true`; it reports `approved_baseline_gate_failures` and `full_gate_status: failed` separately. New or uncertain findings, security or correctness defects, and missing approval remain blocking. Neither the Actor nor Monitor may call the full gate green or expand the mutation boundary silently.
 
+For isolated worktree merges, record the exact approved command, base SHA,
+subtask IDs, exit code, complete-output SHA-256 digests and approval-record
+digest in `.map/<branch>/approved-baseline-gates.json` as described in
+`/map-efficient`'s reference. The runner accepts only an exact matching failed
+result and returns `approved_baseline_failed`; any changed failure still blocks
+the merge. The Markdown record retains the full failed output.
+
 MAP also has a project-level minimality doctrine controlled by `.map/config.yaml`:
 
 ```yaml

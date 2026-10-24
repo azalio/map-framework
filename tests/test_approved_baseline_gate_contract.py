@@ -29,6 +29,10 @@ def test_monitor_separates_scoped_verdict_from_full_gate_evidence():
         assert "full_gate_status: failed" in contract
         assert "`valid: true` then means only that the scoped subtask passed" in contract
         assert "If any required proof is\nmissing, return `valid: false`" in contract
+        assert "introduced-only build, tests, static analysis" in contract
+        assert "report the full static-analysis gate as failed" in contract
+        assert "An exact approved historical diagnostic does not short-circuit" in contract
+        assert "if build/compile fails, set `valid: false` immediately" not in contract
         assert "Actor must fix every error reported by the gate" not in contract
 
 
@@ -46,6 +50,8 @@ def test_efficient_dispatch_passes_user_decision_to_both_agents():
         contract = (ROOT / relative).read_text()
         assert "Pass any exact user-approved baseline gate deferral" in contract
         assert "Actor and Monitor" in contract
+        assert "Approved baseline gate evidence: <exact_user_approval_and_record_path_or_none>" in contract
+        assert "Pass the same `<exact_user_approval_and_record_path_or_none>` value" in contract
     for relative in ("src/mapify_cli/templates_src/skills/map-efficient/efficient-reference.md.jinja",
                      "src/mapify_cli/templates/skills/map-efficient/efficient-reference.md",
                      "src/mapify_cli/templates/codex/skills/map-efficient/efficient-reference.md"):

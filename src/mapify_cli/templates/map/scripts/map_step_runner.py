@@ -23227,6 +23227,56 @@ def _wt_config_verification_checks(project_dir: Path) -> list[str]:
     return [c for c in checks if isinstance(c, str) and c.strip()]
 
 
+def _wt_approved_baseline_gate(
+    project_dir: Path,
+    branch: str,
+    command: str,
+    completed: subprocess.CompletedProcess[str],
+    base_sha: str,
+    subtask_ids: list[str],
+) -> dict[str, object] | None:
+    """Accept only an exact, approved historical gate result for this merge."""
+    branch_dir = project_dir / ".map" / branch
+    evidence_path = branch_dir / "approved-baseline-gates.json"
+    approval_path = branch_dir / "approved-baseline-gates.md"
+    if (evidence_path.is_symlink() or approval_path.is_symlink()
+            or not evidence_path.is_file() or not approval_path.is_file()):
+        return None
+    try:
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        if not isinstance(evidence, dict) or not isinstance(evidence.get("failures"), list):
+            return None
+        approval_digest = hashlib.sha256(approval_path.read_bytes()).hexdigest()
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    stdout_digest = hashlib.sha256(completed.stdout.encode("utf-8")).hexdigest()
+    stderr_digest = hashlib.sha256(completed.stderr.encode("utf-8")).hexdigest()
+    for entry in evidence["failures"]:
+        if not isinstance(entry, dict):
+            continue
+        if (entry.get("command") != command or entry.get("base_sha") != base_sha
+                or entry.get("subtask_ids") != sorted(subtask_ids)
+                or entry.get("returncode") != completed.returncode
+                or entry.get("stdout_sha256") != stdout_digest
+                or entry.get("stderr_sha256") != stderr_digest
+                or entry.get("approval_sha256") != approval_digest
+                or not isinstance(entry.get("diagnostic"), str)
+                or not entry["diagnostic"].strip()):
+            continue
+        return {
+            "full_gate_status": "failed",
+            "command": command,
+            "returncode": completed.returncode,
+            "subtask_ids": sorted(subtask_ids),
+            "base_sha": base_sha,
+            "stdout_sha256": stdout_digest,
+            "stderr_sha256": stderr_digest,
+            "approval_record": str(approval_path),
+            "diagnostic": entry["diagnostic"],
+        }
+    return None
+
+
 def _wt_is_runtime_state_path(path: str) -> bool:
     """True for MAP runtime-state paths that must never be merged into main."""
     norm = path.replace("\\", "/")
@@ -24211,8 +24261,14 @@ def _wt_freeze_and_verify(
                     f"verification command failed to run: {cmd}: {exc}",
                     command=cmd,
                 )
-            results.append({"command": cmd, "returncode": cp.returncode})
+            approved_failure = None
             if cp.returncode != 0:
+                approved_failure = _wt_approved_baseline_gate(
+                    project_dir, branch_name, cmd, cp, base_sha, [subtask_id]
+                )
+            results.append({"command": cmd, "returncode": cp.returncode,
+                            "approved_baseline_failure": approved_failure})
+            if cp.returncode != 0 and approved_failure is None:
                 _wt_set_manifest(
                     branch_name,
                     "verify_failed",
@@ -24227,7 +24283,10 @@ def _wt_freeze_and_verify(
                     stderr_tail=_clip_probe_output(cp.stderr)[-2000:],
                     remediation="fix in the worktree and re-run merge, or discard to retry",
                 )
-        verification = {"ran": True, "status": "passed", "checks": results}
+        verification = {"ran": True,
+                        "status": "approved_baseline_failed" if any(
+                            item["approved_baseline_failure"] is not None for item in results
+                        ) else "passed", "checks": results}
 
     return {
         "status": "success",
@@ -24907,8 +24966,14 @@ def merge_wave_worktrees(
                         f"post-wave verification failed to run: {cmd}: {exc}",
                         command=cmd,
                     )
-                results.append({"command": cmd, "returncode": cp.returncode})
+                approved_failure = None
                 if cp.returncode != 0:
+                    approved_failure = _wt_approved_baseline_gate(
+                        project_dir, branch_name, cmd, cp, wave_base_sha, ids,
+                    )
+                results.append({"command": cmd, "returncode": cp.returncode,
+                                "approved_baseline_failure": approved_failure})
+                if cp.returncode != 0 and approved_failure is None:
                     _wt_rollback(wave_base_sha)
                     _wt_set_manifest(
                         branch_name,
@@ -24923,7 +24988,10 @@ def merge_wave_worktrees(
                         returncode=cp.returncode,
                         stderr_tail=_clip_probe_output(cp.stderr)[-2000:],
                     )
-            post_wave = {"ran": True, "status": "passed", "checks": results}
+            post_wave = {"ran": True,
+                         "status": "approved_baseline_failed" if any(
+                             item["approved_baseline_failure"] is not None for item in results
+                         ) else "passed", "checks": results}
 
         # PHASE 4 — accept: remove every worktree+branch, drop from the sidecar.
         state = _read_worktree_state(branch_name)

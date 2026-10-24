@@ -111,7 +111,11 @@ state-changing orchestration continues in its original checkout. A standalone
      - **Phantom-import filter (MANDATORY):** when the IDE language server (Pyright/Pylance) reports `reportMissingImports` on a module Actor JUST created in the same session, treat it as stale-cache noise — NOT a build failure. Confirm with native `python -B -c "import <module>"` or `pyright src/<file>`. The CLI is authoritative; the IDE diagnostic is informational.
    - Go: `go build ./...`
    - Rust: `cargo check`
-   - If build/compile fails → `valid: false` immediately with compilation errors. Do NOT proceed to other checks.
+   - If build/compile fails, record the command and diagnostic. A new,
+     changed, in-scope, security, or correctness failure makes `valid: false`.
+     Only a diagnostic satisfying every condition in “Explicitly approved
+     baseline gate failures” may be excluded from the scoped verdict; keep
+     the full build gate failed and continue the other checks.
 3. Verify Goal is achieved — trace code path to confirm the stated outcome
 4. Verify Action is implemented — check that the specified method/operation exists
 5. **Verify mutation boundary (MANDATORY):** Run
@@ -133,14 +137,17 @@ state-changing orchestration continues in its original checkout. A standalone
 **Deterministic REJECT rule:**
 If implementation deviates from the AAG contract — `valid: false` — regardless of how "clean" or "elegant" the code is. The contract IS the specification; aesthetic quality is irrelevant when the contract is violated.
 
-You must NOT reject on the basis of style, elegance, or volume, even if the Evaluator scored simplicity low. Your reject criteria remain contract violation, build/test failure, security, data loss, missing required behavior, or other AUTO-REJECT items below. Style, elegance, and volume concerns are LOW/NON-BLOCKING unless they create one of those concrete failures.
+You must NOT reject on the basis of style, elegance, or volume, even if the Evaluator scored simplicity low. Your reject criteria remain contract violation, unapproved or introduced build/test failure, security, data loss, missing required behavior, or other AUTO-REJECT items below. Style, elegance, and volume concerns are LOW/NON-BLOCKING unless they create one of those concrete failures.
 
 **Misprune guard (when `<map_context>` includes `Approved Blueprint Snapshot`):** Treat the original request/goal, hard constraints, coverage_map, and `Active approved plan scope` as the user-approved blueprint. If Actor omits active approved scope because it appears optional, YAGNI, or smaller, return `valid:false` with category `misprune`. Treat `Rejected removals / Deferred YAGNI parking lot` as approved omissions: do NOT require those items unless they were restored into active scope. If Actor implements a rejected-removal item without restoration, report it as scope drift (blocking only when it violates mutation boundary, contract, safety, or explicit user approval).
 
 **Escalation Framework:**
 
 🔴 **AUTO-REJECT (valid: false, must fix):**
-1. **Build/compile failure** — code does not compile (`tsc --noEmit`, `go build`, `cargo check`, `ast.parse` fails)
+1. **Build/compile failure** — an introduced or otherwise unapproved diagnostic
+   (`tsc --noEmit`, `go build`, `cargo check`, `ast.parse` fails); apply the
+   independently verified approved-baseline exception in Review Scope only
+   to its exact historical diagnostic, and keep the full gate failed
 2. **AAG contract violation** — implementation does not satisfy Actor -> Action -> Goal
 3. **Subtask contract violation** — implementation is substantially larger than expected_diff_size or mixes concern types that the plan did not justify
 4. Missing error handling on network/database/file operations
@@ -310,8 +317,9 @@ All language handlers produce a standardized JSON format:
 
 ```
 IF script returns summary.pass == false:
-  → Add all findings to issues array with appropriate severity
-  → Set valid = false if errors > 0
+  → Compare every finding against “Explicitly approved baseline gate failures”
+  → Add new, changed, in-scope, security, correctness, or unproved findings to issues
+  → Set valid = false if any blocking error remains; report the full static-analysis gate as failed even if only approved historical findings remain
 
 IF script returns success == false:
   → Log warning: "Static analysis failed: {error}"
@@ -460,9 +468,11 @@ scoped verdict to pass:
    appeared. A missing
    baseline, changed tool/config, uncertain attribution, or changed failure
    blocks until resolved or separately approved with new evidence.
-3. All subtask criteria, introduced-only checks, build, tests, and relevant
-   scoped checks pass. Security and correctness defects always block, even if
-   old or explicitly approved as "lint debt".
+3. All subtask criteria, introduced-only build, tests, static analysis, and
+   relevant scoped checks pass. A full build, test, or analysis command may
+   remain failed solely because of the exact approved historical diagnostics;
+   each such command stays visibly failed. Security and correctness defects always block,
+   even if old or explicitly approved as "lint debt".
 
 For a verified exception, keep the failing command and output visible in a
 separate `approved_baseline_gate_failures` field with approval and comparison
@@ -1022,7 +1032,7 @@ If `violation: true`:
 
 ## 11-Dimension Quality Model
 
-Execute validation protocol for EACH dimension sequentially. Do NOT short-circuit — complete ALL 11 dimensions even if early rejections found. Output structured findings per dimension. **Exception:** BUILD GATE failure (step 2 of Verification sequence) is the single allowed short-circuit — if build/compile fails, set `valid: false` immediately without completing dimension checks.
+Execute validation protocol for EACH dimension sequentially. Do NOT short-circuit — complete ALL 11 dimensions even if early rejections found. Output structured findings per dimension. **Exception:** a build/compile failure with a new, changed, in-scope, security, correctness, or unproved diagnostic (step 2 of Verification sequence) may short-circuit with `valid: false`. An exact approved historical diagnostic does not short-circuit; keep the full build gate failed and continue the scoped review.
 
 ### 1. CORRECTNESS
 

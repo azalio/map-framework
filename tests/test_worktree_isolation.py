@@ -11,6 +11,7 @@ Two layers:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -199,6 +200,25 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _enable(r)
     monkeypatch.chdir(r)
     return r
+
+
+def _approved_gate_record(repo: Path, command: str, base_sha: str,
+                          subtask_ids: list[str], stdout: str = "baseline") -> None:
+    branch_dir = repo / ".map" / "feat-x"
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    approval = branch_dir / "approved-baseline-gates.md"
+    approval.write_text(f"User explicitly approved diagnostic for {command}\n")
+    entry = {
+        "command": command, "base_sha": base_sha,
+        "subtask_ids": sorted(subtask_ids), "returncode": 7,
+        "stdout_sha256": hashlib.sha256(stdout.encode()).hexdigest(),
+        "stderr_sha256": hashlib.sha256(b"").hexdigest(),
+        "approval_sha256": hashlib.sha256(approval.read_bytes()).hexdigest(),
+        "diagnostic": "historical failure outside the approved scope",
+    }
+    (branch_dir / "approved-baseline-gates.json").write_text(
+        json.dumps({"failures": [entry]})
+    )
 
 
 class TestWorktreeDisabled:
@@ -441,6 +461,28 @@ class TestWorktreeLifecycle:
 
 
 class TestWorktreeGuards:
+    def test_exact_approved_baseline_failure_remains_failed_on_single_merge(self, repo: Path) -> None:
+        base = _git(["rev-parse", "HEAD"], repo).stdout.strip()
+        created = m.create_subtask_worktree("ST-010")
+        (Path(str(created["worktree_path"])) / "b.txt").write_text("x\n")
+        command = 'bash -lc "printf baseline; exit 7"'
+        _approved_gate_record(repo, command, base, ["ST-010"])
+        result = m.merge_subtask_worktree("ST-010", verify_cmds=[command])
+        assert result["status"] == "success", result
+        verification = result["verification"]
+        assert verification["status"] == "approved_baseline_failed"
+        assert verification["checks"][0]["approved_baseline_failure"]["full_gate_status"] == "failed"
+
+    def test_changed_failure_does_not_match_approved_baseline(self, repo: Path) -> None:
+        base = _git(["rev-parse", "HEAD"], repo).stdout.strip()
+        created = m.create_subtask_worktree("ST-010")
+        (Path(str(created["worktree_path"])) / "b.txt").write_text("x\n")
+        command = 'bash -lc "printf changed; exit 7"'
+        _approved_gate_record(repo, command, base, ["ST-010"])
+        result = m.merge_subtask_worktree("ST-010", verify_cmds=[command])
+        assert result["kind"] == "VERIFY_FAILED"
+        assert _git(["rev-parse", "HEAD"], repo).stdout.strip() == base
+
     def test_verify_failure_leaves_main_untouched(self, repo: Path) -> None:
         created = m.create_subtask_worktree("ST-010")
         (Path(str(created["worktree_path"])) / "b.txt").write_text("x\n")
@@ -677,6 +719,19 @@ class TestWaveWorktreeMerge:
         # Worktrees intact for retry.
         status = m.worktree_isolation_status()
         assert len(status["active_worktrees"]) == 2
+
+    def test_exact_approved_baseline_failure_remains_failed_after_wave(self, repo: Path) -> None:
+        base = _git(["rev-parse", "HEAD"], repo).stdout.strip()
+        _wt_with_files("ST-001", {"b.txt": "x\n"})
+        _wt_with_files("ST-002", {"c.txt": "y\n"})
+        command = 'bash -lc "printf baseline; exit 7"'
+        _approved_gate_record(repo, command, base, ["ST-001", "ST-002"])
+        result = m.merge_wave_worktrees(
+            ["ST-001", "ST-002"], verify_cmds=[], post_wave_cmds=[command]
+        )
+        assert result["status"] == "success", result
+        assert result["post_wave"]["status"] == "approved_baseline_failed"
+        assert result["post_wave"]["checks"][0]["approved_baseline_failure"]["full_gate_status"] == "failed"
 
     def test_post_wave_gate_pass_accepts(self, repo: Path) -> None:
         _wt_with_files("ST-001", {"b.txt": "x\n"})

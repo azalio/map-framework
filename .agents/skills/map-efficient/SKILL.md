@@ -301,7 +301,7 @@ ACTOR_TASK_NAME="actor_<normalized_subtask>_<attempt>"
 spawn_agent(
   agent_type="actor",
   task_name=ACTOR_TASK_NAME,
-  message="Implement only <subtask_id>. Owned files: <files>. Consume the supplied MAP context and research. You are not alone in the codebase; preserve others' edits and return the Actor change-summary contract."
+  message="Implement only <subtask_id>. Owned files: <files>. Consume the supplied MAP context and research. Approved baseline gate evidence: <exact_user_approval_and_record_path_or_none>. You are not alone in the codebase; preserve others' edits and return the Actor change-summary contract."
 )
 ```
 
@@ -328,6 +328,9 @@ Use the configured `monitor` agent when available, or run an independent review
 pass in the current session. Validate implementation against the subtask AAG
 contract, validation criteria, coverage tags, hard constraints, and relevant
 soft constraints.
+Pass the same `<exact_user_approval_and_record_path_or_none>` value to the
+Monitor handoff, including the exact approval and durable record path, or
+`[none]` when no baseline exception exists.
 
 If Monitor fails:
 
