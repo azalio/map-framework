@@ -508,6 +508,16 @@ def test_predictor_low_risk_does_not_block():
     assert ledger["computed_verdict"] == "PROCEED"
 
 
+def test_predictor_low_risk_breaking_summary_is_advisory():
+    predictor = _predictor_low_risk()
+    predictor["predicted_state"]["breaking_changes"] = ["Documented API adjustment"]
+    ledger = map_step_runner.normalize_review_verdict(
+        monitor_result=_monitor_no_issues(), predictor_result=predictor,
+    )
+    assert ledger["computed_verdict"] == "PROCEED"
+    assert not any(row["source_agent"] == "predictor" for row in ledger["findings_registry"])
+
+
 def test_no_inputs_is_an_unobserved_review_not_a_clean_one():
     """An empty registry means the review was not seen, not that it was clean."""
     ledger = map_step_runner.normalize_review_verdict()
@@ -2034,7 +2044,40 @@ def test_round_keeps_omitted_unresolved_findings(branch_workspace):
     prompts = runner.build_review_prompts(review_bundle_text="bundle")
     assert prompts["review_scope"]["kind"] == "full"
     assert "RVF-001" in prompts["prompts"]["monitor"]["prompt"]
+    assert "<carried_findings_for_this_reviewer>" in prompts["prompts"]["monitor"]["prompt"]
+    assert "structured object in resolved_findings" in prompts["prompts"]["monitor"]["prompt"]
+    assert "<carried_findings_for_this_reviewer>" not in prompts["prompts"]["predictor"]["prompt"]
     assert "RVF-001" in runner.build_adversarial_review_prompts()["prompts"]["blind"]["prompt"]
+
+
+def test_carried_finding_requests_only_its_originator():
+    runner = cast(Any, map_step_runner)
+    scope = {"unresolved_findings": [
+        {"id": "RVF-002", "source_agent": "role", "originating_reviewer": "maintainer",
+         "claim": "Retry loses writes", "affected_files": ["writer.py"]},
+        {"id": "RVF-003", "source_agent": "adversarial", "reported_by": ["blind"],
+         "claim": "Rollback race", "affected_files": ["writer.py"]},
+    ]}
+    assert "RVF-002" in runner._review_resolution_request("base", scope, "maintainer")
+    assert "RVF-003" not in runner._review_resolution_request("base", scope, "maintainer")
+    assert "RVF-003" in runner._review_resolution_request("base", scope, "blind")
+    assert runner._review_resolution_request("base", scope, "predictor") == "base"
+
+
+def test_reviewer_schemas_expose_checked_finding_and_resolution_fields():
+    runner = cast(Any, map_step_runner)
+    for role in ("monitor", "predictor", "evaluator", "user_experience", "maintainer"):
+        schema = runner.AGENT_OUTPUT_SCHEMAS[role]
+        assert "resolved_findings" in schema["skeleton"]
+        assert "resolved_findings" not in schema["required_keys"]
+        assert "a nonempty evidence string" in schema["skeleton"]["resolved_findings"]
+    for finding in (runner.AGENT_OUTPUT_SCHEMAS["monitor"]["skeleton"]["issues"][0],
+                    runner.ROLE_FINDING_SCHEMA["findings"][0],
+                    runner.ADVERSARIAL_FINDING_SCHEMA["findings"][0]):
+        assert set(runner.REVIEW_FINDING_EVIDENCE_SCHEMA).issubset(finding)
+    assert "resolved_findings" in runner.ADVERSARIAL_FINDING_SCHEMA
+    predictor = runner.AGENT_OUTPUT_SCHEMAS["predictor"]["skeleton"]
+    assert set(runner.REVIEW_FINDING_EVIDENCE_SCHEMA).issubset(predictor)
 
 
 def test_review_round_retry_and_cap_are_durable(branch_workspace):
