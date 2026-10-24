@@ -346,12 +346,12 @@ When compare mode is active, run two review collections with `ordering_label='de
 On Codex, `<n>` in `task_name` (the `map_review_<role>_<n>` counter from Step A.2) keeps incrementing across both collections, so the second (`reverse`) collection dispatches with fresh names.
 
 ### Step A.2: Launch all parallel calls
-Before launching agents, build the reviewer prompts with `build_review_prompts`. Prompts are NOT truncated: each reviewer receives the whole bundle, the review preferences and the full diff. `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is reported in the output for reference only — it clips nothing. If a prompt outgrows the context window, that is an operator decision (`/compact`), not a silent drop.
+Before launching agents, build the reviewer prompts with `build_review_prompts`. Prompts are NOT truncated: each reviewer receives the whole bundle, the review preferences and the full diff. `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is reported in the output for reference only — it clips nothing. A prompt above 512 KiB returns `status: error`; stop dispatch and report the byte counts and reason. Split the change or reduce source evidence before retrying.
 
 ```bash
 REVIEW_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_review_prompts \
   --review-preferences "[paste Review Preferences section above]")
-
+printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("status") == "success" else d.get("reason", str(d)))' || exit 1
 MONITOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["monitor"]["prompt"])')
 PREDICTOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["predictor"]["prompt"])')
 EVALUATOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["evaluator"]["prompt"])')

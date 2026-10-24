@@ -291,10 +291,14 @@ def test_review_target_and_bundle_use_bounded_git_argv(policy_repo, monkeypatch)
     # A small supported argv ceiling models E2BIG without stressing the OS.
     # Each ordinary Git call fits; expanding the inventory into argv does not.
     names = [f"source_{index:03d}_with_a_long_descriptive_name.py" for index in range(48)]
+    git("checkout", "main")
     for name in names:
         Path(name).write_text("value = 1\n")
+    Path("large_unchanged.bin").write_bytes(b"\0" + b"x" * 2_000_000)
     git("add", ".")
     git("commit", "-m", "ordinary source inventory")
+    git("checkout", "feature")
+    git("merge", "--ff-only", "main")
     Path(names[0]).write_text("value = 2\n")
     real_run = subprocess.run
     limit = 1024
@@ -312,13 +316,21 @@ def test_review_target_and_bundle_use_bounded_git_argv(policy_repo, monkeypatch)
     admitted = runner.begin_review_run(branch="feature")
     assert admitted["status"] == "success", admitted
     assert "unverified_reason" not in admitted["target"], admitted["target"]
-    assert set(names) <= set(admitted["required_files"])
+    assert set(names) | {"large_unchanged.bin"} <= set(admitted["required_files"])
     bundle = runner.create_review_bundle(branch="feature")
     assert bundle["status"] == "success", bundle
     persisted = json.loads(Path(".map/feature/review-bundle.json").read_text())
     assert persisted["snapshot"]["target"] == admitted["target"]
     assert persisted["attribution"]["diff_sha256"] == admitted["target"]["diff_digest"]
-    assert set(names) <= {entry["path"] for entry in persisted["attribution"]["files"]}
+    attributed = {entry["path"] for entry in persisted["attribution"]["files"]}
+    assert names[0] in attributed
+    assert not (set(names[1:]) | {"large_unchanged.bin"}) & attributed
+    markdown = Path(bundle["bundle_path_md"]).read_text()
+    assert "large_unchanged.bin" not in markdown
+    assert "snapshot_sha256" in markdown
+    prompts = runner.build_review_prompts(branch="feature")
+    assert prompts["status"] == "success", prompts
+    assert max(len(entry["prompt"].encode()) for entry in prompts["prompts"].values()) < 100_000
     assert not oversized_calls
 
 
