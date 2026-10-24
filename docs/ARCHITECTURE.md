@@ -1792,6 +1792,8 @@ Their output is governed by a **five-part contract** — `problem` (one line + `
 
 **Evidence-First Review Contracts:** Monitor, Predictor, and Evaluator prompts require `evidence[]` before verdict, risk, or score fields. Evidence entries include file path, line range, quote, and relevance so reviewers can trace HIGH/CRITICAL issues, breaking-change claims, and low quality scores back to concrete bundle or diff material.
 
+Follow-up review prompts add a per-originator list of unresolved finding IDs before capture. The ledger only closes an ID through a checked `resolved_findings` object from its originating reviewer; completed round captures remain immutable. A Predictor `risk_assessment=low` with a nonempty `breaking_changes` summary is advisory unless it also reports a concrete defect with bug class, cause or failure scenario.
+
 **Generic JSON Prompt Contracts:** Skill prompts that ask an agent to return JSON via `Output JSON with:` must be backed by either an evidence-first contract or a reusable reference in `.claude/references/map-json-output-contracts.md`. The regression suite scans development skills and `src/mapify_cli/templates/skills/` so future prompt edits cannot add vague unsupported JSON verdicts, summaries, or risk fields without a concrete output contract.
 
 **Token Usage:** ~15-25K tokens (parallel agents + interactive 4-section presentation; `--ci` mode ~12-15K)
