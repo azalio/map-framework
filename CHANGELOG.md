@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.34.2] - 2026-10-25
+
 ### Fixed
 - Ask for structured resolution of carried review findings before a round closes: each carried finding goes to its originating reviewer (or every listed adversarial reporter) in the next round's initial prompt with its stable ID and required `resolved_findings` evidence. Completed round captures stay immutable; clean verdicts or prose no longer silently close an unresolved finding, and a low-risk Predictor `breaking_changes` summary alone no longer becomes a blocking finding. (#585)
 - Keep large review attribution out of prompts: full base/current revisions and line mapping stay in the snapshot-bound `review-bundle.json`, while changed files above 32 KiB are indexed by size and SHA-256 in prompt-facing Markdown. The isolated acceptance reviewer may Read the matching immutable bundle after its SHA-256 receipt is verified; the selected diff and the 512 KiB dispatch guard are unchanged. (#586)
