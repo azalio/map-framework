@@ -1208,18 +1208,28 @@ for user in users:
 2. Check if external calls can be mocked
 3. Review included tests for coverage
 4. Validate test assertions are specific
+5. Apply the vacuous-test check below to every new or changed test
+
+[% include "_partials/vacuous-test-check.md.jinja" %]
+A vacuous test does not count as coverage: a `VCn` or requirement covered only
+by vacuous tests has `test_coverage != PASS` and falls under the contract
+Decision Rule. Report each one as a `testability` issue titled
+`Vacuous test: <test id>` that names the missing assertion; severity HIGH when it
+is the only test for a requirement, otherwise MEDIUM.
 
 #### Pass Criteria
 - Dependencies injected, not hardcoded
 - Tests cover happy path and errors
 - Tests are deterministic and isolated
 - Assertions validate specific behaviors
+- Every new or changed test fails against a do-nothing implementation
 
 #### Common Failures
 - Hardcoded external dependencies
 - Missing tests for error cases
 - Flaky tests (time-dependent, order-dependent)
 - Generic assertions (assertTrue without specifics)
+- Vacuous tests that stay green against a do-nothing implementation
 
 #### Severity Mapping
 - **Critical**: Untestable design blocking all testing

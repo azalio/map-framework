@@ -624,6 +624,30 @@ Untested code is broken code waiting to happen. Testability indicates design qua
 - [ ] Happy path + error cases tested?
 - [ ] Edge cases covered?
 - [ ] Tests are deterministic (not flaky)?
+- [ ] Every new or changed test fails against a do-nothing implementation?
+
+**Vacuous-test check (do-nothing implementation).** For every new or changed
+test, name the assertion that would FAIL if the code under test were replaced by
+a do-nothing implementation: each function returns the empty value of its return
+type (`None`, `[]`, `{}`, `""`, `0`, `False`) and performs no side effect (no
+write, no call, no state change). No such assertion means the test is
+**vacuous**: it stays green when the code does nothing, so it verifies no behavior.
+
+Typical vacuous shapes:
+- no assertion at all: `process(data)`
+- only a type/shape check an empty value satisfies: `assert isinstance(parse("a,b"), list)`
+- only `is not None` / truthiness of a value an empty implementation also returns: `assert load({"x": 1}) is not None`
+- only checks values the test set up itself, never calling the code under test: `repo.get.return_value = item; assert repo.get(1) == item`
+
+Not vacuous: `assert parse("a,b") == ["a", "b"]`; expected-exception tests
+(`pytest.raises`, `assertRaises`, `toThrow`), because a do-nothing implementation
+does not raise; and, for code whose job is a side effect, assertions on that
+effect (written content, persisted row, a call with the expected arguments).
+This check catches tests that verify nothing; it does not prove a test checks the
+right thing (that needs mutation testing).
+
+Score vacuous tests as absent: they add nothing to test coverage or test
+quality, and code covered only by vacuous tests is scored as untested.
 
 <example type="score_9">
 **Code**: Dependency injection, 95% coverage, tests for happy path + 5 error cases + 3 edge cases, mocked external APIs, isolated tests.

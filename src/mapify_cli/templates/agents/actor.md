@@ -289,6 +289,7 @@ Rules:
 8. Do NOT add temporal comments about test failure status (e.g., "currently FAILS",
    "expected to FAIL", "will PASS once fix is applied"). Write tests as permanent,
    clean code — the Red/Green state is transient and must not leak into comments.
+9. Every test must pass the vacuous-test check in section 5 (Testing Considerations).
 
 Output:
 - Test files created via Write tool
@@ -395,6 +396,29 @@ Document key decisions using this structure:
 - For each `VCn:` item in `validation_criteria`, implement or update at least one automated test that would fail without your change and pass with it.
 - Prefer naming tests with `vc<n>` (e.g., `test_vc1_*`, `TestVC1*`) so Monitor can deterministically confirm coverage.
 
+**Vacuous-test check (do-nothing implementation).** For every new or changed
+test, name the assertion that would FAIL if the code under test were replaced by
+a do-nothing implementation: each function returns the empty value of its return
+type (`None`, `[]`, `{}`, `""`, `0`, `False`) and performs no side effect (no
+write, no call, no state change). No such assertion means the test is
+**vacuous**: it stays green when the code does nothing, so it verifies no behavior.
+
+Typical vacuous shapes:
+- no assertion at all: `process(data)`
+- only a type/shape check an empty value satisfies: `assert isinstance(parse("a,b"), list)`
+- only `is not None` / truthiness of a value an empty implementation also returns: `assert load({"x": 1}) is not None`
+- only checks values the test set up itself, never calling the code under test: `repo.get.return_value = item; assert repo.get(1) == item`
+
+Not vacuous: `assert parse("a,b") == ["a", "b"]`; expected-exception tests
+(`pytest.raises`, `assertRaises`, `toThrow`), because a do-nothing implementation
+does not raise; and, for code whose job is a side effect, assertions on that
+effect (written content, persisted row, a call with the expected arguments).
+This check catches tests that verify nothing; it does not prove a test checks the
+right thing (that needs mutation testing).
+
+Self-check before handoff: rewrite or drop any vacuous test. Monitor counts it as
+no coverage.
+
 **Format**:
 ```text
 1. test_[function]_[scenario]_[expected]
@@ -484,6 +508,7 @@ exhaustive test matrices by default.
 - [ ] Trade-offs documented with alternatives
 - [ ] Test cases cover happy + edge + error paths
 - [ ] Each `validation_criteria` item has at least one automated test (or explicit N/A with reason)
+- [ ] No vacuous tests: each new or changed test fails against a do-nothing implementation
 - [ ] Template variables `{{...}}` preserved in generated code
 
 ### Hallucination Guard

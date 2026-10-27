@@ -244,8 +244,8 @@ TEST QUALITY REQUIREMENTS — avoid "2+2=4" tests:
   should or should NOT happen.
 - Prefer scenario-based tests that exercise a CHAIN of behavior (setup → action →
   verify multiple outcomes) over unit-level tests that check one field.
-- For each test ask: "Would this test catch a real bug, or does it just confirm
-  the obvious?" If the answer is "obvious", merge it into a richer scenario or drop it.
+- For each test name the assertion that fails if the code does nothing (returns
+  `None`/`[]`/`{}`/`""`, no side effect). None → the test is vacuous: rewrite or drop it.
 - Aim for at least 60% of tests being full semantic scenarios (multi-step, multi-assert).
 
 Output:
@@ -310,6 +310,7 @@ fi
 Review the test files and classify each test as:
 - **Semantic** — tests real behavior with multi-step scenario or multi-assert verification
 - **Trivial ("2+2=4")** — tests a single if-branch or obvious nil-check with one assert
+- **Vacuous** — stays green against a do-nothing implementation; even one → back to TEST_WRITER to rewrite it
 
 If more than 40% of tests are trivial, go back to TEST_WRITER with feedback:
 "Too many trivial tests. [N] of [M] tests are single-branch checks. Merge trivial

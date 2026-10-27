@@ -1263,18 +1263,47 @@ for user in users:
 2. Check if external calls can be mocked
 3. Review included tests for coverage
 4. Validate test assertions are specific
+5. Apply the vacuous-test check below to every new or changed test
+
+**Vacuous-test check (do-nothing implementation).** For every new or changed
+test, name the assertion that would FAIL if the code under test were replaced by
+a do-nothing implementation: each function returns the empty value of its return
+type (`None`, `[]`, `{}`, `""`, `0`, `False`) and performs no side effect (no
+write, no call, no state change). No such assertion means the test is
+**vacuous**: it stays green when the code does nothing, so it verifies no behavior.
+
+Typical vacuous shapes:
+- no assertion at all: `process(data)`
+- only a type/shape check an empty value satisfies: `assert isinstance(parse("a,b"), list)`
+- only `is not None` / truthiness of a value an empty implementation also returns: `assert load({"x": 1}) is not None`
+- only checks values the test set up itself, never calling the code under test: `repo.get.return_value = item; assert repo.get(1) == item`
+
+Not vacuous: `assert parse("a,b") == ["a", "b"]`; expected-exception tests
+(`pytest.raises`, `assertRaises`, `toThrow`), because a do-nothing implementation
+does not raise; and, for code whose job is a side effect, assertions on that
+effect (written content, persisted row, a call with the expected arguments).
+This check catches tests that verify nothing; it does not prove a test checks the
+right thing (that needs mutation testing).
+
+A vacuous test does not count as coverage: a `VCn` or requirement covered only
+by vacuous tests has `test_coverage != PASS` and falls under the contract
+Decision Rule. Report each one as a `testability` issue titled
+`Vacuous test: <test id>` that names the missing assertion; severity HIGH when it
+is the only test for a requirement, otherwise MEDIUM.
 
 #### Pass Criteria
 - Dependencies injected, not hardcoded
 - Tests cover happy path and errors
 - Tests are deterministic and isolated
 - Assertions validate specific behaviors
+- Every new or changed test fails against a do-nothing implementation
 
 #### Common Failures
 - Hardcoded external dependencies
 - Missing tests for error cases
 - Flaky tests (time-dependent, order-dependent)
 - Generic assertions (assertTrue without specifics)
+- Vacuous tests that stay green against a do-nothing implementation
 
 #### Severity Mapping
 - **Critical**: Untestable design blocking all testing
