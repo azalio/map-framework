@@ -75,6 +75,11 @@ def vacuous_checks_own_setup(impl: SimpleNamespace) -> None:
     assert repo.get(1) == item
 
 
+def vacuous_exception_raised_by_test(impl: SimpleNamespace) -> None:
+    with pytest.raises(KeyError):
+        impl.load({"x": 1})["missing"]  # the test's own indexing raises
+
+
 # Shapes the partial names as NOT vacuous.
 def behavioral_value(impl: SimpleNamespace) -> None:
     assert impl.parse("a,b") == ["a", "b"]
@@ -95,6 +100,7 @@ VACUOUS: list[Callable[[SimpleNamespace], None]] = [
     vacuous_type_only,
     vacuous_not_none,
     vacuous_checks_own_setup,
+    vacuous_exception_raised_by_test,
 ]
 BEHAVIORAL: list[Callable[[SimpleNamespace], None]] = [
     behavioral_value,
@@ -127,6 +133,8 @@ def test_partial_examples_match_the_executed_fixtures() -> None:
         'assert isinstance(parse("a,b"), list)',
         'assert load({"x": 1}) is not None',
         "repo.get.return_value = item; assert repo.get(1) == item",
+        'with pytest.raises(KeyError): load({"x": 1})["missing"]',
+        "whose exception is raised by the code\nunder test",
         'assert parse("a,b") == ["a", "b"]',
         "pytest.raises",
     ):

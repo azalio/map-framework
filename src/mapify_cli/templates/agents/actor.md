@@ -408,10 +408,12 @@ Typical vacuous shapes:
 - only a type/shape check an empty value satisfies: `assert isinstance(parse("a,b"), list)`
 - only `is not None` / truthiness of a value an empty implementation also returns: `assert load({"x": 1}) is not None`
 - only checks values the test set up itself, never calling the code under test: `repo.get.return_value = item; assert repo.get(1) == item`
+- expects an exception the test itself raises, not the code under test: `with pytest.raises(KeyError): load({"x": 1})["missing"]`
 
 Not vacuous: `assert parse("a,b") == ["a", "b"]`; expected-exception tests
-(`pytest.raises`, `assertRaises`, `toThrow`), because a do-nothing implementation
-does not raise; and, for code whose job is a side effect, assertions on that
+(`pytest.raises`, `assertRaises`, `toThrow`) whose exception is raised by the code
+under test, because a do-nothing implementation does not raise it; and, for code
+whose job is a side effect, assertions on that
 effect (written content, persisted row, a call with the expected arguments).
 This check catches tests that verify nothing; it does not prove a test checks the
 right thing (that needs mutation testing).
