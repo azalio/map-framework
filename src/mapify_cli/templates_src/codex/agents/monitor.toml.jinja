@@ -403,11 +403,19 @@ What to Check:
 - Tests included (happy path, errors, edge cases)
 - Test quality (deterministic, isolated, specific assertions)
 
+[% include "_partials/vacuous-test-check.md.jinja" %]
+A vacuous test does not count as coverage: a `VCn` or requirement covered only
+by vacuous tests has `test_coverage != PASS` and falls under the contract
+Decision Rule. Report each one as a `testability` issue titled
+`Vacuous test: <test id>` that names the missing assertion; severity HIGH when it
+is the only test for a requirement, otherwise MEDIUM.
+
 Pass Criteria:
 - Dependencies injected, not hardcoded
 - Tests cover happy path and errors
 - Tests are deterministic and isolated
 - Assertions validate specific behaviors
+- Every new or changed test fails against a do-nothing implementation
 
 Severity Mapping:
 - Critical: Untestable design blocking all testing

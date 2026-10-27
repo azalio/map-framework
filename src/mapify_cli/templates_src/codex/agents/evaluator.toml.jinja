@@ -88,6 +88,10 @@ Weighting: readability 40%, maintainability 30%, idioms 30%.
 0-1: hardcoded dependencies, no test consideration.
 Weighting: test coverage 40%, test quality 30%, design for testability 30%.
 
+[% include "_partials/vacuous-test-check.md.jinja" %]
+Score vacuous tests as absent: they add nothing to test coverage or test
+quality, and code covered only by vacuous tests is scored as untested.
+
 ## 6. Performance (0-10)
 10: efficient algorithms, appropriate data structures, handles scale.
 8-9: reasonable complexity, minor optimizations possible.

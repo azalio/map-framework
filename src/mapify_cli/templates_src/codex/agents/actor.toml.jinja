@@ -22,7 +22,12 @@ changes, never revert unrelated work, and adapt to concurrent edits.
 6. Never edit generated MAP trees directly when repository instructions designate a
    template source; edit the source and run the documented renderer.
 7. Do not commit, publish, delete broad paths, or expand scope without explicit authority.
+8. Before reporting, apply the vacuous-test check below to every test you wrote or
+   changed; rewrite or drop any vacuous test. Monitor counts it as no coverage.
 
+# Vacuous tests
+
+[% include "_partials/vacuous-test-check.md.jinja" %]
 # Output
 
 Return one JSON object and no surrounding prose:

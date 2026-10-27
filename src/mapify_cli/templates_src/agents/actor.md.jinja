@@ -289,6 +289,7 @@ Rules:
 8. Do NOT add temporal comments about test failure status (e.g., "currently FAILS",
    "expected to FAIL", "will PASS once fix is applied"). Write tests as permanent,
    clean code — the Red/Green state is transient and must not leak into comments.
+9. Every test must pass the vacuous-test check in section 5 (Testing Considerations).
 
 Output:
 - Test files created via Write tool
@@ -395,6 +396,10 @@ Document key decisions using this structure:
 - For each `VCn:` item in `validation_criteria`, implement or update at least one automated test that would fail without your change and pass with it.
 - Prefer naming tests with `vc<n>` (e.g., `test_vc1_*`, `TestVC1*`) so Monitor can deterministically confirm coverage.
 
+[% include "_partials/vacuous-test-check.md.jinja" %]
+Self-check before handoff: rewrite or drop any vacuous test. Monitor counts it as
+no coverage.
+
 **Format**:
 ```text
 1. test_[function]_[scenario]_[expected]
@@ -484,6 +489,7 @@ exhaustive test matrices by default.
 - [ ] Trade-offs documented with alternatives
 - [ ] Test cases cover happy + edge + error paths
 - [ ] Each `validation_criteria` item has at least one automated test (or explicit N/A with reason)
+- [ ] No vacuous tests: each new or changed test fails against a do-nothing implementation
 - [ ] Template variables `{{...}}` preserved in generated code
 
 ### Hallucination Guard

@@ -2159,6 +2159,7 @@ If you forked the skill-backed `/map-efficient` workflow, you must manually inte
 - **Functionality:** Does it solve the problem completely?
 - **Security:** OWASP compliance, input validation, secure defaults
 - **Testability:** Can it be easily tested? Clear test cases provided?
+  Vacuous tests (green against a do-nothing implementation) count as absent; Monitor and Actor apply the same check from `_partials/vacuous-test-check.md.jinja`.
 - **Maintainability:** Clear code, good naming, documented trade-offs
 
 **Approval Threshold:** >7.0 overall score

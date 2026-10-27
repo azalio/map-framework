@@ -624,6 +624,11 @@ Untested code is broken code waiting to happen. Testability indicates design qua
 - [ ] Happy path + error cases tested?
 - [ ] Edge cases covered?
 - [ ] Tests are deterministic (not flaky)?
+- [ ] Every new or changed test fails against a do-nothing implementation?
+
+[% include "_partials/vacuous-test-check.md.jinja" %]
+Score vacuous tests as absent: they add nothing to test coverage or test
+quality, and code covered only by vacuous tests is scored as untested.
 
 <example type="score_9">
 **Code**: Dependency injection, 95% coverage, tests for happy path + 5 error cases + 3 edge cases, mocked external APIs, isolated tests.
