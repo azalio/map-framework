@@ -127,8 +127,6 @@ This recommendation is not an enforced minimum.
 
 - Code hard-floor: `optimize` exits **code 2** (zero quota) if the set has fewer than 5 entries.
 - `run` has no such floor — any non-empty valid set works.
-- Note: the `map-skill-eval` SKILL.md mentions "≥ 5 entries"; the real binding constraint is
-  `n_test >= 3`, so author **≥ 8** to be safe.
 
 > Smoke fixture caveat: `tests/skills_eval/fixtures/map_debug_eval_set.json` is a pinned **3-entry**
 > smoke set for unit tests — do **not** add entries or rename it. Optimizer fixtures are the
