@@ -73,7 +73,7 @@ mapify skill-eval view <skill> [--result PATH] [--open]
 ### `optimize` flags
 | Flag | Meaning |
 |---|---|
-| `--eval-set PATH` | **Required.** Needs enough entries that `n_test >= 3` (see sizing). |
+| `--eval-set PATH` | **Required.** Minimum 5 entries; recommend 8–10 (see sizing). |
 | `--iterations N` | Max iterations. Default **5**. Iteration 0 = baseline (current description). |
 | `--provider claude\|codex` | Provider to evaluate and optionally apply. Default **claude**. |
 | `--apply` | Patch the winning description into `templates_src/skills/<skill>/SKILL.md.jinja` and re-render. **Staged, not committed.** `skill-rules.json` is **not** auto-patched. |
@@ -117,13 +117,15 @@ A JSON object with an `entries` array. Each entry:
 - Include **1–2 `should_not_trigger` negatives** so the rejection path is exercised.
 - `contains` values should be lowercase substrings that genuinely appear in the prompt/response.
 
-### Sizing — minimum 7, recommended 8–10 entries for `optimize`
+### Sizing — minimum 5, recommended 8–10 entries for `optimize`
 
 The optimizer uses a deterministic 60/40 train/test split: `n_test = max(1, round(n * 0.4))`.
-The held-out floor is **`n_test >= 3`**: **n = 7** already qualifies (`round(2.8) = 3`).
-Target **8–10** entries for authoring; this recommendation is not the code minimum.
+The CLI minimum is **5 entries**. Five- and six-entry sets produce two held-out entries;
+seven entries produce three. For a more meaningful held-out signal, recommend
+`n_test >= 3` (at least 7 entries); target **8–10** entries for authoring.
+This recommendation is not an enforced minimum.
 
-- Code hard-floor: `optimize` exits **code 2** (zero quota) if the set is too small to reach `n_test >= 3`.
+- Code hard-floor: `optimize` exits **code 2** (zero quota) if the set has fewer than 5 entries.
 - `run` has no such floor — any non-empty valid set works.
 - Note: the `map-skill-eval` SKILL.md mentions "≥ 5 entries"; the real binding constraint is
   `n_test >= 3`, so author **≥ 8** to be safe.
@@ -275,7 +277,7 @@ no double-spend.
 |---|---|
 | `claude not found` | `claude` CLI not on `$PATH`. Install it, re-run `mapify init` to re-activate the skill. |
 | Validation error on `--dry-run` | Each entry needs a non-empty `prompt`; assertions need a valid `type`. |
-| `optimize` exits code 2 | Eval-set too small — needs `n_test >= 3` (minimum 7 entries; recommend 8–10). |
+| `optimize` exits code 2 | Eval-set too small — minimum 5 entries; recommend 8–10. |
 | `--resume` finds no log | No prior `.jsonl` for that skill — omit `--resume` to start fresh. |
 | Every case reports `not_trigger` | Skill name must match exactly (`map-plan`, not `map_plan`); confirm the selected provider's skill tree is seeded in the temp cwd. |
 | Optimize "No improvement found" | Baseline description already optimal for this eval-set — not an error. |
