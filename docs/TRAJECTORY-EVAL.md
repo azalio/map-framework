@@ -1,4 +1,19 @@
+---
+id: map-trajectory-evaluation
+type: submodule-design
+title: Trajectory-Eval — Outcome Quality & Regression Detection
+status: draft
+parent: map-skill-evaluation
+references:
+  - map-architecture
+  - map-product
+---
+
 # Trajectory-Eval — Outcome Quality & Regression Detection
+
+Initial draft spec adopted in place beneath [skill evaluation](SKILL-EVAL.md).
+System context and product goals remain owned by [map-architecture](ARCHITECTURE.md)
+and [map-product](../goal-and-requirements.md).
 
 > Repeatable guide for `mapify skill-eval trajectory` (issue #351, AgentLens-style).
 > Scores the OUTCOME of a full agent run, not just whether the skill fired.
@@ -15,7 +30,7 @@ miss. It is the shipped successor to the whole-skill outcome-eval spike
 
 | Surface | What it measures | Unit | Judge? |
 |---|---|---|---|
-| `skill-eval run`/`optimize` | **Trigger** accuracy + description cost | one `claude -p` prompt | no |
+| `skill-eval run`/`optimize` | **Trigger** accuracy + description cost | one Claude/Codex prompt | no |
 | `skill-eval trajectory` (this) | **Outcome** quality of a full run | full trajectory bundle | yes (batched) |
 | governance fixtures (#350) | **Deterministic** negative-proof on gates | gate inputs | no |
 
@@ -30,7 +45,11 @@ judges process quality with evidence-linked component metrics.
   `tests/skills_eval/fixtures/whole_skill/map_task_false_success/` for a
   regression-catching example.
 - Each run seeds a throwaway cwd (`.claude/` + `.map/scripts/` + fixture repo)
-  and executes the full skill body — minutes per run, real quota.
+  and executes the full skill body — minutes per run, real quota. Unlike trigger evaluation,
+  the trajectory command currently uses Claude only.
+- Temporary directories isolate artifacts, **not OS access**: they are not security
+  sandboxes. Agent and fixture test subprocesses retain same-user access; run only trusted
+  fixtures with explicit quota authorization.
 
 ## Command
 
@@ -70,11 +89,15 @@ trajectory artifact.
 | `pitfalls` | judge | process quality (loops, false progress, missing validation) |
 | `reporting_trust` | judge | final claims match logs/artifacts; no hidden failures |
 
-- Deterministic components are scored 0/1 from artifacts + git + the test cmd.
+- `formal` and `end_result` are binary 0/1 from artifacts + git + the test cmd.
+  `tool_use` is graded on `[0,1]`: retries and guard rework reduce it by 0.15 per event,
+  floored at zero; absent resiliency signals yield a documented neutral 1.0.
 - Judge components come from **one batched `claude -p` call** (cheaper than
   N isolated calls), normalized from a 1–5 rubric to `[0,1]`.
-- `composite` = `0.5·det_avg + 0.5·judge_avg`; `hard_pass` additionally
-  requires `formal` AND `end_result` to pass and `composite ≥ 0.8`.
+- With both metric classes present, `composite` = `0.5·det_avg + 0.5·judge_avg`.
+  If a whole class is absent (e.g. judge skipped), the available class receives full weight;
+  with no components the score is zero. Thus `--no-judge` uses `det_avg`, not half of it.
+  `hard_pass` additionally requires `formal` AND `end_result` to pass and `composite ≥ 0.8`.
 
 ## Repeated runs & flaky detection
 
