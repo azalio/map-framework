@@ -1,6 +1,16 @@
+---
+id: map-architecture
+type: architecture-design
+title: MAP Framework Architecture
+status: draft
+parent: map-product
+---
+
 # MAP Framework Architecture
 
 Deep technical documentation for MAP (Modular Agentic Planner) implementation.
+
+Spec graph: [product goals](../goal-and-requirements.md) (`map-product`). This document is the architecture node `map-architecture`, adopted in place as a draft pending user review. The opening architecture contract takes precedence over conflicting historical deep-dive material below the Freshness section; detailed contracts there remain useful where consistent. Generated runtime surfaces implement these contracts but are not template authoring sources.
 
 > **Research Foundation:** [Nature Communications research (2025)](https://github.com/Shanka123/MAP) — 74% improvement in planning tasks
 
@@ -10,7 +20,7 @@ MAP is a Python 3.11+ CLI (`mapify`) plus provider-specific prompt/skill scaffol
 
 The 3.11 floor applies to **two independent interpreters**, and they are usually not the same one. The CLI runs under whatever installed it (`uvx`/`uv tool`/`pip`), constrained by `requires-python` and re-checked at import by `mapify_cli/_python_guard.py`. The installed runtime surfaces — every hook in `.claude/hooks/` and `.codex/hooks/`, every runner in `.map/scripts/` — are executables with a `#!/usr/bin/env python3` shebang, so they run under PATH's `python3` in the user's shell (on stock macOS: 3.9). `mapify_cli/python_runtime.py` resolves that second interpreter the way a shebang does, skipping its own virtualenv/`uvx` `bin` because that environment is gone by the time Claude Code launches a hook; `mapify init` refuses to install onto a too-old one (`--skip-python-check`, or `MAPIFY_SKIP_PYTHON_CHECK=1` for non-interactive installs, overrides it; `--refresh-existing` warns instead of blocking), and `mapify check`/`doctor` report it. Each shipped executable carries the matching version guard rendered from `templates_src/_partials/python-version-guard.py.jinja`, so an old interpreter reports the version instead of an `ImportError` on `datetime.UTC`. The guard has two modes, selected per file by the including template: context and observability hooks **fail open** (stderr + exit 1, a non-blocking hook error), while the blocking PreToolUse gates — `safety-guardrails.py` and both `workflow-gate.py` copies, rendered with `guard_mode = "deny"` — **fail closed**, emitting the structured `permissionDecision: deny` response so a gate that cannot run never degrades into silent "allow".
 
-The current package is `mapify-cli` `3.30.1`. It ships a Typer CLI, provider delivery helpers, shared workflow-state and verification utilities, bundled Claude/Codex templates, hook scripts, cross-session memory helpers, skill-evaluation utilities, install manifest/lock auditing, durable approval holds, clean end-of-flow teardown, and tests that validate template contracts, artifact schemas, prompt tone, provider surfaces, workflow gates, memory hooks, skill-eval behavior, token-budget behavior, governance-deny fixtures, and install integrity.
+The package is `mapify-cli`. It ships a Typer CLI, provider delivery helpers, shared workflow-state and verification utilities, bundled Claude/Codex templates, hook scripts, cross-session memory helpers, skill-evaluation utilities, install manifest/lock auditing, durable approval holds, clean end-of-flow teardown, and tests that validate template contracts, artifact schemas, prompt tone, provider surfaces, workflow gates, memory hooks, skill-eval behavior, token-budget behavior, governance-deny fixtures, and install integrity.
 
 The remainder of this file contains the deeper implementation dive (workflow-specific agent sequences, artifact specs, MCP integration, template maintenance, and context engineering).
 
@@ -121,7 +131,7 @@ sidecar writers; this does not claim power-loss durability or filesystem fsync.
 
 The step runner owns acceptance contracts, execution receipts and derived status under `.map/<branch>/`; agents cannot supply a `proven` flag. The authoritative inventory is the spec Requirements Index, including ACs missing from the blueprint. Exact IDs are preserved rather than normalizing `AC-1` into `AC-001`. Citation coverage is separate from executable evidence.
 
-Independent TEST_WRITER/RED precedes `freeze_acceptance_contract`: argv or explicit interpreter/script, cwd, timeout, subtask, authoring provenance, requirement digest and proof-file content/modes are frozen before Actor. Single-subtask handoff, batch, wave and resumed admission validate that contract. An implementation agent cannot silently re-freeze its own assertions. `request_acceptance_revision` returns a subtask to independent test-first authoring; `begin_acceptance_authoring` and `revise_acceptance_contract` preserve old/new content and an audit of author, timestamp, reason, command/assertion diff and invalidated contracts/receipts. Weakening/narrowing requires explicit justification; unknown impact blocks acceptance. Hashes detect changed content, not semantic equivalence.
+Independent TEST_WRITER/RED precedes `freeze_acceptance_contract`: argv or explicit interpreter/script, cwd, timeout, subtask, authoring provenance, requirement digest and proof-file content/modes are frozen before Actor. Single-subtask handoff, batch, wave and resumed admission validate that contract. An implementation agent cannot silently re-freeze its own assertions. `request_acceptance_revision` returns a subtask to independent test-first authoring; `begin_acceptance_authoring` and `revise_acceptance_contract` preserve old/new content and an audit of author, timestamp, reason, command/assertion diff and invalidated contracts/receipts. Weakening/narrowing requires explicit justification; unknown impact blocks acceptance. Hashes detect changed content, not semantic equivalence. A runner-proven `additive` assessment is the narrow exception for changed command scope: `_acceptance_additive_evidence` in `templates_src/_partials/acceptance-runtime.py.jinja` requires unchanged previous frozen file entries (bytes, modes and hashes), original argv in order, identical cwd and non-decreasing timeout. Only distinct new explicit pytest test-file targets beside existing targets, with distinct basenames and exactly matching added frozen proof files, are allowed (`pytest` or Python `-m pytest`, with unchanged verbosity flags); selectors, directories, wrappers and other options are unsupported. Independent revision authoring still applies. `assess_acceptance_revision` can recover an unknown assessment for an exact revision with this proof; stored evidence and live files are revalidated. This proves a mechanical target superset, not semantic equivalence or isolation from test imports/plugins.
 
 Acceptance reuses the durable execution owner/supervisor and snapshot machinery rather than creating review rounds. An admitted attempt binds output digest/reference, exit/duration and before/after HEAD/index/dirty/untracked snapshots; contract, inventory and policy are bound separately because mutable `.map` outputs are excluded from product snapshots. The latest admitted attempt controls status, never the latest historical success. Restart, interruption and cleanup ownership remain execution lifecycle states, not successful AC outcomes.
 
@@ -141,7 +151,7 @@ This is conservative full-snapshot evidence, not dependency-selective reuse or h
 - Host-path and cross-process safety primitives, including canonical `MAP_*`/`~/.map/` reference docs and `flock_with_state` lock sidecars for serialized host-level workflows
 - Plan/spec citation validation that requires existing `file:line` evidence before decomposition proceeds
 - Per-subtask token accounting: the `map-token-meter` hook (SubagentStop/Stop) attributes transcript `usage` to the active subtask/phase/agent in `.map/<branch>/token_log.jsonl`, rolled up (with cost, cache-hit ratio, and advisory research ROI) into `token_accounting.json`; logic is self-contained in `.map/scripts/map_step_runner.py` so it runs without the `mapify_cli` package present
-- Internal-ID scrub: at run completion the `scrub-internal-ids.py` Stop hook removes MAP-internal workflow IDs (`ST-`/`AC-`/`VC-`/`INV-`/`HC-`) that leaked into run-changed code **comments** and `vc<n>` test names (strings, docstrings, and data files are left intact and only reported, to avoid corrupting legitimate values) and commits the cleanup; the deterministic engine in `.map/scripts/scrub_internal_ids.py` is hard-scoped to the run's git diff and runs once per completed run for both providers
+- Internal-ID scrub: at run completion the `scrub-internal-ids.py` Stop hook removes MAP-internal workflow IDs (`ST-`/`AC-`/`VC-`/`INV-`/`HC-`) that leaked into run-changed code **comments** and `vc<n>` test names (strings, docstrings, and data files are left intact and only reported, to avoid corrupting legitimate values) and leaves cleanup unstaged for operator review and commit under the host repository’s conventions (the hook never auto-commits); the deterministic engine in `.map/scripts/scrub_internal_ids.py` is hard-scoped to the run's git diff and runs once per completed run for both providers
 - Durable approval holds for human-gated risky workflow actions, including redacted branch-scoped JSON and Markdown artifacts plus explicit resume-blocking state
 - End-of-flow completion and teardown: sequential runs atomically mark `WORKFLOW_COMPLETE`, completed branches can be archived, and branch reuse auto-archives prior completed state before the next workflow starts
 - Skill/template audit surfaces such as `SkillIR`, prompt-tone checks, mutation-boundary checks, and dependency/task validation helpers
@@ -532,11 +542,13 @@ and its manifest entry are refreshed on each write, so whole-file bytes can chan
 - **Governance regression evidence**: `tests/test_governance_attack_fixtures.py` is the deny/allow fixture suite for governance surfaces such as workflow state, mutation boundaries, false-progress gates, wave lifecycle, safety guardrails, workflow-gate, and run-health schema.
 - **Documentation**: `README.md`, `docs/USAGE.md`, `docs/INSTALL.md`, and this document define expected behavior and invariants.
 
-## Worktree Isolation (per-subtask sandboxing)
+## Worktree Isolation (per-subtask checkouts)
 
 Per-subtask git worktree isolation (#284, default **ON** via `worktree.isolation:
-auto` since Slice 6) gives each `/map-efficient` subtask an isolated filesystem
-so a bad Actor attempt can never touch the working branch. It is **runner-owned**:
+auto` since Slice 6) gives each admitted isolated `/map-efficient` subtask a separate
+checkout and branch, keeping ordinary in-worktree edits off the working branch
+until explicit acceptance. This is not an OS sandbox: same-user processes can
+still access the main checkout and shared Git metadata. It is **runner-owned**:
 the step runner creates explicit worktrees rather than using the harness-native
 `isolation="worktree"` — the native mode hides the worktree path, which makes the
 deterministic safety gates, structured conflict reports, and explicit
@@ -1020,10 +1032,9 @@ Information not available in current evidence.
 
 ## Freshness
 
-Last refreshed: 2026-08-09
-
-Refresh reason: Incremental refresh after `main` fixed non-English Monitor
-feedback being silently dropped (#404).
+This draft was adopted from evolving implementation documentation, not a
+whole-document freshness audit. The historical deep dive below remains reference
+material; the opening architecture contract takes precedence where details differ.
 
 Evidence source files:
 - `README.md`
@@ -2031,7 +2042,7 @@ If you forked the skill-backed `/map-efficient` workflow, you must manually inte
 ```
 
 **Key Behaviors:**
-- Each subtask should be completable in <100 lines of code
+- Historical guidance favored <100 lines per subtask; the current contract has no line or token cap. Bound subtasks by approved scope and cohesive, testable responsibilities, not size alone.
 - Explicit dependency tracking
 - Complexity estimation (low/medium/high)
 - Considers existing codebase structure
@@ -2375,7 +2386,7 @@ MCP servers are configured differently depending on the usage context:
 
 ### Modifying Agent Prompts
 
-Agent prompts are located in `.claude/agents/*.md` and use **Handlebars template syntax** for dynamic context injection.
+Author framework agent prompts only in `src/mapify_cli/templates_src/agents/*.md.jinja` and provider-specific sources under `templates_src/codex/agents/`. These are **Jinja** sources rendered by `mapify_cli.delivery.template_renderer` (`make render-templates`; verify with `make check-render`). Shipped `templates/` and installed `.claude/agents/` / `.codex/agents/` are generated outputs, not authoring sources. The Handlebars examples below are historical context notation, not the current renderer syntax or a supported runtime substitution contract.
 
 #### Safe Modifications
 
@@ -2401,17 +2412,11 @@ Agent prompts are located in `.claude/agents/*.md` and use **Handlebars template
 
 #### Unsafe Modifications
 
-❌ **You CANNOT remove:**
-- Template variables: `{{language}}`, `{{project_name}}`, `{{framework}}`
-- Conditional blocks: `{{#if existing_patterns}}...{{/if}}`
-- Context sections: `{{subtask_description}}`, `{{feedback}}`
+Preserve the current source templates’ required context, feedback loops, provider conditionals and output contracts when editing. Validate changes through rendering and the relevant template-contract tests; do not rely on historical placeholder names or an assumed pre-commit presence check.
 
-**Why they're critical:**
-- Orchestrator fills these at runtime with project context
-- Removing them breaks multi-language support and feedback loops
-- Git pre-commit hook validates their presence (see Hooks Integration)
+#### Historical Template Variable Reference
 
-#### Template Variable Reference
+The following examples preserve the earlier design notation only; consult the current Jinja sources for actual variables and includes.
 
 **Available in all agents:**
 ```handlebars
