@@ -138,6 +138,13 @@ unverified application changes abort the workflow. Push application changes and
 wait for their CI before restarting validation; do not select the latest run on
 `main` or override a failing gate.
 
+During Phase 5, a nonzero `gh run watch` exit triggers a warning, not a release
+failure verdict: GitHub annotation/API errors can interrupt a healthy watch.
+The final `gh run view` check still requires completed success for the exact tag
+commit. If the run is still active or its status cannot be verified, the workflow
+stops; check the run and repeat monitoring rather than proceeding to publication
+verification.
+
 ## Python interpreter requirement (`python3` on PATH)
 
 MAP's runtime surfaces — every hook in `.claude/hooks/` and `.codex/hooks/`, and every runner in `.map/scripts/` — are executables that start with `#!/usr/bin/env python3`. They therefore start under the `python3` your shell resolves, **not** under the interpreter that ran `mapify` (with `uvx`/`uv tool run` that is a temporary environment whose `bin` is prepended to `PATH` only for the duration of the command). They require Python 3.11+; on a stock macOS `python3` is `/usr/bin/python3` (3.9), where the version guard reports the mismatch. Codex memory hooks then delegate memory operations to the installed `mapify _memory-hook` runtime, avoiding imports from the target project or ambient system interpreter.

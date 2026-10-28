@@ -1832,6 +1832,12 @@ in local commits after that verified base. Each gate requires a completed,
 successful CI run whose `headSha` equals the base; missing/malformed evidence,
 Git/GitHub failures and unverified application files abort before tag push.
 
+Phase 5 treats `gh run watch` as advisory: a nonzero exit may be a transport or
+annotation error rather than a failed release. Final `gh run view` evidence is
+authoritative and must show completed success for the exact tag commit. Query
+errors, malformed evidence, unfinished runs and unsuccessful conclusions still
+stop the workflow; watch failure alone does not bypass or replace this gate.
+
 **Phases:**
 1. Pre-release validation (12 gates: tests, lint, CI, security, CHANGELOG)
 2. Version determination (user chooses bump type)

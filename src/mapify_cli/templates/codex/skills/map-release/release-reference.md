@@ -397,7 +397,8 @@ for ATTEMPT in 1 2 3 4 5 6 7 8; do
 done
 [[ "$RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo "ABORT: release run not found for $LAST_TAG ($RELEASE_SHA)"; exit 1; }
 echo "Workflow URL: https://github.com/azalio/map-framework/actions/runs/$RUN_ID"
-gh run watch "$RUN_ID" --exit-status || { echo "ABORT: release workflow watch failed"; exit 1; }
+# Watch can fail on transport/annotation errors; final run evidence is authoritative.
+gh run watch "$RUN_ID" --exit-status || echo "WARNING: release watch exited nonzero; checking authoritative run status" >&2
 FINAL_RUN=$(gh run view "$RUN_ID" --json status,conclusion,headSha) || { echo "ABORT: release status query failed"; exit 1; }
 printf '%s' "$FINAL_RUN" | jq -es --arg sha "$RELEASE_SHA" '
   length == 1 and (.[0] | type == "object" and .status == "completed" and
