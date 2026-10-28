@@ -189,6 +189,8 @@ This is conservative full-snapshot evidence, not dependency-selective reuse or h
 
 ## Core Structure
 
+The draft [CLI/module map](../src/mapify_cli/SPEC.md) (`map-cli`) records implementation boundaries and observed dependencies. Evaluation contracts are adopted in place as [skill evaluation](SKILL-EVAL.md) (`map-skill-evaluation`) and [trajectory evaluation](TRAJECTORY-EVAL.md) (`map-trajectory-evaluation`); they are not duplicated in directory specs.
+
 ### Code Layout (this repo)
 
 - `src/mapify_cli/`: CLI implementation and workflow helpers (token budgeting, dependency graph, verification recording, workflow finalization, provider delivery)

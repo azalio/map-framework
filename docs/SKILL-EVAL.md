@@ -4,9 +4,8 @@ type: submodule-design
 title: Skill-Eval — Trigger Accuracy & Description Tuning
 status: draft
 parent: map-cli
-references:
-  - map-architecture
-  - map-product
+references: [map-architecture, map-product]
+depends-on: [map-delivery]
 ---
 
 # Skill-Eval — Trigger Accuracy & Description Tuning

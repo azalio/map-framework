@@ -4,6 +4,7 @@ type: submodule-design
 status: draft
 title: Project configuration and provider settings
 parent: map-cli
+depends-on: [map-delivery]
 ---
 
 ## Responsibility
