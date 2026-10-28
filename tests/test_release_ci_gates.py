@@ -301,7 +301,6 @@ def test_version_execution_requires_explicit_approved_values(
                      "headBranch": "v1.2.0", "event": "push"}},
     {"gh_exit": 9},
     {"raw": "not-json"},
-    {"watch_exit": 9},
     {"view_exit": 9},
     {"release_final": {"status": "completed", "conclusion": "success", "headSha": OLD_SHA}},
     {"release_final": {"status": "in_progress", "conclusion": "success", "headSha": HEAD_SHA}},
@@ -325,6 +324,42 @@ def test_monitor_selects_exact_release_commit_in_fresh_shell(
         assert ["gh", "run", "watch", "77", "--exit-status"] in calls
     elif not any(key in case for key in ("watch_exit", "view_exit", "release_final")):
         assert not any(call[:3] == ["gh", "run", "watch"] for call in calls)
+
+
+@pytest.mark.parametrize("case, accepted", [
+    ({}, True),
+    ({"view_exit": 9}, False),
+    ({"raw_final": "not-json"}, False),
+    ({"release_final": {"status": "completed", "conclusion": None,
+                        "headSha": HEAD_SHA}}, False),
+    ({"release_final": {"status": "completed", "conclusion": "unknown",
+                        "headSha": HEAD_SHA}}, False),
+    ({"release_final": {"status": "completed", "conclusion": "failure",
+                        "headSha": HEAD_SHA}}, False),
+    ({"release_final": {"status": "completed", "conclusion": "cancelled",
+                        "headSha": HEAD_SHA}}, False),
+    ({"release_final": {"status": "in_progress", "conclusion": None,
+                        "headSha": HEAD_SHA}}, False),
+    ({"release_final": {"status": "completed", "conclusion": "success",
+                        "headSha": OLD_SHA}}, False),
+])
+def test_monitor_validates_final_evidence_after_watch_error(
+    installed_reference: str, tmp_path: Path, case: dict, accepted: bool
+) -> None:
+    result, calls = run_block(
+        tmp_path, bash_blocks(installed_reference, "## Phase 5:")[0],
+        {**case, "watch_exit": 1},
+    )
+    assert (result.returncode == 0) == accepted, result.stdout + result.stderr
+    assert ["gh", "run", "watch", "77", "--exit-status"] in calls
+    assert ["gh", "run", "view", "77", "--json", "status,conclusion,headSha"] in calls
+    if not accepted:
+        conclusion = case.get("release_final", {}).get("conclusion")
+        if conclusion in ("failure", "cancelled"):
+            assert "completed unsuccessfully" in result.stdout
+        else:
+            assert "repeat Phase 5 before any recovery or new release" in result.stdout
+            assert "completed unsuccessfully" not in result.stdout
 
 
 def test_monitor_finds_tag_run_among_unfiltered_runs(installed_reference: str,
