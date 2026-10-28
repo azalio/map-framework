@@ -330,6 +330,10 @@ def test_monitor_selects_exact_release_commit_in_fresh_shell(
     ({}, True),
     ({"view_exit": 9}, False),
     ({"raw_final": "not-json"}, False),
+    ({"release_final": {"status": "completed", "conclusion": None,
+                        "headSha": HEAD_SHA}}, False),
+    ({"release_final": {"status": "completed", "conclusion": "unknown",
+                        "headSha": HEAD_SHA}}, False),
     ({"release_final": {"status": "completed", "conclusion": "failure",
                         "headSha": HEAD_SHA}}, False),
     ({"release_final": {"status": "completed", "conclusion": "cancelled",
@@ -349,6 +353,13 @@ def test_monitor_validates_final_evidence_after_watch_error(
     assert (result.returncode == 0) == accepted, result.stdout + result.stderr
     assert ["gh", "run", "watch", "77", "--exit-status"] in calls
     assert ["gh", "run", "view", "77", "--json", "status,conclusion,headSha"] in calls
+    if not accepted:
+        conclusion = case.get("release_final", {}).get("conclusion")
+        if conclusion in ("failure", "cancelled"):
+            assert "completed unsuccessfully" in result.stdout
+        else:
+            assert "repeat Phase 5 before any recovery or new release" in result.stdout
+            assert "completed unsuccessfully" not in result.stdout
 
 
 def test_monitor_finds_tag_run_among_unfiltered_runs(installed_reference: str,

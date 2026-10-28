@@ -429,11 +429,14 @@ done
 echo "Workflow URL: https://github.com/azalio/map-framework/actions/runs/$RUN_ID"
 # Watch can fail on transport/annotation errors; final run evidence is authoritative.
 gh run watch "$RUN_ID" --exit-status || echo "WARNING: release watch exited nonzero; checking authoritative run status" >&2
-FINAL_RUN=$(gh run view "$RUN_ID" --json status,conclusion,headSha) || { echo "ABORT: release status query failed"; exit 1; }
-printf '%s' "$FINAL_RUN" | jq -es --arg sha "$RELEASE_SHA" '
-  length == 1 and (.[0] | type == "object" and .status == "completed" and
-  .conclusion == "success" and .headSha == $sha)
-' > /dev/null || { echo "ABORT: release workflow did not succeed for the release commit"; exit 1; }
+FINAL_RUN=$(gh run view "$RUN_ID" --json status,conclusion,headSha) || { echo "ABORT: release status unverified; repeat Phase 5 before any recovery or new release"; exit 1; }
+FINAL_CONCLUSION=$(printf '%s' "$FINAL_RUN" | jq -ers --arg sha "$RELEASE_SHA" '
+  if length == 1 and (.[0] | type == "object" and .status == "completed" and
+    .headSha == $sha and (.conclusion | IN("success", "failure", "cancelled",
+      "timed_out", "action_required", "neutral", "skipped", "stale", "startup_failure")))
+  then .[0].conclusion else error("active or unverified release run") end
+') || { echo "ABORT: release run active or unverified; repeat Phase 5 before any recovery or new release"; exit 1; }
+[[ "$FINAL_CONCLUSION" == "success" ]] || { echo "ABORT: release workflow completed unsuccessfully ($FINAL_CONCLUSION); see failed-release recovery"; exit 1; }
 echo "✅ Release workflow completed successfully"
 ```
 
@@ -509,7 +512,12 @@ git add . && git commit -m "chore: prepare for release"
 
 ### Scenario 3: Tag Pushed, But CI/CD Failed (Phase 5)
 
-Package NOT published to PyPI (CI must succeed for publish).
+Use this recovery only for a verified, completed unsuccessful run, not a watch
+error or active/unverified run. For active or unverified runs, repeat Phase 5;
+do not start another release while the original may still publish.
+
+Package NOT published to PyPI if the CI gate failed (CI must succeed for publish).
+For failures after CI, inspect the publish steps before choosing recovery.
 
 ```bash
 # Supply the exact release run ID verified against the release tag commit in Phase 5.
