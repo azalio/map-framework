@@ -1,4 +1,17 @@
+---
+id: map-skill-evaluation
+type: submodule-design
+title: Skill-Eval — Trigger Accuracy & Description Tuning
+status: draft
+parent: map-cli
+references: [map-architecture, map-product]
+depends-on: [map-delivery]
+---
+
 # Skill-Eval — Trigger Accuracy & Description Tuning
+
+Initial draft spec adopted in place. System context and product goals remain owned by
+[map-architecture](ARCHITECTURE.md) and [map-product](../goal-and-requirements.md).
 
 > Repeatable guide for the `mapify skill-eval` engine (Phase F). Read this instead of
 > re-deriving the workflow from source each time.
@@ -17,18 +30,22 @@ A third command, **`view`**, re-renders a stored optimize result as an HTML repo
 A fourth command, **`trajectory`**, scores the OUTCOME of a full run (not just
 the trigger) — it is documented separately in [TRAJECTORY-EVAL.md](TRAJECTORY-EVAL.md).
 
-The lever it tunes is the **`description:` field** of a skill — the text Claude Code reads to
+The lever it tunes is the **`description:` field** of a skill — the text Claude Code or Codex CLI reads to
 decide whether a prompt should activate that skill. Better description = fewer false triggers
 (skill fires when it shouldn't) and fewer misses (skill stays silent when it should fire). It does
 **not** touch the skill body / logic.
 
 ## Requirements
 
-- The **`claude` CLI** must be on `$PATH`. The skill is skipped at install time on hosts without it.
-- Auth is via the **Claude.ai subscription** — no `ANTHROPIC_API_KEY`. A failed `claude -p` is
-  never an API-key problem.
-- Each eval case spawns a real `claude -p` in an isolated temp cwd seeded with `.claude/`. Runs are
-  independent — no state leaks between cases.
+- `run` and `optimize` support **`--provider claude|codex`** (default `claude`);
+  the selected CLI must be on `$PATH`.
+- Use the selected CLI's authenticated subscription session; Claude evaluation does not
+  require `ANTHROPIC_API_KEY`.
+- Each eval case spawns `claude -p` or `codex exec --json` in a fresh temp cwd seeded
+  with `.claude/` or `.agents/` + `.codex/`, respectively.
+- Temporary directories isolate evaluation artifacts, **not OS access**: they are not
+  security sandboxes. Provider processes can still access same-user resources; real runs
+  require trusted fixtures and explicit quota authorization.
 
 ## Commands
 
@@ -48,14 +65,17 @@ mapify skill-eval view <skill> [--result PATH] [--open]
 |---|---|
 | `--eval-set PATH` | **Required.** JSON eval-set (see format below). |
 | `--dry-run` | Validate the eval-set + print planned case count. Spends **zero** quota; writes no `.jsonl`. |
-| `--resume` | Continue an interrupted run from the latest `.map/eval-runs/<skill>/<ts>.jsonl`. |
-| `--max-concurrency N` | Parallel `claude -p` workers. Default **1**. |
+| `--resume` | Continue the latest matching provider run (see output artifacts). |
+| `--provider claude\|codex` | Provider CLI. Default **claude**. |
+| `--model MODEL` | Optional provider model; default is the CLI session default. |
+| `--max-concurrency N` | Parallel provider workers. Default **1**. |
 
 ### `optimize` flags
 | Flag | Meaning |
 |---|---|
-| `--eval-set PATH` | **Required.** Needs enough entries that `n_test >= 3` (see sizing). |
+| `--eval-set PATH` | **Required.** Minimum 5 entries; recommend 8–10 (see sizing). |
 | `--iterations N` | Max iterations. Default **5**. Iteration 0 = baseline (current description). |
+| `--provider claude\|codex` | Provider to evaluate and optionally apply. Default **claude**. |
 | `--apply` | Patch the winning description into `templates_src/skills/<skill>/SKILL.md.jinja` and re-render. **Staged, not committed.** `skill-rules.json` is **not** auto-patched. |
 | `--open` | Open the HTML report after the run (best-effort). |
 | `--dry-run` | Print the call budget and exit 0 spending zero quota. |
@@ -97,15 +117,16 @@ A JSON object with an `entries` array. Each entry:
 - Include **1–2 `should_not_trigger` negatives** so the rejection path is exercised.
 - `contains` values should be lowercase substrings that genuinely appear in the prompt/response.
 
-### Sizing — why ≥ 8 entries for `optimize`
+### Sizing — minimum 5, recommended 8–10 entries for `optimize`
 
 The optimizer uses a deterministic 60/40 train/test split: `n_test = max(1, round(n * 0.4))`.
-The held-out signal is only meaningful when **`n_test >= 3`**, i.e. **n ≥ 8** (target **8–10** entries).
+The CLI minimum is **5 entries**. Five- and six-entry sets produce two held-out entries;
+seven entries produce three. For a more meaningful held-out signal, recommend
+`n_test >= 3` (at least 7 entries); target **8–10** entries for authoring.
+This recommendation is not an enforced minimum.
 
-- Code hard-floor: `optimize` exits **code 2** (zero quota) if the set is too small to reach `n_test >= 3`.
+- Code hard-floor: `optimize` exits **code 2** (zero quota) if the set has fewer than 5 entries.
 - `run` has no such floor — any non-empty valid set works.
-- Note: the `map-skill-eval` SKILL.md mentions "≥ 5 entries"; the real binding constraint is
-  `n_test >= 3`, so author **≥ 8** to be safe.
 
 > Smoke fixture caveat: `tests/skills_eval/fixtures/map_debug_eval_set.json` is a pinned **3-entry**
 > smoke set for unit tests — do **not** add entries or rename it. Optimizer fixtures are the
@@ -116,18 +137,20 @@ The held-out signal is only meaningful when **`n_test >= 3`**, i.e. **n ≥ 8** 
 `optimize` dispatch budget:
 
 ```
-iterations × (n_train + n_test) dispatch calls  +  iterations proposer calls
+iterations × (n_train + n_test) dispatch calls  +  (iterations - 1) proposer calls
 ```
 
-Example — `map-plan`, 9-entry set, default 5 iterations: `5 × (5 + 4) = 45` dispatch + `5`
-proposer = **50 `claude -p` calls**. Sequentially (default `--max-concurrency 1`) that is minutes
-per skill. **Always run `--dry-run` first** to see the exact count, and lower `--iterations` (e.g.
-2–3) to cut cost when sweeping many skills.
+Example — `map-plan`, 9-entry set, default 5 iterations: `5 × (5 + 4) = 45` dispatch + `4`
+proposer = **49 logical calls**. Baseline iteration 0 makes no proposer call. Failed proposals
+skip candidate evaluation; provider retries can add subprocess calls. The current `--dry-run`
+output conservatively prints `iterations` proposer calls (50 total in this example), not the
+baseline-aware count. **Always run `--dry-run` first**, and lower `--iterations` (e.g. 2–3)
+to cut cost when sweeping many skills.
 
 ## Anti-overfit logic
 
 - Iteration 0 scores the **current** description as baseline.
-- Each iteration the proposer suggests a new description; it is scored on **train** and **test**.
+- After baseline, each iteration the proposer suggests a new description; it is scored on **train** and **test**.
 - The winner is the candidate with the highest **held-out TEST** pass-rate.
 - A candidate whose **train ↑ but test ↓** is flagged as overfit and **never selected** (the HTML
   report highlights it red).
@@ -136,8 +159,10 @@ per skill. **Always run `--dry-run` first** to see the exact count, and lower `-
 
 ## Output artifacts
 
-- `run`: `.map/eval-runs/<skill>/<timestamp>.jsonl` — one line appended per completed case
-  (durable, `--resume`-able).
+- `run`: `.map/eval-runs/<skill>/<provider>/<timestamp>.jsonl` — one line appended per
+  completed case (durable, `--resume`-able). Resume prefers provider-scoped logs, then checks
+  legacy `.map/eval-runs/<skill>/*.jsonl` for matching rows. Providerless legacy rows belong
+  to Claude only; explicitly tagged rows must match the selected provider.
 - `optimize`: `.map/eval-runs/<skill>/<timestamp>-optimize.json` (the `OptimizeResult`) **and**
   `<timestamp>-optimize.html` (report).
 - Default `optimize` mode is **propose-only**: nothing outside `.map/` changes until `--apply`.
@@ -145,8 +170,12 @@ per skill. **Always run `--dry-run` first** to see the exact count, and lower `-
 ## `--apply` and the single-source render invariant
 
 `--apply` patches the description into the **template source**
-`src/mapify_cli/templates_src/skills/<skill>/SKILL.md.jinja` and re-renders so every generated tree
-(`.claude/`, `.codex/`, `src/mapify_cli/templates/`, `.agents/skills/`) stays byte-identical.
+`src/mapify_cli/templates_src/skills/<skill>/SKILL.md.jinja` for the selected provider.
+It renders in a temporary tree, verifies the opposite provider's rendered skill is unchanged,
+and transactionally promotes only the source and selected skill outputs: `.claude/skills/`
+plus `src/mapify_cli/templates/skills/` for Claude, or `.agents/skills/` plus
+`src/mapify_cli/templates/codex/skills/` for Codex. Provider outputs need not be byte-identical
+to each other. Modified or stale selected generated skills are rejected.
 **Never edit a generated `SKILL.md` directly.** The change is **staged, not committed** — review it.
 
 `skill-rules.json` `description` is **not** auto-patched. If the skill's trigger description also
@@ -183,8 +212,8 @@ make render-templates
 
 ## Operational notes — running a real sweep (READ THIS)
 
-Each `run`/`optimize` spawns real `claude -p` subprocesses. When you sweep many skills these
-gotchas bite — they are the reason a sweep "hangs":
+Each `run`/`optimize` spawns real provider subprocesses. The hook and timeout examples below
+are Claude-specific; Codex runs also consume real quota.
 
 ### 1. Disable the Telegram hook during `claude -p` runs
 
@@ -235,9 +264,8 @@ with no new log lines for many minutes (stuck `claude -p` → let the 1h timeout
 
 ### 4. `--apply` serially, never overlap with another run
 
-`--apply` re-renders all generated trees (`.claude/`, `.codex/`, `templates/`) and `git add`s them.
-If a second skill's `optimize` is seeding its temp cwd from `.claude/` at that moment, it can copy a
-half-rendered tree. **Keep the sweep serial** (one skill fully done — including apply — before the
+`--apply` renders in isolation, promotes the selected skill outputs, and `git add`s changed files.
+Concurrent eval seeding does not share the apply lock and can observe files during promotion. **Keep the sweep serial** (one skill fully done — including apply — before the
 next starts). `optimize --apply` does a **single** eval run then applies from the in-memory result —
 no double-spend.
 
@@ -247,9 +275,9 @@ no double-spend.
 |---|---|
 | `claude not found` | `claude` CLI not on `$PATH`. Install it, re-run `mapify init` to re-activate the skill. |
 | Validation error on `--dry-run` | Each entry needs a non-empty `prompt`; assertions need a valid `type`. |
-| `optimize` exits code 2 | Eval-set too small — needs `n_test >= 3` (≥ 8 entries). |
+| `optimize` exits code 2 | Eval-set too small — minimum 5 entries; recommend 8–10. |
 | `--resume` finds no log | No prior `.jsonl` for that skill — omit `--resume` to start fresh. |
-| Every case reports `not_trigger` | Skill name must match exactly (`map-plan`, not `map_plan`); confirm `.claude/` seeded in temp cwd. |
+| Every case reports `not_trigger` | Skill name must match exactly (`map-plan`, not `map_plan`); confirm the selected provider's skill tree is seeded in the temp cwd. |
 | Optimize "No improvement found" | Baseline description already optimal for this eval-set — not an error. |
 
 ## Source map
