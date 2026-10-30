@@ -223,7 +223,14 @@ creating worktrees: create and accept one batch, then create the next batch
 from the preceding batch's post-merge HEAD. Never create all batches from the
 same old base and merge them separately. Configure the cap before dispatch
 (default 4, maximum 8). Each admitted batch merges atomically via
-`merge_wave_worktrees`. For each sub-batch,
+`merge_wave_worktrees`. Before creating worktrees or dispatching Actors for each
+admitted batch, register its membership and base in the parent checkout:
+
+```bash
+python3 .map/scripts/map_step_runner.py begin_wave_group "$ST_A" "$ST_B"
+```
+
+Then create the batch worktrees and dispatch Actors. For each sub-batch,
 dispatch all N actor subagents **in one turn** — not one per turn:
 
 ```text
@@ -238,7 +245,7 @@ dispatch actor subagent -> ST-004 (pinned to its own worktree)
 
 **Self-audit before dispatch:** "I will dispatch {n} actor subagents in one turn."
 
-**`max_actors` cap:** Default 4–8 per wave. Groups larger than `max_actors` are
+**`max_actors` cap:** Default 4, maximum 8 per wave. Groups larger than `max_actors` are
 pre-split into sequential batches before dispatch.
 
 **Recovery on failure:** on actor failure, timeout or Monitor-reject,
@@ -250,7 +257,9 @@ Never merge a successful subset (HC-4).
 
 ### Anti-patterns — Slice 5b concurrent dispatch only
 
-Before aborting a group, stop its Actors. The runner saves unique binary patches
+If acceptance returns `needs_redispatch: false`, preserve candidates and report
+the refusal; do not call `abort_wave_group` or redispatch.
+Before aborting a group on actor failure, timeout or Monitor-reject, stop its Actors. The runner saves unique binary patches
 under `.map/<branch>/worktree_attempts/` for every candidate before removing any
 worktree. Capture, rollback or cleanup failure stops recovery with
 `needs_redispatch: false`; inspect the returned error and saved patch paths before

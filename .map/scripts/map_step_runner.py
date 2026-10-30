@@ -24876,8 +24876,13 @@ def _wt_save_attempt_patch(
     """Persist a unique, binary-capable recovery patch before destructive cleanup."""
     wt_path = Path(str(record.get("path", "")))
     base_sha = str(record.get("base_sha", ""))
-    if not wt_path.is_dir() or not base_sha:
-        return _wt_error("PATCH_SAVE_FAILED", "candidate worktree or base is missing")
+    if not base_sha:
+        return _wt_error("PATCH_SAVE_FAILED", "candidate base is missing")
+    if not wt_path.exists() and not wt_path.is_symlink():
+        # Cleanup may have completed before the sidecar update was persisted.
+        return {"ok": True, "patch_path": None}
+    if not wt_path.is_dir():
+        return _wt_error("PATCH_SAVE_FAILED", "candidate worktree is not a directory")
     try:
         added = _wt_git(["add", "-A"], cwd=wt_path)
         if added.returncode != 0:
@@ -24940,7 +24945,7 @@ def discard_subtask_worktree(
         saved = _wt_save_attempt_patch(slug, record, branch_name)
         if not saved.get("ok"):
             return saved
-        patch_path = Path(str(saved["patch_path"]))
+        patch_path = Path(str(saved["patch_path"])) if saved.get("patch_path") else None
 
     _wt_force_remove(wt_path, wt_branch)
     if wt_path.exists():
@@ -25646,6 +25651,20 @@ def abort_wave_group(
         return _wt_error("ACTIVE_GIT_OP", f"resolve the active {active_op} first",
                          clean=False, worktrees_preserved=True)
 
+    if group_key is None and state.get("worktrees"):
+        return _wt_error(
+            "WAVE_GROUP_MISSING", "register the candidate group before aborting it",
+            clean=False, worktrees_preserved=True,
+        )
+    if base_sha and _wt_head_sha() != base_sha:
+        return _wt_error(
+            "EXTERNAL_HEAD_MOVED", "parent HEAD moved; direct abort cannot reset user commits",
+            clean=False, worktrees_preserved=True,
+        )
+    dirty_refusal = _wt_dirty_target_guard(branch_name, "wave abort")
+    if dirty_refusal is not None:
+        return {**dirty_refusal, "clean": False, "worktrees_preserved": True}
+
     # Preserve EVERY candidate before resetting the parent or removing ANY
     # worktree. A failed capture leaves the whole group available for recovery.
     patches: dict[str, str] = {}
@@ -25659,13 +25678,19 @@ def abort_wave_group(
         if not saved.get("ok"):
             return {**saved, "clean": False, "patches": patches,
                     "worktrees_preserved": True}
-        patches[sid] = str(saved["patch_path"])
+        if saved.get("patch_path"):
+            patches[sid] = str(saved["patch_path"])
 
     # Step 3: rollback to base_sha if we have one.
     # MUST reuse _wt_rollback — it excludes .map/.codex/.agents from the clean.
     rollback_verified = True  # optimistic; no base_sha → nothing to verify
     if base_sha:
         rolled_back = _wt_rollback(base_sha)
+        if rolled_back is False:
+            return _wt_error(
+                "ROLLBACK_FAILED", "safe rollback failed; candidates were retained",
+                clean=False, patches=patches, worktrees_preserved=True,
+            )
         # Verify rollback landed BEFORE touching group state (F5).
         # If HEAD != base_sha the rollback failed; keep the group entry so that
         # verify_group_clean still has base_sha and a wrong HEAD cannot pass as clean.
@@ -25679,13 +25704,10 @@ def abort_wave_group(
                 "base_sha": base_sha,
                 "actual_head": actual_head,
                 "aborted_group_id": group_id,
+                "patches": patches,
+                "worktrees_preserved": True,
             }
             return result
-        if rolled_back is False:
-            return _wt_error(
-                "ROLLBACK_FAILED", "safe rollback failed; candidates were retained",
-                clean=False, patches=patches, worktrees_preserved=True,
-            )
 
     # Step 4: discard every group worktree + branch.
     for sid in subtask_ids:

@@ -238,7 +238,14 @@ creating worktrees: create and accept one batch, then create the next batch
 from the preceding batch's post-merge HEAD. Never create all batches from the
 same old base and merge them separately. Configure the cap before dispatch
 (default 4, maximum 8). Each admitted batch merges atomically via
-`merge_wave_worktrees`. For each sub-batch,
+`merge_wave_worktrees`. Before creating worktrees or dispatching Actors for each
+admitted batch, register its membership and base in the parent checkout:
+
+```bash
+python3 .map/scripts/map_step_runner.py begin_wave_group "$ST_A" "$ST_B"
+```
+
+Then create the batch worktrees and dispatch Actors. For each sub-batch,
 emit all N `Task(actor)` calls in **one assistant message** — not one per turn:
 
 ```text
@@ -269,7 +276,9 @@ Task(
 
 ### Anti-patterns — Slice 5b concurrent dispatch only
 
-Before aborting a group, stop its Actors. The runner saves unique binary patches
+If acceptance returns `needs_redispatch: false`, preserve candidates and report
+the refusal; do not call `abort_wave_group` or redispatch.
+Before aborting a group on actor failure, timeout or Monitor-reject, stop its Actors. The runner saves unique binary patches
 under `.map/<branch>/worktree_attempts/` for every candidate before removing any
 worktree. Capture, rollback or cleanup failure stops recovery with
 `needs_redispatch: false`; inspect the returned error and saved patch paths before

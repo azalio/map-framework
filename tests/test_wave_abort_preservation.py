@@ -27,14 +27,14 @@ def wave_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def group(ids: list[str]) -> tuple[str, dict[str, Path]]:
+    admitted = m.begin_wave_group(ids)
+    assert admitted["ok"], admitted
     paths = {}
     for sid in ids:
         result = m.create_subtask_worktree(sid)
         assert result["ok"], result
         paths[sid] = Path(result["worktree_path"])
-    result = m.begin_wave_group(ids)
-    assert result["ok"], result
-    return result["group_key"], paths
+    return admitted["group_key"], paths
 
 
 def test_over_cap_refuses_before_merge_or_cleanup(wave_repo: Path) -> None:
@@ -180,16 +180,21 @@ def test_failed_rollback_keeps_candidates(
     assert key in m._read_worktree_state(m.get_branch_name())["wave_groups"]
 
 
-def test_external_head_movement_never_resets_user_commit(wave_repo: Path) -> None:
-    _, paths = group(["task-a"])
+@pytest.mark.parametrize("direct_abort", [False, True])
+def test_external_head_movement_never_resets_user_commit(
+    wave_repo: Path, direct_abort: bool
+) -> None:
+    key, paths = group(["task-a"])
     (paths["task-a"] / "candidate.txt").write_text("keep candidate")
     (wave_repo / "user.txt").write_text("keep user commit")
     assert _git(["add", "user.txt"], wave_repo).returncode == 0
     assert _git(["commit", "-qm", "user change"], wave_repo).returncode == 0
     head = _git(["rev-parse", "HEAD"], wave_repo).stdout
-    result = m.run_concurrent_wave(["task-a"])
+    result = (
+        m.abort_wave_group(key) if direct_abort else m.run_concurrent_wave(["task-a"])
+    )
     assert result["kind"] == "EXTERNAL_HEAD_MOVED", result
-    assert result["needs_redispatch"] is False
+    assert result["worktrees_preserved"] is True
     assert _git(["rev-parse", "HEAD"], wave_repo).stdout == head
     assert (paths["task-a"] / "candidate.txt").read_text() == "keep candidate"
 
@@ -207,3 +212,75 @@ def test_discard_patch_write_failure_retains_candidate(
     result = m.discard_subtask_worktree("task-a", save_patch=True)
     assert result["kind"] == "PATCH_SAVE_FAILED", result
     assert (paths["task-a"] / "keep.txt").read_text() == "keep"
+
+
+@pytest.mark.parametrize("parent_change", ["untracked", "tracked", "staged_runtime"])
+def test_direct_abort_refuses_unowned_parent_changes(
+    wave_repo: Path, parent_change: str
+) -> None:
+    key, paths = group(["task-a"])
+    path = (
+        wave_repo
+        / {
+            "untracked": "user.txt",
+            "tracked": "a.txt",
+            "staged_runtime": ".map/feat-x/handoff.json",
+        }[parent_change]
+    )
+    path.write_text("user work")
+    if parent_change == "staged_runtime":
+        assert _git(["add", str(path)], wave_repo).returncode == 0
+    before = _git(["diff", "--cached", "--binary"], wave_repo).stdout
+    result = m.abort_wave_group(key)
+    assert not result["ok"], result
+    assert result["worktrees_preserved"] is True
+    assert path.read_text() == "user work"
+    assert _git(["diff", "--cached", "--binary"], wave_repo).stdout == before
+    assert paths["task-a"].is_dir()
+
+
+@pytest.mark.parametrize("direct_discard", [False, True])
+def test_cleanup_reentry_after_removal_before_sidecar_update(
+    wave_repo: Path, monkeypatch: pytest.MonkeyPatch, direct_discard: bool
+) -> None:
+    key, paths = group(["task-a"])
+    (paths["task-a"] / "candidate.txt").write_text("recover me")
+    real_remove = m._wt_force_remove
+
+    def crash_after_remove(*args):
+        real_remove(*args)
+        raise RuntimeError("simulated process stop")
+
+    def cleanup():
+        if direct_discard:
+            return m.discard_subtask_worktree("task-a", save_patch=True)
+        return m.abort_wave_group(key)
+
+    monkeypatch.setattr(m, "_wt_force_remove", crash_after_remove)
+    with pytest.raises(RuntimeError, match="simulated process stop"):
+        cleanup()
+    patches = list((wave_repo / ".map/feat-x/worktree_attempts").glob("*.patch"))
+    assert len(patches) == 1
+    assert b"recover me" in patches[0].read_bytes()
+    monkeypatch.setattr(m, "_wt_force_remove", real_remove)
+    result = cleanup()
+    assert result["ok"], result
+    assert patches[0].exists()
+    assert not paths["task-a"].exists()
+
+
+def test_unregistered_group_failure_cannot_authorize_redispatch(
+    wave_repo: Path,
+) -> None:
+    ids = ["task-a", "task-b"]
+    paths = []
+    for sid in ids:
+        result = m.create_subtask_worktree(sid)
+        assert result["ok"], result
+        path = Path(result["worktree_path"])
+        (path / "a.txt").write_text(sid)
+        paths.append(path)
+    result = m.run_concurrent_wave(ids)
+    assert result["kind"] == "WAVE_ABORT_FAILED", result
+    assert result["needs_redispatch"] is False
+    assert all(path.exists() for path in paths)

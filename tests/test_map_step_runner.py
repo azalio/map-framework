@@ -17558,8 +17558,9 @@ class TestAbortWaveGroupRollbackMismatch:
 
         def _fake_head_sha(cwd: "Path | None" = None) -> str:
             del cwd
-            return fake_sha
+            return next(head_reads)
 
+        head_reads = iter([base_sha, fake_sha])
         monkeypatch.setattr(map_step_runner, "_wt_rollback", _noop_rollback)
         monkeypatch.setattr(map_step_runner, "_wt_head_sha", _fake_head_sha)
 
@@ -17574,6 +17575,8 @@ class TestAbortWaveGroupRollbackMismatch:
         assert result.get("clean") is False, (
             f"clean must be False on rollback_head_mismatch; got {result}"
         )
+        assert len(result["patches"]) == 2
+        assert result["worktrees_preserved"] is True
 
         # (3) group entry must STILL exist in sidecar (not deleted on failure)
         state_after = map_step_runner._read_worktree_state(branch)

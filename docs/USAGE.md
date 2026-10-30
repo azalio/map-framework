@@ -683,7 +683,7 @@ any merge or cleanup. Set the cap before dispatch, or create each separate batch
 only after the previous one has merged, from its new HEAD. Existing candidate
 worktrees survive a width refusal. `abort_wave_group` saves unique binary patches
 for every candidate under `.map/<branch>/worktree_attempts/` before deleting any
-worktree. Stop Actors before aborting. If preservation or rollback fails,
+worktree. Stop Actors before aborting. If preservation, rollback, or cleanup fails,
 `needs_redispatch` is false and cleanup stops for recovery.
 
 Merge explicitly disables Git autostash. Rollback preserves unstaged tracked
