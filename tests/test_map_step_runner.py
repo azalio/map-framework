@@ -16587,6 +16587,7 @@ class TestRunConcurrentWaveBatchSplit:
             "execution.max_actors: 4\nexecution.concurrent_dispatch: true\n", encoding="utf-8"
         )
 
+        assert map_step_runner.begin_wave_group(["ST-003", "ST-001", "ST-002"], "test-branch")["ok"]
         result = map_step_runner.run_concurrent_wave(
             ["ST-003", "ST-001", "ST-002"], "test-branch", repo
         )
@@ -16597,10 +16598,10 @@ class TestRunConcurrentWaveBatchSplit:
         assert sorted(cast(list[str], sub_batches[0])) == ["ST-001", "ST-002", "ST-003"]
         assert len(merge_calls) == 1
 
-    def test_vc2_exceeds_cap_splits_into_sub_batches(
+    def test_vc2_exceeds_cap_refuses_before_merge(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """VC2: 5 ids, max_actors=2 -> 3 sub-batches each ≤ 2 wide."""
+        """VC2: 5 ids, max_actors=2 -> refusal before any sub-batch can merge."""
         merge_calls: list[list[str]] = []
 
         def _fake_merge(ids: list[str], branch: Any = None, **kw: Any) -> dict[str, Any]:
@@ -16626,22 +16627,15 @@ class TestRunConcurrentWaveBatchSplit:
         result = map_step_runner.run_concurrent_wave(
             ["ST-005", "ST-001", "ST-003", "ST-002", "ST-004"], "test-branch", repo
         )
-        assert result.get("ok") is True
-        sub_batches = result.get("sub_batches")
-        assert isinstance(sub_batches, list)
-        assert len(sub_batches) == 3, f"expected 3 batches, got {sub_batches}"
-        # All ids present in sorted order, each batch ≤ 2
-        for b in sub_batches:
-            assert len(cast(list[str], b)) <= 2
-        all_ids = sorted(sid for b in cast(list[list[str]], sub_batches) for sid in b)
-        assert all_ids == ["ST-001", "ST-002", "ST-003", "ST-004", "ST-005"]
-        assert len(merge_calls) == 3
+        assert result.get("kind") == "WAVE_EXCEEDS_MAX_ACTORS"
+        assert result.get("needs_redispatch") is False
+        assert merge_calls == []
         assert result.get("max_actors") == 2
 
-    def test_vc2_max_actors_config_controls_batching(
+    def test_vc2_max_actors_config_controls_admission(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """VC2: Setting max_actors=1 -> N sub-batches (one per id)."""
+        """VC2: Setting max_actors=1 refuses a multi-member group without merging."""
         merge_calls: list[list[str]] = []
 
         def _fake_merge(ids: list[str], branch: Any = None, **kw: Any) -> dict[str, Any]:
@@ -16666,10 +16660,9 @@ class TestRunConcurrentWaveBatchSplit:
 
         group_ids = ["ST-A", "ST-B", "ST-C"]
         result = map_step_runner.run_concurrent_wave(group_ids, "test-branch", repo)
-        assert result.get("ok") is True
-        assert len(merge_calls) == 3, f"expected 3 merge calls, got {merge_calls}"
-        for call in merge_calls:
-            assert len(call) == 1
+        assert result.get("kind") == "WAVE_EXCEEDS_MAX_ACTORS"
+        assert result.get("needs_redispatch") is False
+        assert merge_calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -16708,7 +16701,7 @@ class TestRunConcurrentWaveMergeError:
         def _fake_abort(group_id: str, branch: Any = None) -> dict[str, Any]:
             del branch  # unused in stub
             abort_calls.append(group_id)
-            return {"clean": True, "aborted_group_id": group_id}
+            return {"clean": True, "aborted_group_id": group_id, "attempts_used": 1}
 
         monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _fake_merge_fail)
         monkeypatch.setattr(map_step_runner, "abort_wave_group", _fake_abort)
@@ -16726,6 +16719,7 @@ class TestRunConcurrentWaveMergeError:
         monkeypatch.chdir(repo)
         monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
 
+        assert map_step_runner.begin_wave_group(["ST-001", "ST-002"], "test-branch")["ok"]
         result = map_step_runner.run_concurrent_wave(
             ["ST-001", "ST-002"], "test-branch", repo
         )
@@ -16747,18 +16741,13 @@ class TestRunConcurrentWaveMergeError:
         assert merge_err.get("kind") == "WAVE_MERGE_CONFLICT"
         assert "failed_batch" in result
 
-    def test_vc1_failure_in_second_batch_captured_in_merge_error(
+    def test_abort_failure_prevents_redispatch(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """VC1/F7: failure in batch 2 -> merge_error has batches_merged_before_failure=1."""
-        call_count = [0]
+        """A failed preservation/cleanup must never authorize new Actors."""
 
         def _fake_merge(ids: list[str], branch: Any = None, **kw: Any) -> dict[str, Any]:
-            del branch, kw  # match merge_wave_worktrees signature; unused in stub
-            call_count[0] += 1
-            # First batch succeeds; second fails.
-            if call_count[0] == 1:
-                return {"status": "success", "ok": True, "merged": ids, "no_changes": []}
+            del ids, branch, kw
             return {
                 "status": "error",
                 "ok": False,
@@ -16768,7 +16757,7 @@ class TestRunConcurrentWaveMergeError:
 
         def _fake_abort(group_id: str, branch: Any = None) -> dict[str, Any]:
             del group_id, branch
-            return {"clean": True, "aborted_group_id": "fake"}
+            return {"ok": False, "clean": False, "kind": "PATCH_SAVE_FAILED"}
 
         monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _fake_merge)
         monkeypatch.setattr(map_step_runner, "abort_wave_group", _fake_abort)
@@ -16781,24 +16770,23 @@ class TestRunConcurrentWaveMergeError:
         monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
 
         map_dir = repo / ".map"
-        # F6: concurrent_dispatch must be enabled; max_actors=1 → 2 batches for 2 ids.
+        # The group is admitted, but its failed merge cannot be safely cleaned up.
         (map_dir / "config.yaml").write_text(
-            "execution.max_actors: 1\n"
+            "execution.max_actors: 2\n"
             "execution.concurrent_dispatch: true\n"
             "execution.max_wave_retries: 3\n",
             encoding="utf-8",
         )
 
+        assert map_step_runner.begin_wave_group(["ST-001", "ST-002"], "test-branch")["ok"]
         result = map_step_runner.run_concurrent_wave(
             ["ST-001", "ST-002"], "test-branch", repo
         )
         assert result.get("ok") is not True
-        assert result.get("kind") == "WAVE_ABORTED"
-        assert result.get("needs_redispatch") is True
-        # batches_merged_before_failure == 1 (batch 2 failed, batch 1 already done).
-        assert result.get("batches_merged_before_failure") == 1, (
-            f"Expected batches_merged_before_failure=1; got {result}"
-        )
+        assert result.get("kind") == "WAVE_ABORT_FAILED"
+        assert result.get("needs_redispatch") is False
+        assert result["merge_error"]["kind"] == "WAVE_COMMIT_FAILED"
+        assert result["abort_result"]["kind"] == "PATCH_SAVE_FAILED"
 
 
 # ---------------------------------------------------------------------------
@@ -16838,6 +16826,7 @@ class TestRunConcurrentWaveAtomicMerge:
         )
 
         # max_actors=4 (default): both in one batch -> one atomic merge.
+        assert map_step_runner.begin_wave_group(group_ids, branch)["ok"]
         result = map_step_runner.run_concurrent_wave(group_ids, branch, repo)
 
         # All-or-nothing: check outcome.
@@ -16857,15 +16846,10 @@ class TestRunConcurrentWaveAtomicMerge:
                 f"Expected error on failure, got {result}"
             )
 
-    def test_vc4_hc4_each_sub_batch_atomic(
+    def test_vc4_hc4_wide_group_cannot_partially_merge(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """VC4/HC-4: Each sub-batch merge is itself atomic.
-
-        With max_actors=1, each sub-batch has width 1.  Monkeypatching
-        merge_wave_worktrees proves the batches are submitted sequentially
-        as full atomic units: merge is called exactly N times, one id per call.
-        """
+        """A group wider than the cap must never merge a successful prefix."""
         merge_batches: list[list[str]] = []
 
         def _record_merge(ids: list[str], branch: Any = None, **kw: Any) -> dict[str, Any]:
@@ -16890,14 +16874,8 @@ class TestRunConcurrentWaveAtomicMerge:
 
         group_ids = ["ST-001", "ST-002", "ST-003"]
         result = map_step_runner.run_concurrent_wave(group_ids, "test-branch", repo)
-        assert result.get("ok") is True
-        # Each call receives exactly 1 id (sub-batch width == cap == 1).
-        assert len(merge_batches) == 3
-        for b in merge_batches:
-            assert len(b) == 1, f"each sub-batch must have exactly 1 id; got {b}"
-        # All ids covered
-        all_merged = sorted(sid for b in merge_batches for sid in b)
-        assert all_merged == sorted(group_ids)
+        assert result.get("kind") == "WAVE_EXCEEDS_MAX_ACTORS"
+        assert merge_batches == []
 
 
 # ---------------------------------------------------------------------------
@@ -17271,7 +17249,7 @@ class TestRunConcurrentWaveRetryAndEscalation:
         def _fake_abort(group_id: str, branch: Any = None) -> dict[str, Any]:
             del group_id, branch
             abort_call_count[0] += 1
-            return {"clean": True, "aborted_group_id": "fake"}
+            return {"clean": True, "aborted_group_id": "fake", "attempts_used": 1}
 
         monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _always_fail)
         monkeypatch.setattr(map_step_runner, "abort_wave_group", _fake_abort)
@@ -17280,6 +17258,7 @@ class TestRunConcurrentWaveRetryAndEscalation:
         monkeypatch.chdir(repo)
         monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
 
+        assert map_step_runner.begin_wave_group(["ST-001", "ST-002"], "test-branch")["ok"]
         result = map_step_runner.run_concurrent_wave(
             ["ST-001", "ST-002"], "test-branch", repo
         )
@@ -17308,7 +17287,7 @@ class TestRunConcurrentWaveRetryAndEscalation:
 
         def _fake_abort(group_id: str, branch: Any = None) -> dict[str, Any]:
             del group_id, branch
-            return {"clean": True, "aborted_group_id": "fake"}
+            return {"clean": True, "aborted_group_id": "fake", "attempts_used": 1}
 
         monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _always_fail)
         monkeypatch.setattr(map_step_runner, "abort_wave_group", _fake_abort)
@@ -17317,6 +17296,7 @@ class TestRunConcurrentWaveRetryAndEscalation:
         monkeypatch.chdir(repo)
         monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
 
+        assert map_step_runner.begin_wave_group(["ST-001", "ST-002"], "test-branch")["ok"]
         result = map_step_runner.run_concurrent_wave(
             ["ST-001", "ST-002"], "test-branch", repo
         )
@@ -17338,7 +17318,7 @@ class TestRunConcurrentWaveRetryAndEscalation:
 
         def _fake_abort(group_id: str, branch: Any = None) -> dict[str, Any]:
             del group_id, branch
-            return {"clean": True, "aborted_group_id": "fake"}
+            return {"clean": True, "aborted_group_id": "fake", "attempts_used": 1}
 
         monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _always_fail)
         monkeypatch.setattr(map_step_runner, "abort_wave_group", _fake_abort)
@@ -17348,12 +17328,13 @@ class TestRunConcurrentWaveRetryAndEscalation:
         monkeypatch.chdir(repo)
         monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
 
+        assert map_step_runner.begin_wave_group(["ST-001", "ST-002"], "test-branch")["ok"]
         result = map_step_runner.run_concurrent_wave(
             ["ST-001", "ST-002"], "test-branch", repo
         )
 
         assert result.get("kind") == "WAVE_ABORTED"
-        assert result.get("needs_redispatch") is True
+        assert result.get("needs_redispatch") is False
         assert result.get("attempts_remaining") == 0
         assert result.get("escalate_to_human") is True
 
@@ -17373,7 +17354,7 @@ class TestRunConcurrentWaveRetryAndEscalation:
 
         def _fake_abort(group_id: str, branch: Any = None) -> dict[str, Any]:
             del group_id, branch
-            return {"clean": True, "aborted_group_id": "fake"}
+            return {"clean": True, "aborted_group_id": "fake", "attempts_used": 1}
 
         monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _always_fail)
         monkeypatch.setattr(map_step_runner, "abort_wave_group", _fake_abort)
@@ -17382,6 +17363,7 @@ class TestRunConcurrentWaveRetryAndEscalation:
         monkeypatch.chdir(repo)
         monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
 
+        assert map_step_runner.begin_wave_group(["ST-001"], "test-branch")["ok"]
         result = map_step_runner.run_concurrent_wave(
             ["ST-001"], "test-branch", repo
         )
@@ -17584,8 +17566,9 @@ class TestAbortWaveGroupRollbackMismatch:
 
         def _fake_head_sha(cwd: "Path | None" = None) -> str:
             del cwd
-            return fake_sha
+            return next(head_reads)
 
+        head_reads = iter([base_sha, fake_sha])
         monkeypatch.setattr(map_step_runner, "_wt_rollback", _noop_rollback)
         monkeypatch.setattr(map_step_runner, "_wt_head_sha", _fake_head_sha)
 
@@ -17600,6 +17583,8 @@ class TestAbortWaveGroupRollbackMismatch:
         assert result.get("clean") is False, (
             f"clean must be False on rollback_head_mismatch; got {result}"
         )
+        assert len(result["patches"]) == 2
+        assert result["worktrees_preserved"] is True
 
         # (3) group entry must STILL exist in sidecar (not deleted on failure)
         state_after = map_step_runner._read_worktree_state(branch)

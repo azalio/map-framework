@@ -671,12 +671,25 @@ the next trips `BASE_DIVERGED`. The coordinator squash-merges every accepted
 worktree by frozen SHA in sorted id order (one runner commit per subtask), then
 runs the **post-wave gate inside the same transaction**. It is **all-or-nothing**
 — any textual conflict, commit failure, or post-wave-gate failure rolls the whole
-wave back to the base (`reset --hard` + `clean -fd`; squash leaves no
+wave back to the base (`reset --merge` + `clean -fd`; squash leaves no
 `MERGE_HEAD`, so `git merge --abort` is never used) and leaves every worktree
 intact for retry. Failure `kind`s: `WAVE_MERGE_CONFLICT` (with `attribution`
 naming the subtasks that touched each conflicted file), `WAVE_VERIFY_FAILED`,
 `EXTERNAL_HEAD_MOVED`, `WAVE_BASE_MISMATCH`, `DIRTY_TARGET`, `MERGE_IN_PROGRESS`.
 A concurrent second coordinator is blocked by an advisory lock.
+
+`run_concurrent_wave` refuses groups wider than `execution.max_actors` before
+any merge or cleanup. Set the cap before dispatch, or create each separate batch
+only after the previous one has merged, from its new HEAD. Existing candidate
+worktrees survive a width refusal. `abort_wave_group` saves unique binary patches
+for every candidate under `.map/<branch>/worktree_attempts/` before deleting any
+worktree. Stop Actors before aborting. If preservation, rollback, or cleanup fails,
+`needs_redispatch` is false and cleanup stops for recovery.
+
+Merge explicitly disables Git autostash. Rollback preserves unstaged tracked
+runtime files; staged runtime is refused before acceptance and must be unstaged
+first. A rollback that Git cannot perform safely leaves the candidates available
+and reports `ROLLBACK_FAILED`. Existing user stashes are never applied or dropped.
 
 ### Safety model
 

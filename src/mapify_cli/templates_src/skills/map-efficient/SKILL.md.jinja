@@ -54,8 +54,12 @@ the wave-loop creates per-member worktrees, dispatches actor subagents
 atomically via `merge_wave_worktrees`; concurrent fan-out is Slice 5b
 (`dispatch_mode==concurrent`). Under `dispatch_mode==concurrent` (default-ON,
 subject to the dispatch gate), call `run_concurrent_wave`: dispatch N
-actor subagents in **one turn** per sub-batch; on any failure `abort_wave_group`
-discards the whole group and reruns from base (bounded by `max_wave_retries`).
+actor subagents in **one turn** per admitted batch. Register each batch with
+`begin_wave_group` before creating its worktrees. On actor failure, timeout or
+Monitor-reject, stop Actors and call `abort_wave_group`. If acceptance returns
+`needs_redispatch: false`, retain candidates and report the refusal; do not abort
+or redispatch. Retry from base only after successful cleanup, bounded by
+`max_wave_retries`.
 [% endif %]
 ## Mutation Boundary Constraints
 
@@ -300,7 +304,7 @@ else
 fi
 ```
 
-**Execution strategy:** `select_execution_strategy` chooses between the legacy sequential walker and the wave-loop. The wave-loop (`get_wave_step` / `validate_wave_step` / `advance_wave`) engages only when `execution.wave_mode ∈ {on, auto}` AND `worktree.isolation` is not `off` AND a color group has ≥2 members; otherwise `get_next_step` (sequential walker) runs. Under `isolation_active` with `dispatch_mode==sequential` (Slice 5a), the wave-loop creates per-member worktrees, dispatches Actors **sequentially** (one per turn, `HC-3`), verifies via `concurrency_ready`, then accepts atomically via `merge_wave_worktrees`; concurrent fan-out is Slice 5b (`dispatch_mode==concurrent`). Under `dispatch_mode==concurrent` (default-ON, subject to the dispatch gate), call `run_concurrent_wave`: emit N `Task(actor)` blocks in **one message** per sub-batch; on any failure `abort_wave_group` discards the whole group and reruns from base (bounded by `max_wave_retries`). See [efficient-reference.md](efficient-reference.md#wave-execution) for the decision table and full wave loop.
+**Execution strategy:** `select_execution_strategy` chooses between the legacy sequential walker and the wave-loop. The wave-loop (`get_wave_step` / `validate_wave_step` / `advance_wave`) engages only when `execution.wave_mode ∈ {on, auto}` AND `worktree.isolation` is not `off` AND a color group has ≥2 members; otherwise `get_next_step` (sequential walker) runs. Under `isolation_active` with `dispatch_mode==sequential` (Slice 5a), the wave-loop creates per-member worktrees, dispatches Actors **sequentially** (one per turn, `HC-3`), verifies via `concurrency_ready`, then accepts atomically via `merge_wave_worktrees`; concurrent fan-out is Slice 5b (`dispatch_mode==concurrent`). Under `dispatch_mode==concurrent` (default-ON, subject to the dispatch gate), emit N `Task(actor)` blocks in **one message** per admitted batch, then call `run_concurrent_wave`. Create later batches only after the previous batch merged. Register each batch with `begin_wave_group` before creating its worktrees. On actor failure, timeout or Monitor-reject, stop Actors and call `abort_wave_group`. If acceptance returns `needs_redispatch: false`, retain candidates and report the refusal; do not abort or redispatch. Redispatch from base only after successful cleanup, bounded by `max_wave_retries`. See [efficient-reference.md](efficient-reference.md#wave-execution) for admission, recovery and the full wave loop.
 
 **Note on resume:** `resume_from_plan` (Step 0) now auto-invokes `set_waves`
 when `blueprint.json` is present, so resumed workflows do not need a manual

@@ -26,8 +26,12 @@ the wave-loop creates per-member worktrees, dispatches actor subagents
 atomically via `merge_wave_worktrees`; concurrent fan-out is Slice 5b
 (`dispatch_mode==concurrent`). Under `dispatch_mode==concurrent` (default-ON,
 subject to the dispatch gate), call `run_concurrent_wave`: dispatch N
-actor subagents in **one turn** per sub-batch; on any failure `abort_wave_group`
-discards the whole group and reruns from base (bounded by `max_wave_retries`).
+actor subagents in **one turn** per admitted batch. Register each batch with
+`begin_wave_group` before creating its worktrees. On actor failure, timeout or
+Monitor-reject, stop Actors and call `abort_wave_group`. If acceptance returns
+`needs_redispatch: false`, retain candidates and report the refusal; do not abort
+or redispatch. Retry from base only after successful cleanup, bounded by
+`max_wave_retries`.
 
 ## Mutation Boundary Constraints
 

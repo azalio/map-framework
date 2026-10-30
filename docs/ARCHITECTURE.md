@@ -637,9 +637,10 @@ divergence each in-wave squash-merge creates. Design (llm-council-reviewed, conv
   one runner commit per subtask — the one-commit-per-subtask contract holds).
 - **All-or-nothing.** Any textual conflict, commit failure, **or post-wave-gate
   failure** rolls the whole working branch back to the wave base with `reset
-  --hard` + `clean -fd` (squash leaves no `MERGE_HEAD`, so `git merge --abort` is
+  --merge` + `clean -fd` (squash leaves no `MERGE_HEAD`, so `git merge --abort` is
   never used; MAP runtime state is excluded from the clean) and leaves **every**
-  worktree intact for retry. No partial-wave state ever survives.
+  worktree intact for retry. A failed rollback preserves candidates and reports
+  `ROLLBACK_FAILED`; it never authorizes cleanup or redispatch.
 - **One post-wave full gate inside the transaction.** Per-worktree pre-merge
   verify is a local sanity gate; the post-wave `verification_checks` run on the
   fully merged tree are the true correctness gate (they catch a semantic break
@@ -698,14 +699,28 @@ evidence is isolation-only. Evidence hierarchy: overlapping dispatch windows →
 concurrent; non-overlapping with worktree SHAs → isolated-sequential; no
 worktree SHAs → unverifiable.
 
-**`run_concurrent_wave`.** Splits the wave's subtask list into sub-batches of
-`execution.max_actors` (clamped `[1, 8]`). Dispatches each sub-batch as
-concurrent Actor Tasks, then calls `merge_wave_worktrees` atomically for that
-sub-batch. A sub-batch failure triggers `abort_wave_group` for the whole group.
+**`run_concurrent_wave`.** Admits one group within `execution.max_actors`
+(clamped `[1, 8]`) and invokes `merge_wave_worktrees` atomically. Wider groups
+are refused without mutation. The coordinator splits dispatch before creating
+worktrees, creating each later batch from the preceding batch's accepted HEAD.
+It must not split already-created common-base candidates across separate merges.
+Both acceptance entrypoints reject a subset or combination of registered groups
+before freezing candidates. Registered groups must fit the actor cap and their
+recorded base must match HEAD and every candidate. `run_concurrent_wave` requires
+registration; legacy sequential `merge_wave_worktrees` remains usable without it.
+`merge_subtask_worktree` refuses registered group members, including singleton
+groups, so they use atomic wave acceptance and its cleanup. Direct wave acceptance
+also enforces the durable retry budget; bypassing the coordinator cannot clear
+an exhausted count.
 
 **`abort_wave_group` — bounded rollback.** On any sub-batch failure, reverts
 every worktree in the group back to wave base (`discard_subtask_worktree` for
-each member). Retries the whole group up to `execution.max_wave_retries` (clamped
+each member), after persisting a unique binary recovery patch for every candidate.
+Capture or rollback failure preserves candidates and prevents redispatch. Merges
+disable implicit autostash; `reset --merge` preserves unstaged tracked runtime
+edits, while staged runtime is refused before acceptance or rollback. User Git
+operations and external HEAD movement never authorize group cleanup.
+Retries the whole group up to `execution.max_wave_retries` (clamped
 `[1, 10]`, default 3). Exhausted retries → escalation (same path as
 `build_escalation_outcome`).
 

@@ -23247,6 +23247,88 @@ def cleanup_orphan_worktrees(branch: str) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
+def _wt_wave_retry_refusal(
+    state: dict[str, object], group_key: str, project_dir: Path | None = None,
+) -> dict[str, object] | None:
+    counts = state.get("wave_abort_attempts", {})
+    used = counts.get(group_key, 0) if isinstance(counts, dict) else None
+    if not isinstance(used, int) or isinstance(used, bool) or used < 0:
+        return _wt_error(
+            "WAVE_RETRY_STATE_INVALID", "recover invalid wave retry state before proceeding",
+            needs_redispatch=False, escalate_to_human=True, worktrees_preserved=True,
+        )
+    limit = _max_wave_retries(project_dir or _wt_project_dir() or Path("."))
+    if used >= limit:
+        return _wt_error(
+            "WAVE_RETRIES_EXHAUSTED", "wave retry budget exhausted; escalate without redispatch",
+            needs_redispatch=False, escalate_to_human=True, attempts_remaining=0,
+            worktrees_preserved=True,
+        )
+    return None
+
+
+def _wt_wave_admission_refusal(
+    state: dict[str, object], ids: list[str], project_dir: Path | None = None, *,
+    require_registered: bool = False, single: bool = False,
+) -> dict[str, object] | None:
+    """Validate registered membership, width and base before any acceptance mutation.
+
+    Legacy sequential waves need no registration. Concurrent dispatch requires
+    it, and a registered group can only be accepted by the atomic wave path.
+    """
+    groups = state.get("wave_groups", {})
+    if not isinstance(groups, dict):
+        return _wt_error("WAVE_GROUP_STATE_INVALID", "invalid group registry",
+                         needs_redispatch=False, worktrees_preserved=True)
+    supplied = set(ids)
+    matched = False
+    for key, group in groups.items():
+        members = group.get("subtask_ids") if isinstance(group, dict) else None
+        if not isinstance(members, list) or not members:
+            return _wt_error("WAVE_GROUP_STATE_INVALID", "invalid registered membership",
+                             needs_redispatch=False, worktrees_preserved=True)
+        registered = {str(s) for s in members}
+        if not supplied & registered:
+            continue
+        if single:
+            return _wt_error(
+                "WAVE_GROUP_REQUIRES_ATOMIC_ACCEPTANCE",
+                "registered group members must be accepted together via merge_wave_worktrees",
+                needs_redispatch=False, worktrees_preserved=True,
+            )
+        if supplied != registered:
+            return _wt_error(
+                "WAVE_MEMBERSHIP_MISMATCH",
+                "supplied candidates must exactly match their registered atomic group",
+                group_key=key, group_ids=ids, registered_ids=sorted(registered),
+                needs_redispatch=False, worktrees_preserved=True,
+            )
+        matched = True
+        cap = _max_actors(project_dir or _wt_project_dir() or Path("."))
+        if len(registered) > cap:
+            return _wt_error(
+                "WAVE_EXCEEDS_MAX_ACTORS", "registered group exceeds execution.max_actors",
+                max_actors=cap, needs_redispatch=False, worktrees_preserved=True,
+            )
+        base = group.get("base_sha")
+        if not isinstance(base, str) or not base:
+            return _wt_error("WAVE_GROUP_STATE_INVALID", "registered base is missing",
+                             needs_redispatch=False, worktrees_preserved=True)
+        if base != _wt_head_sha():
+            return _wt_error("EXTERNAL_HEAD_MOVED", "HEAD differs from the registered group base",
+                             needs_redispatch=False, worktrees_preserved=True)
+        worktrees = state.get("worktrees")
+        for sid in ids:
+            record = worktrees.get(_wt_slug(sid)) if isinstance(worktrees, dict) else None
+            if isinstance(record, dict) and record.get("base_sha") != base:
+                return _wt_error("WAVE_BASE_MISMATCH", "candidate differs from registered base",
+                                 needs_redispatch=False, worktrees_preserved=True)
+    if require_registered and not matched:
+        return _wt_error("WAVE_GROUP_MISSING", "register the concurrent group before dispatch",
+                         needs_redispatch=False, worktrees_preserved=True)
+    return None
+
+
 def begin_wave_group(
     group_ids: list[str],
     branch: str | None = None,
@@ -23275,10 +23357,15 @@ def begin_wave_group(
         return _wt_error("no_head_sha", "could not resolve HEAD sha")
 
     # Canonical group key: sorted ids joined so order-of-call doesn't vary the key.
-    ids_sorted = sorted(str(s) for s in group_ids if str(s).strip())
+    ids_sorted = sorted({str(s) for s in group_ids if str(s).strip()})
+    if not ids_sorted:
+        return _wt_error("NO_SUBTASKS", "no subtask ids supplied to begin_wave_group")
     group_key = "|".join(ids_sorted)
 
     state = _read_worktree_state(branch_name)
+    retry_refusal = _wt_wave_retry_refusal(state, group_key)
+    if retry_refusal is not None:
+        return retry_refusal
     if not isinstance(state.get("wave_groups"), dict):
         state["wave_groups"] = {}
     wave_groups = state["wave_groups"]
@@ -23856,16 +23943,28 @@ def _wt_freeze_and_verify(
     }
 
 
-def _wt_rollback(base_sha: str) -> None:
-    """Undo an in-progress wave merge: hard-reset to the wave base + clean.
+def _wt_staged_runtime_paths() -> tuple[list[str], str]:
+    staged = _wt_git(["diff", "--cached", "--name-only", "-z"])
+    if staged.returncode != 0:
+        return [], staged.stderr.strip() or "could not inspect the index"
+    return [p for p in staged.stdout.split("\0") if p and _wt_is_runtime_state_path(p)], ""
 
-    A ``git merge --squash`` records NO ``MERGE_HEAD``, so ``git merge --abort``
-    is unusable (council Q2). ``reset --hard`` + ``clean -fd`` is the only correct
-    undo. MAP runtime state (.map/.codex/.agents) is EXCLUDED from the clean so a
-    rollback never destroys the worktree sidecar or step state.
+
+def _wt_rollback(base_sha: str) -> bool:
+    """Rollback product merges while preserving unstaged tracked runtime.
+
+    reset --merge keeps local runtime edits, unlike reset --hard. If Git cannot
+    safely reset, stop without cleaning or deleting candidates. Staged runtime
+    must be unstaged by its owner first; it must never be committed or reset away.
     """
-    _wt_git(["reset", "--hard", base_sha])
-    _wt_git(["clean", "-fd", "-e", ".map", "-e", ".codex", "-e", ".agents"])
+    staged, error = _wt_staged_runtime_paths()
+    if staged or error:
+        return False
+    reset = _wt_git(["reset", "--merge", base_sha])
+    if reset.returncode != 0:
+        return False
+    clean = _wt_git(["clean", "-fd", "-e", ".map", "-e", ".codex", "-e", ".agents"])
+    return clean.returncode == 0
 
 
 def _wt_unmerged_paths() -> list[str]:
@@ -24040,6 +24139,16 @@ def _wt_dirty_target_guard(branch_name: str, operation: str) -> dict[str, object
     dirty paths ride in ``reason`` instead, never file contents. Hold creation is
     best-effort: the refusal must still reach the caller even if it fails.
     """
+    staged_runtime, index_error = _wt_staged_runtime_paths()
+    if index_error:
+        return _wt_error("CLEAN_CHECK_FAILED", index_error)
+    if staged_runtime:
+        return _wt_error(
+            "STAGED_RUNTIME",
+            "unstage the listed runtime files before acceptance; their working "
+            "copies will be preserved. No commit, stash or reset was performed.",
+            paths=staged_runtime,
+        )
     dirty, error = _wt_dirty_paths()
     if error:
         return _wt_error("CLEAN_CHECK_FAILED", error)
@@ -24109,6 +24218,9 @@ def merge_subtask_worktree(
         return _wt_error("INVALID_SUBTASK_ID", f"unsafe subtask id: {subtask_id!r}")
     branch_name = branch or get_branch_name()
     state = _read_worktree_state(branch_name)
+    admission_refusal = _wt_wave_admission_refusal(state, [subtask_id], single=True)
+    if admission_refusal is not None:
+        return admission_refusal
     worktrees = state["worktrees"]
     record = worktrees.get(slug) if isinstance(worktrees, dict) else None
     if not isinstance(record, dict):
@@ -24153,10 +24265,13 @@ def merge_subtask_worktree(
 
     merged_sha = working_head
     if not no_changes:
-        merge = _wt_git(["merge", "--squash", wt_branch])
+        merge = _wt_git(["merge", "--squash", "--no-autostash", wt_branch])
         if merge.returncode != 0:
-            _wt_git(["merge", "--abort"])
-            _wt_git(["reset", "--hard", base_sha])  # clear any staged squash residue
+            if not _wt_rollback(base_sha):
+                return _wt_error(
+                    "ROLLBACK_FAILED", "safe rollback failed; candidates were retained",
+                    worktrees_preserved=True,
+                )
             return _wt_error(
                 "MERGE_CONFLICT",
                 "squash-merge of the worktree branch hit a conflict; aborted, "
@@ -24168,7 +24283,11 @@ def merge_subtask_worktree(
         )
         combined = (commit.stdout + commit.stderr).lower()
         if commit.returncode != 0 and "nothing to commit" not in combined:
-            _wt_git(["reset", "--hard", base_sha])
+            if not _wt_rollback(base_sha):
+                return _wt_error(
+                    "ROLLBACK_FAILED", "safe rollback failed; candidates were retained",
+                    worktrees_preserved=True,
+                )
             return _wt_error(
                 "MERGE_COMMIT_FAILED", commit.stderr.strip() or "git commit failed after squash"
             )
@@ -24211,6 +24330,58 @@ def merge_subtask_worktree(
     }
 
 
+def _wt_save_attempt_patch(
+    slug: str, record: dict, branch_name: str,
+) -> dict[str, object]:
+    """Persist a unique, binary-capable recovery patch before destructive cleanup."""
+    wt_path = Path(str(record.get("path", "")))
+    base_sha = str(record.get("base_sha", ""))
+    if not base_sha:
+        return _wt_error("PATCH_SAVE_FAILED", "candidate base is missing")
+    try:
+        if not wt_path.exists() and not wt_path.is_symlink():
+            # Directory removal and branch deletion are separate crash cuts.
+            # A surviving branch may still be the only owner of candidate commits.
+            ref = "refs/heads/" + str(record.get("branch", ""))
+            found = _wt_git(["show-ref", "--verify", "--quiet", ref])
+            if found.returncode == 1:
+                return {"ok": True, "patch_path": None}
+            if found.returncode != 0:
+                return _wt_error("PATCH_SAVE_FAILED", "could not inspect candidate branch")
+            head = _wt_git(["rev-parse", "--verify", f"{ref}^{{commit}}"])
+            if head.returncode != 0:
+                return _wt_error("PATCH_SAVE_FAILED", "could not resolve candidate commit")
+            diff_cwd = _wt_project_dir()
+            revisions = [base_sha, head.stdout.strip()]
+        else:
+            if not wt_path.is_dir():
+                return _wt_error("PATCH_SAVE_FAILED", "candidate worktree is not a directory")
+            added = _wt_git(["add", "-A"], cwd=wt_path)
+            if added.returncode != 0:
+                return _wt_error("PATCH_SAVE_FAILED", added.stderr.strip() or "git add failed")
+            diff_cwd = wt_path
+            revisions = ["--cached", base_sha]
+        diff = subprocess.run(
+            ["git", "diff", "--binary", "--full-index", "--no-color",
+             "--no-ext-diff", "--no-textconv", *revisions, "--"],
+            cwd=diff_cwd, capture_output=True, timeout=WORKTREE_GIT_TIMEOUT, check=False,
+        )
+        if diff.returncode != 0:
+            return _wt_error("PATCH_SAVE_FAILED", diff.stderr.decode(errors="replace"))
+        attempts_dir = get_branch_dir(branch_name) / "worktree_attempts"
+        attempts_dir.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(
+            prefix=f"{slug}-{record.get('attempt', 0)}-", suffix=".patch", dir=attempts_dir,
+        )
+        with os.fdopen(fd, "wb") as output:
+            output.write(diff.stdout)
+            output.flush()
+            os.fsync(output.fileno())
+        return {"ok": True, "patch_path": name}
+    except (OSError, UnicodeError, subprocess.SubprocessError) as exc:
+        return _wt_error("PATCH_SAVE_FAILED", str(exc))
+
+
 def discard_subtask_worktree(
     subtask_id: str,
     attempt: int = 0,
@@ -24243,21 +24414,17 @@ def discard_subtask_worktree(
         }
     wt_path = Path(str(record.get("path", "")))
     wt_branch = str(record.get("branch", ""))
-    base_sha = str(record.get("base_sha", ""))
-
     patch_path: Path | None = None
-    if save_patch and wt_path.is_dir() and base_sha:
-        # Capture the FULL rejected delta vs base, including uncommitted and
-        # untracked work — a Monitor-rejected attempt is usually never committed.
-        _wt_git(["add", "-A"], cwd=wt_path)
-        diff = _wt_git(["diff", "--cached", base_sha], cwd=wt_path)
-        if diff.returncode == 0 and diff.stdout.strip():
-            attempts_dir = get_branch_dir(branch_name) / "worktree_attempts"
-            attempts_dir.mkdir(parents=True, exist_ok=True)
-            patch_path = attempts_dir / f"{slug}-{record.get('attempt', 0)}.patch"
-            _write_text_file(patch_path, diff.stdout)
+    if save_patch:
+        saved = _wt_save_attempt_patch(slug, record, branch_name)
+        if not saved.get("ok"):
+            return saved
+        patch_path = Path(str(saved["patch_path"])) if saved.get("patch_path") else None
 
     _wt_force_remove(wt_path, wt_branch)
+    if wt_path.exists():
+        return _wt_error("WORKTREE_REMOVE_FAILED", "candidate could not be removed",
+                         patch_path=str(patch_path) if patch_path else None)
     state = _read_worktree_state(branch_name)
     worktrees = state["worktrees"]
     if isinstance(worktrees, dict):
@@ -24295,7 +24462,7 @@ def merge_wave_worktrees(
     divergence each in-wave squash-merge creates.
 
     All-or-nothing (council Q2): any conflict, commit, or post-wave-gate failure
-    rolls the working branch back to the wave base via ``reset --hard`` +
+    rolls the working branch back to the wave base via ``reset --merge`` +
     ``clean -fd`` (squash merges leave no ``MERGE_HEAD`` so ``git merge --abort``
     is NOT used) and leaves EVERY worktree intact for retry. Council-reviewed
     (conv ``c29d6fa9``): dedicated coordinator over a flag on the single path;
@@ -24319,6 +24486,12 @@ def merge_wave_worktrees(
 
     branch_name = branch or get_branch_name()
     state = _read_worktree_state(branch_name)
+    retry_refusal = _wt_wave_retry_refusal(state, "|".join(ids), project_dir)
+    if retry_refusal is not None:
+        return retry_refusal
+    admission_refusal = _wt_wave_admission_refusal(state, ids, project_dir)
+    if admission_refusal is not None:
+        return admission_refusal
     worktrees = state["worktrees"]
     if not isinstance(worktrees, dict):
         return _wt_error("NO_WORKTREE", "no worktree state recorded for this branch")
@@ -24432,11 +24605,15 @@ def merge_wave_worktrees(
             if item["no_changes"]:
                 continue
             wt_head = str(item["wt_head"])
-            merge = _wt_git(["merge", "--squash", wt_head])
+            merge = _wt_git(["merge", "--squash", "--no-autostash", wt_head])
             if merge.returncode != 0:
                 conflict_files = _wt_unmerged_paths()
                 attribution = _wt_attribute_conflict(conflict_files, prepared)
-                _wt_rollback(wave_base_sha)
+                if not _wt_rollback(wave_base_sha):
+                    return _wt_error(
+                        "ROLLBACK_FAILED", "safe rollback failed; candidates were retained",
+                        worktrees_preserved=True,
+                    )
                 _wt_set_manifest(
                     branch_name,
                     "wave_failed",
@@ -24462,7 +24639,11 @@ def merge_wave_worktrees(
             )
             combined = (commit.stdout + commit.stderr).lower()
             if commit.returncode != 0 and "nothing to commit" not in combined:
-                _wt_rollback(wave_base_sha)
+                if not _wt_rollback(wave_base_sha):
+                    return _wt_error(
+                        "ROLLBACK_FAILED", "safe rollback failed; candidates were retained",
+                        worktrees_preserved=True,
+                    )
                 _wt_set_manifest(
                     branch_name, "wave_failed", {"subtask_id": sid, "reason": "commit_failed"}
                 )
@@ -24506,7 +24687,11 @@ def merge_wave_worktrees(
                         check=False,
                     )
                 except subprocess.TimeoutExpired:
-                    _wt_rollback(wave_base_sha)
+                    if not _wt_rollback(wave_base_sha):
+                        return _wt_error(
+                            "ROLLBACK_FAILED", "safe rollback failed; candidates were retained",
+                            worktrees_preserved=True,
+                        )
                     _wt_set_manifest(
                         branch_name,
                         "wave_failed",
@@ -24518,7 +24703,11 @@ def merge_wave_worktrees(
                         command=cmd,
                     )
                 except (OSError, UnicodeError, subprocess.SubprocessError) as exc:
-                    _wt_rollback(wave_base_sha)
+                    if not _wt_rollback(wave_base_sha):
+                        return _wt_error(
+                            "ROLLBACK_FAILED", "safe rollback failed; candidates were retained",
+                            worktrees_preserved=True,
+                        )
                     return _wt_error(
                         "WAVE_VERIFY_ERROR",
                         f"post-wave verification failed to run: {cmd}: {exc}",
@@ -24532,7 +24721,11 @@ def merge_wave_worktrees(
                 results.append({"command": cmd, "returncode": cp.returncode,
                                 "approved_baseline_failure": approved_failure})
                 if cp.returncode != 0 and approved_failure is None:
-                    _wt_rollback(wave_base_sha)
+                    if not _wt_rollback(wave_base_sha):
+                        return _wt_error(
+                            "ROLLBACK_FAILED", "safe rollback failed; candidates were retained",
+                            worktrees_preserved=True,
+                        )
                     _wt_set_manifest(
                         branch_name,
                         "wave_failed",
@@ -24559,6 +24752,11 @@ def merge_wave_worktrees(
             _wt_force_remove(Path(str(rec.get("path", ""))), str(rec.get("branch", "")))
             if isinstance(worktrees, dict):
                 worktrees.pop(str(item["slug"]), None)
+        group_key = "|".join(ids)
+        for field in ("wave_groups", "wave_abort_attempts"):
+            entries = state.get(field)
+            if isinstance(entries, dict):
+                entries.pop(group_key, None)
         _write_worktree_state(branch_name, state)
         final_head = _wt_head_sha()
         no_change_ids = [str(p["subtask_id"]) for p in prepared if p["no_changes"]]
@@ -24883,9 +25081,9 @@ def abort_wave_group(
 
     1. Read the group's recorded ``base_sha`` from the lifecycle sidecar
        (written by ``begin_wave_group``).
-    2. If ``_wt_active_git_operation()`` reports a mid-merge, run
-       ``git merge --abort`` first.
-    3. **Reuse** ``_wt_rollback(base_sha)`` — hard-reset to base_sha + clean
+    2. Refuse an active user Git operation, then save a unique binary patch
+       for every remaining member before touching the parent or deleting any tree.
+    3. **Reuse** ``_wt_rollback(base_sha)`` — reset --merge to base_sha + clean
        with ``-e .map -e .codex -e .agents`` so the gitignored runtime state
        (step_state.json, worktree sidecar) is NEVER deleted.
        DO NOT call ``git clean -fdx`` or ``git clean -x`` directly.
@@ -24931,16 +25129,62 @@ def abort_wave_group(
                 raw_sids = grp.get("subtask_ids", [])
                 subtask_ids = list(raw_sids) if isinstance(raw_sids, list) else []
 
-    # Step 2: abort any in-progress merge (idempotent — fails safely if none).
+    # Squash acceptance never owns MERGE_HEAD or a rebase. Do not abort a
+    # separate user Git operation or consume its autostash.
     active_op = _wt_active_git_operation()
-    if active_op == "merge":
-        _wt_git(["merge", "--abort"])
+    if active_op:
+        return _wt_error("ACTIVE_GIT_OP", f"resolve the active {active_op} first",
+                         clean=False, worktrees_preserved=True)
+
+    if group_key is None and state.get("worktrees"):
+        return _wt_error(
+            "WAVE_GROUP_MISSING", "register the candidate group before aborting it",
+            clean=False, worktrees_preserved=True,
+        )
+    if base_sha and _wt_head_sha() != base_sha:
+        return _wt_error(
+            "EXTERNAL_HEAD_MOVED", "parent HEAD moved; direct abort cannot reset user commits",
+            clean=False, worktrees_preserved=True,
+        )
+    dirty_refusal = _wt_dirty_target_guard(branch_name, "wave abort")
+    if dirty_refusal is not None:
+        return {**dirty_refusal, "clean": False, "worktrees_preserved": True}
+    retry_key = group_key or group_id
+    prior_counts = state.get("wave_abort_attempts")
+    if group_key is None and isinstance(prior_counts, dict) and retry_key not in prior_counts:
+        matches = [key for key in prior_counts if isinstance(key, str) and group_id in key.split("|")]
+        if len(matches) == 1:
+            retry_key = matches[0]
+    retry_refusal = _wt_wave_retry_refusal(state, retry_key)
+    if retry_refusal and retry_refusal.get("kind") == "WAVE_RETRY_STATE_INVALID":
+        return {**retry_refusal, "clean": False}
+
+    # Preserve EVERY candidate before resetting the parent or removing ANY
+    # worktree. A failed capture leaves the whole group available for recovery.
+    patches: dict[str, str] = {}
+    worktrees = state.get("worktrees")
+    for sid in subtask_ids:
+        slug = _wt_slug(sid)
+        record = worktrees.get(slug) if isinstance(worktrees, dict) else None
+        if not isinstance(record, dict):
+            continue  # already discarded during an earlier partial cleanup
+        saved = _wt_save_attempt_patch(str(slug), record, branch_name)
+        if not saved.get("ok"):
+            return {**saved, "clean": False, "patches": patches,
+                    "worktrees_preserved": True}
+        if saved.get("patch_path"):
+            patches[sid] = str(saved["patch_path"])
 
     # Step 3: rollback to base_sha if we have one.
     # MUST reuse _wt_rollback — it excludes .map/.codex/.agents from the clean.
     rollback_verified = True  # optimistic; no base_sha → nothing to verify
     if base_sha:
-        _wt_rollback(base_sha)
+        rolled_back = _wt_rollback(base_sha)
+        if rolled_back is False:
+            return _wt_error(
+                "ROLLBACK_FAILED", "safe rollback failed; candidates were retained",
+                clean=False, patches=patches, worktrees_preserved=True,
+            )
         # Verify rollback landed BEFORE touching group state (F5).
         # If HEAD != base_sha the rollback failed; keep the group entry so that
         # verify_group_clean still has base_sha and a wrong HEAD cannot pass as clean.
@@ -24954,12 +25198,16 @@ def abort_wave_group(
                 "base_sha": base_sha,
                 "actual_head": actual_head,
                 "aborted_group_id": group_id,
+                "patches": patches,
+                "worktrees_preserved": True,
             }
             return result
 
     # Step 4: discard every group worktree + branch.
     for sid in subtask_ids:
-        discard_subtask_worktree(sid, branch=branch_name)
+        discarded = discard_subtask_worktree(sid, branch=branch_name)
+        if not discarded.get("ok"):
+            return {**discarded, "clean": False, "patches": patches}
 
     # Step 5: mark aborted in sidecar and remove the group entry so
     # verify_group_clean sees zero groups.  Only reached when rollback is verified.
@@ -24971,6 +25219,13 @@ def abort_wave_group(
         state2 = _read_worktree_state(branch_name)
         wg2 = state2.get("wave_groups")
         if isinstance(wg2, dict) and group_key in wg2:
+            counts = state2.get("wave_abort_attempts")
+            if not isinstance(counts, dict):
+                counts = {}
+                state2["wave_abort_attempts"] = counts
+            counts[group_key] = int(counts.get(group_key, 0)) + 1
+            # Counter and deletion share one sidecar write, so cleanup re-entry
+            # cannot count the same abandoned attempt twice.
             del wg2[group_key]
             _write_worktree_state(branch_name, state2)
 
@@ -24978,6 +25233,16 @@ def abort_wave_group(
     verdict = verify_group_clean(branch_name)
     final_result: dict[str, object] = dict(verdict)
     final_result["aborted_group_id"] = group_id
+    final_result["ok"] = bool(verdict.get("clean"))
+    final_result["patches"] = patches
+    counts = _read_worktree_state(branch_name).get("wave_abort_attempts")
+    attempts_used = int(counts.get(retry_key, 0)) if isinstance(counts, dict) else 0
+    attempts_remaining = max(0, _max_wave_retries(_wt_project_dir() or Path(".")) - attempts_used)
+    final_result.update(
+        attempts_used=attempts_used, attempts_remaining=attempts_remaining,
+        needs_redispatch=bool(verdict.get("clean")) and attempts_used > 0 and attempts_remaining > 0,
+        escalate_to_human=attempts_remaining == 0,
+    )
     return final_result
 
 
@@ -24986,7 +25251,7 @@ def run_concurrent_wave(
     branch: str | None = None,
     project_dir: Path | None = None,
 ) -> dict[str, object]:
-    """Coordinate an N-way concurrent wave: batch-split + atomic sub-batch merge.
+    """Accept one admitted concurrent group atomically; reject over-cap groups.
 
     This function is the COORDINATOR side of concurrent dispatch.  It does NOT
     spawn actor agents — the skill emits N Task blocks to start actors (ST-007).
@@ -25000,15 +25265,13 @@ def run_concurrent_wave(
        (As of the Slice 6 flip the default is enabled; this guard catches the
        explicit off-ramps.)
 
-    2. **Batch-split**: read ``max_actors`` from config (via ``_max_actors()``),
-       clamp to [1, 8], then split the sorted ``group_ids`` into sequential
-       sub-batches each of width <= cap.  A group already within the cap is one
-       batch (no split).
+    2. **Width admission**: read ``max_actors`` (clamped to [1, 8]) and refuse
+       a wider group before merging or cleaning anything. The coordinator must
+       split work BEFORE creating candidates, creating the next independent
+       batch from the previous batch's accepted HEAD.
 
-    3. **Atomic sub-batch merge**: for each sub-batch call the existing
-       ``merge_wave_worktrees(sub_batch, branch=...)`` which is all-or-nothing
-       (HC-4, #284 invariant).  The NEXT sub-batch branches from the prior
-       sub-batch's post-merge HEAD.  Do NOT re-implement merge.
+    3. **Atomic merge**: call ``merge_wave_worktrees`` for the admitted group.
+       Never split already-created common-base worktrees across multiple merges.
 
     4. **Telemetry / lifecycle**: call ``record_dispatch_actual`` CLI verb (via
        ``begin_wave_group`` + ``record_group_lifecycle`` — these must be called
@@ -25021,9 +25284,9 @@ def run_concurrent_wave(
        discard the WHOLE group and reset to base (HC-4).  Do NOT retry internally —
        the group worktrees are gone after abort and cannot be re-merged without the
        skill re-dispatching actors.  Return a structured result with
-       ``needs_redispatch: True`` and ``attempts_remaining`` (read from the group
-       sidecar so successive calls can track exhaustion).  The SKILL owns the retry
-       loop: re-dispatch actors, then call run_concurrent_wave again.
+       ``attempts_remaining`` from durable abort history. ``needs_redispatch`` is
+       true only while that budget remains. Group registration and acceptance
+       refuse exhausted budgets. The SKILL owns retries after successful cleanup.
 
     Returns on full success::
 
@@ -25053,7 +25316,7 @@ def run_concurrent_wave(
             "status": "error",
             "ok": False,
             "kind": "WAVE_ABORTED",
-            "needs_redispatch": True,
+            "needs_redispatch": bool,    # false at retry exhaustion
             "attempts_remaining": int,   # decremented in group sidecar; 0 → escalate
             "escalate_to_human": bool,   # True when attempts_remaining == 0
             "group_ids": [...],
@@ -25081,48 +25344,83 @@ def run_concurrent_wave(
         )
 
     # Deterministic sorted list — order-of-call must not vary group membership.
-    ids_sorted = sorted(str(s) for s in group_ids if str(s).strip())
+    ids_sorted = sorted({str(s) for s in group_ids if str(s).strip()})
     if not ids_sorted:
         return _wt_error("NO_SUBTASKS", "no subtask ids supplied to run_concurrent_wave")
 
     cap = _max_actors(pd)
+    if len(ids_sorted) > cap:
+        return _wt_error(
+            "WAVE_EXCEEDS_MAX_ACTORS",
+            "group exceeds execution.max_actors; no merge or cleanup was attempted. "
+            "Set the cap before dispatch (maximum 8), or create each separate "
+            "batch only after the preceding batch has merged, from its new HEAD. "
+            "Existing candidate worktrees have been preserved.",
+            max_actors=cap, group_ids=ids_sorted, needs_redispatch=False,
+            worktrees_preserved=True,
+        )
     max_retries = _max_wave_retries(pd)
     sub_batches = _chunk(ids_sorted, cap)
     group_key = "|".join(ids_sorted)
+    state = _read_worktree_state(branch_name)
+    retry_refusal = _wt_wave_retry_refusal(state, group_key, pd)
+    if retry_refusal is not None:
+        return retry_refusal
+    admission_refusal = _wt_wave_admission_refusal(state, ids_sorted, pd, require_registered=True)
+    if admission_refusal is not None:
+        return admission_refusal
 
     merged_ids: list[str] = []
     no_changes: list[str] = []
     batches_merged = 0
 
     for batch in sub_batches:
-        merge_result = merge_wave_worktrees(batch, branch=branch_name, skip_post_wave=True)
+        merge_result = merge_wave_worktrees(batch, branch=branch_name)
         if merge_result.get("status") == "error" or not merge_result.get("ok"):
+            if merge_result.get("kind") in {
+                "EXTERNAL_HEAD_MOVED", "WAVE_BASE_MISMATCH", "STAGED_RUNTIME",
+                "DIRTY_TARGET", "CLEAN_CHECK_FAILED", "MERGE_IN_PROGRESS",
+                "ACTIVE_GIT_OP", "DETACHED_HEAD", "NOT_A_REPO", "NESTED_WORKTREE",
+                "NO_WORKTREE", "WORKTREE_MISSING", "ROLLBACK_FAILED",
+                "WAVE_MEMBERSHIP_MISMATCH", "WAVE_RETRIES_EXHAUSTED",
+                "WAVE_RETRY_STATE_INVALID",
+                "WAVE_GROUP_MISSING", "WAVE_GROUP_STATE_INVALID", "WAVE_EXCEEDS_MAX_ACTORS",
+            }:
+                # These refusals never authorize resetting user work or removing
+                # candidates. In particular, external HEAD movement is not ours.
+                return {**merge_result, "needs_redispatch": False,
+                        "worktrees_preserved": True}
             # F7: Abort ONCE — worktrees are gone after abort; the skill must
             # re-dispatch actors before calling run_concurrent_wave again.
             # Track attempt count in the group sidecar so successive calls can
             # decrement and escalate when exhausted.
-            abort_wave_group(group_key, branch_name)
+            abort_result = abort_wave_group(group_key, branch_name)
+            if not abort_result.get("clean"):
+                return _wt_error(
+                    "WAVE_ABORT_FAILED", "wave cleanup did not complete; recover before retry",
+                    needs_redispatch=False, merge_error=dict(merge_result),
+                    abort_result=abort_result,
+                )
 
-            # Read attempt count from sidecar (written by begin_wave_group / prior calls).
-            _st2 = _read_worktree_state(branch_name)
-            _wg2 = _st2.get("wave_groups") or {}
-            _grp2 = _wg2.get(group_key) if isinstance(_wg2, dict) else None
-            _attempts_used = 1
-            if isinstance(_grp2, dict):
-                _attempts_used = int(_grp2.get("abort_attempts", 0)) + 1
-                _grp2["abort_attempts"] = _attempts_used
-                _write_worktree_state(branch_name, _st2)
+            # Shared abort accounts for Actor/Monitor and merge failures once.
+            _attempts_used = abort_result.get("attempts_used")
+            if not isinstance(_attempts_used, int) or _attempts_used < 1:
+                return _wt_error(
+                    "WAVE_ABORT_FAILED", "abort did not report a durable attempt count",
+                    needs_redispatch=False, abort_result=abort_result,
+                )
 
             attempts_remaining = max(0, max_retries - _attempts_used)
             return {
                 "status": "error",
                 "ok": False,
                 "kind": "WAVE_ABORTED",
-                "needs_redispatch": True,
+                "needs_redispatch": attempts_remaining > 0,
                 "attempts_remaining": attempts_remaining,
                 "escalate_to_human": attempts_remaining == 0,
                 "group_ids": ids_sorted,
                 "merge_error": dict(merge_result),
+                "abort_result": abort_result,
                 "failed_batch": batch,
                 "batches_merged_before_failure": batches_merged,
             }

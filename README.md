@@ -262,6 +262,10 @@ After a good first workflow, you should see:
 
 MAP review is useful, but it is not a replacement for engineering judgment. Serious changes still need human review. The goal is to make that review smaller, earlier, and better grounded.
 
+Concurrent worktree groups must fit `execution.max_actors` (default 4, maximum 8).
+Create later batches after earlier batches merge. Aborting a group preserves
+recovery patches before deleting its worktrees.
+
 ## Options
 
 <details>
