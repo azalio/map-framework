@@ -703,6 +703,9 @@ worktree SHAs → unverifiable.
 are refused without mutation. The coordinator splits dispatch before creating
 worktrees, creating each later batch from the preceding batch's accepted HEAD.
 It must not split already-created common-base candidates across separate merges.
+Both acceptance entrypoints reject a subset or combination of registered groups
+before freezing candidates. Direct `merge_wave_worktrees` also enforces the
+durable retry budget; bypassing the coordinator cannot clear an exhausted count.
 
 **`abort_wave_group` — bounded rollback.** On any sub-batch failure, reverts
 every worktree in the group back to wave base (`discard_subtask_worktree` for

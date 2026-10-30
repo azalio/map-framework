@@ -23267,6 +23267,31 @@ def _wt_wave_retry_refusal(
     return None
 
 
+def _wt_wave_membership_refusal(
+    state: dict[str, object], ids: list[str],
+) -> dict[str, object] | None:
+    """Never accept a subset or combination of registered atomic groups."""
+    groups = state.get("wave_groups")
+    if not isinstance(groups, dict):
+        return None
+    supplied = set(ids)
+    for key, group in groups.items():
+        if not isinstance(group, dict):
+            continue
+        members = group.get("subtask_ids")
+        if not isinstance(members, list):
+            continue
+        registered = {str(s) for s in members}
+        if supplied & registered and supplied != registered:
+            return _wt_error(
+                "WAVE_MEMBERSHIP_MISMATCH",
+                "supplied candidates must exactly match their registered atomic group",
+                group_key=key, group_ids=ids, registered_ids=sorted(registered),
+                needs_redispatch=False, worktrees_preserved=True,
+            )
+    return None
+
+
 def begin_wave_group(
     group_ids: list[str],
     branch: str | None = None,
@@ -24419,6 +24444,12 @@ def merge_wave_worktrees(
 
     branch_name = branch or get_branch_name()
     state = _read_worktree_state(branch_name)
+    retry_refusal = _wt_wave_retry_refusal(state, "|".join(ids), project_dir)
+    if retry_refusal is not None:
+        return retry_refusal
+    membership_refusal = _wt_wave_membership_refusal(state, ids)
+    if membership_refusal is not None:
+        return membership_refusal
     worktrees = state["worktrees"]
     if not isinstance(worktrees, dict):
         return _wt_error("NO_WORKTREE", "no worktree state recorded for this branch")
@@ -25289,9 +25320,13 @@ def run_concurrent_wave(
     max_retries = _max_wave_retries(pd)
     sub_batches = _chunk(ids_sorted, cap)
     group_key = "|".join(ids_sorted)
-    retry_refusal = _wt_wave_retry_refusal(_read_worktree_state(branch_name), group_key, pd)
+    state = _read_worktree_state(branch_name)
+    retry_refusal = _wt_wave_retry_refusal(state, group_key, pd)
     if retry_refusal is not None:
         return retry_refusal
+    membership_refusal = _wt_wave_membership_refusal(state, ids_sorted)
+    if membership_refusal is not None:
+        return membership_refusal
 
     merged_ids: list[str] = []
     no_changes: list[str] = []
@@ -25305,6 +25340,8 @@ def run_concurrent_wave(
                 "DIRTY_TARGET", "CLEAN_CHECK_FAILED", "MERGE_IN_PROGRESS",
                 "ACTIVE_GIT_OP", "DETACHED_HEAD", "NOT_A_REPO", "NESTED_WORKTREE",
                 "NO_WORKTREE", "WORKTREE_MISSING", "ROLLBACK_FAILED",
+                "WAVE_MEMBERSHIP_MISMATCH", "WAVE_RETRIES_EXHAUSTED",
+                "WAVE_RETRY_STATE_INVALID",
             }:
                 # These refusals never authorize resetting user work or removing
                 # candidates. In particular, external HEAD movement is not ours.

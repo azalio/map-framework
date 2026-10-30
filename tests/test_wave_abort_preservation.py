@@ -65,6 +65,45 @@ def test_within_cap_accepts_all_members(wave_repo: Path) -> None:
         assert not path.exists()
 
 
+@pytest.mark.parametrize("operation", [m.run_concurrent_wave, m.merge_wave_worktrees])
+@pytest.mark.parametrize("supplied", [["task-a", "task-b"], ["task-a", "extra"]])
+def test_partial_or_mixed_group_is_preserved(
+    wave_repo: Path, operation, supplied
+) -> None:
+    key, paths = group(["task-a", "task-b", "task-c"])
+    for sid, path in paths.items():
+        (path / f"{sid}.txt").write_text(sid)
+    before = m._read_worktree_state(m.get_branch_name())
+    head = _git(["rev-parse", "HEAD"], wave_repo).stdout
+    result = operation(supplied)
+    assert result["kind"] == "WAVE_MEMBERSHIP_MISMATCH", result
+    assert result["group_key"] == key
+    assert result["needs_redispatch"] is False
+    assert m._read_worktree_state(m.get_branch_name()) == before
+    assert _git(["rev-parse", "HEAD"], wave_repo).stdout == head
+    for sid, path in paths.items():
+        assert (path / f"{sid}.txt").read_text() == sid
+        assert _git(["rev-parse", "HEAD"], path).stdout == head
+
+
+def test_direct_acceptance_refuses_exhausted_registered_group(wave_repo: Path) -> None:
+    key, paths = group(["task-a", "task-b"])
+    state = m._read_worktree_state(m.get_branch_name())
+    state["wave_abort_attempts"] = {key: 3}
+    m._write_worktree_state(m.get_branch_name(), state)
+    head = _git(["rev-parse", "HEAD"], wave_repo).stdout
+    for path in paths.values():
+        (path / "keep.txt").write_text("uncommitted")
+    result = m.merge_wave_worktrees(["task-b", "task-a"])
+    assert result["kind"] == "WAVE_RETRIES_EXHAUSTED", result
+    assert result["needs_redispatch"] is False
+    assert m._read_worktree_state(m.get_branch_name()) == state
+    assert _git(["rev-parse", "HEAD"], wave_repo).stdout == head
+    for path in paths.values():
+        assert (path / "keep.txt").read_text() == "uncommitted"
+        assert _git(["rev-parse", "HEAD"], path).stdout == head
+
+
 def test_abort_preserves_recoverable_binary_patches(
     wave_repo: Path, tmp_path: Path
 ) -> None:
@@ -395,7 +434,11 @@ def test_invalid_retry_state_fails_closed(wave_repo: Path, invalid_count) -> Non
     state = m._read_worktree_state(branch)
     state["wave_abort_attempts"] = {"task-a": invalid_count}
     m._write_worktree_state(branch, state)
-    for operation in (m.begin_wave_group, m.run_concurrent_wave):
+    for operation in (
+        m.begin_wave_group,
+        m.run_concurrent_wave,
+        m.merge_wave_worktrees,
+    ):
         result = operation(["task-a"])
         assert result["kind"] == "WAVE_RETRY_STATE_INVALID", result
         assert result["needs_redispatch"] is False
