@@ -623,6 +623,25 @@ branch **only after the configured `verification_checks` pass inside the worktre
 (a pre-merge gate). A rejected attempt (Monitor `valid=false` / Evaluator fail)
 is discarded, so the working branch is never touched by a bad attempt.
 
+Candidate and parent acceptance commits run the repository's Git hooks, including
+`pre-commit` and `commit-msg`. A nonzero hook exit blocks acceptance even when its
+output says `nothing to commit`. Empty candidates and already-applied squash
+changes skip committing only after Git confirms the index is empty. A failed
+direct acceptance retains its candidates; the concurrent coordinator follows
+its normal patch-preserving abort procedure. Fix the hook failure before retrying;
+the runner does not bypass hooks or the configured verification gates.
+Hooks have the same 30-minute timeout as verification commands. Direct acceptance
+also runs verification against the committed parent result; waves use their
+post-wave gate. Parent commits that change `.map/`, `.codex/`, or `.agents/` are
+rejected and rolled back, preserving those files' working copies for recovery.
+The existing exception for tracked `.map/config.yaml` still applies.
+If a parent hook stages runtime files and then rejects its commit, rollback
+unstages those files while preserving their working copies. Runtime already
+staged before acceptance still blocks the operation without changing the index.
+Changes left staged by `post-commit`, or source edits left unstaged or untracked after commit,
+also block acceptance. Candidates remain available; if Git cannot safely roll
+back an unstaged source edit, the runner returns `ROLLBACK_FAILED` without cleanup.
+
 **Off-ramps (either is sufficient):**
 
 1. **Global kill-switch** — set `MAP_EFFICIENT_SEQUENTIAL_ONLY=1` in your shell.

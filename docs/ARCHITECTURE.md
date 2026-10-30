@@ -604,6 +604,19 @@ Design decisions (llm-council-reviewed, conv `461b92f9`):
   base-divergence guard pins `working HEAD == base_sha`), then `git merge
   --squash` + one runner-authored commit. Never `--no-ff`: that would add a merge
   commit per subtask and break the one-commit-per-subtask manifest contract.
+  Candidate and parent commits use ordinary hook-enabled `git commit`.
+  `_wt_commit_staged` checks for an empty index before committing; every attempted
+  commit failure blocks acceptance, regardless of hook output. Index inspection
+  errors also block acceptance. Hooks share the verification timeout. Candidate
+  verification remains in place; direct acceptance repeats it on the committed
+  parent tree, and waves retain their post-wave gate. Both parent paths reject
+  committed runtime changes before candidate cleanup. Rollback restores runtime
+  index entries first, preserving working copies that a hook accidentally committed.
+  A rejecting parent hook's staged runtime is likewise unstaged without deleting
+  its files; this exception is confined to the admitted commit-failure path.
+  The shared commit boundary also rechecks the same checkout after post-commit
+  hooks: new staged changes, unstaged or untracked source edits, and inspection failures block
+  acceptance before candidate cleanup. Existing unstaged runtime remains allowed.
   Guards run *before* the working branch is touched: base-divergence,
   runtime-state-in-diff, configurable bulk-deletion (`worktree.max_deletions`),
   submodule-pointer change, and detached-HEAD.
