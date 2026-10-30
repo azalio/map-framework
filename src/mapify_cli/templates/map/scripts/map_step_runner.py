@@ -23897,28 +23897,65 @@ def _wt_wave_retry_refusal(
     return None
 
 
-def _wt_wave_membership_refusal(
-    state: dict[str, object], ids: list[str],
+def _wt_wave_admission_refusal(
+    state: dict[str, object], ids: list[str], project_dir: Path | None = None, *,
+    require_registered: bool = False, single: bool = False,
 ) -> dict[str, object] | None:
-    """Never accept a subset or combination of registered atomic groups."""
-    groups = state.get("wave_groups")
+    """Validate registered membership, width and base before any acceptance mutation.
+
+    Legacy sequential waves need no registration. Concurrent dispatch requires
+    it, and a registered group can only be accepted by the atomic wave path.
+    """
+    groups = state.get("wave_groups", {})
     if not isinstance(groups, dict):
-        return None
+        return _wt_error("WAVE_GROUP_STATE_INVALID", "invalid group registry",
+                         needs_redispatch=False, worktrees_preserved=True)
     supplied = set(ids)
+    matched = False
     for key, group in groups.items():
-        if not isinstance(group, dict):
-            continue
-        members = group.get("subtask_ids")
-        if not isinstance(members, list):
-            continue
+        members = group.get("subtask_ids") if isinstance(group, dict) else None
+        if not isinstance(members, list) or not members:
+            return _wt_error("WAVE_GROUP_STATE_INVALID", "invalid registered membership",
+                             needs_redispatch=False, worktrees_preserved=True)
         registered = {str(s) for s in members}
-        if supplied & registered and supplied != registered:
+        if not supplied & registered:
+            continue
+        if single:
+            return _wt_error(
+                "WAVE_GROUP_REQUIRES_ATOMIC_ACCEPTANCE",
+                "registered group members must be accepted together via merge_wave_worktrees",
+                needs_redispatch=False, worktrees_preserved=True,
+            )
+        if supplied != registered:
             return _wt_error(
                 "WAVE_MEMBERSHIP_MISMATCH",
                 "supplied candidates must exactly match their registered atomic group",
                 group_key=key, group_ids=ids, registered_ids=sorted(registered),
                 needs_redispatch=False, worktrees_preserved=True,
             )
+        matched = True
+        cap = _max_actors(project_dir or _wt_project_dir() or Path("."))
+        if len(registered) > cap:
+            return _wt_error(
+                "WAVE_EXCEEDS_MAX_ACTORS", "registered group exceeds execution.max_actors",
+                max_actors=cap, needs_redispatch=False, worktrees_preserved=True,
+            )
+        base = group.get("base_sha")
+        if not isinstance(base, str) or not base:
+            return _wt_error("WAVE_GROUP_STATE_INVALID", "registered base is missing",
+                             needs_redispatch=False, worktrees_preserved=True)
+        if base != _wt_head_sha():
+            return _wt_error("EXTERNAL_HEAD_MOVED", "HEAD differs from the registered group base",
+                             needs_redispatch=False, worktrees_preserved=True)
+        worktrees = state.get("worktrees")
+        for sid in ids:
+            record = worktrees.get(_wt_slug(sid)) if isinstance(worktrees, dict) else None
+            if isinstance(record, dict) and record.get("base_sha") != base:
+                return _wt_error("WAVE_BASE_MISMATCH", "candidate differs from registered base",
+                                 needs_redispatch=False, worktrees_preserved=True)
+    if require_registered and not matched:
+        return _wt_error("WAVE_GROUP_MISSING", "register the concurrent group before dispatch",
+                         needs_redispatch=False, worktrees_preserved=True)
     return None
 
 
@@ -23950,7 +23987,7 @@ def begin_wave_group(
         return _wt_error("no_head_sha", "could not resolve HEAD sha")
 
     # Canonical group key: sorted ids joined so order-of-call doesn't vary the key.
-    ids_sorted = sorted(str(s) for s in group_ids if str(s).strip())
+    ids_sorted = sorted({str(s) for s in group_ids if str(s).strip()})
     group_key = "|".join(ids_sorted)
 
     state = _read_worktree_state(branch_name)
@@ -24809,6 +24846,9 @@ def merge_subtask_worktree(
         return _wt_error("INVALID_SUBTASK_ID", f"unsafe subtask id: {subtask_id!r}")
     branch_name = branch or get_branch_name()
     state = _read_worktree_state(branch_name)
+    admission_refusal = _wt_wave_admission_refusal(state, [subtask_id], single=True)
+    if admission_refusal is not None:
+        return admission_refusal
     worktrees = state["worktrees"]
     record = worktrees.get(slug) if isinstance(worktrees, dict) else None
     if not isinstance(record, dict):
@@ -25077,9 +25117,9 @@ def merge_wave_worktrees(
     retry_refusal = _wt_wave_retry_refusal(state, "|".join(ids), project_dir)
     if retry_refusal is not None:
         return retry_refusal
-    membership_refusal = _wt_wave_membership_refusal(state, ids)
-    if membership_refusal is not None:
-        return membership_refusal
+    admission_refusal = _wt_wave_admission_refusal(state, ids, project_dir)
+    if admission_refusal is not None:
+        return admission_refusal
     worktrees = state["worktrees"]
     if not isinstance(worktrees, dict):
         return _wt_error("NO_WORKTREE", "no worktree state recorded for this branch")
@@ -25932,7 +25972,7 @@ def run_concurrent_wave(
         )
 
     # Deterministic sorted list — order-of-call must not vary group membership.
-    ids_sorted = sorted(str(s) for s in group_ids if str(s).strip())
+    ids_sorted = sorted({str(s) for s in group_ids if str(s).strip()})
     if not ids_sorted:
         return _wt_error("NO_SUBTASKS", "no subtask ids supplied to run_concurrent_wave")
 
@@ -25954,9 +25994,9 @@ def run_concurrent_wave(
     retry_refusal = _wt_wave_retry_refusal(state, group_key, pd)
     if retry_refusal is not None:
         return retry_refusal
-    membership_refusal = _wt_wave_membership_refusal(state, ids_sorted)
-    if membership_refusal is not None:
-        return membership_refusal
+    admission_refusal = _wt_wave_admission_refusal(state, ids_sorted, pd, require_registered=True)
+    if admission_refusal is not None:
+        return admission_refusal
 
     merged_ids: list[str] = []
     no_changes: list[str] = []
@@ -25972,6 +26012,7 @@ def run_concurrent_wave(
                 "NO_WORKTREE", "WORKTREE_MISSING", "ROLLBACK_FAILED",
                 "WAVE_MEMBERSHIP_MISMATCH", "WAVE_RETRIES_EXHAUSTED",
                 "WAVE_RETRY_STATE_INVALID",
+                "WAVE_GROUP_MISSING", "WAVE_GROUP_STATE_INVALID", "WAVE_EXCEEDS_MAX_ACTORS",
             }:
                 # These refusals never authorize resetting user work or removing
                 # candidates. In particular, external HEAD movement is not ours.

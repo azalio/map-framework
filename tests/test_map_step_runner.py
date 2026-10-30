@@ -16587,6 +16587,7 @@ class TestRunConcurrentWaveBatchSplit:
             "execution.max_actors: 4\nexecution.concurrent_dispatch: true\n", encoding="utf-8"
         )
 
+        assert map_step_runner.begin_wave_group(["ST-003", "ST-001", "ST-002"], "test-branch")["ok"]
         result = map_step_runner.run_concurrent_wave(
             ["ST-003", "ST-001", "ST-002"], "test-branch", repo
         )
@@ -16718,6 +16719,7 @@ class TestRunConcurrentWaveMergeError:
         monkeypatch.chdir(repo)
         monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
 
+        assert map_step_runner.begin_wave_group(["ST-001", "ST-002"], "test-branch")["ok"]
         result = map_step_runner.run_concurrent_wave(
             ["ST-001", "ST-002"], "test-branch", repo
         )
@@ -16776,6 +16778,7 @@ class TestRunConcurrentWaveMergeError:
             encoding="utf-8",
         )
 
+        assert map_step_runner.begin_wave_group(["ST-001", "ST-002"], "test-branch")["ok"]
         result = map_step_runner.run_concurrent_wave(
             ["ST-001", "ST-002"], "test-branch", repo
         )
@@ -16823,6 +16826,7 @@ class TestRunConcurrentWaveAtomicMerge:
         )
 
         # max_actors=4 (default): both in one batch -> one atomic merge.
+        assert map_step_runner.begin_wave_group(group_ids, branch)["ok"]
         result = map_step_runner.run_concurrent_wave(group_ids, branch, repo)
 
         # All-or-nothing: check outcome.
@@ -17254,6 +17258,7 @@ class TestRunConcurrentWaveRetryAndEscalation:
         monkeypatch.chdir(repo)
         monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
 
+        assert map_step_runner.begin_wave_group(["ST-001", "ST-002"], "test-branch")["ok"]
         result = map_step_runner.run_concurrent_wave(
             ["ST-001", "ST-002"], "test-branch", repo
         )
@@ -17291,6 +17296,7 @@ class TestRunConcurrentWaveRetryAndEscalation:
         monkeypatch.chdir(repo)
         monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
 
+        assert map_step_runner.begin_wave_group(["ST-001", "ST-002"], "test-branch")["ok"]
         result = map_step_runner.run_concurrent_wave(
             ["ST-001", "ST-002"], "test-branch", repo
         )
@@ -17322,6 +17328,7 @@ class TestRunConcurrentWaveRetryAndEscalation:
         monkeypatch.chdir(repo)
         monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
 
+        assert map_step_runner.begin_wave_group(["ST-001", "ST-002"], "test-branch")["ok"]
         result = map_step_runner.run_concurrent_wave(
             ["ST-001", "ST-002"], "test-branch", repo
         )
@@ -17356,6 +17363,7 @@ class TestRunConcurrentWaveRetryAndEscalation:
         monkeypatch.chdir(repo)
         monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
 
+        assert map_step_runner.begin_wave_group(["ST-001"], "test-branch")["ok"]
         result = map_step_runner.run_concurrent_wave(
             ["ST-001"], "test-branch", repo
         )

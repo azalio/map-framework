@@ -37,13 +37,14 @@ def group(ids: list[str]) -> tuple[str, dict[str, Path]]:
     return admitted["group_key"], paths
 
 
-def test_over_cap_refuses_before_merge_or_cleanup(wave_repo: Path) -> None:
+@pytest.mark.parametrize("operation", [m.run_concurrent_wave, m.merge_wave_worktrees])
+def test_over_cap_refuses_before_merge_or_cleanup(wave_repo: Path, operation) -> None:
     ids = ["task-a", "task-b", "task-c"]
     key, paths = group(ids)
     for sid, path in paths.items():
         (path / f"{sid}.txt").write_text(sid)
     before = _git(["rev-parse", "HEAD"], wave_repo).stdout
-    result = m.run_concurrent_wave(ids)
+    result = operation(ids)
     assert result["kind"] == "WAVE_EXCEEDS_MAX_ACTORS", result
     assert result["needs_redispatch"] is False
     assert _git(["rev-parse", "HEAD"], wave_repo).stdout == before
@@ -102,6 +103,85 @@ def test_direct_acceptance_refuses_exhausted_registered_group(wave_repo: Path) -
     for path in paths.values():
         assert (path / "keep.txt").read_text() == "uncommitted"
         assert _git(["rev-parse", "HEAD"], path).stdout == head
+
+
+@pytest.mark.parametrize("ids", [["task-a"], ["task-a", "task-b"]])
+def test_single_acceptance_cannot_split_registered_group(wave_repo: Path, ids) -> None:
+    _, paths = group(ids)
+    head = _git(["rev-parse", "HEAD"], wave_repo).stdout
+    state = m._read_worktree_state(m.get_branch_name())
+    for path in paths.values():
+        (path / "keep.txt").write_text("uncommitted")
+    result = m.merge_subtask_worktree("task-a")
+    assert result["kind"] == "WAVE_GROUP_REQUIRES_ATOMIC_ACCEPTANCE", result
+    assert result["needs_redispatch"] is False
+    assert m._read_worktree_state(m.get_branch_name()) == state
+    assert _git(["rev-parse", "HEAD"], wave_repo).stdout == head
+    for path in paths.values():
+        assert (path / "keep.txt").read_text() == "uncommitted"
+        assert _git(["rev-parse", "HEAD"], path).stdout == head
+
+
+@pytest.mark.parametrize("operation", [m.run_concurrent_wave, m.merge_wave_worktrees])
+@pytest.mark.parametrize("drift", ["registered_base", "candidate_base"])
+def test_registered_base_must_match_parent_and_candidates(
+    wave_repo: Path, operation, drift
+) -> None:
+    ids = ["task-a", "task-b"]
+    assert m.begin_wave_group(ids)["ok"]
+    if drift == "registered_base":
+        (wave_repo / "external.txt").write_text("external commit after registration")
+        assert _git(["add", "external.txt"], wave_repo).returncode == 0
+        assert _git(["commit", "-qm", "external"], wave_repo).returncode == 0
+    paths = []
+    for sid in ids:
+        created = m.create_subtask_worktree(sid)
+        assert created["ok"], created
+        path = Path(created["worktree_path"])
+        (path / f"{sid}.txt").write_text(sid)
+        paths.append(path)
+    state = m._read_worktree_state(m.get_branch_name())
+    if drift == "candidate_base":
+        old_base = _git(["rev-parse", "HEAD~1"], wave_repo).stdout.strip()
+        for record in state["worktrees"].values():
+            record["base_sha"] = old_base
+        m._write_worktree_state(m.get_branch_name(), state)
+    head = _git(["rev-parse", "HEAD"], wave_repo).stdout
+    result = operation(ids)
+    expected = (
+        "EXTERNAL_HEAD_MOVED" if drift == "registered_base" else "WAVE_BASE_MISMATCH"
+    )
+    assert result["kind"] == expected, result
+    assert result["needs_redispatch"] is False
+    assert m._read_worktree_state(m.get_branch_name()) == state
+    assert _git(["rev-parse", "HEAD"], wave_repo).stdout == head
+    for sid, path in zip(ids, paths, strict=True):
+        assert (path / f"{sid}.txt").read_text() == sid
+        assert _git(["rev-parse", "HEAD"], path).stdout == head
+
+
+def test_unregistered_sequential_wave_remains_supported(wave_repo: Path) -> None:
+    ids = ["task-a", "task-b", "task-c"]
+    for sid in ids:
+        created = m.create_subtask_worktree(sid)
+        assert created["ok"], created
+        (Path(created["worktree_path"]) / f"{sid}.txt").write_text(sid)
+    result = m.merge_wave_worktrees(ids)
+    assert result["ok"], result
+    for sid in ids:
+        assert (wave_repo / f"{sid}.txt").read_text() == sid
+
+
+def test_duplicate_member_ids_use_one_canonical_group(wave_repo: Path) -> None:
+    admitted = m.begin_wave_group(["task-a", "task-a", "task-a"])
+    assert admitted["group_key"] == "task-a"
+    created = m.create_subtask_worktree("task-a")
+    assert created["ok"], created
+    (Path(created["worktree_path"]) / "accepted.txt").write_text("accepted")
+    result = m.run_concurrent_wave(["task-a", "task-a", "task-a"])
+    assert result["ok"], result
+    assert (wave_repo / "accepted.txt").read_text() == "accepted"
+    assert not m._read_worktree_state(m.get_branch_name())["wave_groups"]
 
 
 def test_abort_preserves_recoverable_binary_patches(
@@ -308,8 +388,10 @@ def test_cleanup_reentry_after_removal_before_sidecar_update(
     assert not paths["task-a"].exists()
 
 
-def test_unregistered_group_failure_cannot_authorize_redispatch(
+@pytest.mark.parametrize("conflict", [False, True])
+def test_unregistered_group_cannot_accept_or_authorize_redispatch(
     wave_repo: Path,
+    conflict: bool,
 ) -> None:
     ids = ["task-a", "task-b"]
     paths = []
@@ -317,12 +399,17 @@ def test_unregistered_group_failure_cannot_authorize_redispatch(
         result = m.create_subtask_worktree(sid)
         assert result["ok"], result
         path = Path(result["worktree_path"])
-        (path / "a.txt").write_text(sid)
+        (path / ("a.txt" if conflict else f"{sid}.txt")).write_text(sid)
         paths.append(path)
+    head = _git(["rev-parse", "HEAD"], wave_repo).stdout
+    state = m._read_worktree_state(m.get_branch_name())
     result = m.run_concurrent_wave(ids)
-    assert result["kind"] == "WAVE_ABORT_FAILED", result
+    assert result["kind"] == "WAVE_GROUP_MISSING", result
     assert result["needs_redispatch"] is False
     assert all(path.exists() for path in paths)
+    assert m._read_worktree_state(m.get_branch_name()) == state
+    assert _git(["rev-parse", "HEAD"], wave_repo).stdout == head
+    assert all(_git(["rev-parse", "HEAD"], path).stdout == head for path in paths)
 
 
 @pytest.mark.parametrize("capture_fails", [False, True])
