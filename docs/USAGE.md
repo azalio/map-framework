@@ -630,6 +630,11 @@ changes skip committing only after Git confirms the index is empty. A failed
 direct acceptance retains its candidates; the concurrent coordinator follows
 its normal patch-preserving abort procedure. Fix the hook failure before retrying;
 the runner does not bypass hooks or the configured verification gates.
+Hooks have the same 30-minute timeout as verification commands. Direct acceptance
+also runs verification against the committed parent result; waves use their
+post-wave gate. Parent commits that change `.map/`, `.codex/`, or `.agents/` are
+rejected and rolled back, preserving those files' working copies for recovery.
+The existing exception for tracked `.map/config.yaml` still applies.
 
 **Off-ramps (either is sufficient):**
 

@@ -24428,7 +24428,68 @@ def _wt_commit_staged(message: str, cwd: Path | None = None) -> subprocess.Compl
     staged = _wt_git(["diff", "--cached", "--quiet"], cwd=cwd)
     if staged.returncode != 1:
         return staged
-    return _wt_git(["commit", "-m", message], cwd=cwd)
+    return _wt_git(["commit", "-m", message], cwd=cwd, timeout=WORKTREE_VERIFY_TIMEOUT)
+
+
+def _wt_verify_commit(
+    subtask_id: str, project_dir: Path, branch_name: str, base_sha: str,
+    cwd: Path, checks: list[str], *, parent: bool = False,
+) -> dict[str, object]:
+    """Run the same verification contract on candidate and committed parent trees."""
+    prefix = "MERGE_VERIFY" if parent else "VERIFY"
+    results: list[dict[str, object]] = []
+    for cmd in checks:
+        argv = shlex.split(cmd)
+        if not argv:
+            continue
+        try:
+            cp = subprocess.run(
+                argv,
+                cwd=str(cwd),
+                capture_output=True,
+                text=True,
+                timeout=WORKTREE_VERIFY_TIMEOUT,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            _wt_set_manifest(
+                branch_name, "verify_failed", {"subtask_id": subtask_id, "command": cmd}
+            )
+            return _wt_error(
+                f"{prefix}_TIMEOUT", f"verification command timed out: {cmd}", command=cmd
+            )
+        except (OSError, UnicodeError, subprocess.SubprocessError) as exc:
+            return _wt_error(
+                f"{prefix}_ERROR",
+                f"verification command failed to run: {cmd}: {exc}",
+                command=cmd,
+            )
+        approved_failure = None
+        if cp.returncode != 0:
+            approved_failure = _wt_approved_baseline_gate(
+                project_dir, branch_name, cmd, cp, base_sha, [subtask_id]
+            )
+        results.append({"command": cmd, "returncode": cp.returncode,
+                        "approved_baseline_failure": approved_failure})
+        if cp.returncode != 0 and approved_failure is None:
+            _wt_set_manifest(
+                branch_name,
+                "verify_failed",
+                {"subtask_id": subtask_id, "command": cmd, "returncode": cp.returncode},
+            )
+            return _wt_error(
+                f"{prefix}_FAILED",
+                f"verification failed in {cwd}: {cmd} (exit {cp.returncode})",
+                command=cmd,
+                returncode=cp.returncode,
+                stderr_tail=_clip_probe_output(cp.stderr)[-2000:],
+                remediation="fix in the worktree and re-run merge, or discard to retry",
+            )
+    verification = {"ran": True,
+                    "status": "approved_baseline_failed" if any(
+                        item["approved_baseline_failure"] is not None for item in results
+                    ) else "passed", "checks": results}
+    return verification
 
 
 def _wt_freeze_and_verify(
@@ -24513,59 +24574,11 @@ def _wt_freeze_and_verify(
     checks = list(verify_cmds) if verify_cmds else _wt_config_verification_checks(project_dir)
     verification: dict[str, object] = {"ran": False, "status": "skipped", "checks": []}
     if not skip_verify and checks and not no_changes:
-        results: list[dict[str, object]] = []
-        for cmd in checks:
-            argv = shlex.split(cmd)
-            if not argv:
-                continue
-            try:
-                cp = subprocess.run(
-                    argv,
-                    cwd=str(wt_path),
-                    capture_output=True,
-                    text=True,
-                    timeout=WORKTREE_VERIFY_TIMEOUT,
-                    check=False,
-                )
-            except subprocess.TimeoutExpired:
-                _wt_set_manifest(
-                    branch_name, "verify_failed", {"subtask_id": subtask_id, "command": cmd}
-                )
-                return _wt_error(
-                    "VERIFY_TIMEOUT", f"verification command timed out: {cmd}", command=cmd
-                )
-            except (OSError, UnicodeError, subprocess.SubprocessError) as exc:
-                return _wt_error(
-                    "VERIFY_ERROR",
-                    f"verification command failed to run: {cmd}: {exc}",
-                    command=cmd,
-                )
-            approved_failure = None
-            if cp.returncode != 0:
-                approved_failure = _wt_approved_baseline_gate(
-                    project_dir, branch_name, cmd, cp, base_sha, [subtask_id]
-                )
-            results.append({"command": cmd, "returncode": cp.returncode,
-                            "approved_baseline_failure": approved_failure})
-            if cp.returncode != 0 and approved_failure is None:
-                _wt_set_manifest(
-                    branch_name,
-                    "verify_failed",
-                    {"subtask_id": subtask_id, "command": cmd, "returncode": cp.returncode},
-                )
-                return _wt_error(
-                    "VERIFY_FAILED",
-                    f"pre-merge verification failed in the worktree: {cmd} "
-                    f"(exit {cp.returncode}); working branch untouched",
-                    command=cmd,
-                    returncode=cp.returncode,
-                    stderr_tail=_clip_probe_output(cp.stderr)[-2000:],
-                    remediation="fix in the worktree and re-run merge, or discard to retry",
-                )
-        verification = {"ran": True,
-                        "status": "approved_baseline_failed" if any(
-                            item["approved_baseline_failure"] is not None for item in results
-                        ) else "passed", "checks": results}
+        verification = _wt_verify_commit(
+            subtask_id, project_dir, branch_name, base_sha, wt_path, checks,
+        )
+        if verification.get("status") == "error":
+            return verification
 
     return {
         "status": "success",
@@ -24584,6 +24597,35 @@ def _wt_staged_runtime_paths() -> tuple[list[str], str]:
     return [p for p in staged.stdout.split("\0") if p and _wt_is_runtime_state_path(p)], ""
 
 
+def _wt_committed_runtime_paths(base_sha: str) -> tuple[list[str], str]:
+    diff = _wt_git(["diff", "--name-only", "--no-renames", "-z", base_sha, "HEAD"])
+    if diff.returncode != 0:
+        return [], diff.stderr.strip() or "could not inspect the parent commit"
+    return [p for p in diff.stdout.split("\0") if p and _wt_is_runtime_state_path(p)], ""
+
+
+def _wt_parent_runtime_guard(base_sha: str) -> dict[str, object] | None:
+    """A parent hook must not smuggle runtime state past the candidate guard."""
+    paths, error = _wt_committed_runtime_paths(base_sha)
+    if error:
+        return _wt_error("DIFF_FAILED", error)
+    if paths:
+        return _wt_error(
+            "RUNTIME_STATE_IN_DIFF", "the parent commit modifies MAP runtime state",
+            paths=paths[:20],
+        )
+    return None
+
+
+def _wt_reject_parent_result(base_sha: str, failure: dict[str, object]) -> dict[str, object]:
+    if not _wt_rollback(base_sha):
+        return _wt_error(
+            "ROLLBACK_FAILED", "safe rollback failed; candidates were retained",
+            worktrees_preserved=True,
+        )
+    return failure
+
+
 def _wt_rollback(base_sha: str) -> bool:
     """Rollback product merges while preserving unstaged tracked runtime.
 
@@ -24594,6 +24636,19 @@ def _wt_rollback(base_sha: str) -> bool:
     staged, error = _wt_staged_runtime_paths()
     if staged or error:
         return False
+    # A successful hook may have committed previously unstaged runtime files.
+    # Restore only their index entries first, so reset --merge keeps their
+    # working copies (including newly added files) instead of deleting them.
+    committed_runtime, error = _wt_committed_runtime_paths(base_sha)
+    if error:
+        return False
+    if committed_runtime:
+        restored = _wt_git([
+            "reset", base_sha, "--",
+            *(f":(literal){path}" for path in committed_runtime),
+        ])
+        if restored.returncode != 0:
+            return False
     reset = _wt_git(["reset", "--merge", base_sha])
     if reset.returncode != 0:
         return False
@@ -24898,6 +24953,8 @@ def merge_subtask_worktree(
     verification = cast(dict, prep["verification"])
 
     merged_sha = working_head
+    parent_verification: dict[str, object] = {"ran": False, "status": "skipped", "checks": []}
+    checks = list(verify_cmds) if verify_cmds else _wt_config_verification_checks(project_dir)
     if not no_changes:
         merge = _wt_git(["merge", "--squash", "--no-autostash", wt_branch])
         if merge.returncode != 0:
@@ -24923,6 +24980,16 @@ def merge_subtask_worktree(
                 "MERGE_COMMIT_FAILED", commit.stderr.strip() or "git commit failed after squash"
             )
         merged_sha = _wt_head_sha()
+        runtime_failure = _wt_parent_runtime_guard(base_sha)
+        if runtime_failure is not None:
+            return _wt_reject_parent_result(base_sha, runtime_failure)
+        if not skip_verify and checks:
+            parent_verification = _wt_verify_commit(
+                subtask_id, project_dir, branch_name, base_sha,
+                _wt_toplevel() or Path("."), checks, parent=True,
+            )
+            if parent_verification.get("status") == "error":
+                return _wt_reject_parent_result(base_sha, parent_verification)
 
     _wt_force_remove(wt_path, wt_branch)
     state = _read_worktree_state(branch_name)
@@ -24938,6 +25005,7 @@ def merge_subtask_worktree(
             "merged_sha": merged_sha,
             "deletions": len(deleted),
             "verification": verification.get("status"),
+            "parent_verification": parent_verification.get("status"),
             "no_changes": no_changes,
         },
     )
@@ -24952,6 +25020,7 @@ def merge_subtask_worktree(
         "base_sha": base_sha,
         "deletions": len(deleted),
         "verification": verification,
+        "parent_verification": parent_verification,
         "note": (
             "no changes were captured in the worktree — the Actor may have edited "
             "the main checkout instead of the worktree path"
@@ -25196,6 +25265,12 @@ def merge_wave_worktrees(
         )
 
     try:
+        # Capture configured checks before hooks can modify tracked configuration.
+        post_checks = (
+            list(post_wave_cmds)
+            if post_wave_cmds is not None
+            else _wt_config_verification_checks(project_dir)
+        )
         # PHASE 1 — preflight every worktree (commit + guards + pre-merge verify)
         # WITHOUT touching the working branch. A failure here aborts BEFORE any
         # merge, so the working branch is trivially untouched.
@@ -25280,6 +25355,9 @@ def merge_wave_worktrees(
                     commit.stderr.strip() or f"git commit failed after squash for {sid}",
                     subtask_id=sid,
                 )
+            runtime_failure = _wt_parent_runtime_guard(wave_base_sha)
+            if runtime_failure is not None:
+                return _wt_reject_parent_result(wave_base_sha, runtime_failure)
             merged.append(
                 {
                     "subtask_id": sid,
@@ -25292,11 +25370,6 @@ def merge_wave_worktrees(
         # transaction (council Q3): a semantic break two subtasks create together
         # (A renames a symbol B references) is caught here, not by git's textual
         # merge. Failure rolls the WHOLE wave back.
-        post_checks = (
-            list(post_wave_cmds)
-            if post_wave_cmds is not None
-            else _wt_config_verification_checks(project_dir)
-        )
         post_wave: dict[str, object] = {"ran": False, "status": "skipped", "checks": []}
         if not skip_post_wave and post_checks and merged:
             results: list[dict[str, object]] = []

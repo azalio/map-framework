@@ -607,8 +607,11 @@ Design decisions (llm-council-reviewed, conv `461b92f9`):
   Candidate and parent commits use ordinary hook-enabled `git commit`.
   `_wt_commit_staged` checks for an empty index before committing; every attempted
   commit failure blocks acceptance, regardless of hook output. Index inspection
-  errors also block acceptance. Candidate verification and the atomic wave's
-  post-wave gate remain in place.
+  errors also block acceptance. Hooks share the verification timeout. Candidate
+  verification remains in place; direct acceptance repeats it on the committed
+  parent tree, and waves retain their post-wave gate. Both parent paths reject
+  committed runtime changes before candidate cleanup. Rollback restores runtime
+  index entries first, preserving working copies that a hook accidentally committed.
   Guards run *before* the working branch is touched: base-divergence,
   runtime-state-in-diff, configurable bulk-deletion (`worktree.max_deletions`),
   submodule-pointer change, and detached-HEAD.

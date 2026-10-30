@@ -146,9 +146,9 @@ def test_successful_hooks_and_verification_both_run(
         assert (hook_repo / f"{sid}.txt").read_text() == sid
         assert _git(["show", f"HEAD:{sid}.txt"], hook_repo).stdout == sid
         assert not path.exists()
-    assert verify_log.read_text().splitlines() == [str(p) for p in paths.values()] + (
-        [str(hook_repo)] if mode == "wave" else []
-    )
+    assert verify_log.read_text().splitlines() == [str(p) for p in paths.values()] + [
+        str(hook_repo)
+    ]
 
 
 @pytest.mark.parametrize("mode", ["single", "wave"])
@@ -208,3 +208,124 @@ def test_index_inspection_failure_is_not_an_empty_commit(
     assert "index inspection failed" in result["message"]
     assert _git(["rev-parse", "HEAD"], hook_repo).stdout == base
     assert all(path.exists() for path in paths.values())
+
+
+def install_parent_edit_hook(root: Path, filename: str, content: str) -> None:
+    code = (
+        "from pathlib import Path; "
+        f"p = Path({filename!r}); p.parent.mkdir(parents=True, exist_ok=True); "
+        f"p.write_text({content!r})"
+    )
+    hook = root / ".git/hooks/pre-commit"
+    hook.write_text(
+        "#!/bin/sh\nset -e\n"
+        f'if [ "$PWD" = {shlex.quote(str(root))} ]; then\n'
+        f"  {shlex.join([sys.executable, '-c', code])}\n"
+        f"  git add -f -- {shlex.quote(filename)}\nfi\n"
+    )
+    hook.chmod(0o755)
+
+
+@pytest.mark.parametrize("mode", ["single", "wave"])
+@pytest.mark.parametrize(
+    "filename",
+    [".map/hook.txt", ".codex/hook.txt", ".agents/hook.txt", ".map/tracked-runtime"],
+)
+def test_parent_hook_runtime_commit_is_rejected_without_losing_runtime(
+    hook_repo: Path, mode: str, filename: str
+) -> None:
+    if filename == ".map/tracked-runtime":
+        (hook_repo / filename).write_text("original runtime")
+        assert _git(["add", "-f", filename], hook_repo).returncode == 0
+        assert _git(["commit", "-qm", "existing runtime"], hook_repo).returncode == 0
+    paths = candidates(mode)
+    base = _git(["rev-parse", "HEAD"], hook_repo).stdout
+    original = (
+        (hook_repo / filename).read_text() if (hook_repo / filename).exists() else ""
+    )
+    content = original + "\n# local runtime state\n"
+    install_parent_edit_hook(hook_repo, filename, content)
+    result = accept(mode, paths)
+    assert result.get("kind") == "RUNTIME_STATE_IN_DIFF", result
+    assert _git(["rev-parse", "HEAD"], hook_repo).stdout == base
+    assert (hook_repo / filename).read_text() == content
+    assert not _git(["diff", "--cached", "--name-only"], hook_repo).stdout
+    assert all(path.exists() for path in paths.values())
+    assert all(not (hook_repo / f"{sid}.txt").exists() for sid in paths)
+
+
+@pytest.mark.parametrize("mode", ["single", "wave"])
+def test_parent_hook_source_edit_must_pass_verification(
+    hook_repo: Path, mode: str
+) -> None:
+    paths = candidates(mode)
+    install_parent_edit_hook(hook_repo, "task-a.txt", "broken")
+    code = (
+        "from pathlib import Path; "
+        "p = Path('task-a.txt'); assert not p.exists() or p.read_text() != 'broken'"
+    )
+    command = shlex.join([sys.executable, "-c", code])
+    base = _git(["rev-parse", "HEAD"], hook_repo).stdout
+    result = accept(
+        mode,
+        paths,
+        verify_cmds=[command],
+        **({"post_wave_cmds": [command]} if mode == "wave" else {}),
+    )
+    assert result.get("kind") == (
+        "MERGE_VERIFY_FAILED" if mode == "single" else "WAVE_VERIFY_FAILED"
+    ), result
+    assert _git(["rev-parse", "HEAD"], hook_repo).stdout == base
+    assert all(path.exists() for path in paths.values())
+
+
+def test_commit_hooks_use_verification_timeout(
+    hook_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = candidates("single")
+    git = m._wt_git
+    timeouts = []
+
+    def capture_commit(args, **kwargs):
+        if args[0] == "commit":
+            timeouts.append(kwargs.get("timeout", m.WORKTREE_GIT_TIMEOUT))
+        return git(args, **kwargs)
+
+    monkeypatch.setattr(m, "_wt_git", capture_commit)
+    assert accept("single", paths)["ok"]
+    assert timeouts == [m.WORKTREE_VERIFY_TIMEOUT] * 2
+
+
+@pytest.mark.parametrize("mode", ["single", "wave"])
+def test_parent_hook_cannot_remove_configured_gate(hook_repo: Path, mode: str) -> None:
+    import json
+
+    code = (
+        "from pathlib import Path; "
+        "assert 'verification_checks:' in Path('.map/config.yaml').read_text()"
+    )
+    command = shlex.join([sys.executable, "-c", code])
+    config = hook_repo / ".map/config.yaml"
+    initial = config.read_text()
+    config.write_text(initial + f"\nverification_checks:\n  - {json.dumps(command)}\n")
+    assert _git(["add", ".map/config.yaml"], hook_repo).returncode == 0
+    assert _git(["commit", "-qm", "configured gate"], hook_repo).returncode == 0
+    paths = candidates(mode)
+    base = _git(["rev-parse", "HEAD"], hook_repo).stdout
+    install_parent_edit_hook(hook_repo, ".map/config.yaml", initial)
+    result = accept(mode, paths)
+    assert result.get("kind") == (
+        "MERGE_VERIFY_FAILED" if mode == "single" else "WAVE_VERIFY_FAILED"
+    ), result
+    assert _git(["rev-parse", "HEAD"], hook_repo).stdout == base
+    assert "verification_checks:" in config.read_text()
+    assert all(path.exists() for path in paths.values())
+
+
+@pytest.mark.parametrize("mode", ["single", "wave"])
+def test_parent_hook_valid_source_edit_is_accepted(hook_repo: Path, mode: str) -> None:
+    paths = candidates(mode)
+    install_parent_edit_hook(hook_repo, "formatted.txt", "valid source")
+    assert accept(mode, paths)["ok"]
+    assert _git(["show", "HEAD:formatted.txt"], hook_repo).stdout == "valid source"
+    assert all(not path.exists() for path in paths.values())

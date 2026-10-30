@@ -267,7 +267,7 @@ Create later batches after earlier batches merge. Aborting a group preserves
 recovery patches before deleting its worktrees.
 
 Candidate and acceptance commits run the project's Git hooks. A hook rejection
-blocks acceptance; configured verification checks still apply.
+blocks acceptance; configured verification checks also validate the merged result.
 
 ## Options
 
