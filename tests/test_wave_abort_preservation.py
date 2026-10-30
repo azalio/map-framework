@@ -284,3 +284,88 @@ def test_unregistered_group_failure_cannot_authorize_redispatch(
     assert result["kind"] == "WAVE_ABORT_FAILED", result
     assert result["needs_redispatch"] is False
     assert all(path.exists() for path in paths)
+
+
+@pytest.mark.parametrize("capture_fails", [False, True])
+def test_missing_directory_preserves_surviving_branch_commits(
+    wave_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capture_fails: bool,
+) -> None:
+    key, paths = group(["task-a"])
+    candidate = paths["task-a"]
+    payload = b"\x00\xffcommitted candidate"
+    (candidate / "payload.bin").write_bytes(payload)
+    assert _git(["add", "payload.bin"], candidate).returncode == 0
+    assert _git(["commit", "-qm", "candidate"], candidate).returncode == 0
+    ref = _git(["branch", "--show-current"], candidate).stdout.strip()
+    base = _git(["rev-parse", "HEAD"], wave_repo).stdout.strip()
+    assert (
+        _git(["worktree", "remove", "--force", str(candidate)], wave_repo).returncode
+        == 0
+    )
+    if capture_fails:
+
+        def no_space(*args, **kwargs):
+            raise OSError("injected disk full")
+
+        monkeypatch.setattr(m.tempfile, "mkstemp", no_space)
+    result = m.abort_wave_group(key)
+    if capture_fails:
+        assert result["kind"] == "PATCH_SAVE_FAILED", result
+        assert (
+            _git(["show-ref", "--verify", f"refs/heads/{ref}"], wave_repo).returncode
+            == 0
+        )
+        return
+    assert result["ok"], result
+    recovered = tmp_path / "recovered"
+    assert (
+        _git(
+            ["worktree", "add", "--detach", str(recovered), base], wave_repo
+        ).returncode
+        == 0
+    )
+    assert (
+        _git(["apply", "--binary", result["patches"]["task-a"]], recovered).returncode
+        == 0
+    )
+    assert (recovered / "payload.bin").read_bytes() == payload
+
+
+def test_accepted_batch_does_not_block_later_abort(wave_repo: Path) -> None:
+    first, paths = group(["task-a"])
+    (paths["task-a"] / "accepted.txt").write_text("accepted")
+    assert m.run_concurrent_wave(["task-a"])["ok"]
+    assert first not in m._read_worktree_state(m.get_branch_name())["wave_groups"]
+    second, _ = group(["task-b"])
+    result = m.abort_wave_group(second)
+    assert result["ok"], result
+    assert (wave_repo / "accepted.txt").read_text() == "accepted"
+
+
+def test_retry_history_survives_abort_and_resets_on_accept(wave_repo: Path) -> None:
+    ids = ["task-a", "task-b"]
+    for remaining in (2, 1):
+        key, paths = group(ids)
+        for sid, path in paths.items():
+            (path / "a.txt").write_text(sid)
+        result = m.run_concurrent_wave(ids)
+        assert result["kind"] == "WAVE_ABORTED", result
+        assert result["attempts_remaining"] == remaining
+        assert result["escalate_to_human"] is False
+    _, paths = group(ids)
+    for sid, path in paths.items():
+        (path / f"{sid}.txt").write_text(sid)
+    assert m.run_concurrent_wave(ids)["ok"]
+    state = m._read_worktree_state(m.get_branch_name())
+    assert key not in state["wave_abort_attempts"]
+    for remaining in (2, 1, 0):
+        _, paths = group(ids)
+        for sid, path in paths.items():
+            (path / "a.txt").write_text(sid)
+        result = m.run_concurrent_wave(ids)
+        assert result["kind"] == "WAVE_ABORTED", result
+        assert result["attempts_remaining"] == remaining
+        assert result["escalate_to_human"] is (remaining == 0)

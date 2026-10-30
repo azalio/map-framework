@@ -24878,19 +24878,33 @@ def _wt_save_attempt_patch(
     base_sha = str(record.get("base_sha", ""))
     if not base_sha:
         return _wt_error("PATCH_SAVE_FAILED", "candidate base is missing")
-    if not wt_path.exists() and not wt_path.is_symlink():
-        # Cleanup may have completed before the sidecar update was persisted.
-        return {"ok": True, "patch_path": None}
-    if not wt_path.is_dir():
-        return _wt_error("PATCH_SAVE_FAILED", "candidate worktree is not a directory")
     try:
-        added = _wt_git(["add", "-A"], cwd=wt_path)
-        if added.returncode != 0:
-            return _wt_error("PATCH_SAVE_FAILED", added.stderr.strip() or "git add failed")
+        if not wt_path.exists() and not wt_path.is_symlink():
+            # Directory removal and branch deletion are separate crash cuts.
+            # A surviving branch may still be the only owner of candidate commits.
+            ref = "refs/heads/" + str(record.get("branch", ""))
+            found = _wt_git(["show-ref", "--verify", "--quiet", ref])
+            if found.returncode == 1:
+                return {"ok": True, "patch_path": None}
+            if found.returncode != 0:
+                return _wt_error("PATCH_SAVE_FAILED", "could not inspect candidate branch")
+            head = _wt_git(["rev-parse", "--verify", f"{ref}^{{commit}}"])
+            if head.returncode != 0:
+                return _wt_error("PATCH_SAVE_FAILED", "could not resolve candidate commit")
+            diff_cwd = _wt_project_dir()
+            revisions = [base_sha, head.stdout.strip()]
+        else:
+            if not wt_path.is_dir():
+                return _wt_error("PATCH_SAVE_FAILED", "candidate worktree is not a directory")
+            added = _wt_git(["add", "-A"], cwd=wt_path)
+            if added.returncode != 0:
+                return _wt_error("PATCH_SAVE_FAILED", added.stderr.strip() or "git add failed")
+            diff_cwd = wt_path
+            revisions = ["--cached", base_sha]
         diff = subprocess.run(
-            ["git", "diff", "--cached", "--binary", "--full-index", "--no-color",
-             "--no-ext-diff", "--no-textconv", base_sha, "--"],
-            cwd=wt_path, capture_output=True, timeout=WORKTREE_GIT_TIMEOUT, check=False,
+            ["git", "diff", "--binary", "--full-index", "--no-color",
+             "--no-ext-diff", "--no-textconv", *revisions, "--"],
+            cwd=diff_cwd, capture_output=True, timeout=WORKTREE_GIT_TIMEOUT, check=False,
         )
         if diff.returncode != 0:
             return _wt_error("PATCH_SAVE_FAILED", diff.stderr.decode(errors="replace"))
@@ -25272,6 +25286,11 @@ def merge_wave_worktrees(
             _wt_force_remove(Path(str(rec.get("path", ""))), str(rec.get("branch", "")))
             if isinstance(worktrees, dict):
                 worktrees.pop(str(item["slug"]), None)
+        group_key = "|".join(ids)
+        for field in ("wave_groups", "wave_abort_attempts"):
+            entries = state.get(field)
+            if isinstance(entries, dict):
+                entries.pop(group_key, None)
         _write_worktree_state(branch_name, state)
         final_head = _wt_head_sha()
         no_change_ids = [str(p["subtask_id"]) for p in prepared if p["no_changes"]]
@@ -25883,15 +25902,15 @@ def run_concurrent_wave(
                     abort_result=abort_result,
                 )
 
-            # Read attempt count from sidecar (written by begin_wave_group / prior calls).
+            # Keep retry history outside the group entry deleted by clean abort.
             _st2 = _read_worktree_state(branch_name)
-            _wg2 = _st2.get("wave_groups") or {}
-            _grp2 = _wg2.get(group_key) if isinstance(_wg2, dict) else None
-            _attempts_used = 1
-            if isinstance(_grp2, dict):
-                _attempts_used = int(_grp2.get("abort_attempts", 0)) + 1
-                _grp2["abort_attempts"] = _attempts_used
-                _write_worktree_state(branch_name, _st2)
+            _retry_counts = _st2.get("wave_abort_attempts")
+            if not isinstance(_retry_counts, dict):
+                _retry_counts = {}
+                _st2["wave_abort_attempts"] = _retry_counts
+            _attempts_used = int(_retry_counts.get(group_key, 0)) + 1
+            _retry_counts[group_key] = _attempts_used
+            _write_worktree_state(branch_name, _st2)
 
             attempts_remaining = max(0, max_retries - _attempts_used)
             return {

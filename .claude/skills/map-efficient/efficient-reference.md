@@ -268,7 +268,7 @@ Task(
 # Turn 2: Task(actor, ST-004)   ← serial, not concurrent
 ```
 
-**Self-audit before dispatch:** "I will emit {n} Task(actor) calls in one message for this wave." Confirm n matches the color group size.
+**Self-audit before dispatch:** "I will emit {n} Task(actor) calls in one message for this wave." Confirm n matches the admitted batch size.
 
 **`max_actors` cap:** Default 4, maximum 8 concurrent actors per wave. Groups larger than `max_actors` are pre-split into sequential batches of `max_actors` before dispatch; create later worktrees only after the preceding batch merged. Do not emit more than `max_actors` Task calls in a single message.
 

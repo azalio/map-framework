@@ -391,7 +391,7 @@ dispatch actor subagent -> ST-004 (pinned to its own worktree)
 ```
 [% else %]**Self-audit before dispatch:** "I will dispatch {n} actor subagents in one turn."
 [% endif %]
-[% if PROVIDER == "claude" %]**Self-audit before dispatch:** "I will emit {n} Task(actor) calls in one message for this wave." Confirm n matches the color group size.
+[% if PROVIDER == "claude" %]**Self-audit before dispatch:** "I will emit {n} Task(actor) calls in one message for this wave." Confirm n matches the admitted batch size.
 [% else %]**`max_actors` cap:** Default 4, maximum 8 per wave. Groups larger than `max_actors` are
 pre-split into sequential batches before dispatch.
 [% endif %]
