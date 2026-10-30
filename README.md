@@ -266,6 +266,9 @@ Concurrent worktree groups must fit `execution.max_actors` (default 4, maximum 8
 Create later batches after earlier batches merge. Aborting a group preserves
 recovery patches before deleting its worktrees.
 
+Candidate and acceptance commits run the project's Git hooks. A hook rejection
+blocks acceptance; configured verification checks still apply.
+
 ## Options
 
 <details>

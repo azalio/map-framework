@@ -23789,6 +23789,18 @@ def create_subtask_worktree(
     }
 
 
+def _wt_commit_staged(message: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """Commit a nonempty index with normal hooks; propagate every attempted failure.
+
+    Detect no-op squashes before committing, never by interpreting hook output.
+    Index inspection errors also fail closed rather than discarding candidate work.
+    """
+    staged = _wt_git(["diff", "--cached", "--quiet"], cwd=cwd)
+    if staged.returncode != 1:
+        return staged
+    return _wt_git(["commit", "-m", message], cwd=cwd)
+
+
 def _wt_freeze_and_verify(
     subtask_id: str,
     record: dict,
@@ -23816,22 +23828,14 @@ def _wt_freeze_and_verify(
         return _wt_error(
             "WORKTREE_STAGE_FAILED", add.stderr.strip() or "git add -A failed in worktree"
         )
-    staged = _wt_git(["diff", "--cached", "--quiet"], cwd=wt_path)
-    if staged.returncode == 1:
-        commit = _wt_git(
-            [
-                "commit",
-                "--no-verify",
-                "-m",
-                f"map-wt: {subtask_id} (attempt {record.get('attempt', 0)})",
-            ],
-            cwd=wt_path,
+    commit = _wt_commit_staged(
+        f"map-wt: {subtask_id} (attempt {record.get('attempt', 0)})", cwd=wt_path,
+    )
+    if commit.returncode != 0:
+        return _wt_error(
+            "WORKTREE_COMMIT_FAILED",
+            commit.stderr.strip() or "git commit failed in worktree",
         )
-        if commit.returncode != 0:
-            return _wt_error(
-                "WORKTREE_COMMIT_FAILED",
-                commit.stderr.strip() or "git commit failed in worktree",
-            )
 
     head_branch = _wt_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=wt_path, timeout=10)
     if head_branch.stdout.strip() != wt_branch:
@@ -24278,11 +24282,8 @@ def merge_subtask_worktree(
                 "working branch left at base",
                 stderr_tail=_clip_probe_output(merge.stderr)[-2000:],
             )
-        commit = _wt_git(
-            ["commit", "--no-verify", "-m", f"{subtask_id}: merge isolated worktree"]
-        )
-        combined = (commit.stdout + commit.stderr).lower()
-        if commit.returncode != 0 and "nothing to commit" not in combined:
+        commit = _wt_commit_staged(f"{subtask_id}: merge isolated worktree")
+        if commit.returncode != 0:
             if not _wt_rollback(base_sha):
                 return _wt_error(
                     "ROLLBACK_FAILED", "safe rollback failed; candidates were retained",
@@ -24634,11 +24635,8 @@ def merge_wave_worktrees(
                     attribution=attribution,
                     stderr_tail=_clip_probe_output(merge.stderr)[-2000:],
                 )
-            commit = _wt_git(
-                ["commit", "--no-verify", "-m", f"{sid}: merge isolated worktree (wave)"]
-            )
-            combined = (commit.stdout + commit.stderr).lower()
-            if commit.returncode != 0 and "nothing to commit" not in combined:
+            commit = _wt_commit_staged(f"{sid}: merge isolated worktree (wave)")
+            if commit.returncode != 0:
                 if not _wt_rollback(wave_base_sha):
                     return _wt_error(
                         "ROLLBACK_FAILED", "safe rollback failed; candidates were retained",

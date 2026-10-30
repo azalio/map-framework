@@ -623,6 +623,14 @@ branch **only after the configured `verification_checks` pass inside the worktre
 (a pre-merge gate). A rejected attempt (Monitor `valid=false` / Evaluator fail)
 is discarded, so the working branch is never touched by a bad attempt.
 
+Candidate and parent acceptance commits run the repository's Git hooks, including
+`pre-commit` and `commit-msg`. A nonzero hook exit blocks acceptance even when its
+output says `nothing to commit`. Empty candidates and already-applied squash
+changes skip committing only after Git confirms the index is empty. A failed
+direct acceptance retains its candidates; the concurrent coordinator follows
+its normal patch-preserving abort procedure. Fix the hook failure before retrying;
+the runner does not bypass hooks or the configured verification gates.
+
 **Off-ramps (either is sufficient):**
 
 1. **Global kill-switch** — set `MAP_EFFICIENT_SEQUENTIAL_ONLY=1` in your shell.

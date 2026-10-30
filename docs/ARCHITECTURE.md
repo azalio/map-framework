@@ -604,6 +604,11 @@ Design decisions (llm-council-reviewed, conv `461b92f9`):
   base-divergence guard pins `working HEAD == base_sha`), then `git merge
   --squash` + one runner-authored commit. Never `--no-ff`: that would add a merge
   commit per subtask and break the one-commit-per-subtask manifest contract.
+  Candidate and parent commits use ordinary hook-enabled `git commit`.
+  `_wt_commit_staged` checks for an empty index before committing; every attempted
+  commit failure blocks acceptance, regardless of hook output. Index inspection
+  errors also block acceptance. Candidate verification and the atomic wave's
+  post-wave gate remain in place.
   Guards run *before* the working branch is touched: base-divergence,
   runtime-state-in-diff, configurable bulk-deletion (`worktree.max_deletions`),
   submodule-pointer change, and detached-HEAD.
