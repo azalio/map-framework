@@ -23798,7 +23798,39 @@ def _wt_commit_staged(message: str, cwd: Path | None = None) -> subprocess.Compl
     staged = _wt_git(["diff", "--cached", "--quiet"], cwd=cwd)
     if staged.returncode != 1:
         return staged
-    return _wt_git(["commit", "-m", message], cwd=cwd, timeout=WORKTREE_VERIFY_TIMEOUT)
+    untracked_before = _wt_git(["ls-files", "--others", "--exclude-standard", "-z"], cwd=cwd)
+    if untracked_before.returncode != 0:
+        return untracked_before
+    existing_untracked = set(untracked_before.stdout.split("\0"))
+    commit = _wt_git(["commit", "-m", message], cwd=cwd, timeout=WORKTREE_VERIFY_TIMEOUT)
+    if commit.returncode != 0:
+        return commit
+    # post-commit runs after HEAD is written. Its new index entries must not
+    # disappear during candidate cleanup or escape the committed-diff guards.
+    paths, error = _wt_index_paths(cwd)
+    if not error and paths:
+        error = "post-commit hook left staged changes: " + ", ".join(paths[:20])
+    if not error:
+        unstaged = _wt_git(["diff", "--name-only", "-z"], cwd=cwd)
+        if unstaged.returncode != 0:
+            error = unstaged.stderr.strip() or "could not inspect post-commit working tree"
+        else:
+            product_paths = [p for p in unstaged.stdout.split("\0")
+                             if p and not _wt_is_runtime_state_path(p)]
+            if product_paths:
+                error = "post-commit hook left unstaged source changes: " + ", ".join(product_paths[:20])
+    if not error:
+        untracked = _wt_git(["ls-files", "--others", "--exclude-standard", "-z"], cwd=cwd)
+        if untracked.returncode != 0:
+            error = untracked.stderr.strip() or "could not inspect post-commit untracked files"
+        else:
+            product_paths = [p for p in untracked.stdout.split("\0")
+                             if p and p not in existing_untracked and not _wt_is_runtime_state_path(p)]
+            if product_paths:
+                error = "post-commit hook left untracked source files: " + ", ".join(product_paths[:20])
+    if error:
+        return subprocess.CompletedProcess(commit.args, 1, commit.stdout, error)
+    return commit
 
 
 def _wt_verify_commit(
@@ -23960,11 +23992,16 @@ def _wt_freeze_and_verify(
     }
 
 
-def _wt_staged_runtime_paths() -> tuple[list[str], str]:
-    staged = _wt_git(["diff", "--cached", "--name-only", "-z"])
+def _wt_index_paths(cwd: Path | None = None) -> tuple[list[str], str]:
+    staged = _wt_git(["diff", "--cached", "--name-only", "-z"], cwd=cwd)
     if staged.returncode != 0:
         return [], staged.stderr.strip() or "could not inspect the index"
-    return [p for p in staged.stdout.split("\0") if p and _wt_is_runtime_state_path(p)], ""
+    return [p for p in staged.stdout.split("\0") if p], ""
+
+
+def _wt_staged_runtime_paths() -> tuple[list[str], str]:
+    paths, error = _wt_index_paths()
+    return [p for p in paths if _wt_is_runtime_state_path(p)], error
 
 
 def _wt_committed_runtime_paths(base_sha: str) -> tuple[list[str], str]:

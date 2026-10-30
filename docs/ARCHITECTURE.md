@@ -614,6 +614,9 @@ Design decisions (llm-council-reviewed, conv `461b92f9`):
   index entries first, preserving working copies that a hook accidentally committed.
   A rejecting parent hook's staged runtime is likewise unstaged without deleting
   its files; this exception is confined to the admitted commit-failure path.
+  The shared commit boundary also rechecks the same checkout after post-commit
+  hooks: new staged changes, unstaged or untracked source edits, and inspection failures block
+  acceptance before candidate cleanup. Existing unstaged runtime remains allowed.
   Guards run *before* the working branch is touched: base-divergence,
   runtime-state-in-diff, configurable bulk-deletion (`worktree.max_deletions`),
   submodule-pointer change, and detached-HEAD.

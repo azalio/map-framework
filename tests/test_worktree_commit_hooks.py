@@ -114,7 +114,7 @@ def test_hook_failure_blocks_acceptance(
 
 
 @pytest.mark.parametrize("mode", ["single", "wave"])
-@pytest.mark.parametrize("hook", ["pre-commit", "commit-msg"])
+@pytest.mark.parametrize("hook", ["pre-commit", "commit-msg", "post-commit"])
 def test_successful_hooks_and_verification_both_run(
     hook_repo: Path, tmp_path: Path, mode: str, hook: str
 ) -> None:
@@ -427,3 +427,114 @@ def test_failed_hook_runtime_unstage_stops_without_cleanup(
     )
     assert (hook_repo / ".map/hook-runtime").read_text() == "runtime"
     assert all(path.exists() for path in paths.values())
+
+
+@pytest.mark.parametrize("mode", ["single", "wave"])
+@pytest.mark.parametrize("target", ["candidate", "parent"])
+@pytest.mark.parametrize(
+    "change", ["runtime-staged", "source-staged", "source-unstaged", "source-untracked"]
+)
+def test_post_commit_changes_block_cleanup(
+    hook_repo: Path, mode: str, target: str, change: str
+) -> None:
+    paths = candidates(mode)
+    sid = next(reversed(paths))
+    selected = paths[sid] if target == "candidate" else hook_repo
+    filename = ".map/hook-runtime" if change == "runtime-staged" else f"{sid}.txt"
+    if change == "source-untracked":
+        filename = "new-hook-source.txt"
+    hook = hook_repo / ".git/hooks/post-commit"
+    code = (
+        "from pathlib import Path; "
+        f"p = Path({filename!r}); p.parent.mkdir(parents=True, exist_ok=True); "
+        "p.write_text('post-commit work')"
+    )
+    hook.write_text(
+        "#!/bin/sh\nset -e\n"
+        f'if [ "$PWD" = {shlex.quote(str(selected))} ] && [ -f {sid}.txt ]; then\n'
+        f"  {shlex.join([sys.executable, '-c', code])}\n"
+        + (
+            f"  git add -f -- {shlex.quote(filename)}\n"
+            if change in {"runtime-staged", "source-staged"}
+            else ""
+        )
+        + "fi\n"
+    )
+    hook.chmod(0o755)
+    base = _git(["rev-parse", "HEAD"], hook_repo).stdout
+    result = accept(mode, paths)
+    assert not result["ok"], result
+    assert all(path.exists() for path in paths.values())
+    if target == "candidate":
+        assert result["kind"] == "WORKTREE_COMMIT_FAILED"
+        assert (selected / filename).read_text() == "post-commit work"
+        assert _git(["rev-parse", "HEAD"], hook_repo).stdout == base
+    elif change != "source-unstaged":
+        assert result["kind"] == (
+            "MERGE_COMMIT_FAILED" if mode == "single" else "WAVE_COMMIT_FAILED"
+        )
+        assert _git(["rev-parse", "HEAD"], hook_repo).stdout == base
+        if change == "runtime-staged":
+            assert (selected / filename).read_text() == "post-commit work"
+    else:
+        # reset --merge refuses to overwrite the hook's unstaged source edit.
+        assert result["kind"] == "ROLLBACK_FAILED"
+        assert (selected / filename).read_text() == "post-commit work"
+
+
+@pytest.mark.parametrize("mode", ["single", "wave"])
+@pytest.mark.parametrize("target", ["candidate", "parent"])
+@pytest.mark.parametrize("probe", ["index", "working-tree", "untracked"])
+def test_post_commit_inspection_error_blocks_acceptance(
+    hook_repo: Path, monkeypatch: pytest.MonkeyPatch, mode: str, target: str, probe: str
+) -> None:
+    paths = candidates(mode)
+    selected = paths[next(reversed(paths))] if target == "candidate" else hook_repo
+    git = m._wt_git
+    after_commit = False
+    failed_args = {
+        "index": ["diff", "--cached", "--name-only", "-z"],
+        "working-tree": ["diff", "--name-only", "-z"],
+        "untracked": ["ls-files", "--others", "--exclude-standard", "-z"],
+    }[probe]
+
+    def fail_post_commit_index(args, cwd=None, **kwargs):
+        nonlocal after_commit
+        selected_cwd = (Path(cwd) if cwd is not None else hook_repo) == selected
+        if selected_cwd and after_commit and args == failed_args:
+            after_commit = False
+            return subprocess.CompletedProcess(
+                args, 2, stdout="", stderr="post-commit inspection unavailable"
+            )
+        result = git(args, cwd=cwd, **kwargs)
+        if selected_cwd and args[0] == "commit" and result.returncode == 0:
+            after_commit = True
+        return result
+
+    monkeypatch.setattr(m, "_wt_git", fail_post_commit_index)
+    base = _git(["rev-parse", "HEAD"], hook_repo).stdout
+    result = accept(mode, paths)
+    assert not result["ok"], result
+    assert "post-commit inspection unavailable" in result["message"]
+    assert all(path.exists() for path in paths.values())
+    assert _git(["rev-parse", "HEAD"], hook_repo).stdout == base
+
+
+@pytest.mark.parametrize("mode", ["single", "wave"])
+def test_existing_untracked_config_is_not_a_post_commit_hook_change(
+    hook_repo: Path, tmp_path: Path, mode: str
+) -> None:
+    config = hook_repo / ".map/config.yaml"
+    original = config.read_text()
+    assert _git(["rm", "--cached", ".map/config.yaml"], hook_repo).returncode == 0
+    assert (
+        _git(["commit", "-qm", "local-only configuration"], hook_repo).returncode == 0
+    )
+    paths = candidates(mode)
+    log = tmp_path / "post-commit.log"
+    install_hook(hook_repo, "post-commit", log)
+    result = accept(mode, paths)
+    assert result["ok"], result
+    assert config.read_text() == original
+    assert log.read_text().splitlines().count(str(hook_repo)) == len(paths)
+    assert all(not path.exists() for path in paths.values())

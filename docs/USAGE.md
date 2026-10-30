@@ -638,6 +638,9 @@ The existing exception for tracked `.map/config.yaml` still applies.
 If a parent hook stages runtime files and then rejects its commit, rollback
 unstages those files while preserving their working copies. Runtime already
 staged before acceptance still blocks the operation without changing the index.
+Changes left staged by `post-commit`, or source edits left unstaged or untracked after commit,
+also block acceptance. Candidates remain available; if Git cannot safely roll
+back an unstaged source edit, the runner returns `ROLLBACK_FAILED` without cleanup.
 
 **Off-ramps (either is sufficient):**
 
