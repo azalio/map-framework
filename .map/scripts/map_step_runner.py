@@ -25357,7 +25357,14 @@ def merge_wave_worktrees(
                 )
             runtime_failure = _wt_parent_runtime_guard(wave_base_sha)
             if runtime_failure is not None:
-                return _wt_reject_parent_result(wave_base_sha, runtime_failure)
+                rejected = _wt_reject_parent_result(wave_base_sha, runtime_failure)
+                if rejected is runtime_failure:
+                    _wt_set_manifest(
+                        branch_name, "wave_failed",
+                        {"subtask_id": sid, "reason": "parent_runtime_state"},
+                    )
+                rejected.setdefault("subtask_id", sid)
+                return rejected
             merged.append(
                 {
                     "subtask_id": sid,

@@ -252,6 +252,13 @@ def test_parent_hook_runtime_commit_is_rejected_without_losing_runtime(
     assert not _git(["diff", "--cached", "--name-only"], hook_repo).stdout
     assert all(path.exists() for path in paths.values())
     assert all(not (hook_repo / f"{sid}.txt").exists() for sid in paths)
+    if mode == "wave":
+        assert result["subtask_id"] == "task-a"
+        manifest = m.load_artifact_manifest(m.get_branch_name())
+        stage = manifest["stages"]["worktree"]
+        assert stage["status"] == "wave_failed"
+        assert stage["metadata"]["subtask_id"] == "task-a"
+        assert stage["metadata"]["reason"] == "parent_runtime_state"
 
 
 @pytest.mark.parametrize("mode", ["single", "wave"])
@@ -329,3 +336,18 @@ def test_parent_hook_valid_source_edit_is_accepted(hook_repo: Path, mode: str) -
     assert accept(mode, paths)["ok"]
     assert _git(["show", "HEAD:formatted.txt"], hook_repo).stdout == "valid source"
     assert all(not path.exists() for path in paths.values())
+
+
+def test_runtime_guard_rollback_failure_keeps_candidates_and_does_not_record_rollback(
+    hook_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = candidates("wave")
+    install_parent_edit_hook(hook_repo, ".map/hook.txt", "runtime")
+    monkeypatch.setattr(m, "_wt_rollback", lambda base: False)
+    result = accept("wave", paths)
+    assert result["kind"] == "ROLLBACK_FAILED"
+    assert result["subtask_id"] == "task-a"
+    assert result["worktrees_preserved"] is True
+    assert all(path.exists() for path in paths.values())
+    stage = m.load_artifact_manifest(m.get_branch_name())["stages"]["worktree"]
+    assert stage["status"] == "created"
