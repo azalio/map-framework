@@ -698,14 +698,20 @@ evidence is isolation-only. Evidence hierarchy: overlapping dispatch windows →
 concurrent; non-overlapping with worktree SHAs → isolated-sequential; no
 worktree SHAs → unverifiable.
 
-**`run_concurrent_wave`.** Splits the wave's subtask list into sub-batches of
-`execution.max_actors` (clamped `[1, 8]`). Dispatches each sub-batch as
-concurrent Actor Tasks, then calls `merge_wave_worktrees` atomically for that
-sub-batch. A sub-batch failure triggers `abort_wave_group` for the whole group.
+**`run_concurrent_wave`.** Admits one group within `execution.max_actors`
+(clamped `[1, 8]`) and invokes `merge_wave_worktrees` atomically. Wider groups
+are refused without mutation. The coordinator splits dispatch before creating
+worktrees, creating each later batch from the preceding batch's accepted HEAD.
+It must not split already-created common-base candidates across separate merges.
 
 **`abort_wave_group` — bounded rollback.** On any sub-batch failure, reverts
 every worktree in the group back to wave base (`discard_subtask_worktree` for
-each member). Retries the whole group up to `execution.max_wave_retries` (clamped
+each member), after persisting a unique binary recovery patch for every candidate.
+Capture or rollback failure preserves candidates and prevents redispatch. Merges
+disable implicit autostash; `reset --merge` preserves unstaged tracked runtime
+edits, while staged runtime is refused before acceptance or rollback. User Git
+operations and external HEAD movement never authorize group cleanup.
+Retries the whole group up to `execution.max_wave_retries` (clamped
 `[1, 10]`, default 3). Exhausted retries → escalation (same path as
 `build_escalation_outcome`).
 

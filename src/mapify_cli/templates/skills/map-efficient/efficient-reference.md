@@ -232,8 +232,13 @@ See [Parallel waves](#worktree-isolation) for the sequential worktree protocol.
 > (Slice 5a), one Actor per turn. A sequential fallback is not concurrent fan-out.
 
 **Runtime wiring:** when `get_wave_step` returns `dispatch_mode == 'concurrent'`,
-call `run_concurrent_wave` (runner), which batch-splits the wave by `max_actors`
-and merges each sub-batch atomically via `merge_wave_worktrees`. For each sub-batch,
+call `run_concurrent_wave` (runner) for a group no wider than `max_actors`.
+It rejects oversized groups before any merge or cleanup. Split the work before
+creating worktrees: create and accept one batch, then create the next batch
+from the preceding batch's post-merge HEAD. Never create all batches from the
+same old base and merge them separately. Configure the cap before dispatch
+(default 4, maximum 8). Each admitted batch merges atomically via
+`merge_wave_worktrees`. For each sub-batch,
 emit all N `Task(actor)` calls in **one assistant message** — not one per turn:
 
 ```text
@@ -258,11 +263,20 @@ Task(
 
 **Self-audit before dispatch:** "I will emit {n} Task(actor) calls in one message for this wave." Confirm n matches the color group size.
 
-**`max_actors` cap:** Default 4–8 concurrent actors per wave. Groups larger than `max_actors` are pre-split into sequential batches of `max_actors` before dispatch; do not emit more than `max_actors` Task calls in a single message.
+**`max_actors` cap:** Default 4, maximum 8 concurrent actors per wave. Groups larger than `max_actors` are pre-split into sequential batches of `max_actors` before dispatch; create later worktrees only after the preceding batch merged. Do not emit more than `max_actors` Task calls in a single message.
 
-**Retry-discard on failure:** on any actor failure, timeout, or Monitor-reject within a concurrent group, the runner calls `abort_wave_group`, which discards the **entire group** (cancels siblings, resets all worktrees to base SHA, removes group branches) and reruns from base. Retries are bounded by `max_wave_retries` (default 3); on exhaustion the runner escalates to a human and does **not** auto-restart. Never merges a successful subset — discard-all-or-merge-all (HC-4).
+**Recovery on failure:** on actor failure, timeout or Monitor-reject, stop the sibling Actors and call `abort_wave_group`. It saves every candidate as a unique binary patch before safe rollback and removal. Redispatch only after successful cleanup; otherwise preserve candidates and report the recovery error. Retries are bounded by `max_wave_retries` (default 3); escalate on exhaustion. Never merge a successful subset (HC-4).
 
 ### Anti-patterns — Slice 5b concurrent dispatch only
+
+Before aborting a group, stop its Actors. The runner saves unique binary patches
+under `.map/<branch>/worktree_attempts/` for every candidate before removing any
+worktree. Capture, rollback or cleanup failure stops recovery with
+`needs_redispatch: false`; inspect the returned error and saved patch paths before
+retrying. Do not discard candidates manually to bypass a preservation failure.
+Merge disables Git autostash and never consumes user stashes. Rollback preserves
+unstaged tracked runtime edits; staged runtime must be unstaged first. Active
+user Git operations and external HEAD movement are refused without cleanup.
 
 > These apply **only** under Slice 5b concurrent dispatch (`dispatch_mode == 'concurrent'`). In Slice 5a and the legacy sequential walker, one Task per turn **is** the correct behavior — the first three below are NOT anti-patterns there.
 
@@ -820,9 +834,10 @@ in-wave squash-merge creates; runs each worktree's pre-merge `verification_check
 then squash-merges every accepted worktree by frozen SHA in sorted id order (one
 runner commit per subtask), then runs the post-wave full gate **inside the same
 transaction**. It is **all-or-nothing**: any textual conflict, commit failure, or
-post-wave-gate failure rolls the WHOLE wave back to the base (`reset --hard` +
+post-wave-gate failure rolls the WHOLE wave back to the base (`reset --merge` +
 `clean -fd`, never `git merge --abort` — squash leaves no `MERGE_HEAD`) and leaves
-every worktree intact for retry. Pass each subtask's `merged_sha` from the result
+every worktree intact for retry. If safe rollback fails, stop and recover before
+retrying; the runner retains candidates. Pass each subtask's `merged_sha` from the result
 to `record_subtask_result --commit-sha`. This **replaces** the separate Per-Wave
 Gate when isolation is on — the post-wave gate runs inside `merge_wave_worktrees`.
 

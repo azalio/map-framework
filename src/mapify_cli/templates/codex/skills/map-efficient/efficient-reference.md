@@ -217,8 +217,13 @@ before calling `merge_wave_worktrees`.
 > the provider-neutral shape, not a literal API call.
 
 **Runtime wiring:** when `get_wave_step` returns `dispatch_mode == 'concurrent'`,
-call `run_concurrent_wave` (runner), which batch-splits the wave by `max_actors`
-and merges each sub-batch atomically via `merge_wave_worktrees`. For each sub-batch,
+call `run_concurrent_wave` (runner) for a group no wider than `max_actors`.
+It rejects oversized groups before any merge or cleanup. Split the work before
+creating worktrees: create and accept one batch, then create the next batch
+from the preceding batch's post-merge HEAD. Never create all batches from the
+same old base and merge them separately. Configure the cap before dispatch
+(default 4, maximum 8). Each admitted batch merges atomically via
+`merge_wave_worktrees`. For each sub-batch,
 dispatch all N actor subagents **in one turn** — not one per turn:
 
 ```text
@@ -236,14 +241,23 @@ dispatch actor subagent -> ST-004 (pinned to its own worktree)
 **`max_actors` cap:** Default 4–8 per wave. Groups larger than `max_actors` are
 pre-split into sequential batches before dispatch.
 
-**Retry-discard on failure:** on any actor failure, timeout, or Monitor-reject
-within a concurrent group, the runner calls `abort_wave_group`, which discards
-the **entire group** (cancels siblings, resets all worktrees to base SHA, removes
-group branches) and reruns from base. Retries are bounded by `max_wave_retries`
-(default 3); on exhaustion the runner escalates to a human and does **not**
-auto-restart. Never merges a successful subset — discard-all-or-merge-all (HC-4).
+**Recovery on failure:** on actor failure, timeout or Monitor-reject,
+stop sibling Actors and call `abort_wave_group`. It saves every candidate as a
+unique binary patch before safe rollback and removal. Redispatch only after
+successful cleanup; otherwise preserve candidates and report the recovery error.
+Retries are bounded by `max_wave_retries` (default 3); escalate on exhaustion.
+Never merge a successful subset (HC-4).
 
 ### Anti-patterns — Slice 5b concurrent dispatch only
+
+Before aborting a group, stop its Actors. The runner saves unique binary patches
+under `.map/<branch>/worktree_attempts/` for every candidate before removing any
+worktree. Capture, rollback or cleanup failure stops recovery with
+`needs_redispatch: false`; inspect the returned error and saved patch paths before
+retrying. Do not discard candidates manually to bypass a preservation failure.
+Merge disables Git autostash and never consumes user stashes. Rollback preserves
+unstaged tracked runtime edits; staged runtime must be unstaged first. Active
+user Git operations and external HEAD movement are refused without cleanup.
 
 > These apply **only** under Slice 5b concurrent dispatch (`dispatch_mode == 'concurrent'`). In Slice 5a and the legacy sequential walker, one actor dispatch per turn **is** the correct behavior.
 

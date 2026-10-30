@@ -27,7 +27,8 @@ atomically via `merge_wave_worktrees`; concurrent fan-out is Slice 5b
 (`dispatch_mode==concurrent`). Under `dispatch_mode==concurrent` (default-ON,
 subject to the dispatch gate), call `run_concurrent_wave`: dispatch N
 actor subagents in **one turn** per sub-batch; on any failure `abort_wave_group`
-discards the whole group and reruns from base (bounded by `max_wave_retries`).
+saves every candidate as a recovery patch before cleanup. Redispatch from base
+only after successful cleanup, bounded by `max_wave_retries`.
 
 ## Mutation Boundary Constraints
 
