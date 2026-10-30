@@ -953,7 +953,7 @@ may replay observations. This is best-effort at-least-once capture, not an
 exactly-once transaction or a new workflow event store.
 
 Fresh installs and re-running `mapify init` add `.map/**/sessions/` and
-`__pycache__/` to the managed root `.gitignore`. This keeps session logs, cursor
+`**/__pycache__/` to the managed root `.gitignore`. This keeps session logs, cursor
 sidecars, memory digests and bytecode local while leaving specs and blueprints
 available for version control. Ignore rules do not untrack previously committed
 files; remove those from the index separately if needed.

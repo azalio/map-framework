@@ -417,7 +417,7 @@ class TestInitCommand:
             ".map/installer.lock\n"
             ".map/gitignore.lock\n"
             ".map/**/sessions/\n"
-            "__pycache__/\n"
+            "**/__pycache__/\n"
             ".claude/worktrees/\n"
             "!docs/generated/index.md\n"
         )

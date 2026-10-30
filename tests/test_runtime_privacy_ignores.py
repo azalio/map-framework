@@ -70,3 +70,32 @@ def test_init_keeps_session_data_and_bytecode_out_of_index(
     assert merge_update_runtime_gitignore(tmp_path) == 0
     if existing_install:
         assert "custom-cache/" in (tmp_path / ".gitignore").read_text()
+
+
+@pytest.mark.parametrize(
+    ("negation", "private_path"),
+    [
+        ("!.map/main/**", ".map/main/sessions/scratch/example.jsonl"),
+        ("!.map/main/sessions/", ".map/main/sessions/example.md"),
+        ("!.map/feat-*/**", ".map/feat-example/sessions/example.md"),
+        ("!**/sessions/", ".map/main/sessions/example.md"),
+        ("!.map/scripts/**", ".map/scripts/__pycache__/module.pyc"),
+        ("!src/__pycache__/", "src/__pycache__/module.pyc"),
+    ],
+)
+def test_refresh_repairs_negated_runtime_patterns(
+    tmp_path: Path, negation: str, private_path: str
+) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    merge_update_runtime_gitignore(tmp_path)
+    ignore = tmp_path / ".gitignore"
+    ignore.write_text(ignore.read_text() + negation + "\n")
+    private = tmp_path / private_path
+    private.parent.mkdir(parents=True)
+    private.write_text("synthetic private data\n")
+
+    assert merge_update_runtime_gitignore(tmp_path) == 1
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    staged = subprocess.check_output(["git", "ls-files"], cwd=tmp_path, text=True)
+    assert private_path not in staged.splitlines()
+    assert merge_update_runtime_gitignore(tmp_path) == 0
