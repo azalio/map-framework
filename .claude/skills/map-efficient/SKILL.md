@@ -324,6 +324,7 @@ Full recipe: [efficient-reference.md](efficient-reference.md). Optional research
 
 ### Phase: MONITOR (2.4) - Required
 
+For isolated Actors, forward `create_subtask_worktree.monitor_instruction` to Monitor for each candidate; use its explicit parent-metadata / Actor-diff gates. See [worktree protocol](efficient-reference.md#worktree-isolation).
 ```text
 Task(
   subagent_type="monitor",

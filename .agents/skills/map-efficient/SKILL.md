@@ -333,6 +333,13 @@ after high-confidence research without blocking normal work.
 
 ### MONITOR
 
+For an isolated Actor, include `monitor_instruction` from
+`create_subtask_worktree` in the Monitor message (or rebuild `build_context_block`
+after creation). Use its absolute parent-runner commands with both
+`--metadata-root` and `--worktree`. Inspect/test product code in the candidate;
+read planning/research/state in the parent. Apply this per wave member before
+acceptance; do not copy mutable runtime into candidates.
+
 Use the configured `monitor` agent when available, or run an independent review
 pass in the current session. Validate implementation against the subtask AAG
 contract, validation criteria, coverage tags, hard constraints, and relevant

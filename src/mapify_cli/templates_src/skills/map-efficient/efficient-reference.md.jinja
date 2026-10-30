@@ -962,6 +962,15 @@ the Actor task prompt: *"All edits and test runs for this subtask MUST happen
 inside the git worktree at `$WT_PATH` — never edit the main checkout, and never
 run git fetch/pull/push from the worktree."*
 
+**Before MONITOR:** pass the returned `monitor_instruction` verbatim. It names
+`metadata_root` (the parent), the Actor path, and absolute runner commands with
+`--metadata-root` plus `--worktree`. `build_context_block` called after creation
+also includes these commands. The two Actor gates read parent metadata but
+inspect the registered candidate diff from its creation SHA. Run source/test
+checks in that candidate. Never copy `.map/<branch>` into it or use an
+unqualified parent-only gate. This applies to every sequential or parallel
+wave member; missing context/registration blocks acceptance.
+
 **Accept (after a clean Monitor + Evaluator pass)** — replaces the per-subtask
 `git commit`:
 

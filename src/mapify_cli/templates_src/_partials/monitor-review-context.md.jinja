@@ -20,6 +20,26 @@ subtask metadata) apply only to Actor subtask validation, not standalone review.
 
 ### Actor runtime preflight in linked worktrees
 
+**Managed Actor worktree:** use the `monitor_instruction` returned by
+`create_subtask_worktree` (also included by `build_context_block` after creation).
+It names the parent metadata root, candidate checkout, and two absolute runner
+commands with **both** `--metadata-root <parent>` and `--worktree <candidate>`.
+Run those commands instead of the checkout-local commands below. The runner
+verifies the registered subtask/path and shared Git repository, reads the
+blueprint and prior results from the parent, and computes the candidate diff
+against its registered creation SHA. Parent dirty baselines never filter this
+diff. Read AAG/research/state from the supplied parent branch directory; run
+source inspection, builds, and tests in the candidate. Do not copy or symlink
+mutable `.map/` artifacts into managed candidates, and do not globally redirect
+`CLAUDE_PROJECT_DIR` to the parent. Explicit roots apply only to these gates.
+Missing/mismatched registration, metadata, or runner is a blocking setup error:
+report `valid: false`, `recommendation: "block"`; never fall back to the parent
+diff or silently use the checkout-local gates. Unset inherited Git directory
+and index variables for independent source/test commands as well.
+
+**Unmanaged checkout without explicit managed context:** use the existing
+checkout-local preflight below. A standalone `/map-review` skips both variants.
+
 Before invoking either Actor-specific `.map/scripts/map_step_runner.py` gate,
 clear inherited `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, and
 `GIT_INDEX_FILE` in a subshell before resolving the checkout being reviewed
