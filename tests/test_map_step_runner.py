@@ -16700,7 +16700,7 @@ class TestRunConcurrentWaveMergeError:
         def _fake_abort(group_id: str, branch: Any = None) -> dict[str, Any]:
             del branch  # unused in stub
             abort_calls.append(group_id)
-            return {"clean": True, "aborted_group_id": group_id}
+            return {"clean": True, "aborted_group_id": group_id, "attempts_used": 1}
 
         monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _fake_merge_fail)
         monkeypatch.setattr(map_step_runner, "abort_wave_group", _fake_abort)
@@ -17245,7 +17245,7 @@ class TestRunConcurrentWaveRetryAndEscalation:
         def _fake_abort(group_id: str, branch: Any = None) -> dict[str, Any]:
             del group_id, branch
             abort_call_count[0] += 1
-            return {"clean": True, "aborted_group_id": "fake"}
+            return {"clean": True, "aborted_group_id": "fake", "attempts_used": 1}
 
         monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _always_fail)
         monkeypatch.setattr(map_step_runner, "abort_wave_group", _fake_abort)
@@ -17282,7 +17282,7 @@ class TestRunConcurrentWaveRetryAndEscalation:
 
         def _fake_abort(group_id: str, branch: Any = None) -> dict[str, Any]:
             del group_id, branch
-            return {"clean": True, "aborted_group_id": "fake"}
+            return {"clean": True, "aborted_group_id": "fake", "attempts_used": 1}
 
         monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _always_fail)
         monkeypatch.setattr(map_step_runner, "abort_wave_group", _fake_abort)
@@ -17312,7 +17312,7 @@ class TestRunConcurrentWaveRetryAndEscalation:
 
         def _fake_abort(group_id: str, branch: Any = None) -> dict[str, Any]:
             del group_id, branch
-            return {"clean": True, "aborted_group_id": "fake"}
+            return {"clean": True, "aborted_group_id": "fake", "attempts_used": 1}
 
         monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _always_fail)
         monkeypatch.setattr(map_step_runner, "abort_wave_group", _fake_abort)
@@ -17327,7 +17327,7 @@ class TestRunConcurrentWaveRetryAndEscalation:
         )
 
         assert result.get("kind") == "WAVE_ABORTED"
-        assert result.get("needs_redispatch") is True
+        assert result.get("needs_redispatch") is False
         assert result.get("attempts_remaining") == 0
         assert result.get("escalate_to_human") is True
 
@@ -17347,7 +17347,7 @@ class TestRunConcurrentWaveRetryAndEscalation:
 
         def _fake_abort(group_id: str, branch: Any = None) -> dict[str, Any]:
             del group_id, branch
-            return {"clean": True, "aborted_group_id": "fake"}
+            return {"clean": True, "aborted_group_id": "fake", "attempts_used": 1}
 
         monkeypatch.setattr(map_step_runner, "merge_wave_worktrees", _always_fail)
         monkeypatch.setattr(map_step_runner, "abort_wave_group", _fake_abort)

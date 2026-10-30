@@ -278,7 +278,11 @@ Task(
 
 If acceptance returns `needs_redispatch: false`, preserve candidates and report
 the refusal; do not call `abort_wave_group` or redispatch.
-Before aborting a group on actor failure, timeout or Monitor-reject, stop its Actors. The runner saves unique binary patches
+Before aborting a group on actor failure, timeout or Monitor-reject, stop its Actors.
+Every completed abort consumes one retry, including direct Actor/Monitor aborts.
+Use its returned `attempts_remaining` and `needs_redispatch`; at exhaustion both
+`begin_wave_group` and `run_concurrent_wave` refuse further attempts. Escalate
+without clearing retry history. Successful acceptance clears that batch history. The runner saves unique binary patches
 under `.map/<branch>/worktree_attempts/` for every candidate before removing any
 worktree. Capture, rollback or cleanup failure stops recovery with
 `needs_redispatch: false`; inspect the returned error and saved patch paths before

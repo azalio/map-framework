@@ -369,3 +369,93 @@ def test_retry_history_survives_abort_and_resets_on_accept(wave_repo: Path) -> N
         assert result["kind"] == "WAVE_ABORTED", result
         assert result["attempts_remaining"] == remaining
         assert result["escalate_to_human"] is (remaining == 0)
+        assert result["needs_redispatch"] is (remaining > 0)
+    before = m._read_worktree_state(m.get_branch_name())
+    refused = m.begin_wave_group(ids)
+    assert refused["kind"] == "WAVE_RETRIES_EXHAUSTED", refused
+    assert refused["needs_redispatch"] is False
+    assert m._read_worktree_state(m.get_branch_name()) == before
+    # Even a caller bypassing group admission cannot merge or lose fresh work.
+    candidate = m.create_subtask_worktree(ids[0])
+    assert candidate["ok"], candidate
+    path = Path(candidate["worktree_path"])
+    (path / "keep.txt").write_text("do not freeze or remove")
+    head = _git(["rev-parse", "HEAD"], wave_repo).stdout
+    refused = m.run_concurrent_wave(ids)
+    assert refused["kind"] == "WAVE_RETRIES_EXHAUSTED", refused
+    assert refused["needs_redispatch"] is False
+    assert (path / "keep.txt").read_text() == "do not freeze or remove"
+    assert _git(["rev-parse", "HEAD"], wave_repo).stdout == head
+    assert _git(["rev-parse", "HEAD"], path).stdout == head
+
+
+@pytest.mark.parametrize("invalid_count", [True, -1, "3", None])
+def test_invalid_retry_state_fails_closed(wave_repo: Path, invalid_count) -> None:
+    branch = m.get_branch_name()
+    state = m._read_worktree_state(branch)
+    state["wave_abort_attempts"] = {"task-a": invalid_count}
+    m._write_worktree_state(branch, state)
+    for operation in (m.begin_wave_group, m.run_concurrent_wave):
+        result = operation(["task-a"])
+        assert result["kind"] == "WAVE_RETRY_STATE_INVALID", result
+        assert result["needs_redispatch"] is False
+        assert m._read_worktree_state(branch) == state
+
+
+@pytest.mark.parametrize("ids", [["task-a"], ["task-a", "task-b"]])
+def test_direct_aborts_consume_budget_exactly_once(
+    wave_repo: Path, ids: list[str]
+) -> None:
+    for used in (1, 2, 3):
+        key, paths = group(ids)
+        (paths["task-a"] / "attempt.txt").write_text(str(used))
+        result = m.abort_wave_group(key)
+        assert result["ok"], result
+        assert result["attempts_used"] == used
+        assert result["attempts_remaining"] == 3 - used
+        assert result["needs_redispatch"] is (used < 3)
+        repeated = m.abort_wave_group(ids[0])
+        assert repeated["attempts_used"] == used
+        assert repeated["needs_redispatch"] is (used < 3)
+    refused = m.begin_wave_group(ids)
+    assert refused["kind"] == "WAVE_RETRIES_EXHAUSTED", refused
+
+
+@pytest.mark.parametrize("gate_fails", [False, True])
+def test_concurrent_acceptance_runs_post_wave_gate(
+    wave_repo: Path, gate_fails: bool
+) -> None:
+    # The same check passes in each candidate but detects a semantic failure
+    # only after both independently valid files have landed in the parent.
+    check = wave_repo / "verify.py"
+    check.write_text(
+        "from pathlib import Path\n"
+        "a, b = Path('part-a.txt').exists(), Path('part-b.txt').exists()\n"
+        "if a and b:\n"
+        "    Path('.map/post-wave-ran').write_text('ran')\n"
+        f"    raise SystemExit({7 if gate_fails else 0})\n"
+    )
+    config = wave_repo / ".map/config.yaml"
+    config.write_text(
+        config.read_text() + "verification_checks:\n  - python3 verify.py\n"
+    )
+    assert _git(["add", "verify.py", ".map/config.yaml"], wave_repo).returncode == 0
+    assert _git(["commit", "-qm", "verification command"], wave_repo).returncode == 0
+    _, paths = group(["task-a", "task-b"])
+    (paths["task-a"] / "part-a.txt").write_text("a")
+    (paths["task-b"] / "part-b.txt").write_text("b")
+    base = _git(["rev-parse", "HEAD"], wave_repo).stdout
+    result = m.run_concurrent_wave(["task-a", "task-b"])
+    assert (wave_repo / ".map/post-wave-ran").read_text() == "ran"
+    if gate_fails:
+        assert result["kind"] == "WAVE_ABORTED", result
+        assert result["merge_error"]["kind"] == "WAVE_VERIFY_FAILED"
+        assert _git(["rev-parse", "HEAD"], wave_repo).stdout == base
+        assert not (wave_repo / "part-a.txt").exists()
+        assert not (wave_repo / "part-b.txt").exists()
+        assert len(result["abort_result"]["patches"]) == 2
+        assert result["attempts_remaining"] == 2
+    else:
+        assert result["ok"], result
+        assert (wave_repo / "part-a.txt").read_text() == "a"
+        assert (wave_repo / "part-b.txt").read_text() == "b"

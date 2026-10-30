@@ -23247,6 +23247,26 @@ def cleanup_orphan_worktrees(branch: str) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
+def _wt_wave_retry_refusal(
+    state: dict[str, object], group_key: str, project_dir: Path | None = None,
+) -> dict[str, object] | None:
+    counts = state.get("wave_abort_attempts", {})
+    used = counts.get(group_key, 0) if isinstance(counts, dict) else None
+    if not isinstance(used, int) or isinstance(used, bool) or used < 0:
+        return _wt_error(
+            "WAVE_RETRY_STATE_INVALID", "recover invalid wave retry state before proceeding",
+            needs_redispatch=False, escalate_to_human=True, worktrees_preserved=True,
+        )
+    limit = _max_wave_retries(project_dir or _wt_project_dir() or Path("."))
+    if used >= limit:
+        return _wt_error(
+            "WAVE_RETRIES_EXHAUSTED", "wave retry budget exhausted; escalate without redispatch",
+            needs_redispatch=False, escalate_to_human=True, attempts_remaining=0,
+            worktrees_preserved=True,
+        )
+    return None
+
+
 def begin_wave_group(
     group_ids: list[str],
     branch: str | None = None,
@@ -23279,6 +23299,9 @@ def begin_wave_group(
     group_key = "|".join(ids_sorted)
 
     state = _read_worktree_state(branch_name)
+    retry_refusal = _wt_wave_retry_refusal(state, group_key)
+    if retry_refusal is not None:
+        return retry_refusal
     if not isinstance(state.get("wave_groups"), dict):
         state["wave_groups"] = {}
     wave_groups = state["wave_groups"]
@@ -25053,6 +25076,15 @@ def abort_wave_group(
     dirty_refusal = _wt_dirty_target_guard(branch_name, "wave abort")
     if dirty_refusal is not None:
         return {**dirty_refusal, "clean": False, "worktrees_preserved": True}
+    retry_key = group_key or group_id
+    prior_counts = state.get("wave_abort_attempts")
+    if group_key is None and isinstance(prior_counts, dict) and retry_key not in prior_counts:
+        matches = [key for key in prior_counts if isinstance(key, str) and group_id in key.split("|")]
+        if len(matches) == 1:
+            retry_key = matches[0]
+    retry_refusal = _wt_wave_retry_refusal(state, retry_key)
+    if retry_refusal and retry_refusal.get("kind") == "WAVE_RETRY_STATE_INVALID":
+        return {**retry_refusal, "clean": False}
 
     # Preserve EVERY candidate before resetting the parent or removing ANY
     # worktree. A failed capture leaves the whole group available for recovery.
@@ -25114,6 +25146,13 @@ def abort_wave_group(
         state2 = _read_worktree_state(branch_name)
         wg2 = state2.get("wave_groups")
         if isinstance(wg2, dict) and group_key in wg2:
+            counts = state2.get("wave_abort_attempts")
+            if not isinstance(counts, dict):
+                counts = {}
+                state2["wave_abort_attempts"] = counts
+            counts[group_key] = int(counts.get(group_key, 0)) + 1
+            # Counter and deletion share one sidecar write, so cleanup re-entry
+            # cannot count the same abandoned attempt twice.
             del wg2[group_key]
             _write_worktree_state(branch_name, state2)
 
@@ -25123,6 +25162,14 @@ def abort_wave_group(
     final_result["aborted_group_id"] = group_id
     final_result["ok"] = bool(verdict.get("clean"))
     final_result["patches"] = patches
+    counts = _read_worktree_state(branch_name).get("wave_abort_attempts")
+    attempts_used = int(counts.get(retry_key, 0)) if isinstance(counts, dict) else 0
+    attempts_remaining = max(0, _max_wave_retries(_wt_project_dir() or Path(".")) - attempts_used)
+    final_result.update(
+        attempts_used=attempts_used, attempts_remaining=attempts_remaining,
+        needs_redispatch=bool(verdict.get("clean")) and attempts_used > 0 and attempts_remaining > 0,
+        escalate_to_human=attempts_remaining == 0,
+    )
     return final_result
 
 
@@ -25164,9 +25211,9 @@ def run_concurrent_wave(
        discard the WHOLE group and reset to base (HC-4).  Do NOT retry internally —
        the group worktrees are gone after abort and cannot be re-merged without the
        skill re-dispatching actors.  Return a structured result with
-       ``needs_redispatch: True`` and ``attempts_remaining`` (read from the group
-       sidecar so successive calls can track exhaustion).  The SKILL owns the retry
-       loop: re-dispatch actors, then call run_concurrent_wave again.
+       ``attempts_remaining`` from durable abort history. ``needs_redispatch`` is
+       true only while that budget remains. Group registration and acceptance
+       refuse exhausted budgets. The SKILL owns retries after successful cleanup.
 
     Returns on full success::
 
@@ -25196,7 +25243,7 @@ def run_concurrent_wave(
             "status": "error",
             "ok": False,
             "kind": "WAVE_ABORTED",
-            "needs_redispatch": True,
+            "needs_redispatch": bool,    # false at retry exhaustion
             "attempts_remaining": int,   # decremented in group sidecar; 0 → escalate
             "escalate_to_human": bool,   # True when attempts_remaining == 0
             "group_ids": [...],
@@ -25242,13 +25289,16 @@ def run_concurrent_wave(
     max_retries = _max_wave_retries(pd)
     sub_batches = _chunk(ids_sorted, cap)
     group_key = "|".join(ids_sorted)
+    retry_refusal = _wt_wave_retry_refusal(_read_worktree_state(branch_name), group_key, pd)
+    if retry_refusal is not None:
+        return retry_refusal
 
     merged_ids: list[str] = []
     no_changes: list[str] = []
     batches_merged = 0
 
     for batch in sub_batches:
-        merge_result = merge_wave_worktrees(batch, branch=branch_name, skip_post_wave=True)
+        merge_result = merge_wave_worktrees(batch, branch=branch_name)
         if merge_result.get("status") == "error" or not merge_result.get("ok"):
             if merge_result.get("kind") in {
                 "EXTERNAL_HEAD_MOVED", "WAVE_BASE_MISMATCH", "STAGED_RUNTIME",
@@ -25272,22 +25322,20 @@ def run_concurrent_wave(
                     abort_result=abort_result,
                 )
 
-            # Keep retry history outside the group entry deleted by clean abort.
-            _st2 = _read_worktree_state(branch_name)
-            _retry_counts = _st2.get("wave_abort_attempts")
-            if not isinstance(_retry_counts, dict):
-                _retry_counts = {}
-                _st2["wave_abort_attempts"] = _retry_counts
-            _attempts_used = int(_retry_counts.get(group_key, 0)) + 1
-            _retry_counts[group_key] = _attempts_used
-            _write_worktree_state(branch_name, _st2)
+            # Shared abort accounts for Actor/Monitor and merge failures once.
+            _attempts_used = abort_result.get("attempts_used")
+            if not isinstance(_attempts_used, int) or _attempts_used < 1:
+                return _wt_error(
+                    "WAVE_ABORT_FAILED", "abort did not report a durable attempt count",
+                    needs_redispatch=False, abort_result=abort_result,
+                )
 
             attempts_remaining = max(0, max_retries - _attempts_used)
             return {
                 "status": "error",
                 "ok": False,
                 "kind": "WAVE_ABORTED",
-                "needs_redispatch": True,
+                "needs_redispatch": attempts_remaining > 0,
                 "attempts_remaining": attempts_remaining,
                 "escalate_to_human": attempts_remaining == 0,
                 "group_ids": ids_sorted,
