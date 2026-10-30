@@ -511,6 +511,8 @@ _UPDATE_RUNTIME_GITIGNORE_PATHS = (
     ".map/provider-refresh.lock",
     ".map/installer.lock",
     ".map/gitignore.lock",
+    ".map/**/sessions/",
+    "**/__pycache__/",
     ".claude/worktrees/",
 )
 _WINDOWS_GITIGNORE_MUTEX_TIMEOUT_MS = 30_000
@@ -1135,6 +1137,48 @@ def _gitignore_pattern_matches(pattern: bytes, path: bytes) -> bool:
     return match(0, 0)
 
 
+def _gitignore_patterns_may_overlap(left: bytes, right: bytes) -> bool:
+    """Conservatively intersect patterns, including recursive directory rules.
+
+    Unlike matching a concrete path, either side can contain wildcards. Two
+    wildcard-bearing segments may overlap; literal segments still constrain the
+    result so unrelated negations do not cause repeated ignore-file growth.
+    """
+    def parts(pattern: bytes) -> list[bytes]:
+        stripped = pattern.rstrip(b"/")
+        segments = stripped.lstrip(b"/").split(b"/")
+        return [b"**", *segments] if b"/" not in stripped else segments
+
+    a, b = parts(left), parts(right)
+    pending = [(0, 0)]
+    seen: set[tuple[int, int]] = set()
+    while pending:
+        i, j = pending.pop()
+        if (i, j) in seen:
+            continue
+        seen.add((i, j))
+        if i == len(a) and j == len(b):
+            return True
+        if i < len(a) and a[i] == b"**":
+            pending.append((i + 1, j))
+            if j < len(b):
+                pending.append((i, j + 1))
+        elif j < len(b) and b[j] == b"**":
+            pending.append((i, j + 1))
+            if i < len(a):
+                pending.append((i + 1, j))
+        elif i < len(a) and j < len(b):
+            a_glob = any(char in a[i] for char in (b"*", b"?", b"["))
+            b_glob = any(char in b[j] for char in (b"*", b"?", b"["))
+            if (
+                (a_glob and b_glob)
+                or fnmatchcase(a[i], b[j])
+                or fnmatchcase(b[j], a[i])
+            ):
+                pending.append((i + 1, j + 1))
+    return False
+
+
 def _negation_targets_path(negation: bytes, required: bytes) -> bool:
     """Return whether a later ``!`` rule can plausibly re-include *required*.
 
@@ -1148,6 +1192,10 @@ def _negation_targets_path(negation: bytes, required: bytes) -> bool:
     if not pattern:
         return False
     base = required.rstrip(b"/")
+    if b"*" in base and _gitignore_patterns_may_overlap(
+        pattern, required
+    ):
+        return True
     if _gitignore_pattern_matches(pattern, base):
         return True
     pattern_base = pattern.rstrip(b"/")

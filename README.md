@@ -249,6 +249,9 @@ MAP is inspired by the [MAP cognitive architecture](https://github.com/Shanka123
 
 ## What Success Looks Like
 
+`mapify init` keeps session logs, memory digests and Python bytecode out of Git
+by adding runtime ignore rules. Specs and planning artifacts remain shareable.
+
 After a good first workflow, you should see:
 
 - a written plan or spec before implementation starts;
