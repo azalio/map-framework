@@ -612,6 +612,8 @@ Design decisions (llm-council-reviewed, conv `461b92f9`):
   parent tree, and waves retain their post-wave gate. Both parent paths reject
   committed runtime changes before candidate cleanup. Rollback restores runtime
   index entries first, preserving working copies that a hook accidentally committed.
+  A rejecting parent hook's staged runtime is likewise unstaged without deleting
+  its files; this exception is confined to the admitted commit-failure path.
   Guards run *before* the working branch is touched: base-divergence,
   runtime-state-in-diff, configurable bulk-deletion (`worktree.max_deletions`),
   submodule-pointer change, and detached-HEAD.

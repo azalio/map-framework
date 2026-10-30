@@ -24626,15 +24626,17 @@ def _wt_reject_parent_result(base_sha: str, failure: dict[str, object]) -> dict[
     return failure
 
 
-def _wt_rollback(base_sha: str) -> bool:
+def _wt_rollback(base_sha: str, *, unstage_hook_runtime: bool = False) -> bool:
     """Rollback product merges while preserving unstaged tracked runtime.
 
     reset --merge keeps local runtime edits, unlike reset --hard. If Git cannot
     safely reset, stop without cleaning or deleting candidates. Staged runtime
-    must be unstaged by its owner first; it must never be committed or reset away.
+    normally requires its owner to unstage it. An admitted acceptance whose
+    parent commit failed can unstage hook-added runtime while keeping its files:
+    its preflight already refused any runtime staged before acceptance.
     """
     staged, error = _wt_staged_runtime_paths()
-    if staged or error:
+    if error or (staged and not unstage_hook_runtime):
         return False
     # A successful hook may have committed previously unstaged runtime files.
     # Restore only their index entries first, so reset --merge keeps their
@@ -24642,10 +24644,11 @@ def _wt_rollback(base_sha: str) -> bool:
     committed_runtime, error = _wt_committed_runtime_paths(base_sha)
     if error:
         return False
-    if committed_runtime:
+    preserved_runtime = sorted(set(committed_runtime + staged))
+    if preserved_runtime:
         restored = _wt_git([
             "reset", base_sha, "--",
-            *(f":(literal){path}" for path in committed_runtime),
+            *(f":(literal){path}" for path in preserved_runtime),
         ])
         if restored.returncode != 0:
             return False
@@ -24971,7 +24974,7 @@ def merge_subtask_worktree(
             )
         commit = _wt_commit_staged(f"{subtask_id}: merge isolated worktree")
         if commit.returncode != 0:
-            if not _wt_rollback(base_sha):
+            if not _wt_rollback(base_sha, unstage_hook_runtime=True):
                 return _wt_error(
                     "ROLLBACK_FAILED", "safe rollback failed; candidates were retained",
                     worktrees_preserved=True,
@@ -25342,7 +25345,7 @@ def merge_wave_worktrees(
                 )
             commit = _wt_commit_staged(f"{sid}: merge isolated worktree (wave)")
             if commit.returncode != 0:
-                if not _wt_rollback(wave_base_sha):
+                if not _wt_rollback(wave_base_sha, unstage_hook_runtime=True):
                     return _wt_error(
                         "ROLLBACK_FAILED", "safe rollback failed; candidates were retained",
                         worktrees_preserved=True,

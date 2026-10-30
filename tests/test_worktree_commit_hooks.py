@@ -210,18 +210,31 @@ def test_index_inspection_failure_is_not_an_empty_commit(
     assert all(path.exists() for path in paths.values())
 
 
-def install_parent_edit_hook(root: Path, filename: str, content: str) -> None:
+def install_parent_edit_hook(
+    root: Path,
+    filename: str,
+    content: str,
+    *,
+    name: str = "pre-commit",
+    reject: bool = False,
+    only_if_file: str | None = None,
+) -> None:
     code = (
         "from pathlib import Path; "
         f"p = Path({filename!r}); p.parent.mkdir(parents=True, exist_ok=True); "
         f"p.write_text({content!r})"
     )
-    hook = root / ".git/hooks/pre-commit"
+    hook = root / ".git/hooks" / name
+    condition = f'"$PWD" = {shlex.quote(str(root))}'
+    if only_if_file is not None:
+        condition += f" ] && [ -f {shlex.quote(only_if_file)}"
     hook.write_text(
         "#!/bin/sh\nset -e\n"
-        f'if [ "$PWD" = {shlex.quote(str(root))} ]; then\n'
+        f"if [ {condition} ]; then\n"
         f"  {shlex.join([sys.executable, '-c', code])}\n"
-        f"  git add -f -- {shlex.quote(filename)}\nfi\n"
+        f"  git add -f -- {shlex.quote(filename)}\n"
+        + ("  exit 9\n" if reject else "")
+        + "fi\n"
     )
     hook.chmod(0o755)
 
@@ -351,3 +364,66 @@ def test_runtime_guard_rollback_failure_keeps_candidates_and_does_not_record_rol
     assert all(path.exists() for path in paths.values())
     stage = m.load_artifact_manifest(m.get_branch_name())["stages"]["worktree"]
     assert stage["status"] == "created"
+
+
+@pytest.mark.parametrize("mode", ["single", "wave"])
+@pytest.mark.parametrize("hook", ["pre-commit", "commit-msg"])
+@pytest.mark.parametrize("tracked", [False, True])
+def test_rejecting_parent_hook_preserves_staged_runtime_during_rollback(
+    hook_repo: Path, mode: str, hook: str, tracked: bool
+) -> None:
+    filename = ".map/hook-runtime"
+    if tracked:
+        (hook_repo / filename).write_text("baseline runtime")
+        assert _git(["add", "-f", filename], hook_repo).returncode == 0
+        assert _git(["commit", "-qm", "existing runtime"], hook_repo).returncode == 0
+    paths = candidates(mode)
+    base = _git(["rev-parse", "HEAD"], hook_repo).stdout
+    install_parent_edit_hook(
+        hook_repo,
+        filename,
+        "hook runtime",
+        name=hook,
+        reject=True,
+        only_if_file="task-b.txt" if mode == "wave" else None,
+    )
+    result = accept(mode, paths)
+    assert result["kind"] == (
+        "MERGE_COMMIT_FAILED" if mode == "single" else "WAVE_COMMIT_FAILED"
+    ), result
+    assert _git(["rev-parse", "HEAD"], hook_repo).stdout == base
+    assert not _git(["diff", "--cached", "--name-only"], hook_repo).stdout
+    assert (hook_repo / filename).read_text() == "hook runtime"
+    assert all(path.exists() for path in paths.values())
+    assert all(not (hook_repo / f"{sid}.txt").exists() for sid in paths)
+
+
+@pytest.mark.parametrize("mode", ["single", "wave"])
+def test_failed_hook_runtime_unstage_stops_without_cleanup(
+    hook_repo: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    paths = candidates(mode)
+    install_parent_edit_hook(hook_repo, ".map/hook-runtime", "runtime", reject=True)
+    base = _git(["rev-parse", "HEAD"], hook_repo).stdout.strip()
+    git = m._wt_git
+    rollback_calls = []
+
+    def fail_unstage(args, **kwargs):
+        if args[0] in {"reset", "clean"}:
+            rollback_calls.append(args)
+        if args[:2] == ["reset", base]:
+            return subprocess.CompletedProcess(
+                args, 1, stdout="", stderr="index locked"
+            )
+        return git(args, **kwargs)
+
+    monkeypatch.setattr(m, "_wt_git", fail_unstage)
+    result = accept(mode, paths)
+    assert result["kind"] == "ROLLBACK_FAILED", result
+    assert len(rollback_calls) == 1
+    assert (
+        ".map/hook-runtime"
+        in _git(["diff", "--cached", "--name-only"], hook_repo).stdout
+    )
+    assert (hook_repo / ".map/hook-runtime").read_text() == "runtime"
+    assert all(path.exists() for path in paths.values())

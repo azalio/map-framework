@@ -635,6 +635,9 @@ also runs verification against the committed parent result; waves use their
 post-wave gate. Parent commits that change `.map/`, `.codex/`, or `.agents/` are
 rejected and rolled back, preserving those files' working copies for recovery.
 The existing exception for tracked `.map/config.yaml` still applies.
+If a parent hook stages runtime files and then rejects its commit, rollback
+unstages those files while preserving their working copies. Runtime already
+staged before acceptance still blocks the operation without changing the index.
 
 **Off-ramps (either is sufficient):**
 
