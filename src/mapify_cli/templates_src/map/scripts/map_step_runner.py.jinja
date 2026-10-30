@@ -23358,6 +23358,8 @@ def begin_wave_group(
 
     # Canonical group key: sorted ids joined so order-of-call doesn't vary the key.
     ids_sorted = sorted({str(s) for s in group_ids if str(s).strip()})
+    if not ids_sorted:
+        return _wt_error("NO_SUBTASKS", "no subtask ids supplied to begin_wave_group")
     group_key = "|".join(ids_sorted)
 
     state = _read_worktree_state(branch_name)

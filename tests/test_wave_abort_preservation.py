@@ -1,7 +1,9 @@
 """Real-Git regressions for lossless wave refusal and abort."""
 
+import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -182,6 +184,32 @@ def test_duplicate_member_ids_use_one_canonical_group(wave_repo: Path) -> None:
     assert result["ok"], result
     assert (wave_repo / "accepted.txt").read_text() == "accepted"
     assert not m._read_worktree_state(m.get_branch_name())["wave_groups"]
+
+
+@pytest.mark.parametrize("ids", [[], [""], [" ", "\t"], None])
+def test_empty_registration_does_not_poison_existing_group(
+    wave_repo: Path, ids
+) -> None:
+    _, paths = group(["task-a"])
+    (paths["task-a"] / "accepted.txt").write_text("accepted")
+    before = m._read_worktree_state(m.get_branch_name())
+    if ids is None:
+        cli = subprocess.run(
+            [sys.executable, m.__file__, "begin_wave_group", ""],
+            cwd=wave_repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert cli.returncode != 0, cli.stdout
+        result = json.loads(cli.stdout)
+    else:
+        result = m.begin_wave_group(ids)
+    assert result["kind"] == "NO_SUBTASKS", result
+    assert m._read_worktree_state(m.get_branch_name()) == before
+    accepted = m.run_concurrent_wave(["task-a"])
+    assert accepted["ok"], accepted
+    assert (wave_repo / "accepted.txt").read_text() == "accepted"
 
 
 def test_abort_preserves_recoverable_binary_patches(
