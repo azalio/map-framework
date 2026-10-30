@@ -47,8 +47,11 @@ the missing edits before Monitor. If `detect_symbol_blast_radius` recommends
 
 ## Cross-Subtask Regression Gate
 
-Before committing or recording a clean Monitor result, ask whether a scoped test
-run is safe:
+Before accepting an isolated candidate, use its current regression result from
+`monitor_instruction`, or rerun that exact command with both `--metadata-root`
+and `--worktree`. Run the recommended suite in the candidate before acceptance;
+never replace this decision with a parent-only result. For non-isolated execution
+only, ask whether a scoped test run is safe before committing or recording:
 
 ```bash
 python3 .map/scripts/map_step_runner.py detect_cross_subtask_regression_risk \

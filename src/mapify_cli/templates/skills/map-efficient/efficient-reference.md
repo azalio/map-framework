@@ -534,7 +534,8 @@ GATE=$(printf '%s' "$BLAST" | jq -r '.recommended_gate')
 - `recommended_gate == "scoped"` — no external callers affected; proceed to
   Monitor dispatch without modification.
 
-It is read-only and exits 0 always; callers branch on `recommended_gate`.
+It is read-only; advisory reports exit 0 and callers branch on `recommended_gate`.
+Invalid explicit managed context exits 1 and blocks acceptance.
 
 ## Cross-subtask regression gate
 
@@ -545,8 +546,11 @@ edited `chunked_review_pipeline.py`, a file seven earlier subtasks shared, and
 broke a stub-path test that only surfaced at the final full-suite gate, eight
 subtasks later.
 
-Before the post-Monitor test gate, ask the deterministic detector whether a
-scoped run is safe:
+For isolated candidates, the post-Monitor test decision uses the current
+regression result from `monitor_instruction`, or a rerun with both explicit
+roots. Run the recommended suite in the candidate before acceptance; never
+replace this decision with a parent-only result. For non-isolated execution
+only, ask the deterministic detector whether a scoped run is safe:
 
 ```bash
 RISK=$(python3 .map/scripts/map_step_runner.py \
@@ -564,7 +568,8 @@ GATE=$(printf '%s' "$RISK" | jq -r '.recommended_gate')
   run is sufficient. (Overlap on test-only files stays `scoped` — a shared
   test edit can't regress another subtask's production code.)
 
-It is read-only and exits 0 always; callers branch on `recommended_gate`.
+It is read-only; advisory reports exit 0 and callers branch on `recommended_gate`.
+Invalid explicit managed context exits 1 and blocks acceptance.
 
 ## Approval-hold preflight
 

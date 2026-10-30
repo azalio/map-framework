@@ -145,6 +145,43 @@ def test_missing_parent_blueprint_does_not_use_candidate_copy(context):
     assert json.loads(result.stdout)["message"] == "blueprint.json not found"
 
 
+@pytest.mark.parametrize("location", ["nested", "external"])
+@pytest.mark.parametrize("declaration_root", ["actor", "parent"])
+def test_absolute_declarations_use_actor_relative_paths(context, tmp_path, location, declaration_root):
+    root, actor, _ = context
+    if location == "external":
+        moved = tmp_path / "external actor"
+        assert _git(["worktree", "move", str(actor), str(moved)], root).returncode == 0
+        registry = root / ".map/actor-plan/worktrees.json"
+        data = json.loads(registry.read_text())
+        next(iter(data["worktrees"].values()))["path"] = str(moved)
+        registry.write_text(json.dumps(data))
+        actor = moved
+    blueprint = root / ".map/actor-plan/blueprint.json"
+    data = json.loads(blueprint.read_text())
+    data["subtasks"][0]["affected_files"] = [str((actor if declaration_root == "actor" else root) / "a.txt")]
+    blueprint.write_text(json.dumps(data))
+    (actor / "a.txt").write_text("Actor change\n")
+    result = gate(root, actor, "validate_mutation_boundary")
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads(result.stdout)
+    assert report["status"] == "clean"
+    assert report["expected"] == report["actual"] == ["a.txt"]
+
+
+def test_actor_absolute_escape_does_not_fall_back_to_parent(context):
+    root, actor, _ = context
+    (root / "outside").mkdir()
+    (actor / "link").symlink_to(root / "outside", target_is_directory=True)
+    blueprint = root / ".map/actor-plan/blueprint.json"
+    data = json.loads(blueprint.read_text())
+    data["subtasks"][0]["affected_files"] = [str(actor / "link/file.txt")]
+    blueprint.write_text(json.dumps(data))
+    result = gate(root, actor, "validate_mutation_boundary")
+    assert result.returncode == 1
+    assert "escapes checkout" in json.loads(result.stdout)["message"]
+
+
 @pytest.mark.parametrize("gate_name", ["validate_mutation_boundary", "detect_cross_subtask_regression_risk"])
 @pytest.mark.parametrize("damage", ["missing_registry", "bad_json", "wrong_path", "wrong_branch", "duplicate", "bad_base", "missing_base", "unrelated"])
 def test_invalid_managed_context_blocks_without_parent_fallback(context, tmp_path, gate_name, damage):
@@ -208,3 +245,5 @@ def test_managed_monitor_instructions_shipped_for_both_providers(provider):
     assert "--metadata-root <parent>" in monitor.read_text()
     assert "--worktree <candidate>" in monitor.read_text()
     assert "monitor_instruction" in skill.read_text()
+    assert "For non-isolated execution only" in skill.read_text()
+    assert "regression result from `monitor_instruction`" in skill.read_text()

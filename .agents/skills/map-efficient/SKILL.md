@@ -384,10 +384,9 @@ non-green, exit 0). `defer_flaky_subtask "$SUBTASK_ID" --check-id "<check-id>"`
 remains the lower-level direct close. Do not close this with
 `validate_step 2.4 --recommendation proceed`.
 
-On a clean pass, run the regression gate and record the subtask:
+On a clean pass, before accepting an isolated candidate, reuse its current regression result from `monitor_instruction` or rerun that exact command with both roots. Never substitute a parent-only result; run the recommended suite in the candidate before acceptance. For non-isolated execution only, run `python3 .map/scripts/map_step_runner.py detect_cross_subtask_regression_risk "$BRANCH" "$SUBTASK_ID"`. Then record the accepted subtask:
 
 ```bash
-python3 .map/scripts/map_step_runner.py detect_cross_subtask_regression_risk "$BRANCH" "$SUBTASK_ID"
 python3 .map/scripts/map_orchestrator.py record_subtask_result "$SUBTASK_ID" valid \
   --files "$FILES_CSV" --summary "$ONE_LINE" --commit-sha "$SHA"
 python3 .map/scripts/map_orchestrator.py validate_step 2.4 \

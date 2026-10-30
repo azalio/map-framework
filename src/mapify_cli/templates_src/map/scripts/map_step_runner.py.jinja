@@ -19542,6 +19542,24 @@ def _monitor_gate_cli_args():
     return parser.parse_args(sys.argv[2:])
 
 
+def _normalize_monitor_declaration(path: str, metadata_root: Path, actor_root: Path) -> str:
+    """Prefer Actor absolute paths, including candidates nested in the parent.
+
+    Managed roots are canonical. A declaration inside Actor must pass Actor's
+    escape checks; a failure must not be retried as a parent-relative path.
+    Parent absolute declarations are translated and checked in Actor as well.
+    """
+    declared = Path(path)
+    if (
+        not declared.is_absolute()
+        or metadata_root == actor_root
+        or declared.is_relative_to(actor_root)
+    ):
+        return _normalize_mutation_declaration(path, actor_root)
+    relative = _normalize_mutation_declaration(path, metadata_root)
+    return _normalize_mutation_declaration(relative, actor_root)
+
+
 def validate_mutation_boundary(
     branch: str, subtask_id: str, base_ref: str | None = None, *,
     metadata_root: Path | None = None, worktree: Path | None = None,
@@ -19609,10 +19627,7 @@ def validate_mutation_boundary(
     expected_raw = subtask.get("affected_files", []) or []
     try:
         expected = sorted({
-            _normalize_mutation_declaration(
-                _normalize_mutation_declaration(p, project_dir) if Path(p).is_absolute() else p,
-                git_cwd,
-            )
+            _normalize_monitor_declaration(p, project_dir, git_cwd)
             for p in expected_raw if isinstance(p, str)
         })
     except ValueError as exc:
