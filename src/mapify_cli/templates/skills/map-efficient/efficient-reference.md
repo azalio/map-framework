@@ -534,8 +534,7 @@ GATE=$(printf '%s' "$BLAST" | jq -r '.recommended_gate')
 - `recommended_gate == "scoped"` — no external callers affected; proceed to
   Monitor dispatch without modification.
 
-It is read-only; advisory reports exit 0 and callers branch on `recommended_gate`.
-Invalid explicit managed context exits 1 and blocks acceptance.
+It is read-only and exits 0 always; callers branch on `recommended_gate`.
 
 ## Cross-subtask regression gate
 
