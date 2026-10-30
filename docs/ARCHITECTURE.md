@@ -533,6 +533,9 @@ and its manifest entry are refreshed on each write, so whole-file bytes can chan
 - **Generated provider surfaces**: `.claude/skills/`, optional `.claude/commands/` custom-command scaffolding, and `.codex/` are the operational "runtime spec" consumed by providers.
 - **Run artifacts**: `.map/<branch>/` holds the durable record of what happened in a run (what was planned, what was verified, what was learned).
 - **Session memory artifacts**: `.map/<branch>/sessions/` holds finalized cross-session memory digests; `.map/<branch>/sessions/scratch/` is the temporary WAL-like capture area until finalization succeeds.
+  The installer-managed root ignore block excludes `.map/**/sessions/` and
+  `__pycache__/` on both fresh and repeated installs; planning artifacts remain
+  versionable. Existing tracked files are not removed from the index.
 - **Skill-eval artifacts**: `.map/eval-runs/<skill>/<provider>/` stores provider-scoped run JSONL so `--resume` cannot combine Claude and Codex cells. Providerless legacy JSONL remains readable as Claude data for backward compatibility; optimization JSON and generated HTML reports stay under `.map/eval-runs/<skill>/`.
 - **CLI templates and delivery code**: `src/mapify_cli/templates/` plus `src/mapify_cli/delivery/` define what `mapify init` installs.
 - **Deterministic helpers**: `src/mapify_cli/*` helper modules and `.map/scripts/` templates enforce artifact schemas, workflow state, prompt budgets, SkillIR checks, memory finalization, skill-eval assertions, and prior-stage validation.

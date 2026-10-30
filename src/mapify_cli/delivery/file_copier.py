@@ -511,6 +511,8 @@ _UPDATE_RUNTIME_GITIGNORE_PATHS = (
     ".map/provider-refresh.lock",
     ".map/installer.lock",
     ".map/gitignore.lock",
+    ".map/**/sessions/",
+    "__pycache__/",
     ".claude/worktrees/",
 )
 _WINDOWS_GITIGNORE_MUTEX_TIMEOUT_MS = 30_000
