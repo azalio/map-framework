@@ -236,7 +236,97 @@ decision table (`review_verdict_table.v1`) and writes:
 - `.map/<branch>/review-verdict-ledger.json` — machine-readable audit trail
 - `.map/<branch>/review-verdict-ledger.md` — human summary
 
+### Parent-served context loop (Step A.2a)
+
+The role reviewers run in the SAME fan-out but with isolated context: they see
+the diff and the bundle, never the other reviewers' output. They inspect supplied
+base/current source and changed-hunk attribution — the user role checks the old
+path, the maintainer role checks base-wide patterns that classes B/C/H need.
+Missing context must be requested from the parent and recorded, never recovered
+with shell or guessed. A base line's existence alone is not behavioral attribution.
+
+After each successful native dispatch, bind its returned agent ID to the original
+prompt role and context ID. Use an empty ordering for normal/adversarial review;
+use `default` or `reverse` for the matching compare-orderings collection:
+
+```bash
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
+REVIEW_ROUND_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["round_id"])' ".map/$BRANCH/review-mode.json")
+python3 .map/scripts/map_step_runner.py bind_review_context \
+  --reviewer "$REVIEWER_ROLE" --context-id "$CONTEXT_ID" --agent-id "$AGENT_ID" \
+  --round-id "$REVIEW_ROUND_ID" --ordering "${ORDERING_LABEL:-}"
+```
+
+Keep the returned `session_id`. Bindings, outstanding chunks, acknowledged byte
+prefixes and finalization tokens live in the round's `context_sessions` and
+`context_active` ledger fields, not only conversation or shell memory. On restart,
+recover the active session from `.map/<branch>/review-verdict-ledger.json` and run
+`review_context_status --session-id <id> --round-id <round>`. Continue the stored
+native agent only if the host still has it; otherwise dispatch a replacement,
+bind its new ID and redeliver all required resources. Another role, agent or
+ordering cannot borrow delivery progress.
+
+Apply this loop before final-schema validation for every reviewer, including
+retries, both ordering collections and the advisory complexity lens:
+
+1. Use `review_context_status` to recover pending work. An existing `pending_chunk`
+   takes priority over `remaining`: replay its resource and offset with
+   `--chunk-bytes` equal to `next_offset - offset` (or smaller), even if another
+   resource appears first in `remaining`. For an agent's
+   `context_request`, call `serve_review_context` with its payload on stdin and
+   `--reviewer <original-role> --round-id <round> --session-id <session> --agent-id <bound-agent>`.
+   For an early final response, retain no final capture: create the same request
+   shape from the status's next `remaining` resource/offset and continue delivery.
+   Required resources include the manifest, full original prompt (unless initially
+   inline), inventory and every permitted source resource. Blind stays diff-only.
+2. Store the exact returned chunk JSON in a session-specific pending file under
+   `.map/<branch>/review-context-delivery/<session-id>/`, then pass that JSON
+   verbatim to the **same agent**:
+
+```text
+Task(resume=<same agent_id>, prompt=<context_response JSON>)
+```
+
+3. Only after the host accepts that followup, pipe the exact stored chunk JSON to
+   `ack_review_context --session-id <session> --agent-id <bound-agent> --round-id <round>`.
+   Serving bytes alone never advances delivery. Do not ACK failed, truncated or
+   unconfirmed host submissions. Crash after acceptance but before ACK: replay the
+   same frozen chunk to the same agent, then ACK; duplicate bytes are identified by
+   offsets/hashes. An ACK replay is idempotent. Continue until `context_ready`.
+4. The ready result includes a persisted `finalization_token`. Send a NEW request
+   to the same agent: all required context has arrived; finalize now and include
+   `context_receipt={session_id,finalization_token}` in the final JSON envelope.
+   The plain-text lens may return its normal text only after this request.
+   Reject/discard queued early finals without that token even if delivery is now
+   complete. Never add the token yourself to an earlier saved response. Responses
+   to this finalization request proceed to Step A.2b even when `context_receipt`
+   is missing or invalid; those defects trigger its one malformed-final retry.
+   Only valid context and reviewer coverage receipts permit `capture_review_output`.
+   The runner independently fences capture and ledger
+   completeness; delivery does not prove source inspection or grant approval.
+
+Use `--chunk-bytes 8192` with a shell-tool output budget of at least 65536 tokens
+(roughly 50 KiB worst-case JSON escaping); use 1024 for a 10000-token capture
+budget. Never forward truncated tool output. A smaller same-offset retry atomically
+replaces the pending chunk without advancing progress; ACK of the superseded
+larger chunk is rejected. The CLI allows 4–65536 source bytes and keeps the 512 KiB
+serialized-response limit. Preserve the currently pending tuple on recovery.
+
+`not_context_request` classifies a response; it does NOT prove delivery complete.
+Context requests and queued early finals never consume a malformed-final retry or a
+review round. A malformed response to the finalization request consumes the one
+malformed-final retry; it cannot be captured without valid receipts.
+Do not increment the dispatch counter for same-agent continuations.
+On stale snapshot, denied resource or unresolved no-progress loop, keep collection
+incomplete; never substitute arbitrary live reads, shell or MCP. Existing
+role/provider permissions remain unchanged. Capability enforcement stays separate.
+
 ### Capturing reviewer envelopes (Step A.2c)
+
+First process intermediate `context_request` responses through Step A.2a's
+`serve_review_context` loop, continuing the same agent. Only a response classified
+as `not_context_request`, carrying the post-delivery `context_receipt`, and
+validated against the final role schema is eligible for capture. A denied or stale context request leaves collection incomplete.
 
 Write each reviewer's JSON envelope verbatim with a quoted heredoc, so nothing
 inside the payload is expanded by the shell:
@@ -244,7 +334,9 @@ inside the payload is expanded by the shell:
 ```bash
 BRANCH=$(python3 .map/scripts/map_utils.py branch)
 BRANCH_DIR=".map/$BRANCH"
-cat > "$BRANCH_DIR/review-agent-monitor.json" <<'MONITOR_EOF'
+REVIEW_ROUND_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["round_id"])' "$BRANCH_DIR/review-mode.json")
+python3 .map/scripts/map_step_runner.py capture_review_output --reviewer monitor \
+  --round-id "$REVIEW_ROUND_ID" --ordering "${ORDERING_LABEL:-}" <<'MONITOR_EOF'
 <paste the Monitor JSON envelope verbatim>
 MONITOR_EOF
 ```
@@ -414,5 +506,5 @@ large and quote-heavy; prefer the file flags written in Step A.2c.
 
 - Detached prep unavailable: continue from the in-place review bundle; do not mutate the source branch.
 - Missing bundle: rerun `create_review_bundle` before agents.
-- Oversized reviewer prompt: nothing is clipped and no `token_budget.json` entry is written for review — `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is reported, not enforced. Reduce the input yourself (`/compact`, or split the change); raising the variable changes nothing.
+- Oversized reviewer prompt: nothing is clipped and no `token_budget.json` entry is written for review — `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is reported, not enforced. Admitted rounds deliver the full prompt through the context manifest (Step A.2a). Legacy builder calls without an admitted bundle retain the oversized-prompt error; run `begin_review_run` and `create_review_bundle` first.
 - Monitor invalid: treat as hard stop and record `REVISE` or `BLOCK`.

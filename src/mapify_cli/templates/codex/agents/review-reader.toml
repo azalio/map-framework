@@ -16,7 +16,16 @@ changed-hunk attribution. Native shell-free read/search has not been established
 Request missing content from the parent; never restore shell or guess attribution.
 Existing base lines alone do not prove that a behavioral defect is pre-existing.
 
-Return the role envelope plus
+When a generated prompt provides parent-served context, first return its exact
+context_request JSON and consume context_chunk continuations in this same session.
+Follow next_offset through eof; check offsets, total size and hash metadata against the manifest before using it. Request
+missing permitted resources from the parent, never object paths or extra tools.
+These are intermediate responses, not findings or final review envelopes.
+Wait for the parent's post-delivery finalization request before returning a final
+review. In structured final envelopes, echo its session_id and finalization_token
+in a context_receipt object.
+Delivery is parent_acknowledged; it does not prove inspection or capability.
+After receiving needed evidence, return the role envelope plus
 receipt={covered_files:[],skipped_files:[],denied_access:[],check_evidence:[check_id]}.
 covered_files lists only paths actually inspected, including supplied source text.
 Report missing scope and denied access honestly. Reading claims are self_reported,

@@ -66,7 +66,13 @@ Task(subagent_type="review-reader", description=MAINTAINER_DESC, prompt=MAINTAIN
 
 ## Step B.adversarial.2: Validate reviewer outputs
 
-Each reviewer must return valid JSON matching the adversarial finding schema. If any reviewer output is truncated or invalid JSON:
+First apply Step A.2a's `serve_review_context` loop to every response, using the
+original role key (`blind`, `edge_case`, `acceptance`, `user_experience` or
+`maintainer`) and continuing the same agent. Context requests are intermediate;
+never aggregate them or count them as malformed final responses. This also applies
+to retries and both independent `--compare-orderings` collections.
+
+Only after `status: not_context_request`, require valid JSON matching the adversarial finding schema. If any final reviewer output is truncated or invalid JSON:
 - Log the failure
 - Re-invoke that specific reviewer ONCE with the same prompt
 - If still invalid, record the reviewer as `parse_error` and continue with remaining reviewers

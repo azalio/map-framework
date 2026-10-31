@@ -344,7 +344,7 @@ If `DETACHED_STATUS` is `success`, tell reviewer agents to read source files fro
 When compare mode is active, run two review collections with `ordering_label='default'` and `ordering_label='reverse'`, then call `compare-review-runs` and `record-review-ordering` to stage the drift summary. See [review-reference.md](review-reference.md#compare-orderings) for the detailed loop.
 
 ### Step A.2: Launch all parallel calls
-Before launching agents, build the reviewer prompts with `build_review_prompts`. Prompts are NOT truncated: each reviewer receives the whole bundle, the review preferences and the full diff. `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is reported in the output for reference only — it clips nothing. A prompt above 512 KiB returns `status: error`; stop dispatch and report the byte counts and reason. Split the change or reduce source evidence before retrying.
+Before launching agents, build the reviewer prompts with `build_review_prompts`. Evidence is NOT truncated. The admitted immutable bundle backs a compact initial prompt and parent-served resources; large original prompts, full file inventory and permitted base/current sources arrive in chunks through Step A.2a. `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is informational and clips nothing. The 512 KiB limit still applies to each initial prompt and serialized context response. On a builder error, stop dispatch and report the reason; never bypass admission or remove evidence to fit.
 
 ```bash
 REVIEW_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_review_prompts \
@@ -372,27 +372,27 @@ If security is in admitted roster: Task(subagent_type="review-reader", descripti
 If COMPLEXITY_LENS_ENABLED=true: Task(subagent_type="review-reader", description="Find deletable complexity", prompt=COMPLEXITY_LENS_PROMPT)
 ```
 
-The role reviewers run in the SAME fan-out but with isolated context: they see
-the diff and the bundle, never the other reviewers' output. They inspect supplied
-base/current source and changed-hunk attribution — the user role checks the old
-path, the maintainer role checks base-wide patterns that classes B/C/H need.
-Missing context must be requested from the parent and recorded, never recovered
-with shell or guessed. A base line's existence alone is not behavioral attribution.
+Role reviewers remain isolated; follow the access and attribution rules in [Parent-served context loop](review-reference.md#parent-served-context-loop-step-a2a).
 
 Reviewer prompts reference `review-bundle.json`, `review-bundle.md`, the raw diff as secondary context, and the expected output schema.
 
 When enabled (`minimality != off`), the complexity lens is advisory only. It lists over-engineering as `delete:`, `stdlib:`, `native:`, `yagni:`, or `shrink:` findings, ends with `net: -<N> lines possible.` or `Lean already. Ship.`, samples `map:simplification:` marker claims, and never feeds Actor retries or verdict gates.
 
+### Step A.2a: Deliver requested context to the same reviewer (MANDATORY)
+
+Before final JSON validation, follow [Parent-served context loop](review-reference.md#parent-served-context-loop-step-a2a): run `serve_review_context` for every response, including retries, adversarial roles and the complexity lens. Continue the same agent for `context_response`; responses to the post-delivery finalization request proceed to Step A.2b even with missing or invalid receipts. Discard queued early finals; context requests never consume final-response retries or become captured reviews. Denied/stale context leaves collection incomplete.
+
 ### Step A.2b: Truncated-response gate (MANDATORY — post-fan-out, pre-verification)
 
-After each reviewer returns, pipe its response on stdin (a bare call returns
+After Step A.2a identifies a final response, pipe it on stdin (a bare call returns
 `status:"no_input"`, not a pass):
 `printf '%s' "$RESPONSE" | python3 .map/scripts/map_step_runner.py detect_truncated_agent_output --agent <kind>`
-using the role-specific kind shown below. On truncation: log via
+using the role-specific kind shown below. On truncation or missing/invalid finalization `context_receipt`: log via
 `log_agent_failure --agent <role> --phase post-invoke --failure-label truncated --reasons '<reasons>'`
 and re-invoke that reviewer ONCE using the prompt from
 `build_json_retry_prompt --agent <role> --errors '<reasons>'`; if still
 malformed, stop with CLARIFICATION_NEEDED.
+Include the original generated prompt and context protocol with retry instructions; process intermediate requests through Step A.2a.
 
 Role → `--agent` kind for the truncation check:
 - monitor reviewer → `--agent review-monitor` (enforces the full review schema:

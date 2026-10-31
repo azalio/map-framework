@@ -28,7 +28,16 @@ changed-hunk attribution instead of shell commands. A line existing at base does
 not prove a behavioral defect is pre-existing; require supporting context or mark
 attribution unknown. Request missing bundle content from the parent, never shell.
 
-Return the role's envelope with an additional receipt object:
+When the prompt provides parent-served context, return its exact context_request
+JSON and consume context_chunk continuations in this same session. Follow
+next_offset through eof and check offsets, total size and hash metadata against the manifest before using it. Request
+permitted resources from the parent, never read context object paths directly.
+These intermediate responses are not findings or final review envelopes.
+Wait for the parent's post-delivery finalization request before returning a final
+review. In structured final envelopes, echo its session_id and finalization_token
+in a context_receipt object.
+Delivery is parent_acknowledged; it does not prove inspection or capability.
+After receiving needed evidence, return the role's envelope with an additional receipt object:
 `receipt={covered_files:[],skipped_files:[],denied_access:[],check_evidence:[check_id]}`.
 List only paths actually inspected in covered_files; report skipped scope and denied
 required access honestly. Reading claims are self_reported, not tool_witnessed.
