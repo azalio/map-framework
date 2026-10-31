@@ -44,6 +44,7 @@ def _issue():
 
 
 def _round(runner, round_id, issues, resolutions=None):
+    """Collect verified Monitor evidence for one admitted review iteration."""
     admission = runner.begin_review_run(scheduled_reviewers=["monitor"], round_id=round_id, provider="claude")
     assert admission["status"] == "success", admission
     assert runner.create_review_bundle()["status"] == "success"
@@ -226,6 +227,7 @@ def test_reworded_finding_keeps_identity_and_author_reactions(evidence_review):
 
 
 def test_adversarial_paraphrase_preserves_durable_id_and_reaction(evidence_review):
+    """Retain finding identity and author reactions across paraphrased reports."""
     runner = cast(Any, map_step_runner)
     finding_id = ""
     for round_id, wording in (("first", "zero input crashes"), ("second", "division fails for zero")):
@@ -266,6 +268,7 @@ def test_reaction_cli_invalid_input_returns_nonzero(evidence_review, finding_id,
 
 
 def test_adversarial_captures_archive_and_preserve_round_coverage(evidence_review):
+    """Retain completed coverage while archiving captures for a new revision."""
     runner = cast(Any, map_step_runner)
     reviewers = ["blind", "edge_case", "acceptance", "user_experience", "maintainer"]
     admission = runner.begin_review_run(review_mode="adversarial", arguments="--adversarial", scheduled_reviewers=reviewers, round_id="first", provider="claude")

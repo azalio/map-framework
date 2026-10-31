@@ -84,6 +84,7 @@ def test_create_review_bundle_keeps_pending_snapshot_binding(receipt_workspace):
 
 @pytest.mark.parametrize("receipt", [None, []])
 def test_invalid_receipt_stays_pending_and_accepts_correction(receipt_workspace, receipt):
+    """Leave malformed receipts replaceable until valid coverage completes review."""
     admission = _admit()
     envelope = {"verdict": "approved", "issues": [], "receipt": receipt}
     assert runner.capture_review_output("monitor", json.dumps(envelope), "receipt")["status"] == "success"

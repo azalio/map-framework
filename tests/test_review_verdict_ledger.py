@@ -1828,6 +1828,7 @@ def test_monitor_location_only_distinct_files_do_not_merge(branch_workspace):
 
 @pytest.mark.parametrize("flags", ["--adversarial", "--adversarial --quick", "--adversarial --quick --compare-orderings"])
 def test_adversarial_originating_reviewer_can_resolve_prior_finding(review_git_workspace, flags):
+    """Accept bound resolution evidence from the originating adversarial reviewer."""
     branch_workspace = review_git_workspace
     runner = cast(Any, map_step_runner)
     runner.begin_review_run(arguments=flags, round_id="1")
@@ -1862,6 +1863,7 @@ def test_adversarial_distinct_defects_survive_round_merge(branch_workspace):
 
 
 def test_moved_finding_retains_identity_and_resolves_without_phantom(review_git_workspace):
+    """Preserve finding identity across moved anchors and checked resolution."""
     branch_workspace = review_git_workspace
     runner = cast(Any, map_step_runner)
     for number, line in ((1, 10), (2, 11)):
@@ -1884,6 +1886,7 @@ def test_moved_finding_retains_identity_and_resolves_without_phantom(review_git_
 
 @pytest.mark.parametrize("owner,other", [("maintainer", "user_experience"), ("user_experience", "maintainer")])
 def test_role_resolution_cannot_close_another_role_finding(branch_workspace, owner, other):
+    """Reject resolution evidence from a different role reviewer."""
     runner = cast(Any, map_step_runner)
     runner.begin_review_run(round_id="first")
     envelopes = {"monitor": _monitor_no_issues(), "predictor": _predictor_low_risk(),
@@ -1910,6 +1913,7 @@ def test_role_resolution_cannot_close_another_role_finding(branch_workspace, own
 
 
 def test_incomplete_round_recovers_without_counting_and_rejects_stale_finalizer(review_git_workspace):
+    """Complete a pending collection once and reject its stale finalizer."""
     del review_git_workspace
     runner = cast(Any, map_step_runner)
     admission = _admit_receipt_review(runner, round_id="first")
@@ -1925,6 +1929,7 @@ def test_incomplete_round_recovers_without_counting_and_rejects_stale_finalizer(
 
 
 def test_completed_round_rejects_changed_submission_and_corrupt_history(review_git_workspace):
+    """Keep completed submissions and damaged convergence history immutable."""
     branch_workspace = review_git_workspace
     runner = cast(Any, map_step_runner)
     admission = _admit_receipt_review(runner, round_id="first")
@@ -2001,6 +2006,7 @@ def test_incremental_scope_includes_dependent_modules_and_falls_back(branch_work
 
 
 def test_publication_suppresses_only_acknowledged_unchanged_revision(branch_workspace):
+    """Republish only new or changed finding revisions at each destination."""
     runner = cast(Any, map_step_runner)
     runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="1")
     capture = branch_workspace / "review-agent-monitor.json"
@@ -2023,6 +2029,7 @@ def test_publication_suppresses_only_acknowledged_unchanged_revision(branch_work
 
 
 def test_explicit_rereview_resolution_allows_third_round_pass(review_git_workspace):
+    """Count earlier abandoned attempts when a verified third round passes."""
     branch_workspace = review_git_workspace
     runner = cast(Any, map_step_runner)
     for number in (1, 2):
@@ -2040,6 +2047,7 @@ def test_explicit_rereview_resolution_allows_third_round_pass(review_git_workspa
 
 
 def test_round_keeps_omitted_unresolved_findings(branch_workspace):
+    """Keep omitted findings and route their resolution requests to the owner."""
     runner = cast(Any, map_step_runner)
     runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="first")
     capture = branch_workspace / "review-agent-monitor.json"
@@ -2093,6 +2101,7 @@ def test_reviewer_schemas_expose_checked_finding_and_resolution_fields():
 
 
 def test_review_round_retry_and_cap_are_durable(review_git_workspace):
+    """Seal complete unsuccessful rounds once and enforce the three-attempt cap."""
     branch_workspace = review_git_workspace
     runner = cast(Any, map_step_runner)
     for number in range(1, 4):
@@ -2190,6 +2199,7 @@ def test_begin_review_run_archives_only_inputs_and_gate_preserving_journal(branc
 
 
 def test_same_mode_review_reruns_do_not_overwrite_archived_inputs(branch_workspace):
+    """Preserve earlier archives when an incomplete collection is abandoned."""
     workspace = branch_workspace
     begin = cast(Any, map_step_runner).begin_review_run
     (workspace / "review-agent-monitor.json").write_text("stale", encoding="utf-8")
@@ -2386,6 +2396,7 @@ def test_real_aggregate_string_evidence_reaches_durable_ledger(branch_workspace)
 
 @pytest.mark.parametrize("resolver,expected", [("blind", "success"), ("edge_case", "success"), ("acceptance", "error")])
 def test_real_aggregate_merges_reporters_without_changing_identity(review_git_workspace, resolver, expected):
+    """Merge reporters without changing the defect identity or resolution ownership."""
     branch_workspace = review_git_workspace
     runner = cast(Any, map_step_runner)
     for round_id, reporters in (("1", ("blind",)), ("2", ("edge_case",))):
@@ -2424,6 +2435,7 @@ def test_legacy_malformed_evidence_does_not_discard_finding(branch_workspace, ev
 
 
 def test_monitor_schema_locations_keep_distinct_files_and_stable_moved_ids(branch_workspace):
+    """Keep file-specific finding IDs stable when reported locations move."""
     runner = cast(Any, map_step_runner)
     for round_id, line in (("1", "10-12"), ("2", "20-22")):
         runner.begin_review_run(scheduled_reviewers=["monitor"], round_id=round_id)
@@ -2448,6 +2460,7 @@ def test_monitor_schema_locations_keep_distinct_files_and_stable_moved_ids(branc
 @pytest.mark.parametrize("omitted", [False, True])
 @pytest.mark.parametrize("channel", ["wrong_category", "unverifiable_context", "no_new_fact"])
 def test_current_objections_bind_after_durable_ids_and_include_omissions(branch_workspace, omitted, channel):
+    """Bind objections to durable findings even when later reports omit them."""
     runner = cast(Any, map_step_runner)
     issue = _monitor_with_critical()["issues"][0]
     issues = [{**issue, "file_path": path} for path in ("a.py", "b.py")]
@@ -2479,6 +2492,7 @@ def test_current_objections_bind_after_durable_ids_and_include_omissions(branch_
 
 @pytest.mark.parametrize("completed", [False, True])
 def test_legacy_write_rejected_after_admission_without_artifact_mutation(review_git_workspace, completed):
+    """Reject legacy writes for both pending and completed admitted reviews."""
     branch_workspace = review_git_workspace
     runner = cast(Any, map_step_runner)
     admission = _admit_receipt_review(runner, round_id="1")
@@ -2522,6 +2536,7 @@ def _bound_resolution(finding_id="RVF-001", *, evidence="Regression now passes",
 
 
 def test_legacy_free_text_resolution_cannot_close_a_finding(review_git_workspace):
+    """Require structured checked evidence to close a retained finding."""
     workspace = review_git_workspace
     runner = cast(Any, map_step_runner)
     runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="first")
@@ -2681,6 +2696,7 @@ def test_completed_review_gate_rejects_changed_snapshot_after_restart(review_git
 
 @pytest.mark.parametrize("mutation", ["binary", "index", "policy", "base", "head", "untracked", "symlink"])
 def test_completed_binding_detects_byte_and_policy_changes(review_git_workspace, mutation):
+    """Reject completed evidence after any reviewed input or policy changes."""
     del review_git_workspace
     runner = cast(Any, map_step_runner)
     Path("image.bin").write_bytes(b"\x00\xff\x01")
@@ -2724,6 +2740,7 @@ def _admit_receipt_review(runner, *, provider="claude", required_checks=None, ro
 
 
 def _capture_complete_monitor(runner, admission, round_id, payload=None):
+    """Capture a Monitor result with full admitted coverage and a durable witness."""
     assert admission["status"] == "success", admission
     envelope = {**(payload if payload is not None else _monitor_with_critical()), "receipt": {
         "covered_files": admission["required_files"], "skipped_files": [],
@@ -2989,6 +3006,7 @@ def _review_cli(*args, payload=""):
 
 @pytest.mark.parametrize("changed_path", ["writer.py", "untracked.py"])
 def test_explicit_abandonment_recovers_changed_target_without_reset(review_git_workspace, changed_path):
+    """Recover a changed pending target without resetting history or attempt counts."""
     workspace = review_git_workspace
     runner = cast(Any, map_step_runner)
     admission = _admit_receipt_review(runner, round_id="first")
@@ -3038,6 +3056,7 @@ def test_explicit_abandonment_recovers_changed_target_without_reset(review_git_w
 
 
 def test_abandon_cli_preserves_three_attempt_cap_across_processes(review_git_workspace):
+    """Combine completed and abandoned attempts in the durable CLI cap."""
     workspace = review_git_workspace
     runner = cast(Any, map_step_runner)
     for round_id in ("1", "2"):
@@ -3062,6 +3081,7 @@ def test_abandon_cli_preserves_three_attempt_cap_across_processes(review_git_wor
 
 @pytest.mark.parametrize("adversarial", [False, True])
 def test_acknowledged_identical_publication_is_suppressed_across_rounds(branch_workspace, adversarial):
+    """Suppress previously acknowledged revisions after starting another attempt."""
     runner = cast(Any, map_step_runner)
     first_revision = None
     for round_id in ("1", "2"):
@@ -3109,6 +3129,7 @@ def test_abandoned_capture_never_establishes_review_coverage(review_git_workspac
 
 @pytest.mark.parametrize("channel", ["wrong_category", "unverifiable_context", "no_new_fact"])
 def test_explicit_resolution_supersedes_persisted_objection(review_git_workspace, channel):
+    """Let checked originating-reviewer evidence supersede a prior objection."""
     branch_workspace = review_git_workspace
     runner = cast(Any, map_step_runner)
     runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="1")
@@ -3135,6 +3156,7 @@ def test_explicit_resolution_supersedes_persisted_objection(review_git_workspace
 
 @pytest.mark.parametrize("reported_again", [False, True])
 def test_resolved_objection_stays_superseded_on_omission_but_observation_reopens(review_git_workspace, reported_again):
+    """Preserve resolved objections on omission and reopen freshly observed defects."""
     branch_workspace = review_git_workspace
     runner = cast(Any, map_step_runner)
     first = _monitor_with_critical()["issues"][0]

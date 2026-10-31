@@ -17,6 +17,7 @@ review_git_workspace = ledger_tests.review_git_workspace
 @pytest.mark.parametrize("flags", ["", "--compare-orderings", "--adversarial", "--adversarial --compare-orderings"])
 @pytest.mark.parametrize("gap", ["scope", "denied", "check", "codex"])
 def test_pending_third_round_resumes_across_restart(review_git_workspace, flags, gap):
+    """Keep incomplete third attempts resumable and cap only terminal attempts."""
     workspace = review_git_workspace
     profile = Path(".claude/agents/review-reader.md")
     profile.parent.mkdir(parents=True)
@@ -40,6 +41,7 @@ def test_pending_third_round_resumes_across_restart(review_git_workspace, flags,
         incomplete["check_evidence"] = ["unrecorded-check"]
 
     def capture(value):
+        """Capture the same finding with the supplied evidence receipt."""
         if "--adversarial" in flags:
             report = ledger_tests._produced_adversarial_report(receipt=value)
             return ledger_tests._capture_aggregate(report, "3", flags)
@@ -87,6 +89,7 @@ def test_pending_third_round_resumes_across_restart(review_git_workspace, flags,
 
 @pytest.mark.parametrize("failed_first", [False, True])
 def test_required_check_can_finish_after_pending_ledger(review_git_workspace, failed_first):
+    """Allow missing or failed checks to be retried before sealing the round."""
     workspace = review_git_workspace
     marker = workspace / "check-ready"
     command = [sys.executable, "-c", f"from pathlib import Path; raise SystemExit(0 if Path({str(marker)!r}).exists() else 1)"]
@@ -110,3 +113,36 @@ def test_required_check_can_finish_after_pending_ledger(review_git_workspace, fa
     ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
     assert ledger["execution_checks"]["suite"]["passed"] is True
     assert len(ledger["execution_check_history"]) == int(failed_first)
+
+
+@pytest.mark.parametrize("changed", ["arguments", "provider", "checks", "round_id", "target"])
+def test_inferred_mode_resume_preserves_all_other_bindings(review_git_workspace, changed):
+    """Restore only the inferred mode; never silently rebind a pending review."""
+    workspace = review_git_workspace
+    admission = runner.begin_review_run(mode="lightweight", round_id="pending")
+    assert admission["status"] == "success"
+    assert runner.create_review_bundle()["status"] == "success"
+    assert runner.capture_review_output("monitor", json.dumps(ledger_tests._monitor_no_issues()), "pending")["status"] == "success"
+    runner.write_review_verdict_ledger(current_run=True)
+    assert runner.begin_review_run(mode="full")["status"] == "error"
+    resumed = runner.begin_review_run(mode="full", resume_admitted_mode=True)
+    assert resumed["resumed"] and resumed["round_id"] == "pending"
+    assert resumed["mode"] == "lightweight" and resumed["scheduled_reviewers"] == ["monitor"]
+    before = (workspace / "review-verdict-ledger.json").read_bytes()
+    kwargs = {"mode": "full", "resume_admitted_mode": True}
+    if changed == "arguments":
+        kwargs["arguments"] = "new focus"
+    elif changed == "provider":
+        kwargs["provider"] = "claude"
+    elif changed == "checks":
+        kwargs["required_checks"] = ["new-check"]
+    elif changed == "round_id":
+        kwargs["round_id"] = "different"
+    else:
+        Path("writer.py").write_text("VALUE = 2\n")
+    assert runner.begin_review_run(**kwargs)["status"] == "error"
+    assert (workspace / "review-verdict-ledger.json").read_bytes() == before
+    assert runner.abandon_review_round("pending", reason="Review inputs intentionally changed")["status"] == "success"
+    new = runner.begin_review_run(mode="full", resume_admitted_mode=True)
+    assert new["status"] == "success" and new["resumed"] is False
+    assert new["scheduled_reviewers"] == list(runner.NORMAL_REVIEWERS)

@@ -144,6 +144,74 @@ def test_security_capture_passes_independently_but_consent_stays_pending(sensiti
                                         branch="feature")["status"] == "error"
 
 
+@pytest.mark.parametrize("gap", [None, "skipped_files", "denied_access", "unexplained_verdict"])
+def test_security_findings_consume_complete_rounds_but_missing_coverage_stays_pending(sensitive_repo, gap):
+    """Separate collected security findings from missing security evidence."""
+    del sensitive_repo
+    profile = Path(".claude/agents/review-reader.md")
+    profile.parent.mkdir(parents=True)
+    profile.write_text("---\nname: review-reader\ntools: Read, Glob, Grep\n---\n")
+    directory = Path(".map/feature")
+    for number in range(1, 4 if gap is None else 2):
+        admission = runner.begin_review_run(branch="feature", provider="claude", round_id=str(number))
+        assert admission["status"] == "success", admission
+        assert runner.create_review_bundle(branch="feature")["status"] == "success"
+        receipt = {"covered_files": admission["required_files"], "skipped_files": [],
+                   "denied_access": [], "check_evidence": []}
+        for role in admission["scheduled_reviewers"]:
+            payload = {"all_clear": True, "findings": [], "receipt": dict(receipt)}
+            if role == "monitor":
+                payload.update(verdict="approved", issues=[])
+            elif role == "predictor":
+                payload.update(risk_assessment="low", predicted_state={"breaking_changes": []})
+            elif role == "evaluator":
+                payload.update(overall_score=10, recommendation="proceed")
+            elif role == "security":
+                # A minor finding alone may leave the findings verdict PROCEED;
+                # the independent strict security gate must still reject approval.
+                payload.update(all_clear=False, findings=[{
+                    "severity": "minor", "category": "security", "claim": "Review shell invocation",
+                    "proof": "old/code.py uses shell=True", "cost": "unsafe input handling",
+                    "counterfactual": "argv avoids shell interpretation", "failure_mode": "input interpreted by shell",
+                    "anchor": "old/code.py:2", "proposed_code": "subprocess.run(argv)",
+                    "bug_class": "shell_interpretation", "cause": "shell enabled for command",
+                    "failure_scenario": "invoke the command through a shell",
+                    "evidence_refs": [{"file_path": "old/code.py", "revision": "current",
+                                       "quote": "subprocess.run(command, shell=True)"}],
+                    "reachability": {"status": "reachable", "reason": "top-level shell invocation",
+                        "evidence_refs": [{"file_path": "old/code.py", "revision": "current",
+                                           "quote": "subprocess.run(command, shell=True)"}]},
+                    "baseline_attribution": {"status": "introduced", "reason": "base contains no shell invocation",
+                        "evidence_refs": [{"file_path": "old/code.py", "revision": "baseline", "quote": "value = 1"},
+                                          {"file_path": "old/code.py", "revision": "current",
+                                           "quote": "subprocess.run(command, shell=True)"}]}}])
+                if gap == "unexplained_verdict":
+                    payload["findings"] = []
+                elif gap:
+                    payload["receipt"][gap] = ["old/code.py"]
+            assert runner.capture_review_output(role, json.dumps(payload), str(number), branch="feature")["status"] == "success"
+        result = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+        assert result["status"] == "success", result
+        ledger = json.loads((directory / "review-verdict-ledger.json").read_text())
+        assert ledger["code_approval"]["approved"] is False
+        assert ledger["computed_verdict"] != "PROCEED"
+        assert runner.write_stage_gate("review", "ready", branch="feature")["status"] == "error"
+        if gap:
+            assert ledger["completeness"]["status"] == ("BLOCKED" if gap == "denied_access" else "INCOMPLETE")
+            assert ledger["convergence"]["attempted_rounds"] == 0
+            assert "completed_at" not in ledger["convergence"]["rounds"][-1]
+        else:
+            assert ledger["completeness"]["status"] == "COMPLETE"
+            assert ledger["findings_verdict"] == "PROCEED"
+            assert ledger["security_gate"]["status"] == "BLOCKED"
+            assert ledger["security_gate"]["collection_reasons"] == []
+            assert ledger["convergence"]["completed_rounds"] == number
+            assert runner.capture_review_output("security", "{}", str(number), branch="feature")["status"] == "error"
+    if gap is None:
+        assert ledger["convergence"]["outcome"] == "capped"
+        assert runner.begin_review_run(branch="feature", provider="claude", round_id="4")["stop_reason"] == "reconsider_approach"
+
+
 @pytest.mark.parametrize("receipt", [None, [], "invalid", {"covered_files": [{}]}, {"covered_files": [[]]}])
 def test_security_capture_rejects_malformed_receipt_before_persistence(sensitive_repo, receipt):
     del sensitive_repo
