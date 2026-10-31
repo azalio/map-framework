@@ -184,7 +184,7 @@ def test_aggregation_rejects_malformed_role_receipts_and_accepts_retry(role, def
 
 @pytest.mark.parametrize("ordering", ["", "default", "reverse"])
 @pytest.mark.parametrize("role", ROLES)
-@pytest.mark.parametrize("defect", ["missing", "malformed", "parse_error", "invalid_entry"])
+@pytest.mark.parametrize("defect", ["missing", "malformed", "parse_error_with_raw", "invalid_entry"])
 def test_adversarial_capture_preserves_evidence_on_bad_nested_receipt(review_git_workspace, ordering, role, defect):
     workspace = review_git_workspace
     flags = "--adversarial" + (" --compare-orderings" if ordering else "")
@@ -202,8 +202,9 @@ def test_adversarial_capture_preserves_evidence_on_bad_nested_receipt(review_git
         del entry["raw"]["receipt"]
     elif defect == "malformed":
         entry["raw"]["receipt"]["covered_files"] = [42]
-    elif defect == "parse_error":
-        invalid["reviewer_status"][role] = {"status": "parse_error", "error": "receipt is invalid"}
+    elif defect == "parse_error_with_raw":
+        entry["status"] = "parse_error"
+        del entry["raw"]["receipt"]
     else:
         invalid["reviewer_status"][role] = []
     result = runner.capture_review_output("adversarial", json.dumps(invalid), "receipt", ordering=ordering)
@@ -214,8 +215,57 @@ def test_adversarial_capture_preserves_evidence_on_bad_nested_receipt(review_git
 
 
 def test_adversarial_capture_retains_missing_response_evidence(review_git_workspace):
-    del review_git_workspace
+    workspace = review_git_workspace
     assert runner.begin_review_run(arguments="--adversarial", round_id="receipt")["status"] == "success"
     report = runner.aggregate_adversarial_findings(blind_json=json.dumps({"all_clear": True, "findings": []}))
     assert report["reviewer_status"]["maintainer"]["status"] == "not_run"
     assert runner.capture_review_output("adversarial", json.dumps(report), "receipt")["status"] == "success"
+    stored = json.loads((workspace / "review-agent-adversarial.json").read_text())
+    assert stored["reviewer_status"]["maintainer"]["status"] == "not_run"
+    assert "raw" not in stored["reviewer_status"]["maintainer"]
+
+
+@pytest.mark.parametrize("ordering", ["", "default", "reverse"])
+@pytest.mark.parametrize("role", ROLES)
+def test_adversarial_capture_rejects_omitted_scheduled_role(review_git_workspace, ordering, role):
+    workspace = review_git_workspace
+    flags = "--adversarial" + (" --compare-orderings" if ordering else "")
+    admission = runner.begin_review_run(
+        arguments=flags, round_id="receipt", review_mode="compare_orderings" if ordering else "adversarial",
+        scheduled_reviewers=[*runner.ADVERSARIAL_REVIEWERS, "security"],
+    )
+    assert admission["status"] == "success", admission
+    report = runner.aggregate_adversarial_findings(role_json={name: json.dumps(envelope(name)) for name in ROLES})
+    assert runner.capture_review_output("adversarial", json.dumps(report), "receipt", ordering=ordering)["status"] == "success"
+    directory = workspace / "review-collections" / ordering if ordering else workspace
+    artifact = directory / "review-agent-adversarial.json"
+    ledger = workspace / "review-verdict-ledger.json"
+    before = artifact.read_bytes(), ledger.read_bytes()
+    del report["reviewer_status"][role]
+    result = runner.capture_review_output("adversarial", json.dumps(report), "receipt", ordering=ordering)
+    assert result["status"] == "error", result
+    assert f"omits scheduled role {role}" in result["message"]
+    assert (artifact.read_bytes(), ledger.read_bytes()) == before
+
+
+@pytest.mark.parametrize("role", ROLES)
+def test_parse_error_capture_retains_peer_findings_without_approval(review_git_workspace, role):
+    workspace = review_git_workspace
+    assert runner.begin_review_run(arguments="--adversarial", round_id="receipt")["status"] == "success"
+    roles = {name: json.dumps(envelope(name)) for name in ROLES}
+    roles[role] = json.dumps({"all_clear": True, "findings": []})
+    finding = {"severity": "IMPORTANT", "category": "correctness", "file_path": "writer.py",
+               "failure_mode": "Lost committed write", "evidence": "Writer discards the value"}
+    report = runner.aggregate_adversarial_findings(
+        blind_json=json.dumps({"all_clear": False, "findings": [finding]}), role_json=roles)
+    assert report["reviewer_status"][role]["status"] == "parse_error"
+    assert runner.capture_review_output("adversarial", json.dumps(report), "receipt")["status"] == "success"
+    stored = json.loads((workspace / "review-agent-adversarial.json").read_text())
+    assert stored["reviewer_status"][role] == report["reviewer_status"][role]
+    assert stored["findings"] == report["findings"]
+    assert stored["findings"][0]["failure_mode"] == finding["failure_mode"]
+    assert runner.write_review_verdict_ledger(current_run=True)["status"] == "success"
+    ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
+    assert ledger["completeness"]["status"] == "INCOMPLETE"
+    assert ledger["code_approval"]["approved"] is False
+    assert any("Lost committed write" in item["claim"] for item in ledger["findings_registry"])

@@ -10563,10 +10563,14 @@ def capture_review_output(
             raise ValueError("Adversarial reviewer_status must be an object")
         for role in ROLE_REVIEWER_IDS:
             if role not in statuses:
+                if role in run["scheduled_reviewers"]:
+                    raise ValueError(f"Adversarial reviewer_status omits scheduled role {role}")
                 continue
             entry = statuses[role]
-            # A missing response remains collection evidence, not a malformed receipt.
-            if isinstance(entry, dict) and entry.get("status") == "not_run" and "raw" not in entry:
+            # Explicit collection failures carry no claimed coverage. Preserve them
+            # so the ledger can retain peer findings while refusing approval.
+            if (isinstance(entry, dict) and entry.get("status") in {"not_run", "parse_error"}
+                    and "raw" not in entry):
                 continue
             raw = entry.get("raw") if isinstance(entry, dict) else None
             receipt_errors = _review_coverage_receipt_errors(raw.get("receipt") if isinstance(raw, dict) else None)
