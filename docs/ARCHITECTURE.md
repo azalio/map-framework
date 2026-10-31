@@ -592,6 +592,13 @@ Design decisions (llm-council-reviewed, conv `461b92f9`):
   state-mutating worktree commands refuse if invoked from inside a managed
   worktree — closing the silent state-desync footgun where a gate-pass write
   would land in the worktree's `.map/` and evaporate on cleanup.
+  Managed Monitor dispatch carries explicit `--metadata-root` and `--worktree`
+  gate arguments through `create_subtask_worktree.monitor_instruction` and
+  `build_context_block`. Gates verify the shared repository and registered
+  candidate path, read metadata in the parent, and inspect candidate Git state
+  relative to its creation SHA. They never subtract parent dirty baselines from
+  the isolated diff. Source/build/test checks run in the candidate; no mutable
+  runtime copy is needed. Invalid context blocks validation without fallback.
   An external linked worktree whose `.map/` is ignored has no local runtime;
   Monitor reports that missing prerequisite as a blocking setup issue instead
   of treating the unavailable gate as a source defect. Copying a snapshot of

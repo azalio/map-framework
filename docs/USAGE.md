@@ -723,6 +723,17 @@ and reports `ROLLBACK_FAILED`. Existing user stashes are never applied or droppe
 - **State stays in the main checkout.** MAP runtime state (`.map/<branch>/…`)
   always resolves against the main checkout; state-mutating commands refuse if
   invoked from inside a managed worktree (prevents silent state desync).
+- **Managed Monitor context.** `create_subtask_worktree` returns `metadata_root`
+  and `monitor_instruction`; forward the latter to Monitor for each candidate.
+  `build_context_block` called after creation includes the same instructions.
+  Both Actor gates accept `--metadata-root <parent> --worktree <candidate>`:
+  invoke the parent's absolute `.map/scripts/map_step_runner.py` with both flags.
+  The runner validates repository identity and the subtask's registered path,
+  reads blueprint/prior results from the parent, and diffs the candidate from
+  its creation SHA. Parent dirty baselines do not filter Actor changes. Run
+  builds/tests in the candidate; keep planning/research/state in the parent.
+  Missing or mismatched context blocks validation; never copy mutable runtime
+  into managed candidates or fall back to checking the parent diff.
 - **External linked worktrees with ignored `.map/`.** A fresh worktree created
   outside MAP's runner may lack the local scripts and branch artifacts. During
   Actor validation, Monitor checks for both before running its formal gates.

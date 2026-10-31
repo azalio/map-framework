@@ -693,12 +693,12 @@ _POSITIONAL_CLI_USAGE = {
         "[branch] [--transcript PATH] [--agent NAME] [--phase PHASE] [--subtask ID]"
     ),
     "token_report": "[branch] [--dashboard] [--json] [--csv] [--history [N]] [--estimate] [--finalize]",
-    "detect_cross_subtask_regression_risk": "branch subtask_id",
+    "detect_cross_subtask_regression_risk": "branch subtask_id [--metadata-root PATH --worktree PATH]",
     "detect_symbol_blast_radius": "branch subtask_id",
     "detect_research_consumption_drift": "branch subtask_id < actor_response.txt",
     "detect_actor_files_changed_mismatch": "branch subtask_id [--declared CSV]",
     "detect_already_done": "branch subtask_id [--since-ref REF]",
-    "validate_mutation_boundary": "branch subtask_id [base_ref]",
+    "validate_mutation_boundary": "branch subtask_id [base_ref] [--metadata-root PATH --worktree PATH]",
     "save_research": "branch subtask_id [kind] [--attempt N] [--file PATH] < research.json",
     "validate_research": "branch subtask_id [kind]",
     "load_research": "branch subtask_id [kind] [--all]",
@@ -20080,8 +20080,119 @@ def _normalize_mutation_declaration(declaration: str, project_root: Path) -> str
     return path.as_posix()
 
 
+def _monitor_worktree_context(
+    branch: str, subtask_id: str, metadata_root: Path | None, worktree: Path | None
+) -> tuple[Path, Path, str | None]:
+    """Bind authoritative parent metadata to one registered Actor checkout.
+
+    Explicit roots are a pair: never silently fall back to the parent diff or
+    an unregistered candidate. The creation SHA, not mutable parent progress,
+    defines the isolated candidate's complete committed and uncommitted diff.
+    """
+    if metadata_root is None and worktree is None:
+        root = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+        return root, root, None
+    if metadata_root is None or worktree is None:
+        raise ValueError("--metadata-root and --worktree must be supplied together")
+    try:
+        parent, actor = Path(metadata_root).resolve(), Path(worktree).resolve()
+        if parent == actor:
+            raise ValueError("Actor worktree must differ from metadata root")
+
+        def git(root: Path, *args: str) -> str:
+            result = subprocess.run(
+                ["git", *args], cwd=root, env=_attribution_git_env(),
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+            if result.returncode:
+                raise ValueError(f"Cannot validate worktree context: {result.stderr.strip()}")
+            return result.stdout.strip()
+
+        for root in (parent, actor):
+            if Path(git(root, "rev-parse", "--show-toplevel")).resolve() != root:
+                raise ValueError("Monitor roots must name checkout roots")
+        common = [
+            (root / git(root, "rev-parse", "--git-common-dir")).resolve()
+            for root in (parent, actor)
+        ]
+        if common[0] != common[1]:
+            raise ValueError("Metadata root and Actor worktree belong to different repositories")
+        data = json.loads((parent / ".map" / branch / "worktrees.json").read_text())
+        records = data.get("worktrees") if isinstance(data, dict) else None
+        if not isinstance(records, dict):
+            raise ValueError("Invalid worktree registry")
+        matches = [r for r in records.values()
+                   if isinstance(r, dict) and r.get("subtask_id") == subtask_id]
+        if len(matches) != 1:
+            raise ValueError("Actor subtask must have exactly one registered worktree")
+        record = matches[0]
+        path = record.get("path")
+        if not isinstance(path, str) or not path or Path(path).resolve() != actor:
+            raise ValueError("Actor worktree does not match the subtask registry")
+        if git(actor, "symbolic-ref", "--short", "HEAD") != record.get("branch"):
+            raise ValueError("Actor branch does not match the subtask registry")
+        base = record.get("base_sha")
+        if not isinstance(base, str) or not re.fullmatch(r"[0-9a-f]{40,64}", base):
+            raise ValueError("Registered worktree has no valid creation SHA")
+        git(actor, "merge-base", "--is-ancestor", base, "HEAD")
+        return parent, actor, base
+    except (OSError, RuntimeError, subprocess.TimeoutExpired, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Cannot load managed Monitor context: {exc}") from exc
+
+
+def _monitor_context_instruction(
+    branch: str, subtask_id: str, parent: Path, actor: Path
+) -> str:
+    """Exact gate commands for dispatch; all shell arguments are quoted."""
+    runner = parent / ".map/scripts/map_step_runner.py"
+    commands = [shlex.join([
+        "python3", str(runner), gate, branch, subtask_id,
+        "--metadata-root", str(parent), "--worktree", str(actor),
+    ]) for gate in ("validate_mutation_boundary", "detect_cross_subtask_regression_risk")]
+    return (
+        f"Review and run product tests in {actor}. Read planning/research/state "
+        f"from {parent / '.map' / branch}; do not copy runtime into the candidate. "
+        "Run these parent-runner gates with both explicit roots (their Git diff "
+        "is the Actor checkout, regardless of cwd or CLAUDE_PROJECT_DIR):\n"
+        + "\n".join(commands)
+    )
+
+
+def _monitor_gate_cli_args():
+    """Parse paired context flags without mistaking a flag for base_ref."""
+    import argparse
+
+    parser = argparse.ArgumentParser(prog=f"map_step_runner.py {sys.argv[1]}")
+    parser.add_argument("branch")
+    parser.add_argument("subtask_id")
+    if sys.argv[1] == "validate_mutation_boundary":
+        parser.add_argument("base_ref", nargs="?")
+    parser.add_argument("--metadata-root", type=Path)
+    parser.add_argument("--worktree", type=Path)
+    return parser.parse_args(sys.argv[2:])
+
+
+def _normalize_monitor_declaration(path: str, metadata_root: Path, actor_root: Path) -> str:
+    """Prefer Actor absolute paths, including candidates nested in the parent.
+
+    Managed roots are canonical. A declaration inside Actor must pass Actor's
+    escape checks; a failure must not be retried as a parent-relative path.
+    Parent absolute declarations are translated and checked in Actor as well.
+    """
+    declared = Path(path)
+    if (
+        not declared.is_absolute()
+        or metadata_root == actor_root
+        or declared.is_relative_to(actor_root)
+    ):
+        return _normalize_mutation_declaration(path, actor_root)
+    relative = _normalize_mutation_declaration(path, metadata_root)
+    return _normalize_mutation_declaration(relative, actor_root)
+
+
 def validate_mutation_boundary(
-    branch: str, subtask_id: str, base_ref: str | None = None
+    branch: str, subtask_id: str, base_ref: str | None = None, *,
+    metadata_root: Path | None = None, worktree: Path | None = None,
 ) -> dict:
     """Compare actual repo diff against the subtask's declared affected_files.
 
@@ -20120,7 +20231,14 @@ def validate_mutation_boundary(
     can verdict `valid: false` with the message.
     """
     branch_name = _sanitize_branch(branch)
-    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    try:
+        project_dir, git_cwd, worktree_base = _monitor_worktree_context(
+            branch_name, subtask_id, metadata_root, worktree,
+        )
+        if worktree_base and base_ref:
+            raise ValueError("Managed Monitor uses the registered creation SHA; omit base_ref")
+    except ValueError as exc:
+        return {"status": "error", "subtask_id": subtask_id, "message": str(exc)}
     blueprint = load_blueprint(branch_name, project_dir=project_dir)
     if blueprint is None:
         return {
@@ -20139,7 +20257,7 @@ def validate_mutation_boundary(
     expected_raw = subtask.get("affected_files", []) or []
     try:
         expected = sorted({
-            _normalize_mutation_declaration(p, project_dir)
+            _normalize_monitor_declaration(p, project_dir, git_cwd)
             for p in expected_raw if isinstance(p, str)
         })
     except ValueError as exc:
@@ -20156,14 +20274,16 @@ def validate_mutation_boundary(
     # behaviour in a brand-new repo before its first commit.
     base_ref_explicit = bool(base_ref)
     try:
-        adjusted_base = _adjusted_subtask_diff_base(branch_name, subtask_id, project_dir)
+        adjusted_base = (
+            None if worktree_base else _adjusted_subtask_diff_base(branch_name, subtask_id, project_dir)
+        )
         if not base_ref:
-            base_ref = _resolve_subtask_diff_base(branch_name, subtask_id, project_dir)
+            base_ref = worktree_base or _resolve_subtask_diff_base(branch_name, subtask_id, project_dir)
         if base_ref:
             diff_result = subprocess.run(
                 ["git", "diff", "--name-only", "--no-renames", "-z", base_ref],
                 env=_attribution_git_env(),
-                cwd=project_dir,
+                cwd=git_cwd,
                 capture_output=True,
                 text=False,
                 timeout=10,
@@ -20180,7 +20300,7 @@ def validate_mutation_boundary(
         status_result = subprocess.run(
             ["git", "status", "--porcelain", "-z", "-uall"],
             env=_attribution_git_env(),
-            cwd=project_dir,
+            cwd=git_cwd,
             capture_output=True,
             text=False,
             timeout=10,
@@ -20221,7 +20341,9 @@ def validate_mutation_boundary(
     if diff_result is not None:
         actual_set.update(_git_diff_paths(diff_result.stdout))
 
-    if adjusted_base is not None and not base_ref_explicit:
+    if worktree_base:
+        actual_set = {p for p in actual_set if not _is_map_internal_artifact(p)}
+    elif adjusted_base is not None and not base_ref_explicit:
         current_surface = _current_subtask_changed_files(branch_name, subtask_id, project_dir)
         if current_surface is None:
             return {
@@ -20269,7 +20391,7 @@ def validate_mutation_boundary(
     # The recommended recovery commands are inline so the operator
     # doesn't have to dig through docs.
     diagnostic_hint = None
-    if unexpected:
+    if unexpected and not worktree_base:
         if not base_ref_explicit:
             diagnostic_hint = (
                 "If 'unexpected' includes files from prior subtasks: either "
@@ -20414,7 +20536,8 @@ def _get_active_worktree_path(
 
 
 def _current_subtask_changed_files(
-    branch_name: str, subtask_id: str, project_dir: Path, *, work_dir: Path | None = None
+    branch_name: str, subtask_id: str, project_dir: Path, *, work_dir: Path | None = None,
+    base_ref: str | None = None,
 ) -> set[str] | None:
     """Files touched by the in-flight subtask since the prior subtask commit.
 
@@ -20436,7 +20559,7 @@ def _current_subtask_changed_files(
     """
     git_cwd = work_dir if work_dir is not None else project_dir
     try:
-        base_ref = _resolve_subtask_diff_base(branch_name, subtask_id, project_dir)
+        base_ref = base_ref or _resolve_subtask_diff_base(branch_name, subtask_id, project_dir)
     except ValueError:
         return None
 
@@ -20491,7 +20614,8 @@ def _current_subtask_changed_files(
 
 
 def detect_cross_subtask_regression_risk(
-    branch: str, subtask_id: str
+    branch: str, subtask_id: str, *,
+    metadata_root: Path | None = None, worktree: Path | None = None,
 ) -> dict:
     """Flag when the in-flight subtask edits files that prior subtasks owned.
 
@@ -20526,7 +20650,15 @@ def detect_cross_subtask_regression_risk(
     (git error): the gate defaults to thorough rather than silently scoped.
     """
     branch_name = _sanitize_branch(branch)
-    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    try:
+        project_dir, git_cwd, worktree_base = _monitor_worktree_context(
+            branch_name, subtask_id, metadata_root, worktree,
+        )
+    except ValueError as exc:
+        return {
+            "status": "error", "subtask_id": subtask_id, "message": str(exc),
+            "at_risk": True, "recommended_gate": "full_suite",
+        }
 
     prior_owners: dict[str, list[str]] = {}
     state_file = project_dir / ".map" / branch_name / "step_state.json"
@@ -20549,7 +20681,9 @@ def detect_cross_subtask_regression_risk(
                         if prior_id not in prior_owners[path]:
                             prior_owners[path].append(prior_id)
 
-    current = _current_subtask_changed_files(branch_name, subtask_id, project_dir)
+    current = _current_subtask_changed_files(
+        branch_name, subtask_id, project_dir, work_dir=git_cwd, base_ref=worktree_base,
+    )
     if current is None:
         return {
             "status": "unknown",
@@ -21477,6 +21611,14 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
         parts.append("")
         parts.append(doctrine_block)
     parts.extend(current_details)
+    active_worktree = _get_active_worktree_path(branch, current_subtask_id, project_dir)
+    if active_worktree is not None:
+        parts.extend([
+            "", "# Managed Monitor context:",
+            _monitor_context_instruction(
+                branch, current_subtask_id, project_dir.resolve(), active_worktree.resolve(),
+            ),
+        ])
     parts.append("")
     parts.extend(_approved_blueprint_snapshot_lines(blueprint, goal))
     if upstream_lines:
@@ -24411,6 +24553,10 @@ def create_subtask_worktree(
         "worktree_branch": wt_branch,
         "base_sha": base_sha,
         "submodules": submodules,
+        "metadata_root": str(_wt_project_dir()),
+        "monitor_instruction": _monitor_context_instruction(
+            branch_name, subtask_id, _wt_project_dir(), storage,
+        ),
         "actor_instruction": (
             f"Operate ONLY inside {storage} (an isolated git worktree). Edit and "
             f"test files there, never in the main checkout. Do NOT run "
@@ -27015,12 +27161,18 @@ if __name__ == "__main__":
 
     elif func_name == "detect_cross_subtask_regression_risk" and len(sys.argv) >= 4:
         # CLI: detect_cross_subtask_regression_risk <branch> <subtask_id>
-        # Read-only. Exit 0 always (callers branch on the `at_risk` /
+        # Read-only. Advisory reports exit 0 (callers branch on the `at_risk` /
         # `recommended_gate` fields, like detect_truncated_agent_output) so a
         # shell pipeline can decide full-suite vs scoped without `set -e`
-        # tripping on an advisory signal.
-        report = detect_cross_subtask_regression_risk(sys.argv[2], sys.argv[3])
+        # tripping on an advisory signal. Invalid explicit context exits 1.
+        gate_args = _monitor_gate_cli_args()
+        report = detect_cross_subtask_regression_risk(
+            gate_args.branch, gate_args.subtask_id,
+            metadata_root=gate_args.metadata_root, worktree=gate_args.worktree,
+        )
         print(json.dumps(report, indent=2))
+        if report.get("status") == "error":
+            sys.exit(1)
 
     elif func_name == "detect_symbol_blast_radius" and len(sys.argv) >= 4:
         # CLI: detect_symbol_blast_radius <branch> <subtask_id>
@@ -27076,8 +27228,11 @@ if __name__ == "__main__":
         #   1: status == "error" (missing blueprint, unknown subtask, git
         #      failure) — always non-zero so Monitor's mandatory gate cannot
         #      silently pass; OR status == "violation" with MAP_STRICT_SCOPE=1.
-        base_ref_arg = sys.argv[4] if len(sys.argv) >= 5 else None
-        report = validate_mutation_boundary(sys.argv[2], sys.argv[3], base_ref_arg)
+        gate_args = _monitor_gate_cli_args()
+        report = validate_mutation_boundary(
+            gate_args.branch, gate_args.subtask_id, gate_args.base_ref,
+            metadata_root=gate_args.metadata_root, worktree=gate_args.worktree,
+        )
         print(json.dumps(report, indent=2))
         report_status = report.get("status")
         if report_status == "error":

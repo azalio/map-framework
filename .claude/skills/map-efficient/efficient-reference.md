@@ -545,8 +545,11 @@ edited `chunked_review_pipeline.py`, a file seven earlier subtasks shared, and
 broke a stub-path test that only surfaced at the final full-suite gate, eight
 subtasks later.
 
-Before the post-Monitor test gate, ask the deterministic detector whether a
-scoped run is safe:
+For isolated candidates, the post-Monitor test decision uses the current
+regression result from `monitor_instruction`, or a rerun with both explicit
+roots. Run the recommended suite in the candidate before acceptance; never
+replace this decision with a parent-only result. For non-isolated execution
+only, ask the deterministic detector whether a scoped run is safe:
 
 ```bash
 RISK=$(python3 .map/scripts/map_step_runner.py \
@@ -564,7 +567,8 @@ GATE=$(printf '%s' "$RISK" | jq -r '.recommended_gate')
   run is sufficient. (Overlap on test-only files stays `scoped` — a shared
   test edit can't regress another subtask's production code.)
 
-It is read-only and exits 0 always; callers branch on `recommended_gate`.
+It is read-only; advisory reports exit 0 and callers branch on `recommended_gate`.
+Invalid explicit managed context exits 1 and blocks acceptance.
 
 ## Approval-hold preflight
 
@@ -790,6 +794,15 @@ NOT silently fall back to the shared tree. When `WT_PATH` is non-empty, append t
 the Actor task prompt: *"All edits and test runs for this subtask MUST happen
 inside the git worktree at `$WT_PATH` — never edit the main checkout, and never
 run git fetch/pull/push from the worktree."*
+
+**Before MONITOR:** pass the returned `monitor_instruction` verbatim. It names
+`metadata_root` (the parent), the Actor path, and absolute runner commands with
+`--metadata-root` plus `--worktree`. `build_context_block` called after creation
+also includes these commands. The two Actor gates read parent metadata but
+inspect the registered candidate diff from its creation SHA. Run source/test
+checks in that candidate. Never copy `.map/<branch>` into it or use an
+unqualified parent-only gate. This applies to every sequential or parallel
+wave member; missing context/registration blocks acceptance.
 
 **Accept (after a clean Monitor + Evaluator pass)** — replaces the per-subtask
 `git commit`:
