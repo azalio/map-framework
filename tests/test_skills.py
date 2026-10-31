@@ -4200,7 +4200,7 @@ class TestMapReviewSharedSourceCodexRender:
             assert "Step A.2b truncation retry" in text
             assert "second `--compare-orderings` collection" in text
             assert "unique `task_name`" in text
-            assert "read-only and must return only the required JSON" in text
+            assert "read-only and may return intermediate `context_request` JSON" in text
             assert "Wait for all dispatched reviewers and map each final JSON" in text
             assert "sequentially" in text
             assert "parent-session personas" in text

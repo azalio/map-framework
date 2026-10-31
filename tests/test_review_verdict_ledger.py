@@ -2007,7 +2007,20 @@ def test_incremental_scope_includes_dependent_modules_and_falls_back(branch_work
     envelope = _monitor_with_critical()
     envelope["receipt"] = {"covered_files": admission["required_files"], "skipped_files": [],
                            "denied_access": [], "check_evidence": []}
-    runner.capture_review_output("monitor", json.dumps(envelope), "baseline")
+    context_id = prompts["prompts"]["monitor"]["context_transport"]["context_id"]
+    delivery = runner.bind_review_context("monitor", context_id, "baseline-monitor", "baseline")
+    while delivery["status"] == "context_pending":
+        pending = delivery["remaining"][0]
+        request = {"type": "context_request", "context_id": context_id,
+                   "resource_id": pending["resource_id"], "offset": pending["offset"]}
+        chunk = runner.serve_review_context("monitor", json.dumps(request), "baseline",
+                                             session_id=delivery["session_id"], agent_id="baseline-monitor")
+        assert chunk["status"] == "context_response", chunk
+        delivery = runner.ack_review_context(delivery["session_id"], "baseline-monitor", json.dumps(chunk), "baseline")
+    assert delivery["status"] == "context_ready", delivery
+    envelope["context_receipt"] = {"session_id": delivery["session_id"],
+                                   "finalization_token": delivery["finalization_token"]}
+    assert runner.capture_review_output("monitor", json.dumps(envelope), "baseline")["status"] == "success"
     runner.write_review_verdict_ledger(current_run=True)
     Path("core.py").write_text("VALUE = 3\n")
     git("commit", "-am", "fix")

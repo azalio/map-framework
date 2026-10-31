@@ -191,6 +191,8 @@ The DevOpsConf 2026 case study applies this process to a production Kubernetes P
 
 For stacked PRs, use `/map-review --base-ref runtime` (Codex: `$map-review --base-ref runtime`) to review only the child branch's changes against its parent's merge-base, including dirty work. Trusted review policy still comes from the default branch.
 
+Large `/map-review` bundles are delivered in bounded portions by the parent to the same reviewer. The full admitted evidence remains available within the 512 KiB message limit, including for Codex reviewers without shell or MCP access; missing or stale context keeps the review incomplete. Durable delivery acknowledgments and a post-delivery finalization token prevent premature final captures.
+
 [Detailed usage and options →](docs/USAGE.md)
 
 ## Why Engineers Stick With It

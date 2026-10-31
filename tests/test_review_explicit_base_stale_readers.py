@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.review_context_helpers import original_review_prompt
 from tests.test_review_explicit_base import SCRIPTS, admit, git, runner
 from tests.test_review_explicit_base import stack as stack  # noqa: PLC0414 -- expose pytest fixture
 
@@ -89,14 +90,24 @@ def test_current_scope_readers_still_observe_dirty_work(stack, consumer):
     assert runner.create_review_bundle(branch="product")["status"] == "success"
     Path("product.py").write_text("PRODUCT = 558\n")
     result = fresh_consumer(consumer)
-    assert result["status"] == "success", result
     if consumer == "snapshot_code_state":
+        assert result["status"] == "success", result
         assert result["diff_base"] == stack["runtime"][:12]
         assert "product.py" in result["uncommitted_files_changed"]
     else:
+        # An immutable delivery cannot mix newly dirty code with the older
+        # admitted bundle. Re-admit it explicitly before constructing prompts.
+        assert result["status"] == "error", result
+        assert runner.abandon_review_round("stack", reason="Include new dirty work", branch="product")["status"] == "success"
+        admitted = runner.begin_review_run(branch="product", base_ref="runtime", round_id="refreshed")
+        assert admitted["status"] == "success", admitted
+        assert runner.create_review_bundle(branch="product")["status"] == "success"
+        result = fresh_consumer(consumer)
+        assert result["status"] == "success", result
         for name, entry in result["prompts"].items():
-            assert "+PRODUCT = 558" in entry["prompt"], name
-            assert "+PARENT_ONLY = 1701" not in entry["prompt"], name
+            prompt = original_review_prompt(runner, entry, name, branch="product")
+            assert "+PRODUCT = 558" in prompt, name
+            assert "+PARENT_ONLY = 1701" not in prompt, name
 
 
 def test_admitted_default_with_unrelated_ancestry_keeps_dirty_fallback(stack):
