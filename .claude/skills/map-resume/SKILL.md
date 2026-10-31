@@ -67,7 +67,7 @@ For idle status, continue normal checkpoint detection below.
 Check if state files exist for the current branch:
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 test -f ".map/${BRANCH}/step_state.json" && echo "Found incomplete workflow" || echo "No checkpoint"
 ```
 
@@ -97,7 +97,7 @@ No recovery needed.
 Read both state files, the task plan, and branch artifacts to display a briefing:
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 
 # Read state files using the Read tool
 # .map/${BRANCH}/step_state.json — orchestrator state + enforcement gates
@@ -198,7 +198,7 @@ Before resuming, read:
 **Resume via orchestrator:**
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 
 # Get next step from orchestrator (reads step_state.json internally)
 NEXT_STEP=$(python3 .map/scripts/map_orchestrator.py get_next_step)

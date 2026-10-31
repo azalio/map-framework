@@ -50,7 +50,7 @@ Before any step, detect which artifacts already exist AND whether the request ma
 ```
 exec_command:
   cmd: |
-    BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+    BRANCH=$(python3 .map/scripts/map_utils.py branch)
     echo "BRANCH=$BRANCH"
     python3 .map/scripts/map_step_runner.py check_plan_resume "$ARGUMENTS"
 ```
@@ -247,7 +247,7 @@ Save discovery to the canonical research namespace:
 ```
 exec_command:
   cmd: |
-    BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+    BRANCH=$(python3 .map/scripts/map_utils.py branch)
     python3 .map/scripts/map_step_runner.py save_research "$BRANCH" plan discovery << 'DISCOVERY_EOF'
 <paste researcher output here>
 DISCOVERY_EOF
@@ -342,7 +342,7 @@ After answers are collected, write the spec:
 ```
 exec_command:
   cmd: |
-    BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+    BRANCH=$(python3 .map/scripts/map_utils.py branch)
     mkdir -p .map/${BRANCH}
     cat > .map/${BRANCH}/spec_${BRANCH}.md << 'SPEC_EOF'
 # Spec: [Title]
@@ -485,7 +485,7 @@ If HIGH-severity issues exist: list them clearly — do not output "SPEC APPROVE
 ```
 exec_command:
   cmd: |
-    BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+    BRANCH=$(python3 .map/scripts/map_utils.py branch)
     mkdir -p .map/${BRANCH}
     echo "Working directory: .map/${BRANCH}"
 ```
@@ -621,7 +621,7 @@ Save the decomposer output as `.map/<branch>/blueprint.json`. This file is requi
 ```
 exec_command:
   cmd: |
-    BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+    BRANCH=$(python3 .map/scripts/map_utils.py branch)
     cat > .map/${BRANCH}/blueprint.json << 'BLUEPRINT_EOF'
 <paste decomposer JSON output here>
 BLUEPRINT_EOF
@@ -681,7 +681,7 @@ If gaps are found, update the decomposition before proceeding.
 ```
 exec_command:
   cmd: |
-    BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+    BRANCH=$(python3 .map/scripts/map_utils.py branch)
     cat > .map/${BRANCH}/task_plan_${BRANCH}.md << 'PLAN_EOF'
 <MAP_Plan_v1_0 branch="<branch>" created="YYYY-MM-DD">
 
@@ -799,7 +799,7 @@ Print a clear checkpoint:
 ```
 exec_command:
   cmd: |
-    BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+    BRANCH=$(python3 .map/scripts/map_utils.py branch)
     echo "==================================================="
     echo "WORKFLOW CHECKPOINT: PLAN PHASE COMPLETE"
     echo "==================================================="

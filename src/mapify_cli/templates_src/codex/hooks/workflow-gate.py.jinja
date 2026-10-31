@@ -37,6 +37,7 @@ Exit code 0 always (fail-open on errors).
 """
 
 [% set guard_mode = "deny" %][% include "_partials/python-version-guard.py.jinja" %]
+import hashlib
 import json
 import os
 import re
@@ -393,7 +394,7 @@ def sanitize_branch_name(branch: str) -> str:
     sanitized = re.sub(r"-+", "-", sanitized).strip("-")
     if ".." in sanitized or sanitized.startswith("."):
         return "default"
-    return sanitized or "default"
+    return sanitized or ("branch-" + hashlib.sha256(branch.encode("utf-8")).hexdigest() if branch else "default")
 
 
 def get_branch_name() -> str:

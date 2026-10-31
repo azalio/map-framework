@@ -70,7 +70,7 @@ If **no flag** is present (standard mode), run all steps as written. The Scale A
 ### Pre-flight: Resume Detection
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 python3 .map/scripts/map_step_runner.py check_plan_resume "$ARGUMENTS"
 ```
 

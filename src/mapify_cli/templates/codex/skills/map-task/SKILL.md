@@ -74,7 +74,7 @@ python3 .map/scripts/map_step_runner.py list_approval_holds --state pending
 A ready plan needs no approval. Pending `plan_approval` (left by an older `$map-plan`): do not ask — close it via `decide_approval_hold <hold-id> approved --note "plan_approval no longer gates execution"` and continue to the resume call below. Pending `dangerous_action`/`safety_guardrail`: refuse to proceed — surface the hold's `reason` and stop; `$map-task` never auto-decides these.
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 
 # If a persisted TDD contract exists, resume implementation from ACTOR.
 # Otherwise start normal single-subtask execution from RESEARCH.
@@ -100,7 +100,7 @@ fi
 Read the plan to get the subtask's details:
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 # Read: .map/${BRANCH}/task_plan_${BRANCH}.md — find the ### ${SUBTASK_ID} section
 # Read: .map/${BRANCH}/blueprint.json — get AAG contract, validation_criteria, dependencies
 # If present, also read:

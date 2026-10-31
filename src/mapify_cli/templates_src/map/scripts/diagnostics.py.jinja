@@ -13,6 +13,7 @@ Output:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -52,7 +53,7 @@ def get_branch_name() -> str:
             sanitized = re.sub(r"-+", "-", sanitized).strip("-")
             if ".." in sanitized or sanitized.startswith("."):
                 return "default"
-            return sanitized or "default"
+            return sanitized or ("branch-" + hashlib.sha256(branch.encode("utf-8")).hexdigest() if branch else "default")
     except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
     print("MAP warning: could not determine Git branch; using .map/default/ for workflow artifacts.", file=sys.stderr)

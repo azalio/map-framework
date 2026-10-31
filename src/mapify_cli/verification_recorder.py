@@ -4,6 +4,7 @@ Records verification results to .map/verification_results_<sanitized_branch>.jso
 with atomic writes to prevent concurrent write corruption.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -50,7 +51,7 @@ def _sanitize_branch_name(branch: str) -> str:
     sanitized = re.sub(r"-+", "-", sanitized).strip("-")
     if ".." in sanitized or sanitized.startswith("."):
         return "default"
-    return sanitized or "default"
+    return sanitized or ("branch-" + hashlib.sha256(branch.encode("utf-8")).hexdigest() if branch else "default")
 
 
 def _log_warning(message: str) -> None:

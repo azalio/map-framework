@@ -55,7 +55,8 @@ def _sanitize_branch(name: str) -> str:
     rest of MAP (a path-traversal hardening applied there is inherited here).
     Behaviour: replaces every character not in [a-zA-Z0-9_.-] with '-',
     collapses consecutive '-', strips leading/trailing '-', and falls back to
-    "default" on empty result or path-traversal indicators.
+    "default" on empty input or path-traversal indicators. Non-empty names
+    stripped entirely by normalization use a deterministic SHA-256 scope.
     """
     return sanitize_branch_name(name)
 

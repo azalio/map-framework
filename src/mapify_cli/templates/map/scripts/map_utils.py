@@ -1,7 +1,9 @@
 """Shared utilities for MAP workflow scripts."""
 
+import argparse
 import contextlib
 import errno
+import hashlib
 import importlib
 import os
 import re
@@ -169,8 +171,9 @@ def sanitize_branch_name(branch: str) -> str:
     Replaces ``/`` and any non-``[a-zA-Z0-9_.-]`` character with ``-``,
     collapses runs of hyphens, and strips leading/trailing hyphens. Refuses
     path-traversal patterns (``..`` anywhere, or a leading ``.``) by
-    returning ``"default"``. Empty or all-stripped input also yields
-    ``"default"`` so callers always get a non-empty, traversal-safe segment.
+    returning ``"default"``. Empty input also yields ``"default"``. Non-empty
+    names stripped entirely by normalization use ``branch-<sha256>`` so
+    successfully resolved Unicode branches do not share the fallback scope.
     """
     if not isinstance(branch, str):
         return "default"
@@ -179,7 +182,7 @@ def sanitize_branch_name(branch: str) -> str:
     sanitized = re.sub(r"-+", "-", sanitized).strip("-")
     if ".." in sanitized or sanitized.startswith("."):
         return "default"
-    return sanitized or "default"
+    return sanitized or ("branch-" + hashlib.sha256(branch.encode("utf-8")).hexdigest() if branch else "default")
 
 
 def get_branch_name() -> str:
@@ -212,3 +215,10 @@ def get_branch_name() -> str:
         pass
     print("MAP warning: could not determine Git branch; using .map/default/ for workflow artifacts.", file=sys.stderr)
     return "default"
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Shared MAP workflow utilities")
+    parser.add_argument("command", choices=["branch"], help="print the current artifact branch scope")
+    parser.parse_args()
+    print(get_branch_name())

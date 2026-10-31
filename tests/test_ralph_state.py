@@ -310,7 +310,7 @@ class TestSanitizeBranchName:
     def test_empty_returns_default(self) -> None:
         """Empty string should return 'default'."""
         assert sanitize_branch_name("") == "default"
-        assert sanitize_branch_name("---") == "default"
+        assert sanitize_branch_name("---").startswith("branch-")
 
 
 class TestIterationMetrics:

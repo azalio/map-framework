@@ -51,6 +51,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Installed beside this script; direct CLI execution supplies its import path.
+from map_utils import sanitize_branch_name  # pyright: ignore[reportMissingImports]
+
 # Match `<path>:<line>` or `<path>:<start>-<end>`, where the path ends in a
 # recognised extension. The negative lookbehind on `:` avoids matching the
 # second half of an already-matched range, and the positive lookahead on
@@ -111,7 +114,7 @@ def _branch_slug() -> str:
             )
             if result.returncode == 0 and result.stdout.strip():
                 raw = result.stdout.strip()
-                return re.sub(r"-{2,}", "-", re.sub(r"[^a-zA-Z0-9_.-]", "-", raw)).strip("-")
+                return sanitize_branch_name(raw)
     except (OSError, subprocess.SubprocessError):
         pass
     return ""

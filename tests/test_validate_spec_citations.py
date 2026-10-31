@@ -25,7 +25,10 @@ def _load_validator():
 
 @pytest.fixture(scope="module")
 def validator():
-    return _load_validator()
+    # Mirror direct CLI execution, which adds the installed scripts directory.
+    with pytest.MonkeyPatch.context() as patch:
+        patch.syspath_prepend(str(VALIDATOR_PATH.parent))
+        return _load_validator()
 
 
 def _write_spec(tmp_path: Path, body: str) -> Path:

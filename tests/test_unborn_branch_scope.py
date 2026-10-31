@@ -1,5 +1,6 @@
 """Real Git branch discovery before the first commit across installed surfaces."""
 
+import hashlib
 import json
 import os
 import runpy
@@ -72,6 +73,37 @@ def test_branch_discovery_preserves_scope_and_fallback(repo, path, function, sta
         assert "using .map/default/" in captured.err
     else:
         assert captured.err == ""
+
+
+@pytest.mark.parametrize(("path", "function"), SURFACES, ids=[f"{p.parent.parent.name}/{p.stem}" for p, _ in SURFACES])
+@pytest.mark.parametrize("branch", ["ветка", "日本語", "!!!", "default"])
+@pytest.mark.parametrize("committed", [False, True])
+def test_resolved_branch_never_loses_its_scope(repo, path, function, branch, committed, capsys):
+    """Fully stripped names have stable distinct scopes; a literal default branch stays quiet."""
+    git(repo, "symbolic-ref", "HEAD", f"refs/heads/{branch}")
+    if committed:
+        git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "base")
+    expected = "default" if branch == "default" else "branch-" + hashlib.sha256(branch.encode("utf-8")).hexdigest()
+    namespace = runpy.run_path(str(path))
+    assert namespace[function]() == expected
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize("branch", ["ветка", "日本語", "!!!", "default"])
+def test_scope_encoding_matches_runtime_and_statusline(repo, branch):
+    """Other artifact producers and the statusline must locate the same branch directory."""
+    from mapify_cli import get_branch_workspace_status, initialize_branch_workspace
+    from mapify_cli.ralph_state import sanitize_branch_name
+    from mapify_cli.verification_recorder import _sanitize_branch_name
+
+    expected = "default" if branch == "default" else "branch-" + hashlib.sha256(branch.encode("utf-8")).hexdigest()
+    assert sanitize_branch_name(branch) == expected
+    assert _sanitize_branch_name(branch) == expected
+    assert runpy.run_path(str(SCRIPTS / "map_step_runner.py"))["_sanitize_branch"](branch) == expected
+    assert runpy.run_path(str(ROOT / ".claude/hooks/map-statusline.py"))["_sanitize_branch"](branch) == expected
+    git(repo, "symbolic-ref", "HEAD", f"refs/heads/{branch}")
+    assert initialize_branch_workspace(repo) == repo / ".map" / expected
+    assert get_branch_workspace_status(repo)["branch"] == expected
 
 
 @pytest.mark.parametrize("provider", ["claude", "codex"])
@@ -186,3 +218,78 @@ def test_plan_cli_default_scope_warning_keeps_json_stdout(repo):
     assert json.loads(result.stdout)["branch"] == "default"
     assert "MAP warning:" in result.stderr
     assert "using .map/default/" in result.stderr
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("state", ["unborn", "unicode", "detached", "not_git"])
+def test_installed_skill_commands_and_plan_scripts_share_runner_scope(repo, provider, state):
+    """Execute installed skill assignments and planning scripts, not only their Python helper."""
+    installed = CliRunner().invoke(app, ["init", ".", "--force", "--no-git", "--mcp", "none", "--provider", provider])
+    assert installed.exit_code == 0, installed.output
+    if state == "unicode":
+        git(repo, "symbolic-ref", "HEAD", "refs/heads/ветка")
+    elif state == "detached":
+        git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "base")
+        git(repo, "checkout", "--detach", "-q")
+    elif state == "not_git":
+        shutil.rmtree(repo / ".git")
+    branch = {"unborn": "feat-unborn_branch", "unicode": "branch-" + hashlib.sha256("ветка".encode()).hexdigest(),
+              "detached": "HEAD", "not_git": "default"}[state]
+    skills = repo / (".claude/skills" if provider == "claude" else ".agents/skills")
+    plan_text = (skills / "map-plan/SKILL.md").read_text()
+    assert any(line.strip().startswith("BRANCH=$(") for line in plan_text.splitlines())
+    assignments = {
+        line.strip() for path in skills.rglob("*.md") for line in path.read_text().splitlines()
+        if line.strip().startswith("BRANCH=$(")
+    }
+    for command in sorted(assignments):
+        result = subprocess.run(
+            ["bash", "-c", command + '\nprintf "%s\\n" "$BRANCH"'],
+            cwd=repo, text=True, capture_output=True, check=True, timeout=10,
+        )
+        assert result.stdout.strip() == branch, (command, result.stdout, result.stderr)
+        assert ("MAP warning:" in result.stderr) == (state == "not_git")
+
+    if state != "not_git":
+        explanation = (skills / "map-explain/SKILL.md").read_text()
+        current_lines = [line.strip() for line in explanation.splitlines()
+                         if line.strip().startswith(("CURRENT=$(", 'echo "CURRENT=$('))]
+        assert current_lines
+        for command in current_lines:
+            if command.startswith("CURRENT="):
+                command += '\nprintf "CURRENT=%s\\n" "$CURRENT"'
+            result = subprocess.run(["bash", "-c", command], cwd=repo, text=True,
+                                    capture_output=True, check=True, timeout=10)
+            expected_current = {"detached": "HEAD", "unicode": "ветка", "unborn": "feat/unborn_branch"}[state]
+            assert result.stdout.strip() == f"CURRENT={expected_current}"
+
+    scripts = skills / "map-state/scripts"
+    path_result = subprocess.run(["bash", str(scripts / "get-plan-path.sh")], cwd=repo,
+                                 text=True, capture_output=True, check=True, timeout=10)
+    expected = f".map/{branch}/task_plan_{branch}.md"
+    assert path_result.stdout.strip() == expected
+    initialized = subprocess.run(["bash", str(scripts / "init-session.sh")], cwd=repo,
+                                 text=True, capture_output=True, check=True, timeout=10)
+    assert (repo / expected).is_file()
+    assert (repo / f".map/{branch}/research/plan__discovery.md").is_file()
+    assert ("MAP warning:" in path_result.stderr) == (state == "not_git")
+    assert ("MAP warning:" in initialized.stderr) == (state == "not_git")
+    if provider == "claude":
+        rules = json.loads((skills / "skill-rules.json").read_text())
+        assert "python3" in rules["skills"]["map-state"]["requires-cmd"]
+    if state == "unicode":
+        spec = repo / f".map/{branch}/spec_{branch}.md"
+        spec.write_text("# Specification\nNo source citations required.\n")
+        validated = subprocess.run([sys.executable, str(repo / ".map/scripts/validate_spec_citations.py")],
+                                   cwd=repo, text=True, capture_output=True, check=True, timeout=10)
+        assert json.loads(validated.stdout)["passed"] is True
+
+
+@pytest.mark.parametrize(("argument", "exit_code"), [("--help", 0), ("unknown", 2)])
+def test_branch_utility_cli_validates_command_without_side_effects(repo, argument, exit_code):
+    """Help and invalid command handling must not create workflow artifacts."""
+    result = subprocess.run([sys.executable, str(SCRIPTS / "map_utils.py"), argument],
+                            cwd=repo, text=True, capture_output=True, check=False, timeout=10)
+    assert result.returncode == exit_code
+    assert "MAP warning:" not in result.stderr
+    assert not (repo / ".map").exists()

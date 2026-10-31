@@ -42,6 +42,7 @@ if tuple(sys.version_info) < (3, 11):
     sys.stderr.write(_MAP_PYTHON_PROBLEM)
     sys.exit(1)
 
+import hashlib
 import json
 import os
 import re
@@ -81,7 +82,7 @@ def sanitize_branch_name(branch: str) -> str:
     sanitized = sanitized.strip("-")
     if ".." in sanitized or sanitized.startswith("."):
         return "default"
-    return sanitized or "default"
+    return sanitized or ("branch-" + hashlib.sha256(branch.encode("utf-8")).hexdigest() if branch else "default")
 
 
 def get_branch_name() -> str:

@@ -15966,7 +15966,7 @@ def _sanitize_branch(branch: str) -> str:
     sanitized = re.sub(r"-+", "-", sanitized).strip("-")
     if ".." in sanitized or sanitized.startswith("."):
         return "default"
-    return sanitized or "default"
+    return sanitized or ("branch-" + hashlib.sha256(branch.encode("utf-8")).hexdigest() if branch else "default")
 
 
 _RESEARCH_KIND_RE = re.compile(r"^[a-z][a-z0-9_]*$")

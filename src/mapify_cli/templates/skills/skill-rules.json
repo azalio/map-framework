@@ -33,7 +33,7 @@
         "hooks",
         "branch-scoped .map artifacts"
       ],
-      "requires-cmd": ["git"],
+      "requires-cmd": ["git", "python3"],
       "promptTriggers": {
         "keywords": [
           "create plan",

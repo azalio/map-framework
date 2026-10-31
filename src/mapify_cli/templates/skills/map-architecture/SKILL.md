@@ -39,7 +39,7 @@ Parse `$ARGUMENTS`:
 - **No argument**: derive scope from recent git hotspot analysis:
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD)
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 git log --since="90 days ago" --name-only --pretty=format: | \
   grep -v '^$' | sort | uniq -c | sort -rn
 ```
@@ -76,7 +76,7 @@ Total score = sum of signal scores. Rank candidates descending. Report at least 
 ### 2.2 Determine output paths
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD)
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 REPORT_DIR=".map/${BRANCH}/architecture-report"
 mkdir -p "$REPORT_DIR"
 ```

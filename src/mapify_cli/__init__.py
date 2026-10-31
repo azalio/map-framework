@@ -144,6 +144,7 @@ from mapify_cli.provider_registry import (
     SUPPORTED_PROVIDERS,
     skill_dir,
 )
+from mapify_cli.ralph_state import sanitize_branch_name
 
 if TYPE_CHECKING:
     from mapify_cli.install_manifest import InstallManifest
@@ -434,7 +435,7 @@ def _detect_provider(project_path: Path) -> str:
 def get_project_health(project_path: Path) -> dict[str, Any]:
     """Collect project health diagnostics for check/doctor commands."""
     agent_exclude = {"README.md", "CHANGELOG.md", "MCP-PATTERNS.md"}
-    current_branch = sanitize_identifier(get_current_branch_name())
+    current_branch = sanitize_branch_name(get_current_branch_name())
     branch_dir = project_path / ".map" / current_branch
     detected = _detect_provider(project_path)
 
@@ -548,7 +549,7 @@ def get_current_branch_name() -> str:
 
 def get_branch_workspace_dir(project_path: Path, branch: str | None = None) -> Path:
     """Return the branch-scoped MAP workspace directory."""
-    branch_name = sanitize_identifier(branch or get_current_branch_name())
+    branch_name = sanitize_branch_name(branch or get_current_branch_name())
     return project_path / ".map" / branch_name
 
 
@@ -563,7 +564,7 @@ def get_branch_artifact_templates() -> dict[str, str]:
 
 def initialize_branch_workspace(project_path: Path, branch: str | None = None) -> Path:
     """Create branch-scoped planning artifacts inside `.map/<branch>/`."""
-    branch_name = sanitize_identifier(branch or get_current_branch_name())
+    branch_name = sanitize_branch_name(branch or get_current_branch_name())
     workspace_dir = get_branch_workspace_dir(project_path, branch_name)
     workspace_dir.mkdir(parents=True, exist_ok=True)
 
@@ -579,7 +580,7 @@ def get_branch_workspace_status(
     project_path: Path, branch: str | None = None
 ) -> dict[str, Any]:
     """Collect status information for branch-scoped planning artifacts."""
-    branch_name = sanitize_identifier(branch or get_current_branch_name())
+    branch_name = sanitize_branch_name(branch or get_current_branch_name())
     workspace_dir = get_branch_workspace_dir(project_path, branch_name)
     expected_files = list(get_branch_artifact_templates().keys())
     existing_files = (

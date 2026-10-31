@@ -21,17 +21,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_ROOT="$(dirname "$SCRIPT_DIR")"
 TEMPLATE_DIR="$SKILL_ROOT/templates"
 
-# Get branch name for file naming
-BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'main')
-if [ -z "$BRANCH" ]; then
-    BRANCH="main"
-fi
-
-# Sanitize branch name (matches MAP orchestrator convention)
-SANITIZED_BRANCH=$(echo "$BRANCH" | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
-if [ -z "$SANITIZED_BRANCH" ]; then
-    SANITIZED_BRANCH="main"
-fi
+# Reuse the runner's scope; never create plans under a different fallback branch.
+SANITIZED_BRANCH=$(python3 "$SCRIPT_DIR/../../../../.map/scripts/map_utils.py" branch)
 
 # Create .map/<branch> directory (nested convention)
 MAP_DIR=".map/${SANITIZED_BRANCH}"
@@ -44,7 +35,7 @@ DISCOVERY="$MAP_DIR/research/plan__discovery.md"
 PROGRESS="$MAP_DIR/progress_${SANITIZED_BRANCH}.md"
 
 echo "=== MAP Planning Session Initialization ==="
-echo "Branch: $BRANCH (sanitized: $SANITIZED_BRANCH)"
+echo "Branch: $SANITIZED_BRANCH"
 echo ""
 
 # Copy templates if files don't exist (idempotent)

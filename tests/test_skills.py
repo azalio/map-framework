@@ -2410,7 +2410,7 @@ class TestMapReviewSkillBundleWiring:
         )
         assert fence, "no fenced block holds the write_stage_gate call"
         block = fence.group(1)
-        assert block.lstrip().startswith("BRANCH=$(git rev-parse"), block[:80]
+        assert block.lstrip().startswith("BRANCH=$(python3 .map/scripts/map_utils.py branch)"), block[:80]
         assert 'BRANCH_DIR=".map/$BRANCH"' in block
         assert "review-verdict-ledger.json" in block
         assert "computed_verdict" in block
