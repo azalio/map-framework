@@ -1414,6 +1414,7 @@ def test_adversarial_mode_reports_incomplete_role_finding_without_gating(severit
                     "reviewer": "maintainer",
                     "all_clear": False,
                     "checks_performed": ["B"],
+                    "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [], "check_evidence": []},
                     "findings": [
                         _complete_role_finding(id="F-M-04", severity=severity, cost="")
                     ],
@@ -1451,6 +1452,7 @@ def test_adversarial_ledger_findings_carry_incomplete_role_findings_to_the_ledge
                     "reviewer": "maintainer",
                     "all_clear": False,
                     "checks_performed": ["B"],
+                    "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [], "check_evidence": []},
                     "findings": [
                         _complete_role_finding(id="F-M-05", severity=severity, cost="")
                     ],
@@ -1499,6 +1501,7 @@ def test_adversarial_complete_role_finding_is_not_double_counted():
                     "reviewer": "maintainer",
                     "all_clear": False,
                     "checks_performed": ["B"],
+                    "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [], "check_evidence": []},
                     "findings": [_complete_role_finding(id="F-M-06")],
                 }
             )
@@ -1705,6 +1708,7 @@ def _all_clear_adversarial_report(blind_payload: str | None = "clean") -> dict:
         "all_clear_rationale": "Reviewed the diff and found no reachable defect",
         "findings": [],
         "checks_performed": ["changed paths", "boundary inputs"],
+        "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [], "check_evidence": []},
     })
     return map_step_runner.aggregate_adversarial_findings(
         blind_json=clean if blind_payload == "clean" else blind_payload,
@@ -2332,7 +2336,8 @@ def _produced_adversarial_report(reporters=("blind",), *, evidence="writer.py:10
     envelopes = {}
     for reviewer in ("blind", "edge_case", "acceptance", "maintainer", "user_experience"):
         entries = [finding] if reviewer in reporters else []
-        envelope = {"all_clear": not entries, "findings": entries, "checks_performed": ["write rollback"]}
+        envelope = {"all_clear": not entries, "findings": entries, "checks_performed": ["write rollback"],
+                    "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [], "check_evidence": []}}
         if resolutions and reviewer in resolutions:
             envelope["resolved_findings"] = resolutions[reviewer]
         if receipt is not None:

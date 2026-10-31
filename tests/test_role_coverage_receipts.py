@@ -159,3 +159,63 @@ def test_real_cli_receipt_failure_and_one_retry(tmp_path):
                                text=True, capture_output=True, check=False)
     assert corrected.returncode == 0
     assert json.loads(corrected.stdout)["truncated"] is False
+
+
+@pytest.mark.parametrize("role", ROLES)
+@pytest.mark.parametrize("defect", ["missing", "null", *KEYS])
+def test_aggregation_rejects_malformed_role_receipts_and_accepts_retry(role, defect):
+    payload = envelope(role)
+    if defect == "missing":
+        del payload["receipt"]
+    elif defect == "null":
+        payload["receipt"] = None
+    else:
+        payload["receipt"][defect] = [False]
+    hunter = json.dumps({"all_clear": True, "findings": []})
+    invalid = runner.aggregate_adversarial_findings(blind_json=hunter, role_json={role: json.dumps(payload)})
+    assert invalid["reviewer_status"][role]["status"] == "parse_error"
+    assert any(f"{role}: receipt" in error for error in invalid["parse_errors"])
+    assert invalid["reviewer_status"]["blind"]["status"] == "ok"
+    retry = runner.build_json_retry_prompt(role)["prompt"]
+    assert '"receipt"' in retry
+    corrected = runner.aggregate_adversarial_findings(role_json={role: json.dumps(envelope(role))})
+    assert corrected["reviewer_status"][role]["status"] == "ok"
+
+
+@pytest.mark.parametrize("ordering", ["", "default", "reverse"])
+@pytest.mark.parametrize("role", ROLES)
+@pytest.mark.parametrize("defect", ["missing", "malformed", "parse_error", "invalid_entry"])
+def test_adversarial_capture_preserves_evidence_on_bad_nested_receipt(review_git_workspace, ordering, role, defect):
+    workspace = review_git_workspace
+    flags = "--adversarial" + (" --compare-orderings" if ordering else "")
+    admitted = runner.begin_review_run(arguments=flags, round_id="receipt")
+    assert admitted["status"] == "success", admitted
+    report = runner.aggregate_adversarial_findings(role_json={name: json.dumps(envelope(name)) for name in ROLES})
+    assert runner.capture_review_output("adversarial", json.dumps(report), "receipt", ordering=ordering)["status"] == "success"
+    directory = workspace / "review-collections" / ordering if ordering else workspace
+    artifact = directory / "review-agent-adversarial.json"
+    ledger = workspace / "review-verdict-ledger.json"
+    before = artifact.read_bytes(), ledger.read_bytes()
+    invalid = copy.deepcopy(report)
+    entry = invalid["reviewer_status"][role]
+    if defect == "missing":
+        del entry["raw"]["receipt"]
+    elif defect == "malformed":
+        entry["raw"]["receipt"]["covered_files"] = [42]
+    elif defect == "parse_error":
+        invalid["reviewer_status"][role] = {"status": "parse_error", "error": "receipt is invalid"}
+    else:
+        invalid["reviewer_status"][role] = []
+    result = runner.capture_review_output("adversarial", json.dumps(invalid), "receipt", ordering=ordering)
+    assert result["status"] == "error", result
+    assert f"{role} coverage receipt" in result["message"]
+    assert (artifact.read_bytes(), ledger.read_bytes()) == before
+    assert runner.capture_review_output("adversarial", json.dumps(report), "receipt", ordering=ordering)["status"] == "success"
+
+
+def test_adversarial_capture_retains_missing_response_evidence(review_git_workspace):
+    del review_git_workspace
+    assert runner.begin_review_run(arguments="--adversarial", round_id="receipt")["status"] == "success"
+    report = runner.aggregate_adversarial_findings(blind_json=json.dumps({"all_clear": True, "findings": []}))
+    assert report["reviewer_status"]["maintainer"]["status"] == "not_run"
+    assert runner.capture_review_output("adversarial", json.dumps(report), "receipt")["status"] == "success"

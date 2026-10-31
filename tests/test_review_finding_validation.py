@@ -231,7 +231,8 @@ def test_adversarial_paraphrase_preserves_durable_id_and_reaction(evidence_revie
     for round_id, wording in (("first", "zero input crashes"), ("second", "division fails for zero")):
         assert runner.begin_review_run(review_mode="adversarial", arguments="--adversarial", round_id=round_id)["status"] == "success"
         issue = {**_issue(), "severity": "IMPORTANT", "file_path": "divide.py", "symbol": "divide", "failure_mode": wording}
-        clean = json.dumps({"all_clear": True, "findings": [], "checks_performed": ["division path"]})
+        clean = json.dumps({"all_clear": True, "findings": [], "checks_performed": ["division path"],
+                            "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [], "check_evidence": []}})
         report = runner.aggregate_adversarial_findings(blind_json=json.dumps({
             "all_clear": False, "findings": [issue], "checks_performed": ["division path"]}),
             edge_case_json=clean, acceptance_json=clean,

@@ -369,7 +369,8 @@ def test_envelope_ledger_gate_fresh_shell(project, case):
 
 def _adversarial_report(root: Path, findings: list[dict]) -> dict:
     branch_dir = root / ".map" / BRANCH_DIR_NAME
-    clean = {"all_clear": True, "findings": [], "checks_performed": ["changed paths"]}
+    clean = {"all_clear": True, "findings": [], "checks_performed": ["changed paths"],
+             "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [], "check_evidence": []}}
     roles = ("blind", "edge_case", "acceptance", "user_experience", "maintainer")
     flags = []
     for role in roles:
@@ -497,7 +498,8 @@ def test_quick_adversarial_capture_uses_persisted_roster_in_a_fresh_shell(projec
     (branch_dir / "adversarial-edge.json").write_text("stale edge", encoding="utf-8")
     reference = (project / ".agents/skills/map-review/adversarial-reference.md").read_text()
     capture = _bash_blocks(reference, "## Step B.adversarial.3")[0]
-    clean = json.dumps({"all_clear": True, "findings": [], "checks_performed": ["diff"]})
+    clean = json.dumps({"all_clear": True, "findings": [], "checks_performed": ["diff"],
+                        "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [], "check_evidence": []}})
     capture = re.sub(r"<paste [^>]*JSON[^>]*>", clean, capture)
     _run_block(project, capture)
     assert not (branch_dir / "adversarial-edge.json").exists()

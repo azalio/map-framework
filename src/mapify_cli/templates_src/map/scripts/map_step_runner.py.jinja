@@ -10532,6 +10532,21 @@ def capture_review_output(
         receipt_errors = _review_coverage_receipt_errors(data.get("receipt"))
         if receipt_errors:
             raise ValueError("Invalid reviewer coverage receipt: " + "; ".join(receipt_errors))
+    elif reviewer == "adversarial":
+        statuses = data.get("reviewer_status")
+        if not isinstance(statuses, dict):
+            raise ValueError("Adversarial reviewer_status must be an object")
+        for role in ROLE_REVIEWER_IDS:
+            if role not in statuses:
+                continue
+            entry = statuses[role]
+            # A missing response remains collection evidence, not a malformed receipt.
+            if isinstance(entry, dict) and entry.get("status") == "not_run" and "raw" not in entry:
+                continue
+            raw = entry.get("raw") if isinstance(entry, dict) else None
+            receipt_errors = _review_coverage_receipt_errors(raw.get("receipt") if isinstance(raw, dict) else None)
+            if receipt_errors:
+                raise ValueError(f"Invalid {role} coverage receipt: " + "; ".join(receipt_errors))
     if ordering:
         directory = directory / "review-collections" / ordering
     directory.mkdir(parents=True, exist_ok=True)
@@ -13985,6 +14000,8 @@ def aggregate_adversarial_findings(
         try:
             parsed = json.loads(raw_json)
             envelope_error = _adversarial_reviewer_error(parsed)
+            if not envelope_error and reviewer_id in ROLE_REVIEWER_IDS:
+                envelope_error = "; ".join(_review_coverage_receipt_errors(parsed.get("receipt"))) or None
             if envelope_error:
                 reviewer_data[reviewer_id] = {"status": "parse_error", "error": envelope_error}
                 findings_by_reviewer[reviewer_id] = []
