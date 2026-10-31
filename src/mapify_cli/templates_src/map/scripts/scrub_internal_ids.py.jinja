@@ -8,7 +8,7 @@ into the shipped code as comments (``// The rule (INV-7) is:``) or test names
 should review in their PR.
 
 This module is the deterministic *engine*. It is invoked at workflow close by
-the ``scrub-internal-ids.py`` Stop hook (Claude provider). It is stdlib-only on
+the ``scrub-internal-ids.py`` Stop hook (Claude and Codex providers). It is stdlib-only on
 purpose: in an installed project ``mapify_cli`` is not importable, so all logic
 must live here under ``.map/scripts/`` (same rationale as ``map_step_runner``).
 
@@ -26,9 +26,10 @@ Safety model — conservative, hard-scoped, corruption-averse:
      - a comment whose payload is only an ID marker  -> delete the line;
      - an ID token inside a larger comment           -> strip the token and any
        immediately trailing separator (``ID:`` -> `` ``, ``ID -`` -> `` ``),
-       empty brackets, and redundant whitespace. ``(ID)`` is handled by the
-       empty-bracket cleanup. The line is kept unless the whole comment becomes
-       empty.
+       empty ID lists, and redundant whitespace. Comment openers/closers and
+       surrounding code are preserved; an open block is never closed or deleted.
+       References after a preposition (``for AC-3:``) are left for manual review
+       rather than rewritten into ambiguous prose.
    Test identifiers carrying ``vc<n>`` are renamed (``test_vc1_foo`` ->
    ``test_foo``, ``TestFoo_VC1_Bar`` -> ``TestFoo_Bar``) with a collision guard.
    IDs in code, string literals, or docstrings are LEFT IN PLACE and reported
@@ -45,7 +46,7 @@ CLI::
     scrub_internal_ids.py clean [--base REF] [--branch NAME]   # mutate + report
 
 Always exits 0 — the scrub is advisory and must never block the close. The
-caller (hook) decides whether to commit the resulting working-tree changes.
+hook leaves cleanup unstaged for operator review and commit.
 """
 from __future__ import annotations
 
@@ -179,83 +180,112 @@ def _region_kind(regions: list[tuple[int, int, str]], pos: int) -> str:
     return "code"
 
 
+def _drop_id_markers(text: str, *, inside_brackets: bool) -> str:
+    """Remove ID list items with their adjacent separator, preserving unrelated punctuation."""
+    marker = r"[\x00\x01]" if inside_brackets else r"\x00"
+    # A marker followed by explanatory text is a label, not a whole list item.
+    text = re.sub(r"[,;][ \t]*" + marker + r"(?=[ \t\x00\x01]*(?:[,;]|$))", "", text)
+    text = re.sub(marker + r"[ \t]*[,;][ \t]*", "", text)
+    return re.sub(marker, "", text)
+
+
 def _tidy_comment_payload(text: str) -> str:
-    """Remove empty brackets and collapse whitespace left by token removal."""
-    text = re.sub(r"[(\[{]\s*[)\]}]", "", text)  # empty () [] {}
+    """Clean marked ID removals without touching unrelated empty brackets or tuple commas."""
+    def clean_bracket(match: re.Match[str]) -> str:
+        """Collapse only a bracket group that contained an ID or a removed ID group."""
+        group = match.group(0)
+        if "\x00" not in group and "\x01" not in group:
+            return group
+        content = _drop_id_markers(group[1:-1], inside_brackets=True).strip()
+        # A whole removed parenthetical retains surrounding prose punctuation.
+        return "\x01" if not content.strip(",; \t") else group[0] + content + group[-1]
+
+    previous = None
+    while text != previous:
+        previous = text
+        for opening, closing in ((r"\(", r"\)"), (r"\[", r"\]"), (r"\{", r"\}")):
+            text = re.sub(opening + r"[^()\[\]{}]*" + closing, clean_bracket, text)
+    text = _drop_id_markers(text, inside_brackets=False)
+    text = re.sub(r"[ \t]*\x01[ \t]*([,.;:!?])", r"\1", text).replace("\x01", "")
     text = re.sub(r"[ \t]{2,}", " ", text)
-    text = text.strip()
-    text = text.lstrip(":;,- \t")
-    return text.strip()
+    return text.strip().lstrip(":;,- \t").strip()
 
 
 def _comment_leader(comment_text: str) -> tuple[str, str]:
-    """Split a comment region into (leader, payload)."""
-    for leader in ("//", "--", "<!--", "/*", "#", ";"):
-        if comment_text.lstrip().startswith(leader):
-            stripped = comment_text.lstrip()
-            payload = stripped[len(leader) :]
-            if leader == "/*" and payload.rstrip().endswith("*/"):
-                payload = payload.rstrip()[:-2]
-            if leader == "<!--" and payload.rstrip().endswith("-->"):
-                payload = payload.rstrip()[:-3]
-            return leader, payload
-    return "", comment_text
+    """Split a region while preserving documentation-comment opener bytes."""
+    stripped = comment_text.lstrip()
+    match = re.match(r"(?:/\*+!?|//+!?|<!--|--|#|;)", stripped)
+    if not match:
+        return "", comment_text
+    leader = match.group(0)
+    payload = stripped[len(leader):]
+    closer = "*/" if leader.startswith("/*") else ("-->" if leader == "<!--" else "")
+    if closer and payload.rstrip().endswith(closer):
+        payload = payload.rstrip()[:-len(closer)]
+    return leader, payload
+
+
+def _scrub_comment(comment: str) -> tuple[str, list[str], list[str]]:
+    """Edit one comment payload; ambiguous references remain unchanged for manual review."""
+    leader, payload = _comment_leader(comment)
+    matches = list(ID_TOKEN.finditer(payload))
+    if not matches:
+        return comment, [], []
+    tokens = [match.group(0) for match in matches]
+    if "\x00" in payload or "\x01" in payload:
+        return comment, [], tokens  # reserved removal markers: preserve unusual input
+    # Removing the object of a preposition needs a prose rewrite, not token cleanup.
+    if any(re.search(r"\b(?:for|of|to|from|with|by|in|on|at|under|per|as|against|via)"
+                     r"\s*[(\[{]?\s*$", payload[:match.start()], re.IGNORECASE) for match in matches):
+        return comment, [], tokens
+    cleaned = payload
+    for match in reversed(matches):
+        end = match.end()
+        separator = re.match(r"[ \t]*[:\-][ \t]?", payload[end:])
+        if separator:
+            end += separator.end()
+        cleaned = cleaned[:match.start()] + "\x00" + cleaned[end:]
+    tidied = _tidy_comment_payload(cleaned)
+    closer = "*/" if leader.startswith("/*") else ("-->" if leader == "<!--" else "")
+    closed = bool(closer and comment.rstrip().endswith(closer))
+    if not tidied:
+        # An open block must survive, even if its opening line held only an ID.
+        return (leader if closer and not closed else ""), tokens, []
+    return f"{leader} {tidied}" + (f" {closer}" if closed else ""), tokens, []
 
 
 def scrub_line(line: str, syntax: dict | None) -> tuple[str | None, list[str], list[str]]:
-    """Strip ID tokens that sit INSIDE a comment on one line.
+    """Strip comment IDs while preserving every surrounding code/string region.
 
     Returns ``(new_line | None, removed_tokens, residual_tokens)``. ``None``
-    means delete the line (a comment that became empty). Tokens outside comments
-    (code, string literals, docstrings) are left in place and reported.
+    means delete an empty comment-only line. Ambiguous comment prose and IDs
+    outside comments remain unchanged and are reported for manual review.
     """
-    matches = list(ID_TOKEN.finditer(line))
-    if not matches:
+    if not ID_TOKEN.search(line):
         return line, [], []
-
-    regions = _line_regions(line, syntax)
+    pieces: list[str] = []
     removed: list[str] = []
     residual: list[str] = []
-    eligible_spans: list[tuple[int, int]] = []
-    for m in matches:
-        if _region_kind(regions, m.start()) == "comment":
-            start, end = m.start(), m.end()
-            # Absorb a trailing separator ("ID: text" -> "text", "ID - note" -> "note")
-            # to avoid leaving broken prose. Only one separator consumed.
-            sep = re.match(r"[ \t]*[:\-][ \t]?", line[end:])
-            if sep:
-                end += sep.end()
-            eligible_spans.append((start, end))
-            removed.append(m.group(0))
+    for start, end, kind in _line_regions(line, syntax):
+        region = line[start:end]
+        if kind == "comment":
+            replacement, stripped, retained = _scrub_comment(region)
+            # A removed block comment still separates adjacent language tokens.
+            if (not replacement and start and end < len(line)
+                    and not line[start - 1].isspace() and not line[end].isspace()):
+                replacement = " "
+            pieces.append(replacement)
+            removed.extend(stripped)
+            residual.extend(retained)
         else:
-            residual.append(m.group(0))
-
-    if not eligible_spans:
-        return line, removed, residual
-
-    # Remove eligible spans right-to-left so indices stay valid.
-    new_line = line
-    for start, end in sorted(eligible_spans, reverse=True):
-        new_line = new_line[:start] + new_line[end:]
-
-    # If the comment is now an empty marker, delete the line (or just the comment
-    # if there is meaningful code before it).
-    new_regions = _line_regions(new_line, syntax)
-    new_comment = [r for r in new_regions if r[2] == "comment"]
-    if new_comment:
-        cstart, cend, _ = new_comment[0]
-        leader, payload = _comment_leader(new_line[cstart:cend])
-        tidied = _tidy_comment_payload(payload)
-        head = new_line[:cstart]
-        if not tidied:
-            if head.strip() == "":
-                return None, removed, residual
-            new_line = head.rstrip()
-        else:
-            closer = " -->" if leader == "<!--" else (" */" if leader == "/*" else "")
-            new_line = f"{head}{leader} {tidied}{closer}"
-
-    return new_line, removed, residual
+            pieces.append(region)
+            residual.extend(ID_TOKEN.findall(region))
+    if not removed:
+        return line, [], residual
+    new_line = "".join(pieces)
+    if pieces and not pieces[-1]:
+        new_line = new_line.rstrip()  # separator before a removed trailing comment
+    return (new_line if new_line.strip() else None), removed, residual
 
 
 def renamed_test_identifier(name: str) -> str | None:
@@ -341,12 +371,15 @@ def scrub_text(
         if not in_scope(idx0):
             out.append(raw)
             continue
-        body = raw.rstrip("\n")
-        newline = raw[len(body):]  # preserve original EOL ("" or "\n")
-        new_body, removed, line_residual = scrub_line(body, syntax)
+        body = raw.rstrip("\r\n")
+        newline = raw[len(body):]  # preserve original EOL, including CRLF
+        new_body, removed, _ = scrub_line(body, syntax)
         removed_count += len(removed)
-        for tok in line_residual:
-            residual.append({"line": idx0 + 1, "token": tok, "reason": "outside_comment"})
+        remaining = new_body or ""
+        regions = _line_regions(remaining, syntax)
+        for match in ID_TOKEN.finditer(remaining):
+            reason = "ambiguous_comment" if _region_kind(regions, match.start()) == "comment" else "outside_comment"
+            residual.append({"line": idx0 + 1, "token": match.group(0), "reason": reason})
         if new_body is None:
             deleted_count += 1
             continue
@@ -473,6 +506,7 @@ def _affected_files(project_dir: Path, branch: str | None) -> set[str] | None:
 
 # --- driver ------------------------------------------------------------------
 def run(project_dir: Path, *, mode: str, base: str | None, branch: str | None) -> dict:
+    """Clean run-changed source lines without changing file line endings; report retained IDs."""
     resolved_base = resolve_run_base(project_dir, base)
     if resolved_base is None:
         return {"status": "no_base", "base": None, "files_modified": [],
@@ -498,7 +532,8 @@ def run(project_dir: Path, *, mode: str, base: str | None, branch: str | None) -
         if syntax is None:
             continue  # unsupported / data file -> never scrub (avoid corruption)
         try:
-            text = path.read_text(encoding="utf-8")
+            with path.open(encoding="utf-8", newline="") as source:
+                text = source.read()
         except (UnicodeDecodeError, OSError):
             continue  # skip binary / unreadable
         scope = _added_line_numbers(project_dir, resolved_base, rel)
@@ -514,7 +549,8 @@ def run(project_dir: Path, *, mode: str, base: str | None, branch: str | None) -
                 tests_renamed.append({"file": rel, **rn})
             files_modified.append(rel)
             if mode == "clean":
-                path.write_text(new_text, encoding="utf-8")
+                with path.open("w", encoding="utf-8", newline="") as destination:
+                    destination.write(new_text)
 
     status = "modified" if files_modified else "clean"
     return {

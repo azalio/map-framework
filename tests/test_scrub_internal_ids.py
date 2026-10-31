@@ -254,6 +254,16 @@ def _seed_base(repo: Path, name: str, content: str) -> str:
 
 
 class TestRunGitScoped:
+    def test_cleanup_preserves_crlf_in_changed_and_untouched_lines(self, git_repo: Path) -> None:
+        """Keep the source file's actual line endings when the CLI driver rewrites comments."""
+        original = "// untouched\r\nconst base = 1;\r\n"
+        base = _seed_base(git_repo, "app.ts", original)
+        source = git_repo / "app.ts"
+        source.write_bytes((original + "/** AC-3: documented */ const value = 2;  \r\n").encode())
+        report = engine.run(git_repo, mode="clean", base=base, branch=None)
+        assert report["files_modified"] == ["app.ts"]
+        assert source.read_bytes() == (original + "/** documented */ const value = 2;  \r\n").encode()
+
     def test_scope_safety_pre_existing_id_untouched(self, git_repo: Path) -> None:
         src = git_repo / "mod.py"
         base = _seed_base(git_repo, "mod.py", "# INV-1 pre-existing\nold = 1\n")
@@ -334,3 +344,84 @@ class TestRunGitScoped:
         assert "INV-7" not in go and "func TestH(" in go
         assert "AC-3" not in sql and "SELECT 1" in sql
         assert {"file": "svc.go", "old": "TestVC1H", "new": "TestH"} in report["tests_renamed"]
+
+
+@pytest.mark.parametrize(("line", "expected"), [
+    ("/** AC-20: every edge case", "/** every edge case"),
+    ("/** AC-20: every edge case */", "/** every edge case */"),
+    ("/*! AC-20: retained license text */", "/*! retained license text */"),
+    ("/// AC-3: documented", "/// documented"),
+    ("//! AC-3: documented", "//! documented"),
+    ("/** AC-3", "/**"),
+    ("/* AC-3", "/*"),
+    ("/* AC-3 */ const value = 1;", " const value = 1;"),
+    ("/* AC-3 */ const value = 1;  ", " const value = 1;  "),
+    ("/** AC-3: covered */ const value = 1;", "/** covered */ const value = 1;"),
+    ("left/* AC-3 */right", "left right"),
+    ("a(); /* AC-3 */ b(); /* INV-1: note */ c();", "a();  b(); /* note */ c();"),
+    ('/* AC-3 */ const sku = "INV-7-special-sku";', ' const sku = "INV-7-special-sku";'),
+    ("// rule (AC-8, INV-1, INV-8)", "// rule"),
+    ("// (AC-8, INV-1, INV-8)", None),
+    ("// rule [AC-8; INV-1; INV-8]", "// rule"),
+    ("// rule {(AC-8, INV-1)}", "// rule"),
+    ("// rule (wired by the daemon, INV-3)", "// rule (wired by the daemon)"),
+    ("// rule (INV-3, wired by the daemon)", "// rule (wired by the daemon)"),
+    ("// rule (first, INV-3, last)", "// rule (first, last)"),
+    ("// foo, AC-3: bar", "// foo, bar"),
+    ("// choices (first, AC-3: second, last)", "// choices (first, second, last)"),
+    ("// detection (INV-3),", "// detection,"),
+    ("// AC-3: keep tuple (1,) and empty call ()", "// keep tuple (1,) and empty call ()"),
+    ("// AC-3: keep punctuation (, ,) elsewhere", "// keep punctuation (, ,) elsewhere"),
+    ("// unrelated (W-xx)", "// unrelated (W-xx)"),
+])
+def test_comment_reconstruction_preserves_syntax_and_code(line, expected):
+    """Strip annotations without changing delimiters, losing code or leaving ID-list residue."""
+    cleaned, _, _ = engine.scrub_line(line, engine.syntax_for_ext(".ts"))
+    assert cleaned == expected
+    if cleaned is not None:
+        assert "\x00" not in cleaned and "\x01" not in cleaned
+        assert engine.scrub_line(cleaned, engine.syntax_for_ext(".ts"))[0] == cleaned
+
+
+@pytest.mark.parametrize("phrase", [
+    "Completeness check for AC-20: every spec edge case",
+    "Implementation of INV-3", "Related to (AC-3)", "Checked against [HC-1]",
+])
+def test_ambiguous_comment_reference_stays_visible(phrase):
+    """Leave prose requiring interpretation intact and report its IDs for manual review."""
+    line = "// " + phrase
+    cleaned, removed, residual = engine.scrub_line(line, engine.syntax_for_ext(".ts"))
+    assert cleaned == line
+    assert removed == []
+    assert residual == engine.ID_TOKEN.findall(line)
+    text, report = engine.scrub_text(line + "\n", None, engine.syntax_for_ext(".ts"))
+    assert text == line + "\n"
+    assert report["residual"]
+    assert all(item["reason"] == "ambiguous_comment" for item in report["residual"])
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_unclosed_doc_comment_retains_multiline_structure(newline):
+    """Do not close or delete an opening line while stripping its internal marker."""
+    source = "/** AC-20\n * Describes the public API.\n */\nexport const value = 1;\n".replace("\n", newline)
+    cleaned, report = engine.scrub_text(source, None, engine.syntax_for_ext(".ts"))
+    assert cleaned == "/**\n * Describes the public API.\n */\nexport const value = 1;\n".replace("\n", newline)
+    assert report["removed"] == 1
+
+
+@pytest.mark.parametrize(("line", "expected"), [
+    ("<!-- AC-3: note --> <div>content</div>", "<!-- note --> <div>content</div>"),
+    ("<!-- AC-3 --> <div>content</div>", " <div>content</div>"),
+    ("<!-- AC-3", "<!--"),
+    ("<!-- rule (AC-3, INV-1) -->", "<!-- rule -->"),
+])
+def test_html_comment_boundaries_and_following_markup_survive(line, expected):
+    """Apply the same payload-only cleanup without closing open HTML comments or losing markup."""
+    assert engine.scrub_line(line, MD)[0] == expected
+
+
+@pytest.mark.parametrize("marker", ["\x00", "\x01"])
+def test_comment_with_reserved_cleanup_marker_is_not_rewritten(marker):
+    """Treat unusual input as residual instead of confusing it with an internal removal marker."""
+    line = "// AC-3: before" + marker + "after"
+    assert engine.scrub_line(line, C) == (line, [], ["AC-3"])

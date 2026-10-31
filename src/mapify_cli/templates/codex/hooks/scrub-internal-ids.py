@@ -26,7 +26,7 @@ marker so it fires exactly once.  The operator decides how and whether to commit
 the changes (preserving the host repository's commit conventions).
 
 Synchronous by design (justified exception to the async-hook rule): the scrub
-must finish and commit before the run is considered done; a detached run would
+must finish before the run is considered done; a detached run would
 race the close/PR and could land after it. The work is fast — scoped to the
 run's git diff, like ``end-of-turn.sh``.
 

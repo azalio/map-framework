@@ -3,7 +3,7 @@
 The hook is strictly gated: it must no-op unless a MAP run actually completed
 (``workflow_status == WORKFLOW_COMPLETE``), it must run exactly once (marker),
 honor ``MAP_INVOKED_BY`` and the ``scrub_internal_ids`` opt-out, and on the
-active path it must scrub the run-changed code and commit the cleanup.
+active path it must scrub the run-changed code and leave cleanup unstaged.
 """
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HOOK = REPO_ROOT / ".claude" / "hooks" / "scrub-internal-ids.py"
@@ -56,6 +58,13 @@ def _make_project(tmp_path: Path, *, complete: bool, leaked: bool = True,
     _git(project, "config", "user.email", "t@t")
     _git(project, "config", "user.name", "t")
     (project / "seed.txt").write_text("seed\n", encoding="utf-8")
+    # Ship the engine into the project's .map/scripts (generated-project shape).
+    scripts = project / ".map" / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "scrub_internal_ids.py").write_text(
+        ENGINE_SRC.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
     _git(project, "add", "-A")
     _git(project, "commit", "-m", "base")
     _git(project, "checkout", "-b", "feature")
@@ -65,13 +74,6 @@ def _make_project(tmp_path: Path, *, complete: bool, leaked: bool = True,
         (project / "app.py").write_text(LEAKED, encoding="utf-8")
         _git(project, "add", "-A")
         _git(project, "commit", "-m", "subtask work")
-
-    # Ship the engine into the project's .map/scripts (generated-project shape).
-    scripts = project / ".map" / "scripts"
-    scripts.mkdir(parents=True)
-    (scripts / "scrub_internal_ids.py").write_text(
-        ENGINE_SRC.read_text(encoding="utf-8"), encoding="utf-8"
-    )
 
     branch_dir = project / ".map" / branch
     branch_dir.mkdir(parents=True)
@@ -163,7 +165,8 @@ def test_noop_when_disabled_in_config(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # Active path + run-once
 # --------------------------------------------------------------------------- #
-def test_active_path_scrubs_and_commits(tmp_path: Path) -> None:
+def test_active_path_scrubs_without_committing(tmp_path: Path) -> None:
+    """Leave successful cleanup for the operator without creating a commit."""
     project, branch = _make_project(tmp_path, complete=True)
     commits_before = len(_commit_subjects(project))
     run = _run_hook(project)
@@ -181,6 +184,51 @@ def test_active_path_scrubs_and_commits(tmp_path: Path) -> None:
     # The operator is told to commit via stderr.
     assert "app.py" in run.stderr
     assert (project / ".map" / branch / ".scrub_done").exists()
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("complete", [False, True])
+def test_typescript_comment_cleanup_preserves_code_and_reports_prose(tmp_path, monkeypatch, provider, complete):
+    """Exercise generated Stop hooks with real Git scope and safe TypeScript cleanup."""
+    monkeypatch.setattr(sys.modules[__name__], "HOOK", REPO_ROOT / f".{provider}" / "hooks" / "scrub-internal-ids.py")
+    project, branch = _make_project(tmp_path, complete=complete, leaked=False)
+    source = (
+        "/** AC-20: Covers the public API.\n * Details remain documented.\n */\n"
+        "export const first = 1; /* AC-3 */ export const second = 2;\n"
+        "// rule (AC-8, INV-1, INV-8)\n"
+        "// callbacks (wired by the daemon, INV-3)\n"
+        "// Completeness check for AC-20: every spec edge case\n"
+    )
+    path = project / "app.ts"
+    path.write_text(source)
+    _git(project, "add", "app.ts")
+    _git(project, "commit", "-m", "add documented source")
+    head = _git(project, "rev-parse", "HEAD")
+    result = _run_hook(project)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "{}"
+    assert _git(project, "rev-parse", "HEAD") == head
+    assert _git(project, "diff", "--cached") == ""
+    marker = project / ".map" / branch / ".scrub_done"
+    if not complete:
+        assert path.read_text() == source
+        assert not marker.exists()
+        return
+    expected = (
+        "/** Covers the public API.\n * Details remain documented.\n */\n"
+        "export const first = 1;  export const second = 2;\n"
+        "// rule\n"
+        "// callbacks (wired by the daemon)\n"
+        "// Completeness check for AC-20: every spec edge case\n"
+    )
+    assert path.read_text() == expected
+    report = json.loads(marker.read_text())
+    assert report["files_modified"] == ["app.ts"]
+    assert report["tokens_removed"] == 6
+    assert any(item["token"] == "AC-20" and item["reason"] == "ambiguous_comment" for item in report["residual"])
+    assert "could not auto-remove" in result.stderr
+    assert _run_hook(project).returncode == 0
+    assert path.read_text() == expected
 
 
 def test_runs_only_once(tmp_path: Path) -> None:
