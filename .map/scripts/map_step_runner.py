@@ -13404,12 +13404,12 @@ def _prepare_review_context(prompts: dict[str, dict[str, object]], *, branch: st
     inventory = _review_context_store(directory, json.dumps(
         {"snapshot": snapshot, "attribution": {key: value for key, value in attribution.items()
                                                if key not in {"files", "diff"}}},
-        sort_keys=True, ensure_ascii=False,
+        sort_keys=True, ensure_ascii=True,
     ))
     sources = {}
     for index, source in enumerate(attribution.get("files", [])):
         sources[f"source_{index:06d}"] = {
-            **_review_context_store(directory, json.dumps(source, sort_keys=True, ensure_ascii=False)),
+            **_review_context_store(directory, json.dumps(source, sort_keys=True, ensure_ascii=True)),
             "path": source["path"], "encoding": source["encoding"],
             "base_sha256": hashlib.sha256(source["base_content"].encode("utf-8")).hexdigest(),
             "current_sha256": hashlib.sha256(source["current_content"].encode("utf-8")).hexdigest(),
@@ -13426,7 +13426,7 @@ def _prepare_review_context(prompts: dict[str, dict[str, object]], *, branch: st
             "round_id": row["round_id"], "context_access": access,
             "bundle_sha256": row["bundle_receipt"]["sha256"], "resources": resources,
         }
-        metadata = _review_context_store(directory, json.dumps(manifest, sort_keys=True, ensure_ascii=False))
+        metadata = _review_context_store(directory, json.dumps(manifest, sort_keys=True, ensure_ascii=True))
         context_id = metadata["sha256"]
         inline = len(original.encode("utf-8")) <= REVIEW_CONTEXT_INLINE_BYTES
         request = {"type": "context_request", "context_id": context_id,

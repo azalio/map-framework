@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -97,6 +98,36 @@ def fetch(entry, reviewer, resource="manifest", chunk_bytes=65536):
             return combined.decode("utf-8")
         assert result["next_offset"] > offset
         offset = result["next_offset"]
+
+
+def test_undecodable_git_filename_roundtrips_through_context(tmp_path, monkeypatch):
+    """A deleted Git path can contain bytes that the current filesystem cannot create."""
+    monkeypatch.chdir(tmp_path)
+    git(tmp_path, "init", "-q", "-b", "main")
+    git(tmp_path, "config", "user.name", "Test")
+    git(tmp_path, "config", "user.email", "test@example.invalid")
+    Path(".gitignore").write_text(".map/\n")
+    git(tmp_path, "add", ".gitignore")
+    raw_name = b"deleted-\xff.py"
+    name = os.fsdecode(raw_name)
+    oid = subprocess.run(["git", "hash-object", "-w", "--stdin"], input=b"value = 1\n",
+                         capture_output=True, check=True).stdout.decode().strip()
+    git(tmp_path, "update-index", "--add", "--cacheinfo", f"100644,{oid},{name}")
+    git(tmp_path, "commit", "-qm", "base with byte filename")
+    git(tmp_path, "checkout", "-qb", "feature")
+    assert runner.begin_review_run(branch="feature", round_id="context-round", provider="codex")["status"] == "success"
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    built = runner.build_review_prompts(branch="feature")
+    assert built["status"] == "success", built
+    entry = built["prompts"]["monitor"]
+    manifest = json.loads(fetch(entry, "monitor"))
+    inventory = json.loads(fetch(entry, "monitor", "inventory"))
+    assert name in inventory["snapshot"]["required_files"]
+    resource = next(key for key, item in manifest["resources"].items() if item.get("path") == name)
+    source = json.loads(fetch(entry, "monitor", resource))
+    assert os.fsencode(source["path"]) == raw_name
+    assert source["base_content"] == "value = 1\n"
+    assert source["current_content"] == ""
 
 
 def test_aggregate_context_roundtrip_preserves_prompt_inventory_and_all_sources(repo, monkeypatch):
