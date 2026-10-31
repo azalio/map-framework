@@ -1,5 +1,6 @@
 """Sensitive review cannot trade security or human consent for fast execution."""
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -122,12 +123,14 @@ def test_security_evidence_cannot_be_normal_execution_checks(sensitive_repo):
 
 
 def test_security_capture_passes_independently_but_consent_stays_pending(sensitive_repo):
+    """Complete security evidence does not substitute for verified human consent."""
     del sensitive_repo
     profile = Path(".claude/agents/review-reader.md")
     profile.parent.mkdir(parents=True)
     profile.write_text("---\nname: review-reader\ntools: Read, Glob, Grep\n---\nRead only.\n")
     admitted = runner.begin_review_run(branch="feature", provider="claude")
     payload = {"reviewer": "security", "all_clear": True, "findings": [],
+               "all_clear_rationale": "Read all admitted source paths and checked their security boundaries",
                "receipt": {"covered_files": admitted["required_files"], "skipped_files": [],
                            "denied_access": [], "check_evidence": []}}
     capture = runner.capture_review_output("security", json.dumps(payload), admitted["round_id"], branch="feature")
@@ -152,9 +155,18 @@ def test_security_findings_consume_complete_rounds_but_missing_coverage_stays_pe
     profile.parent.mkdir(parents=True)
     profile.write_text("---\nname: review-reader\ntools: Read, Glob, Grep\n---\n")
     directory = Path(".map/feature")
+    previous_capture = None
+    previous_receipt = None
     for number in range(1, 4 if gap is None else 2):
         admission = runner.begin_review_run(branch="feature", provider="claude", round_id=str(number))
         assert admission["status"] == "success", admission
+        if previous_capture is not None:
+            archive = Path(admission["archive_path"])
+            for name in ("review-agent-security.json", "adversarial-security.json"):
+                assert not (directory / name).exists()
+                assert (archive / name).read_bytes() == previous_capture
+            assert previous_receipt is not None
+            assert hashlib.sha256(previous_capture).hexdigest() == previous_receipt["sha256"]
         assert runner.create_review_bundle(branch="feature")["status"] == "success"
         receipt = {"covered_files": admission["required_files"], "skipped_files": [],
                    "denied_access": [], "check_evidence": []}
@@ -167,6 +179,7 @@ def test_security_findings_consume_complete_rounds_but_missing_coverage_stays_pe
             elif role == "evaluator":
                 payload.update(overall_score=10, recommendation="proceed")
             elif role == "security":
+                payload["all_clear_rationale"] = f"Security collection in attempt {number}"
                 # A minor finding alone may leave the findings verdict PROCEED;
                 # the independent strict security gate must still reject approval.
                 payload.update(all_clear=False, findings=[{
@@ -190,9 +203,16 @@ def test_security_findings_consume_complete_rounds_but_missing_coverage_stays_pe
                 elif gap:
                     payload["receipt"][gap] = ["old/code.py"]
             assert runner.capture_review_output(role, json.dumps(payload), str(number), branch="feature")["status"] == "success"
+        current_capture = (directory / "review-agent-security.json").read_bytes()
+        if previous_capture is not None:
+            assert current_capture != previous_capture
+            assert (Path(admission["archive_path"]) / "review-agent-security.json").read_bytes() == previous_capture
+        previous_capture = current_capture
+        (directory / "adversarial-security.json").write_bytes(previous_capture)
         result = runner.write_review_verdict_ledger(current_run=True, branch="feature")
         assert result["status"] == "success", result
         ledger = json.loads((directory / "review-verdict-ledger.json").read_text())
+        previous_receipt = ledger["convergence"]["rounds"][-1]["receipts"]["default:security"]
         assert ledger["code_approval"]["approved"] is False
         assert ledger["computed_verdict"] != "PROCEED"
         assert runner.write_stage_gate("review", "ready", branch="feature")["status"] == "error"
@@ -635,7 +655,9 @@ def test_hold_restart_and_changed_snapshot_preserve_pending_history(sensitive_re
     assert all(hold["state"] == "pending" for hold in holds.values())
 
 
-def test_complete_review_waits_without_spending_rounds(sensitive_repo):
+@pytest.mark.parametrize("rationale", ["Read all required paths and checked security boundaries", "missing", None, "", "  ", [], 42])
+def test_complete_review_waits_without_spending_rounds(sensitive_repo, rationale):
+    """Require a clear security explanation before sealing and waiting for consent."""
     del sensitive_repo
     profile = Path(".claude/agents/review-reader.md")
     profile.parent.mkdir(parents=True)
@@ -647,11 +669,26 @@ def test_complete_review_waits_without_spending_rounds(sensitive_repo):
     outputs = {"monitor": {"verdict": "approved", "issues": []},
                "predictor": {"risk_assessment": "low", "predicted_state": {"breaking_changes": []}},
                "evaluator": {"overall_score": 10, "recommendation": "proceed"}}
+    assert "security" in admitted["scheduled_reviewers"]
+    security_output = {}
     for role in admitted["scheduled_reviewers"]:
         output = {**outputs.get(role, {"all_clear": True, "findings": []}), "receipt": receipt}
+        if role == "security":
+            if rationale != "missing":
+                output["all_clear_rationale"] = rationale
+            security_output = output
         assert runner.capture_review_output(role, json.dumps(output), admitted["round_id"],
                                             branch="feature")["status"] == "success"
     final = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    if not isinstance(rationale, str) or not rationale.strip() or rationale == "missing":
+        assert final["code_approval"]["approved"] is False
+        assert final["completeness"]["status"] == "INCOMPLETE"
+        assert final["convergence"]["attempted_rounds"] == 0
+        assert "completed_at" not in final["convergence"]["rounds"][-1]
+        security_output["all_clear_rationale"] = "Read admitted paths; no security findings survived validation"
+        assert runner.capture_review_output("security", json.dumps(security_output), admitted["round_id"],
+                                            branch="feature")["status"] == "success"
+        final = runner.write_review_verdict_ledger(current_run=True, branch="feature")
     assert final["code_approval"]["approved"], final
     assert final["convergence"]["outcome"] == "awaiting_human"
     ledger_path = Path(".map/feature/review-verdict-ledger.json")

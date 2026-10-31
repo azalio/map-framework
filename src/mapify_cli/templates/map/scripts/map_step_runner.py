@@ -8640,10 +8640,10 @@ ADVERSARIAL_AGGREGATE_SCHEMA = "adversarial_aggregate.v1"
 REVIEW_INPUT_NAMES = (
     *(f"review-agent-{role}.json" for role in (
         "monitor", "predictor", "evaluator", "adversarial", "user_experience", "maintainer",
-        "blind", "edge_case", "acceptance",
+        "blind", "edge_case", "acceptance", "security",
     )),
     *(f"adversarial-{role}.json" for role in (
-        "blind", "edge", "acceptance", "user-experience", "maintainer",
+        "blind", "edge", "acceptance", "user-experience", "maintainer", "security",
     )),
     "review-mode.json", "review-gate.json", "review-collections",
 )
@@ -10680,6 +10680,10 @@ def _review_security_gate(row: dict[str, Any], directory: Path) -> dict[str, Any
         verdict_error = _adversarial_reviewer_error(output)
         if verdict_error or (output.get("all_clear") is False and output.get("findings") == []):
             reasons.append(f"{ordering}: invalid or unexplained security verdict")
+        elif output.get("all_clear") is True and (
+            not isinstance(output.get("all_clear_rationale"), str) or not output["all_clear_rationale"].strip()
+        ):
+            reasons.append(f"{ordering}: clear security verdict requires a nonempty rationale")
         elif output.get("findings"):
             finding_reasons.append(f"{ordering}: security review is not clear")
     return {"status": "INCOMPLETE" if reasons else ("BLOCKED" if finding_reasons else "COMPLETE"),

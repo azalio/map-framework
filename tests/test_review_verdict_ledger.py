@@ -2127,6 +2127,7 @@ def test_review_round_retry_and_cap_are_durable(review_git_workspace):
 
 
 def test_begin_review_run_archives_only_inputs_and_gate_preserving_journal(branch_workspace):
+    """Archive each owned reviewer capture while retaining findings and audit history."""
     workspace = branch_workspace
     map_step_runner.write_review_verdict_ledger(monitor_json=json.dumps(_monitor_with_critical()))
     map_step_runner.record_review_objection("RVF-001", "no_new_fact", "retain this objection")
@@ -2136,10 +2137,10 @@ def test_begin_review_run_archives_only_inputs_and_gate_preserving_journal(branc
     preserved = {name: (workspace / name).read_bytes() for name in preserved_names}
     stale_names = (
         *(f"review-agent-{role}.json" for role in (
-            "monitor", "predictor", "evaluator", "adversarial", "user_experience", "maintainer",
+            "monitor", "predictor", "evaluator", "adversarial", "user_experience", "maintainer", "security",
         )),
         *(f"adversarial-{role}.json" for role in (
-            "blind", "edge", "acceptance", "user-experience", "maintainer",
+            "blind", "edge", "acceptance", "user-experience", "maintainer", "security",
         )),
         "review-mode.json", "review-gate.json",
     )
