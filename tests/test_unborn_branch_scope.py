@@ -52,7 +52,7 @@ def repo(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize(("path", "function"), SURFACES, ids=[f"{p.parent.parent.name}/{p.stem}" for p, _ in SURFACES])
 @pytest.mark.parametrize("state", ["unborn", "committed", "detached", "not_git"])
-def test_branch_discovery_preserves_scope_and_fallback(repo, path, function, state):
+def test_branch_discovery_preserves_scope_and_fallback(repo, path, function, state, capsys):
     """Symbolic unborn names work; committed, detached and non-repo semantics survive."""
     if state in {"committed", "detached"}:
         git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "base")
@@ -65,6 +65,13 @@ def test_branch_discovery_preserves_scope_and_fallback(repo, path, function, sta
     if state == "not_git":
         expected = "" if function == "_branch_slug" else "default"
     assert namespace[function]() == expected
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    if state == "not_git" and function != "_branch_slug":
+        assert "MAP warning:" in captured.err
+        assert "using .map/default/" in captured.err
+    else:
+        assert captured.err == ""
 
 
 @pytest.mark.parametrize("provider", ["claude", "codex"])
@@ -77,6 +84,7 @@ def test_plan_and_wayfind_manifest_use_unborn_branch(repo, provider):
     scripts = repo / ".map/scripts"
 
     def invoke(script, *args):
+        """Run the installed CLI and preserve diagnostics on a failed assertion."""
         result = subprocess.run([sys.executable, str(scripts / script), *args], cwd=repo,
                                 capture_output=True, text=True, check=False, timeout=20)
         assert result.returncode == 0, result.stdout + result.stderr
@@ -128,7 +136,7 @@ def test_worktree_branch_probe_uses_cwd_and_preserves_detached(repo):
 
 @pytest.mark.parametrize(("path", "function"), SURFACES)
 @pytest.mark.parametrize("failure", [FileNotFoundError("git unavailable"), subprocess.TimeoutExpired("git", 1)])
-def test_unavailable_git_retains_safe_fallback(repo, monkeypatch, path, function, failure):
+def test_unavailable_git_retains_safe_fallback(repo, monkeypatch, path, function, failure, capsys):
     """Unavailable Git and timeouts remain best-effort discovery failures."""
     namespace = runpy.run_path(str(path))
 
@@ -137,16 +145,44 @@ def test_unavailable_git_retains_safe_fallback(repo, monkeypatch, path, function
 
     monkeypatch.setattr(subprocess, "run", fail)
     assert namespace[function]() == ("" if function == "_branch_slug" else "default")
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    if function != "_branch_slug":
+        assert "MAP warning:" in captured.err
+        assert "using .map/default/" in captured.err
+    else:
+        assert captured.err == ""
 
 
 @pytest.mark.parametrize("provider", [".claude", ".codex"])
-def test_logger_persists_to_unborn_scope(repo, provider):
-    """A real hook must write its observation under the same branch as the runner."""
+@pytest.mark.parametrize("state", ["unborn", "not_git"])
+def test_logger_persists_to_discovered_scope(repo, provider, state):
+    """A real hook preserves JSON stdout and makes default-scope fallback visible."""
+    if state == "not_git":
+        shutil.rmtree(repo / ".git")
     result = subprocess.run(
         [sys.executable, str(ROOT / provider / "hooks/ralph-iteration-logger.py")],
         cwd=repo, env=os.environ.copy(), input=json.dumps({"tool_name": "Bash", "tool_response": "Success"}),
         text=True, capture_output=True, check=True, timeout=10,
     )
     assert json.loads(result.stdout) == {}
-    assert (repo / ".map/feat-unborn_branch/iteration_log.jsonl").is_file()
-    assert not (repo / ".map/default").exists()
+    branch = "default" if state == "not_git" else "feat-unborn_branch"
+    assert (repo / f".map/{branch}/iteration_log.jsonl").is_file()
+    if state == "not_git":
+        assert "MAP warning:" in result.stderr
+        assert "using .map/default/" in result.stderr
+    else:
+        assert result.stderr == ""
+        assert not (repo / ".map/default").exists()
+
+
+def test_plan_cli_default_scope_warning_keeps_json_stdout(repo):
+    """A non-Git caller receives both the usable JSON response and an explicit warning."""
+    shutil.rmtree(repo / ".git")
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS / "map_step_runner.py"), "check_plan_resume"],
+        cwd=repo, text=True, capture_output=True, check=True, timeout=20,
+    )
+    assert json.loads(result.stdout)["branch"] == "default"
+    assert "MAP warning:" in result.stderr
+    assert "using .map/default/" in result.stderr

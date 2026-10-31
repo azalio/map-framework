@@ -16,6 +16,7 @@ import argparse
 import json
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,6 +28,7 @@ def utc_now() -> str:
 
 
 def get_branch_name() -> str:
+    """Resolve branch scope before the first commit; warn on unavailable Git."""
     try:
         # Symbolic HEAD exists even before the branch has its first commit.
         # rev-parse retains the historical detached-HEAD fallback.
@@ -53,6 +55,7 @@ def get_branch_name() -> str:
             return sanitized or "default"
     except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
+    print("MAP warning: could not determine Git branch; using .map/default/ for workflow artifacts.", file=sys.stderr)
     return "default"
 
 

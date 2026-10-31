@@ -6,6 +6,7 @@ import importlib
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -187,7 +188,7 @@ def get_branch_name() -> str:
     Returns the current git branch with unsafe characters replaced by hyphens,
     including an unborn branch before its first commit. Detached HEAD retains
     the historical 'HEAD' scope.
-    Falls back to 'default' on any error (not in a git repo, git not installed, etc.).
+    Warns on stderr and falls back to 'default' on any error (not in a git repo, git not installed, etc.).
     """
     try:
         # Symbolic HEAD exists even before the branch has its first commit.
@@ -207,6 +208,7 @@ def get_branch_name() -> str:
                 break
         if result.returncode == 0:
             return sanitize_branch_name(result.stdout.strip())
-        return "default"
-    except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
-        return "default"
+    except Exception:  # noqa: BLE001, S110 -- fallback warning follows; raw Git errors may contain sensitive paths
+        pass
+    print("MAP warning: could not determine Git branch; using .map/default/ for workflow artifacts.", file=sys.stderr)
+    return "default"

@@ -108,6 +108,7 @@ def get_branch_name() -> str:
     except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         # Intentionally ignore all errors (e.g., missing git, not a repo) and fall back to default
         pass
+    print("MAP warning: could not determine Git branch; using .map/default/ for workflow artifacts.", file=sys.stderr)
     return "default"
 
 

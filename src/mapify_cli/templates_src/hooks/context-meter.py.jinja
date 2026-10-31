@@ -55,6 +55,7 @@ def _sanitize_branch(branch: str) -> str:
 
 
 def _get_branch() -> str:
+    """Resolve branch scope before the first commit; warn on unavailable Git."""
     try:
         # Symbolic HEAD exists even before the branch has its first commit.
         # rev-parse retains the historical detached-HEAD fallback.
@@ -76,6 +77,7 @@ def _get_branch() -> str:
             return _sanitize_branch(result.stdout.strip())
     except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
+    print("MAP warning: could not determine Git branch; using .map/default/ for workflow artifacts.", file=sys.stderr)
     return "default"
 
 
