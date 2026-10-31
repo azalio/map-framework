@@ -2927,6 +2927,8 @@ Workflow state is managed through file-based persistence in `.map/` directory:
 
 **Forward-coverage completeness gate** (also inside `validate_blueprint_contract`): a deterministic set-diff between the spec's Requirements Index (`mapify:requirements-index:v1` fenced YAML block) and `coverage_map` keys. The Requirements Index is the authoritative requirement list — it lives in the spec, not in `blueprint.json`, because the decomposer must not be allowed to declare the set it is checked against. Default outcome for an uncovered requirement is a warning; `MAP_STRICT_COVERAGE=1` promotes it to a hard error (off by default — staged migration). An absent index (e.g. the `/map-efficient` path with no spec) emits a loud warning and skips, never a silent pass. A malformed index is always a hard error. See the ST-007 spike note above (line ~164) for why multi-node cycle DFS was deliberately omitted from this gate.
 
+The blueprint drift validator accumulates explicit `creates_files` along valid, unique, earlier dependency edges in declaration order. These transitive outputs count as existing when checking a later subtask's modify-targets; no filesystem writes or recursive graph traversal are needed. Own-file creation and cross-repository warnings keep their existing behavior. Reverse-phantom coverage warnings exempt IDs declared in `soft_constraints`, whose coverage-or-rationale contract is separate from the AC/INV/HC/CCR Requirements Index vocabulary; ownership and bracket-tag checks still apply.
+
 **Benefits:**
 - 30-60% fewer tokens in system prompt on long workflows
 - Actor focuses on current subtask criteria, not future steps
