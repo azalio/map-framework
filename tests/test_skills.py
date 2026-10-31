@@ -4103,6 +4103,7 @@ class TestMapReviewSharedSourceCodexRender:
     @pytest.mark.parametrize("provider", ["claude", "codex"])
     @pytest.mark.parametrize("specs", [{}, {"unit suite; literal": ["python3", "-m", "pytest"]}])
     def test_review_documented_checks_use_literal_argv(self, monkeypatch, provider, specs) -> None:
+        """Preserve literal check argv and request admitted-mode resume in both providers."""
         import subprocess
         import sys
         from types import SimpleNamespace
@@ -4124,6 +4125,7 @@ class TestMapReviewSharedSourceCodexRender:
         admission = calls[0]
         assert admission[admission.index("--provider") + 1] == provider
         assert admission[admission.index("--capability-profile") + 1] == "review-reader"
+        assert "--resume-admitted-mode" in admission
         assert json.loads(admission[admission.index("--check-specs-json") + 1]) == specs
         assert admission[admission.index("--check-timeouts-json") + 1] == "{}"
         required = [admission[i + 1] for i, value in enumerate(admission) if value == "--required-check"]

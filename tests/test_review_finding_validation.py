@@ -44,7 +44,8 @@ def _issue():
 
 
 def _round(runner, round_id, issues, resolutions=None):
-    admission = runner.begin_review_run(scheduled_reviewers=["monitor"], round_id=round_id)
+    """Collect verified Monitor evidence for one admitted review iteration."""
+    admission = runner.begin_review_run(scheduled_reviewers=["monitor"], round_id=round_id, provider="claude")
     assert admission["status"] == "success", admission
     assert runner.create_review_bundle()["status"] == "success"
     payload = {"issues": issues, "resolved_findings": resolutions or [], "receipt": {
@@ -226,6 +227,7 @@ def test_reworded_finding_keeps_identity_and_author_reactions(evidence_review):
 
 
 def test_adversarial_paraphrase_preserves_durable_id_and_reaction(evidence_review):
+    """Retain finding identity and author reactions across paraphrased reports."""
     runner = cast(Any, map_step_runner)
     finding_id = ""
     for round_id, wording in (("first", "zero input crashes"), ("second", "division fails for zero")):
@@ -243,6 +245,7 @@ def test_adversarial_paraphrase_preserves_durable_id_and_reaction(evidence_revie
             finding_id = next(row["id"] for row in json.loads(evidence_review.read_text())["findings_registry"]
                               if row["source_agent"] == "adversarial")
             assert runner.record_review_reaction(finding_id, "wrong", "reviewing zero input contract")["status"] == "success"
+            assert runner.abandon_review_round(round_id, reason="Continue findings review in a new attempt")["status"] == "success"
     rows = [row for row in json.loads(evidence_review.read_text())["findings_registry"]
             if row["source_agent"] == "adversarial"]
     assert len(rows) == 1
@@ -265,10 +268,12 @@ def test_reaction_cli_invalid_input_returns_nonzero(evidence_review, finding_id,
 
 
 def test_adversarial_captures_archive_and_preserve_round_coverage(evidence_review):
+    """Retain completed coverage while archiving captures for a new revision."""
     runner = cast(Any, map_step_runner)
     reviewers = ["blind", "edge_case", "acceptance", "user_experience", "maintainer"]
-    admission = runner.begin_review_run(review_mode="adversarial", arguments="--adversarial", scheduled_reviewers=reviewers, round_id="first")
+    admission = runner.begin_review_run(review_mode="adversarial", arguments="--adversarial", scheduled_reviewers=reviewers, round_id="first", provider="claude")
     assert admission["status"] == "success", admission
+    assert runner.create_review_bundle()["status"] == "success"
     envelopes = {}
     for reviewer in reviewers:
         payload = {"all_clear": True, "findings": [], "checks_performed": ["division"], "receipt": {
@@ -282,7 +287,8 @@ def test_adversarial_captures_archive_and_preserve_round_coverage(evidence_revie
     assert runner.write_review_verdict_ledger(current_run=True, round_id="first")["status"] == "success"
     ledger = json.loads(evidence_review.read_text())
     assert ledger["convergence"]["rounds"][0]["covered_files"] == sorted(admission["required_files"])
-    assert runner.begin_review_run(review_mode="adversarial", arguments="--adversarial", scheduled_reviewers=reviewers, round_id="second")["status"] == "success"
+    Path("divide.py").write_text(Path("divide.py").read_text() + "\n# next revision\n")
+    assert runner.begin_review_run(review_mode="adversarial", arguments="--adversarial", scheduled_reviewers=reviewers, round_id="second", provider="claude")["status"] == "success"
     for reviewer in reviewers:
         assert not (evidence_review.parent / f"review-agent-{reviewer}.json").exists()
         assert list((evidence_review.parent / "review-input-archive").rglob(f"review-agent-{reviewer}.json"))

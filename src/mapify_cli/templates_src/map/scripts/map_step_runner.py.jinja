@@ -8615,10 +8615,10 @@ ADVERSARIAL_AGGREGATE_SCHEMA = "adversarial_aggregate.v1"
 REVIEW_INPUT_NAMES = (
     *(f"review-agent-{role}.json" for role in (
         "monitor", "predictor", "evaluator", "adversarial", "user_experience", "maintainer",
-        "blind", "edge_case", "acceptance",
+        "blind", "edge_case", "acceptance", "security",
     )),
     *(f"adversarial-{role}.json" for role in (
-        "blind", "edge", "acceptance", "user-experience", "maintainer",
+        "blind", "edge", "acceptance", "user-experience", "maintainer", "security",
     )),
     "review-mode.json", "review-gate.json", "review-collections",
 )
@@ -9150,7 +9150,7 @@ def _scoped_review_diff(branch: str | None, supplied: str | None) -> tuple[str, 
 
 
 def _prepare_review_inputs(directory: Path, ledger: dict[str, Any], row: dict[str, Any]) -> list[str]:
-    """Replay an interrupted archive using the durable admission's fixed move list."""
+    """Replay the admission archive and relocate matching historical receipt paths."""
     archive = directory / "review-input-archive" / row["round_id"].encode().hex()
     archive.mkdir(parents=True, exist_ok=True)
     for name in row["archive_inputs"]:
@@ -9159,6 +9159,26 @@ def _prepare_review_inputs(directory: Path, ledger: dict[str, Any], row: dict[st
             continue
         if source.exists():
             source.rename(target)
+    # Receipts use branch-relative paths. Relocate only references to this
+    # admission's moved inputs, including nested compare-ordering captures.
+    # Run after all moves, also on replay when the archive already exists.
+    for previous in ledger.get("convergence", {}).get("rounds", []):
+        if previous is row:
+            continue
+        receipts = previous.get("receipts", {})
+        if not isinstance(receipts, dict):
+            continue
+        for receipt in receipts.values():
+            if not isinstance(receipt, dict) or not isinstance(receipt.get("artifact"), str):
+                continue
+            artifact = Path(receipt["artifact"])
+            if (artifact.is_absolute() or ".." in artifact.parts or not artifact.parts
+                    or artifact.parts[0] not in row["archive_inputs"]):
+                continue
+            archived = archive / artifact
+            if (archived.is_file() and not archived.is_symlink()
+                    and hashlib.sha256(archived.read_bytes()).hexdigest() == receipt.get("sha256")):
+                receipt["artifact"] = str(archived.relative_to(directory))
     _write_json_file(directory / "review-mode.json", {**row["binding"], "round_id": row["round_id"]})
     row["prepared"] = True
     _write_json_file(directory / "review-verdict-ledger.json", ledger)
@@ -9267,8 +9287,18 @@ def begin_review_run(
     policy_files: list[str] | None = None, required_checks: list[str] | None = None,
     check_specs: dict[str, list[str]] | None = None,
     check_timeouts: dict[str, float] | None = None, base_ref: str | None = None,
+    resume_admitted_mode: bool = False,
 ) -> dict[str, Any]:
     """Admit one review/fix iteration; retries retain captured reviewer inputs."""
+    branch_dir = _review_branch_dir(branch)
+    prior = _read_review_ledger(branch_dir)
+    if resume_admitted_mode:
+        pending = next((row for row in prior.get("convergence", {}).get("rounds", [])
+                        if not _review_round_terminal(row)), None)
+        if pending and (not round_id or pending["round_id"] == round_id):
+            # Workflow mode detection can change after creating the full bundle.
+            # Only this inferred mode is restored; all other bindings still match.
+            mode = pending["binding"]["mode"]
     # Intent: focus text is free prose, not a shell command; detect only literal flag tokens.
     flags = arguments.split()
     if scheduled_reviewers is None:
@@ -9313,7 +9343,6 @@ def begin_review_run(
     error = _validate_review_run(payload)
     if error:
         return {"status": "error", "message": error}
-    branch_dir = _review_branch_dir(branch)
     policy_hash = _review_policy(dict(payload), trusted_policy=target["trusted_policy"])
     consent: dict[str, Any] = {"status": "not_required"}
     if _review_requires_consent(target):
@@ -9321,7 +9350,6 @@ def begin_review_run(
                                          branch=branch_dir.name)
         if consent["status"] == "error" and _review_gates_strict(target):
             return consent
-    prior = _read_review_ledger(branch_dir)
     convergence = prior.get("convergence", {"rounds": [], "started_at": time.time()})
     if (convergence.get("outcome") == "awaiting_human" and convergence.get("rounds")
             and convergence["rounds"][-1]["binding"] == dict(payload)
@@ -10621,8 +10649,9 @@ def review_publication(
 def _review_security_gate(row: dict[str, Any], directory: Path) -> dict[str, Any]:
     """Security has its own captured role receipt, never an execution-check substitute."""
     if not _review_requires_consent(row.get("target", {})):
-        return {"status": "NOT_REQUIRED", "reasons": []}
+        return {"status": "NOT_REQUIRED", "reasons": [], "collection_reasons": []}
     reasons: list[str] = []
+    finding_reasons: list[str] = []
     if row.get("capability", {}).get("status") != "verified" or not _review_binding_current(row):
         reasons.append("Security capability or snapshot/policy binding is unverified")
     orderings = ("default", "reverse") if row["binding"]["review_mode"] == "compare_orderings" else ("default",)
@@ -10643,12 +10672,21 @@ def _review_security_gate(row: dict[str, Any], directory: Path) -> dict[str, Any
                 or set(row.get("required_files", [])) - set(covered)
                 or receipt.get("skipped_files") != [] or receipt.get("denied_access") != []):
             reasons.append(f"{ordering}: incomplete security coverage")
-        if output.get("all_clear") is not True or output.get("findings") != []:
-            reasons.append(f"{ordering}: security review is not clear")
-    return {"status": "INCOMPLETE" if reasons else "COMPLETE", "reasons": reasons}
+        verdict_error = _adversarial_reviewer_error(output)
+        if verdict_error or (output.get("all_clear") is False and output.get("findings") == []):
+            reasons.append(f"{ordering}: invalid or unexplained security verdict")
+        elif output.get("all_clear") is True and (
+            not isinstance(output.get("all_clear_rationale"), str) or not output["all_clear_rationale"].strip()
+        ):
+            reasons.append(f"{ordering}: clear security verdict requires a nonempty rationale")
+        elif output.get("findings"):
+            finding_reasons.append(f"{ordering}: security review is not clear")
+    return {"status": "INCOMPLETE" if reasons else ("BLOCKED" if finding_reasons else "COMPLETE"),
+            "reasons": [*reasons, *finding_reasons], "collection_reasons": reasons}
 
 
 def _review_completeness(row: dict[str, Any], directory: Path) -> dict[str, Any]:
+    """Check evidence collection independently of whether collected findings block approval."""
     reasons: list[str] = []
     blocked = bool(row.get("target", {}).get("conflicts"))
     if blocked:
@@ -10696,7 +10734,7 @@ def _review_completeness(row: dict[str, Any], directory: Path) -> dict[str, Any]
                         reasons.append(f"{ordering}:{name}: check evidence {check_id!r} is missing, stale or unsuccessful")
     security = _review_security_gate(row, directory)
     if _review_gates_strict(row.get("target", {})):
-        reasons.extend(security["reasons"])
+        reasons.extend(security["collection_reasons"])
         if row.get("target", {}).get("security_gate_policy", {}).get("error"):
             reasons.append("Trusted security gate policy is invalid")
     return {"status": "BLOCKED" if blocked else ("INCOMPLETE" if reasons else "COMPLETE"), "reasons": reasons}
@@ -10714,6 +10752,7 @@ def _review_check_valid(directory: Path, check_id: str, row: dict[str, Any]) -> 
 def _complete_review_round(
     ledger: dict[str, Any], prior: dict[str, Any], run: dict[str, Any], directory: Path,
 ) -> dict[str, Any]:
+    """Publish findings while pending, sealing only a fully collected review round."""
     convergence = prior.get("convergence")
     if not convergence:
         raise ValueError("Current review has no durable round admission")
@@ -10755,24 +10794,32 @@ def _complete_review_round(
                 coverage.append(set())
             else:
                 coverage.append(set(covered))
-    row.update({"completed_at": time.time(), "submission_digest": digest,
-                "covered_files": sorted(set.intersection(*coverage)) if coverage else [],
-                "verdict": ledger["computed_verdict"]})
+    # Findings may be published while evidence collection is still pending.
+    # Only a complete collection seals the payload and consumes a round; an
+    # incomplete/blocked receipt must remain replaceable under this admission.
+    if completeness["status"] == "COMPLETE":
+        row.update({"completed_at": time.time(), "submission_digest": digest,
+                    "covered_files": sorted(set.intersection(*coverage)) if coverage else []})
+    row["verdict"] = ledger["computed_verdict"]
     row["completeness"] = completeness
     ledger["findings_verdict"] = ledger["computed_verdict"]
-    approved = ledger["findings_verdict"] == "PROCEED" and completeness["status"] == "COMPLETE"
+    security = _review_security_gate(row, directory)
+    security_blocked = (_review_gates_strict(row["target"])
+                        and security["status"] not in {"NOT_REQUIRED", "COMPLETE"})
+    approved = (ledger["findings_verdict"] == "PROCEED" and completeness["status"] == "COMPLETE"
+                and not security_blocked)
     if not approved and ledger["computed_verdict"] == "PROCEED":
-        ledger["computed_verdict"] = "BLOCK" if completeness["status"] == "BLOCKED" else "REVISE"
-        ledger["verdict_basis"] = "; ".join(completeness["reasons"])
+        ledger["computed_verdict"] = "BLOCK" if completeness["status"] == "BLOCKED" or security_blocked else "REVISE"
+        ledger["verdict_basis"] = "; ".join([*completeness["reasons"], *(security["reasons"] if security_blocked else [])])
         ledger["journal"].update({"current_verdict": ledger["computed_verdict"], "basis": ledger["verdict_basis"]})
     if not approved and row["verdict"] == "PROCEED":
-        row["verdict"] = "INCOMPLETE"
+        row["verdict"] = "INCOMPLETE" if completeness["status"] != "COMPLETE" else ledger["computed_verdict"]
     ledger["completeness"] = completeness
     ledger["code_approval"] = {"approved": approved, "target": row["target"], "policy_hash": row["policy_hash"]}
     ledger["execution_check_history"] = prior.get("execution_check_history", [])
     ledger["execution_checks"] = prior.get("execution_checks", {})
     ledger["human_consent"] = {"status": "not_required"}
-    ledger["security_gate"] = _review_security_gate(row, directory)
+    ledger["security_gate"] = security
     if _review_requires_consent(row["target"]):
         ledger["human_consent"] = _ensure_review_consent(row, branch=directory.name)
     _update_review_convergence(convergence, passed=approved)
@@ -27898,6 +27945,8 @@ if __name__ == "__main__":
         _p = _ap.ArgumentParser(prog="map_step_runner.py begin_review_run")
         _p.add_argument("--base-ref", default=None)
         _p.add_argument("--mode", default="full", choices=("full", "lightweight", "sibling-aware"))
+        _p.add_argument("--resume-admitted-mode", action="store_true",
+                        help="Restore a pending round's mode when workflow mode was inferred")
         _p.add_argument("--arguments", default="")
         _p.add_argument("--sibling-hint", default="")
         _p.add_argument("--round-id", default="")
@@ -27919,7 +27968,8 @@ if __name__ == "__main__":
                                   sibling_hint=_args.sibling_hint, branch=_args.branch, round_id=_args.round_id,
                                   provider=_args.provider, capability_profile=_args.capability_profile,
                                   policy_files=_args.policy_file, required_checks=_args.required_check,
-                                  check_specs=_check_specs, check_timeouts=_check_timeouts, base_ref=_args.base_ref)
+                                  check_specs=_check_specs, check_timeouts=_check_timeouts, base_ref=_args.base_ref,
+                                  resume_admitted_mode=_args.resume_admitted_mode)
         print(json.dumps(result, indent=2, ensure_ascii=True))
         if result["status"] == "error":
             sys.exit(1)

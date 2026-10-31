@@ -83,8 +83,9 @@ def test_create_review_bundle_keeps_pending_snapshot_binding(receipt_workspace):
 
 
 @pytest.mark.parametrize("receipt", [None, []])
-def test_complete_review_round_records_invalid_receipt_without_crashing(receipt_workspace, receipt):
-    _admit()
+def test_invalid_receipt_stays_pending_and_accepts_correction(receipt_workspace, receipt):
+    """Leave malformed receipts replaceable until valid coverage completes review."""
+    admission = _admit()
     envelope = {"verdict": "approved", "issues": [], "receipt": receipt}
     assert runner.capture_review_output("monitor", json.dumps(envelope), "receipt")["status"] == "success"
     result = runner.write_review_verdict_ledger(current_run=True)
@@ -92,7 +93,10 @@ def test_complete_review_round_records_invalid_receipt_without_crashing(receipt_
     ledger = json.loads((receipt_workspace / "review-verdict-ledger.json").read_text())
     assert ledger["completeness"]["status"] == "INCOMPLETE"
     assert ledger["code_approval"]["approved"] is False
-    assert ledger["convergence"]["rounds"][-1]["covered_files"] == []
+    assert not {"completed_at", "submission_digest", "covered_files"}.intersection(ledger["convergence"]["rounds"][-1])
+    envelope["receipt"] = _receipt(admission)
+    assert runner.capture_review_output("monitor", json.dumps(envelope), "receipt")["status"] == "success"
+    assert runner.write_review_verdict_ledger(current_run=True)["code_approval"]["approved"] is True
 
 
 def test_complete_review_round_retains_adversarial_raw_coverage(receipt_workspace):
@@ -113,10 +117,20 @@ def test_complete_review_round_retains_adversarial_raw_coverage(receipt_workspac
 
 
 def test_begin_review_run_missing_yaml_records_unverified_capability(receipt_workspace, monkeypatch):
-    monkeypatch.setitem(sys.modules, "yaml", None)
-    result = runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="receipt", provider="claude")
+    """Recover a missing admission dependency through explicit abandonment, not retry."""
+    with monkeypatch.context() as patch:
+        patch.setitem(sys.modules, "yaml", None)
+        result = runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="receipt", provider="claude")
     assert result["status"] == "success", result
     ledger = json.loads((receipt_workspace / "review-verdict-ledger.json").read_text())
     capability = ledger["convergence"]["rounds"][-1]["capability"]
     assert capability["status"] == "unverified"
     assert "PyYAML" in capability["reason"]
+    resumed = runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="receipt", provider="claude")
+    assert resumed["resumed"] is True
+    assert resumed["capability"] == capability
+    abandoned = runner.abandon_review_round("receipt", reason="PyYAML is now available")
+    assert abandoned["convergence"]["attempted_rounds"] == 1
+    recovered = runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="recovered", provider="claude")
+    assert recovered["status"] == "success", recovered
+    assert recovered["capability"]["status"] == "verified"

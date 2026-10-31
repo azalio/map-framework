@@ -52,6 +52,7 @@ def test_concurrent_review_admission_counts_once_and_fences_stale_capture(tmp_pa
 
 @pytest.mark.parametrize("provider", ["claude", "codex"])
 def test_review_round_cli_restart_cap_and_rejected_admission_preserve_inputs(tmp_path, provider):
+    """Count explicit abandonment across CLI restarts without losing captures."""
     project_dir = tmp_path / provider
     project_dir.mkdir()
     previous_cwd = os.getcwd()
@@ -84,8 +85,11 @@ def test_review_round_cli_restart_cap_and_rejected_admission_preserve_inputs(tmp
         assert code == 0 and retry["resumed"]
         code, completed = call("write_review_verdict_ledger", "--current-run", "--round-id", str(number))
         assert code == 0, completed
-        assert completed["convergence"]["completed_rounds"] == number
-        assert call("write_review_verdict_ledger", "--current-run", "--round-id", str(number))[1]["convergence"] == completed["convergence"]
+        assert completed["convergence"]["completed_rounds"] == 0
+        assert completed["convergence"]["attempted_rounds"] == number - 1
+        assert completed["code_approval"]["approved"] is False
+        code, abandoned = call("abandon_review_round", str(number), "--reason", "Explicitly cancel incomplete collection")
+        assert code == 0 and abandoned["convergence"]["attempted_rounds"] == number
     before = capture.read_bytes()
     code, rejected = call("begin_review_run", "--mode", "lightweight", "--round-id", "4")
     assert code == 1 and rejected["stop_reason"] == "reconsider_approach"
@@ -408,6 +412,36 @@ def _start_review(root: Path, arguments: str, *, lightweight: bool = False) -> N
                "CHECK_TIMEOUTS_JSON='{\"tests\": 5, \"lint\": 5}'\n" + "\n".join(blocks))
 
 
+def _abandon_incomplete_review(root: Path) -> None:
+    """Explicitly end an unverified Codex collection before changing its inputs."""
+    run = json.loads((root / ".map" / BRANCH_DIR_NAME / "review-mode.json").read_text())
+    _run_block(root, shlex.join([
+        "python3", ".map/scripts/map_step_runner.py", "abandon_review_round", run["round_id"],
+        "--reason", "Continue findings review in a new attempt",
+    ]))
+
+
+def test_rendered_resume_keeps_lightweight_mode_after_bundle_creation(project):
+    """A real bundle must not change the inferred mode of a pending admission."""
+    _start_review(project, "", lightweight=True)
+    directory = project / ".map" / BRANCH_DIR_NAME
+    before = json.loads((directory / "review-mode.json").read_text())
+    _run_block(project, "python3 .map/scripts/map_step_runner.py create_review_bundle")
+    bundle = (directory / "review-bundle.md").read_bytes()
+    assert b"##" in bundle
+    capture = _bash_blocks(_skill_text(project), "### Step A.2c")[0]
+    _run_block(project, _capture_script(capture, {"monitor": MONITOR_CLEAN}))
+    captured = (directory / "review-agent-monitor.json").read_bytes()
+    _run_block(project, _bash_blocks(_skill_text(project), "## Write Review Verdict Ledger")[0])
+    detect = _bash_blocks(_skill_text(project), "### Step A.0b")[0]
+    _run_block(project, "ARGUMENTS=''\n"
+               f"CHECK_SPECS_JSON={shlex.quote(json.dumps(before['check_specs']))}\n"
+               f"CHECK_TIMEOUTS_JSON={shlex.quote(json.dumps(before['check_timeouts']))}\n" + detect)
+    assert json.loads((directory / "review-mode.json").read_text()) == before
+    assert (directory / "review-agent-monitor.json").read_bytes() == captured
+    assert (directory / "review-bundle.md").read_bytes() == bundle
+
+
 @pytest.mark.parametrize(
     ("previous", "mode", "arguments", "current", "expected"),
     [
@@ -422,6 +456,7 @@ def _start_review(root: Path, arguments: str, *, lightweight: bool = False) -> N
 def test_current_review_closeout_does_not_consume_previous_run(
     project, previous, mode, arguments, current, expected,
 ):
+    """Archive prior inputs while retaining unresolved findings across review modes."""
     branch_dir = project / ".map" / BRANCH_DIR_NAME
     capture = _bash_blocks(_skill_text(project), "### Step A.2c")[0]
     ledger_block = _bash_blocks(_skill_text(project), "## Write Review Verdict Ledger")[0]
@@ -437,6 +472,7 @@ def test_current_review_closeout_does_not_consume_previous_run(
     _run_block(project, ledger_block)
     _run_block(project, gate_block)
     if previous == "adversarial":
+        _abandon_incomplete_review(project)
         _start_review(project, "--adversarial")
         (branch_dir / "review-agent-adversarial.json").write_text(
             json.dumps(_adversarial_report(project, [{
@@ -447,6 +483,7 @@ def test_current_review_closeout_does_not_consume_previous_run(
         _run_block(project, gate_block)
     prior = json.loads((branch_dir / "review-verdict-ledger.json").read_text())["computed_verdict"]
 
+    _abandon_incomplete_review(project)
     _start_review(project, arguments, lightweight=current == "monitor")
     if current == "minor":
         report = _adversarial_report(project, minor)

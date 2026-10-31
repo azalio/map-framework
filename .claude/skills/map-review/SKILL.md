@@ -243,7 +243,7 @@ import sys
 specs_json, mode, arguments, sibling_hint, timeouts_json = sys.argv[1:]
 specs = json.loads(specs_json)
 runner = [sys.executable, ".map/scripts/map_step_runner.py"]
-argv = runner + ["begin_review_run", "--provider", "claude", "--capability-profile", "review-reader",
+argv = runner + ["begin_review_run", "--resume-admitted-mode", "--provider", "claude", "--capability-profile", "review-reader",
                  "--check-specs-json", specs_json, "--check-timeouts-json", timeouts_json,
                  "--mode", mode, "--arguments=" + arguments, "--sibling-hint", sibling_hint]
 # Parse only literal option tokens; free prose (including apostrophes) is not shell syntax.
@@ -275,8 +275,8 @@ PY
 Start before any capture or fan-out. Abort on a start error; in particular
 `reconsider_approach` means STOP and request reconsideration, never approval or a
 fourth automatic round. A round is a review/fix iteration, not a reviewer/tool
-retry or an ordering collection. Pending admission resumes its stored identity;
-completed rounds are immutable. Use `--round-id <stored-id>` for an explicit retry.
+retry or an ordering collection. Pending admission restores its identity and inferred mode; all other inputs must still match.
+Completed rounds are immutable. Use `--round-id <stored-id>` for an explicit retry.
 Do not dispatch reviewers when admission reports `completed: true`. For a stale pending round,
 explicitly run `abandon_review_round <round-id> --reason "<why>"` through the runner before new admission;
 abandonment preserves audit/findings and consumes an unsuccessful attempt, never resets the cap.
