@@ -10755,9 +10755,13 @@ def _complete_review_round(
                 coverage.append(set())
             else:
                 coverage.append(set(covered))
-    row.update({"completed_at": time.time(), "submission_digest": digest,
-                "covered_files": sorted(set.intersection(*coverage)) if coverage else [],
-                "verdict": ledger["computed_verdict"]})
+    # Findings may be published while evidence collection is still pending.
+    # Only a complete collection seals the payload and consumes a round; an
+    # incomplete/blocked receipt must remain replaceable under this admission.
+    if completeness["status"] == "COMPLETE":
+        row.update({"completed_at": time.time(), "submission_digest": digest,
+                    "covered_files": sorted(set.intersection(*coverage)) if coverage else []})
+    row["verdict"] = ledger["computed_verdict"]
     row["completeness"] = completeness
     ledger["findings_verdict"] = ledger["computed_verdict"]
     approved = ledger["findings_verdict"] == "PROCEED" and completeness["status"] == "COMPLETE"

@@ -1146,7 +1146,10 @@ Current delta captured:
   retries preserve the budget and findings, and stale captures/finalizers fail.
   Legacy direct writes are rejected once bounded admission is active.
   `attempted_rounds` counts completed and abandoned rounds; `completed_rounds`
-  excludes abandonment. Missing reviewer collection stays incomplete;
+  excludes abandonment. Missing reviewers, scope gaps, denied access, unverified
+  capabilities and missing check evidence leave collection pending: no completion
+  timestamp, sealed submission digest or reusable coverage is recorded. Captures
+  and required checks may be retried under the same admission;
   success alone records rounds-to-pass, including consumed abandoned attempts. Corrupt convergence state cannot reset
   the budget. The JSON ledger is authoritative; Markdown and manifest entries
   are derived artifacts, not independent counters.

@@ -84,8 +84,11 @@ def test_review_round_cli_restart_cap_and_rejected_admission_preserve_inputs(tmp
         assert code == 0 and retry["resumed"]
         code, completed = call("write_review_verdict_ledger", "--current-run", "--round-id", str(number))
         assert code == 0, completed
-        assert completed["convergence"]["completed_rounds"] == number
-        assert call("write_review_verdict_ledger", "--current-run", "--round-id", str(number))[1]["convergence"] == completed["convergence"]
+        assert completed["convergence"]["completed_rounds"] == 0
+        assert completed["convergence"]["attempted_rounds"] == number - 1
+        assert completed["code_approval"]["approved"] is False
+        code, abandoned = call("abandon_review_round", str(number), "--reason", "Explicitly cancel incomplete collection")
+        assert code == 0 and abandoned["convergence"]["attempted_rounds"] == number
     before = capture.read_bytes()
     code, rejected = call("begin_review_run", "--mode", "lightweight", "--round-id", "4")
     assert code == 1 and rejected["stop_reason"] == "reconsider_approach"
@@ -408,6 +411,15 @@ def _start_review(root: Path, arguments: str, *, lightweight: bool = False) -> N
                "CHECK_TIMEOUTS_JSON='{\"tests\": 5, \"lint\": 5}'\n" + "\n".join(blocks))
 
 
+def _abandon_incomplete_review(root: Path) -> None:
+    """Explicitly end an unverified Codex collection before changing its inputs."""
+    run = json.loads((root / ".map" / BRANCH_DIR_NAME / "review-mode.json").read_text())
+    _run_block(root, shlex.join([
+        "python3", ".map/scripts/map_step_runner.py", "abandon_review_round", run["round_id"],
+        "--reason", "Continue findings review in a new attempt",
+    ]))
+
+
 @pytest.mark.parametrize(
     ("previous", "mode", "arguments", "current", "expected"),
     [
@@ -437,6 +449,7 @@ def test_current_review_closeout_does_not_consume_previous_run(
     _run_block(project, ledger_block)
     _run_block(project, gate_block)
     if previous == "adversarial":
+        _abandon_incomplete_review(project)
         _start_review(project, "--adversarial")
         (branch_dir / "review-agent-adversarial.json").write_text(
             json.dumps(_adversarial_report(project, [{
@@ -447,6 +460,7 @@ def test_current_review_closeout_does_not_consume_previous_run(
         _run_block(project, gate_block)
     prior = json.loads((branch_dir / "review-verdict-ledger.json").read_text())["computed_verdict"]
 
+    _abandon_incomplete_review(project)
     _start_review(project, arguments, lightweight=current == "monitor")
     if current == "minor":
         report = _adversarial_report(project, minor)

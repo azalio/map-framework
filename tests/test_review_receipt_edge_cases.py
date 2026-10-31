@@ -83,8 +83,8 @@ def test_create_review_bundle_keeps_pending_snapshot_binding(receipt_workspace):
 
 
 @pytest.mark.parametrize("receipt", [None, []])
-def test_complete_review_round_records_invalid_receipt_without_crashing(receipt_workspace, receipt):
-    _admit()
+def test_invalid_receipt_stays_pending_and_accepts_correction(receipt_workspace, receipt):
+    admission = _admit()
     envelope = {"verdict": "approved", "issues": [], "receipt": receipt}
     assert runner.capture_review_output("monitor", json.dumps(envelope), "receipt")["status"] == "success"
     result = runner.write_review_verdict_ledger(current_run=True)
@@ -92,7 +92,10 @@ def test_complete_review_round_records_invalid_receipt_without_crashing(receipt_
     ledger = json.loads((receipt_workspace / "review-verdict-ledger.json").read_text())
     assert ledger["completeness"]["status"] == "INCOMPLETE"
     assert ledger["code_approval"]["approved"] is False
-    assert ledger["convergence"]["rounds"][-1]["covered_files"] == []
+    assert not {"completed_at", "submission_digest", "covered_files"}.intersection(ledger["convergence"]["rounds"][-1])
+    envelope["receipt"] = _receipt(admission)
+    assert runner.capture_review_output("monitor", json.dumps(envelope), "receipt")["status"] == "success"
+    assert runner.write_review_verdict_ledger(current_run=True)["code_approval"]["approved"] is True
 
 
 def test_complete_review_round_retains_adversarial_raw_coverage(receipt_workspace):
