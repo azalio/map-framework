@@ -1981,6 +1981,7 @@ def test_archive_interruption_resumes_same_admission(branch_workspace, monkeypat
 
 
 def test_incremental_scope_includes_dependent_modules_and_falls_back(branch_workspace, monkeypatch):
+    """A delivered and captured baseline enables dependent scope with conservative fallback."""
     runner = cast(Any, map_step_runner)
     monkeypatch.chdir(branch_workspace.parents[1])
     import subprocess

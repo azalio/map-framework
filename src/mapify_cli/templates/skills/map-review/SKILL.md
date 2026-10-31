@@ -380,14 +380,14 @@ When enabled (`minimality != off`), the complexity lens is advisory only. It lis
 
 ### Step A.2a: Deliver requested context to the same reviewer (MANDATORY)
 
-Before final JSON validation, follow [Parent-served context loop](review-reference.md#parent-served-context-loop-step-a2a): run `serve_review_context` for every response, including retries, adversarial roles and the complexity lens. Continue the same agent for `context_response`; only a post-delivery final response with its session token proceeds to Step A.2b. Context requests never consume final-response retries or become captured reviews. Denied/stale context leaves collection incomplete.
+Before final JSON validation, follow [Parent-served context loop](review-reference.md#parent-served-context-loop-step-a2a): run `serve_review_context` for every response, including retries, adversarial roles and the complexity lens. Continue the same agent for `context_response`; responses to the post-delivery finalization request proceed to Step A.2b even with missing or invalid receipts. Discard queued early finals; context requests never consume final-response retries or become captured reviews. Denied/stale context leaves collection incomplete.
 
 ### Step A.2b: Truncated-response gate (MANDATORY — post-fan-out, pre-verification)
 
 After Step A.2a identifies a final response, pipe it on stdin (a bare call returns
 `status:"no_input"`, not a pass):
 `printf '%s' "$RESPONSE" | python3 .map/scripts/map_step_runner.py detect_truncated_agent_output --agent <kind>`
-using the role-specific kind shown below. On truncation: log via
+using the role-specific kind shown below. On truncation or missing/invalid finalization `context_receipt`: log via
 `log_agent_failure --agent <role> --phase post-invoke --failure-label truncated --reasons '<reasons>'`
 and re-invoke that reviewer ONCE using the prompt from
 `build_json_retry_prompt --agent <role> --errors '<reasons>'`; if still

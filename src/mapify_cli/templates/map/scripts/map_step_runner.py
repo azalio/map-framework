@@ -9299,9 +9299,12 @@ def _review_capability(binding: dict[str, Any]) -> dict[str, Any]:
 
 
 def _review_binding_current(row: dict[str, Any]) -> bool:
+    """Fingerprint fresh inputs once, sharing only this observation's trusted policy."""
     try:
-        return (row.get("target") == _review_target(row["binding"])
-                and row.get("policy_hash") == _review_policy(row["binding"]))
+        target = _review_target(row["binding"])
+        return (row.get("target") == target
+                and row.get("policy_hash") == _review_policy(
+                    row["binding"], trusted_policy=target["trusted_policy"]))
     except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
         return False
 
@@ -13511,8 +13514,8 @@ def serve_review_context(
         if session["context_id"] != context_id or session["reviewer"] != reviewer:
             raise ValueError("Context request does not belong to this delivery session")
     _review_admitted_binding(branch)
-    if not _review_binding_current(row) or not _review_attribution_artifact(_sanitize_branch(branch) if branch else get_branch_name()):
-        raise ValueError("Review snapshot, policy or bundle changed before context delivery")
+    if not _review_attribution_artifact(directory.name):
+        raise ValueError("Review bundle changed before context delivery")
     manifest_bytes = _review_context_read(directory, registered)
     manifest = json.loads(manifest_bytes)
     if (manifest["reviewer"] != reviewer or manifest["round_id"] != round_id
@@ -13542,8 +13545,7 @@ def serve_review_context(
               "total_bytes": len(raw), "sha256": metadata["sha256"],
               "chunk_sha256": hashlib.sha256(raw[offset:end]).hexdigest(),
               "eof": end == len(raw), "content": content}
-    if not _review_binding_current(row):
-        raise ValueError("Review snapshot or policy changed during context delivery")
+    _require_review_delivery_current(row, directory.name)
     if session is not None:
         prefix = session["offsets"].get(resource_id, 0)
         if offset != prefix and end > prefix:
@@ -13593,7 +13595,7 @@ def _review_delivery_state(session_id: str, session: dict[str, Any]) -> dict[str
 
 
 def _review_delivery_load(branch: str | None, round_id: str) -> tuple[Path, dict[str, Any], dict[str, Any]]:
-    """Load a still-current admitted snapshot without acquiring a second transaction lock."""
+    """Load admission metadata; callers must fingerprint live inputs before return or write."""
     directory = _review_branch_dir(branch)
     ledger = _read_review_ledger(directory)
     rounds = ledger.get("convergence", {}).get("rounds", [])
@@ -13601,9 +13603,15 @@ def _review_delivery_load(branch: str | None, round_id: str) -> tuple[Path, dict
         raise ValueError("Stale or terminal review delivery session")
     row = rounds[-1]
     _review_admitted_binding(branch)
-    if not _review_binding_current(row) or not _review_attribution_artifact(directory.name):
-        raise ValueError("Review snapshot, policy or bundle changed")
+    if not _review_attribution_artifact(directory.name):
+        raise ValueError("Review bundle changed")
     return directory, ledger, row
+
+
+def _require_review_delivery_current(row: dict[str, Any], branch: str) -> None:
+    """Fence publication with fresh snapshot, policy and bundle bytes, never cached state."""
+    if not _review_binding_current(row) or not _review_attribution_artifact(branch):
+        raise ValueError("Review snapshot, policy or bundle changed during context delivery")
 
 
 @_review_transaction
@@ -13631,8 +13639,7 @@ def bind_review_context(
         "pending": None,
     })
     row.setdefault("context_active", {})[f"{ordering}:{reviewer}"] = session_id
-    if not _review_binding_current(row):
-        raise ValueError("Review snapshot or policy changed during delivery binding")
+    _require_review_delivery_current(row, directory.name)
     _write_json_file(directory / "review-verdict-ledger.json", ledger)
     return _review_delivery_state(session_id, session)
 
@@ -13644,6 +13651,7 @@ def review_context_status(session_id: str, round_id: str, *, branch: str | None 
     session = _review_delivery_session(row, session_id)
     for metadata in session["required"].values():
         _review_context_read(directory, metadata)
+    _require_review_delivery_current(row, directory.name)
     return _review_delivery_state(session_id, session)
 
 
@@ -13679,6 +13687,7 @@ def ack_review_context(
         raise ValueError("Acknowledgment bytes or hashes do not match the frozen chunk")
     prefix = session["offsets"].get(resource, 0)
     if end <= prefix and start < end:
+        _require_review_delivery_current(row, directory.name)
         return _review_delivery_state(session_id, session)
     if key != session.get("pending") or start != prefix:
         raise ValueError("Acknowledgment is not the current pending chunk")
@@ -13686,8 +13695,7 @@ def ack_review_context(
     session["pending"] = None
     if all(session["offsets"].get(name, 0) == item["bytes"] for name, item in session["required"].items()):
         session.setdefault("finalization_token", os.urandom(24).hex())
-    if not _review_binding_current(row):
-        raise ValueError("Review snapshot or policy changed during delivery acknowledgment")
+    _require_review_delivery_current(row, directory.name)
     _write_json_file(directory / "review-verdict-ledger.json", ledger)
     return _review_delivery_state(session_id, session)
 

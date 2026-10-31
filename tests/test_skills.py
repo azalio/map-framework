@@ -4193,6 +4193,7 @@ class TestMapReviewSharedSourceCodexRender:
             assert "spawn_agent(" not in claude, name
 
     def test_codex_states_counter_and_five_dispatch_rules(self) -> None:
+        """Codex counters distinguish initial dispatches, context continuations and retries."""
         skill = self._render("SKILL.md.jinja", "codex")
         adversarial = self._render("adversarial-reference.md.jinja", "codex")
         for text in (skill, adversarial):

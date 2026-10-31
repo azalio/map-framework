@@ -199,6 +199,7 @@ def test_learning_handoff_returns_structured_error_for_corrupt_review_admission(
 
 
 def test_explicit_api_scope_snapshot_bundle_prompts_and_policy(stack):
+    """Explicit API review scope survives snapshot, bundle and complete prompt transport."""
     admission = admit(base_ref="runtime")
     target = admission["target"]
     assert target["base"] == target["base_tip"] == stack["runtime"]

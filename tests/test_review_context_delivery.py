@@ -90,6 +90,74 @@ def cli(*args, payload=None):
     return json.loads(result.stdout)
 
 
+def test_chunk_pair_fingerprints_once_per_publication(repository, monkeypatch):
+    """Serve and ACK each retain one fresh guard without rediscovering trusted policy."""
+    del repository
+    state = bind(prepare()["monitor"])
+    counts = {"_review_target": 0, "_review_trusted_policy": 0}
+
+    def observe(name):
+        """Count actual expensive observations while preserving their implementation."""
+        original = getattr(runner, name)
+
+        def counted(*args, **kwargs):
+            counts[name] += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(runner, name, counted)
+
+    for name in counts:
+        observe(name)
+    chunk = serve(state)
+    assert chunk["status"] == "context_response"
+    assert acknowledge(state, chunk)["status"] == "context_pending"
+    assert counts == {"_review_target": 2, "_review_trusted_policy": 2}
+
+
+@pytest.mark.parametrize("operation", ["serve", "bind", "status", "ack", "ack_replay"])
+@pytest.mark.parametrize("changed", ["source", "policy", "bundle"])
+def test_change_during_resource_read_blocks_publication(repository, monkeypatch, operation, changed):
+    """A change after initial validation must not publish bytes, progress or a final token."""
+    entry = prepare()["monitor"]
+    state = bind(entry)
+    chunk = serve(state)
+    if operation == "ack_replay":
+        state = acknowledge(state, chunk)
+    ledger_path = repository / ".map/feature/review-verdict-ledger.json"
+    before = ledger_path.read_bytes()
+    row = json.loads(before)["convergence"]["rounds"][-1]
+    target = {
+        "source": repository / "code.py",
+        "policy": repository / ".map/feature/spec_changed.md",
+        "bundle": ledger_path.parent / row["bundle_receipt"]["artifact"],
+    }[changed]
+    original = runner._review_context_read
+    mutated = False
+
+    def read_then_change(*args, **kwargs):
+        """Inject a concurrent edit after frozen resource bytes have been verified."""
+        nonlocal mutated
+        raw = original(*args, **kwargs)
+        if not mutated:
+            target.write_text("changed during delivery\n")
+            mutated = True
+        return raw
+
+    monkeypatch.setattr(runner, "_review_context_read", read_then_change)
+    if operation == "serve":
+        result = serve(state)
+    elif operation == "bind":
+        result = runner.bind_review_context("monitor", entry["context_transport"]["context_id"],
+                                            "new-agent", "delivery-round", branch="feature")
+    elif operation == "status":
+        result = runner.review_context_status(state["session_id"], "delivery-round", branch="feature")
+    else:
+        result = acknowledge(state, chunk)
+    assert mutated
+    assert result["status"] == "error", result
+    assert ledger_path.read_bytes() == before
+
+
 def test_early_final_stays_rejected_after_delivery_until_new_finalization_token(repository):
     """A queued early response cannot become valid merely because ACKs arrived later."""
     prompts = prepare()

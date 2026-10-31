@@ -298,9 +298,11 @@ followup_task(target=<same agent_id>, message=<context_response JSON>)
    `context_receipt={session_id,finalization_token}` in the final JSON envelope.
    The plain-text lens may return its normal text only after this request.
    Reject/discard queued early finals without that token even if delivery is now
-   complete. Never add the token yourself to an earlier saved response. Only this
-   post-delivery final response proceeds to Step A.2b and
-   `capture_review_output`. The runner independently fences capture and ledger
+   complete. Never add the token yourself to an earlier saved response. Responses
+   to this finalization request proceed to Step A.2b even when `context_receipt`
+   is missing or invalid; those defects trigger its one malformed-final retry.
+   Only valid context and reviewer coverage receipts permit `capture_review_output`.
+   The runner independently fences capture and ledger
    completeness; delivery does not prove source inspection or grant approval.
 
 Use `--chunk-bytes 8192` with a shell-tool output budget of at least 65536 tokens
@@ -311,8 +313,10 @@ larger chunk is rejected. The CLI allows 4–65536 source bytes and keeps the 51
 serialized-response limit. Preserve the currently pending tuple on recovery.
 
 `not_context_request` classifies a response; it does NOT prove delivery complete.
-Context requests and premature finals never consume a malformed-final retry or a
-review round. Do not increment the dispatch counter for same-agent continuations.
+Context requests and queued early finals never consume a malformed-final retry or a
+review round. A malformed response to the finalization request consumes the one
+malformed-final retry; it cannot be captured without valid receipts.
+Do not increment the dispatch counter for same-agent continuations.
 On stale snapshot, denied resource or unresolved no-progress loop, keep collection
 incomplete; never substitute arbitrary live reads, shell or MCP. Existing
 role/provider permissions remain unchanged. Capability enforcement stays separate.
@@ -502,5 +506,5 @@ large and quote-heavy; prefer the file flags written in Step A.2c.
 
 - Detached prep unavailable: continue from the in-place review bundle; do not mutate the source branch.
 - Missing bundle: rerun `create_review_bundle` before agents.
-- Oversized reviewer prompt: nothing is clipped and no `token_budget.json` entry is written for review — `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is reported, not enforced. Reduce the input yourself (`/compact`, or split the change); raising the variable changes nothing.
+- Oversized reviewer prompt: nothing is clipped and no `token_budget.json` entry is written for review — `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is reported, not enforced. Admitted rounds deliver the full prompt through the context manifest (Step A.2a). Legacy builder calls without an admitted bundle retain the oversized-prompt error; run `begin_review_run` and `create_review_bundle` first.
 - Monitor invalid: treat as hard stop and record `REVISE` or `BLOCK`.

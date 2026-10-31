@@ -86,6 +86,7 @@ def test_supplied_diff_does_not_bypass_scope_resolution(stack, change):
 
 @pytest.mark.parametrize("consumer", ["snapshot_code_state", "build_review_prompts", "build_adversarial_review_prompts"])
 def test_current_scope_readers_still_observe_dirty_work(stack, consumer):
+    """Dirty work requires fresh immutable admission before a prompt can expose it."""
     admit(base_ref="runtime")
     assert runner.create_review_bundle(branch="product")["status"] == "success"
     Path("product.py").write_text("PRODUCT = 558\n")
