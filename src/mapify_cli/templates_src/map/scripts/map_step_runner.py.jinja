@@ -4361,6 +4361,7 @@ def validate_blueprint_contract(
             errors.append(f"{label}: missing description (or text)")
         hard_constraint_ids.append(constraint_id)
 
+    soft_constraint_ids: set[str] = set()
     for index, constraint in enumerate(soft_constraints):
         label = f"soft_constraints[{index}]"
         if not isinstance(constraint, dict):
@@ -4373,6 +4374,8 @@ def validate_blueprint_contract(
             continue
         if not description:
             errors.append(f"{label}: missing description (or text)")
+
+        soft_constraint_ids.add(constraint_id)
 
     subtask_id_counts: dict[str, int] = {}
     # Position map: declaration order of each subtask id in the blueprint's
@@ -4399,6 +4402,15 @@ def validate_blueprint_contract(
     oversized_subtasks: list[str] = []
     mixed_concern_subtasks: list[str] = []
     forward_dep_violations: list[str] = []
+    # Only established, unique earlier dependencies contribute planned outputs.
+    # Accumulating in declaration order also handles diamonds without recursion.
+    planned_outputs: dict[str, set[Path]] = {}
+
+    def _resolve_planned_path(value: str) -> Path | None:
+        try:
+            return (Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())) / value).resolve()
+        except (OSError, RuntimeError):
+            return None
 
     for index, subtask in enumerate(subtasks):
         label = f"subtasks[{index}]"
@@ -4418,6 +4430,8 @@ def validate_blueprint_contract(
         label = subtask_id
 
         dependencies = subtask.get("dependencies")
+        dependency_outputs: set[Path] = set()
+        dependencies_established = isinstance(dependencies, list)
         if not isinstance(dependencies, list):
             errors.append(f"{label}: dependencies must be an array")
         else:
@@ -4450,6 +4464,14 @@ def validate_blueprint_contract(
                     forward_dep_violations.append(
                         f"{subtask_id}->{dependency}"
                     )
+
+            for dependency in dependencies:
+                if not isinstance(dependency, str) or dependency not in planned_outputs:
+                    dependencies_established = False
+                else:
+                    dependency_outputs.update(planned_outputs[dependency])
+        if not dependencies_established:
+            dependency_outputs.clear()
 
         expected_diff_size = str(subtask.get("expected_diff_size") or "").strip().lower()
         concern_type = str(subtask.get("concern_type") or "").strip().lower()
@@ -4554,6 +4576,7 @@ def validate_blueprint_contract(
         # heuristic is ignored and `creates_files` is authoritative.
         raw_creates_files = subtask.get("creates_files")
         creates_files_declared = raw_creates_files is not None
+        creates_files_valid = True
         creates_files_list: list[str] = []
         if creates_files_declared:
             if not isinstance(raw_creates_files, list) or not all(
@@ -4563,6 +4586,7 @@ def validate_blueprint_contract(
                     f"{label}: creates_files must be an array of path strings"
                 )
                 creates_files_declared = False
+                creates_files_valid = False
             else:
                 creates_files_list = [p for p in raw_creates_files if p.strip()]
                 affected_set = (
@@ -4574,12 +4598,23 @@ def validate_blueprint_contract(
                     p for p in creates_files_list if p not in affected_set
                 ]
                 if orphan_creates:
+                    creates_files_valid = False
                     errors.append(
                         f"{label}: creates_files entries {orphan_creates!r} are not "
                         "listed in affected_files — a created file is part of the "
                         "mutation surface; add it to affected_files "
                         "(normalize_blueprint unions these automatically)"
                     )
+
+        if (
+            subtask_id_counts.get(subtask_id) == 1
+            and dependencies_established
+            and creates_files_valid
+        ):
+            planned_outputs[subtask_id] = dependency_outputs | {
+                resolved for p in creates_files_list
+                if (resolved := _resolve_planned_path(p)) is not None
+            }
 
         # affected_files drift check: warn when EVERY declared path is
         # missing from disk (decomposer hallucinated names that don't
@@ -4659,6 +4694,7 @@ def validate_blueprint_contract(
                     missing_present = [
                         p for p in expected_present
                         if not (project_root_check / p).exists()
+                        and _resolve_planned_path(p) not in dependency_outputs
                     ]
                     if expected_present and missing_present == expected_present:
                         warnings.append(
@@ -4898,10 +4934,15 @@ def validate_blueprint_contract(
                     "(did you forget to add it?)"
                 )
 
-    # (b) reverse-phantom: coverage_map keys absent from the index.
+    # (b) reverse-phantom: soft preferences have their own declaration; the
+    # Requirements Index vocabulary covers AC/INV/HC/CCR, not soft constraints.
     if _index_present and isinstance(coverage_map, dict):
         for _ckey in coverage_map:
-            if isinstance(_ckey, str) and _ckey not in _index_id_set:
+            if (
+                isinstance(_ckey, str)
+                and _ckey not in _index_id_set
+                and _ckey not in soft_constraint_ids
+            ):
                 warnings.append(
                     f"coverage_map key {_ckey!r} is not in the Requirements Index "
                     "(possible hallucinated/extra requirement)"

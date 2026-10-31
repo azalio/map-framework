@@ -13758,6 +13758,136 @@ class TestST008EntryPoint:
 # ============================================================================
 
 
+class TestBlueprintDependencyCreation:
+    """Planned dependency outputs exist for drift purposes, not on disk yet."""
+
+    @pytest.mark.parametrize("shape", ["direct", "transitive", "diamond", "mixed", "normalized", "cross_repo"])
+    def test_upstream_outputs_do_not_warn(self, branch_workspace, monkeypatch, shape):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        bp = TestBlueprintContractAffectedFilesDrift()._bp(["src/new.py"])
+        first = bp["subtasks"][0]
+        first["creates_files"] = ["src/new.py"]
+        dependent = dict(first, id="ST-002", dependencies=["ST-001"], creates_files=[])
+        bp["subtasks"].append(dependent)
+        if shape in {"transitive", "diamond"}:
+            dependent["affected_files"] = []
+            last = dict(first, id="ST-003", dependencies=["ST-002"], creates_files=[])
+            bp["subtasks"].append(last)
+            if shape == "diamond":
+                last["affected_files"] = []
+                last["dependencies"] = ["ST-001"]
+                bp["subtasks"].append(dict(
+                    first, id="ST-004", dependencies=["ST-002", "ST-003"], creates_files=[]
+                ))
+        elif shape == "mixed":
+            dependent["affected_files"] = ["src/new.py", "missing.py"]
+        elif shape == "normalized":
+            dependent["affected_files"] = [str(repo / "src" / "new.py")]
+        elif shape == "cross_repo":
+            first["affected_files"] = first["creates_files"] = ["../sibling/new.py"]
+            dependent["affected_files"] = ["../sibling/new.py"]
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(bp))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"], result["errors"]
+        assert not any("affected_files drift" in w for w in result["warnings"])
+        assert any("cross-repo affected_files" in w for w in result["warnings"]) is (shape == "cross_repo")
+        assert not (repo / "src/new.py").exists()
+
+    @pytest.mark.parametrize("shape", [
+        "unrelated", "future", "unknown", "duplicate", "self", "cycle",
+        "legacy", "malformed", "orphan", "different",
+    ])
+    def test_unestablished_outputs_still_warn(self, branch_workspace, monkeypatch, shape):
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(branch_workspace.parents[1]))
+        bp = TestBlueprintContractAffectedFilesDrift()._bp(["new.py"])
+        first = bp["subtasks"][0]
+        first["creates_files"] = ["new.py"]
+        dependent = dict(first, id="ST-002", dependencies=["ST-001"], creates_files=[])
+        bp["subtasks"].append(dependent)
+        if shape == "unrelated":
+            dependent["dependencies"] = []
+        elif shape == "future":
+            bp["subtasks"].reverse()
+        elif shape == "unknown":
+            dependent["dependencies"] = ["ST-999"]
+        elif shape == "duplicate":
+            bp["subtasks"].insert(1, dict(first))
+        elif shape == "self":
+            dependent["dependencies"] = ["ST-002"]
+        elif shape == "cycle":
+            first["dependencies"] = ["ST-002"]
+        elif shape == "legacy":
+            del first["creates_files"]
+            first["description"] = "Creates new file"
+        elif shape == "malformed":
+            first["creates_files"] = "new.py"
+        elif shape == "orphan":
+            first["affected_files"] = []
+        elif shape == "different":
+            dependent["affected_files"] = ["other.py"]
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(bp))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is (shape in {"unrelated", "legacy", "different"})
+        assert any(w.startswith("ST-002: affected_files drift") for w in result["warnings"])
+
+
+class TestBlueprintSoftConstraintIndex:
+    """Soft preferences are declared separately but still need honest coverage."""
+
+    @pytest.mark.parametrize("mode", ["covered", "rationale", "unknown", "missing_tag", "bad_owner", "missing"])
+    def test_soft_constraint_coverage(self, tmp_path, monkeypatch, mode):
+        bp = TestBlueprintContractAffectedFilesDrift()._bp([])
+        bp["soft_constraints"] = [{"id": "SC-1", "description": "Prefer small changes"}]
+        if mode == "rationale":
+            bp["soft_constraints"][0]["tradeoff_rationale"] = "Tradeoff accepted"
+        elif mode != "missing":
+            key = "SC-99" if mode == "unknown" else "SC-1"
+            bp["coverage_map"][key] = "ST-999" if mode == "bad_owner" else "ST-001"
+            if mode != "missing_tag":
+                bp["subtasks"][0]["validation_criteria"].append(f"VC2 [{key}]: checked")
+        spec = _make_spec("requirements:\n  - id: HC-1\n    kind: hard_constraint\n")
+        result = _run_gate(tmp_path, "test-branch", monkeypatch, spec, bp)
+        assert result["valid"] is (mode in {"covered", "rationale"}), result
+        phantom = [w for w in result["warnings"] if "not in the Requirements Index" in w]
+        assert bool(phantom) is (mode == "unknown"), phantom
+
+    def test_supported_runner_cli_accepts_greenfield_plan(self, branch_workspace, monkeypatch):
+        """Exercise the command used by installed map-plan, including spec lookup."""
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        bp = TestBlueprintContractAffectedFilesDrift()._bp(["new.py"])
+        first = bp["subtasks"][0]
+        first["creates_files"] = ["new.py"]
+        bp["subtasks"].append(dict(
+            first, id="ST-002", dependencies=["ST-001"], creates_files=[]
+        ))
+        bp["soft_constraints"] = [{"id": "SC-1", "description": "Prefer small changes"}]
+        bp["coverage_map"]["SC-1"] = "ST-002"
+        bp["subtasks"][1]["validation_criteria"] = ["VC1 [SC-1]: checked"]
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(bp))
+        # A non-Git fixture uses the installed runner's default branch directory.
+        default = repo / ".map" / "default"
+        default.mkdir()
+        (default / "spec_default.md").write_text(_make_spec(
+            "requirements:\n  - id: HC-1\n    kind: hard_constraint\n"
+        ))
+        completed = subprocess.run(
+            [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"),
+             "validate_blueprint_contract", str(path)],
+            cwd=repo, capture_output=True, text=True, check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+        result = json.loads(completed.stdout)
+        assert result["valid"], result
+        assert result["forward_coverage"]["status"] == "present_nonempty"
+        assert not any("affected_files drift" in w or "not in the Requirements Index" in w
+                       for w in result["warnings"])
+
+
 class TestST009Guardrails:
     """VC1, VC2, VC3 for ST-009."""
 
