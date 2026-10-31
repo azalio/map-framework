@@ -965,6 +965,11 @@ run in every phase.
 Session-start memory finalization and recall run through one ordered wrapper so
 they cannot race even though Codex executes peer hook handlers concurrently.
 
+The Ralph iteration logger accepts both structured and textual tool responses.
+Textual responses are logged with the default effectiveness score of 1.0;
+the hook does not infer success or failure from their wording. Structured
+exit codes and explicit error/success fields retain their usual scoring.
+
 On reinstall or upgrade, MAP removes stale MAP-owned `.codex/hooks/` handlers,
 merges the current registrations, and preserves unrelated project hooks. The
 installed `hooks.json` keeps Codex's strict top-level schema: only `hooks`.
