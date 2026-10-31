@@ -1157,6 +1157,15 @@ Current delta captured:
   module graphs with full Git identity and completed-roster file coverage;
   unsupported languages/import structures retain full review.
   Acceptance-tag coverage alone is not file-review coverage.
+  Role-reviewer schemas and retry prompts share `REVIEW_COVERAGE_RECEIPT_SCHEMA`.
+  The early response gate, direct role capture, adversarial aggregation and ledger
+  use one receipt-shape validator for the four string arrays. Aggregate capture
+  also checks nested role receipts and scheduled-role entries before replacing
+  stored evidence. Explicit not-run/parse-error entries without raw responses remain
+  collection failures, so peer findings survive without granting approval. Invalid shape
+  cannot replace a captured role response or aggregate. Valid skipped/denied scope
+  remains evidence; only ledger completeness and current runner check receipts can
+  establish approval.
 
 - Evidence-backed finding validation (#522) extends Step A.3 and the same
   finding ledger, not a new validator service or review stage. Finding identity

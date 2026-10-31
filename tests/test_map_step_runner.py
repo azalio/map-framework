@@ -19138,6 +19138,8 @@ class TestRoleReviewers:
                 "all_clear_rationale": "no rot found",
                 "findings": [],
                 "checks_performed": ["A1"],
+                "receipt": {"covered_files": [], "skipped_files": [],
+                            "denied_access": [], "check_evidence": []},
             }
         )
         report = map_step_runner.detect_truncated_agent_output(
@@ -19162,6 +19164,7 @@ class TestRoleReviewers:
                     self._complete_finding(id="F-U-02", why_better="", cost=""),
                 ],
                 "checks_performed": ["old path"],
+                "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [], "check_evidence": []},
             }
         )
         result = map_step_runner.aggregate_adversarial_findings(

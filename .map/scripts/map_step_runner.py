@@ -10553,6 +10553,29 @@ def capture_review_output(
     data = json.loads(payload)
     if not isinstance(data, dict):
         raise ValueError("Reviewer capture must be a JSON object")
+    if reviewer in ROLE_REVIEWER_IDS:
+        receipt_errors = _review_coverage_receipt_errors(data.get("receipt"))
+        if receipt_errors:
+            raise ValueError("Invalid reviewer coverage receipt: " + "; ".join(receipt_errors))
+    elif reviewer == "adversarial":
+        statuses = data.get("reviewer_status")
+        if not isinstance(statuses, dict):
+            raise ValueError("Adversarial reviewer_status must be an object")
+        for role in ROLE_REVIEWER_IDS:
+            if role not in statuses:
+                if role in run["scheduled_reviewers"]:
+                    raise ValueError(f"Adversarial reviewer_status omits scheduled role {role}")
+                continue
+            entry = statuses[role]
+            # Explicit collection failures carry no claimed coverage. Preserve them
+            # so the ledger can retain peer findings while refusing approval.
+            if (isinstance(entry, dict) and entry.get("status") in {"not_run", "parse_error"}
+                    and "raw" not in entry):
+                continue
+            raw = entry.get("raw") if isinstance(entry, dict) else None
+            receipt_errors = _review_coverage_receipt_errors(raw.get("receipt") if isinstance(raw, dict) else None)
+            if receipt_errors:
+                raise ValueError(f"Invalid {role} coverage receipt: " + "; ".join(receipt_errors))
     if ordering:
         directory = directory / "review-collections" / ordering
     directory.mkdir(parents=True, exist_ok=True)
@@ -10685,10 +10708,7 @@ def _review_completeness(row: dict[str, Any], directory: Path) -> dict[str, Any]
                 for name in binding["scheduled_reviewers"]}
             for name, output in outputs.items():
                 receipt = output.get("receipt", {})
-                if not isinstance(receipt, dict) or any(
-                    not isinstance(receipt.get(key), list) or any(not isinstance(item, str) for item in receipt[key])
-                    for key in ("covered_files", "skipped_files", "denied_access", "check_evidence")
-                ):
+                if _review_coverage_receipt_errors(receipt):
                     reasons.append(f"{ordering}:{name}: missing or invalid reviewer coverage receipt")
                     continue
                 if receipt["denied_access"]:
@@ -12648,6 +12668,26 @@ REVIEW_FINDING_EVIDENCE_SCHEMA: dict[str, object] = {
                              "reason": "<string>", "evidence_refs": ["<current and baseline evidence_refs>"]},
 }
 
+REVIEW_COVERAGE_RECEIPT_SCHEMA = {
+    "covered_files": ["<string — actual source path inspected, including supplied source content>"],
+    "skipped_files": ["<string — required source path not inspected; [] when none>"],
+    "denied_access": ["<string — source path or resource whose access was denied; [] when none>"],
+    "check_evidence": ["<string — current runner-issued check ID; [] when no check receipt is available>"],
+}
+
+
+def _review_coverage_receipt_errors(receipt: object) -> list[str]:
+    """Validate shape only; honest denied/skipped scope is ledger evidence."""
+    if not isinstance(receipt, dict):
+        return ["receipt must be a JSON object"]
+    return [
+        f"receipt.{key} must be an array of strings"
+        for key in REVIEW_COVERAGE_RECEIPT_SCHEMA
+        if not isinstance(receipt.get(key), list)
+        or any(not isinstance(item, str) for item in receipt[key])
+    ]
+
+
 ROLE_FINDING_SCHEMA: dict[str, object] = {
     # Derived from the roster: a new role needs no edit here either.
     "reviewer": "<one of: " + " | ".join(ROLE_REVIEWER_IDS) + ">",
@@ -12672,6 +12712,7 @@ ROLE_FINDING_SCHEMA: dict[str, object] = {
         }
     ],
     "checks_performed": ["<string — list what was actually checked>"],
+    "receipt": REVIEW_COVERAGE_RECEIPT_SCHEMA,
     "resolved_findings": "<array — required when closing carried findings: objects with finding_id, a nonempty evidence string, bug_class, cause, failure_scenario, evidence_refs, reachability, baseline_attribution and sibling_search>",
 }
 
@@ -12865,7 +12906,7 @@ AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
 # absence); `all_clear_rationale` is conditional on it.
 AGENT_OUTPUT_SCHEMAS.update({
     role_id: AgentOutputSchema(
-        required_keys=("reviewer", "all_clear", "findings", "checks_performed"),
+        required_keys=("reviewer", "all_clear", "findings", "checks_performed", "receipt"),
         skeleton=ROLE_FINDING_SCHEMA,
     )
     for role_id in ROLE_REVIEWER_IDS
@@ -13601,7 +13642,12 @@ def _render_role_reviewer_prompt(
         "so research it further or withdraw it rather than softening it. "
         "Prefer no finding over a weak finding. "
         "Set all_clear=true when nothing survived the contract, with a rationale "
-        "explaining what you checked."
+        "explaining what you checked. "
+        "Always include receipt with all four arrays of strings, even when all_clear=true. "
+        "Use [] for an empty category; report skipped files and denied access honestly. "
+        "covered_files names actual source paths inspected, not acceptance citations. "
+        "check_evidence contains only current runner-issued check IDs, never claimed executions. "
+        "checks_performed does not replace receipt; reading/coverage claims remain self_reported."
     )
 
     stable_sections = [
@@ -13983,6 +14029,8 @@ def aggregate_adversarial_findings(
         try:
             parsed = json.loads(raw_json)
             envelope_error = _adversarial_reviewer_error(parsed)
+            if not envelope_error and reviewer_id in ROLE_REVIEWER_IDS:
+                envelope_error = "; ".join(_review_coverage_receipt_errors(parsed.get("receipt"))) or None
             if envelope_error:
                 reviewer_data[reviewer_id] = {"status": "parse_error", "error": envelope_error}
                 findings_by_reviewer[reviewer_id] = []
@@ -17074,6 +17122,8 @@ def detect_truncated_agent_output(
     missing = [k for k in expected_keys if k not in parsed]
     for key in missing:
         reasons.append(f"missing required key: {key}")
+    if agent_kind in ROLE_REVIEWER_IDS:
+        reasons.extend(_review_coverage_receipt_errors(parsed.get("receipt")))
 
     return {
         "truncated": bool(reasons),
