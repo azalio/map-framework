@@ -19138,6 +19138,8 @@ class TestRoleReviewers:
                 "all_clear_rationale": "no rot found",
                 "findings": [],
                 "checks_performed": ["A1"],
+                "receipt": {"covered_files": [], "skipped_files": [],
+                            "denied_access": [], "check_evidence": []},
             }
         )
         report = map_step_runner.detect_truncated_agent_output(

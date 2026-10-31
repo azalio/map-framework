@@ -145,15 +145,20 @@ def test_security_capture_passes_independently_but_consent_stays_pending(sensiti
 
 
 @pytest.mark.parametrize("receipt", [None, [], "invalid", {"covered_files": [{}]}, {"covered_files": [[]]}])
-def test_security_gate_rejects_malformed_legitimately_captured_receipt(sensitive_repo, receipt):
+def test_security_capture_rejects_malformed_receipt_before_persistence(sensitive_repo, receipt):
     del sensitive_repo
     profile = Path(".claude/agents/review-reader.md")
     profile.parent.mkdir(parents=True)
     profile.write_text("---\nname: review-reader\ntools: Read, Glob, Grep\n---\nRead only.\n")
     admitted = runner.begin_review_run(branch="feature", provider="claude")
     payload = {"reviewer": "security", "all_clear": True, "findings": [], "receipt": receipt}
+    ledger_path = Path(".map/feature/review-verdict-ledger.json")
+    before = ledger_path.read_bytes()
     capture = runner.capture_review_output("security", json.dumps(payload), admitted["round_id"], branch="feature")
-    assert capture["status"] == "success", capture
+    assert capture["status"] == "error", capture
+    assert "coverage receipt" in capture["message"]
+    assert ledger_path.read_bytes() == before
+    assert not Path(".map/feature/review-agent-security.json").exists()
     directory = Path(".map/feature")
     row = json.loads((directory / "review-verdict-ledger.json").read_text())["convergence"]["rounds"][-1]
     gate = runner._review_security_gate(row, directory)

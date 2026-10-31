@@ -273,6 +273,12 @@ def _role_clear(role: str) -> dict:
         "all_clear_rationale": "old path unchanged; no new mandatory flag",
         "findings": [],
         "checks_performed": ["old path", "flag names"],
+        "receipt": {
+            "covered_files": [],
+            "skipped_files": [],
+            "denied_access": [],
+            "check_evidence": [],
+        },
     }
 
 
