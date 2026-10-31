@@ -213,6 +213,11 @@ def test_security_findings_consume_complete_rounds_but_missing_coverage_stays_pe
         assert result["status"] == "success", result
         ledger = json.loads((directory / "review-verdict-ledger.json").read_text())
         previous_receipt = ledger["convergence"]["rounds"][-1]["receipts"]["default:security"]
+        for historical in ledger["convergence"]["rounds"][:-1]:
+            for witness in historical["receipts"].values():
+                archived_capture = directory / witness["artifact"]
+                assert "review-input-archive" in archived_capture.parts
+                assert hashlib.sha256(archived_capture.read_bytes()).hexdigest() == witness["sha256"]
         assert ledger["code_approval"]["approved"] is False
         assert ledger["computed_verdict"] != "PROCEED"
         assert runner.write_stage_gate("review", "ready", branch="feature")["status"] == "error"

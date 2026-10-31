@@ -9150,7 +9150,7 @@ def _scoped_review_diff(branch: str | None, supplied: str | None) -> tuple[str, 
 
 
 def _prepare_review_inputs(directory: Path, ledger: dict[str, Any], row: dict[str, Any]) -> list[str]:
-    """Replay an interrupted archive using the durable admission's fixed move list."""
+    """Replay the admission archive and relocate matching historical receipt paths."""
     archive = directory / "review-input-archive" / row["round_id"].encode().hex()
     archive.mkdir(parents=True, exist_ok=True)
     for name in row["archive_inputs"]:
@@ -9159,6 +9159,26 @@ def _prepare_review_inputs(directory: Path, ledger: dict[str, Any], row: dict[st
             continue
         if source.exists():
             source.rename(target)
+    # Receipts use branch-relative paths. Relocate only references to this
+    # admission's moved inputs, including nested compare-ordering captures.
+    # Run after all moves, also on replay when the archive already exists.
+    for previous in ledger.get("convergence", {}).get("rounds", []):
+        if previous is row:
+            continue
+        receipts = previous.get("receipts", {})
+        if not isinstance(receipts, dict):
+            continue
+        for receipt in receipts.values():
+            if not isinstance(receipt, dict) or not isinstance(receipt.get("artifact"), str):
+                continue
+            artifact = Path(receipt["artifact"])
+            if (artifact.is_absolute() or ".." in artifact.parts or not artifact.parts
+                    or artifact.parts[0] not in row["archive_inputs"]):
+                continue
+            archived = archive / artifact
+            if (archived.is_file() and not archived.is_symlink()
+                    and hashlib.sha256(archived.read_bytes()).hexdigest() == receipt.get("sha256")):
+                receipt["artifact"] = str(archived.relative_to(directory))
     _write_json_file(directory / "review-mode.json", {**row["binding"], "round_id": row["round_id"]})
     row["prepared"] = True
     _write_json_file(directory / "review-verdict-ledger.json", ledger)

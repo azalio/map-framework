@@ -1,5 +1,6 @@
 """Tests for normalize_review_verdict and write_review_verdict_ledger (issue #406)."""
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -1943,10 +1944,20 @@ def test_completed_round_rejects_changed_submission_and_corrupt_history(review_g
     assert capture.exists()
 
 
-def test_archive_interruption_resumes_same_admission(branch_workspace, monkeypatch):
+@pytest.mark.parametrize("ordering", ["", "default", "reverse"])
+def test_archive_interruption_resumes_same_admission(branch_workspace, monkeypatch, ordering):
+    """Recover moved captures and their receipt paths after an interrupted admission."""
     runner = cast(Any, map_step_runner)
-    marker = branch_workspace / "review-agent-monitor.json"
-    marker.write_text("old capture")
+    mode = "compare_orderings" if ordering else "normal"
+    admission = runner.begin_review_run(review_mode=mode, scheduled_reviewers=["monitor"], round_id="first")
+    assert admission["status"] == "success", admission
+    assert runner.capture_review_output("monitor", json.dumps(_monitor_no_issues()), "first",
+                                        ordering=ordering)["status"] == "success"
+    ledger_path = branch_workspace / "review-verdict-ledger.json"
+    ledger = json.loads(ledger_path.read_text())
+    witness = ledger["convergence"]["rounds"][0]["receipts"][f"{ordering or 'default'}:monitor"]
+    old_capture = (branch_workspace / witness["artifact"]).read_bytes()
+    assert runner.abandon_review_round("first", reason="Exercise archive recovery")["status"] == "success"
     rename = Path.rename
 
     def interrupt(self, target):
@@ -1955,12 +1966,18 @@ def test_archive_interruption_resumes_same_admission(branch_workspace, monkeypat
 
     with monkeypatch.context() as patch:
         patch.setattr(Path, "rename", interrupt)
-        assert runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="first")["status"] == "error"
-    assert runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="first")["resumed"]
+        assert runner.begin_review_run(review_mode=mode, scheduled_reviewers=["monitor"],
+                                       round_id="second")["status"] == "error"
+    assert runner.begin_review_run(review_mode=mode, scheduled_reviewers=["monitor"], round_id="second")["resumed"]
     archives = list(branch_workspace.rglob("review-agent-monitor.json"))
-    assert len(archives) == 1 and archives[0].read_text() == "old capture"
-    ledger = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())
-    assert len(ledger["convergence"]["rounds"]) == 1
+    assert len(archives) == 1 and archives[0].read_bytes() == old_capture
+    ledger = json.loads(ledger_path.read_text())
+    assert len(ledger["convergence"]["rounds"]) == 2
+    relocated = ledger["convergence"]["rounds"][0]["receipts"][f"{ordering or 'default'}:monitor"]
+    assert (branch_workspace / relocated["artifact"]) == archives[0]
+    assert {key: value for key, value in relocated.items() if key != "artifact"} == {
+        key: value for key, value in witness.items() if key != "artifact"}
+    assert hashlib.sha256(archives[0].read_bytes()).hexdigest() == relocated["sha256"]
 
 
 def test_incremental_scope_includes_dependent_modules_and_falls_back(branch_workspace, monkeypatch):
