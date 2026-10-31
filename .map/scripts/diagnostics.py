@@ -28,13 +28,21 @@ def utc_now() -> str:
 
 def get_branch_name() -> str:
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
-        )
+        # Symbolic HEAD exists even before the branch has its first commit.
+        # rev-parse retains the historical detached-HEAD fallback.
+        for command in (
+            ["symbolic-ref", "--quiet", "--short", "HEAD"],
+            ["rev-parse", "--abbrev-ref", "HEAD"],
+        ):
+            result = subprocess.run(
+                ["git", *command],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                break
         if result.returncode == 0:
             branch = result.stdout.strip()
             sanitized = branch.replace("/", "-")

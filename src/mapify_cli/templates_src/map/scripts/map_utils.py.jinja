@@ -184,17 +184,27 @@ def sanitize_branch_name(branch: str) -> str:
 def get_branch_name() -> str:
     """Get sanitized git branch name.
 
-    Returns the current git branch with unsafe characters replaced by hyphens.
+    Returns the current git branch with unsafe characters replaced by hyphens,
+    including an unborn branch before its first commit. Detached HEAD retains
+    the historical 'HEAD' scope.
     Falls back to 'default' on any error (not in a git repo, git not installed, etc.).
     """
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=1,
-            check=False,
-        )
+        # Symbolic HEAD exists even before the branch has its first commit.
+        # rev-parse retains the historical detached-HEAD fallback.
+        for command in (
+            ["symbolic-ref", "--quiet", "--short", "HEAD"],
+            ["rev-parse", "--abbrev-ref", "HEAD"],
+        ):
+            result = subprocess.run(
+                ["git", *command],
+                capture_output=True,
+                text=True,
+                timeout=1,
+                check=False,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                break
         if result.returncode == 0:
             return sanitize_branch_name(result.stdout.strip())
         return "default"

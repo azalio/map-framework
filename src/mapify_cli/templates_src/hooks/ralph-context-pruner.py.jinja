@@ -62,14 +62,22 @@ def sanitize_branch_name(branch: str) -> str:
 def get_branch_name() -> str:
     """Get current git branch name (sanitized) for branch-scoped artifacts."""
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-            cwd=PROJECT_DIR,
-            timeout=2,
-            check=False,
-        )
+        # Symbolic HEAD exists even before the branch has its first commit.
+        # rev-parse retains the historical detached-HEAD fallback.
+        for command in (
+            ["symbolic-ref", "--quiet", "--short", "HEAD"],
+            ["rev-parse", "--abbrev-ref", "HEAD"],
+        ):
+            result = subprocess.run(
+                ["git", *command],
+                capture_output=True,
+                text=True,
+                cwd=PROJECT_DIR,
+                timeout=2,
+                check=False,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                break
         if result.returncode == 0:
             return sanitize_branch_name(result.stdout.strip())
     except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate

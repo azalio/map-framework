@@ -235,6 +235,8 @@ under each available supported Bash, including non-diagnostic/no-finding paths.
 - `.map/<branch>/approval_holds.json` and `.map/<branch>/approval_hold_<id>.md`: Durable human-gate artifacts for pending/decided approval holds
 - `.map/wayfind/<slug>/`: **Repo-level** (not branch-scoped) decision maps for `/map-wayfind`. Holds the canonical `state.json`, regenerated `map.md` and `tickets/*.md` views (DO-NOT-EDIT banner), author-written `resolutions/*.md` (+ `*.human.md` verbatim human answers), and the final `handoff.md`/`handoff.json`. Maps outlive branches and are committed by default.
 
+Branch discovery reads symbolic HEAD first, so an unborn branch has the same sanitized artifact scope before and after its first commit. Planning, diagnostics, handoff manifest registration and both providers' hooks use this rule. The legacy `rev-parse` fallback preserves detached-HEAD behavior. Worktree branch guards also recognize unborn refs, but creating or merging isolated work still requires a real commit; branch discovery never substitutes a synthetic base.
+
 ### Codex parity boundary
 
 The Codex provider ships the same 23 workflow entry points as Claude and nine
