@@ -60,7 +60,7 @@ exec_command:
     # 3. Refresh the base so the comparison reflects what would actually merge.
     git fetch origin "${BASE#origin/}" --quiet
     echo "BASE=$BASE"
-    echo "CURRENT=$(git rev-parse --abbrev-ref HEAD)"
+    echo "CURRENT=$(git symbolic-ref --quiet --short HEAD || git rev-parse --abbrev-ref HEAD)"
 ```
 
 ### Mode A — Project overview (current branch is `main`/`master`, OR `HEAD` == `$BASE`)

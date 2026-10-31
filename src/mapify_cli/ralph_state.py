@@ -10,6 +10,7 @@ State persisted to .map/<branch>/ralph_state.json
 Circuit breaker config source: .claude/ralph-loop-config.json
 """
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -299,7 +300,7 @@ def sanitize_branch_name(branch: str) -> str:
     # Prevent path traversal attempts
     if ".." in sanitized or sanitized.startswith("."):
         return "default"
-    return sanitized or "default"
+    return sanitized or ("branch-" + hashlib.sha256(branch.encode("utf-8")).hexdigest() if branch else "default")
 
 
 @dataclass

@@ -53,7 +53,7 @@ fi
 # 3. Refresh the base so the comparison reflects what would actually merge.
 git fetch origin "${BASE#origin/}" --quiet
 
-CURRENT=$(git rev-parse --abbrev-ref HEAD)
+CURRENT=$(git symbolic-ref --quiet --short HEAD || git rev-parse --abbrev-ref HEAD)
 ```
 
 Then choose **one** of the two modes below and follow it.

@@ -16596,7 +16596,7 @@ def _sanitize_branch(branch: str) -> str:
     sanitized = re.sub(r"-+", "-", sanitized).strip("-")
     if ".." in sanitized or sanitized.startswith("."):
         return "default"
-    return sanitized or "default"
+    return sanitized or ("branch-" + hashlib.sha256(branch.encode("utf-8")).hexdigest() if branch else "default")
 
 
 _RESEARCH_KIND_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -23304,6 +23304,14 @@ def _wt_git(
         return subprocess.CompletedProcess(args, returncode=255, stdout="", stderr=str(exc))
 
 
+def _wt_branch_ref(cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """Read attached branch names before the first commit; preserve detached HEAD."""
+    result = _wt_git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd=cwd, timeout=10)
+    if result.returncode == 0 and result.stdout.strip():
+        return result
+    return _wt_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd, timeout=10)
+
+
 def _wt_error(kind: str, message: str, **extra: object) -> dict[str, object]:
     """Structured guard failure the skill can branch on by ``kind``."""
     payload: dict[str, object] = {
@@ -23359,7 +23367,7 @@ def _wt_cwd_is_managed_worktree() -> bool:
     them from inside a linked worktree would resolve `.map/<branch>/` against the
     wrong root and silently desync workflow state (council Q6).
     """
-    r = _wt_git(["rev-parse", "--abbrev-ref", "HEAD"], timeout=10)
+    r = _wt_branch_ref()
     if r.returncode == 0 and r.stdout.strip().startswith(WORKTREE_BRANCH_PREFIX):
         return True
     top = _wt_toplevel()
@@ -24019,7 +24027,7 @@ def cleanup_orphan_worktrees(branch: str) -> dict[str, object]:
     # Enumerate candidates from storage root + git worktree list
     candidate_paths: set[Path] = set()
 
-    current = _wt_git(["rev-parse", "--abbrev-ref", "HEAD"], timeout=10)
+    current = _wt_branch_ref()
     current_ref = current.stdout.strip() if current.returncode == 0 else ""
     storage_branch = (
         current_ref
@@ -24541,7 +24549,7 @@ def create_subtask_worktree(
     attempt = max(0, int(attempt))
     branch_name = branch or get_branch_name()
 
-    cur = _wt_git(["rev-parse", "--abbrev-ref", "HEAD"], timeout=10)
+    cur = _wt_branch_ref()
     cur_branch = cur.stdout.strip() if cur.returncode == 0 else ""
     if cur_branch in WORKTREE_PROTECTED_REFS:
         return _wt_error(
@@ -24590,7 +24598,7 @@ def create_subtask_worktree(
     for previous in (alternate, legacy_path):
         if previous is None or previous == storage or not previous.exists():
             continue
-        actual_ref = _wt_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=previous)
+        actual_ref = _wt_branch_ref(cwd=previous)
         if actual_ref.returncode != 0 or actual_ref.stdout.strip() != wt_branch:
             continue
         if previous == legacy_path and not _wt_legacy_storage_unambiguous(branch_name):
@@ -24803,7 +24811,7 @@ def _wt_freeze_and_verify(
             commit.stderr.strip() or "git commit failed in worktree",
         )
 
-    head_branch = _wt_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=wt_path, timeout=10)
+    head_branch = _wt_branch_ref(cwd=wt_path)
     if head_branch.stdout.strip() != wt_branch:
         return _wt_error(
             "WORKTREE_HEAD_MOVED",
@@ -25529,7 +25537,7 @@ def merge_wave_worktrees(
 
     # The target must be an attached, clean branch before we touch it — rollback
     # semantics depend on it. MAP runtime state is excluded from the dirty check.
-    cur = _wt_git(["rev-parse", "--abbrev-ref", "HEAD"], timeout=10)
+    cur = _wt_branch_ref()
     if cur.returncode != 0 or cur.stdout.strip() == "HEAD":
         return _wt_error(
             "DETACHED_HEAD",

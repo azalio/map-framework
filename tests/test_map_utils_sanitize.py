@@ -90,7 +90,7 @@ class TestSanitizeBranchName:
 
     def test_empty_returns_default(self) -> None:
         assert sanitize_branch_name("") == "default"
-        assert sanitize_branch_name("---") == "default"
+        assert sanitize_branch_name("---").startswith("branch-")
 
     def test_non_string_returns_default(self) -> None:
         # Defensive: if a caller hands us a non-string (e.g. None when an

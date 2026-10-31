@@ -112,7 +112,7 @@ A ready plan needs no approval. Pending `plan_approval` (left by an older `/map-
 Run this BEFORE any `$TASK_ARGS` validation.
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 STATE_FILE=".map/${BRANCH}/step_state.json"
 PLAN_FILE=".map/${BRANCH}/task_plan_${BRANCH}.md"
 
@@ -210,7 +210,7 @@ guidance: [efficient-reference.md](efficient-reference.md#pre-flight-test-baseli
 ### Wave Computation (after INIT_STATE) - REQUIRED
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 if [ -f ".map/${BRANCH}/blueprint.json" ]; then
   python3 .map/scripts/map_orchestrator.py set_waves --blueprint .map/${BRANCH}/blueprint.json
 else

@@ -6,6 +6,11 @@ from pathlib import Path
 
 import pytest
 
+_BRANCH_WARNING = (
+    "MAP warning: could not determine Git branch; "
+    "using .map/default/ for workflow artifacts."
+)
+
 
 def _run_hook(tmp_project_dir: Path, stdin_payload: dict) -> tuple[int, str, str]:
     return _run_hook_raw(tmp_project_dir, json.dumps(stdin_payload))
@@ -127,7 +132,7 @@ def test_injects_for_edit_when_step_state_exists(
         tmp_path, {"tool_name": "Edit", "tool_input": {"file_path": "x"}}
     )
     assert code == 0
-    assert err == ""
+    assert err == _BRANCH_WARNING
     payload = json.loads(out)
     additional = payload["hookSpecificOutput"]["additionalContext"]
     assert "[MAP]" in additional
@@ -186,7 +191,7 @@ def test_uses_claude_project_dir_for_branch_detection(tmp_path: Path) -> None:
     )
 
     assert code == 0
-    assert err == ""
+    assert err == _BRANCH_WARNING
     payload = json.loads(out)
     additional = payload["hookSpecificOutput"]["additionalContext"]
     assert "2.3" in additional
@@ -201,7 +206,7 @@ def test_skips_for_readonly_bash(tmp_path: Path) -> None:
         {"tool_name": "Bash", "tool_input": {"command": "ls"}},
     )
     assert code == 0
-    assert err == ""
+    assert err == _BRANCH_WARNING
     assert out == "{}"
 
 
@@ -228,7 +233,7 @@ def test_records_skipped_for_insignificant_bash_when_state_exists(
     )
 
     assert code == 0
-    assert err == ""
+    assert err == _BRANCH_WARNING
     assert out == "{}"
     state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
     assert state["hook_injection"]["status"] == "skipped"
@@ -256,7 +261,7 @@ def test_records_malformed_hook_input_when_state_exists(
     code, out, err = _run_hook_raw(tmp_path, "{")
 
     assert code == 0
-    assert err == ""
+    assert err == _BRANCH_WARNING
     assert out == "{}"
     state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
     assert state["hook_injection"]["status"] == "skipped"
@@ -287,7 +292,7 @@ def test_non_string_bash_command_remains_non_blocking(
     )
 
     assert code == 0
-    assert err == ""
+    assert err == _BRANCH_WARNING
     assert out == "{}"
     state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
     assert state["hook_injection"]["status"] == "skipped"
@@ -317,7 +322,7 @@ def test_records_unsupported_tool_when_state_exists(
     )
 
     assert code == 0
-    assert err == ""
+    assert err == _BRANCH_WARNING
     assert out == "{}"
     state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
     assert state["hook_injection"]["status"] == "skipped"
@@ -352,7 +357,7 @@ def test_schema_invalid_step_state_fields_remain_non_blocking(
     )
 
     assert code == 0
-    assert err == ""
+    assert err == _BRANCH_WARNING
     assert out == "{}"
     state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
     assert state["hook_injection"]["status"] == "skipped"
@@ -370,7 +375,7 @@ def test_missing_step_state_remains_non_blocking_without_creating_state(
     )
 
     assert code == 0
-    assert err == ""
+    assert err == _BRANCH_WARNING
     assert out == "{}"
     assert not state_file.exists()
 
@@ -389,7 +394,7 @@ def test_invalid_step_state_remains_non_blocking_without_clobbering_state(
     )
 
     assert code == 0
-    assert err == ""
+    assert err == _BRANCH_WARNING
     assert out == "{}"
     assert state_file.read_text(encoding="utf-8") == "{"
 
@@ -421,7 +426,7 @@ def test_injects_for_pytest_bash_when_step_state_exists(
         {"tool_name": "Bash", "tool_input": {"command": "pytest -q"}},
     )
     assert code == 0
-    assert err == ""
+    assert err == _BRANCH_WARNING
     payload = json.loads(out)
     additional = payload["hookSpecificOutput"]["additionalContext"]
     assert "2.8" in additional
@@ -479,7 +484,7 @@ def test_conflict_guardrail_warns_for_rebase_preflight(
     )
 
     assert code == 0
-    assert err == ""
+    assert err == _BRANCH_WARNING
     payload = json.loads(out)
     additional = payload["hookSpecificOutput"]["additionalContext"]
     assert "[MAP-CONFLICT] Merge/rebase preflight" in additional
@@ -497,7 +502,7 @@ def test_conflict_guardrail_skips_clean_lifecycle_command(
     )
 
     assert code == 0
-    assert err == ""
+    assert err == _BRANCH_WARNING
     payload = json.loads(out)
     additional = payload["hookSpecificOutput"]["additionalContext"]
     assert "[MAP]" in additional
@@ -544,7 +549,7 @@ def test_records_skipped_when_state_has_no_reminder(
     )
 
     assert code == 0
-    assert err == ""
+    assert err == _BRANCH_WARNING
     assert out == "{}"
     state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
     assert state["hook_injection"]["status"] == "skipped"
@@ -1089,7 +1094,7 @@ def _get_additional_context(tmp_project_dir):
     """Run the hook and return the additionalContext string."""
     rc, out, err = _run_hook(tmp_project_dir, _eligible_payload())
     assert rc == 0, f"hook exited {rc}: {err}"
-    assert err == "", f"unexpected stderr: {err!r}"
+    assert err == _BRANCH_WARNING, f"unexpected stderr: {err!r}"
     payload = json.loads(out)
     return payload["hookSpecificOutput"]["additionalContext"]
 
@@ -1337,7 +1342,7 @@ class TestTerminalStateSuppress:
             {"tool_name": "Edit", "tool_input": {"file_path": "src/foo.py"}},
         )
         assert code == 0
-        assert err == ""
+        assert err == _BRANCH_WARNING
         assert "REQUIRED" not in out
         assert "Complete phase COMPLETE" not in out
         assert "map_orchestrator.py archive" in out
@@ -1352,7 +1357,7 @@ class TestTerminalStateSuppress:
             {"tool_name": "Write", "tool_input": {"file_path": "docs/x.md", "content": "x"}},
         )
         assert code == 0
-        assert err == ""
+        assert err == _BRANCH_WARNING
         assert "REQUIRED" not in out
         assert "map_orchestrator.py archive" in out
 
@@ -1365,7 +1370,7 @@ class TestTerminalStateSuppress:
             {"tool_name": "Bash", "tool_input": {"command": "pytest -q"}},
         )
         assert code == 0
-        assert err == ""
+        assert err == _BRANCH_WARNING
         assert out == "{}"
 
     def test_only_step_id_complete_emits_notice(self, tmp_path: Path) -> None:
@@ -1378,7 +1383,7 @@ class TestTerminalStateSuppress:
             {"tool_name": "Edit", "tool_input": {"file_path": "x"}},
         )
         assert code == 0
-        assert err == ""
+        assert err == _BRANCH_WARNING
         assert "REQUIRED" not in out
         assert "map_orchestrator.py archive" in out
 
@@ -1392,7 +1397,7 @@ class TestTerminalStateSuppress:
             {"tool_name": "Edit", "tool_input": {"file_path": "x"}},
         )
         assert code == 0
-        assert err == ""
+        assert err == _BRANCH_WARNING
         assert "REQUIRED" not in out
         assert "map_orchestrator.py archive" in out
 
@@ -1428,7 +1433,7 @@ class TestTerminalStateSuppress:
             {"tool_name": "Edit", "tool_input": {"file_path": "src/foo.py"}},
         )
         assert code == 0
-        assert err == ""
+        assert err == _BRANCH_WARNING
         assert "REQUIRED" not in out
         assert "map_orchestrator.py archive" in out
 
@@ -1516,7 +1521,7 @@ class TestTerminalStateSuppress:
             {"tool_name": "Edit", "tool_input": {"file_path": "src/foo.py"}},
         )
         assert code == 0
-        assert err == ""
+        assert err == _BRANCH_WARNING
         payload = json.loads(out)
         assert "hookSpecificOutput" in payload
         ctx = payload["hookSpecificOutput"]["additionalContext"]

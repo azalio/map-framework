@@ -79,6 +79,7 @@ if tuple(sys.version_info) < (3, 11):
     )
     sys.exit(0)
 
+import hashlib
 import json
 import os
 import re
@@ -313,7 +314,7 @@ def sanitize_branch_name(branch: str) -> str:
     sanitized = re.sub(r"-+", "-", sanitized).strip("-")
     if ".." in sanitized or sanitized.startswith("."):
         return "default"
-    return sanitized or "default"
+    return sanitized or ("branch-" + hashlib.sha256(branch.encode("utf-8")).hexdigest() if branch else "default")
 
 
 def get_branch_name() -> str:
@@ -321,18 +322,27 @@ def get_branch_name() -> str:
     try:
         import subprocess
 
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-            cwd=PROJECT_DIR,
-            timeout=1,
-            check=False,
-        )
+        # Symbolic HEAD exists even before the branch has its first commit.
+        # rev-parse retains the historical detached-HEAD fallback.
+        for command in (
+            ["symbolic-ref", "--quiet", "--short", "HEAD"],
+            ["rev-parse", "--abbrev-ref", "HEAD"],
+        ):
+            result = subprocess.run(
+                ["git", *command],
+                capture_output=True,
+                text=True,
+                cwd=PROJECT_DIR,
+                timeout=1,
+                check=False,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                break
         if result.returncode == 0:
             return sanitize_branch_name(result.stdout.strip())
     except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
+    print("MAP warning: could not determine Git branch; using .map/default/ for workflow artifacts.", file=sys.stderr)
     return "default"
 
 

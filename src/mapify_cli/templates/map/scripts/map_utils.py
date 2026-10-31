@@ -1,11 +1,14 @@
 """Shared utilities for MAP workflow scripts."""
 
+import argparse
 import contextlib
 import errno
+import hashlib
 import importlib
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -168,8 +171,9 @@ def sanitize_branch_name(branch: str) -> str:
     Replaces ``/`` and any non-``[a-zA-Z0-9_.-]`` character with ``-``,
     collapses runs of hyphens, and strips leading/trailing hyphens. Refuses
     path-traversal patterns (``..`` anywhere, or a leading ``.``) by
-    returning ``"default"``. Empty or all-stripped input also yields
-    ``"default"`` so callers always get a non-empty, traversal-safe segment.
+    returning ``"default"``. Empty input also yields ``"default"``. Non-empty
+    names stripped entirely by normalization use ``branch-<sha256>`` so
+    successfully resolved Unicode branches do not share the fallback scope.
     """
     if not isinstance(branch, str):
         return "default"
@@ -178,25 +182,43 @@ def sanitize_branch_name(branch: str) -> str:
     sanitized = re.sub(r"-+", "-", sanitized).strip("-")
     if ".." in sanitized or sanitized.startswith("."):
         return "default"
-    return sanitized or "default"
+    return sanitized or ("branch-" + hashlib.sha256(branch.encode("utf-8")).hexdigest() if branch else "default")
 
 
 def get_branch_name() -> str:
     """Get sanitized git branch name.
 
-    Returns the current git branch with unsafe characters replaced by hyphens.
-    Falls back to 'default' on any error (not in a git repo, git not installed, etc.).
+    Returns the current git branch with unsafe characters replaced by hyphens,
+    including an unborn branch before its first commit. Detached HEAD retains
+    the historical 'HEAD' scope.
+    Warns on stderr and falls back to 'default' on any error (not in a git repo, git not installed, etc.).
     """
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=1,
-            check=False,
-        )
+        # Symbolic HEAD exists even before the branch has its first commit.
+        # rev-parse retains the historical detached-HEAD fallback.
+        for command in (
+            ["symbolic-ref", "--quiet", "--short", "HEAD"],
+            ["rev-parse", "--abbrev-ref", "HEAD"],
+        ):
+            result = subprocess.run(
+                ["git", *command],
+                capture_output=True,
+                text=True,
+                timeout=1,
+                check=False,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                break
         if result.returncode == 0:
             return sanitize_branch_name(result.stdout.strip())
-        return "default"
-    except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
-        return "default"
+    except Exception:  # noqa: BLE001, S110 -- fallback warning follows; raw Git errors may contain sensitive paths
+        pass
+    print("MAP warning: could not determine Git branch; using .map/default/ for workflow artifacts.", file=sys.stderr)
+    return "default"
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Shared MAP workflow utilities")
+    parser.add_argument("command", choices=["branch"], help="print the current artifact branch scope")
+    parser.parse_args()
+    print(get_branch_name())

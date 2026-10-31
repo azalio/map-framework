@@ -243,7 +243,7 @@ Write each reviewer's JSON envelope verbatim with a quoted heredoc, so nothing
 inside the payload is expanded by the shell:
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 BRANCH_DIR=".map/$BRANCH"
 cat > "$BRANCH_DIR/review-agent-monitor.json" <<'MONITOR_EOF'
 <paste the Monitor JSON envelope verbatim>
@@ -402,7 +402,7 @@ Never discover inputs by scanning the branch directory. Legacy direct file/JSON
 calls remain supported; bare `[]` or `{}` alone is not observed review evidence.
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 BRANCH_DIR=".map/$BRANCH"
 REVIEW_MODE_LABEL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["review_mode"])' "$BRANCH_DIR/review-mode.json") || exit 1
 python3 .map/scripts/map_step_runner.py write_review_verdict_ledger --current-run || exit 1

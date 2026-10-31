@@ -254,6 +254,8 @@ MAP is inspired by the [MAP cognitive architecture](https://github.com/Shanka123
 
 ## What Success Looks Like
 
+Planning and handoff manifest registration work before the first commit: a branch such as `feat/new-project` uses `.map/feat-new-project/`. Isolated Actor worktrees still require an initial commit.
+
 `mapify init` keeps session logs, memory digests and Python bytecode out of Git
 by adding runtime ignore rules. Specs and planning artifacts remain shareable.
 

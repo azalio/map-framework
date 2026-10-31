@@ -216,7 +216,7 @@ contradict a clean precheck require evidence stronger than narrative
 ### Step A.0b: Detect review mode
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 BRANCH_DIR=".map/$BRANCH"
 REVIEW_MODE="full"
 # Empty / placeholder review-bundle.md ⇒ lightweight.
@@ -451,7 +451,7 @@ computed from these files — a role whose file is missing is recorded as an
 unobserved review, not as a clean one.
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 BRANCH_DIR=".map/$BRANCH"
 # For compare-orderings set ORDERING_LABEL=default or reverse in this call.
 # Preserve both collections; do not call begin_review_run between them.
@@ -620,7 +620,7 @@ Run this BEFORE the stage gate: the gate refuses verdicts contradicting the comp
 Use the persisted scheduled roster, not file discovery. The runner passes every expected path, even missing/empty ones; those failures are integrity findings.
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 BRANCH_DIR=".map/$BRANCH"
 REVIEW_MODE_LABEL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["review_mode"])' "$BRANCH_DIR/review-mode.json") || exit 1
 # REVIEW_ROUND_ID is the identity retained with this iteration's dispatched work.
@@ -665,7 +665,7 @@ literal. Positional arguments are `<stage> <verdict> <source_artifact> <notes>` 
 the summary is the FOURTH argument:
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 BRANCH_DIR=".map/$BRANCH"
 FINAL_VERDICT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["computed_verdict"])' "$BRANCH_DIR/review-verdict-ledger.json")
 

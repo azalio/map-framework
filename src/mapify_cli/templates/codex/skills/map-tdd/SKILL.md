@@ -107,7 +107,7 @@ Full-workflow TDD: DECOMPOSE → TEST_WRITER → TEST_FAIL_GATE → ACTOR (code 
 ```bash
 TASK_ARGS="$ARGUMENTS"
 SUBTASK_ID=$(printf '%s' "$TASK_ARGS" | grep -m1 -oE 'ST-[0-9]+')
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 ```
 
 **Two modes:**
@@ -269,7 +269,7 @@ Run the tests written by TEST_WRITER. They MUST fail (implementation doesn't exi
 
 ```bash
 # Run tests — expect failures
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 
 if [ -f "pytest.ini" ] || [ -f "setup.py" ] || [ -f "pyproject.toml" ]; then
   TEST_OUTPUT=$(pytest --tb=short 2>&1) || true

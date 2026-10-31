@@ -35,7 +35,7 @@ parallel_tool_policy: independent_checks_only
 Use this mode when `.map/<branch>/step_state.json` does not exist.
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 STATE_FILE=".map/${BRANCH}/step_state.json"
 
 if [[ ! -f "$STATE_FILE" ]]; then
@@ -104,7 +104,7 @@ What this command cannot do:
 ### Step 1: Load Workflow State
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 STATE_FILE=".map/${BRANCH}/step_state.json"
 PLAN_FILE=".map/${BRANCH}/task_plan_${BRANCH}.md"
 ```

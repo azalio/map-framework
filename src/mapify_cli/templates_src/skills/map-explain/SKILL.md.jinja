@@ -68,7 +68,7 @@ exec_command:
     # 3. Refresh the base so the comparison reflects what would actually merge.
     git fetch origin "${BASE#origin/}" --quiet
     echo "BASE=$BASE"
-    echo "CURRENT=$(git rev-parse --abbrev-ref HEAD)"
+    echo "CURRENT=$(git symbolic-ref --quiet --short HEAD || git rev-parse --abbrev-ref HEAD)"
 [% endif %]```
 
 [% if PROVIDER == "claude" %]- Use adaptive reasoning to build the requested mental model, but stop at explanation: do not plan or implement changes from this skill.
@@ -106,7 +106,7 @@ fi
 # 3. Refresh the base so the comparison reflects what would actually merge.
 git fetch origin "${BASE#origin/}" --quiet
 
-CURRENT=$(git rev-parse --abbrev-ref HEAD)
+CURRENT=$(git symbolic-ref --quiet --short HEAD || git rev-parse --abbrev-ref HEAD)
 [% else %][% endif %]```
 [% if PROVIDER == "claude" %]
 Then choose **one** of the two modes below and follow it.

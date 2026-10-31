@@ -65,7 +65,7 @@ The skill supports several modes via CLI flags:
 ### Step 1: Resolve the branch
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 ```
 
 If the user passed an explicit branch argument, use it instead of the detected

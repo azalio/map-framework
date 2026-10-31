@@ -24,7 +24,7 @@ fill all five is dropped by `aggregate_adversarial_findings` into
 ## Step B.adversarial.0: Build adversarial review prompts
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 BRANCH_DIR=".map/$BRANCH"
 QUICK_ARG=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("--quick" if "edge_case" not in d["scheduled_reviewers"] else "")' "$BRANCH_DIR/review-mode.json") || exit 1
 
@@ -76,7 +76,7 @@ Each reviewer must return valid JSON matching the adversarial finding schema. If
 Write each reviewer's raw JSON output to a temp file, then aggregate:
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 BRANCH_DIR=".map/$BRANCH"
 RUN_MODE="$BRANCH_DIR/review-mode.json"
 QUICK_FLAG=$(python3 -c 'import json,sys; print("true" if "edge_case" not in json.load(open(sys.argv[1]))["scheduled_reviewers"] else "false")' "$RUN_MODE") || exit 1

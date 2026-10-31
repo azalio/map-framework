@@ -13,9 +13,11 @@ Output:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,14 +29,23 @@ def utc_now() -> str:
 
 
 def get_branch_name() -> str:
+    """Resolve branch scope before the first commit; warn on unavailable Git."""
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
-        )
+        # Symbolic HEAD exists even before the branch has its first commit.
+        # rev-parse retains the historical detached-HEAD fallback.
+        for command in (
+            ["symbolic-ref", "--quiet", "--short", "HEAD"],
+            ["rev-parse", "--abbrev-ref", "HEAD"],
+        ):
+            result = subprocess.run(
+                ["git", *command],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                break
         if result.returncode == 0:
             branch = result.stdout.strip()
             sanitized = branch.replace("/", "-")
@@ -42,9 +53,10 @@ def get_branch_name() -> str:
             sanitized = re.sub(r"-+", "-", sanitized).strip("-")
             if ".." in sanitized or sanitized.startswith("."):
                 return "default"
-            return sanitized or "default"
+            return sanitized or ("branch-" + hashlib.sha256(branch.encode("utf-8")).hexdigest() if branch else "default")
     except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
+    print("MAP warning: could not determine Git branch; using .map/default/ for workflow artifacts.", file=sys.stderr)
     return "default"
 
 

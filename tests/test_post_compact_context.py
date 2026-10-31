@@ -3,6 +3,11 @@ import os
 import subprocess
 from pathlib import Path
 
+_BRANCH_WARNING = (
+    "MAP warning: could not determine Git branch; "
+    "using .map/default/ for workflow artifacts."
+)
+
 
 def _run_hook(tmp_project_dir: Path, stdin_payload: dict) -> tuple[int, str, str]:
     hook_path = Path(".claude/hooks/post-compact-context.py")
@@ -72,7 +77,7 @@ def test_post_compact_reprime_includes_state_constraints_and_authority(
     code, out, err = _run_hook(tmp_path, {})
 
     assert code == 0
-    assert err == ""
+    assert err == _BRANCH_WARNING
     payload = json.loads(out)
     additional = payload["hookSpecificOutput"]["additionalContext"]
     assert "MAP RE-PRIME" in additional
@@ -85,9 +90,9 @@ def test_post_compact_reprime_includes_state_constraints_and_authority(
     assert "source files, tests, schemas, and configs beat" in additional
 
 
-def test_post_compact_reprime_remains_silent_without_artifacts(tmp_path: Path) -> None:
+def test_post_compact_reprime_warns_on_default_without_artifacts(tmp_path: Path) -> None:
     code, out, err = _run_hook(tmp_path, {})
 
     assert code == 0
-    assert err == ""
+    assert err == _BRANCH_WARNING
     assert out == "{}"

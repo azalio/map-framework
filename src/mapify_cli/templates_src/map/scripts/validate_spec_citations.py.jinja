@@ -26,6 +26,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Installed beside this script; direct CLI execution supplies its import path.
+from map_utils import sanitize_branch_name  # pyright: ignore[reportMissingImports]
+
 # Match `<path>:<line>` or `<path>:<start>-<end>`, where the path ends in a
 # recognised extension. The negative lookbehind on `:` avoids matching the
 # second half of an already-matched range, and the positive lookahead on
@@ -75,13 +78,21 @@ def _find_by_basename(repo_root: Path, basename: str) -> list[Path]:
 
 
 def _branch_slug() -> str:
+    """Resolve symbolic HEAD before the first commit, preserving detached fallback."""
     try:
-        raw = subprocess.check_output(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True
-        ).strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return ""
-    return re.sub(r"-{2,}", "-", re.sub(r"[^a-zA-Z0-9_.-]", "-", raw)).strip("-")
+        for command in (
+            ["symbolic-ref", "--quiet", "--short", "HEAD"],
+            ["rev-parse", "--abbrev-ref", "HEAD"],
+        ):
+            result = subprocess.run(
+                ["git", *command], capture_output=True, text=True, timeout=2, check=False,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                raw = result.stdout.strip()
+                return sanitize_branch_name(raw)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return ""
 
 
 def _resolve_repo_root() -> Path:

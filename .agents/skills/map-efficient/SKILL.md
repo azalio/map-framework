@@ -158,7 +158,7 @@ A ready plan needs no approval. A pending `plan_approval` (left by an older `$ma
 Run this before validating `$TASK_ARGS`.
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+BRANCH=$(python3 .map/scripts/map_utils.py branch)
 STATE_FILE=".map/${BRANCH}/step_state.json"
 PLAN_FILE=".map/${BRANCH}/task_plan_${BRANCH}.md"
 
