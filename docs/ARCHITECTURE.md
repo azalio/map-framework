@@ -261,6 +261,12 @@ built-in item identifiers rather than a renderer command, so MAP does not wire
 the Claude renderer into it. The context meter and token report remain available
 through hooks and skills.
 
+Both providers render the Ralph iteration logger from one shared hook source.
+Its effectiveness scorer accepts arbitrary JSON response values: dictionaries
+provide structured exit-code/error/success indicators, while strings and other
+unstructured values retain the default score of 1.0. This fallback is an
+observability heuristic, not verification that the tool succeeded.
+
 Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json` so the runtime contract is explicit: `task` skills behave like manual slash workflows or opt-in interactive task surfaces, `reference` skills provide inline guidance, and `hybrid` skills combine reference material with declared runtime effects. Today the MAP slash surfaces are `task` skills, including `/map-understand`, whose checklist is transient in the conversation and has no runtime effects; `map-state` is `hybrid` because it documents planning state and ships hooks/scripts that interact with `.map/<branch>/` artifacts, and `map-so-search` is `hybrid` because it ships a script with declared network/credential runtime effects (the opt-in SOFA search; see [Stack Overflow for Agents (SOFA) Integration](#stack-overflow-for-agents-sofa-integration)).
 
 ## Runtime Flows

@@ -244,6 +244,9 @@ command-driven dynamic status-line renderer. Codex supports project-level
 `[tui].status_line`, but only as an ordered list of built-in item identifiers,
 so MAP does not install the Claude renderer there.
 
+The shared iteration logger accepts textual tool responses from either provider
+without interrupting logging; effectiveness uses structured indicators when available.
+
 MAP is inspired by the [MAP cognitive architecture](https://github.com/Shanka123/MAP) (Nature Communications, 2025), which reported a 74% improvement on planning tasks. The CLI turns that idea into a practical software-development workflow.
 
 [Architecture deep-dive →](docs/ARCHITECTURE.md)

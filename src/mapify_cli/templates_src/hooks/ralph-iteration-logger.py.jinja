@@ -132,14 +132,15 @@ def get_exit_code(tool_response: dict) -> int | None:
     return None
 
 
-def calculate_effectiveness(tool_name: str, tool_response: dict | None) -> float:
+def calculate_effectiveness(tool_name: str, tool_response: object) -> float:
     """
     Calculate effectiveness score based on STRUCTURED indicators, not string search.
 
     For Bash: use exit_code if available (tolerant of key name variations)
     For Edit/Write: use success indicator
+    Unstructured responses have no reliable indicators and use the default score.
     """
-    if not tool_response:
+    if not isinstance(tool_response, dict) or not tool_response:
         return 1.0
 
     # Bash tool: check exit code (most reliable)
