@@ -214,7 +214,7 @@ def _tidy_comment_payload(text: str) -> str:
 def _comment_leader(comment_text: str) -> tuple[str, str]:
     """Split a region while preserving documentation-comment opener bytes."""
     stripped = comment_text.lstrip()
-    match = re.match(r"(?:/\*+!?|//+!?|<!--|--|#|;)", stripped)
+    match = re.match(r"(?:/\*+!?|//+!?|<!--|-{2,}|#+[!:'>]?|;)", stripped)
     if not match:
         return "", comment_text
     leader = match.group(0)

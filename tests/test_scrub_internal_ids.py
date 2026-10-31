@@ -425,3 +425,23 @@ def test_comment_with_reserved_cleanup_marker_is_not_rewritten(marker):
     """Treat unusual input as residual instead of confusing it with an internal removal marker."""
     line = "// AC-3: before" + marker + "after"
     assert engine.scrub_line(line, C) == (line, [], ["AC-3"])
+
+
+@pytest.mark.parametrize(("extension", "line", "expected"), [
+    (".py", "## AC-3: section", "## section"),
+    (".py", "#### AC-3: section", "#### section"),
+    (".r", "#' AC-3: @param x", "#' @param x"),
+    (".py", "#: AC-3 description", "#: description"),
+    (".py", "#! AC-3: note", "#! note"),
+    (".r", "#> AC-3: example", "#> example"),
+    (".lua", "--- AC-3: docs", "--- docs"),
+    (".sql", "---- AC-3: section", "---- section"),
+    (".py", "| AC-3: unsupported", "| AC-3: unsupported"),
+    (".md", "### AC-3 heading", "### AC-3 heading"),
+])
+def test_hash_and_dash_documentation_openers_keep_their_bytes(extension, line, expected):
+    """Preserve supported comment prefixes without expanding a language's comment syntax."""
+    cleaned, removed, residual = engine.scrub_line(line, engine.syntax_for_ext(extension))
+    assert cleaned == expected
+    assert removed == ([] if cleaned == line else ["AC-3"])
+    assert residual == (["AC-3"] if cleaned == line else [])
