@@ -74,6 +74,85 @@ def test_default_on_research_cannot_resolve_without_assessment() -> None:
     assert ledger["budget_limit"] is None
 
 
+def _record_source_report(ticket: str, source: dict[str, Any]) -> dict[str, Any]:
+    """Submit one reserved report through the public CLI with its source intact."""
+    attempt = reserve(ticket)["attempt"]
+    report = {
+        "protocol_version": 1, "ticket_id": ticket, "attempt_id": attempt["attempt_id"],
+        "brief_sha256": attempt["brief_sha256"], "answer": "Observed",
+        "claims": [{"id": "observation", "text": "Observed", "evidence": ["source"]}],
+        "sources": [dict(source, id="source")], "decisive_assumptions": [],
+        "falsification_conditions": ["Source changes"], "uncertainty": [],
+    }
+    path = write_artifact(ticket, "source-report.json", report)
+    state = Path(".map/wayfind/demo/state.json")
+    before = state.read_bytes()
+    result = cli("record_research_attempt", "demo", ticket, "owner", attempt["attempt_id"],
+                 "completed", "--result-path", path)
+    if result["status"] == "error":
+        assert state.read_bytes() == before
+    else:
+        saved = cli("show_ticket", "demo", ticket)["ticket"]["research"]["attempts"][-1]
+        assert saved["outcome"] == "completed"
+        assert saved["report_path"] == path
+    return result
+
+
+@pytest.mark.parametrize("url", ["https://example.test/docs", "http://example.test/docs",
+                                    "cli://tool --help", "file://local/guide.md"])
+def test_documentation_scheme_guidance(url: str) -> None:
+    """Accept HTTP(S) sources and direct local URL authors to ticket artifacts."""
+    ticket = research_ticket()
+    result = _record_source_report(ticket, {
+        "kind": "documentation", "url": url, "version": "1.0",
+        "observed_at": "2026-11-01", "freshness_limit": "recheck before use",
+    })
+    if url.startswith(("https://", "http://")):
+        assert result["status"] == "success", result
+    else:
+        assert result["code"] == "invalid_research_evidence"
+        assert "documentation url must start with http:// or https://" in result["message"]
+        assert f"experiment artifact under research/{ticket}/" in result["message"]
+
+
+@pytest.mark.parametrize("field", ["url", "version", "observed_at", "freshness_limit"])
+def test_documentation_missing_provenance_names_required_fields(field: str) -> None:
+    """Name required documentation metadata without advancing a rejected attempt."""
+    ticket = research_ticket()
+    source = {"kind": "documentation", "url": "https://example.test/docs", "version": "1.0",
+              "observed_at": "2026-11-01", "freshness_limit": "recheck before use"}
+    del source[field]
+    result = _record_source_report(ticket, source)
+    assert result["code"] == "invalid_research_evidence"
+    assert "nonempty url, version, observed_at and freshness_limit" in result["message"]
+
+
+@pytest.mark.parametrize("location", ["own", "other", "shared", "symlink", "changed"])
+def test_experiment_ticket_path_guidance(location: str) -> None:
+    """Accept owned observations while preserving ticket isolation and hash checks."""
+    ticket = research_ticket()
+    contents = "Read-only CLI help observation: --help displays usage.\n"
+    folder = "observations" if location == "shared" else "T-999" if location in {"other", "symlink"} else ticket
+    rel = write_artifact(folder, "cli-help.txt", contents)
+    if location == "symlink":
+        alias = Path(".map/wayfind/demo/research") / ticket / "cli-help.txt"
+        alias.parent.mkdir(parents=True, exist_ok=True)
+        alias.symlink_to(Path("../T-999/cli-help.txt"))
+        rel = f"research/{ticket}/cli-help.txt"
+    result = _record_source_report(ticket, {
+        "kind": "experiment", "path": rel,
+        "sha256": hashlib.sha256((contents + ("changed" if location == "changed" else "")).encode()).hexdigest(),
+    })
+    if location == "own":
+        assert result["status"] == "success", result
+    else:
+        assert result["code"] == "invalid_research_evidence"
+        if location == "changed":
+            assert "source content changed" in result["message"]
+        else:
+            assert f"research/{ticket}/" in result["message"]
+
+
 @pytest.mark.parametrize("outcome", ["failed", "unknown", "cancelled"])
 def test_explicit_budget_is_configured_before_work_and_cannot_be_replaced(outcome: str) -> None:
     ticket = research_ticket()
