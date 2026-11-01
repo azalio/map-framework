@@ -45,7 +45,7 @@ amend_resolution <slug> <ticket> --gist "<gist>" --resolution-path <path> --asse
 validate_wayfind_handoff <slug>
 ```
 
-1. Inspect `show_ticket`, reuse its recorded owner/session on resume, or explicitly release/reclaim through the owner. Configure mode. Snapshot the question, constraints, settling criteria and dependency bindings in one neutral initial brief.
+1. Inspect `show_ticket`, reuse its recorded owner/session on resume, or explicitly release/reclaim through the owner. Configure mode. Snapshot the question, constraints, settling criteria and dependency bindings in one neutral initial brief. State the source rules before dispatch: `documentation.url` must start with `http://` or `https://`; CLI output and local-file observations that do not qualify as `local_code` must be returned to the coordinator for capture as ticket-local `experiment` artifacts with raw-byte `sha256`. Investigators remain read-only; only the coordinator writes these artifacts under `research/<ticket>/`.
 2. Reserve BEFORE investigation. Persist the returned `attempt_id` and `attempt.brief_sha256`. Only `created: true` permits a new dispatch; `created: false` is replay, not permission to start another worker. For independent research reserve two distinct investigators, give both the SAME neutral brief without sibling reports or preferred recommendation, and wait for two completed independent initial reports. One completed plus one failed report does not satisfy this requirement. Direct mode still reserves its single investigation before reading sources.
 3. Dispatch using the provider's reasoning-capable general-purpose API; assign the returned attempt ID, brief hash and report schema to the worker. The worker returns report JSON only; the coordinator saves it. When available retain the host dispatch ID. If an agent tool returns ambiguously, inspect durable attempts and the original host job; never blindly redispatch. Missing capability is an explicit blocker, not permission to fabricate reports or substitute a location-only agent.
 
@@ -102,7 +102,14 @@ Report:
 }
 ```
 
-Source kinds: `local_code` requires repo-contained `path` and raw-byte `sha256` (including dirty contents); `experiment` requires an existing map-relative artifact path/hash, not permission to run an experiment; `documentation` requires nonempty `url`, `version`, `observed_at`, `freshness_limit`; `inference` requires `rationale` and cannot alone source an answer. Hash explicitly cited local sources only, excluding secrets and map-generated artifacts; no repository-wide crawl. External documentation is observed-only: record freshness limits honestly, with no claim of automatic remote revalidation.
+Source kinds:
+
+- `local_code` requires repo-contained `path` and raw-byte `sha256` (including dirty contents).
+- `experiment` requires an existing regular artifact with map-relative `path` under `research/<ticket_id>/` and its raw-byte `sha256`. For ticket `T-001`, use `research/T-001/cli-help.txt`; the coordinator saves permitted read-only observations there before registering the report. Shared folders such as `research/observations/` and paths or symlinks into another ticket are rejected. If multiple tickets cite the same observation, the coordinator saves an immutable copy in each ticket's folder and hashes each copy. This source kind does not authorize running experiments or writing implementation code.
+- `documentation` requires nonempty `url`, `version`, `observed_at`, `freshness_limit`; `url` must start with `http://` or `https://`. `cli://` and `file://` are not documentation URLs: capture permitted local/CLI observations as `experiment` artifacts instead (or use `local_code` for eligible repo source files).
+- `inference` requires `rationale` and cannot alone source an answer.
+
+Hash explicitly cited local sources only, excluding secrets and map-generated artifacts; no repository-wide crawl. External documentation is observed-only: record freshness limits honestly, with no claim of automatic remote revalidation.
 
 Assessment (immutable unique `assessment_id`; report bindings cover every completed attempt):
 

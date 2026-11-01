@@ -176,7 +176,7 @@ The DevOpsConf 2026 case study applies this process to a production Kubernetes P
 | `/map-auto` | Single-entry autonomous autopilot: routes a task through existing MAP workflows and drives the chain to a committed branch |
 | `/map-plan` | **Start here** for non-trivial work; clarify behavior and decompose tasks |
 | `/map-prd-review` | Review a PRD with a 0-10 readiness score, strengths, risks, and uncovered edge cases |
-| `/map-wayfind` | Too foggy to plan? Resolve design decisions on a durable map *before* `/map-plan` |
+| `/map-wayfind` | Too foggy to plan? Resolve design decisions on a durable map *before* `/map-plan`; cite HTTP(S) docs, repo sources or hashed ticket-local observations |
 | `/map-efficient` | **Implement** an approved plan or already-scoped task |
 | `/map-fast` | Small, low-risk changes where full planning is overhead |
 | `/map-check` | Quality gates, verification, and artifact checks |

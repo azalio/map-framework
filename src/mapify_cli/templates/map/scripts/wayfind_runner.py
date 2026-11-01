@@ -639,8 +639,8 @@ def _research_file(slug: str, ticket_id: str, rel: str) -> Path:
     _require(path is not None, "artifact must be a contained regular file")
     assert path is not None
     parts = Path(rel).parts
-    _require(".." not in parts and len(parts) >= 3 and parts[:2] == ("research", ticket_id), "artifact belongs to another ticket")
-    _require(path.is_relative_to(_map_dir(slug).resolve()) and path.relative_to(_map_dir(slug).resolve()).parts[:2] == ("research", ticket_id), "cross-ticket symlink")
+    _require(".." not in parts and len(parts) >= 3 and parts[:2] == ("research", ticket_id), f"artifact belongs to another ticket; use a map-relative path under research/{ticket_id}/ (no shared or cross-ticket artifacts)")
+    _require(path.is_relative_to(_map_dir(slug).resolve()) and path.relative_to(_map_dir(slug).resolve()).parts[:2] == ("research", ticket_id), f"cross-ticket symlink; artifact must resolve under research/{ticket_id}/")
     return path
 
 
@@ -797,7 +797,8 @@ def _validate_report(slug: str, ticket_id: str, attempt: dict[str, Any], data: d
             _require(_digest(path) == source.get("sha256"), "source content changed")
             observed.add(source["id"])
         elif kind == "documentation":
-            _require(all(_text(source.get(k)) for k in ("url", "version", "observed_at", "freshness_limit")) and source["url"].startswith(("https://", "http://")), "documentation provenance required")
+            _require(all(_text(source.get(k)) for k in ("url", "version", "observed_at", "freshness_limit")), "documentation provenance requires nonempty url, version, observed_at and freshness_limit")
+            _require(source["url"].startswith(("https://", "http://")), f"documentation url must start with http:// or https://; the coordinator must capture local/CLI observations as an experiment artifact under research/{ticket_id}/ with its sha256")
             observed.add(source["id"])
         else:
             _require(kind == "inference" and _text(source.get("rationale")), "unknown source kind or missing inference rationale")

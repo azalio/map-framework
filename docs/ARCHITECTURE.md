@@ -885,6 +885,14 @@ reports from distinct investigators. Initial prompts omit sibling conclusions.
 Synthesis identifies material disagreements and commissions only targeted checks;
 exhaustion or unresolved disputes cannot become a sufficient assessment.
 
+Research documentation URLs must use HTTP(S) and carry nonempty version,
+observation time and freshness limit. CLI/local observations that are not eligible
+repo `local_code` sources are coordinator-written `experiment` artifacts under
+`research/<ticket_id>/`, cited by map-relative path and raw-byte hash. Artifacts
+must resolve within that ticket's directory; shared folders and cross-ticket
+symlinks are rejected. Investigators remain read-only, and this evidence format
+does not grant permission for code-writing experiments or other side effects.
+
 The runner binds reports, briefs, assessments and resolution bytes, plus the
 question, dependency decisions and explicitly cited local source files. External
 sources record their observation/version and remain observed-only: validation does
