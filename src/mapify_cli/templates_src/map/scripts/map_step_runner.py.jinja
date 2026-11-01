@@ -8992,7 +8992,8 @@ def _review_policy(
     for pattern in (".claude/rules/**/*.md", ".claude/agents/review-reader.md",
                     ".codex/agents/review-reader.toml", ".codex/config.toml",
                     ".map/scripts/**/*.py", ".map/scripts/**/*.sh",
-                    ".map/*/spec_*.md", ".map/*/blueprint.json", ".map/*/test_contract_*.md"):
+                    ".map/*/spec_*.md", ".map/*/blueprint.json", ".map/*/test_contract_*.md",
+                    ".map/*/task_plan_*.md", ".map/*/verification-summary.md", ".map/*/test_handoff_*.json"):
         names.update(str(path) for path in Path(".").glob(pattern) if path.is_file())
     policy = {"schema": "review_receipt.v1", "criteria": _VERDICT_TABLE_ID,
               "binding": binding, "files": [_review_file_entry(name) for name in sorted(names)],
@@ -11887,11 +11888,13 @@ def _read_branch_artifact_text(branch_dir: Path, name: str) -> str:
     return content
 
 
-def build_handoff_bundle(branch: str | None = None) -> dict:
+def build_handoff_bundle(branch: str | None = None, *, ensure_artifacts: bool = True) -> dict:
     """Build a compact handoff bundle from branch-scoped human artifacts."""
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
-    ensure_human_artifacts(branch_name)
+    # During an admitted review, even placeholder creation would alter its inputs.
+    if ensure_artifacts and not _read_review_ledger(branch_dir).get("convergence", {}).get("rounds"):
+        ensure_human_artifacts(branch_name)
 
     verification = _read_branch_artifact_text(branch_dir, "verification-summary.md")
     qa = _read_branch_artifact_text(branch_dir, "qa-001.md")
@@ -12333,17 +12336,18 @@ def _review_attribution(target: dict[str, Any]) -> dict[str, Any]:
     import base64
     import difflib
 
-    if not target.get("base"):
-        return {"status": "unknown", "reason": "No verified review base", "files": []}
+    if not target.get("head"):
+        return {"status": "unknown", "reason": "No verified review target", "files": []}
+    base_ref = target.get("base", "")
     # Source evidence and mandatory coverage use the same selected-base scope.
-    changed = set(_review_changed_paths(target["base"], target.get("required_files", [])))
+    changed = set(_review_changed_paths(base_ref or "HEAD", target.get("required_files", [])))
     entries = []
     for name in target.get("required_files", []):
         if name not in changed:
             continue
         result = subprocess.run(["git", "show", f"{target['base']}:{name}"],
-                                capture_output=True, timeout=10, check=False)
-        base = result.stdout if result.returncode == 0 else b""
+                                capture_output=True, timeout=10, check=False) if base_ref else None
+        base = result.stdout if result is not None and result.returncode == 0 else b""
         path = Path(name)
         current = os.fsencode(os.readlink(path)) if path.is_symlink() else (path.read_bytes() if path.is_file() else b"")
         try:
@@ -12355,16 +12359,19 @@ def _review_attribution(target: dict[str, Any]) -> dict[str, Any]:
             base_text, current_text = base64.b64encode(base).decode(), base64.b64encode(current).decode()
             encoding = "base64"
         mapping = []
-        if encoding == "utf-8":
+        if encoding == "utf-8" and base_ref:
             mapping = [{"base_start": match.a + 1, "current_start": match.b + 1, "length": match.size}
                        for match in difflib.SequenceMatcher(None, base_text.splitlines(), current_text.splitlines(),
                                                            autojunk=False).get_matching_blocks() if match.size]
         entries.append({"path": name, "base_content": base_text, "current_content": current_text,
                         "encoding": encoding, "line_mapping": mapping,
-                        "status": "added" if result.returncode else ("deleted" if not path.exists() else "present")})
-    diff = _review_git_bytes("diff", "--binary", target["base"], "--",
+                        "baseline_known": bool(base_ref),
+                        "status": "unknown" if result is None else ("added" if result.returncode else
+                                  ("deleted" if not path.exists() else "present"))})
+    diff = _review_git_bytes("diff", "--binary", base_ref or "HEAD", "--",
                             *_review_source_pathspec(target.get("required_files", [])))
-    return {"status": "available", "base": target["base"], "head": target["head"],
+    return {"status": "available" if base_ref else "unknown", "base": base_ref, "head": target["head"],
+            "reason": "" if base_ref else "No verified review base; only current source is known",
             "diff": diff.decode("utf-8", errors="replace"), "diff_sha256": hashlib.sha256(diff).hexdigest(),
             "files": entries, "attribution_limit": "Line presence is not proof of behavioral pre-existence"}
 
@@ -12460,7 +12467,7 @@ def create_review_bundle(branch: str | None = None) -> dict:
 
     # --- PR handoff summary ---
     try:
-        pr_bundle_raw = build_handoff_bundle(branch_name)
+        pr_bundle_raw = build_handoff_bundle(branch_name, ensure_artifacts=False)
         pr_handoff = _bundle_pr_handoff_fields(pr_bundle_raw)
     except Exception as exc:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
         pr_handoff = {
@@ -13205,6 +13212,23 @@ def _review_attribution_artifact(branch_name: str) -> str:
     return str(path)
 
 
+def _review_untracked_diff(base: str) -> str:
+    """Expose new source bytes to diff-only readers without exposing task artifacts."""
+    inventory = set(_review_source_paths(base or "HEAD"))
+    names = _review_git_bytes("ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
+    patches = []
+    for raw_name in sorted(name for name in names if name):
+        name = os.fsdecode(raw_name)
+        if name not in inventory:
+            continue
+        result = subprocess.run(["git", "diff", "--no-index", "--binary", "--", os.devnull, name],
+                                capture_output=True, timeout=10, check=False)
+        if result.returncode not in {0, 1}:
+            raise ValueError(f"Cannot produce review diff for untracked source {name!r}")
+        patches.append(result.stdout.decode("utf-8", errors="replace"))
+    return "\n".join(patches)
+
+
 def _read_git_diff_for_review(branch: str | None = None) -> str:
     """Return the diff every reviewer prompt carries: the branch's review target.
 
@@ -13253,11 +13277,16 @@ def _read_git_diff_for_review(branch: str | None = None) -> str:
         # Both exist: the reviewer needs the committed target AND the work still
         # in the tree. Dropping either half hides real review scope, so they are
         # concatenated under explicit labels rather than one silently winning.
-        return (
+        combined = (
             f"=== committed review target ({base_ref}...HEAD) ===\n{committed}\n\n"
             f"=== uncommitted working tree (git diff HEAD) ===\n{uncommitted}"
         )
-    return committed or uncommitted or "[no git diff output]"
+    else:
+        combined = committed or uncommitted
+    untracked = _review_untracked_diff(base_sha) if _quiet(["rev-parse", "HEAD"]) else ""
+    if untracked:
+        combined += "\n\n=== untracked source additions ===\n" + untracked
+    return combined or "[no git diff output]"
 
 
 def _layer_prompt_sections(

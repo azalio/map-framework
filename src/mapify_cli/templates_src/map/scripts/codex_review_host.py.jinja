@@ -258,7 +258,10 @@ class CodexReviewHost:
             params.update({"environments": [], "experimentalRawEvents": True, "dynamicTools": [CONTEXT_TOOL],
                            "developerInstructions": "You are a MAP review reader. Use only the runner's review_context tool for source evidence. First perform the fixed synthetic capability probe requested by the runner. Never execute repository code, request approvals, change environments, use network or delegate. After probing, follow the role prompt and return its exact schema."})
             result = self.call("thread/start", params)
-        self.thread_id = require_empty_environments(result, idle_resume=bool(thread_id))
+        identity = require_empty_environments(result, idle_resume=bool(thread_id))
+        if thread_id and identity != thread_id:
+            raise HostError("Codex resumed a different thread than requested")
+        self.thread_id = identity
         status = self.call("mcpServerStatus/list", {"threadId": self.thread_id, "limit": 100})
         if (not isinstance(status.get("data"), list) or status.get("nextCursor")
                 or any(row.get("runtimeStatus") != "disabled" or row.get("tools")

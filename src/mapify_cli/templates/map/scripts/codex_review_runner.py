@@ -285,10 +285,12 @@ def run(branch: str | None = None, *, timeout: float = 900, review_preferences: 
         row = ledger["convergence"]["rounds"][-1]
         if runner._review_round_terminal(row):
             raise HostError("Review round is terminal; do not dispatch new readers")
+        normal = "monitor" in binding["scheduled_reviewers"]
+        if not normal and review_preferences:
+            raise HostError("--review-preferences is supported only for normal reviews")
         bound_preferences: str = require_success(runner._bind_codex_review_preferences(
             review_preferences, row["round_id"], branch=branch))["review_preferences"]
         bundle = compact_bundle(branch)
-        normal = "monitor" in binding["scheduled_reviewers"]
         built = require_success(runner.build_review_prompts(branch=branch, review_bundle_text=bundle,
                                 review_preferences=bound_preferences, pack_sources=True, role_rubrics=ROLE_RUBRICS) if normal else
                                 runner.build_adversarial_review_prompts(branch=branch,

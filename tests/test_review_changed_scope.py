@@ -154,16 +154,17 @@ def test_full_task_artifacts_are_frozen_and_role_scoped(repo):
     (directory / "task_plan_feature.md").write_text("Changed after admission\n")
     recreated = runner.create_review_bundle(branch="feature")
     assert recreated["status"] == "error", recreated
-    assert "Immutable review bundle source changed" in str(recreated)
+    assert "changed" in str(recreated).lower()
 
 
-def test_unknown_base_does_not_label_changed_sources_unchanged(repo):
+@pytest.mark.parametrize("name", ["first.py", "untracked.py"])
+def test_unknown_base_does_not_label_changed_sources_unchanged(repo, name):
     del repo
     git("branch", "-D", "main")
-    Path("first.py").write_text("value = 2\n")
+    Path(name).write_text("value = 2\n")
     admitted = runner.begin_review_run(branch="feature", provider="codex", round_id="unknown")
     assert admitted["status"] == "success", admitted
-    assert admitted["required_files"] == ["first.py"]
+    assert admitted["required_files"] == [name]
     assert not admitted["target"]["base"]
     assert runner.create_review_bundle(branch="feature")["status"] == "success"
     built = runner.build_review_prompts(branch="feature")
@@ -171,7 +172,11 @@ def test_unknown_base_does_not_label_changed_sources_unchanged(repo):
     directory = Path(".map/feature")
     entry = built["prompts"]["monitor"]
     manifest = json.loads((directory / "review-context-objects" / entry["context_transport"]["context_id"]).read_text())
-    assert "first.py" not in {value.get("path") for value in manifest["resources"].values()}
+    metadata = next(value for value in manifest["resources"].values() if value.get("path") == name)
+    source = json.loads(runner._review_context_read(directory, metadata))
+    assert source["current_content"] == "value = 2\n"
+    assert source["status"] == "unknown"
+    assert source["baseline_known"] is False
 
 
 def test_unreadable_optional_file_cannot_bypass_snapshot_binding(repo, monkeypatch):
@@ -190,3 +195,57 @@ def test_unreadable_optional_file_cannot_bypass_snapshot_binding(repo, monkeypat
     result = runner.build_review_prompts(branch="feature")
     assert result["status"] == "error", result
     assert runner._review_target().get("reusable") is False
+
+
+def test_blind_review_receives_untracked_source_as_diff(repo):
+    del repo
+    Path("new file.py").write_text("UNTRACKED_REVIEW_MARKER = 42\n")
+    runner.begin_review_run(branch="feature", provider="codex", arguments="--adversarial --quick", round_id="untracked")
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    built = runner.build_adversarial_review_prompts(branch="feature")
+    assert built["status"] == "success", built
+    entry = built["prompts"]["blind"]
+    directory = Path(".map/feature")
+    manifest = json.loads((directory / "review-context-objects" / entry["context_transport"]["context_id"]).read_text())
+    prompt = runner._review_context_read(directory, manifest["resources"]["prompt"])
+    assert b"+UNTRACKED_REVIEW_MARKER = 42" in prompt
+    assert not any(key.startswith("source_") for key in manifest["resources"])
+    assert "artifacts" not in manifest["resources"]
+
+
+@pytest.mark.parametrize("filename", ["task_plan_feature.md", "verification-summary.md", "test_handoff_ST-001.json"])
+def test_task_input_changes_reject_capture_and_completion(repo, filename):
+    del repo
+    Path("first.py").write_text("value = 2\n")
+    directory = Path(".map/feature")
+    directory.mkdir(parents=True)
+    artifact = directory / filename
+    artifact.write_text("{}")
+    runner.begin_review_run(branch="feature", provider="claude", scheduled_reviewers=["monitor"], round_id="task-inputs")
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    row = runner._read_review_ledger(directory)["convergence"]["rounds"][-1]
+    assert runner._review_binding_current(row)
+    output = {"verdict": "approved", "issues": [], "receipt": {"covered_files": ["first.py"],
+              "skipped_files": [], "denied_access": [], "check_evidence": []}}
+    assert runner.capture_review_output("monitor", json.dumps(output), "task-inputs", branch="feature")["status"] == "success"
+    artifact.write_text('{"changed":true}')
+    assert not runner._review_binding_current(row)
+    assert runner.capture_review_output("monitor", json.dumps(output), "task-inputs", branch="feature")["status"] == "error"
+    assert runner.write_review_verdict_ledger(current_run=True, branch="feature")["status"] == "error"
+
+
+def test_admitted_handoff_does_not_create_review_inputs(repo):
+    del repo
+    Path("first.py").write_text("value = 2\n")
+    runner.begin_review_run(branch="feature", provider="claude", scheduled_reviewers=["monitor"], round_id="handoff")
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    output = {"verdict": "approved", "issues": [], "receipt": {"covered_files": ["first.py"],
+              "skipped_files": [], "denied_access": [], "check_evidence": []}}
+    runner.capture_review_output("monitor", json.dumps(output), "handoff", branch="feature")
+    result = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    assert result["code_approval"]["approved"] is True
+    assert runner.build_handoff_bundle("feature")["status"] == "success"
+    directory = Path(".map/feature")
+    assert not (directory / "verification-summary.md").exists()
+    row = runner._read_review_ledger(directory)["convergence"]["rounds"][-1]
+    assert runner._review_binding_current(row)

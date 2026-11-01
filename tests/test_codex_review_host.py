@@ -85,7 +85,8 @@ def admitted_delivery():
     Path("first.py").write_text("value = 2\n")
     admission = runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="host")
     assert admission["status"] == "success", admission
-    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    bundle = runner.create_review_bundle(branch="feature")
+    assert bundle["status"] == "success", bundle
     entry = runner.build_review_prompts(branch="feature")["prompts"]["monitor"]
     state = runner.bind_review_context("monitor", entry["context_transport"]["context_id"], "thread", "host", branch="feature")
     return driver.Delivery("feature", "host", state)
@@ -308,3 +309,29 @@ def test_host_proof_rejects_unbound_identity_before_record(repo, defect):
     row = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
     assert row["capability"]["status"] == "unverified"
     assert not row["context_sessions"][delivery.state["session_id"]].get("host_capability")
+
+
+def test_resume_rejects_host_replacing_thread(tmp_path):
+    client = object.__new__(host.CodexReviewHost)
+    client.thread_id = "original"
+    client.root = tmp_path
+    client.overrides = {}
+    client._open_rollout = lambda path: None
+    client.call = lambda method, params: ({"thread": {"id": "replacement", "environments": [],
+        "status": {"type": "idle"}, "path": "unused"}, "sandbox": {"type": "readOnly", "networkAccess": False}}
+        if method == "thread/resume" else {"data": []})
+    with pytest.raises(host.HostError, match="different thread"):
+        client.start("original")
+    assert client.thread_id == "original"
+
+
+def test_adversarial_preferences_rejected_before_saving(repo, monkeypatch):
+    del repo
+    Path("first.py").write_text("value = 2\n")
+    monkeypatch.setattr(driver, "CodexReviewHost", SimulatedHost)
+    runner.begin_review_run(branch="feature", provider="codex", arguments="--adversarial --quick", round_id="preferences")
+    runner.create_review_bundle(branch="feature")
+    with pytest.raises(host.HostError, match="normal reviews"):
+        driver.run("feature", review_preferences="Requested focus")
+    row = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
+    assert "codex_review_preferences" not in row
