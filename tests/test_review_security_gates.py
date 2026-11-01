@@ -304,15 +304,25 @@ def test_review_skill_capture_and_quick_dispatch_follow_admitted_roster(provider
     root = Path(__file__).resolve().parents[1] / "src/mapify_cli/templates"
     skill = root / ("skills" if provider == "claude" else "codex/skills") / "map-review/SKILL.md"
     text = skill.read_text()
-    capture = text.split("Repeat for `predictor`,", 1)[1].split("In adversarial", 1)[0]
-    assert "`maintainer` and `security`" not in capture
-    assert "security" in capture and "only when" in capture and "admitted roster" in capture
+    if provider == "claude":
+        capture = text.split("Repeat for `predictor`,", 1)[1].split("In adversarial", 1)[0]
+        assert "`maintainer` and `security`" not in capture
+        assert "security" in capture and "only when" in capture and "admitted roster" in capture
+        fanout = text.split("2. Fan-out:", 1)[1].split("3. Validate:", 1)[0]
+        assert "for every role in the admitted roster" in fanout
+    else:
+        assert "codex_review_runner.py" in text
+        driver = (root / "map/scripts/codex_review_runner.py").read_text()
+        assert 'roles = list(binding["scheduled_reviewers"])' in driver
     assert "`user_experience`, `maintainer`, `security`; plus" not in text
-    fanout = text.split("2. Fan-out:", 1)[1].split("3. Validate:", 1)[0]
-    assert "for every role in the admitted roster" in fanout
-    aggregate = text.split("4. Aggregate:", 1)[1].splitlines()[0]
-    assert "[--edge-case <path> when admitted]" in aggregate
-    assert "[--security <path> when admitted]" in aggregate
+    if provider == "claude":
+        aggregate = text.split("4. Aggregate:", 1)[1].splitlines()[0]
+        assert "[--edge-case <path> when admitted]" in aggregate
+        assert "[--security <path> when admitted]" in aggregate
+    else:
+        quick = text.split("### Quick reference", 1)[1].split("## Phase B:", 1)[0]
+        assert "Builds prompts, validates reports and captures the aggregate for the admitted roster" in quick
+        assert "aggregate_adversarial_findings" not in quick
 
 
 @pytest.mark.parametrize("document", [
@@ -414,7 +424,8 @@ def test_review_target_and_bundle_use_bounded_git_argv(policy_repo, monkeypatch)
     admitted = runner.begin_review_run(branch="feature")
     assert admitted["status"] == "success", admitted
     assert "unverified_reason" not in admitted["target"], admitted["target"]
-    assert set(names) | {"large_unchanged.bin"} <= set(admitted["required_files"])
+    assert set(names) | {"large_unchanged.bin"} <= set(admitted["target"]["context_files"])
+    assert admitted["required_files"] == [names[0]]
     bundle = runner.create_review_bundle(branch="feature")
     assert bundle["status"] == "success", bundle
     persisted = json.loads(Path(".map/feature/review-bundle.json").read_text())

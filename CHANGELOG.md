@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Codex review uses runner-owned context delivery, resumable native threads and runtime-witnessed environment-free readers instead of parent-model chunk relays (#618, #526).
+- Review coverage requires changed paths against the admitted base; unchanged repository context remains available without mandatory reading (#619).
+
 ## [3.35.0] - 2026-11-01
 
 ### Changed

@@ -205,7 +205,8 @@ def test_explicit_api_scope_snapshot_bundle_prompts_and_policy(stack):
     assert target["base"] == target["base_tip"] == stack["runtime"]
     assert target["trusted_policy"]["revision"] == stack["main"]
     assert "FEATURE_POLICY" not in json.dumps(target["trusted_policy"])
-    assert "runtime.py" in admission["required_files"], "Full inventory must not be narrowed to diff paths"
+    assert "runtime.py" not in admission["required_files"]
+    assert "runtime.py" in admission["target"]["context_files"], "Unchanged context remains snapshot-bound"
     snapshot = fresh("snapshot_code_state", branch="product")
     assert snapshot["diff_base"] == stack["runtime"][:12]
     assert snapshot["files_changed"] == ["product.py"]

@@ -172,19 +172,6 @@ def _bash_call(command: str) -> dict:
     return {"tool_name": "Bash", "tool_input": {"command": command}}
 
 
-def _write_state(root: Path, **state: str) -> None:
-    path = root / ".map" / BRANCH_DIR_NAME / "step_state.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "current_subtask_id": "ST-001",
-        "current_step_id": "2.3",
-        "subtask_phases": {},
-        "workflow_status": "IN_PROGRESS",
-        **state,
-    }
-    path.write_text(json.dumps(payload), encoding="utf-8")
-
-
 def _run_hook(root: Path, tool_call: dict) -> str:
     env = {k: v for k, v in os.environ.items() if k != "MAP_MONITOR_HOTFIX"}
     env["CLAUDE_PROJECT_DIR"] = str(root)
@@ -213,36 +200,22 @@ def _selected_blocks(root: Path, hook) -> list[str]:
     return selected
 
 
-def test_shell_expansion_blocks_allowed_in_supported_states(project):
+def test_runner_dispatch_has_no_shell_expanded_capture_targets(project):
     hook = _load_hook(project)
-    blocks = _selected_blocks(project, hook)
-    assert blocks, "no map-review block has a shell-expanded write target (vacuous)"
+    assert not _selected_blocks(project, hook)
+    blocks = _bash_blocks(_skill_text(project), "### Step A.2")
+    command = next(block for block in blocks if "codex_review_runner.py" in block)
+    assert _run_hook(project, _bash_call(command)) == "allow"
 
-    state_dir = project / ".map" / BRANCH_DIR_NAME
-    supported = {
-        "none": None,
-        "WORKFLOW_COMPLETE": {
-            "workflow_status": "WORKFLOW_COMPLETE",
-            "current_step_phase": "COMPLETE",
-        },
-        "MONITOR": {"current_step_phase": "MONITOR"},
-    }
-    for label, state in supported.items():
-        (state_dir / "step_state.json").unlink(missing_ok=True)
-        if state is not None:
-            _write_state(project, **state)
-        for block in blocks:
-            assert _run_hook(project, _bash_call(block)) == "allow", (
-                label,
-                block[:80],
-            )
 
-    # Documented limitation: outside the supported states the hook cannot
-    # resolve `$VAR` targets and denies. Invert this when the #488 hook
-    # follow-up lands.
-    _write_state(project, current_step_phase="DECOMPOSE")
-    for block in blocks:
-        assert _run_hook(project, _bash_call(block)) == "deny", block[:80]
+def _legacy_capture_block() -> str:
+    """Exercise the retained installed capture API without dispatching a live model.
+
+    Native Codex captures deliberately stay unverified; the supported driver is
+    exercised separately by test_codex_review_host and live smoke runs.
+    """
+    reference = REPO_ROOT / "src/mapify_cli/templates/skills/map-review/SKILL.md"
+    return _bash_blocks(reference.read_text(), "### Step A.2c")[0]
 
 
 MONITOR_CLEAN = {"verdict": "approved", "issues": []}
@@ -342,7 +315,7 @@ def test_envelope_ledger_gate_fresh_shell(project, case):
     envelopes, expected_ledger, expected_gate = ROSTERS[case]
     text = _skill_text(project)
 
-    capture = _bash_blocks(text, "### Step A.2c")[0]
+    capture = _legacy_capture_block()
     ledger = _bash_blocks(text, "## Write Review Verdict Ledger")[0]
     gate = _bash_blocks(text, "## Handoff Artifact Update")[0]
 
@@ -429,7 +402,7 @@ def test_rendered_resume_keeps_lightweight_mode_after_bundle_creation(project):
     _run_block(project, "python3 .map/scripts/map_step_runner.py create_review_bundle")
     bundle = (directory / "review-bundle.md").read_bytes()
     assert b"##" in bundle
-    capture = _bash_blocks(_skill_text(project), "### Step A.2c")[0]
+    capture = _legacy_capture_block()
     _run_block(project, _capture_script(capture, {"monitor": MONITOR_CLEAN}))
     captured = (directory / "review-agent-monitor.json").read_bytes()
     _run_block(project, _bash_blocks(_skill_text(project), "## Write Review Verdict Ledger")[0])
@@ -458,7 +431,7 @@ def test_current_review_closeout_does_not_consume_previous_run(
 ):
     """Archive prior inputs while retaining unresolved findings across review modes."""
     branch_dir = project / ".map" / BRANCH_DIR_NAME
-    capture = _bash_blocks(_skill_text(project), "### Step A.2c")[0]
+    capture = _legacy_capture_block()
     ledger_block = _bash_blocks(_skill_text(project), "## Write Review Verdict Ledger")[0]
     gate_block = _bash_blocks(_skill_text(project), "## Handoff Artifact Update")[0]
     blocked_monitor = {**MONITOR_FINDING, "issues": [
@@ -515,7 +488,7 @@ def test_current_review_closeout_does_not_consume_previous_run(
 def test_missing_or_empty_scheduled_monitor_cannot_be_masked_by_clean_peers(project, content):
     _start_review(project, "")
     text = _skill_text(project)
-    capture = _bash_blocks(text, "### Step A.2c")[0]
+    capture = _legacy_capture_block()
     peers = {role: envelope for role, envelope in ROSTERS["full_roster_PROCEED"][0].items()
              if role != "monitor"}
     _run_block(project, _capture_script(capture, peers))
@@ -533,7 +506,7 @@ def test_quick_adversarial_capture_uses_persisted_roster_in_a_fresh_shell(projec
     _start_review(project, "--adversarial --quick")
     branch_dir = project / ".map" / BRANCH_DIR_NAME
     (branch_dir / "adversarial-edge.json").write_text("stale edge", encoding="utf-8")
-    reference = (project / ".agents/skills/map-review/adversarial-reference.md").read_text()
+    reference = (REPO_ROOT / "src/mapify_cli/templates/skills/map-review/adversarial-reference.md").read_text()
     capture = _bash_blocks(reference, "## Step B.adversarial.3")[0]
     clean = json.dumps({"all_clear": True, "findings": [], "checks_performed": ["diff"],
                         "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [], "check_evidence": []}})

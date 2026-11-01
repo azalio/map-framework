@@ -114,6 +114,8 @@ exclude = [
 # that otherwise ignores .venv and spuriously reports unresolved imports).
 venvPath = "."
 venv = ".venv"
+# Installed runtime scripts import their siblings when invoked directly.
+extraPaths = ["src/mapify_cli/templates/map/scripts"]
 exclude = [
     "**/node_modules",
     "**/__pycache__",

@@ -149,7 +149,7 @@ def test_aggregate_context_roundtrip_preserves_prompt_inventory_and_all_sources(
     assert inventory["snapshot"]["required_files"] == admission["required_files"]
     assert inventory["snapshot"]["target"] == admission["target"]
     assert inventory["attribution"]["base"] == git(root, "rev-parse", "main")
-    source_resources = {key: value for key, value in manifest["resources"].items() if key.startswith("source_")}
+    source_resources = {key: value for key, value in manifest["resources"].items() if key.startswith("source_") and value.get("required", True)}
     assert len(source_resources) == 36
     for key, metadata in source_resources.items():
         source = json.loads(fetch(entry, "monitor", key))
@@ -296,7 +296,8 @@ def test_manifest_itself_is_chunkable_and_abandoned_context_is_unavailable(repo)
     del repo
     entry = runner.build_review_prompts(branch="feature")["prompts"]["monitor"]
     manifest = json.loads(fetch(entry, "monitor", chunk_bytes=2048))
-    assert len(manifest["resources"]) == 38
+    assert len(manifest["resources"]) == 39
+    assert sum(item.get("required", True) for item in manifest["resources"].values()) == 38
     abandoned = runner.abandon_review_round("context-round", reason="source changed", branch="feature")
     assert abandoned["status"] == "success", abandoned
     result = runner.serve_review_context("monitor", json.dumps(request(entry)), "context-round", branch="feature")
@@ -348,7 +349,11 @@ def test_fresh_install_routes_intermediate_context_before_final_validation(seed,
                   payload='{"verdict":"approved","issues":[]}') == {"status": "not_context_request"}
     skill = root / (".claude/skills/map-review/SKILL.md" if provider == "claude" else ".agents/skills/map-review/SKILL.md")
     instructions = skill.read_text()
-    assert instructions.index("### Step A.2a:") < instructions.index("### Step A.2b:")
-    assert "serve_review_context" in instructions
+    if provider == "claude":
+        assert instructions.index("### Step A.2a:") < instructions.index("### Step A.2b:")
+        assert "serve_review_context" in instructions
+    else:
+        assert "python3 .map/scripts/codex_review_runner.py" in instructions
+        assert "rerun the same command" in instructions
     continuation = "Task(resume=<same agent_id>" if provider == "claude" else "followup_task(target=<same agent_id>"
     assert continuation in (skill.parent / "review-reference.md").read_text()
