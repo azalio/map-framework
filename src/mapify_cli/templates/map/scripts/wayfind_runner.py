@@ -634,6 +634,7 @@ def _json_digest(value: Any) -> str:
 
 
 def _research_file(slug: str, ticket_id: str, rel: str) -> Path:
+    """Resolve a regular artifact inside its owning ticket, rejecting escapes."""
     _require(isinstance(rel, str), "artifact path must be a string")
     path = _resolve_evidence_path(slug, rel)
     _require(path is not None, "artifact must be a contained regular file")
@@ -775,6 +776,7 @@ def reserve_research_attempt(slug: str, ticket_id: str, session: str, request_id
 
 
 def _validate_report(slug: str, ticket_id: str, attempt: dict[str, Any], data: dict[str, Any]) -> None:
+    """Check dispatch binding, source provenance and claim references before recording."""
     _require(data.get("attempt_id") == attempt["attempt_id"] and data.get("brief_sha256") == attempt["brief_sha256"], "report does not bind original dispatch")
     _require(_text(data.get("answer")), "report requires answer")
     for field in ("decisive_assumptions", "falsification_conditions", "uncertainty"):

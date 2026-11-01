@@ -101,6 +101,7 @@ def _record_source_report(ticket: str, source: dict[str, Any]) -> dict[str, Any]
 @pytest.mark.parametrize("url", ["https://example.test/docs", "http://example.test/docs",
                                     "cli://tool --help", "file://local/guide.md"])
 def test_documentation_scheme_guidance(url: str) -> None:
+    """Accept HTTP(S) sources and direct local URL authors to ticket artifacts."""
     ticket = research_ticket()
     result = _record_source_report(ticket, {
         "kind": "documentation", "url": url, "version": "1.0",
@@ -116,6 +117,7 @@ def test_documentation_scheme_guidance(url: str) -> None:
 
 @pytest.mark.parametrize("field", ["url", "version", "observed_at", "freshness_limit"])
 def test_documentation_missing_provenance_names_required_fields(field: str) -> None:
+    """Name required documentation metadata without advancing a rejected attempt."""
     ticket = research_ticket()
     source = {"kind": "documentation", "url": "https://example.test/docs", "version": "1.0",
               "observed_at": "2026-11-01", "freshness_limit": "recheck before use"}
@@ -127,6 +129,7 @@ def test_documentation_missing_provenance_names_required_fields(field: str) -> N
 
 @pytest.mark.parametrize("location", ["own", "other", "shared", "symlink", "changed"])
 def test_experiment_ticket_path_guidance(location: str) -> None:
+    """Accept owned observations while preserving ticket isolation and hash checks."""
     ticket = research_ticket()
     contents = "Read-only CLI help observation: --help displays usage.\n"
     folder = "observations" if location == "shared" else "T-999" if location in {"other", "symlink"} else ticket
