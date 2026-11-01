@@ -155,3 +155,38 @@ def test_full_task_artifacts_are_frozen_and_role_scoped(repo):
     recreated = runner.create_review_bundle(branch="feature")
     assert recreated["status"] == "error", recreated
     assert "Immutable review bundle source changed" in str(recreated)
+
+
+def test_unknown_base_does_not_label_changed_sources_unchanged(repo):
+    del repo
+    git("branch", "-D", "main")
+    Path("first.py").write_text("value = 2\n")
+    admitted = runner.begin_review_run(branch="feature", provider="codex", round_id="unknown")
+    assert admitted["status"] == "success", admitted
+    assert admitted["required_files"] == ["first.py"]
+    assert not admitted["target"]["base"]
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    built = runner.build_review_prompts(branch="feature")
+    assert built["status"] == "success", built
+    directory = Path(".map/feature")
+    entry = built["prompts"]["monitor"]
+    manifest = json.loads((directory / "review-context-objects" / entry["context_transport"]["context_id"]).read_text())
+    assert "first.py" not in {value.get("path") for value in manifest["resources"].values()}
+
+
+def test_unreadable_optional_file_cannot_bypass_snapshot_binding(repo, monkeypatch):
+    del repo
+    Path("first.py").write_text("value = 2\n")
+    runner.begin_review_run(branch="feature", provider="codex", round_id="unreadable")
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    original = Path.read_bytes
+
+    def unreadable(path):
+        if path.name == "dependency.py":
+            raise PermissionError("optional source is unreadable")
+        return original(path)
+
+    monkeypatch.setattr(Path, "read_bytes", unreadable)
+    result = runner.build_review_prompts(branch="feature")
+    assert result["status"] == "error", result
+    assert runner._review_target().get("reusable") is False

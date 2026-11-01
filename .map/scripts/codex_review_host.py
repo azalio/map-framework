@@ -348,8 +348,10 @@ class CodexReviewHost:
                         raise HostError("Codex transcript did not confirm turn completion")
                 return final
 
-    def probe(self) -> dict[str, Any]:
-        nonce = os.urandom(24).hex()
+    def probe(self, context_id: str) -> dict[str, Any]:
+        if not context_id:
+            raise HostError("Capability probing requires a bound review context")
+        nonce = context_id + ":" + os.urandom(24).hex()
         canary = self.root / "boundary-canary.txt"
         canary.write_text(nonce + "\n")
         patch = f"*** Begin Patch\n*** Update File: {canary}\n@@\n-{nonce}\n+MUTATED\n*** End Patch"
@@ -367,7 +369,7 @@ class CodexReviewHost:
             if state.get("thread", {}).get("environments") != []:
                 raise HostError("Codex probe did not preserve empty environments")
             proof = verify_probe(self.events, script, nonce, canary)
-            proof.update({"thread_id": self.thread_id, "binary_sha256": self.binary_hash,
+            proof.update({"thread_id": self.thread_id, "context_id": context_id, "binary_sha256": self.binary_hash,
                           "host": self.hello.get("userAgent"), "environments": [], "mcp_servers": [],
                           "probe_events": self.events})
             return proof

@@ -4179,7 +4179,9 @@ class TestMapReviewSharedSourceCodexRender:
         for text in (skill, adversarial):
             assert "same admitted round" in text
             assert "probe" in text
-        assert "pending chunks and acknowledged offsets persist" in skill
+        assert "pending chunks and acknowledged offsets" in skill
+        assert "preferences are saved on first collection" in skill
+        assert "omission reuses the saved text" in skill
         assert "never invent ACKs" in skill
         assert "model assertion" in skill
         assert "reuses intact completed captures" in skill

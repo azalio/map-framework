@@ -129,8 +129,8 @@ class SimulatedHost:
         self.resumed.append(thread_id)
         return "thread"
 
-    def probe(self):
-        return {"boundary": "codex_no_environments", "thread_id": "thread", "environments": [], "mcp_servers": [],
+    def probe(self, context_id="context"):
+        return {"context_id": context_id, "boundary": "codex_no_environments", "thread_id": "thread", "environments": [], "mcp_servers": [],
                 "source_read": "host_witnessed", "canary_write": "host_denied_no_environment"}
 
     def turn(self, message):
@@ -163,9 +163,11 @@ def test_driver_resume_same_thread_and_complete_receipts(repo, monkeypatch):
     SimulatedHost.resumed = []
     SimulatedHost.interrupt_once = True
     with pytest.raises(host.HostError, match="interrupted"):
-        driver.run("feature")
+        driver.run("feature", review_preferences="Inspect dependencies carefully.\n")
     path = Path(".map/feature/review-verdict-ledger.json")
     before = json.loads(path.read_text())["convergence"]["rounds"][-1]
+    with pytest.raises(host.HostError, match="preferences differ"):
+        driver.run("feature", review_preferences="Different preferences")
     assert driver.run("feature")["status"] == "success"
     assert SimulatedHost.resumed == ["", "thread"]
     after = json.loads(path.read_text())["convergence"]["rounds"][-1]
@@ -257,8 +259,8 @@ def test_driver_adversarial_roster_and_ordering_sessions(repo, monkeypatch, argu
             self.identity = identity
             return identity
 
-        def probe(self):
-            return {**super().probe(), "thread_id": self.identity}
+        def probe(self, context_id):
+            return {**super().probe(context_id), "thread_id": self.identity}
 
         def turn(self, message):
             for count in range(200):
@@ -284,3 +286,25 @@ def test_driver_adversarial_roster_and_ordering_sessions(repo, monkeypatch, argu
     ledger = runner.write_review_verdict_ledger(current_run=True, branch="feature")
     assert ledger["completeness"]["status"] == "COMPLETE", ledger
     assert ledger["code_approval"]["approved"] is True
+
+
+@pytest.mark.parametrize("defect", ["missing_thread", "empty_thread", "wrong_thread", "missing_context", "wrong_context"])
+def test_host_proof_rejects_unbound_identity_before_record(repo, defect):
+    del repo
+    delivery = admitted_delivery()
+    proof = {**SimulatedHost().probe(), "context_id": delivery.state["context_id"]}
+    if defect == "missing_thread":
+        proof.pop("thread_id")
+    elif defect == "empty_thread":
+        proof["thread_id"] = ""
+    elif defect == "wrong_thread":
+        proof["thread_id"] = "another-thread"
+    elif defect == "missing_context":
+        proof.pop("context_id")
+    else:
+        proof["context_id"] = "another-context"
+    result = runner._record_codex_host_capability(delivery.state["session_id"], proof, "host", branch="feature")
+    assert result["status"] == "error", result
+    row = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
+    assert row["capability"]["status"] == "unverified"
+    assert not row["context_sessions"][delivery.state["session_id"]].get("host_capability")

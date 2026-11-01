@@ -10744,17 +10744,38 @@ def _review_capability_verified(row: dict[str, Any], directory: Path) -> bool:
 
 
 @_review_transaction
+def _bind_codex_review_preferences(preferences: str | None, round_id: str, *, branch: str) -> dict[str, Any]:
+    """Persist the exact prompt input once so recovery need not reconstruct it."""
+    directory, ledger, row = _review_delivery_load(branch, round_id)
+    if row["binding"]["provider"] != "codex":
+        raise ValueError("Review preferences require an admitted Codex round")
+    saved = row.get("codex_review_preferences", preferences or "")
+    if not isinstance(saved, str) or (preferences is not None and preferences != saved):
+        raise ValueError("Review preferences differ from the admitted run; omit --review-preferences to resume")
+    _require_review_delivery_current(row, branch)
+    if "codex_review_preferences" not in row:
+        row["codex_review_preferences"] = saved
+        _write_json_file(directory / "review-verdict-ledger.json", ledger)
+    return {"status": "success", "review_preferences": saved}
+
+
+@_review_transaction
 def _record_codex_host_capability(session_id: str, proof: dict[str, Any], round_id: str, *, branch: str) -> dict[str, Any]:
     """Called only after the driver verifies the live host probe; no CLI verification override."""
     directory, ledger, row = _review_delivery_load(branch, round_id)
-    session = _review_delivery_session(row, session_id, proof.get("thread_id", ""))
+    thread_id = proof.get("thread_id")
+    if not isinstance(thread_id, str) or not thread_id:
+        raise ValueError("Missing verified Codex host thread identity")
+    session = _review_delivery_session(row, session_id, thread_id)
+    if proof.get("context_id") != session["context_id"]:
+        raise ValueError("Codex host proof context does not match the bound reader")
     if (row["binding"]["provider"] != "codex" or proof.get("boundary") != "codex_no_environments"
             or proof.get("source_read") != "host_witnessed" or proof.get("canary_write") != "host_denied_no_environment"
             or proof.get("environments") != [] or proof.get("mcp_servers") != []):
         raise ValueError("Missing verified Codex host boundary")
     artifact = directory / "review-context-delivery" / session_id / "host-capability.json"
     artifact.parent.mkdir(parents=True, exist_ok=True)
-    _write_json_file(artifact, {**proof, "context_id": session["context_id"]})
+    _write_json_file(artifact, proof)
     session["host_capability"] = {"artifact": str(artifact.relative_to(directory)),
                                   "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}
     row["capability"] = {"provider": "codex", "profile": "review-reader", "status": "verified",
@@ -13525,7 +13546,7 @@ def _prepare_review_context(prompts: dict[str, dict[str, object]], *, branch: st
     sources = {}
     from itertools import chain
 
-    changed_paths = {item["path"] for item in attribution.get("files", [])}
+    changed_paths = {item["path"] for item in attribution.get("files", [])} | set(snapshot["required_files"])
     source_entries = chain(attribution.get("files", []), _review_optional_context_sources(snapshot, changed_paths))
     for index, source in enumerate(source_entries):
         sources[f"source_{index:06d}"] = {

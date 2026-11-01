@@ -70,7 +70,7 @@ if recovery:
     finally:
         driver.Delivery.observe = original
     before = runner._read_review_ledger(Path('.map/feature'))['convergence']['rounds'][-1]
-result = driver.run('feature', timeout=300, review_preferences=preferences)
+result = driver.run('feature', timeout=300, review_preferences=None if recovery else preferences)
 assert result['status'] == 'success', result
 if recovery:
     after = runner._read_review_ledger(Path('.map/feature'))['convergence']['rounds'][-1]

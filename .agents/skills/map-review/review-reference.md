@@ -26,6 +26,12 @@ Unread or explicitly skipped optional context does not make review incomplete.
 
 ## Compare Orderings
 
+For supported Codex reviews, `codex_review_runner.py` performs binding, delivery,
+ACK, finalization and capture, including both compare orderings. Do not perform
+these steps manually. The manual collection instructions below apply only to
+Claude and the legacy unverified native-reader path. Keep the comparison/report
+steps after the driver completes.
+
 When `--compare-orderings` is set, begin the invocation once, then collect with
 `ORDERING_LABEL=default` and `ORDERING_LABEL=reverse` set in each capture call.
 Keep envelopes in `review-collections/default/` and `review-collections/reverse/`;
@@ -244,6 +250,12 @@ decision table (`review_verdict_table.v1`) and writes:
 - `.map/<branch>/review-verdict-ledger.md` — human summary
 
 ### Parent-served context loop (Step A.2a)
+
+For supported Codex reviews, `codex_review_runner.py` performs binding, delivery,
+ACK, finalization and capture, including both compare orderings. Do not perform
+these steps manually. The manual collection instructions below apply only to
+Claude and the legacy unverified native-reader path. Keep the comparison/report
+steps after the driver completes.
 
 The role reviewers run in the SAME fan-out but with isolated context: they see
 the diff and the bundle, never the other reviewers' output. They inspect supplied

@@ -359,8 +359,10 @@ python3 .map/scripts/codex_review_runner.py --review-preferences "[paste Review 
 
 Keep this command running and poll its process with the host's normal process tools;
 progress names the current role. A tool timeout is not a completed review. If the
-process was interrupted, rerun the same command under the same admitted round:
-its native thread IDs, pending chunks and acknowledged offsets persist. A lost
+process was interrupted, rerun the command under the same admitted round and omit
+`--review-preferences`: the exact preferences are saved on first collection, alongside
+native thread IDs, pending chunks and acknowledged offsets. Explicitly different
+preferences are rejected; omission reuses the saved text. A lost
 thread or stale snapshot is an explicit error; never invent ACKs or replace its
 session silently. Do not call begin_review_run for another round to hide a failure.
 

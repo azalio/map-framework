@@ -202,7 +202,7 @@ def _review_one(host: CodexReviewHost, branch: str, row: dict[str, Any], role: s
     identity = host.start(old.get("agent_id", "") if old.get("context_id") == context_id else "")
     state = require_success(runner.bind_review_context(role, context_id, identity, row["round_id"],
                                                       ordering=ordering, branch=branch))
-    proof = host.probe()
+    proof = host.probe(context_id)
     require_success(runner._record_codex_host_capability(state["session_id"], proof, row["round_id"], branch=branch))
     delivery = Delivery(branch, row["round_id"], state)
     host.on_tool, host.on_event = delivery.respond, delivery.observe
@@ -268,7 +268,7 @@ def _review_one(host: CodexReviewHost, branch: str, row: dict[str, Any], role: s
             raise HostError("Malformed final reviewer output after one retry; resume saved context")
 
 
-def run(branch: str | None = None, *, timeout: float = 900, review_preferences: str = "") -> dict[str, Any]:
+def run(branch: str | None = None, *, timeout: float = 900, review_preferences: str | None = None) -> dict[str, Any]:
     if not math.isfinite(timeout) or timeout <= 0:
         raise HostError("timeout must be a finite positive number")
     branch = runner._sanitize_branch(branch) if branch else runner.get_branch_name()
@@ -285,10 +285,12 @@ def run(branch: str | None = None, *, timeout: float = 900, review_preferences: 
         row = ledger["convergence"]["rounds"][-1]
         if runner._review_round_terminal(row):
             raise HostError("Review round is terminal; do not dispatch new readers")
+        bound_preferences: str = require_success(runner._bind_codex_review_preferences(
+            review_preferences, row["round_id"], branch=branch))["review_preferences"]
         bundle = compact_bundle(branch)
         normal = "monitor" in binding["scheduled_reviewers"]
         built = require_success(runner.build_review_prompts(branch=branch, review_bundle_text=bundle,
-                                review_preferences=review_preferences, pack_sources=True, role_rubrics=ROLE_RUBRICS) if normal else
+                                review_preferences=bound_preferences, pack_sources=True, role_rubrics=ROLE_RUBRICS) if normal else
                                 runner.build_adversarial_review_prompts(branch=branch,
                                     reviewers=binding["scheduled_reviewers"], repo_context_text=bundle, pack_sources=True))
         orderings = ("default", "reverse") if binding["review_mode"] == "compare_orderings" else ("",)
@@ -321,7 +323,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--branch")
     parser.add_argument("--timeout", type=float, default=900)
-    parser.add_argument("--review-preferences", default="")
+    parser.add_argument("--review-preferences")
     args = parser.parse_args()
     try:
         result = run(args.branch, timeout=args.timeout, review_preferences=args.review_preferences)
