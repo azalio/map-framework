@@ -13546,13 +13546,14 @@ def _prepare_review_context(prompts: dict[str, dict[str, object]], *, branch: st
     sources = {}
     from itertools import chain
 
-    changed_paths = {item["path"] for item in attribution.get("files", [])} | set(snapshot["required_files"])
+    required_paths = set(snapshot["required_files"])
+    changed_paths = {item["path"] for item in attribution.get("files", [])} | required_paths
     source_entries = chain(attribution.get("files", []), _review_optional_context_sources(snapshot, changed_paths))
     for index, source in enumerate(source_entries):
         sources[f"source_{index:06d}"] = {
             **_review_context_store(directory, json.dumps(source, sort_keys=True, ensure_ascii=True)),
             "path": source["path"], "encoding": source["encoding"],
-            "required": not pack_sources and source["path"] in snapshot["required_files"],
+            "required": not pack_sources and source["path"] in required_paths,
             "base_sha256": hashlib.sha256(source["base_content"].encode("utf-8")).hexdigest(),
             "current_sha256": hashlib.sha256(source["current_content"].encode("utf-8")).hexdigest(),
         }
