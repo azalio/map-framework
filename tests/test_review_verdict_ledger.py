@@ -1980,7 +1980,8 @@ def test_archive_interruption_resumes_same_admission(branch_workspace, monkeypat
     assert hashlib.sha256(archives[0].read_bytes()).hexdigest() == relocated["sha256"]
 
 
-def test_incremental_scope_includes_dependent_modules_and_falls_back(branch_workspace, monkeypatch):
+@pytest.mark.parametrize("cover_dependency", [False, True])
+def test_incremental_scope_includes_dependent_modules_and_falls_back(branch_workspace, monkeypatch, cover_dependency):
     """A delivered and captured baseline enables dependent scope with conservative fallback."""
     runner = cast(Any, map_step_runner)
     monkeypatch.chdir(branch_workspace.parents[1])
@@ -2019,6 +2020,18 @@ def test_incremental_scope_includes_dependent_modules_and_falls_back(branch_work
         assert chunk["status"] == "context_response", chunk
         delivery = runner.ack_review_context(delivery["session_id"], "baseline-monitor", json.dumps(chunk), "baseline")
     assert delivery["status"] == "context_ready", delivery
+    if cover_dependency:
+        manifest = json.loads((branch_workspace / "review-context-objects" / context_id).read_text())
+        resource_id = next(key for key, metadata in manifest["resources"].items()
+                           if metadata.get("path") == "consumer.py")
+        request = {"type": "context_request", "context_id": context_id,
+                   "resource_id": resource_id, "offset": 0}
+        chunk = runner.serve_review_context("monitor", json.dumps(request), "baseline",
+                                           session_id=delivery["session_id"], agent_id="baseline-monitor")
+        assert chunk["status"] == "context_response", chunk
+        delivery = runner.ack_review_context(delivery["session_id"], "baseline-monitor", json.dumps(chunk), "baseline")
+        assert delivery["status"] == "context_ready", delivery
+        envelope["receipt"]["covered_files"] = [*admission["required_files"], "consumer.py"]
     envelope["context_receipt"] = {"session_id": delivery["session_id"],
                                    "finalization_token": delivery["finalization_token"]}
     assert runner.capture_review_output("monitor", json.dumps(envelope), "baseline")["status"] == "success"
@@ -2027,6 +2040,10 @@ def test_incremental_scope_includes_dependent_modules_and_falls_back(branch_work
     git("commit", "-am", "fix")
     runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="2")
     prompts = runner.build_review_prompts(review_bundle_text="bundle")
+    if not cover_dependency:
+        assert prompts["review_scope"]["kind"] == "full"
+        assert prompts["review_scope"]["reason"] == "Affected dependencies lack prior reviewer coverage"
+        return
     assert prompts["review_scope"]["kind"] == "incremental"
     assert prompts["review_scope"]["affected_files"] == ["consumer.py", "core.py"]
     assert "VALUE = 3" in prompts["prompts"]["monitor"]["prompt"]

@@ -22,6 +22,28 @@ The two role reviewers answer to the five-part output contract (`problem`,
 fill all five is dropped by `aggregate_adversarial_findings` into
 `contract_incomplete` — reported, never counted.
 
+[%- if PROVIDER == "codex" %]
+
+## Steps B.adversarial.0–3: Collect through the Codex runner
+
+After admission and immutable bundle creation, run:
+
+```bash
+python3 .map/scripts/codex_review_runner.py
+```
+
+The driver reads the admitted roster, creates independent environment-free threads,
+probes each host boundary, serves only each role's permitted immutable context,
+validates individual reports and captures the tagged adversarial aggregate. Blind
+remains diff-only. Compare-orderings uses separate thread/session/receipt sets.
+Poll the running command; on interruption rerun it under the same admitted round.
+Do not spawn native readers, copy chunks through the parent, or promote an unverified
+probe. See SKILL.md Step A.2 for the capability and recovery contract. Read the
+captured `review-agent-adversarial.json` (or both review-collections in compare mode)
+for presentation, then proceed below.
+
+[%- else %]
+
 ## Step B.adversarial.0: Build adversarial review prompts
 
 ```bash
@@ -139,6 +161,8 @@ python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings \
   "${ADV_ARGS[@]}" | python3 .map/scripts/map_step_runner.py capture_review_output \
   --reviewer adversarial --round-id "$REVIEW_ROUND_ID" --ordering "${ORDERING_LABEL:-}" || exit 1
 ```
+
+[%- endif %]
 
 ## Step B.adversarial.4: Present unified adversarial report
 

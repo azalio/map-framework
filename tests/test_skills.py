@@ -4157,34 +4157,15 @@ class TestMapReviewSharedSourceCodexRender:
         assert "$map-review" in codex
         assert "/map-review" in claude and "$map-review" not in claude
 
-    _NORMAL_DISPATCH = tuple((role, "review-reader") for role in (
-        "monitor", "predictor", "evaluator", "user_experience", "maintainer", "complexity_lens",
-    ))
-    _ADVERSARIAL_DISPATCH = tuple((role, "review-reader") for role in (
-        "blind", "edge_case", "acceptance", "user_experience", "maintainer",
-    ))
-
-    @staticmethod
-    def _spawn_line(text: str, role: str, agent_type: str) -> bool:
-        pattern = (
-            rf'spawn_agent\(agent_type="{re.escape(agent_type)}", '
-            rf'task_name="map_review_{role}_<n>", message='
-        )
-        return re.search(pattern, text) is not None
-
-    def test_codex_dispatch_uses_spawn_agent_with_d4_mapping(self) -> None:
-        skill = self._render("SKILL.md.jinja", "codex")
-        adversarial = self._render("adversarial-reference.md.jinja", "codex")
-        for text in (skill, adversarial):
+    def test_codex_collection_uses_runner_owned_threads(self) -> None:
+        for name in ("SKILL.md.jinja", "adversarial-reference.md.jinja"):
+            text = self._render(name, "codex")
             assert "Task(" not in text
+            assert "spawn_agent(" not in text
             assert "subagent_type=" not in text
-        for role, agent_type in self._NORMAL_DISPATCH:
-            assert self._spawn_line(skill, role, agent_type), role
-        for role, agent_type in self._ADVERSARIAL_DISPATCH:
-            assert self._spawn_line(adversarial, role, agent_type), role
-        assert "as the spawn_agent messages" in skill
-        assert 'spawn_agent(agent_type="review-reader", task_name="map_review_<role>_<n>"' in skill
-        assert "for every role" in skill
+            assert "python3 .map/scripts/codex_review_runner.py" in text
+            assert "environment-free" in text
+            assert "unverified" in text
 
     def test_claude_render_keeps_task_dispatch(self) -> None:
         for name in ("SKILL.md.jinja", "adversarial-reference.md.jinja"):
@@ -4192,23 +4173,19 @@ class TestMapReviewSharedSourceCodexRender:
             assert "Task(subagent_type=" in claude, name
             assert "spawn_agent(" not in claude, name
 
-    def test_codex_states_counter_and_five_dispatch_rules(self) -> None:
-        """Codex counters distinguish initial dispatches, context continuations and retries."""
+    def test_codex_documents_same_round_resume_and_host_proof(self) -> None:
         skill = self._render("SKILL.md.jinja", "codex")
         adversarial = self._render("adversarial-reference.md.jinja", "codex")
         for text in (skill, adversarial):
-            assert re.search(r"`<n>` increments on every dispatch in the run", text)
-            assert "Step A.2b truncation retry" in text
-            assert "second `--compare-orderings` collection" in text
-            assert "unique `task_name`" in text
-            assert "read-only and may return intermediate `context_request` JSON" in text
-            assert "Wait for all dispatched reviewers and map each final JSON" in text
-            assert "sequentially" in text
-            assert "parent-session personas" in text
-        assert "generated role prompt supplies its complete role protocol" in skill
-        assert "fresh `task_name`" in skill.split("Step A.2b: Truncated-response gate")[1]
-        compare = skill.split("Step A.1d")[1].split("Step A.2:")[0]
-        assert "keeps incrementing across both collections" in compare
+            assert "same admitted round" in text
+            assert "probe" in text
+        assert "pending chunks and acknowledged offsets" in skill
+        assert "preferences are saved on first collection" in skill
+        assert "omission reuses the saved text" in skill
+        assert "never invent ACKs" in skill
+        assert "model assertion" in skill
+        assert "reuses intact completed captures" in skill
+        assert "host witness" in skill
 
     def test_cross_ai_passes_explicit_provider_and_honest_provenance(self) -> None:
         for provider in ("claude", "codex"):
@@ -4223,12 +4200,9 @@ class TestMapReviewSharedSourceCodexRender:
         codex = self._render("SKILL.md.jinja", "codex")
         claude = self._render("SKILL.md.jinja", "claude")
         for needle in (
-            "Codex — supported review states",
-            "`WORKFLOW_COMPLETE`",
-            "MAP_MONITOR_HOTFIX",
-            "In other non-editing phases (e.g. `DECOMPOSE`, `PREDICTOR`",
-            "workflow-gate hook denies shell writes",
-            "do not work around the hook",
+            "Codex collection",
+            "Normal workflow-state and snapshot gates",
+            "Do not bypass a host or workflow denial",
         ):
             assert needle in codex, needle
             assert needle not in claude, needle
@@ -4246,6 +4220,12 @@ class TestMapReviewSharedSourceCodexRender:
 def test_map_review_truncation_gate_pipes_response_on_stdin(rendered: str) -> None:
     """detect_truncated_agent_output reads stdin; a bare call is no_input, not a pass."""
     text = (Path(__file__).parent.parent / rendered).read_text(encoding="utf-8")
+    if rendered.startswith(".agents/"):
+        assert "codex_review_runner.py" in text
+        driver = (Path(__file__).parent.parent / "src/mapify_cli/templates/map/scripts/codex_review_runner.py").read_text()
+        assert "runner.detect_truncated_agent_output(response, agent_kind=" in driver
+        assert 'checked.get("truncated") is False' in driver
+        return
     assert (
         "printf '%s' \"$RESPONSE\" | python3 .map/scripts/map_step_runner.py "
         "detect_truncated_agent_output --agent <kind>"

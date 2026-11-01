@@ -21,105 +21,23 @@ The two role reviewers answer to the five-part output contract (`problem`,
 fill all five is dropped by `aggregate_adversarial_findings` into
 `contract_incomplete` — reported, never counted.
 
-## Step B.adversarial.0: Build adversarial review prompts
+## Steps B.adversarial.0–3: Collect through the Codex runner
+
+After admission and immutable bundle creation, run:
 
 ```bash
-BRANCH=$(python3 .map/scripts/map_utils.py branch)
-BRANCH_DIR=".map/$BRANCH"
-QUICK_ARG=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("--quick" if "edge_case" not in d["scheduled_reviewers"] else "")' "$BRANCH_DIR/review-mode.json") || exit 1
-
-ADV_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_adversarial_review_prompts $QUICK_ARG)
-
-BLIND_PROMPT=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("blind",{}).get("prompt",""))')
-BLIND_DESC=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("blind",{}).get("description",""))')
-
-EDGE_PROMPT=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("edge_case",{}).get("prompt",""))')
-EDGE_DESC=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("edge_case",{}).get("description",""))')
-
-ACCEPTANCE_PROMPT=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("acceptance",{}).get("prompt",""))')
-ACCEPTANCE_DESC=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("acceptance",{}).get("description",""))')
-
-USER_EXPERIENCE_PROMPT=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("user_experience",{}).get("prompt",""))')
-USER_EXPERIENCE_DESC=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("user_experience",{}).get("description",""))')
-
-MAINTAINER_PROMPT=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("maintainer",{}).get("prompt",""))')
-MAINTAINER_DESC=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("maintainer",{}).get("description",""))')
+python3 .map/scripts/codex_review_runner.py
 ```
 
-## Step B.adversarial.1: Launch all five in parallel (fan-out)
-
-```text
-# Dispatch all five reviewers together — they are fully independent.
-# <n> increments on every dispatch in the run.
-
-spawn_agent(agent_type="review-reader", task_name="map_review_blind_<n>", message=BLIND_PROMPT)
-spawn_agent(agent_type="review-reader", task_name="map_review_edge_case_<n>", message=EDGE_PROMPT)  # skip if --quick
-spawn_agent(agent_type="review-reader", task_name="map_review_acceptance_<n>", message=ACCEPTANCE_PROMPT)
-spawn_agent(agent_type="review-reader", task_name="map_review_user_experience_<n>", message=USER_EXPERIENCE_PROMPT)
-spawn_agent(agent_type="review-reader", task_name="map_review_maintainer_<n>", message=MAINTAINER_PROMPT)
-```
-
-Codex dispatch rules:
-
-- `<n>` increments on every dispatch in the run (including the Step A.2b truncation retry, the Step B.adversarial.2 re-invoke, and the second `--compare-orderings` collection), so every call gets a unique `task_name`.
-- Each call sends its generated prompt as `message`, plus a reminder that the reviewer is read-only and may return intermediate `context_request` JSON before its required final output.
-- Wait for all dispatched reviewers and map each final JSON back to `BLIND_OUTPUT`, `EDGE_OUTPUT`, `ACCEPTANCE_OUTPUT`, `USER_EXPERIENCE_OUTPUT`, and `MAINTAINER_OUTPUT`.
-- If concurrency is unavailable, make the same calls sequentially.
-- Never replace independent review with parent-session personas.
-- Every role uses `review-reader`; its generated prompt supplies the role-specific protocol, quality rubric and schema. No general-purpose fallback or shell restoration. Codex capability enforcement remains unverified: findings remain publishable, but completeness is INCOMPLETE and cannot approve.
-
-## Step B.adversarial.2: Validate reviewer outputs
-
-First apply Step A.2a's `serve_review_context` loop to every response, using the
-original role key (`blind`, `edge_case`, `acceptance`, `user_experience` or
-`maintainer`) and continuing the same agent. Context requests are intermediate;
-never aggregate them or count them as malformed final responses. This also applies
-to retries and both independent `--compare-orderings` collections.
-
-Only after `status: not_context_request`, require valid JSON matching the adversarial finding schema. If any final reviewer output is truncated or invalid JSON:
-- Log the failure
-- Re-invoke that specific reviewer ONCE with the same prompt
-- If still invalid, record the reviewer as `parse_error` and continue with remaining reviewers
-
-## Step B.adversarial.3: Aggregate findings
-
-Write each reviewer's raw JSON output to a temp file, then aggregate:
-
-```bash
-BRANCH=$(python3 .map/scripts/map_utils.py branch)
-BRANCH_DIR=".map/$BRANCH"
-RUN_MODE="$BRANCH_DIR/review-mode.json"
-QUICK_FLAG=$(python3 -c 'import json,sys; print("true" if "edge_case" not in json.load(open(sys.argv[1]))["scheduled_reviewers"] else "false")' "$RUN_MODE") || exit 1
-# In compare-orderings set ORDERING_LABEL=default or reverse in this call.
-if [ -n "${ORDERING_LABEL:-}" ]; then BRANCH_DIR="$BRANCH_DIR/review-collections/$ORDERING_LABEL"; fi
-mkdir -p "$BRANCH_DIR"
-cat > "$BRANCH_DIR/adversarial-blind.json" <<'BLIND_EOF'
-<paste the Blind JSON envelope verbatim>
-BLIND_EOF
-cat > "$BRANCH_DIR/adversarial-acceptance.json" <<'ACCEPTANCE_EOF'
-<paste the Acceptance JSON envelope verbatim>
-ACCEPTANCE_EOF
-cat > "$BRANCH_DIR/adversarial-user-experience.json" <<'USER_EOF'
-<paste the User Experience JSON envelope verbatim>
-USER_EOF
-cat > "$BRANCH_DIR/adversarial-maintainer.json" <<'MAINTAINER_EOF'
-<paste the Maintainer JSON envelope verbatim>
-MAINTAINER_EOF
-rm -f "$BRANCH_DIR/adversarial-edge.json"
-ADV_ARGS=(--blind "$BRANCH_DIR/adversarial-blind.json" --acceptance "$BRANCH_DIR/adversarial-acceptance.json"
-  --user-experience "$BRANCH_DIR/adversarial-user-experience.json" --maintainer "$BRANCH_DIR/adversarial-maintainer.json")
-if [ "$QUICK_FLAG" != "true" ]; then
-  cat > "$BRANCH_DIR/adversarial-edge.json" <<'EDGE_EOF'
-<paste the Edge Case JSON envelope verbatim>
-EDGE_EOF
-  ADV_ARGS+=(--edge-case "$BRANCH_DIR/adversarial-edge.json")
-fi
-REVIEW_ROUND_ID="${REVIEW_ROUND_ID:-$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["round_id"])' "$RUN_MODE")}"
-set -o pipefail
-python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings \
-  "${ADV_ARGS[@]}" | python3 .map/scripts/map_step_runner.py capture_review_output \
-  --reviewer adversarial --round-id "$REVIEW_ROUND_ID" --ordering "${ORDERING_LABEL:-}" || exit 1
-```
+The driver reads the admitted roster, creates independent environment-free threads,
+probes each host boundary, serves only each role's permitted immutable context,
+validates individual reports and captures the tagged adversarial aggregate. Blind
+remains diff-only. Compare-orderings uses separate thread/session/receipt sets.
+Poll the running command; on interruption rerun it under the same admitted round.
+Do not spawn native readers, copy chunks through the parent, or promote an unverified
+probe. See SKILL.md Step A.2 for the capability and recovery contract. Read the
+captured `review-agent-adversarial.json` (or both review-collections in compare mode)
+for presentation, then proceed below.
 
 ## Step B.adversarial.4: Present unified adversarial report
 

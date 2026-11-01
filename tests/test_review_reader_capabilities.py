@@ -120,8 +120,15 @@ def test_all_installed_review_dispatches_use_reader(installed_reader):
     skill_root = root / (".claude/skills/map-review" if provider == "claude" else ".agents/skills/map-review")
     texts = [(skill_root / name).read_text() for name in ("SKILL.md", "adversarial-reference.md", "review-reference.md")]
     dispatches = re.findall(r'(?:subagent_type|agent_type)="([^"]+)"', "\n".join(texts))
-    assert len(dispatches) >= 11
-    assert set(dispatches) == {"review-reader"}
+    if provider == "claude":
+        assert len(dispatches) >= 11
+        assert set(dispatches) == {"review-reader"}
+    else:
+        assert dispatches == []
+        assert "codex_review_runner.py" in texts[0]
+        assert "codex_review_runner.py" in texts[1]
+        assert (root / ".map/scripts/codex_review_host.py").is_file()
+        assert (root / ".map/scripts/codex_review_runner.py").is_file()
     skill = texts[0]
     assert f'"--provider", "{provider}", "--capability-profile", "review-reader"' in skill
     assert "run_test_gate" in skill

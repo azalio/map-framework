@@ -25,7 +25,7 @@ parallel_tool_policy: single_review_fanout
 ```
 
 - Use deeper reasoning for verdicts, risk ranking, section tradeoffs, and contradictory reviewer evidence.
-- Use exactly one parallel reviewer fan-out after bundle preparation: Monitor, Predictor, Evaluator, the two role reviewers, and the optional complexity lens may run together because they inspect the same review input independently.
+- Use one runner invocation after bundle preparation; it collects independent reviewer threads in order and owns recovery. Do not launch an additional native fan-out.
 - Wait for all reviewer agents before section presentation. Do not parallelize interactive decisions, ordering comparisons that share state, or review-bundle writes.
 
 ## Flags
@@ -52,7 +52,9 @@ parallel_tool_policy: single_review_fanout
 7. **Monitor `valid=false` requires verification, not immediate publication** — Step A.3 verifies evidence and bug-introduced-here BEFORE Phase B. Bare claims become `needs_investigation`, not published issues.
 8. Present options neutrally as A/B/C. Append `(Recommended)` after the option label, not by position.
 
-**Codex — supported review states:** run `$map-review` (normal, `--adversarial`, `--cross-ai`) with no `.map/<branch>/step_state.json`, in `COMPLETE`/`WORKFLOW_COMPLETE`, or in `MONITOR` while `MAP_MONITOR_HOTFIX` is not `0`. In other non-editing phases (e.g. `DECOMPOSE`, `PREDICTOR`, or `MONITOR` with `MAP_MONITOR_HOTFIX=0`) the Codex workflow-gate hook denies shell writes to `$`-expanded targets (precheck log, `review-mode.json`, reviewer envelopes, adversarial files). On such a deny, archive the stale workflow (or finish it) or rerun `$map-review` from a supported state — do not work around the hook.
+**Codex collection:** the supported driver owns captures and continuation; the skill
+has no shell-expanded capture targets. Normal workflow-state and snapshot gates
+remain authoritative. Do not bypass a host or workflow denial.
 
 ## Review Preferences (Customize per project)
 
@@ -337,129 +339,47 @@ if [ "$DETACHED_FLAG" = "true" ]; then
 fi
 ```
 
-If `DETACHED_STATUS` is `success`, tell reviewer agents to read source files from `$DETACHED_PATH` read-only. If status is `unavailable` or `error`, announce `$DETACHED_REASON` and continue in place. Do not mutate the source branch.
+If `DETACHED_STATUS` is `success`, retain the detached tree for operator inspection; the driver still serves only the admitted immutable resources. If status is `unavailable` or `error`, announce `$DETACHED_REASON` and continue in place. Do not mutate the source branch.
 
 ### Step A.1d: Prepare compare-mode ordering (optional, `--compare-orderings` only)
 
 When compare mode is active, run two review collections with `ordering_label='default'` and `ordering_label='reverse'`, then call `compare-review-runs` and `record-review-ordering` to stage the drift summary. See [review-reference.md](review-reference.md#compare-orderings) for the detailed loop.
 
-On Codex, `<n>` in `task_name` (the `map_review_<role>_<n>` counter from Step A.2) keeps incrementing across both collections, so the second (`reverse`) collection dispatches with fresh names.
+On Codex, one driver invocation collects both orderings with separate persisted native threads. Rerunning it resumes unfinished threads and reuses intact completed captures.
 
-### Step A.2: Launch all parallel calls
-Before launching agents, build the reviewer prompts with `build_review_prompts`. Evidence is NOT truncated. The admitted immutable bundle backs a compact initial prompt and parent-served resources; large original prompts, full file inventory and permitted base/current sources arrive in chunks through Step A.2a. `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is informational and clips nothing. The 512 KiB limit still applies to each initial prompt and serialized context response. On a builder error, stop dispatch and report the reason; never bypass admission or remove evidence to fit.
+### Step A.2: Collect reviewer reports
 
-```bash
-REVIEW_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_review_prompts \
-  --review-preferences "[paste Review Preferences section above]")
-printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("status") == "success" else json.dumps(d, indent=2))' || exit 1
-MONITOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["monitor"]["prompt"])')
-PREDICTOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["predictor"]["prompt"])')
-EVALUATOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["evaluator"]["prompt"])')
-COMPLEXITY_LENS_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("prompts",{}).get("complexity_lens",{}).get("prompt", ""))')
-COMPLEXITY_LENS_ENABLED=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); print("true" if data.get("prompts",{}).get("complexity_lens") else "false")')
-USER_EXPERIENCE_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["user_experience"]["prompt"])')
-SECURITY_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("prompts", {}).get("security", {}).get("prompt", ""))')
-MAINTAINER_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["maintainer"]["prompt"])')
-```
-
-Use the extracted prompt variables as the spawn_agent messages. Keep reviewer spawn calls below the bundle and prompt-builder commands.
-
-```text
-spawn_agent(agent_type="review-reader", task_name="map_review_monitor_<n>", message=MONITOR_PROMPT)
-spawn_agent(agent_type="review-reader", task_name="map_review_predictor_<n>", message=PREDICTOR_PROMPT)
-spawn_agent(agent_type="review-reader", task_name="map_review_evaluator_<n>", message=EVALUATOR_PROMPT)
-spawn_agent(agent_type="review-reader", task_name="map_review_user_experience_<n>", message=USER_EXPERIENCE_PROMPT)
-spawn_agent(agent_type="review-reader", task_name="map_review_maintainer_<n>", message=MAINTAINER_PROMPT)
-If security is in admitted roster: spawn_agent(agent_type="review-reader", task_name="map_review_security_<n>", message=SECURITY_PROMPT)
-If COMPLEXITY_LENS_ENABLED=true: spawn_agent(agent_type="review-reader", task_name="map_review_complexity_lens_<n>", message=COMPLEXITY_LENS_PROMPT)
-```
-
-Codex dispatch rules:
-
-- `<n>` increments on every dispatch in the run (including the Step A.2b truncation retry and the second `--compare-orderings` collection), so every call gets a unique `task_name`.
-- Each call sends its generated prompt as `message`, plus a reminder that the reviewer is read-only and may return intermediate `context_request` JSON before its required final output.
-- Wait for all dispatched reviewers and map each final JSON back to its role variable (`MONITOR_OUTPUT`, `PREDICTOR_OUTPUT`, `EVALUATOR_OUTPUT`, `USER_EXPERIENCE_OUTPUT`, `MAINTAINER_OUTPUT`, `SECURITY_OUTPUT`, and `COMPLEXITY_LENS_OUTPUT` when enabled).
-- If concurrency is unavailable, make the same calls sequentially.
-- Never replace independent review with parent-session personas.
-- Every reviewer uses `review-reader`; the generated role prompt supplies its complete role protocol, rubric and schema. Do not route through general-purpose or execution-capable profiles.
-- `capability_enforcement=unverified`: shell/delegation disabling settings and read-only sandbox are defense in depth, not runtime proof of no writes/native read-search. Continue review and finding publication from source content in the runner bundle; the result is INCOMPLETE and cannot approve. Never disable the whole Codex review or silently restore shell (#526).
-
-Role reviewers remain isolated; follow the access and attribution rules in [Parent-served context loop](review-reference.md#parent-served-context-loop-step-a2a).
-
-Reviewer prompts reference `review-bundle.json`, `review-bundle.md`, the raw diff as secondary context, and the expected output schema.
-
-When enabled (`minimality != off`), the complexity lens is advisory only. It lists over-engineering as `delete:`, `stdlib:`, `native:`, `yagni:`, or `shrink:` findings, ends with `net: -<N> lines possible.` or `Lean already. Ship.`, samples `map:simplification:` marker claims, and never feeds Actor retries or verdict gates.
-
-### Step A.2a: Deliver requested context to the same reviewer (MANDATORY)
-
-Before final JSON validation, follow [Parent-served context loop](review-reference.md#parent-served-context-loop-step-a2a): run `serve_review_context` for every response, including retries, adversarial roles and the complexity lens. Continue the same agent for `context_response`; responses to the post-delivery finalization request proceed to Step A.2b even with missing or invalid receipts. Discard queued early finals; context requests never consume final-response retries or become captured reviews. Denied/stale context leaves collection incomplete.
-
-### Step A.2b: Truncated-response gate (MANDATORY — post-fan-out, pre-verification)
-
-After Step A.2a identifies a final response, pipe it on stdin (a bare call returns
-`status:"no_input"`, not a pass):
-`printf '%s' "$RESPONSE" | python3 .map/scripts/map_step_runner.py detect_truncated_agent_output --agent <kind>`
-using the role-specific kind shown below. On truncation or missing/invalid finalization `context_receipt`: log via
-`log_agent_failure --agent <role> --phase post-invoke --failure-label truncated --reasons '<reasons>'`
-and re-invoke that reviewer ONCE using the prompt from
-`build_json_retry_prompt --agent <role> --errors '<reasons>'`; if still
-malformed, stop with CLARIFICATION_NEEDED.
-Include the original generated prompt and context protocol with retry instructions; process intermediate requests through Step A.2a.
-
-On Codex, the re-invocation is a new `spawn_agent` call: `<n>` keeps incrementing, so the retry gets a fresh `task_name`.
-
-Role → `--agent` kind for the truncation check:
-- monitor reviewer → `--agent review-monitor` (enforces the full review schema:
-  evidence/valid/summary/verdict/issues/passed_checks/failed_checks)
-- predictor reviewer → `--agent predictor`
-- evaluator reviewer → `--agent evaluator`
-- role reviewers → `--agent user_experience` / `--agent maintainer` / `--agent security`
-
-The optional complexity lens returns plain text, not JSON. Do not run the JSON truncation gate on it; if it is empty or visibly cut off, rerun only that lens prompt once.
-
-### Step A.2c: Capture reviewer envelopes (MANDATORY — the ledger reads these)
-
-Once a reviewer clears the truncation gate, write its JSON envelope verbatim to
-`.map/<branch>/review-agent-<role>.json` (`monitor`, `predictor`, `evaluator`,
-`user_experience`, `maintainer`; include `security` only when it is in the
-admitted roster, plus `adversarial` in adversarial/compare-orderings mode). The verdict ledger is
-computed from these files — a role whose file is missing is recorded as an
-unobserved review, not as a clean one.
+Use the runner-owned Codex app-server transport. Do not launch native review-reader
+subagents or relay context through the main conversation. For adversarial mode,
+use the corresponding command in adversarial-reference.md instead of this section.
 
 ```bash
-BRANCH=$(python3 .map/scripts/map_utils.py branch)
-BRANCH_DIR=".map/$BRANCH"
-# For compare-orderings set ORDERING_LABEL=default or reverse in this call.
-# Preserve both collections; do not call begin_review_run between them.
-if [ -n "${ORDERING_LABEL:-}" ]; then BRANCH_DIR="$BRANCH_DIR/review-collections/$ORDERING_LABEL"; fi
-mkdir -p "$BRANCH_DIR"
-
-REVIEW_ROUND_ID="${REVIEW_ROUND_ID:-$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["round_id"])' ".map/$BRANCH/review-mode.json")}"
-python3 .map/scripts/map_step_runner.py capture_review_output \
-  --reviewer monitor --round-id "$REVIEW_ROUND_ID" --ordering "${ORDERING_LABEL:-}" <<'MONITOR_EOF'
-<paste the Monitor JSON envelope verbatim>
-MONITOR_EOF
+python3 .map/scripts/codex_review_runner.py --review-preferences "[paste Review Preferences section above]"
 ```
 
-The quoted heredoc marker (`<<'MONITOR_EOF'`, quotes included) is what stops the
-shell expanding anything inside the payload. Repeat for `predictor`,
-`evaluator`, `user_experience` and `maintainer`; repeat for `security` only when it is in the admitted roster. In adversarial or
-compare-orderings mode write the complete tagged aggregate to
-`review-agent-adversarial.json` instead, including `ledger_findings`,
-`reviewer_status` and `parse_errors`; an empty findings array alone cannot prove review.
+Keep this command running and poll its process with the host's normal process tools;
+progress names the current role. A tool timeout is not a completed review. If the
+process was interrupted, rerun the command under the same admitted round and omit
+`--review-preferences`: the exact preferences are saved on first collection, alongside
+native thread IDs, pending chunks and acknowledged offsets. Explicitly different
+preferences are rejected; omission reuses the saved text. A lost
+thread or stale snapshot is an explicit error; never invent ACKs or replace its
+session silently. Do not call begin_review_run for another round to hide a failure.
 
-Every reviewer envelope includes
-`receipt={covered_files:[],skipped_files:[],denied_access:[],check_evidence:[check_id]}`.
-Coverage means actual source paths inspected (including supplied source content),
-not acceptance citations; reading claims remain `self_reported`. Check references
-must be current runner-issued IDs, never claimed executions. Preserve each raw
-reviewer receipt in the adversarial aggregate's `reviewer_status[role].raw`;
-a top-level aggregate receipt cannot substitute for individual coverage.
-Reviewers may submit structured `resolved_findings` using the full evidence and
-sibling-remediation contract in review-reference.md § Evidence validation in the admitted round.
-Only the originating reviewer may request closure; free text or omission is not
-resolution. Fresh checked evidence is required, not a tool-witnessed execution claim.
-Preserve file/location/failure-scenario evidence so distinct defects stay distinct.
+The driver builds compact role prompts, serves immutable resources through one
+read-only dynamic tool, checks intact Code Mode output before ACK, resizes truncated
+chunks, validates final envelopes and captures them in the usual ledger paths.
+Each role has an independent environment-free Codex thread. A runtime probe checks
+actual tool inventory, successful source delivery and a denied canary write before
+any repository evidence is supplied. COMPLETE requires every admitted reader's
+host witness as well as scope, snapshot/policy, checks and finalization receipts.
+The legacy native profile remains `capability_enforcement=unverified`: findings
+remain publishable, but that route stays INCOMPLETE and cannot approve. A failed
+probe never becomes verified by configuration, version text or model assertion.
+
+Reading claims in `receipt={covered_files:[],skipped_files:[],denied_access:[],check_evidence:[]}`
+remain self_reported. The optional complexity lens stays advisory. On driver success,
+continue at Step A.3 using captured artifacts; do not dispatch a second reviewer set.
 
 ### Step A.3: Verification gate (MANDATORY before any presentation)
 
@@ -531,17 +451,11 @@ When `--adversarial` is set (with `--cross-ai`: present cross-AI first, then thi
 ### Quick reference
 
 ```text
-1. Build prompts:  python3 .map/scripts/map_step_runner.py build_adversarial_review_prompts --reviewers <comma-separated admitted roster>
-2. Fan-out:        spawn_agent(agent_type="review-reader", task_name="map_review_<role>_<n>", message=<ROLE>_PROMPT)
-                   for every role in the admitted roster — parallel, then wait for all (strict overrides --quick)
-3. Validate:       Each must return valid JSON per adversarial finding schema; retry ONCE on failure
-4. Aggregate:      python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings --blind <path> [--edge-case <path> when admitted] --acceptance <path> --user-experience <path> --maintainer <path> [--security <path> when admitted]
-5. Present:        Unified report: CRITICAL/IMPORTANT/MINOR, convergence section, all-clear statements (--show-raw-findings for debug)
-6. Feed ledger:    persist the complete tagged aggregate to "$BRANCH_DIR/review-agent-adversarial.json"
-                   including ledger_findings, reviewer_status and parse_errors
-7. Skip to:        Final Verdict → Handoff Artifacts; do NOT run normal 4-section walkthrough
-                   The verdict is computed by the ledger from those findings — this phase
-                   does not assign one.
+1. Collect: python3 .map/scripts/codex_review_runner.py
+            Builds prompts, validates reports and captures the aggregate for the admitted roster.
+            On interruption rerun the same command in the same admitted round.
+2. Present: Read the captured aggregate; show findings, convergence and all-clear statements.
+3. Continue: Final Verdict → Handoff Artifacts. The ledger computes the verdict.
 ```
 
 ## Phase B: Interactive Presentation (4 Sections) — NORMAL MODE ONLY

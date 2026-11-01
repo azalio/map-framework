@@ -30,7 +30,7 @@ ARCHITECTURE = REPO / "docs" / "ARCHITECTURE.md"
 # invocable manually via Task(subagent_type="<name>"). Each MUST carry a
 # "Dispatch status:" annotation in its template so the undispatched state is deliberate.
 DOCUMENTED_OPTIONAL_AGENTS = {"documentation-reviewer"}
-CODEX_DOCUMENTED_OPTIONAL_AGENTS = {"documentation-reviewer"}
+CODEX_DOCUMENTED_OPTIONAL_AGENTS = {"documentation-reviewer", "review-reader"}
 
 _DISPATCH_RE = re.compile(r'subagent_type=["\']([a-z0-9-]+)["\']')
 CODEX_SKILLS_RENDERED = REPO / ".agents" / "skills"
@@ -98,7 +98,8 @@ def test_every_codex_agent_is_dispatched_or_documented_optional():
     assert not silent_orphans, (
         f"Codex role(s) have no agent_type dispatch site or optional annotation: {sorted(silent_orphans)}"
     )
-    assert "review-reader" in dispatched
+    assert "review-reader" not in dispatched
+    assert "codex_review_runner.py" in (CODEX_SKILLS_RENDERED / "map-review/SKILL.md").read_text()
 
 
 def test_codex_optional_agents_exist_and_are_annotated():
@@ -133,7 +134,7 @@ def test_doctrine_documented_in_architecture():
     assert "Agent-Boundary Doctrine" in text, (
         "docs/ARCHITECTURE.md must document the Agent-Boundary Doctrine (issue #230)."
     )
-    assert "all nine pipeline-dispatched agents in each provider" in text
+    assert "eight native pipeline agents in Codex" in text
     assert "optional in both providers" in text
     assert "DocumentationReviewer | *(no skill dispatch" not in text
 

@@ -25,7 +25,11 @@ parallel_tool_policy: single_review_fanout
 ```
 
 - Use deeper reasoning for verdicts, risk ranking, section tradeoffs, and contradictory reviewer evidence.
+[%- if PROVIDER == "codex" %]
+- Use one runner invocation after bundle preparation; it collects independent reviewer threads in order and owns recovery. Do not launch an additional native fan-out.
+[%- else %]
 - Use exactly one parallel reviewer fan-out after bundle preparation: Monitor, Predictor, Evaluator, the two role reviewers, and the optional complexity lens may run together because they inspect the same review input independently.
+[%- endif %]
 - Wait for all reviewer agents before section presentation. Do not parallelize interactive decisions, ordering comparisons that share state, or review-bundle writes.
 
 ## Flags
@@ -53,7 +57,9 @@ parallel_tool_policy: single_review_fanout
 8. Present options neutrally as A/B/C. Append `(Recommended)` after the option label, not by position.
 [%- if PROVIDER == "codex" %]
 
-**Codex — supported review states:** run `$map-review` (normal, `--adversarial`, `--cross-ai`) with no `.map/<branch>/step_state.json`, in `COMPLETE`/`WORKFLOW_COMPLETE`, or in `MONITOR` while `MAP_MONITOR_HOTFIX` is not `0`. In other non-editing phases (e.g. `DECOMPOSE`, `PREDICTOR`, or `MONITOR` with `MAP_MONITOR_HOTFIX=0`) the Codex workflow-gate hook denies shell writes to `$`-expanded targets (precheck log, `review-mode.json`, reviewer envelopes, adversarial files). On such a deny, archive the stale workflow (or finish it) or rerun `$map-review` from a supported state — do not work around the hook.
+**Codex collection:** the supported driver owns captures and continuation; the skill
+has no shell-expanded capture targets. Normal workflow-state and snapshot gates
+remain authoritative. Do not bypass a host or workflow denial.
 [%- endif %]
 
 ## Review Preferences (Customize per project)
@@ -339,17 +345,52 @@ if [ "$DETACHED_FLAG" = "true" ]; then
 fi
 ```
 
-If `DETACHED_STATUS` is `success`, tell reviewer agents to read source files from `$DETACHED_PATH` read-only. If status is `unavailable` or `error`, announce `$DETACHED_REASON` and continue in place. Do not mutate the source branch.
+If `DETACHED_STATUS` is `success`, [% if PROVIDER == "codex" %]retain the detached tree for operator inspection; the driver still serves only the admitted immutable resources[% else %]tell reviewer agents to read source files from `$DETACHED_PATH` read-only[% endif %]. If status is `unavailable` or `error`, announce `$DETACHED_REASON` and continue in place. Do not mutate the source branch.
 
 ### Step A.1d: Prepare compare-mode ordering (optional, `--compare-orderings` only)
 
 When compare mode is active, run two review collections with `ordering_label='default'` and `ordering_label='reverse'`, then call `compare-review-runs` and `record-review-ordering` to stage the drift summary. See [review-reference.md](review-reference.md#compare-orderings) for the detailed loop.
 [%- if PROVIDER != "claude" %]
 
-On Codex, `<n>` in `task_name` (the `map_review_<role>_<n>` counter from Step A.2) keeps incrementing across both collections, so the second (`reverse`) collection dispatches with fresh names.
+On Codex, one driver invocation collects both orderings with separate persisted native threads. Rerunning it resumes unfinished threads and reuses intact completed captures.
 [%- endif %]
 
-### Step A.2: Launch all parallel calls
+### Step A.2: [% if PROVIDER == "codex" %]Collect reviewer reports[% else %]Launch all parallel calls[% endif %]
+[%- if PROVIDER == "codex" %]
+
+Use the runner-owned Codex app-server transport. Do not launch native review-reader
+subagents or relay context through the main conversation. For adversarial mode,
+use the corresponding command in adversarial-reference.md instead of this section.
+
+```bash
+python3 .map/scripts/codex_review_runner.py --review-preferences "[paste Review Preferences section above]"
+```
+
+Keep this command running and poll its process with the host's normal process tools;
+progress names the current role. A tool timeout is not a completed review. If the
+process was interrupted, rerun the command under the same admitted round and omit
+`--review-preferences`: the exact preferences are saved on first collection, alongside
+native thread IDs, pending chunks and acknowledged offsets. Explicitly different
+preferences are rejected; omission reuses the saved text. A lost
+thread or stale snapshot is an explicit error; never invent ACKs or replace its
+session silently. Do not call begin_review_run for another round to hide a failure.
+
+The driver builds compact role prompts, serves immutable resources through one
+read-only dynamic tool, checks intact Code Mode output before ACK, resizes truncated
+chunks, validates final envelopes and captures them in the usual ledger paths.
+Each role has an independent environment-free Codex thread. A runtime probe checks
+actual tool inventory, successful source delivery and a denied canary write before
+any repository evidence is supplied. COMPLETE requires every admitted reader's
+host witness as well as scope, snapshot/policy, checks and finalization receipts.
+The legacy native profile remains `capability_enforcement=unverified`: findings
+remain publishable, but that route stays INCOMPLETE and cannot approve. A failed
+probe never becomes verified by configuration, version text or model assertion.
+
+Reading claims in `receipt={covered_files:[],skipped_files:[],denied_access:[],check_evidence:[]}`
+remain self_reported. The optional complexity lens stays advisory. On driver success,
+continue at Step A.3 using captured artifacts; do not dispatch a second reviewer set.
+
+[%- else %]
 Before launching agents, build the reviewer prompts with `build_review_prompts`. Evidence is NOT truncated. The admitted immutable bundle backs a compact initial prompt and parent-served resources; large original prompts, full file inventory and permitted base/current sources arrive in chunks through Step A.2a. `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is informational and clips nothing. The 512 KiB limit still applies to each initial prompt and serialized context response. On a builder error, stop dispatch and report the reason; never bypass admission or remove evidence to fit.
 
 ```bash
@@ -485,6 +526,8 @@ Only the originating reviewer may request closure; free text or omission is not
 resolution. Fresh checked evidence is required, not a tool-witnessed execution claim.
 Preserve file/location/failure-scenario evidence so distinct defects stay distinct.
 
+[%- endif %]
+
 ### Step A.3: Verification gate (MANDATORY before any presentation)
 
 For EVERY substantive finding, extend this gate; do not dispatch another validation layer.
@@ -554,15 +597,21 @@ When `--adversarial` is set (with `--cross-ai`: present cross-AI first, then thi
 
 ### Quick reference
 
+[%- if PROVIDER == "codex" %]
+
+```text
+1. Collect: python3 .map/scripts/codex_review_runner.py
+            Builds prompts, validates reports and captures the aggregate for the admitted roster.
+            On interruption rerun the same command in the same admitted round.
+2. Present: Read the captured aggregate; show findings, convergence and all-clear statements.
+3. Continue: Final Verdict → Handoff Artifacts. The ledger computes the verdict.
+```
+[%- else %]
+
 ```text
 1. Build prompts:  python3 .map/scripts/map_step_runner.py build_adversarial_review_prompts --reviewers <comma-separated admitted roster>
-[%- if PROVIDER == "claude" %]
 2. Fan-out:        Task(subagent_type="review-reader", ...) for every role in the admitted roster
                    (edge_case absent under non-strict --quick; security only when admitted) — wait for all
-[%- else %]
-2. Fan-out:        spawn_agent(agent_type="review-reader", task_name="map_review_<role>_<n>", message=<ROLE>_PROMPT)
-                   for every role in the admitted roster — parallel, then wait for all (strict overrides --quick)
-[%- endif %]
 3. Validate:       Each must return valid JSON per adversarial finding schema; retry ONCE on failure
 4. Aggregate:      python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings --blind <path> [--edge-case <path> when admitted] --acceptance <path> --user-experience <path> --maintainer <path> [--security <path> when admitted]
 5. Present:        Unified report: CRITICAL/IMPORTANT/MINOR, convergence section, all-clear statements (--show-raw-findings for debug)
@@ -572,6 +621,7 @@ When `--adversarial` is set (with `--cross-ai`: present cross-AI first, then thi
                    The verdict is computed by the ledger from those findings — this phase
                    does not assign one.
 ```
+[%- endif %]
 
 ## Phase B: Interactive Presentation (4 Sections) — NORMAL MODE ONLY
 

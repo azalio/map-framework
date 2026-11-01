@@ -1,5 +1,33 @@
 # Review receipt capability spike
 
+## 2026-11-01: supported Codex app-server boundary
+
+The native-profile limitations below remain valid for direct `review-reader`
+dispatch. The supported Codex review path now uses `codex_review_runner.py` and
+`codex_review_host.py`, with an empty execution-environment selection on every
+turn. External tool sources are disabled and approval requests are denied.
+A fixed Code Mode probe must expose only the admitted tool inventory, complete a
+runner context read, and receive the host error `No usable execution environment
+is available` from native `apply_patch`, while its disposable canary stays intact.
+Model assertions and configuration alone cannot establish verification.
+
+Local validation used Codex CLI 0.166.0 on macOS: a fresh installation collected
+all five normal roles plus the advisory complexity lens on a synthetic 62-file
+diff and produced `COMPLETE` with `approved=true`. A separate real interruption
+after a durable context ACK resumed the same native thread and retained its byte
+offsets, then completed with approval. This validates those fixtures, not the
+original reporter's repository or every Codex build. The reproducible opt-in tests
+are in `tests/test_codex_review_native.py`; deterministic transport, invalid-proof,
+truncation, scope and ordering tests run in the ordinary suite.
+
+Codex 0.166 restores an idle thread with default environments on resume, so the
+driver reapplies `environments=[]` before executing a turn and re-probes before
+serving repository evidence. Its resume API lacks raw-event subscription; the
+host-owned transcript for that same thread supplies current-turn response items.
+Unsupported or inconclusive host behavior remains incomplete. Human-consent,
+source provenance, snapshot, test-check and reviewer-coverage gates remain separate.
+
+
 Date: 2026-10-17. Scope: #521 PR 1b. Baseline: c0cd4f0 (#525).
 Time budget: approximately 30 minutes. No release or deployment.
 

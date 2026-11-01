@@ -6,7 +6,7 @@ This file contains lower-frequency review details. Keep `SKILL.md` focused on th
 
 New gates default to shadow diagnostics: no new blockers, no reduced existing safeguards. Strict opt-in is `review: {security_gates: strict}` in `.map/config.yaml` on the pinned trusted default branch, never PR-head/local config. In strict mode admission overrides quick/lightweight or reduced explicit rosters for sensitive/unknown changes. Dispatch every admitted reviewer, including the independent `security` role, and capture its own envelope for each ordering. Normal approval and execution checks cannot replace security coverage.
 
-Human consent is a separate snapshot/policy/action-bound `review_consent` hold in the existing durable store. Verified human provenance is currently unavailable: host UI answers, transcripts and caller JSON do not establish it. Never call `decide_approval_hold` to discharge review consent, or reinterpret auto mode, agent votes or successful checks as consent. Report the pending hold in both modes. In strict mode stop before review-ready; do not burn additional review rounds waiting. The strict ready gate remains blocked even when legacy ledger enforcement is disabled. Shadow holds do not add blockers and must never be reported as consent. Positive human ingress remains incomplete under #523; Codex capability remains unverified under #526.
+Human consent is a separate snapshot/policy/action-bound `review_consent` hold in the existing durable store. Verified human provenance is currently unavailable: host UI answers, transcripts and caller JSON do not establish it. Never call `decide_approval_hold` to discharge review consent, or reinterpret auto mode, agent votes or successful checks as consent. Report the pending hold in both modes. In strict mode stop before review-ready; do not burn additional review rounds waiting. The strict ready gate remains blocked even when legacy ledger enforcement is disabled. Shadow holds do not add blockers and must never be reported as consent. Positive human ingress remains incomplete under #523; Legacy native Codex capability remains unverified under #526; the runner-owned app-server path requires per-reader host probes.
 
 Shadow consent-store errors are reported in admission output and persisted in the review ledger when writable; they do not deny admission or ready. Never reset a corrupt hold store: existing generic hold blockers remain enforced. Strict consent-store errors still fail closed. Gate configuration is read from the pinned trusted revision independently of `REVIEW.md` content validation; invalid root/area policy cannot downgrade a strict configuration.
 
@@ -17,7 +17,20 @@ Shadow consent-store errors are reported in admission output and persisted in th
 - Tests: changed behavior, failure cases, fixtures, coverage of acceptance tags.
 - Performance: hot paths, large artifacts, prompt budgets, avoid speculative micro-optimizations.
 
+## Review Scope
+
+Required coverage is the admitted `required_files`: changed paths against the selected base,
+including staged/unstaged/untracked inputs, deletions and both rename sides. The full
+`context_files` inventory remains snapshot-bound and available for dependency checks.
+Unread or explicitly skipped optional context does not make review incomplete.
+
 ## Compare Orderings
+
+For supported Codex reviews, `codex_review_runner.py` performs binding, delivery,
+ACK, finalization and capture, including both compare orderings. Do not perform
+these steps manually. The manual collection instructions below apply only to
+Claude and the legacy unverified native-reader path. Keep the comparison/report
+steps after the driver completes.
 
 When `--compare-orderings` is set, begin the invocation once, then collect with
 `ORDERING_LABEL=default` and `ORDERING_LABEL=reverse` set in each capture call.
@@ -238,6 +251,12 @@ decision table (`review_verdict_table.v1`) and writes:
 
 ### Parent-served context loop (Step A.2a)
 
+For supported Codex reviews, `codex_review_runner.py` performs binding, delivery,
+ACK, finalization and capture, including both compare orderings. Do not perform
+these steps manually. The manual collection instructions below apply only to
+Claude and the legacy unverified native-reader path. Keep the comparison/report
+steps after the driver completes.
+
 The role reviewers run in the SAME fan-out but with isolated context: they see
 the diff and the bundle, never the other reviewers' output. They inspect supplied
 base/current source and changed-hunk attribution — the user role checks the old
@@ -278,7 +297,8 @@ retries, both ordering collections and the advisory complexity lens:
    For an early final response, retain no final capture: create the same request
    shape from the status's next `remaining` resource/offset and continue delivery.
    Required resources include the manifest, full original prompt (unless initially
-   inline), inventory and every permitted source resource. Blind stays diff-only.
+   inline), inventory and source resources marked `required`. Unchanged sources
+   are optional dependency context; fetch them only when needed. Blind stays diff-only.
 2. Store the exact returned chunk JSON in a session-specific pending file under
    `.map/<branch>/review-context-delivery/<session-id>/`, then pass that JSON
    verbatim to the **same agent**:

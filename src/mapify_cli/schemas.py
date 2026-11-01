@@ -1426,6 +1426,14 @@ REVIEW_BUNDLE_SCHEMA = {
                 "files": {"type": "array", "items": {"type": "object"}},
             }, "required": ["status", "files"], "additionalProperties": True,
         },
+        "context_artifacts": {
+            "type": "object", "additionalProperties": {
+                "type": "array", "items": {
+                    "type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                    "required": ["path", "content"], "additionalProperties": False,
+                },
+            },
+        },
         "generated_at": {"type": "string"},
         "artifacts": {
             "type": "object",
