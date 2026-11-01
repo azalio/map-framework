@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.35.0] - 2026-11-01
+
 ### Changed
 - Flag vacuous tests: Actor, Monitor and Evaluator (Claude and Codex) now name, for every new or changed test, the assertion that fails against a do-nothing implementation (empty return value, no side effect). A test with none verifies no behavior: Monitor counts it as missing coverage for its `VCn`/requirement and reports `Vacuous test: <id>`, Evaluator scores it as absent, and `/map-tdd` sends any vacuous test back to TEST_WRITER. Expected-exception and side-effect assertions are not vacuous. (#589)
 - Keep private runtime data out of Git: fresh installs and re-running `mapify init` add `.map/**/sessions/` and `**/__pycache__/` to the managed root `.gitignore`, so session logs, cursor sidecars, memory digests and bytecode stay local while specs and blueprints remain shareable. A refresh re-adds the rules after any later `!` negation, including wildcard ones, that would re-include these paths. Already-committed files are not untracked. (#602)
