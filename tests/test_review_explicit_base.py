@@ -113,8 +113,9 @@ def test_default_control_retains_parent_diff_and_main_policy(stack):
 
 
 def test_learning_handoff_after_review_fix_commit_records_base_drift(stack):
-    admit(base_ref="runtime")
+    Path(".map/product").mkdir(parents=True)
     Path(".map/product/verification-summary.md").write_text("ADMITTED VALIDATION\n")
+    admit(base_ref="runtime")
     assert runner.create_review_bundle(branch="product")["status"] == "success"
     bundle_path = Path(".map/product/review-bundle.json")
     admitted_bundle = bundle_path.read_bytes()
