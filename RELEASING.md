@@ -90,8 +90,8 @@ grep -r "\\[.*\\](.*\\.md)" docs/ README.md
 ```bash
 # Audit the project's resolved dependency set, not the runner environment
 uv export --all-extras --all-groups --no-hashes --no-emit-project \
-  --format requirements-txt > /tmp/mapify-release-reqs.txt
-uvx pip-audit -r /tmp/mapify-release-reqs.txt --disable-pip --no-deps
+  --format requirements-txt > /tmp/mapify-release-reqs.txt && \
+  uvx pip-audit -r /tmp/mapify-release-reqs.txt --disable-pip --no-deps
 
 # Verify dependency versions in pyproject.toml
 cat pyproject.toml | grep -A 20 "dependencies"
