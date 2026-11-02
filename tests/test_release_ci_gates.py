@@ -206,6 +206,133 @@ def run_block(
     return result, calls
 
 
+GATE7 = "### Gate 7:"
+
+# Gate 7 must audit the project's exported requirements, so both tools are faked:
+# `uv export` emits pinned requirements, `uvx pip-audit -r` records what it audits.
+GATE7_TOOLS = r'''
+import json
+import os
+import sys
+from pathlib import Path
+
+name, args = Path(sys.argv[0]).name, sys.argv[1:]
+case = json.loads(Path(os.environ["CASE_FILE"]).read_text())
+with Path(os.environ["CALLS_FILE"]).open("a") as log:
+    log.write(json.dumps([name, *args]) + "\n")
+if name == "uv":
+    if args[:1] != ["export"]:
+        sys.exit("unrecognised uv command: " + repr(args))
+    if case.get("export_failure"):
+        print("simulated export failure", file=sys.stderr)
+        sys.exit(3)
+    print("# requirements exported by fake uv")
+    print("requests==2.32.3")
+    print("urllib3==2.2.1")
+elif name == "uvx":
+    if args[:2] != ["pip-audit", "-r"]:
+        sys.exit("unrecognised uvx command: " + repr(args))
+    Path(os.environ["AUDITED_FILE"]).write_text(
+        Path(args[2]).read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    if case.get("audit_failure"):
+        print("Found 1 known vulnerability", file=sys.stderr)
+        sys.exit(1)
+else:
+    sys.exit("unrecognised tool")
+'''
+
+
+def run_gate7(
+    tmp_path: Path, block: str, overrides: dict | None = None
+) -> tuple[subprocess.CompletedProcess[str], list[list[str]], Path]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("uv", "uvx"):
+        tool = bin_dir / name
+        tool.write_text(f"#!{sys.executable}\n" + GATE7_TOOLS, encoding="utf-8")
+        tool.chmod(0o755)
+    temp_dir = tmp_path / "tmp"
+    temp_dir.mkdir()
+    case = {"export_failure": False, "audit_failure": False}
+    case.update(overrides or {})
+    case_file, calls_file = tmp_path / "case.json", tmp_path / "calls.jsonl"
+    case_file.write_text(json.dumps(case), encoding="utf-8")
+    environment = {
+        "PATH": f"{bin_dir}:{os.defpath}",
+        "TMPDIR": str(temp_dir),
+        "CASE_FILE": str(case_file),
+        "CALLS_FILE": str(calls_file),
+        "AUDITED_FILE": str(tmp_path / "audited-requirements.txt"),
+    }
+    result = subprocess.run(
+        ["/bin/bash", "-c", block], cwd=tmp_path, env=environment,
+        text=True, capture_output=True, check=False, timeout=60,
+    )
+    calls = (
+        [json.loads(line) for line in calls_file.read_text().splitlines()]
+        if calls_file.exists() else []
+    )
+    return result, calls, temp_dir
+
+
+def test_gate7_audits_exported_project_requirements(
+    installed_reference: str, tmp_path: Path
+) -> None:
+    block = bash_blocks(installed_reference, GATE7)[0]
+    result, calls, temp_dir = run_gate7(tmp_path, block)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    export = next(call for call in calls if call[0] == "uv")
+    assert export[:2] == ["uv", "export"]
+    for flag in ("--all-extras", "--all-groups", "--no-emit-project"):
+        assert flag in export
+    assert export[export.index("--format") + 1] == "requirements-txt"
+
+    audit = next(call for call in calls if call[0] == "uvx")
+    assert audit[:3] == ["uvx", "pip-audit", "-r"]
+    requirement = Path(audit[3])
+    assert requirement.parent == temp_dir
+    assert requirement.name.startswith("mapify-release-reqs")
+    assert "--disable-pip" in audit and "--no-deps" in audit
+
+    audited = (tmp_path / "audited-requirements.txt").read_text(encoding="utf-8")
+    assert "requests==2.32.3" in audited
+    assert "urllib3==2.2.1" in audited
+    assert all(call[0] not in ("pip", "pip3") for call in calls)
+    assert list(temp_dir.iterdir()) == []
+
+
+@pytest.mark.parametrize("case", [
+    pytest.param({"export_failure": True}, id="export-fails"),
+    pytest.param({"audit_failure": True}, id="vulnerability-found"),
+])
+def test_gate7_fails_closed(installed_reference: str, tmp_path: Path, case: dict) -> None:
+    block = bash_blocks(installed_reference, GATE7)[0]
+    result, calls, _ = run_gate7(tmp_path, block, case)
+    assert result.returncode != 0, result.stdout + result.stderr
+    if case.get("export_failure"):
+        assert not any(call[0] == "uvx" for call in calls)
+
+
+def test_gate7_never_mutates_the_runner_environment(installed_reference: str) -> None:
+    block = bash_blocks(installed_reference, GATE7)[0]
+    assert "uv export" in block
+    assert "uvx pip-audit -r" in block
+    assert "pip install" not in block
+    assert re.search(r"(?m)^\s*pip-audit\b", block) is None
+
+
+@pytest.mark.parametrize(
+    "doc", ["RELEASING.md", ".github/ISSUE_TEMPLATE/release-checklist.md"]
+)
+def test_release_docs_audit_exported_requirements(doc: str) -> None:
+    text = (ROOT / doc).read_text(encoding="utf-8")
+    assert "uv export" in text
+    assert "uvx pip-audit -r" in text
+    assert "pip install pip-audit" not in text
+
+
 BAD_EVIDENCE = [
     pytest.param({"run": {**GOOD_RUN, "conclusion": "failure"}}, id="failed-target-old-green"),
     pytest.param({"run": None}, id="missing-target-old-green"),

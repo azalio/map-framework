@@ -35,11 +35,20 @@ uv run --with twine twine check dist/*
 ### Gate 7: Security Audit
 
 ```bash
-pip install pip-audit
-pip-audit
+set -euo pipefail
+# Audit the project's resolved dependency set, not the runner interpreter.
+REQS_FILE=$(mktemp "${TMPDIR:-/tmp}/mapify-release-reqs.XXXXXX")
+trap 'rm -f "$REQS_FILE"' EXIT
+uv export --all-extras --all-groups --no-hashes --no-emit-project \
+  --format requirements-txt > "$REQS_FILE"
+# --no-deps audits exactly the exported pins; --disable-pip stops pip from
+# resolving or mutating the runner environment.
+uvx pip-audit -r "$REQS_FILE" --disable-pip --no-deps
 ```
 
 **Expected Results:**
+- ✅ `uv export` resolves the project's dependencies (all extras and groups)
+- ✅ `pip-audit` audits the exported pinned requirements, not the runner environment
 - ✅ No known security vulnerabilities in dependencies
 
 **If vulnerabilities found:** Assess severity; update dependencies if critical.

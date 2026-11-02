@@ -54,7 +54,7 @@ assignees: ''
 
 ### 1.3 Dependency Verification
 
-- [ ] Run security audit: `pip install pip-audit && pip-audit`
+- [ ] Run security audit on the project's exported requirements: `uv export --all-extras --all-groups --no-hashes --no-emit-project --format requirements-txt > /tmp/mapify-release-reqs.txt && uvx pip-audit -r /tmp/mapify-release-reqs.txt --disable-pip --no-deps`
 - [ ] No known security vulnerabilities
 - [ ] All dependencies in `pyproject.toml` are pinned to compatible versions
 - [ ] Test installation in clean environment: `uv venv .venv-test && source .venv-test/bin/activate && pip install . && mapify --version`

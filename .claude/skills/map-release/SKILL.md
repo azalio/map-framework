@@ -74,7 +74,7 @@ Execute all 12 gates. Read the full gate scripts in [release-reference.md § Pha
 **Gate summary (full commands in reference):**
 - **Gates 1–4:** `make check` — tests, ruff, mypy, pyright, rendered-template parity
 - **Gates 5–6:** Build + twine check
-- **Gate 7:** Security audit (`pip-audit`)
+- **Gate 7:** Security audit of the project's resolved requirements (`uv export` + `pip-audit -r`)
 - **Gates 8–10:** Git state — main branch, clean working directory, up-to-date with origin
 - **Gate 11:** CI run for `git merge-base HEAD origin/main` must have `conclusion: "success"`; unpushed commits may touch only release metadata
 - **Gate 12:** CHANGELOG.md completeness (Unreleased section exists and has content; commit/entry gap check)
