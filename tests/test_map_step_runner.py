@@ -2818,18 +2818,21 @@ def test_record_auto_phase_single_phase_route_completes_after_one_phase(
 def test_auto_route_phase_chains_cover_every_schema_route():
     """Issue #621: every route the schema admits has an explicit ordered phase
     chain, so a future route cannot silently fall back to unknown completion
-    semantics."""
+    semantics and a chain edit cannot silently change the route contract.
+    """
     schema_routes = set(
         auto_route_schemas_module.AUTO_ROUTE_SCHEMA["properties"]["selected_route"][
             "enum"
         ]
     )
     assert set(map_step_runner.AUTO_ROUTE_PHASE_CHAINS) == schema_routes
-    for route, chain in map_step_runner.AUTO_ROUTE_PHASE_CHAINS.items():
-        assert chain, f"{route} must declare at least one phase"
-        assert chain[0] == route, (
-            f"{route}'s chain must start with the route's own phase, got {chain}"
-        )
+    assert map_step_runner.AUTO_ROUTE_PHASE_CHAINS == {
+        "map-resume": ("map-resume",),
+        "map-check": ("map-check",),
+        "map-fast": ("map-fast",),
+        "map-plan": ("map-plan", "map-efficient", "map-check", "map-review"),
+        "map-efficient": ("map-efficient", "map-check", "map-review"),
+    }
     assert map_step_runner._auto_route_final_phase("not-a-route") is None
 
 
