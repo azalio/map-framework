@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- CI runs the test suite in parallel with `pytest-xdist` (`-n auto`), collects coverage only on the job that uploads it (ubuntu/3.11), and tests macOS on Python 3.12 only; macOS test time was ~80 min per job. `pytest-xdist` is added to the `test` and `dev` extras.
+
 ### Fixed
 
 - `/map-release` Gate 7 audits the project's resolved dependency set (`uv export` → `uvx pip-audit -r ... --disable-pip --no-deps`) instead of the runner interpreter, so a vulnerable pinned dependency can no longer pass the gate unseen. (#617)

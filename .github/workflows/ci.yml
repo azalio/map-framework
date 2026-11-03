@@ -70,6 +70,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]  # Skip Windows for now
         python-version: ["3.11", "3.12"]
+        exclude:
+          # macOS runners are ~4x slower on this subprocess-heavy suite; one
+          # macOS interpreter covers the platform, Ubuntu covers both versions.
+          - os: macos-latest
+            python-version: "3.11"
 
     steps:
     - uses: actions/checkout@v6
@@ -108,8 +113,11 @@ jobs:
           tests/test_mapify_cli.py::TestCodexProvider
 
     - name: Run tests
+      env:
+        # Coverage is uploaded only from ubuntu/3.11; skip tracing elsewhere.
+        COV_ARGS: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11') && '--cov=mapify_cli --cov-report=xml' || '' }}
       run: |
-        python -m pytest -v -m "not slow" --timeout=300 --timeout-method=thread --durations=20 --cov=mapify_cli --cov-report=xml
+        python -m pytest -n auto -v -m "not slow" --timeout=300 --timeout-method=thread --durations=20 $COV_ARGS
 
     - name: Upload coverage to Codecov
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
