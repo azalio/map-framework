@@ -31,10 +31,10 @@ dev-install:
 # global Homebrew install whose interpreter lacks truststore/hypothesis),
 # producing phantom failures that disappear under `uv run`.
 test:
-	uv run --extra test --extra ssl pytest
+	uv run --extra test --extra ssl pytest -n auto
 
 test-cov:
-	uv run --extra test --extra ssl pytest --cov=mapify_cli --cov-report=html --cov-report=term
+	uv run --extra test --extra ssl pytest -n auto --cov=mapify_cli --cov-report=html --cov-report=term
 
 test-watch:
 	uv run --extra dev pytest-watch
