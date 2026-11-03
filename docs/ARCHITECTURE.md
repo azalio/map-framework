@@ -952,8 +952,13 @@ invoked; there is no shadow mode, calibration period, or opt-in flag.
   to its own guards below) and always initializes `phases` empty — it never appends a
   phase entry. `record_auto_phase` is the ONLY function that appends to `phases[]`; it
   also owns the `chain_status` transitions into `completed`/`aborted` and the
-  `abort_reason` field. Per Decision 14, `route_task` writes only `auto-route.json` and
-  its manifest stage — it never calls `record_workflow_fit` or `create_approval_hold`.
+  `abort_reason` field. Phase completion and route completion are separate: a
+  `completed` phase closes the chain only when it is the last phase of the route's
+  `AUTO_ROUTE_PHASE_CHAINS` entry (`map-review` for multi-phase `map-plan`/
+  `map-efficient`; the only phase for single-phase `map-resume`/`map-check`/`map-fast`),
+  while an intermediate `completed` leaves the chain `in_progress`. Per Decision 14,
+  `route_task` writes only `auto-route.json` and its manifest stage — it never calls
+  `record_workflow_fit` or `create_approval_hold`.
 - **`auto_route` manifest stage**: registered in `ARTIFACT_STAGE_NAMES` immediately after
   `plan` (before `test_contract`); `route_task` and `record_auto_phase` each refresh it via
   `_set_manifest_stage`, so chain progress is observable from `artifact_manifest.json`
@@ -968,12 +973,12 @@ invoked; there is no shadow mode, calibration period, or opt-in flag.
   `check_plan_resume`'s verdict blocks the chain (`chain_status: "blocked"`,
   `block_reason` set) without archiving or overwriting the pre-existing
   spec/task_plan/blueprint artifacts. Separately, **terminal-chain no-resurrection**:
-  `record_auto_phase` refuses every call once `chain_status` is `aborted` or `blocked`,
-  regardless of phase name, returning the existing `abort_reason`/`block_reason` instead
-  of mutating anything — only a fresh `route_task` call can move a terminal chain
-  forward. `route_task` itself may re-route from any of `recommended_only`, `blocked`,
-  `completed`, or `aborted` (never from `in_progress`), preserving the superseded route
-  in `route_history[]`.
+  `record_auto_phase` refuses every call once `chain_status` is `aborted`, `blocked`, or
+  `completed`, regardless of phase name, returning the existing
+  `abort_reason`/`block_reason` instead of mutating anything — only a fresh `route_task`
+  call can move a terminal chain forward. `route_task` itself may re-route from any of
+  `recommended_only`, `blocked`, `completed`, or `aborted` (never from `in_progress`),
+  preserving the superseded route in `route_history[]`.
 - **Hold-autonomy policy**: `auto_decide_holds` partitions `APPROVAL_HOLD_KINDS` into two
   disjoint, exhaustive sets — a test asserts the union covers the whole set with an empty
   intersection, so a future sixth hold kind hard-fails instead of being silently

@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `/map-auto` keeps phase completion and route completion separate: `record_auto_phase` marks `chain_status: "completed"` only when the completed phase is the last phase of the selected route (`map-review` for `map-plan`/`map-efficient`, the only phase for `map-resume`/`map-check`/`map-fast`), so completing `map-plan` no longer closes the chain and refuses the following `map-efficient` phase. The terminal guard still refuses calls on a genuinely completed chain. (#621)
 - `/map-release` Gate 7 audits the project's resolved dependency set (`uv export` → `uvx pip-audit -r ... --disable-pip --no-deps`) instead of the runner interpreter, so a vulnerable pinned dependency can no longer pass the gate unseen. (#617)
 
 ## [3.35.1] - 2026-11-02

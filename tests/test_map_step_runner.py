@@ -2720,8 +2720,22 @@ def test_record_auto_phase_appends_one_schema_valid_six_field_entry(branch_works
 
 
 def test_record_auto_phase_terminal_success_status_completes_chain(branch_workspace):
+    """A terminal-success status completes a SINGLE-phase route on its phase.
+
+    Issue #621 separates phase completion from route completion: the
+    map-check route has exactly one phase, so completing map-check closes the
+    chain. Multi-phase completion is covered by
+    test_record_auto_phase_multi_phase_route_continues_past_plan_completed and
+    test_record_auto_phase_refuses_after_chain_completed.
+    """
     branch = branch_workspace.name
-    map_step_runner.route_task("ship something", branch=branch)
+    # Tier 1 all-complete state is the routing engine's single-phase
+    # map-check route -- no other signal can force that route in a fresh
+    # workspace.
+    _write_blueprint(branch_workspace, ["ST-001"])
+    _write_step_state(branch_workspace, {"ST-001": []})
+    route = map_step_runner.route_task("ship something", branch=branch)
+    assert route["selected_route"] == "map-check"
 
     result = map_step_runner.record_auto_phase("map-check", "completed", branch=branch)
 
@@ -2735,6 +2749,91 @@ def test_record_auto_phase_terminal_success_status_completes_chain(branch_worksp
     assert stage["status"] == "completed"
     assert stage["artifacts"][0]["path"] == result["path"]
     assert stage["metadata"]["chain_status"] == "completed"
+
+
+def test_record_auto_phase_multi_phase_route_continues_past_plan_completed(
+    branch_workspace,
+):
+    """Issue #621: on a map-plan route, map-plan completing is NOT the route
+    completing. The chain must stay in_progress so the map-efficient phase
+    that follows is accepted instead of being refused by the terminal guard.
+    """
+    branch = branch_workspace.name
+    route = map_step_runner.route_task("ship feature", branch=branch)
+    assert route["selected_route"] == "map-plan"
+
+    plan_started = map_step_runner.record_auto_phase(
+        "map-plan", "in_progress", branch=branch
+    )
+    assert plan_started["status"] == "success"
+    assert plan_started["chain_status"] == "in_progress"
+
+    plan_completed = map_step_runner.record_auto_phase(
+        "map-plan", "completed", branch=branch
+    )
+    assert plan_completed["status"] == "success"
+    assert plan_completed["chain_status"] == "in_progress", (
+        "completing map-plan is an intermediate phase boundary on the "
+        "map-plan route, not a completed route"
+    )
+
+    efficient_started = map_step_runner.record_auto_phase(
+        "map-efficient", "in_progress", branch=branch
+    )
+    assert efficient_started["status"] == "success", (
+        "map-efficient must be accepted after map-plan completed: the route "
+        "is still in_progress"
+    )
+    assert efficient_started["chain_status"] == "in_progress"
+
+    artifact = _read_auto_route_artifact(branch_workspace)
+    assert artifact["selected_route"] == "map-plan"
+    assert artifact["chain_status"] == "in_progress"
+    phases = artifact["phases"]
+    assert isinstance(phases, list)
+    assert [(entry["phase"], entry["status"]) for entry in phases] == [
+        ("map-plan", "in_progress"),
+        ("map-plan", "completed"),
+        ("map-efficient", "in_progress"),
+    ]
+
+
+def test_record_auto_phase_single_phase_route_completes_after_one_phase(
+    branch_workspace,
+):
+    """Issue #621: a single-phase route completes after its only phase."""
+    branch = branch_workspace.name
+    _write_workflow_fit(branch_workspace, "map-fast")
+    route = map_step_runner.route_task("tiny tweak", branch=branch)
+    assert route["selected_route"] == "map-fast"
+
+    result = map_step_runner.record_auto_phase("map-fast", "completed", branch=branch)
+
+    assert result["status"] == "success"
+    assert result["chain_status"] == "completed"
+    artifact = _read_auto_route_artifact(branch_workspace)
+    assert artifact["chain_status"] == "completed"
+
+
+def test_auto_route_phase_chains_cover_every_schema_route():
+    """Issue #621: every route the schema admits has an explicit ordered phase
+    chain, so a future route cannot silently fall back to unknown completion
+    semantics and a chain edit cannot silently change the route contract.
+    """
+    schema_routes = set(
+        auto_route_schemas_module.AUTO_ROUTE_SCHEMA["properties"]["selected_route"][
+            "enum"
+        ]
+    )
+    assert set(map_step_runner.AUTO_ROUTE_PHASE_CHAINS) == schema_routes
+    assert map_step_runner.AUTO_ROUTE_PHASE_CHAINS == {
+        "map-resume": ("map-resume",),
+        "map-check": ("map-check",),
+        "map-fast": ("map-fast",),
+        "map-plan": ("map-plan", "map-efficient", "map-check", "map-review"),
+        "map-efficient": ("map-efficient", "map-check", "map-review"),
+    }
+    assert map_step_runner._auto_route_final_phase("not-a-route") is None
 
 
 def test_record_auto_phase_abort_class_status_aborts_chain(branch_workspace):
@@ -2964,27 +3063,40 @@ def test_record_auto_phase_is_the_sole_phases_mutator_in_source():
 
 
 def test_record_auto_phase_refuses_after_chain_completed(branch_workspace):
-    """Bug #446 (Bug 5): record_auto_phase must refuse when chain_status is
-    'completed', not just 'aborted'/'blocked'. A replayed or erroneous call
-    after a successful chain close must not corrupt the artifact.
+    """Bug #446 (Bug 5) + issue #621: record_auto_phase must refuse once the
+    routed chain genuinely completes. A map-plan route is multi-phase, so the
+    chain closes only when map-review completes; a replayed or erroneous call
+    after that successful close must not corrupt the artifact.
     """
     branch = branch_workspace.name
-    map_step_runner.route_task("ship feature", branch=branch)
+    route = map_step_runner.route_task("ship feature", branch=branch)
+    assert route["selected_route"] == "map-plan"
 
-    # Advance the chain to completed via record_auto_phase
-    map_step_runner.record_auto_phase("map-plan", "in_progress", branch=branch)
-    complete_result = map_step_runner.record_auto_phase(
-        "map-plan", "completed", branch=branch
-    )
-    assert complete_result["status"] == "success"
-    assert complete_result["chain_status"] == "completed"
+    # Drive the full map-plan route: plan -> efficient -> check -> review.
+    for phase in ("map-plan", "map-efficient", "map-check", "map-review"):
+        started = map_step_runner.record_auto_phase(
+            phase, "in_progress", branch=branch
+        )
+        assert started["status"] == "success", (
+            f"{phase} in_progress must be accepted while the route is live"
+        )
+        complete_result = map_step_runner.record_auto_phase(
+            phase, "completed", branch=branch
+        )
+        assert complete_result["status"] == "success"
+        expected_chain_status = (
+            "completed" if phase == "map-review" else "in_progress"
+        )
+        assert complete_result["chain_status"] == expected_chain_status, (
+            f"{phase} completed must leave the chain {expected_chain_status}"
+        )
 
     artifact_before = _read_auto_route_artifact(branch_workspace)
     assert artifact_before["chain_status"] == "completed"
 
     # A subsequent call on a completed chain must be refused
     refused = map_step_runner.record_auto_phase(
-        "map-efficient", "in_progress", branch=branch
+        "map-review", "in_progress", branch=branch
     )
 
     assert refused["status"] == "refused"

@@ -468,6 +468,10 @@ def test_existing_lock_dir_mode_enforced(
 
     lock_root = tmp_path / ".map" / "locks"
     lock_root.mkdir(mode=0o755, parents=True)  # too permissive
+    # mkdir(mode=...) is filtered through the process umask, so a restrictive
+    # umask (e.g. 0o077) would create 0o700 and fail the precondition below.
+    # Set the broad mode explicitly to keep the test's intent umask-independent.
+    os.chmod(str(lock_root), 0o755)
     # Verify the broad mode is actually in place before we call.
     pre_mode = os.stat(str(lock_root)).st_mode & 0o777
     assert pre_mode == 0o755, f"Setup precondition failed: {oct(pre_mode)}"
