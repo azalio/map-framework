@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.35.2] - 2026-11-03
+
 ### Changed
 
 - CI runs the test suite in parallel with `pytest-xdist` (`-n auto`), collects coverage only on the job that uploads it (ubuntu/3.11), and tests macOS on Python 3.12 only; macOS test time was ~80 min per job. `pytest-xdist` is added to the `test` and `dev` extras, and `make test` / `make test-cov` (and so `make check`) run with `-n auto` too.
