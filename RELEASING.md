@@ -88,9 +88,13 @@ grep -r "\\[.*\\](.*\\.md)" docs/ README.md
 ### 3. Dependency Verification
 
 ```bash
-# Check for security vulnerabilities
-pip install pip-audit
-pip-audit
+set -euo pipefail
+# Audit the project's resolved dependency set, not the runner environment
+REQS_FILE=$(mktemp "${TMPDIR:-/tmp}/mapify-release-reqs.XXXXXX")
+trap 'rm -f "$REQS_FILE"' EXIT
+uv export --all-extras --all-groups --no-hashes --no-emit-project \
+  --format requirements-txt > "$REQS_FILE" && \
+  uvx pip-audit -r "$REQS_FILE" --disable-pip --no-deps
 
 # Verify dependency versions in pyproject.toml
 cat pyproject.toml | grep -A 20 "dependencies"
