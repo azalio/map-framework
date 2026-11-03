@@ -20216,18 +20216,49 @@ _AUTO_ROUTE_NEXT_COMMAND: dict[str, str] = {
 
 # /map-auto phase ledger (issue #414): closed status vocabulary for
 # record_auto_phase's chain_status transitions. A phase status in
-# AUTO_PHASE_TERMINAL_SUCCESS_STATUSES completes the chain; a status in
-# AUTO_PHASE_ABORT_STATUSES aborts it; any other status leaves the chain
-# in_progress. These two sets are intentionally NOT required to partition
-# every possible status string -- callers may pass phase-specific statuses
-# (e.g. "monitor_rejected") that fall through to in_progress.
+# AUTO_PHASE_TERMINAL_SUCCESS_STATUSES completes the ROUTE only when that
+# phase is the last phase of the routed chain (see AUTO_ROUTE_PHASE_CHAINS); a
+# status in AUTO_PHASE_ABORT_STATUSES aborts the chain; any other status
+# leaves the chain in_progress. These two sets are intentionally NOT required
+# to partition every possible status string -- callers may pass phase-specific
+# statuses (e.g. "monitor_rejected") that fall through to in_progress.
 AUTO_PHASE_TERMINAL_SUCCESS_STATUSES = frozenset({"completed"})
 AUTO_PHASE_ABORT_STATUSES = frozenset({"aborted", "failed"})
+
+# /map-auto routed phase chains (issue #621): phase completion and route
+# completion are separate. A route reaches chain_status="completed" only when
+# the completed phase is the LAST phase of the chain its selected_route drives.
+# map-resume, map-check and map-fast are single-phase routes; map-plan and
+# map-efficient are multi-phase routes that continue through map-check and
+# close on map-review. Keeping the table beside the terminal-status vocabulary
+# makes the route/phase split explicit instead of inferring "completed" from
+# the phase status alone (the #446 regression).
+AUTO_ROUTE_PHASE_CHAINS: dict[str, tuple[str, ...]] = {
+    "map-resume": ("map-resume",),
+    "map-check": ("map-check",),
+    "map-fast": ("map-fast",),
+    "map-plan": ("map-plan", "map-efficient", "map-check", "map-review"),
+    "map-efficient": ("map-efficient", "map-check", "map-review"),
+}
 
 # Chain-level retry bound: at most ONE re-entry per phase -- attempt 1
 # (first record) plus attempt 2 (the single permitted re-entry) are allowed;
 # a 3rd record of the same phase name is refused by record_auto_phase.
 AUTO_PHASE_MAX_ATTEMPTS = 2
+
+
+def _auto_route_final_phase(route: object) -> str | None:
+    """Return the last phase of `route`'s chain, or None for an unknown route.
+
+    record_auto_phase uses this to keep "this phase completed" and "the whole
+    route completed" separate (issue #621). A missing or unrecognized route
+    fails closed (returns None), so an unknown route can never be treated as
+    completed by a phase record.
+    """
+    if not isinstance(route, str):
+        return None
+    chain = AUTO_ROUTE_PHASE_CHAINS.get(route)
+    return chain[-1] if chain else None
 
 
 def auto_route_artifact_path(branch: str | None = None) -> Path:
@@ -20447,11 +20478,16 @@ def record_auto_phase(
 
     On every non-refused call, chain_status transitions from the recorded
     `status` using a closed vocabulary (AUTO_PHASE_TERMINAL_SUCCESS_STATUSES
-    -> "completed", AUTO_PHASE_ABORT_STATUSES -> "aborted", otherwise
-    "in_progress") and the `abort_reason` field is set/cleared to match. The
-    `auto_route` manifest stage is refreshed on every call (refused or not)
-    so progress is observable outside the artifact, with its status
-    mirroring the resulting chain_status.
+    -> "completed" when the phase is the LAST phase of the route's chain,
+    AUTO_PHASE_ABORT_STATUSES -> "aborted", otherwise "in_progress") and the
+    `abort_reason` field is set/cleared to match. Phase completion and route
+    completion are separate: a multi-phase route (map-plan, map-efficient)
+    stays "in_progress" after map-plan/map-efficient/map-check completes and
+    closes only on map-review; a single-phase route (map-resume, map-check,
+    map-fast) closes on its only phase. AUTO_ROUTE_PHASE_CHAINS is the single
+    source for each route's ordered chain. The `auto_route` manifest stage is
+    refreshed on every call (refused or not) so progress is observable outside
+    the artifact, with its status mirroring the resulting chain_status.
 
     `evidence_refs` persists caller-supplied ids (e.g. hold ids
     auto-approved by `auto_decide_holds`) in the phase entry, giving every
@@ -20562,7 +20598,14 @@ def record_auto_phase(
     artifact["phases"] = phases
 
     if status in AUTO_PHASE_TERMINAL_SUCCESS_STATUSES:
-        chain_status = "completed"
+        # Issue #621: a phase completing is not the route completing. Only the
+        # LAST phase of the routed chain closes chain_status; earlier completed
+        # phases keep the chain in_progress so the next phase is accepted
+        # instead of being refused by the terminal-chain guard below.
+        if phase == _auto_route_final_phase(artifact.get("selected_route")):
+            chain_status = "completed"
+        else:
+            chain_status = "in_progress"
     elif status in AUTO_PHASE_ABORT_STATUSES:
         chain_status = "aborted"
     else:

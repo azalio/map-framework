@@ -15,7 +15,7 @@ python3 .map/scripts/map_step_runner.py record_auto_phase <phase> <status> [--br
 
 - `route_task <task>` -- `<task>` is the free-text task description (quote it). `--branch` defaults to the current branch. `--dry-run` recommends a route without marking the chain `in_progress` (see Dry-run usage below).
 - `auto_decide_holds` -- no positional arguments; only `--branch` (defaults to current branch).
-- `record_auto_phase <phase> <status>` -- `<phase>` is the workflow name (`map-plan`, `map-efficient`, `map-check`, `map-review`); `<status>` is the phase's own outcome word (`completed`, `failed`, `aborted`, or any other phase-specific status, which leaves `chain_status` at `in_progress`). `--evidence-refs` takes a comma-separated list of ids (auto-approved hold ids from the surrounding `auto_decide_holds` calls); `--reason` is a free-text note stored on the ledger entry.
+- `record_auto_phase <phase> <status>` -- `<phase>` is the workflow name (`map-plan`, `map-efficient`, `map-check`, `map-review`); `<status>` is the phase's own outcome word (`completed`, `failed`, `aborted`, or any other phase-specific status, which leaves `chain_status` at `in_progress`). A `completed` status closes the chain (`chain_status: "completed"`) only on the LAST phase of the selected route -- `map-review` for multi-phase `map-plan`/`map-efficient` routes, or the single phase of `map-resume`/`map-check`/`map-fast`; a `completed` intermediate phase keeps the chain `in_progress`. `--evidence-refs` takes a comma-separated list of ids (auto-approved hold ids from the surrounding `auto_decide_holds` calls); `--reason` is a free-text note stored on the ledger entry.
 
 ## Chain Walkthrough Example
 
@@ -35,10 +35,12 @@ $ python3 .map/scripts/map_step_runner.py auto_decide_holds
 
 $ python3 .map/scripts/map_step_runner.py record_auto_phase "map-efficient" "completed" \
   --evidence-refs "hold-1" --reason "all subtasks closed, make check green"
-{"status": "success", "chain_status": "completed", "phase": "map-efficient", "attempt": 1, ...}
+{"status": "success", "chain_status": "in_progress", "phase": "map-efficient", "attempt": 1, ...}
 
-# -- chain then continues to map-check, then map-review, each following the same
-#    poll -> drive -> poll -> record loop, until the last phase records "completed" --
+# -- map-efficient is not the last phase of this route: the chain stays
+#    in_progress and continues to map-check, then map-review, each following the
+#    same poll -> drive -> poll -> record loop. Only map-review completing closes
+#    the route (chain_status: "completed") --
 ```
 
 The run ends there: a committed feature branch, `phases[]` in `auto-route.json` holding one entry per phase attempt, and no PR/merge/CI step of any kind.
