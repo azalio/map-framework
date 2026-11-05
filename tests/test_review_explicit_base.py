@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import pytest
 
-from tests.review_context_helpers import original_review_prompt
+from tests.review_context_helpers import review_evidence_text
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "src/mapify_cli/templates/map/scripts"
@@ -221,7 +221,7 @@ def test_explicit_api_scope_snapshot_bundle_prompts_and_policy(stack):
         prompts = fresh(function, branch="product")["prompts"]
         assert prompts
         for name, entry in prompts.items():
-            prompt = original_review_prompt(runner, entry, name, branch="product")
+            prompt = review_evidence_text(runner, entry, name, branch="product")
             assert "+PARENT_ONLY = 1701" not in prompt, name
             assert "+PRODUCT = 557" in prompt, name
 
