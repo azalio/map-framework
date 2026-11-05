@@ -559,3 +559,74 @@ def test_prompt_build_rejects_any_reviewer_over_budget_without_partial_prompts(r
     assert not row.get("context_manifests")
     monkeypatch.delenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES")
     assert runner.build_review_prompts(branch="feature")["status"] == "success"
+
+
+def shard_budget(extra=60_000):
+    return str(runner.REVIEW_CONTEXT_RESERVE_BYTES + extra)
+
+
+def write_many(count, lines=900, directories=("pkg_a", "pkg_b", "pkg_c")):
+    for index in range(count):
+        directory = Path(directories[index % len(directories)])
+        directory.mkdir(exist_ok=True)
+        (directory / f"module_{index:02d}.py").write_text("".join(f"value_{line} = {line}\n" for line in range(lines)))
+
+
+def test_shard_planner_is_deterministic_and_keeps_directories_together():
+    sizes = {f"{directory}/f{index}.py": 10 for directory in ("a", "b", "c") for index in range(3)}
+    first = runner._review_plan_shards(sizes, 35)
+    assert first == runner._review_plan_shards(dict(reversed(list(sizes.items()))), 35)
+    assert [sorted({name.split("/")[0] for name in shard}) for shard in first] == [["a"], ["b"], ["c"]]
+    assert all(sum(sizes[name] for name in shard) <= 35 for shard in first)
+    assert sorted(name for shard in first for name in shard) == sorted(sizes)
+    # A directory larger than one shard is split by recursion, never dropped.
+    deep = {f"root/sub{index}/f.py": 10 for index in range(6)}
+    planned = runner._review_plan_shards(deep, 25)
+    assert [len(shard) for shard in planned] == [2, 2, 2]
+    assert sorted(name for shard in planned for name in shard) == sorted(deep)
+
+
+def test_over_budget_change_is_admitted_as_disjoint_shards_within_capacity(repo, monkeypatch):
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", shard_budget())
+    write_changes()
+    write_many(6)
+    admitted = runner.begin_review_run(branch="feature", scheduled_reviewers=["monitor"], provider="claude",
+                                      round_id="shards", base_ref="main")
+    assert admitted["status"] == "success", admitted
+    assert len(admitted["shard_ids"]) >= 2
+    row = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
+    assert [shard["id"] for shard in row["shards"]] == admitted["shard_ids"]
+    flat = [name for shard in row["shards"] for name in shard["files"]]
+    assert sorted(flat) == sorted(row["required_files"]) and len(flat) == len(set(flat))
+    assert all(shard["bytes"] <= 60_000 for shard in row["shards"])
+    assert all("files" not in shard for shard in admitted["shards"])
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    bundle = json.loads(Path(".map/feature/review-bundle.json").read_text())
+    assert bundle["snapshot"]["shards"] == row["shards"]
+
+
+def test_default_configuration_never_shards_a_small_change(repo):
+    del repo
+    write_changes("small.py")
+    admitted = admit("unsharded")
+    assert "shard_ids" not in admitted and "shards" not in admitted
+    row = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
+    assert "shards" not in row
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    assert "shards" not in json.loads(Path(".map/feature/review-bundle.json").read_text())["snapshot"]
+
+
+def test_too_many_shards_and_oversized_single_file_fail_fast(repo, monkeypatch):
+    del repo
+    write_changes()
+    write_many(6)
+    trust_on_main({".map/config.yaml": "review:\n  max_shards: 2\n"})
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", shard_budget())
+    result = runner.begin_review_run(branch="feature", provider="codex", round_id="many", base_ref="main")
+    assert result["stop_reason"] == "review_context_budget_exceeded" and result["reason"] == "too_many_shards"
+    assert result["shards_needed"] > result["max_shards"] == 2
+    assert not runner._read_review_ledger(Path(".map/feature")).get("convergence", {}).get("rounds")
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", shard_budget(10_000))
+    result = runner.begin_review_run(branch="feature", provider="codex", round_id="big", base_ref="main")
+    assert result["reason"] == "file_too_large" and result["oversized_paths"]

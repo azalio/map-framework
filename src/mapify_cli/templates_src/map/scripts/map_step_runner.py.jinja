@@ -397,6 +397,7 @@ REVIEW_ATTRIBUTION_INLINE_MAX_BYTES = 32 * 1024
 REVIEW_CONTEXT_BUDGET_BYTES = 384 * 1024
 REVIEW_CONTEXT_RESERVE_BYTES = 64 * 1024
 REVIEW_CONTEXT_BUDGET_ENV = "MAP_REVIEW_CONTEXT_BUDGET_BYTES"
+REVIEW_MAX_SHARDS = 8
 # Generated sources are skipped only by file name, config pattern or trusted
 # linguist-generated attribute; a header comment alone never excludes a file.
 REVIEW_GENERATED_NAME_PATTERNS = ("*.pb.go", "*.pb.cc", "*.pb.h", "*_pb2.py", "*_pb2_grpc.py", "zz_generated*")
@@ -9417,12 +9418,23 @@ def begin_review_run(
         return {"status": "error", "message": error}
     open_rounds = [row for row in prior.get("convergence", {}).get("rounds", []) if not _review_round_terminal(row)]
     last_round = (prior.get("convergence", {}).get("rounds") or [None])[-1]
+    shard_plan: list[dict[str, Any]] = []
     if "required_files" in target and not open_rounds and not (last_round and last_round["binding"] == dict(payload)):
         skipped_paths = {item["path"] for item in coverage_skips}
         sizes = _review_required_bytes(target, [name for name in target["required_files"] if name not in skipped_paths])
         budget = _review_context_budget(review_config)
         if sum(sizes.values()) + REVIEW_CONTEXT_RESERVE_BYTES > budget:
-            return _review_context_budget_error(sizes, budget)
+            capacity = budget - REVIEW_CONTEXT_RESERVE_BYTES
+            oversized = {name: size for name, size in sizes.items() if size > capacity}
+            if oversized:
+                return _review_context_budget_error(sizes, budget, reason="file_too_large", oversized_paths=oversized)
+            planned = _review_plan_shards(sizes, capacity)
+            max_shards = _review_max_shards(review_config)
+            if len(planned) > max_shards:
+                return _review_context_budget_error(sizes, budget, reason="too_many_shards",
+                                                    shards_needed=len(planned), max_shards=max_shards)
+            shard_plan = [{"id": f"s{index:02d}", "files": files, "bytes": sum(sizes[name] for name in files)}
+                          for index, files in enumerate(planned, 1)]
     policy_hash = _review_policy(dict(payload), trusted_policy=target["trusted_policy"])
     consent: dict[str, Any] = {"status": "not_required"}
     if _review_requires_consent(target):
@@ -9463,7 +9475,8 @@ def begin_review_run(
         return {"status": "success", "resumed": True, "round_id": round_id,
                 "completed": "completed_at" in existing, "human_consent": consent, **dict(payload),
                 **{key: existing.get(key) for key in ("target", "required_files", "policy_hash", "capability")},
-                **({"coverage_skips": existing["coverage_skips"]} if existing.get("coverage_skips") else {})}
+                **({"coverage_skips": existing["coverage_skips"]} if existing.get("coverage_skips") else {}),
+                **_review_shard_summary(existing)}
     if pending:
         return {"status": "error", "message": "Resume the unfinished review round or explicitly abandon_review_round first"}
     unsuccessful = sum(_review_round_terminal(row) and row.get("verdict") != "PROCEED" for row in rounds)
@@ -9485,6 +9498,8 @@ def begin_review_run(
         row["required_files"] = [name for name in row["target"].get("required_files", []) if name not in skipped]
         if coverage_skips:
             row["coverage_skips"] = coverage_skips
+        if len(shard_plan) > 1:
+            row["shards"] = shard_plan
         rounds.append(row)
         convergence.update({"outcome": "incomplete", "stop_reason": "review_pending",
                             "rounds_to_pass": None})
@@ -9503,7 +9518,8 @@ def begin_review_run(
             "archived_inputs": [path.name for path in previous],
             "archive_path": str(archive_path) if archive_path else None,
             **{key: row[key] for key in ("target", "required_files", "policy_hash", "capability", "coverage_skips")
-               if key in row}}
+               if key in row},
+            **_review_shard_summary(row)}
 
 
 def _adversarial_reviewer_error(parsed: Any) -> str | None:
@@ -12362,12 +12378,23 @@ def _render_bundle_markdown(result: dict) -> str:
     return "\n".join(lines)
 
 
+def _review_shard_summary(row: dict[str, Any]) -> dict[str, Any]:
+    """Admission output names shards without repeating their file lists."""
+    shards = row.get("shards")
+    if not shards:
+        return {}
+    return {"shard_ids": [item["id"] for item in shards],
+            "shards": [{"id": item["id"], "files_count": len(item["files"]), "bytes": item["bytes"]} for item in shards]}
+
+
 def _review_row_snapshot(row: dict[str, Any]) -> dict[str, Any]:
     """Snapshot object the immutable bundle must carry for an admitted round."""
     snapshot = {"target": row.get("target"), "policy_hash": row.get("policy_hash"),
                 "required_files": row.get("required_files", [])}
     if row.get("coverage_skips"):
         snapshot["coverage_skips"] = row["coverage_skips"]
+    if row.get("shards"):
+        snapshot["shards"] = row["shards"]
     return snapshot
 
 
@@ -12590,6 +12617,8 @@ def create_review_bundle(branch: str | None = None) -> dict:
     skipped_paths = frozenset(item["path"] for item in (row or {}).get("coverage_skips", []))
     if skipped_paths:
         result["snapshot"]["coverage_skips"] = row["coverage_skips"] if row else []
+    if row and row.get("shards"):
+        result["snapshot"]["shards"] = row["shards"]
     result["attribution"] = _review_attribution(target, skipped_paths)
 
     # Soft schema validation: warn on drift but still write the bundle.
@@ -12627,6 +12656,10 @@ def create_review_bundle(branch: str | None = None) -> dict:
                         "snapshot_sha256": hashlib.sha256(snapshot_json.encode()).hexdigest(),
                         "full_snapshot": str(bundle_json_path)}
     snapshot_summary.pop("required_files", None)
+    if "shards" in snapshot_summary:
+        # Intent: file lists per shard live in review-bundle.json; the prompt names the plan only.
+        snapshot_summary["shards"] = [{"id": item["id"], "files_count": len(item["files"]), "bytes": item["bytes"]}
+                                      for item in snapshot_summary["shards"]]
     if "coverage_skips" in snapshot_summary:
         # Intent: the prompt carries a count and sample; the full list is in review-bundle.json.
         skips = snapshot_summary.pop("coverage_skips")
@@ -23215,6 +23248,48 @@ def _review_required_bytes(target: dict[str, Any], paths: list[str]) -> dict[str
             current = 0
         sizes[name] = base_sizes[name] + current + diff_sizes.get(name, current if not base_sizes[name] else 0)
     return sizes
+
+
+def _review_max_shards(review_config: dict[str, Any]) -> int:
+    value = review_config.get("max_shards")
+    return value if type(value) is int and value > 0 else REVIEW_MAX_SHARDS
+
+
+def _review_shard_units(paths: list[str], sizes: dict[str, int], capacity: int, depth: int = 0) -> list[list[str]]:
+    """Group sorted paths into directory units, descending only into directories that exceed capacity."""
+    import itertools
+
+    units: list[list[str]] = []
+    for _, members in itertools.groupby(paths, key=lambda item: PurePosixPath(item).parts[depth]):
+        group = list(members)
+        if len(PurePosixPath(group[0]).parts) == depth + 1:
+            units.extend([name] for name in group)
+        elif sum(sizes[name] for name in group) <= capacity:
+            units.append(group)
+        else:
+            units.extend(_review_shard_units(group, sizes, capacity, depth + 1))
+    return units
+
+
+def _review_plan_shards(sizes: dict[str, int], capacity: int) -> list[list[str]]:
+    """Deterministic directory-aware next-fit packing of required paths into shards.
+
+    Every path must individually fit ``capacity`` (checked by the caller). Whole
+    directories stay in one shard when they fit, so related files are reviewed together.
+    """
+    shards: list[list[str]] = []
+    current: list[str] = []
+    used = 0
+    for unit in _review_shard_units(sorted(sizes), sizes, capacity):
+        weight = sum(sizes[name] for name in unit)
+        if current and used + weight > capacity:
+            shards.append(current)
+            current, used = [], 0
+        current.extend(unit)
+        used += weight
+    if current:
+        shards.append(current)
+    return shards
 
 
 def _review_context_budget_error(
