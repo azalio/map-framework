@@ -10,20 +10,25 @@ from unittest.mock import Mock
 import pytest
 
 from mapify_cli import auto_update
-from mapify_cli.auto_update import UpdateMode, UpdateStatus, check_and_update
+from mapify_cli.auto_update import (
+    UpdateMode,
+    UpdateStatus,
+    check_and_update,
+    record_declined_major,
+)
 from mapify_cli.update_install import InstallKind
-from mapify_cli.update_state import UpdateState, write_update_state
-from mapify_cli.update_versions import VersionTargets
+from mapify_cli.update_state import UpdateState, read_update_state, write_update_state
+from mapify_cli.update_versions import ReleaseHighlights, StableVersion, VersionTargets
 
 NOW = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
 
 
 @pytest.fixture(autouse=True)
-def _installed_package(monkeypatch: pytest.MonkeyPatch) -> None:
+def installed_package_fixture(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         auto_update,
         "detect_install_kind",
-        lambda module_file: InstallKind.PIP,
+        lambda *_args: InstallKind.PIP,
     )
     # CLI == PyPI latest: discovery alone offers nothing.
     monkeypatch.setattr(
@@ -137,17 +142,73 @@ def test_stale_framework_source_repo_is_still_skipped(
     assert result.status is UpdateStatus.SKIPPED
 
 
-def test_major_behind_project_needs_manual_mode(
+def _major_highlights() -> ReleaseHighlights:
+    return ReleaseHighlights(
+        version=StableVersion(3, 36, 0),
+        title="MAP 3.36.0",
+        body="Highlights",
+        url="https://github.com/azalio/map-framework/releases/tag/v3.36.0",
+    )
+
+
+def test_major_behind_project_offers_consent_then_declines_then_approves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_project(tmp_path, "2.9.0")
+    refresh = _refresh_rewriting_lock("3.36.0")
+    monkeypatch.setattr(auto_update, "refresh_installed_providers", refresh)
+    monkeypatch.setattr(
+        auto_update,
+        "fetch_release_highlights",
+        Mock(return_value=_major_highlights()),
+    )
+    later = NOW + timedelta(days=2)
+
+    offered = check_and_update(tmp_path, "3.36.0", UpdateMode.AUTOMATIC, now=NOW)
+    refresh.assert_not_called()
+    assert offered.status is UpdateStatus.MAJOR_AVAILABLE
+    assert offered.major is not None
+    assert str(offered.major.version) == "3.36.0"
+
+    record_declined_major(tmp_path, "3.36.0", "3.36.0")
+    declined = check_and_update(tmp_path, "3.36.0", UpdateMode.AUTOMATIC, now=later)
+    refresh.assert_not_called()
+    assert declined.status is UpdateStatus.CURRENT
+
+    approved = check_and_update(
+        tmp_path,
+        "3.36.0",
+        UpdateMode.MANUAL,
+        approved_major="3.36.0",
+        now=later,
+    )
+    assert approved.status is UpdateStatus.UPDATED
+    assert approved.refreshed_providers == ("claude",)
+    refresh.assert_called_once()
+    assert read_update_state(tmp_path).declined_major_version is None
+    again = check_and_update(
+        tmp_path, "3.36.0", UpdateMode.AUTOMATIC, now=later + timedelta(days=2)
+    )
+    assert again.status is UpdateStatus.CURRENT
+
+
+def test_decline_of_current_major_is_rejected_for_an_up_to_date_project(
+    tmp_path: Path,
+) -> None:
+    _install_project(tmp_path, "3.35.2")
+
+    with pytest.raises(ValueError):
+        record_declined_major(tmp_path, "3.36.0", "3.36.0")
+
+
+def test_major_behind_project_manual_mode_refreshes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _install_project(tmp_path, "2.9.0")
     refresh = _refresh_rewriting_lock("3.36.0")
     monkeypatch.setattr(auto_update, "refresh_installed_providers", refresh)
 
-    automatic = check_and_update(tmp_path, "3.36.0", UpdateMode.AUTOMATIC, now=NOW)
-    refresh.assert_not_called()
     manual = check_and_update(tmp_path, "3.36.0", UpdateMode.MANUAL, now=NOW)
 
-    assert automatic.status is UpdateStatus.CURRENT
     assert manual.status is UpdateStatus.UPDATED
     refresh.assert_called_once()
