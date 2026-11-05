@@ -342,6 +342,6 @@ def test_vc4_deterministic_merge_order(repo: Path) -> None:
 
     # Commit subjects: newest commit = ST-003 (last merged), oldest new commit = ST-001
     subjects = _git(["log", "-3", "--format=%s"], repo).stdout.strip().splitlines()
-    assert subjects[0].startswith("ST-003:"), f"Newest commit should be ST-003, got: {subjects[0]}"
-    assert subjects[1].startswith("ST-002:"), f"Second commit should be ST-002, got: {subjects[1]}"
-    assert subjects[2].startswith("ST-001:"), f"Third commit should be ST-001, got: {subjects[2]}"
+    assert subjects[0] == "chore(map): merge ST-003 isolated worktree (wave)", subjects[0]
+    assert subjects[1] == "chore(map): merge ST-002 isolated worktree (wave)", subjects[1]
+    assert subjects[2] == "chore(map): merge ST-001 isolated worktree (wave)", subjects[2]

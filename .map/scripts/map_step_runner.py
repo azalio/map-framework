@@ -25473,7 +25473,9 @@ def _wt_freeze_and_verify(
             "WORKTREE_STAGE_FAILED", add.stderr.strip() or "git add -A failed in worktree"
         )
     commit = _wt_commit_staged(
-        f"map-wt: {subtask_id} (attempt {record.get('attempt', 0)})", cwd=wt_path,
+        f"chore(map): checkpoint {subtask_id} worktree "
+        f"(attempt {record.get('attempt', 0)})",
+        cwd=wt_path,
     )
     if commit.returncode != 0:
         return _wt_error(
@@ -25930,7 +25932,7 @@ def merge_subtask_worktree(
                 "working branch left at base",
                 stderr_tail=_clip_probe_output(merge.stderr)[-2000:],
             )
-        commit = _wt_commit_staged(f"{subtask_id}: merge isolated worktree")
+        commit = _wt_commit_staged(f"chore(map): merge {subtask_id} isolated worktree")
         if commit.returncode != 0:
             if not _wt_rollback(base_sha, unstage_hook_runtime=True):
                 return _wt_error(
@@ -26301,7 +26303,7 @@ def merge_wave_worktrees(
                     attribution=attribution,
                     stderr_tail=_clip_probe_output(merge.stderr)[-2000:],
                 )
-            commit = _wt_commit_staged(f"{sid}: merge isolated worktree (wave)")
+            commit = _wt_commit_staged(f"chore(map): merge {sid} isolated worktree (wave)")
             if commit.returncode != 0:
                 if not _wt_rollback(wave_base_sha, unstage_hook_runtime=True):
                     return _wt_error(
