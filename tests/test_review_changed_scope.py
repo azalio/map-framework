@@ -104,8 +104,10 @@ def test_unchanged_context_is_frozen_optional_and_retrievable(repo):
     assert "changed" in str(rejected)
 
 
-def test_large_inventory_packs_only_changed_sources(repo):
+def test_large_inventory_packs_only_changed_sources(repo, monkeypatch):
     del repo
+    # Packing keeps transport chunks few; the byte budget is exercised separately.
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", "100000000")
     for index in range(1250):
         Path(f"module_{index:04d}.py").write_text("value = 1\n")
     git("add", ".")
@@ -474,3 +476,86 @@ def test_codex_and_claude_share_one_compact_bundle_text(repo):
     assert runner.create_review_bundle(branch="feature")["status"] == "success"
     codex_runner = importlib.import_module("codex_review_runner")
     assert codex_runner.compact_bundle("feature") == runner._review_compact_bundle("feature")
+
+
+def test_default_budget_constants():
+    assert runner.REVIEW_CONTEXT_BUDGET_BYTES == 384 * 1024
+    assert runner.REVIEW_CONTEXT_RESERVE_BYTES == 64 * 1024
+    assert runner.REVIEW_CONTEXT_BUDGET_ENV == "MAP_REVIEW_CONTEXT_BUDGET_BYTES"
+
+
+def big_change(lines=3000):
+    write_changes("small.py")
+    Path("first.py").write_text("".join(f"value_{index} = {index}\n" for index in range(lines)))
+
+
+def test_admission_over_budget_fails_fast_without_consuming_a_round(repo, monkeypatch):
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(runner.REVIEW_CONTEXT_RESERVE_BYTES + 20_000))
+    big_change()
+    result = runner.begin_review_run(branch="feature", provider="codex", round_id="budget", base_ref="main")
+    assert result["status"] == "error"
+    assert result["stop_reason"] == "review_context_budget_exceeded"
+    assert result["total"] > result["budget"] == runner.REVIEW_CONTEXT_RESERVE_BYTES + 20_000
+    assert result["top_paths"][0]["path"] == "first.py"
+    assert result["top_paths"][0]["bytes"] > 20_000
+    assert result["hints"]
+    ledger = runner._read_review_ledger(Path(".map/feature"))
+    assert not ledger.get("convergence", {}).get("rounds")
+    assert not Path(".map/feature/review-mode.json").exists()
+    monkeypatch.delenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES")
+    assert runner.begin_review_run(branch="feature", provider="codex", round_id="budget", base_ref="main")["status"] == "success"
+
+
+def test_budget_comes_from_trusted_config_and_env_overrides_it(repo, monkeypatch):
+    del repo
+    trust_on_main({".map/config.yaml": f"review:\n  context_budget_bytes: {runner.REVIEW_CONTEXT_RESERVE_BYTES + 20_000}\n"})
+    big_change()
+    result = runner.begin_review_run(branch="feature", provider="codex", round_id="cfg", base_ref="main")
+    assert result["stop_reason"] == "review_context_budget_exceeded"
+    # A PR-head config cannot raise the budget.
+    Path(".map").mkdir(exist_ok=True)
+    Path(".map/config.yaml").write_text("review:\n  context_budget_bytes: 100000000\n")
+    assert runner.begin_review_run(branch="feature", provider="codex", round_id="cfg", base_ref="main")["status"] == "error"
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", "100000000")
+    assert runner.begin_review_run(branch="feature", provider="codex", round_id="cfg", base_ref="main")["status"] == "success"
+
+
+def test_generated_files_do_not_count_toward_the_admission_estimate(repo, monkeypatch):
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(runner.REVIEW_CONTEXT_RESERVE_BYTES + 20_000))
+    write_changes()
+    Path("api").mkdir()
+    Path("api/huge.pb.go").write_text("x := 1\n" * 50_000)
+    admitted = admit("generated-budget")
+    assert admitted["required_files"] == ["first.py"]
+
+
+def test_resuming_an_admitted_round_ignores_a_later_budget_change(repo, monkeypatch):
+    del repo
+    write_changes()
+    admit("resume-budget")
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", "1")
+    resumed = runner.begin_review_run(branch="feature", scheduled_reviewers=["monitor"], provider="claude",
+                                      round_id="resume-budget", base_ref="main")
+    assert resumed["status"] == "success" and resumed["resumed"] is True
+
+
+def test_prompt_build_rejects_any_reviewer_over_budget_without_partial_prompts(repo, monkeypatch):
+    del repo
+    write_changes()
+    directory = Path(".map/feature")
+    directory.mkdir(parents=True)
+    (directory / "spec_feature.md").write_text("A requirement.\n" * 12_000)
+    runner.begin_review_run(branch="feature", provider="codex", round_id="exact", base_ref="main")
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    # Admission passed (artifacts are not in the estimate); the exact check sees the frozen spec.
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(runner.REVIEW_CONTEXT_RESERVE_BYTES + 100_000))
+    result = runner.build_review_prompts(branch="feature")
+    assert result["status"] == "error" and result["stop_reason"] == "review_context_budget_exceeded", result
+    assert "prompts" not in result
+    assert max(result["required_bytes"].values()) > result["budget"]
+    row = runner._read_review_ledger(directory)["convergence"]["rounds"][-1]
+    assert not row.get("context_manifests")
+    monkeypatch.delenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES")
+    assert runner.build_review_prompts(branch="feature")["status"] == "success"

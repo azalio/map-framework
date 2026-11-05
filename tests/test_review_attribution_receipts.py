@@ -72,6 +72,7 @@ def test_read_only_review_bundle_preserves_pre_existing_defect(tmp_path, monkeyp
 def test_large_changed_files_keep_full_snapshot_without_bloating_prompts(tmp_path, monkeypatch):
     """Large files retain complete attributed snapshots through bounded parent delivery."""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", "100000000")
 
     def git(*args: str) -> str:
         return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()

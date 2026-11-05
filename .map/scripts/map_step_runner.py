@@ -9440,6 +9440,14 @@ def begin_review_run(
     error = _validate_review_run(payload)
     if error:
         return {"status": "error", "message": error}
+    open_rounds = [row for row in prior.get("convergence", {}).get("rounds", []) if not _review_round_terminal(row)]
+    last_round = (prior.get("convergence", {}).get("rounds") or [None])[-1]
+    if "required_files" in target and not open_rounds and not (last_round and last_round["binding"] == dict(payload)):
+        skipped_paths = {item["path"] for item in coverage_skips}
+        sizes = _review_required_bytes(target, [name for name in target["required_files"] if name not in skipped_paths])
+        budget = _review_context_budget(review_config)
+        if sum(sizes.values()) + REVIEW_CONTEXT_RESERVE_BYTES > budget:
+            return _review_context_budget_error(sizes, budget)
     policy_hash = _review_policy(dict(payload), trusted_policy=target["trusted_policy"])
     consent: dict[str, Any] = {"status": "not_required"}
     if _review_requires_consent(target):
@@ -13806,6 +13814,20 @@ def _prepare_review_context(
             **metadata, "reviewer": reviewer, "bundle_sha256": manifest["bundle_sha256"],
             "prompt_inline": inline,
         }
+    budget = _review_context_budget(_review_trusted_config(row.get("target", {})))
+    required_bytes = {}
+    for reviewer, entry in prepared.items():
+        manifest_meta = row["context_manifests"][entry["context_transport"]["context_id"]]
+        manifest_resources = json.loads(_review_context_read(directory, manifest_meta))["resources"]
+        required_bytes[reviewer] = manifest_meta["bytes"] + sum(
+            item["bytes"] for item in manifest_resources.values() if item.get("required", True))
+    if any(size > budget for size in required_bytes.values()):
+        # Intent: never hand out some prompts and not others; the whole fan-out stops.
+        return {"status": "error", "stop_reason": "review_context_budget_exceeded", "branch": branch,
+                "budget": budget, "required_bytes": required_bytes,
+                "message": "A reviewer's required context exceeds the per-reviewer budget; no prompt was returned.",
+                "hints": ["Split the change into smaller reviews.",
+                          f"Raise review.context_budget_bytes in the trusted .map/config.yaml or set {REVIEW_CONTEXT_BUDGET_ENV}."]}
     error = _review_prompt_size_error(branch, prepared)
     if error:
         return error
@@ -23768,6 +23790,75 @@ def _review_trusted_config(target: dict[str, Any]) -> dict[str, Any]:
         return {}
     review = config.get("review") if isinstance(config, dict) else None
     return review if isinstance(review, dict) else {}
+
+
+def _review_context_budget(review_config: dict[str, Any]) -> int:
+    """Total required bytes one reviewer may consume: env, trusted config, then the default."""
+    def positive(value: Any) -> int:
+        if isinstance(value, str) and value.strip().replace("_", "").isdigit():
+            value = int(value.strip().replace("_", ""))
+        return value if type(value) is int and value > 0 else 0
+
+    return (positive(os.environ.get(REVIEW_CONTEXT_BUDGET_ENV)) or positive(review_config.get("context_budget_bytes"))
+            or REVIEW_CONTEXT_BUDGET_BYTES)
+
+
+def _review_base_sizes(base: str, names: list[str]) -> dict[str, int]:
+    """Blob sizes at the review base in one Git process; absent paths are 0."""
+    sizes = {name: 0 for name in names}
+    if not base:
+        return sizes
+    batchable = [name for name in names if "\n" not in name]
+    result = subprocess.run(["git", "cat-file", "--batch-check"], input=b"".join(f"{base}:".encode() + os.fsencode(name) + b"\n" for name in batchable),
+                            capture_output=True, timeout=30, check=False)
+    for name, line in zip(batchable, result.stdout.decode("utf-8", errors="replace").splitlines(), strict=False):
+        fields = line.split()
+        if len(fields) == 3 and fields[1] == "blob":
+            sizes[name] = int(fields[2])
+    for name in names:
+        if "\n" in name:
+            single = subprocess.run(["git", "cat-file", "-s", f"{base}:{name}"], capture_output=True, timeout=10, check=False)
+            sizes[name] = int(single.stdout) if single.returncode == 0 and single.stdout.strip().isdigit() else 0
+    return sizes
+
+
+def _review_required_bytes(target: dict[str, Any], paths: list[str]) -> dict[str, int]:
+    """Estimate each path's required context: base + current source evidence plus its diff bytes.
+
+    Per-path sizes (not just a total) let a sharding planner reuse this estimate.
+    """
+    base = target.get("base", "")
+    base_sizes = _review_base_sizes(base, paths)
+    diff_sizes: dict[str, int] = {}
+    if base:
+        for part in re.split(rb"(?m)^(?=diff --git )", _review_git_bytes("diff", "--no-renames", base, "--",
+                                                                         *_review_source_pathspec(paths))):
+            match = re.match(rb"diff --git a/(.+?) b/(.+)\n", part)
+            if match:
+                diff_sizes[os.fsdecode(match.group(2))] = len(part)
+    sizes = {}
+    for name in paths:
+        try:
+            path = Path(name)
+            current = len(os.fsencode(os.readlink(path))) if path.is_symlink() else (path.stat().st_size if path.is_file() else 0)
+        except OSError:
+            current = 0
+        sizes[name] = base_sizes[name] + current + diff_sizes.get(name, current if not base_sizes[name] else 0)
+    return sizes
+
+
+def _review_context_budget_error(
+    sizes: dict[str, int], budget: int, **extra: Any,
+) -> dict[str, Any]:
+    total = sum(sizes.values()) + REVIEW_CONTEXT_RESERVE_BYTES
+    top = sorted(sizes.items(), key=lambda item: (-item[1], item[0]))[:10]
+    return {"status": "error", "stop_reason": "review_context_budget_exceeded", "total": total, "budget": budget,
+            "top_paths": [{"path": name, "bytes": size} for name, size in top],
+            "hints": ["Split the change into smaller reviews.",
+                      "Exclude generated files: review.generated_patterns, or linguist-generated in the trusted base .gitattributes.",
+                      f"Raise review.context_budget_bytes in the trusted .map/config.yaml or set {REVIEW_CONTEXT_BUDGET_ENV}."],
+            "message": f"Required review context (~{total} bytes) exceeds the {budget}-byte per-reviewer budget; no round was consumed.",
+            **extra}
 
 
 def _review_gitattr_regex(pattern: str) -> re.Pattern[str]:

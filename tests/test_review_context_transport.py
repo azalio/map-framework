@@ -64,6 +64,8 @@ def repo(seed, small_seed, tmp_path, monkeypatch, request):
     source = seed if request.node.originalname in large_cases else small_seed
     shutil.copytree(source, root)
     monkeypatch.chdir(root)
+    # These fixtures intentionally exceed the default byte budget; budget behavior is tested separately.
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", "100000000")
     admission = runner.begin_review_run(branch="feature", round_id="context-round", provider="codex")
     assert admission["status"] == "success", admission
     bundle = runner.create_review_bundle(branch="feature")
@@ -169,9 +171,10 @@ def test_aggregate_context_roundtrip_preserves_prompt_inventory_and_all_sources(
 
 @pytest.mark.parametrize("builder,reviewer", [("build_review_prompts", "monitor"),
     ("build_role_review_prompts", "maintainer"), ("build_adversarial_review_prompts", "blind")])
-def test_all_builders_deliver_large_unicode_diff_without_message_overflow(repo, builder, reviewer):
+def test_all_builders_deliver_large_unicode_diff_without_message_overflow(repo, monkeypatch, builder, reviewer):
     """UTF-8 and JSON escaping count toward the unchanged per-message cap."""
     del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", "100000000")
     diff = "diff --git a/x b/x\n+" + ('🙂\\"\x00\n' * 80_000) + "END_OF_DIFF"
     result = getattr(runner, builder)(branch="feature", git_diff_text=diff)
     assert result["status"] == "success", result
@@ -315,6 +318,7 @@ def test_fresh_install_routes_intermediate_context_before_final_validation(seed,
     root = tmp_path / provider
     shutil.copytree(seed, root)
     monkeypatch.chdir(root)
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", "100000000")
     installed = CliRunner().invoke(app, ["init", ".", "--force", "--no-git", "--mcp", "none", "--provider", provider])
     assert installed.exit_code == 0, installed.output
     git(root, "add", ".")
