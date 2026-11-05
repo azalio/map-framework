@@ -28,6 +28,7 @@ def git(*args):
 
 
 def install(root, provider):
+    assert Path.cwd().resolve() == Path(root).resolve(), "init . installs into the cwd"
     result = CliRunner().invoke(app, ["init", ".", "--force", "--no-git", "--mcp", "none", "--provider", provider])
     assert result.exit_code == 0, result.output
 
