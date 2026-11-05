@@ -10660,9 +10660,152 @@ def _retain_review_findings(
     })
 
 
+_REVIEW_VERDICT_ORDERS = {
+    "verdict": ("approved", "needs_revision", "rejected"),
+    "risk_assessment": ("low", "medium", "high", "critical"),
+    "recommendation": ("proceed", "improve", "reconsider"),
+}
+
+
+def _review_worst(key: str, values: list[Any]) -> Any:
+    """Worst verdict across shards; an unrecognized value ranks worst so it can never be hidden."""
+    order = _REVIEW_VERDICT_ORDERS[key]
+    return max(values, key=lambda value: order.index(value) if value in order else len(order))
+
+
+def _review_merge_envelopes(items: list[tuple[str, dict[str, Any]]], owners: dict[str, set[str]]) -> dict[str, Any]:
+    """Merge per-shard reviewer envelopes: worst-of verdicts, concatenated findings, unioned receipts."""
+    outputs = [output for _, output in items]
+    base = dict(max(outputs, key=lambda out: _REVIEW_VERDICT_ORDERS["risk_assessment"].index(out["risk_assessment"])
+                    if out.get("risk_assessment") in _REVIEW_VERDICT_ORDERS["risk_assessment"] else 99)
+                if all("risk_assessment" in out for out in outputs) else outputs[0])
+
+    def present(key: str) -> list[Any]:
+        return [out[key] for out in outputs if key in out]
+
+    def union(values: list[Any]) -> list[Any]:
+        seen: dict[str, Any] = {}
+        for value in values:
+            seen.setdefault(json.dumps(value, sort_keys=True), value)
+        return list(seen.values())
+
+    for key in ("checks_performed", "passed_checks", "failed_checks", "strengths", "weaknesses", "next_steps"):
+        if present(key):
+            base[key] = union([item for value in present(key) if isinstance(value, list) for item in value])
+    for key in ("findings", "issues", "evidence", "monitor_severity_audit", "resolved_findings"):
+        lists = [value for value in present(key) if isinstance(value, list)]
+        if lists:
+            base[key] = union([item for value in lists for item in value])
+    for key in ("all_clear", "valid"):
+        if present(key):
+            base[key] = all(value is True for value in present(key))
+    for key in _REVIEW_VERDICT_ORDERS:
+        if present(key):
+            base[key] = _review_worst(key, present(key))
+    if present("overall_score"):
+        base["overall_score"] = min(value for value in present("overall_score") if isinstance(value, (int, float)))
+    if all(isinstance(out.get("scores"), dict) for out in outputs):
+        base["scores"] = {name: min(out["scores"].get(name, 0) for out in outputs
+                                    if isinstance(out["scores"].get(name, 0), (int, float)))
+                          for name in outputs[0]["scores"]}
+    if all(isinstance(out.get("confidence"), dict) and isinstance(out["confidence"].get("score"), (int, float))
+           for out in outputs):
+        base["confidence"] = {**base["confidence"], "score": min(out["confidence"]["score"] for out in outputs)}
+    if all(isinstance(out.get("predicted_state"), dict) for out in outputs):
+        state = dict(base["predicted_state"])
+        for key in ("affected_components", "breaking_changes", "required_updates"):
+            state[key] = union([item for out in outputs for item in out["predicted_state"].get(key, [])
+                                if isinstance(out["predicted_state"].get(key, []), list)])
+        base["predicted_state"] = state
+    for key in ("summary", "all_clear_rationale", "landmine_evidence"):
+        joined = [str(value) for value in present(key) if str(value).strip()]
+        if joined:
+            base[key] = " | ".join(dict.fromkeys(joined))
+    findings = base.get("findings")
+    if isinstance(findings, list):
+        # Intent: reviewer-chosen IDs restart per shard; keep them unique without touching the ledger's RVF identity.
+        used: set[str] = set()
+        for index, finding in enumerate(findings):
+            if isinstance(finding, dict) and isinstance(finding.get("id"), str):
+                if finding["id"] in used:
+                    finding = findings[index] = {**finding, "id": f"{finding['id']}-{index + 1}"}
+                used.add(finding["id"])
+    receipts = [(sid, out["receipt"]) for sid, out in items if isinstance(out.get("receipt"), dict)]
+    if receipts:
+        foreign = {sid: set().union(*(files for other, files in owners.items() if other != sid)) for sid in owners}
+        merged = {key: [] for key in REVIEW_COVERAGE_RECEIPT_SCHEMA}
+        for sid, receipt in receipts:
+            for key, collected in merged.items():
+                values = receipt.get(key, [])
+                if key == "skipped_files":
+                    # Intent: another shard's file is not this shard's skip; it is judged in its own shard.
+                    values = [name for name in values if name not in foreign.get(sid, set())]
+                collected.extend(value for value in values if value not in collected)
+        base["receipt"] = merged
+    proofs = {sid: out["context_receipt"] for sid, out in items if isinstance(out.get("context_receipt"), dict)}
+    if proofs:
+        base["context_receipts"] = proofs
+        base["context_receipt"] = proofs[items[0][0]] if items[0][0] in proofs else next(iter(proofs.values()))
+    return base
+
+
+def _review_merge_shard_outputs(reviewer: str, items: list[tuple[str, dict[str, Any]]], row: dict[str, Any]) -> dict[str, Any]:
+    """Build the canonical single-envelope capture from complete per-shard captures."""
+    owners = {item["id"]: set(item["files"]) for item in row["shards"]}
+    if reviewer != "adversarial":
+        return _review_merge_envelopes(items, owners)
+    statuses: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    for sid, envelope in items:
+        for name, entry in envelope.get("reviewer_status", {}).items():
+            statuses.setdefault(name, []).append((sid, entry))
+    raw_inputs: dict[str, str | None] = {}
+    for name, entries in statuses.items():
+        if all(isinstance(entry, dict) and entry.get("status") == "ok" and isinstance(entry.get("raw"), dict)
+               for _, entry in entries) and len(entries) == len(items):
+            raw_inputs[name] = json.dumps(_review_merge_envelopes([(sid, entry["raw"]) for sid, entry in entries], owners))
+        else:
+            raw_inputs[name] = None
+    aggregate = aggregate_adversarial_findings(
+        raw_inputs.get("blind"), raw_inputs.get("edge_case"), raw_inputs.get("acceptance"),
+        {role: raw_inputs.get(role) for role in ROLE_REVIEWER_IDS})
+    aggregate["shards"] = [sid for sid, _ in items]
+    return aggregate
+
+
+def _review_shard_problems(row: dict[str, Any], directory: Path, ordering: str, reviewer: str) -> list[str]:
+    """Verify every shard capture of one (ordering, reviewer): file hash, delivery proof and own-file coverage."""
+    problems: list[str] = []
+    stored = row.get("shard_receipts", {}).get(f"{ordering}:{reviewer}", {})
+    for shard in row.get("shards", []):
+        sid, label = shard["id"], f"{ordering}:{reviewer}#{shard['id']}"
+        witness = stored.get(sid)
+        path = directory / witness["artifact"] if isinstance(witness, dict) else directory / "missing-shard"
+        if (not isinstance(witness, dict) or not path.is_file()
+                or hashlib.sha256(path.read_bytes()).hexdigest() != witness.get("sha256")):
+            problems.append(f"{label}: missing or changed shard capture")
+            continue
+        envelope = json.loads(path.read_text(encoding="utf-8"))
+        outputs = ({name: entry["raw"] for name, entry in envelope.get("reviewer_status", {}).items()
+                    if isinstance(entry, dict) and isinstance(entry.get("raw"), dict)}
+                   if reviewer == "adversarial" else {reviewer: envelope})
+        for name, output in outputs.items():
+            delivery = _review_delivery_problem(row, name, output, ordering, sid)
+            if delivery:
+                problems.append(f"{label}:{name}: {delivery}")
+            if reviewer == "adversarial" and name not in ROLE_REVIEWER_IDS:
+                continue  # Hunters carry no coverage receipt; the role reviewers do.
+            receipt = output.get("receipt")
+            if _review_coverage_receipt_errors(receipt):
+                problems.append(f"{label}:{name}: missing or invalid shard coverage receipt")
+            elif set(shard["files"]) - set(receipt["covered_files"]) or set(shard["files"]) & set(receipt["skipped_files"]):
+                problems.append(f"{label}:{name}: shard scope is unread or skipped")
+    return problems
+
+
 @_review_transaction
 def capture_review_output(
     reviewer: str, payload: str, round_id: str, *, ordering: str = "", branch: str | None = None,
+    shard: str = "",
 ) -> dict[str, Any]:
     """Fence a reviewer response to the admitted iteration before replacing its capture."""
     directory = _review_branch_dir(branch)
@@ -10677,6 +10820,11 @@ def capture_review_output(
     allowed = run["scheduled_reviewers"] if "monitor" in run["scheduled_reviewers"] else ["adversarial", *run["scheduled_reviewers"]]
     if reviewer not in allowed or ordering not in {"", "default", "reverse"}:
         raise ValueError("Capture is not part of the admitted reviewer roster")
+    shard_ids = [item["id"] for item in row.get("shards", [])]
+    if shard_ids and shard not in shard_ids:
+        raise ValueError(f"Sharded round: capture requires one of the admitted shards {shard_ids}")
+    if shard and not shard_ids:
+        raise ValueError("The admitted review round is not sharded")
     if bool(ordering) != (run["review_mode"] == "compare_orderings"):
         raise ValueError("Capture ordering does not match the admitted round")
     data = json.loads(payload)
@@ -10690,11 +10838,11 @@ def capture_review_output(
             raise ValueError("Adversarial reviewer_status must be an object")
         for role, entry in delivery_statuses.items():
             if isinstance(entry, dict) and entry.get("status") == "ok":
-                problem = _review_delivery_problem(row, role, entry.get("raw", {}), ordering)
+                problem = _review_delivery_problem(row, role, entry.get("raw", {}), ordering, shard)
                 if problem:
                     raise ValueError(f"{role}: {problem}")
     else:
-        problem = _review_delivery_problem(row, reviewer, data, ordering)
+        problem = _review_delivery_problem(row, reviewer, data, ordering, shard)
         if problem:
             raise ValueError(problem)
     if reviewer in ROLE_REVIEWER_IDS:
@@ -10720,12 +10868,32 @@ def capture_review_output(
             receipt_errors = _review_coverage_receipt_errors(raw.get("receipt") if isinstance(raw, dict) else None)
             if receipt_errors:
                 raise ValueError(f"Invalid {role} coverage receipt: " + "; ".join(receipt_errors))
+    root = _review_branch_dir(branch)
+    key = f"{ordering or 'default'}:{reviewer}"
+    shard_state: dict[str, Any] = {}
+    if shard:
+        shard_dir = root / "review-shards" / round_id.encode().hex() / (ordering or "default") / shard
+        shard_dir.mkdir(parents=True, exist_ok=True)
+        shard_artifact = shard_dir / f"shard-{reviewer}.json"
+        _write_json_file(shard_artifact, data)
+        row.setdefault("shard_receipts", {}).setdefault(key, {})[shard] = {
+            "artifact": str(shard_artifact.relative_to(root)),
+            "sha256": hashlib.sha256(shard_artifact.read_bytes()).hexdigest()}
+        captured = row["shard_receipts"][key]
+        missing = [sid for sid in shard_ids if sid not in captured]
+        shard_state = {"shard": shard, "shards_captured": sorted(captured), "shards_missing": missing, "merged": not missing}
+        if missing:
+            # Intent: a partial set of shards never produces the canonical capture, so completeness stays INCOMPLETE.
+            row.get("receipts", {}).pop(key, None)
+            _write_json_file(root / "review-verdict-ledger.json", ledger)
+            return {"status": "success", "round_id": round_id, "reviewer": reviewer, **shard_state}
+        data = _review_merge_shard_outputs(reviewer, [
+            (sid, json.loads((root / captured[sid]["artifact"]).read_text(encoding="utf-8"))) for sid in shard_ids], row)
     if ordering:
         directory = directory / "review-collections" / ordering
     directory.mkdir(parents=True, exist_ok=True)
     artifact = directory / f"review-agent-{reviewer}.json"
     _write_json_file(artifact, data)
-    root = _review_branch_dir(branch)
     row.setdefault("receipts", {})[f"{ordering or 'default'}:{reviewer}"] = {
         "artifact": str(artifact.relative_to(root)), "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
         "snapshot_evidence": "tool_witnessed", "coverage_evidence": "self_reported",
@@ -10733,7 +10901,7 @@ def capture_review_output(
         "capability_enforcement": row["capability"]["status"], "capability_reason": row["capability"]["reason"],
     }
     _write_json_file(root / "review-verdict-ledger.json", ledger)
-    return {"status": "success", "round_id": round_id, "reviewer": reviewer}
+    return {"status": "success", "round_id": round_id, "reviewer": reviewer, **shard_state}
 
 
 @_review_transaction
@@ -10873,6 +11041,7 @@ def _review_security_gate(row: dict[str, Any], directory: Path) -> dict[str, Any
                 or not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != witness.get("sha256")):
             reasons.append(f"{ordering}: missing, stale or changed independent security receipt")
             continue
+        reasons.extend(_review_shard_problems(row, directory, ordering, "security"))
         output = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(output, dict) or not isinstance(output.get("receipt"), dict):
             reasons.append(f"{ordering}: invalid security reviewer envelope")
@@ -10932,6 +11101,7 @@ def _review_completeness(row: dict[str, Any], directory: Path) -> dict[str, Any]
             if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != witness.get("sha256"):
                 reasons.append(f"{ordering}:{reviewer}: missing or changed capture receipt")
                 continue
+            reasons.extend(_review_shard_problems(row, directory, ordering, reviewer))
             envelope = json.loads(path.read_text(encoding="utf-8"))
             outputs = {reviewer: envelope} if normal else {
                 name: envelope.get("reviewer_status", {}).get(name, {}).get("raw", {})
@@ -10985,10 +11155,11 @@ def _complete_review_round(
         raise ValueError("Current review round is not admitted")
     if "aborted_at" in row:
         raise ValueError("Abandoned review round cannot be finalized")
-    files = sorted(path for path in directory.rglob("review-agent-*.json")
-                   if "review-input-archive" not in path.parts)
+    files = sorted([*(path for path in directory.rglob("review-agent-*.json")
+                      if "review-input-archive" not in path.parts)])
+    shard_files = sorted((directory / "review-shards").rglob("shard-*.json")) if (directory / "review-shards").is_dir() else []
     digest = hashlib.sha256(json.dumps(
-        [(str(path.relative_to(directory)), path.read_text(encoding="utf-8")) for path in files],
+        [(str(path.relative_to(directory)), path.read_text(encoding="utf-8")) for path in [*files, *shard_files]],
         sort_keys=True,
     ).encode()).hexdigest()
     if not _review_binding_current(row):
@@ -14171,12 +14342,28 @@ def ack_review_context(
     return _review_delivery_state(session_id, session)
 
 
-def _review_delivery_problem(row: dict[str, Any], reviewer: str, output: dict[str, Any], ordering: str) -> str:
-    """Fence final envelopes by complete delivery and a nonce unavailable to early responses."""
+def _review_delivery_problem(
+    row: dict[str, Any], reviewer: str, output: dict[str, Any], ordering: str, shard: str = "",
+) -> str:
+    """Fence final envelopes by complete delivery and a nonce unavailable to early responses.
+
+    A sharded round proves each shard separately: a shard capture carries its own
+    ``context_receipt``; the merged canonical envelope carries ``context_receipts`` per shard.
+    """
     if not any(item.get("reviewer") == reviewer for item in row.get("context_manifests", {}).values()):
         return ""  # Legacy admission without transport retains its existing capture contract.
     if not isinstance(output, dict):
         return "Invalid final context envelope"
+    if row.get("shards") and not shard:
+        receipts = output.get("context_receipts")
+        expected = [item["id"] for item in row["shards"]]
+        if not isinstance(receipts, dict) or set(receipts) != set(expected):
+            return "Missing per-shard context_receipts; every shard needs a post-delivery proof"
+        for sid in expected:
+            problem = _review_delivery_problem(row, reviewer, {"context_receipt": receipts[sid]}, ordering, sid)
+            if problem:
+                return f"shard {sid}: {problem}"
+        return ""
     proof = output.get("context_receipt")
     if not isinstance(proof, dict) or not isinstance(proof.get("session_id"), str):
         return "Missing post-delivery context_receipt; finish context delivery before finalization"
@@ -14186,6 +14373,7 @@ def _review_delivery_problem(row: dict[str, Any], reviewer: str, output: dict[st
     except (ValueError, TypeError, KeyError):
         return "Invalid or replaced context delivery session"
     if (session["reviewer"] != reviewer or session["ordering"] != (ordering or "default")
+            or session.get("shard", "") != shard
             or state["status"] != "context_ready"
             or proof.get("finalization_token") != state.get("finalization_token")):
         return "Context delivery is incomplete or final response predates its finalization request"
@@ -29964,9 +30152,10 @@ if __name__ == "__main__":
         _p.add_argument("--round-id", required=True)
         _p.add_argument("--ordering", default="")
         _p.add_argument("--branch", default=None)
+        _p.add_argument("--shard", default="", help="Shard ID (sNN) when the round is sharded")
         _args = _p.parse_args(sys.argv[2:])
         result = capture_review_output(_args.reviewer, sys.stdin.read(), _args.round_id,
-                                       ordering=_args.ordering, branch=_args.branch)
+                                       ordering=_args.ordering, branch=_args.branch, shard=_args.shard)
         print(json.dumps(result, indent=2, ensure_ascii=True))
         if result["status"] == "error":
             sys.exit(1)

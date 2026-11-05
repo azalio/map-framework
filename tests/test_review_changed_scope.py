@@ -739,3 +739,214 @@ def test_diff_rewrite_preserves_labels_and_scope_trailers():
     assert rewritten.endswith('Review scope: {"kind": "full"}')
     rewritten = runner._review_rewrite_diff(diff, lambda old, new, size: "[gone]" if old == "a.py" else None)
     assert "=== untracked source additions ===" in rewritten and "+two" in rewritten
+
+
+@pytest.fixture
+def sharded_monitor(repo, monkeypatch):
+    """Sharded normal round scheduled for the monitor only (so delivery stays small)."""
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", shard_budget())
+    write_changes()
+    write_many(6)
+    admitted = runner.begin_review_run(branch="feature", scheduled_reviewers=["monitor"], provider="claude",
+                                      round_id="r", base_ref="main")
+    assert admitted["status"] == "success", admitted
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    return admitted
+
+
+def deliver(entry, reviewer, agent, ordering=""):
+    """Complete parent-acknowledged delivery for one shard context; return its finalization proof."""
+    context_id = entry["context_transport"]["context_id"]
+    state = runner.bind_review_context(reviewer, context_id, agent, "r", ordering=ordering, branch="feature")
+    while state["status"] == "context_pending":
+        pending = state["remaining"][0] if state["remaining"] else state["pending_chunk"]
+        request = {"type": "context_request", "context_id": context_id,
+                   "resource_id": pending["resource_id"], "offset": pending["offset"]}
+        chunk = runner.serve_review_context(reviewer, json.dumps(request), "r", branch="feature",
+                                            session_id=state["session_id"], agent_id=agent)
+        assert chunk["status"] == "context_response", chunk
+        state = runner.ack_review_context(state["session_id"], agent, json.dumps(chunk), "r", branch="feature")
+    assert state["status"] == "context_ready", state
+    return {"session_id": state["session_id"], "finalization_token": state["finalization_token"]}
+
+
+def monitor_output(proof, covered, *, verdict="approved", skipped=()):
+    return {"verdict": verdict, "valid": verdict == "approved", "issues": [], "summary": "ok",
+            "context_receipt": proof,
+            "receipt": {"covered_files": list(covered), "skipped_files": list(skipped),
+                        "denied_access": [], "check_evidence": []}}
+
+
+def capture_shard(row, shard, covered=None, *, ordering="", **kwargs):
+    built = runner.build_review_prompts(branch="feature", shard=shard["id"])
+    assert built["status"] == "success", built
+    proof = deliver(built["prompts"]["monitor"], "monitor", f"agent-{ordering}-{shard['id']}", ordering)
+    output = monitor_output(proof, shard["files"] if covered is None else covered, **kwargs)
+    return runner.capture_review_output("monitor", json.dumps(output), "r", ordering=ordering, branch="feature",
+                                        shard=shard["id"])
+
+
+def current_row():
+    return runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
+
+
+def test_shard_captures_merge_into_one_canonical_capture_only_when_complete(sharded_monitor):
+    shards = current_row()["shards"]
+    first = capture_shard(current_row(), shards[0])
+    assert first["status"] == "success" and first["merged"] is False
+    assert first["shards_missing"] == [item["id"] for item in shards[1:]]
+    directory = Path(".map/feature")
+    assert not (directory / "review-agent-monitor.json").exists()
+    assert "default:monitor" not in current_row()["receipts"]
+    # Shard files live outside the review-agent-* namespace.
+    assert not list(directory.rglob("review-agent-monitor.json"))
+    partial = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    assert partial["completeness"]["status"] == "INCOMPLETE", partial
+    assert partial["code_approval"]["approved"] is False
+    for shard in shards[1:]:
+        last = capture_shard(current_row(), shard)
+    assert last["merged"] is True and last["shards_missing"] == []
+    merged = json.loads((directory / "review-agent-monitor.json").read_text())
+    assert set(merged["context_receipts"]) == {item["id"] for item in shards}
+    assert set(merged["receipt"]["covered_files"]) == set(current_row()["required_files"])
+    complete = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    assert complete["completeness"]["status"] == "COMPLETE", complete
+    assert complete["code_approval"]["approved"] is True
+
+
+def test_shard_capture_requires_an_admitted_shard_and_its_own_delivery_proof(sharded_monitor):
+    shards = current_row()["shards"]
+    built = runner.build_review_prompts(branch="feature", shard=shards[0]["id"])
+    proof = deliver(built["prompts"]["monitor"], "monitor", "agent-a")
+    payload = json.dumps(monitor_output(proof, shards[0]["files"]))
+    for bad in ("", "s99"):
+        assert runner.capture_review_output("monitor", payload, "r", branch="feature", shard=bad)["status"] == "error"
+    # shard s01's proof cannot stand in for s02
+    wrong = runner.capture_review_output("monitor", payload, "r", branch="feature", shard=shards[1]["id"])
+    assert wrong["status"] == "error", wrong
+    ok = runner.capture_review_output("monitor", payload, "r", branch="feature", shard=shards[0]["id"])
+    assert ok["status"] == "success"
+
+
+def test_union_coverage_cannot_hide_an_unread_shard(sharded_monitor):
+    shards = current_row()["shards"]
+    everything = [name for item in shards for name in item["files"]]
+    capture_shard(current_row(), shards[0], covered=shards[1]["files"])
+    for shard in shards[1:]:
+        capture_shard(current_row(), shard, covered=everything)
+    result = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    assert result["completeness"]["status"] == "INCOMPLETE", result
+    assert any("shard scope is unread or skipped" in reason and shards[0]["id"] in reason
+               for reason in result["completeness"]["reasons"]), result["completeness"]["reasons"]
+
+
+def test_tampered_shard_capture_is_incomplete(sharded_monitor):
+    shards = current_row()["shards"]
+    for shard in shards:
+        capture_shard(current_row(), shard)
+    stored = current_row()["shard_receipts"]["default:monitor"][shards[0]["id"]]
+    path = Path(".map/feature") / stored["artifact"]
+    path.write_text(path.read_text() + " ")
+    result = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    assert result["completeness"]["status"] == "INCOMPLETE", result
+    assert any("missing or changed shard capture" in reason for reason in result["completeness"]["reasons"])
+
+
+def test_unsharded_capture_rejects_a_shard_argument(repo):
+    del repo
+    write_changes()
+    runner.begin_review_run(branch="feature", scheduled_reviewers=["monitor"], provider="claude",
+                            round_id="plain", base_ref="main")
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    payload = json.dumps({"verdict": "approved", "issues": [], "receipt": {
+        "covered_files": ["first.py"], "skipped_files": [], "denied_access": [], "check_evidence": []}})
+    result = runner.capture_review_output("monitor", payload, "plain", branch="feature", shard="s01")
+    assert result["status"] == "error" and "not sharded" in str(result)
+    assert runner.capture_review_output("monitor", payload, "plain", branch="feature")["status"] == "success"
+
+
+def test_compare_orderings_capture_merges_per_ordering(repo, monkeypatch):
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", shard_budget())
+    write_changes()
+    write_many(6)
+    admitted = runner.begin_review_run(branch="feature", scheduled_reviewers=["monitor"], provider="claude",
+                                      review_mode="compare_orderings", arguments="--compare-orderings",
+                                      round_id="r", base_ref="main")
+    assert admitted["status"] == "success", admitted
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    shards = current_row()["shards"]
+    for ordering in ("default", "reverse"):
+        for shard in shards:
+            capture_shard(current_row(), shard, ordering=ordering)
+        assert (Path(".map/feature/review-collections") / ordering / "review-agent-monitor.json").exists()
+    keys = current_row()["shard_receipts"]
+    assert set(keys) == {"default:monitor", "reverse:monitor"}
+    assert all(len(value) == len(shards) for value in keys.values())
+    result = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    assert result["completeness"]["status"] == "COMPLETE", result
+
+
+def envelope(**fields):
+    return {"reviewer": "x", "all_clear": True, "findings": [], "checks_performed": [],
+            "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [], "check_evidence": []}, **fields}
+
+
+def test_merge_is_worst_of_with_unioned_receipts_and_stable_finding_ids():
+    owners = {"s01": {"a.py"}, "s02": {"b.py"}}
+    clear = envelope(all_clear_rationale="checked a", receipt={"covered_files": ["a.py"], "skipped_files": ["b.py"],
+                     "denied_access": [], "check_evidence": ["c1"]}, context_receipt={"session_id": "1"})
+    dirty = envelope(all_clear=False, findings=[{"id": "F-M-01", "problem": "x"}, {"id": "F-M-01", "problem": "y"}],
+                     receipt={"covered_files": ["b.py"], "skipped_files": [], "denied_access": ["z"],
+                              "check_evidence": ["c1", "c2"]}, context_receipt={"session_id": "2"})
+    merged = runner._review_merge_envelopes([("s01", clear), ("s02", dirty)], owners)
+    assert merged["all_clear"] is False and len(merged["findings"]) == 2
+    assert len({item["id"] for item in merged["findings"]}) == 2
+    assert merged["receipt"]["covered_files"] == ["a.py", "b.py"]
+    assert merged["receipt"]["skipped_files"] == []  # b.py is s02's file, judged in s02
+    assert merged["receipt"]["denied_access"] == ["z"] and merged["receipt"]["check_evidence"] == ["c1", "c2"]
+    assert merged["context_receipts"] == {"s01": {"session_id": "1"}, "s02": {"session_id": "2"}}
+    monitor = [("s01", {"verdict": "approved", "valid": True, "issues": [], "summary": "a"}),
+               ("s02", {"verdict": "rejected", "valid": False, "issues": [{"description": "bad"}], "summary": "b"})]
+    out = runner._review_merge_envelopes(monitor, owners)
+    assert out["verdict"] == "rejected" and out["valid"] is False and out["issues"] == [{"description": "bad"}]
+    assert runner._review_merge_envelopes([("s01", {"verdict": "approved"}), ("s02", {"verdict": "unheard-of"})],
+                                          owners)["verdict"] == "unheard-of"
+    predictor = [("s01", {"risk_assessment": "low", "confidence": {"score": 0.9}, "bug_class": "none",
+                          "predicted_state": {"affected_components": ["a"], "breaking_changes": [], "required_updates": []}}),
+                 ("s02", {"risk_assessment": "high", "confidence": {"score": 0.4}, "bug_class": "race",
+                          "predicted_state": {"affected_components": ["b"], "breaking_changes": [], "required_updates": ["u"]}})]
+    out = runner._review_merge_envelopes(predictor, owners)
+    assert out["risk_assessment"] == "high" and out["bug_class"] == "race" and out["confidence"]["score"] == 0.4
+    assert out["predicted_state"]["affected_components"] == ["a", "b"] and out["predicted_state"]["required_updates"] == ["u"]
+    evaluator = [("s01", {"scores": {"security": 9}, "overall_score": 9.0, "recommendation": "proceed"}),
+                 ("s02", {"scores": {"security": 4}, "overall_score": 5.0, "recommendation": "improve"})]
+    out = runner._review_merge_envelopes(evaluator, owners)
+    assert out["scores"]["security"] == 4 and out["overall_score"] == 5.0 and out["recommendation"] == "improve"
+
+
+def test_adversarial_shard_aggregates_merge_by_reaggregating_merged_reviewers():
+
+    def receipt(name):
+        return {"covered_files": [name], "skipped_files": [], "denied_access": [], "check_evidence": []}
+
+    clear = {"all_clear": True, "all_clear_rationale": "ok", "findings": [], "checks_performed": ["c"]}
+
+    def aggregate(name, finding=None):
+        hunter = json.dumps({**clear, "all_clear": finding is None,
+                             "findings": [finding] if finding else []})
+        roles = {role: json.dumps({**clear, "receipt": receipt(name), "context_receipt": {"session_id": name}})
+                 for role in runner.BASE_ROLE_REVIEWERS}
+        return runner.aggregate_adversarial_findings(hunter, json.dumps(clear), json.dumps(clear), roles)
+
+    finding = {"id": "F-B-01", "severity": "CRITICAL", "category": "logic", "file_path": "b.py", "line_range": "1",
+               "symbol": "f", "failure_mode": "boom", "evidence": "e", "recommendation": "r"}
+    merged = runner._review_merge_shard_outputs("adversarial", [("s01", aggregate("a.py")), ("s02", aggregate("b.py", finding))],
+                                                {"shards": [{"id": "s01", "files": ["a.py"]}, {"id": "s02", "files": ["b.py"]}]})
+    assert merged["schema_version"] == runner.ADVERSARIAL_AGGREGATE_SCHEMA
+    assert merged["reviewer_status"]["blind"]["all_clear"] is False
+    assert merged["ledger_findings"], merged
+    role = merged["reviewer_status"]["maintainer"]["raw"]
+    assert role["receipt"]["covered_files"] == ["a.py", "b.py"]
+    assert set(role["context_receipts"]) == {"s01", "s02"}
