@@ -40,6 +40,14 @@ of the trusted default revision. A `Code generated` header never skips a file, l
 required, and strict `review.security_gates` disables every skip. Their diff hunks appear as
 one-line stubs. `review.exclude_generated: false` turns skipping off.
 
+Unmodified installed MAP files are skipped too (`rule: mapify-managed`, listed in `skipped_scope`):
+a file whose embedded `MAP-MANAGED` header has a `template_hash` equal to the hash of its own payload
+(fully managed files, and fenced files whose fence is intact with no user tail). Edited payloads,
+user tails, missing or malformed headers and files whose JSON was reformatted stay required.
+**Trust trade-off:** the header is self-attested. A PR author can add a self-consistent header to
+any file and it is skipped (visibly, in `skipped_scope`). Use strict `review.security_gates` when PR
+authors are untrusted; it disables this skip. `review.exclude_mapify_managed: false` opts out.
+
 ## Sharded Rounds
 
 When the required scope does not fit one reviewer's budget, admission plans `row.shards`

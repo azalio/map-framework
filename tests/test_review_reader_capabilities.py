@@ -83,10 +83,8 @@ def test_managed_refresh_restores_capabilities_and_preserves_user_tail(installed
         assert settings["agents"]["enabled"] is False
 
 
-def test_installed_check_supervisor_refresh_and_execution(installed_reader, monkeypatch):
+def test_installed_check_supervisor_refresh_and_execution(installed_reader):
     root, provider = installed_reader
-    # The untracked fresh install is itself the review scope here; the byte budget is not under test.
-    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", "100000000")
     helper = root / ".map/scripts/review_check_supervisor.py"
     assert helper.exists()
     original_metadata, original_payload = extract_metadata(helper.read_text(), ".py")

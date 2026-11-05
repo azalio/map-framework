@@ -23646,6 +23646,125 @@ def _review_linguist_generated_rules(revision: str) -> list[tuple[re.Pattern[str
     return rules
 
 
+_MAPIFY_MD_PATTERN = re.compile(r"^<!--\s*MAP-MANAGED:\s*(\{.*?\})\s*-->\n?", re.DOTALL)
+_MAPIFY_HASH_PATTERN = re.compile(r"^#\s*MAP-MANAGED:\s*(\{.*?\})\n?")
+
+
+def _review_extract_mapify_metadata(content: str, ext: str) -> tuple[dict[str, Any] | None, str]:
+    """Port of mapify_cli.delivery.managed_file_copier.extract_metadata (parity-tested); runner is standalone."""
+    if ext == ".md":
+        match = _MAPIFY_MD_PATTERN.match(content)
+        if match:
+            try:
+                return json.loads(match.group(1)), content[match.end():]
+            except json.JSONDecodeError:
+                pass
+        if content.startswith("---\n"):
+            end_idx = content.find("\n---\n", 3)
+            if end_idx != -1:
+                after_fm = end_idx + 5
+                rest = content[after_fm:]
+                match = _MAPIFY_MD_PATTERN.match(rest)
+                if match:
+                    try:
+                        meta = json.loads(match.group(1))
+                        clean = content[:after_fm] + rest[match.end():]
+                        if not rest[match.end():] and clean.endswith("\n---\n"):
+                            clean = clean[:-1]
+                        return meta, clean
+                    except json.JSONDecodeError:
+                        pass
+        return None, content
+    if ext == ".json":
+        try:
+            data = json.loads(content)
+            if isinstance(data, dict) and "_map_managed" in data:
+                meta = data.pop("_map_managed")
+                return meta, json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return None, content
+    if ext in (".py", ".sh", ".bash", ".toml", ".yaml", ".yml"):
+        lines = content.split("\n", 3)
+        check_idx = 1 if ext in (".py", ".sh", ".bash") and lines and lines[0].startswith("#!") else 0
+        if check_idx < len(lines):
+            match = _MAPIFY_HASH_PATTERN.match(lines[check_idx])
+            if match:
+                try:
+                    meta = json.loads(match.group(1))
+                except json.JSONDecodeError:
+                    return None, content
+                before, after = lines[:check_idx], lines[check_idx + 1:]
+                clean = ("\n".join(before) + "\n" + "\n".join(after)) if before else "\n".join(after)
+                return meta, clean
+        return None, content
+    return None, content
+
+
+_MAPIFY_FENCES = {".md": ("<!-- map:start -->", "<!-- map:end -->"), ".py": ("# map:start", "# map:end"),
+                  ".sh": ("# map:start", "# map:end"), ".bash": ("# map:start", "# map:end"),
+                  ".toml": ("# map:start", "# map:end"), ".yaml": ("# map:start", "# map:end"),
+                  ".yml": ("# map:start", "# map:end")}
+_MAPIFY_META_LINE = re.compile(r"^(?:<!--\s*MAP-MANAGED:\s*(\{.*?\})\s*-->|#\s*MAP-MANAGED:\s*(\{.*?\}))$")
+
+
+def _review_mapify_fenced_source(content: str, ext: str) -> tuple[dict[str, Any], str] | None:
+    """For a fenced (watched) install with an empty user tail, rebuild (metadata, original template source).
+
+    Port of the layout written by mapify's copy_managed_file: ``<pre><meta line>\\n<start fence>\\n<body><end fence>\\n``.
+    Returns None when the file is not a pristine fenced install (user tail, malformed fence, no header).
+    """
+    start_token, end_token = _MAPIFY_FENCES[ext]
+    lines = content.split("\n")
+    starts = [i for i, line in enumerate(lines) if line.rstrip() == start_token]
+    if not starts:
+        return None
+    start = starts[0]
+    ends = [i for i, line in enumerate(lines) if i > start and line.rstrip() == end_token]
+    if not ends or any(line.rstrip() == start_token for line in lines[start + 1:ends[0]]):
+        return None
+    end = ends[0]
+    if "\n".join(lines[end + 1:]) != "" or start == 0:
+        return None  # A non-empty user tail is user-owned content and stays required.
+    found = _MAPIFY_META_LINE.match(lines[start - 1])
+    if not found:
+        return None
+    try:
+        meta = json.loads(found.group(1) or found.group(2))
+    except json.JSONDecodeError:
+        return None
+    pre_lines = lines[:start - 1]
+    body_lines = lines[start + 1:end]
+    return meta, ("\n".join(pre_lines) + "\n" if pre_lines else "") + ("\n".join(body_lines) + "\n" if body_lines else "")
+
+
+def _review_mapify_managed(name: str) -> bool:
+    """True for an unmodified installed MAP file: its embedded template_hash matches its own payload.
+
+    Covers fully managed files (header + payload) and fenced files with no user tail. The header
+    is self-attested; a forged self-consistent header qualifies by design (documented trade-off;
+    strict security gates disable this skip).
+    """
+    path = Path(name)
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 4 * 1024 * 1024:
+            return False
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    ext = path.suffix.lower()
+    fenced = _review_mapify_fenced_source(content, ext) if ext in _MAPIFY_FENCES else None
+    if fenced is not None:
+        meta, payload = fenced
+    elif ext in _MAPIFY_FENCES and any(line.rstrip() in _MAPIFY_FENCES[ext] for line in content.split("\n")):
+        return False  # Fence markers without a pristine fenced layout: user-owned or malformed.
+    else:
+        meta, payload = _review_extract_mapify_metadata(content, ext)
+    if not isinstance(meta, dict) or not isinstance(meta.get("template_hash"), str) or not meta["template_hash"]:
+        return False
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest() == meta["template_hash"]
+
+
 def _review_generated_skips(
     target: dict[str, Any], review_config: dict[str, Any], paths: list[str],
 ) -> list[dict[str, str]]:
@@ -23661,6 +23780,7 @@ def _review_generated_skips(
     configured = review_config.get("generated_patterns", [])
     configured = [item for item in configured if isinstance(item, str) and item] if isinstance(configured, list) else []
     attributes = _review_linguist_generated_rules(target["trusted_policy"]["revision"])
+    managed_enabled = review_config.get("exclude_mapify_managed", True) is True
     skips = []
     for path in paths:
         base = PurePosixPath(path).name
@@ -23676,6 +23796,8 @@ def _review_generated_skips(
             matched = [(state, line) for regex, state, line in attributes if regex.fullmatch(path)]
             if matched and matched[-1][0]:
                 rule = "gitattributes:linguist-generated"
+        if not rule and managed_enabled and _review_mapify_managed(path):
+            rule = "mapify-managed"
         if rule:
             skips.append({"path": path, "reason": "generated", "rule": rule})
     return skips
