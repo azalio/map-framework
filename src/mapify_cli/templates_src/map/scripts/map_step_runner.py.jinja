@@ -9421,7 +9421,14 @@ def begin_review_run(
     open_rounds = [row for row in prior.get("convergence", {}).get("rounds", []) if not _review_round_terminal(row)]
     last_round = (prior.get("convergence", {}).get("rounds") or [None])[-1]
     shard_plan: list[dict[str, Any]] = []
-    if "required_files" in target and not open_rounds and not (last_round and last_round["binding"] == dict(payload)):
+    existing_ids = {row["round_id"] for row in prior.get("convergence", {}).get("rounds", [])}
+    # Intent: budget and shard planning apply to every NEW round. Only a genuine resume of an existing
+    # round, or the already-passed/awaiting-human early returns, reuse a prior admission.
+    reuses_admission = bool(round_id and round_id in existing_ids) or bool(
+        last_round and last_round.get("binding") == dict(payload) and "aborted_at" not in last_round
+        and prior.get("convergence", {}).get("outcome") in {"passed", "awaiting_human"}
+        and _review_binding_current(last_round))
+    if "required_files" in target and not open_rounds and not reuses_admission:
         skipped_paths = {item["path"] for item in coverage_skips}
         sizes = _review_required_bytes(target, [name for name in target["required_files"] if name not in skipped_paths])
         budget = _review_context_budget(review_config)
@@ -11160,7 +11167,9 @@ def _complete_review_round(
         raise ValueError("Abandoned review round cannot be finalized")
     files = sorted([*(path for path in directory.rglob("review-agent-*.json")
                       if "review-input-archive" not in path.parts)])
-    shard_files = sorted((directory / "review-shards").rglob("shard-*.json")) if (directory / "review-shards").is_dir() else []
+    shard_root = directory / "review-shards" / str(run.get("round_id", "")).encode().hex()
+    # Intent: only this round's shard captures belong to its digest; earlier rounds' files are history.
+    shard_files = sorted(shard_root.rglob("shard-*.json")) if shard_root.is_dir() else []
     digest = hashlib.sha256(json.dumps(
         [(str(path.relative_to(directory)), path.read_text(encoding="utf-8")) for path in [*files, *shard_files]],
         sort_keys=True,

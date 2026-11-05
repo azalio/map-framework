@@ -1116,3 +1116,42 @@ def test_strict_security_gate_rejects_union_coverage_that_hides_an_unread_shard(
     gate = security_gate()
     assert gate["status"] == "INCOMPLETE", gate
     assert any("shard scope is unread or skipped" in reason and first["id"] in reason for reason in gate["reasons"]), gate["reasons"]
+
+
+def test_every_new_round_is_planned_not_just_the_first(repo, monkeypatch):
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", shard_budget())
+    write_changes()
+    write_many(6)
+    first = runner.begin_review_run(branch="feature", provider="claude", round_id="one", base_ref="main")
+    assert first["status"] == "success" and first["shard_ids"], first
+    assert runner.abandon_review_round("one", reason="retry", branch="feature")["status"] == "success"
+    second = runner.begin_review_run(branch="feature", provider="claude", base_ref="main")
+    assert second["status"] == "success" and second["shard_ids"] == first["shard_ids"], second
+    row = current_row()
+    assert row["round_id"] != "one" and [item["id"] for item in row["shards"]] == first["shard_ids"]
+
+
+def test_resuming_the_pending_round_never_replans(repo, monkeypatch):
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", shard_budget())
+    write_changes()
+    write_many(6)
+    first = runner.begin_review_run(branch="feature", provider="claude", round_id="one", base_ref="main")
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", "1")
+    resumed = runner.begin_review_run(branch="feature", provider="claude", round_id="one", base_ref="main")
+    assert resumed["status"] == "success" and resumed["resumed"] is True and resumed["shard_ids"] == first["shard_ids"]
+
+
+def test_digest_ignores_shard_files_of_earlier_rounds(sharded_monitor):
+    shards = current_row()["shards"]
+    stale = Path(".map/feature/review-shards/ffff/default/s01")
+    stale.mkdir(parents=True)
+    (stale / "shard-monitor.json").write_text('{"old": true}')
+    for shard in shards:
+        capture_shard(current_row(), shard)
+    first = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    assert first["completeness"]["status"] == "COMPLETE", first
+    (stale / "shard-monitor.json").write_text('{"old": false}')
+    again = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    assert again["status"] == "success", again
