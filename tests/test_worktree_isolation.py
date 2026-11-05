@@ -652,8 +652,8 @@ class TestWaveWorktreeMerge:
         assert _git(["rev-list", "--count", "HEAD"], repo).stdout.strip() == "3"
         # Commit subjects carry the subtask ids in sorted order (newest first).
         subjects = _git(["log", "-2", "--format=%s"], repo).stdout.split("\n")
-        assert subjects[0].startswith("ST-002:")
-        assert subjects[1].startswith("ST-001:")
+        assert subjects[0] == "chore(map): merge ST-002 isolated worktree (wave)"
+        assert subjects[1] == "chore(map): merge ST-001 isolated worktree (wave)"
         # HEAD advanced past the wave base.
         assert _git(["rev-parse", "HEAD"], repo).stdout.strip() != base
         # Worktrees cleaned up + sidecar emptied.
@@ -661,6 +661,27 @@ class TestWaveWorktreeMerge:
         assert status["active_worktrees"] == []
         assert "map-wt/ST-001-0" not in _git(["branch"], repo).stdout
         assert "map-wt/ST-002-0" not in _git(["branch"], repo).stdout
+
+    def test_merge_subjects_pass_conventional_commit_msg_hook(self, repo: Path) -> None:
+        """#632: host repos with a Conventional Commits commit-msg hook accept merges."""
+        hook = repo / ".git" / "hooks" / "commit-msg"
+        hook.write_text(
+            "#!/bin/sh\n"
+            "head -n 1 \"$1\" | grep -Eq "
+            "'^(feat|fix|chore|docs|test|refactor)(\\([^)]+\\))?: .+' || exit 1\n"
+        )
+        hook.chmod(0o755)
+        _wt_with_files("ST-001", {"b.txt": "from-001\n"})
+        single = m.merge_subtask_worktree("ST-001", verify_cmds=[])
+        assert single["status"] == "success", single
+        _wt_with_files("ST-002", {"c.txt": "from-002\n"})
+        wave = m.merge_wave_worktrees(["ST-002"], verify_cmds=[], post_wave_cmds=[])
+        assert wave["status"] == "success", wave
+        subjects = _git(["log", "-2", "--format=%s"], repo).stdout.split("\n")
+        assert subjects[:2] == [
+            "chore(map): merge ST-002 isolated worktree (wave)",
+            "chore(map): merge ST-001 isolated worktree",
+        ]
 
     def test_conflict_rolls_whole_wave_back(self, repo: Path) -> None:
         base = _git(["rev-parse", "HEAD"], repo).stdout.strip()

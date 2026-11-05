@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Isolated-worktree commits use Conventional Commits subjects (`chore(map): merge ST-001 isolated worktree`, `... (wave)`, and `chore(map): checkpoint ST-001 worktree (attempt N)` inside the worktree), so host repos with a Conventional Commits `commit-msg` hook no longer reject wave merges. (#632)
+
 ## [3.35.2] - 2026-11-03
 
 ### Changed
