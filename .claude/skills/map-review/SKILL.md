@@ -216,26 +216,24 @@ contradict a clean precheck require evidence stronger than narrative
 ```bash
 BRANCH=$(python3 .map/scripts/map_utils.py branch)
 BRANCH_DIR=".map/$BRANCH"
-REVIEW_MODE="full"
+WORKFLOW_MODE="full"  # --mode, echoed as `mode`; `review_mode` (normal/adversarial/...) is separate
 # Empty / placeholder review-bundle.md ⇒ lightweight.
 if [ -f ".map/$BRANCH/review-bundle.md" ] && \
    grep -qE 'MISSING|^- $|^—$' ".map/$BRANCH/review-bundle.md" && \
    ! grep -qE '^\s*##' ".map/$BRANCH/review-bundle.md"; then
-   REVIEW_MODE="lightweight"
+   WORKFLOW_MODE="lightweight"
 fi
 # "twin of X", "sibling controller", "mirror of Y" in commit or PR body
 # ⇒ sibling-aware (operator probably wants comparison, not synthesis).
 SIBLING_HINT=""
 if git log -1 --format=%B | grep -iE 'twin of |sibling |mirror of |port of ' >/dev/null; then
-  REVIEW_MODE="sibling-aware"
+  WORKFLOW_MODE="sibling-aware"
   SIBLING_HINT=$(git log -1 --format=%B | grep -oiE '(twin of|sibling|mirror of|port of)[^.]*' | sed -n '1p')
 fi
-# Include only documented project checks as {"<id>":[argv...]}; never invent placeholder passes.
-# Record absent automation as a limitation in the review summary; use {} if no checks exist.
+# Only documented project checks as {"<id>":[argv...]}; no placeholder passes; {} if none (state the limitation).
 : "${CHECK_SPECS_JSON:?Set CHECK_SPECS_JSON to documented project check argv specifications}"
-# Optional positive seconds per admitted check; default 300.
-if [ -z "${CHECK_TIMEOUTS_JSON:-}" ]; then CHECK_TIMEOUTS_JSON='{}'; fi
-python3 - "$CHECK_SPECS_JSON" "$REVIEW_MODE" "$ARGUMENTS" "$SIBLING_HINT" "$CHECK_TIMEOUTS_JSON" <<'PY'
+if [ -z "${CHECK_TIMEOUTS_JSON:-}" ]; then CHECK_TIMEOUTS_JSON='{}'; fi  # optional seconds per check; default 300
+python3 - "$CHECK_SPECS_JSON" "$WORKFLOW_MODE" "$ARGUMENTS" "$SIBLING_HINT" "$CHECK_TIMEOUTS_JSON" <<'PY'
 import json
 import subprocess
 import sys
@@ -267,19 +265,21 @@ print(admission.stdout, end="")
 if json.loads(admission.stdout).get("completed"):
     raise SystemExit("Review already completed; do not dispatch reviewers")
 for check_id in specs:
-    subprocess.run(runner + ["run_test_gate", "--check-id", check_id], check=True)
+    gate = subprocess.run(runner + ["run_test_gate", "--check-id", check_id], capture_output=True, text=True)
+    print("CHECK", check_id, *(f"{k}={json.loads(gate.stdout or '{}').get(k)}" for k in ("passed", "exit_code", "output_artifact")))
+    if gate.returncode: raise SystemExit(f"Check {check_id} failed; read $BRANCH_DIR/<artifact> before any fix")
 PY
 [ "$?" -eq 0 ] || exit 1
 ```
 
-Start before any capture or fan-out. Abort on a start error; in particular
+Start before any capture or fan-out. Stdout is a compact summary (full rows stay in the ledger); for `human_consent` `enforcement` see [review-reference.md](review-reference.md#sensitive-and-unknown-review-gates). Abort on a start error; in particular
 `reconsider_approach` means STOP and request reconsideration, never approval or a
 fourth automatic round. A round is a review/fix iteration, not a reviewer/tool
 retry or an ordering collection. Pending admission restores its identity and inferred mode; all other inputs must still match.
 Completed rounds are immutable. Use `--round-id <stored-id>` for an explicit retry.
-Do not dispatch reviewers when admission reports `completed: true`. For a stale pending round,
+Do not dispatch reviewers when admission reports `completed: true`. For a stale pending round or one whose reviewers could not run,
 explicitly run `abandon_review_round <round-id> --reason "<why>"` through the runner before new admission;
-abandonment preserves audit/findings and consumes an unsuccessful attempt, never resets the cap.
+abandonment preserves audit/findings and consumes an unsuccessful attempt, never resets the cap (out-of-harness review: see reference).
 After the initial full review, verified baseline/static impact enables incremental
 prioritization of delta + affected dependencies + unresolved findings, not exemption
 from admitted required_files coverage. Unknown impact retains full-scope fallback.

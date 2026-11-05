@@ -9497,7 +9497,7 @@ def begin_review_run(
     except OSError as exc:
         return {"status": "error", "message": f"Review start failed: {exc}",
                 "archive_path": str(archive_path) if archive_path else None}
-    return {"status": "success", "review_mode": review_mode, "round_id": round_id, "resumed": False,
+    return {"status": "success", "mode": mode, "review_mode": review_mode, "round_id": round_id, "resumed": False,
             "human_consent": consent, "scheduled_reviewers": scheduled_reviewers,
             "archived_inputs": [path.name for path in previous],
             "archive_path": str(archive_path) if archive_path else None,
@@ -16899,6 +16899,36 @@ def _record_review_check(check_id: str, command: list[str], *, branch: str | Non
     return {"status": "success", **checks[check_id], "check_id": check_id}
 
 
+def _review_cli_target(target: Any) -> Any:
+    """Summarize a review target for stdout; the ledger keeps the full row."""
+    if not isinstance(target, dict):
+        return target
+    compact = {key: value for key, value in target.items() if key not in ("context_files", "required_files")}
+    if isinstance(target.get("context_files"), list):
+        compact["context_files_count"] = len(target["context_files"])
+    policy = target.get("trusted_policy")
+    if isinstance(policy, dict) and isinstance(policy.get("files"), list):
+        compact["trusted_policy"] = {**policy, "files": [
+            {key: value for key, value in entry.items() if key != "content"} if isinstance(entry, dict) else entry
+            for entry in policy["files"]]}
+    return compact
+
+
+def _review_cli_admission(result: dict[str, Any]) -> dict[str, Any]:
+    """Keep admission stdout readable: no policy text or repository inventory (#627)."""
+    return {**result, "target": _review_cli_target(result["target"])} if "target" in result else result
+
+
+def _review_cli_check(result: dict[str, Any]) -> dict[str, Any]:
+    """Replace full before/after targets with one comparison flag on stdout (#627)."""
+    if "before" not in result and "after" not in result:
+        return result
+    compact = {key: value for key, value in result.items() if key not in ("before", "after")}
+    if "after" in result:
+        compact["target_unchanged"] = result.get("before") == result["after"]
+    return compact
+
+
 def run_test_gate(*, command: list[str] | None = None, check_id: str = "", branch: str | None = None) -> dict:
     """Run project test suite as a deterministic verification gate.
 
@@ -23580,7 +23610,8 @@ def _ensure_review_consent(row: dict[str, Any], *, branch: str | None = None) ->
         if hold.get("kind") == "review_consent" and hold.get("review_binding") == binding:
             if hold["state"] != "pending":
                 raise ValueError("Review consent has no supported verified human authority")
-            return {"status": "pending", "hold_id": hold["id"], "reason": hold["reason"]}
+            return {"status": "pending", "hold_id": hold["id"], "reason": hold["reason"],
+                    "enforcement": hold.get("enforcement", "shadow")}
     now = _utc_timestamp()
     hold_id = f"hold-{store['next_id']:03d}"
     if hold_id in store["holds"]:
@@ -23596,7 +23627,7 @@ def _ensure_review_consent(row: dict[str, Any], *, branch: str | None = None) ->
     store["updated_at"] = now
     _write_json_file(path, store)
     _write_text_file(_approval_hold_report_path(hold_id, branch_name), _render_approval_hold_report(hold))
-    return {"status": "pending", "hold_id": hold_id, "reason": reason}
+    return {"status": "pending", "hold_id": hold_id, "reason": reason, "enforcement": hold["enforcement"]}
 
 
 def _render_approval_hold_report(hold: dict[str, Any]) -> str:
@@ -27877,7 +27908,7 @@ if __name__ == "__main__":
             print(json.dumps({"status": "error", "passed": False, "message": "Invalid command JSON"}))
             sys.exit(1)
         result = run_test_gate(command=_command, check_id=_args.check_id, branch=_args.branch)
-        print(json.dumps(result, indent=2))
+        print(json.dumps(_review_cli_check(result), indent=2))
         if not result.get("passed"):
             sys.exit(1)
 
@@ -29495,7 +29526,7 @@ if __name__ == "__main__":
                                   policy_files=_args.policy_file, required_checks=_args.required_check,
                                   check_specs=_check_specs, check_timeouts=_check_timeouts, base_ref=_args.base_ref,
                                   resume_admitted_mode=_args.resume_admitted_mode)
-        print(json.dumps(result, indent=2, ensure_ascii=True))
+        print(json.dumps(_review_cli_admission(result), indent=2, ensure_ascii=True))
         if result["status"] == "error":
             sys.exit(1)
 
