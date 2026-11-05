@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `/map-review` no longer fails admission with `file_too_large` when a large file has a small change (#642): a changed text file whose full base+current source resource would exceed `review.full_source_max_bytes` (default 48 KiB) is delivered as a required windowed resource (diff hunks plus `review.hunk_context_lines`, default 40, numbered lines from base and current), and the full `base:<path>` / `current:<path>` content is an optional lazy resource frozen on first use. The admission estimate uses the same serializer, so it stays at or above the exact bytes. Small, binary and baseline-less files are unchanged; a file whose windowed hunks still exceed the shard capacity still fails fast with a split hint.
+- `/map-review` no longer fails admission with `file_too_large` when a large file has a small change (#642): a changed text file whose full base+current source resource would exceed `review.full_source_max_bytes` (default 48 KiB) is delivered as a required windowed resource (diff hunks plus `review.hunk_context_lines`, default 40, numbered lines from base and current), and the full `base:<path>` / `current:<path>` content is an optional lazy resource frozen on first use. The admission estimate uses the same serializer, so it stays at or above the exact bytes. Small, binary and baseline-less files are unchanged; a file whose windowed hunks still exceed the shard capacity still fails fast with a split hint. The shard cap can also be raised operator-locally with `MAP_REVIEW_MAX_SHARDS` (positive integer; env, then trusted `review.max_shards`, then 8; invalid values ignored), and the `too_many_shards` hints name the needed count.
 
 ## [3.36.0] - 2026-11-05
 

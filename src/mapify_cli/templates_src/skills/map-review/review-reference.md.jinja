@@ -65,7 +65,7 @@ shard capacity fails admission with `file_too_large`; split that change.
 ## Sharded Rounds
 
 When the required scope does not fit one reviewer's budget, admission plans `row.shards`
-(deterministic, directory-aware, disjoint; at most `review.max_shards`, default 8) and returns
+(deterministic, directory-aware, disjoint; at most `review.max_shards`, default 8; the operator-local env `MAP_REVIEW_MAX_SHARDS` (positive int, invalid values ignored) overrides the trusted config and the default, and the `too_many_shards` error hints the exact count needed) and returns
 `shard_ids`. A single file above the per-shard capacity or more than `max_shards` shards fails
 admission with `review_context_budget_exceeded` (`reason: file_too_large | too_many_shards`).
 Unsharded rounds never see any of this.
