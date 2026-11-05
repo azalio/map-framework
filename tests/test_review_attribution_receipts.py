@@ -57,11 +57,16 @@ def test_read_only_review_bundle_preserves_pre_existing_defect(tmp_path, monkeyp
     assert '"diff":' not in markdown
     # A shell-free reviewer consumes the persisted bundle, not git commands.
     prompts = runner.build_review_prompts(branch="feature")
-    prompt = prompts["prompts"]["monitor"]["prompt"]
-    assert "return 10 / value" in prompt
-    assert "base_content" in prompt
-    assert "line_mapping" in prompt
-    assert prompt.count("diff --git a/calculator.py b/calculator.py") == 1
+    entry = prompts["prompts"]["monitor"]
+    directory = tmp_path / ".map/feature"
+    manifest = json.loads((directory / "review-context-objects" / entry["context_transport"]["context_id"]).read_text())
+    # Source evidence and the diff each arrive exactly once, as frozen resources.
+    metadata = next(item for item in manifest["resources"].values() if item.get("path") == "calculator.py")
+    frozen = runner._review_context_read(directory, metadata).decode()
+    assert "return 10 / value" in frozen and "base_content" in frozen and "line_mapping" in frozen
+    diff = runner._review_context_read(directory, manifest["resources"]["diff"]).decode()
+    assert diff.count("diff --git a/calculator.py b/calculator.py") == 1
+    assert "diff --git" not in entry["prompt"]
 
 
 def test_large_changed_files_keep_full_snapshot_without_bloating_prompts(tmp_path, monkeypatch):
@@ -98,8 +103,12 @@ def test_large_changed_files_keep_full_snapshot_without_bloating_prompts(tmp_pat
     assert "LINE_02499" not in markdown
     prompts = runner.build_review_prompts(branch="feature")
     assert prompts["status"] == "success", prompts
-    assert "LINE_00000_CHANGED" in prompts["prompts"]["monitor"]["prompt"]
+    assert "LINE_00000_CHANGED" not in prompts["prompts"]["monitor"]["prompt"]
     assert len(prompts["prompts"]["maintainer"]["prompt"].encode()) <= runner.REVIEW_PROMPT_MAX_BYTES
+    directory = tmp_path / ".map/feature"
+    manifest = json.loads((directory / "review-context-objects"
+                           / prompts["prompts"]["monitor"]["context_transport"]["context_id"]).read_text())
+    assert "LINE_00000_CHANGED" in runner._review_context_read(directory, manifest["resources"]["diff"]).decode()
     adversarial = runner.build_adversarial_review_prompts(branch="feature", reviewers=["blind", "acceptance"])
     assert adversarial["status"] == "success", adversarial
     receipt = json.loads((tmp_path / ".map/feature/review-verdict-ledger.json").read_text())[

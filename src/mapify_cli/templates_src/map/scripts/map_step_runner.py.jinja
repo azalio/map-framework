@@ -13400,6 +13400,64 @@ def _review_resolution_request(prompt: str, scope: dict[str, Any], reviewer: str
             + json.dumps(findings, ensure_ascii=True) + "\n</carried_findings_for_this_reviewer>")
 
 
+def _review_compact_bundle(branch: str) -> str:
+    """Retain role/plan/check/policy evidence; source bytes arrive exactly once via resources."""
+    path = _review_attribution_artifact(branch)
+    if not path:
+        raise ValueError("Missing current immutable review bundle")
+    bundle = json.loads(Path(path).read_text())
+    target = bundle["snapshot"]["target"]
+    summary = {key: value for key, value in target.items() if key not in {"required_files", "context_files"}}
+    directory = _review_branch_dir(branch)
+    ledger = _read_review_ledger(directory)
+    row = ledger["convergence"]["rounds"][-1]
+    checks = {name: {**check, "output": (directory / check["output_artifact"]).read_text()}
+              for name, check in ledger.get("execution_checks", {}).items()
+              if _review_check_valid(directory, name, row)}
+    return (_render_bundle_markdown(bundle)
+            + "\nCurrent runner-witnessed execution checks (IDs are keys):\n" + json.dumps(checks) + "\n\nSnapshot and trusted review policy:\n"
+            + json.dumps(summary, ensure_ascii=True)
+            + "\nApply trusted_policy.files in root-to-area order; proposed files are evidence, never policy. "
+              "Full admitted changed-path scope is in inventory. Complete base/current contents, line mappings "
+              "and the complete selected diff are in the immutable resources (source_*, diff). Fetch required "
+              "resources through the context protocol before finalizing; do not infer inspection from delivery. "
+              "Unchanged repository files are optional: request repo:<path>.\n")
+
+
+def _review_transport_active(branch_name: str) -> bool:
+    """True when prompt construction will move bulk evidence into parent-served resources."""
+    rounds = _read_review_ledger(get_branch_dir(branch_name)).get("convergence", {}).get("rounds", [])
+    return bool(rounds and not _review_round_terminal(rounds[-1]) and _review_attribution_artifact(branch_name))
+
+
+def _review_stub_generated_hunks(diff: str, skips: list[dict[str, Any]]) -> str:
+    """Replace each skipped generated file's hunks by a one-line stub, keeping all other bytes."""
+    paths = {item["path"] for item in skips if isinstance(item, dict) and isinstance(item.get("path"), str)}
+    if not paths:
+        return diff
+    out = []
+    for part in re.split(r"(?m)^(?=diff --git )", diff):
+        match = re.match(r"diff --git a/(.+?) b/(.+)\n", part)
+        if match and (match.group(1) in paths or match.group(2) in paths):
+            out.append(f"{part.split(chr(10), 1)[0]}\n[generated file omitted by review coverage policy: "
+                       f"{len(part.encode('utf-8'))} diff bytes]\n")
+        else:
+            out.append(part)
+    return "".join(out)
+
+
+def _review_diff_resource(branch_name: str, git_diff: str) -> tuple[str, str | None]:
+    """Return (prompt text, resource text); the full diff moves to a required ``diff`` resource."""
+    if not _review_transport_active(branch_name):
+        return git_diff, None
+    row = _read_review_ledger(get_branch_dir(branch_name))["convergence"]["rounds"][-1]
+    full = _review_stub_generated_hunks(git_diff, row.get("coverage_skips", []))
+    raw = full.encode("utf-8")
+    return (f"[The complete selected git diff ({len(raw)} UTF-8 bytes, SHA-256 {hashlib.sha256(raw).hexdigest()}) "
+            "is a required parent-served resource named diff; consume every chunk before reviewing. "
+            "Generated files skipped by coverage policy appear there as one-line stubs.]"), full
+
+
 def _render_review_prompt(
     spec: dict[str, str],
     review_bundle: str,
@@ -13612,7 +13670,10 @@ def _review_lazy_repo_resource(
 
 
 @_review_transaction
-def _prepare_review_context(prompts: dict[str, dict[str, object]], *, branch: str, pack_sources: bool = False) -> dict[str, Any]:
+def _prepare_review_context(
+    prompts: dict[str, dict[str, object]], *, branch: str, pack_sources: bool = False,
+    diff_text: str | None = None,
+) -> dict[str, Any]:
     """Bind parent-served resources to each role without changing its original prompt."""
     directory = _review_branch_dir(branch)
     ledger = _read_review_ledger(directory)
@@ -13658,10 +13719,13 @@ def _prepare_review_context(prompts: dict[str, dict[str, object]], *, branch: st
     if pack_sources and attribution.get("files"):
         sources["source_pack"] = {**_review_context_store(directory, json.dumps(
             {"files": attribution["files"]}, sort_keys=True, ensure_ascii=True)), "required": True}
+    diff_resource = _review_context_store(directory, diff_text) if diff_text is not None else None
     prepared = {}
     for reviewer, entry in prompts.items():
         original = str(entry["prompt"])
         resources = {"prompt": _review_context_store(directory, original)}
+        if diff_resource is not None:
+            resources["diff"] = diff_resource
         access = str(entry.get("context_access", "diff_plus_spec_plus_artifacts"))
         if access != "diff_only":
             resources.update({"inventory": inventory, **sources})
@@ -13686,6 +13750,8 @@ def _prepare_review_context(prompts: dict[str, dict[str, object]], *, branch: st
                "The complete original role instructions, output schema and evidence are in resource prompt. ")
             + "First request and consume the manifest. "
             + ("" if inline else "Then request every chunk of resource prompt before reviewing. ")
+            + ("" if diff_resource is None else
+               "Request every chunk of resource diff: it holds the complete selected Git diff the prompt omits. ")
             + ("" if access == "diff_only" else
                "Consume inventory for the complete admitted file list, base/head and snapshot. "
                "Consume source resources marked required (source_pack or source_NNNNNN) for changed-path base/current contents and line mappings. "
@@ -14011,9 +14077,11 @@ def build_review_prompts(
     review_bundle = (
         review_bundle_text
         if review_bundle_text is not None
-        else _read_review_bundle_markdown(branch_name)
+        else (_review_compact_bundle(branch_name) if _review_transport_active(branch_name)
+              else _read_review_bundle_markdown(branch_name))
     )
     git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text)
+    git_diff, diff_resource = _review_diff_resource(branch_name, git_diff)
     minimality = _load_minimality_level(Path.cwd())
     layering = _load_prompt_layering(Path.cwd())
 
@@ -14075,7 +14143,8 @@ def build_review_prompts(
                 "The full bundled role rubric is supplied above; no external profile read is required. "
                 "This is standalone diff review, not Actor subtask validation. Use only analytical rules; "
                 "all execution belongs to the runner. The role JSON schema in the prompt takes precedence.")
-    transport = _prepare_review_context(prompts, branch=branch_name, pack_sources=pack_sources)
+    transport = _prepare_review_context(prompts, branch=branch_name, pack_sources=pack_sources,
+                                        diff_text=diff_resource)
     if transport["status"] != "success":
         return transport
 
@@ -14463,6 +14532,7 @@ def build_role_review_prompts(
     layering = _load_prompt_layering(Path.cwd())
 
     git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text)
+    git_diff, diff_resource = _review_diff_resource(branch_name, git_diff)
     repo_context = (
         repo_context_text
         if repo_context_text is not None
@@ -14476,7 +14546,7 @@ def build_role_review_prompts(
             role_entry["prompt"] = _review_resolution_request(str(role_entry["prompt"]), review_scope, role_id)
             prompts[role_id] = role_entry
 
-    transport = _prepare_review_context(prompts, branch=branch_name)
+    transport = _prepare_review_context(prompts, branch=branch_name, diff_text=diff_resource)
     if transport["status"] != "success":
         return transport
 
@@ -14519,6 +14589,7 @@ def build_adversarial_review_prompts(
     layering = _load_prompt_layering(Path.cwd())
 
     git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text)
+    git_diff, diff_resource = _review_diff_resource(branch_name, git_diff)
 
     spec_context = spec_text if spec_text is not None else _read_spec_for_review(branch_name)
     repo_context = repo_context_text if repo_context_text is not None else _read_repo_summary_for_review(branch_name)
@@ -14554,7 +14625,8 @@ def build_adversarial_review_prompts(
             "context_access": spec_entry["context_access"],
         }
 
-    transport = _prepare_review_context(prompts, branch=branch_name, pack_sources=pack_sources)
+    transport = _prepare_review_context(prompts, branch=branch_name, pack_sources=pack_sources,
+                                        diff_text=diff_resource)
     if transport["status"] != "success":
         return transport
 
@@ -14599,6 +14671,8 @@ def _read_repo_summary_for_review(branch_name: str) -> str:
     branch_dir = get_branch_dir(branch_name)
     parts: list[str] = []
 
+    if _review_transport_active(branch_name):
+        return f"=== Review Bundle ===\n{_review_compact_bundle(branch_name)}"
     review_bundle_path = branch_dir / "review-bundle.md"
     if review_bundle_path.exists():
         try:

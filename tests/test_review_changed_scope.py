@@ -1,5 +1,6 @@
 """Diff coverage is distinct from the immutable context inventory."""
 
+import importlib
 import json
 from pathlib import Path
 
@@ -124,7 +125,7 @@ def test_large_inventory_packs_only_changed_sources(repo):
     directory = Path(".map/feature")
     manifest = json.loads((directory / "review-context-objects" / context_id).read_text())
     required = {key for key, value in manifest["resources"].items() if value.get("required", True)}
-    assert required == {"prompt", "inventory", "source_pack"}
+    assert required == {"prompt", "inventory", "source_pack", "diff"}
     sources = [value for value in manifest["resources"].values() if "path" in value]
     assert {value["path"] for value in sources} == changed
     inventory = json.loads(runner._review_context_read(Path(".map/feature"), manifest["resources"]["inventory"]))
@@ -216,8 +217,9 @@ def test_blind_review_receives_untracked_source_as_diff(repo):
     entry = built["prompts"]["blind"]
     directory = Path(".map/feature")
     manifest = json.loads((directory / "review-context-objects" / entry["context_transport"]["context_id"]).read_text())
-    prompt = runner._review_context_read(directory, manifest["resources"]["prompt"])
-    assert b"+UNTRACKED_REVIEW_MARKER = 42" in prompt
+    diff = runner._review_context_read(directory, manifest["resources"]["diff"])
+    assert b"+UNTRACKED_REVIEW_MARKER = 42" in diff
+    assert b"UNTRACKED_REVIEW_MARKER" not in runner._review_context_read(directory, manifest["resources"]["prompt"])
     assert not any(key.startswith("source_") for key in manifest["resources"])
     assert "artifacts" not in manifest["resources"]
 
@@ -414,3 +416,61 @@ def test_diff_only_reviewer_cannot_fetch_repository_context(repo):
     entry = built["prompts"]["blind"]
     result = runner.serve_review_context("blind", json.dumps(lazy_request(entry, "repo:dependency.py")), "blind", branch="feature")
     assert result["status"] == "error"
+
+
+def read_resource(directory, entry, resource):
+    manifest = json.loads((directory / "review-context-objects" / entry["context_transport"]["context_id"]).read_text())
+    return runner._review_context_read(directory, manifest["resources"][resource]).decode("utf-8")
+
+
+def test_original_prompt_is_compact_and_full_diff_is_a_required_resource(repo):
+    del repo
+    write_changes("api/types.pb.go")
+    Path("first.py").write_text("value = 2\n" + "# changed line\n" * 4000)
+    Path("new file.py").write_text("UNTRACKED_DIFF_MARKER = 1\n")
+    admitted = runner.begin_review_run(branch="feature", provider="codex", round_id="diff", base_ref="main")
+    assert admitted["status"] == "success", admitted
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    directory = Path(".map/feature")
+    bundle_before = (directory / "review-bundle.md").read_bytes()
+    built = runner.build_review_prompts(branch="feature")
+    assert built["status"] == "success", built
+    assert (directory / "review-bundle.md").read_bytes() == bundle_before
+    entry = built["prompts"]["monitor"]
+    prompt = read_resource(directory, entry, "prompt")
+    assert "# changed line" not in prompt
+    assert "required parent-served resource named diff" in prompt
+    assert len(prompt.encode()) < 40_000
+    diff = read_resource(directory, entry, "diff")
+    assert diff.count("# changed line") == 4000
+    assert "UNTRACKED_DIFF_MARKER" in diff
+    assert "diff --git a/api/types.pb.go b/api/types.pb.go" in diff
+    assert "// api/types.pb.go" not in diff
+    assert "generated file omitted by review coverage policy" in diff
+    state = runner.bind_review_context("monitor", entry["context_transport"]["context_id"], "reader", "diff", branch="feature")
+    row = runner._read_review_ledger(directory)["convergence"]["rounds"][-1]
+    assert "diff" in row["context_sessions"][state["session_id"]]["required"]
+
+
+def test_every_builder_serves_the_diff_resource_including_diff_only_reviewers(repo):
+    del repo
+    Path("first.py").write_text("value = 2\n")
+    runner.begin_review_run(branch="feature", provider="codex", arguments="--adversarial", round_id="all")
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    directory = Path(".map/feature")
+    built = runner.build_adversarial_review_prompts(branch="feature")
+    for name in ("blind", "edge_case", "acceptance", "maintainer"):
+        assert "+value = 2" in read_resource(directory, built["prompts"][name], "diff"), name
+    blind = json.loads((directory / "review-context-objects" / built["prompts"]["blind"]["context_transport"]["context_id"]).read_text())
+    assert set(blind["resources"]) == {"prompt", "diff"}
+    roles = runner.build_role_review_prompts(branch="feature")
+    assert "+value = 2" in read_resource(directory, roles["prompts"]["maintainer"], "diff")
+
+
+def test_codex_and_claude_share_one_compact_bundle_text(repo):
+    del repo
+    Path("first.py").write_text("value = 2\n")
+    runner.begin_review_run(branch="feature", provider="codex", round_id="compact")
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    codex_runner = importlib.import_module("codex_review_runner")
+    assert codex_runner.compact_bundle("feature") == runner._review_compact_bundle("feature")

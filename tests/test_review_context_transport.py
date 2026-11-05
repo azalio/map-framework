@@ -176,10 +176,11 @@ def test_all_builders_deliver_large_unicode_diff_without_message_overflow(repo, 
     result = getattr(runner, builder)(branch="feature", git_diff_text=diff)
     assert result["status"] == "success", result
     entry = result["prompts"][reviewer]
-    original = fetch(entry, reviewer, "prompt")
+    original = fetch(entry, reviewer, "diff")
     assert len(original.encode()) > runner.REVIEW_PROMPT_MAX_BYTES
     assert diff in original
     assert "END_OF_DIFF" in original
+    assert "END_OF_DIFF" not in fetch(entry, reviewer, "prompt")
     assert len(entry["prompt"].encode()) < 30_000
 
 
@@ -190,7 +191,7 @@ def test_role_access_and_peer_independence_survive_transport(repo):
     result = runner.build_adversarial_review_prompts(branch="feature", spec_text="SPEC_SECRET")
     prompts = result["prompts"]
     blind = json.loads(fetch(prompts["blind"], "blind"))
-    assert set(blind["resources"]) == {"prompt"}
+    assert set(blind["resources"]) == {"prompt", "diff"}
     assert "SPEC_SECRET" not in fetch(prompts["blind"], "blind", "prompt")
     assert "SPEC_SECRET" not in fetch(prompts["edge_case"], "edge_case", "prompt")
     assert "SPEC_SECRET" in fetch(prompts["acceptance"], "acceptance", "prompt")
@@ -300,8 +301,8 @@ def test_manifest_itself_is_chunkable_and_abandoned_context_is_unavailable(repo)
     del repo
     entry = runner.build_review_prompts(branch="feature")["prompts"]["monitor"]
     manifest = json.loads(fetch(entry, "monitor", chunk_bytes=2048))
-    assert len(manifest["resources"]) == 38
-    assert sum(item.get("required", True) for item in manifest["resources"].values()) == 38
+    assert len(manifest["resources"]) == 39
+    assert sum(item.get("required", True) for item in manifest["resources"].values()) == 39
     abandoned = runner.abandon_review_round("context-round", reason="source changed", branch="feature")
     assert abandoned["status"] == "success", abandoned
     result = runner.serve_review_context("monitor", json.dumps(request(entry)), "context-round", branch="feature")
