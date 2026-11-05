@@ -40,6 +40,34 @@ of the trusted default revision. A `Code generated` header never skips a file, l
 required, and strict `review.security_gates` disables every skip. Their diff hunks appear as
 one-line stubs. `review.exclude_generated: false` turns skipping off.
 
+## Sharded Rounds
+
+When the required scope does not fit one reviewer's budget, admission plans `row.shards`
+(deterministic, directory-aware, disjoint; at most `review.max_shards`, default 8) and returns
+`shard_ids`. A single file above the per-shard capacity or more than `max_shards` shards fails
+admission with `review_context_budget_exceeded` (`reason: file_too_large | too_many_shards`).
+Unsharded rounds never see any of this.
+
+- Every scheduled role reviews every shard; there is no per-role coverage exemption. Loop
+  ordering, then shard, then role. `--adversarial` and `--compare-orderings` work unchanged
+  per shard (orderings x shards x roles).
+- Build with `--shard <id>` (`build_review_prompts`, `build_role_review_prompts`,
+  `build_adversarial_review_prompts`). Without it a sharded round returns
+  `{status: "sharded", shard_ids}`. A shard context carries only that shard's source resources and
+  diff; other shards' files are optional `repo:<path>` context. Delivery, finalization token and
+  `context_receipt` are per shard (`ordering:reviewer#sNN`); bind/serve/ack are unchanged.
+- Capture with `capture_review_output --shard <id>`. Shard captures are stored under
+  `review-shards/` (outside the `review-agent-*` namespace). Once every shard of an
+  (ordering, reviewer) is captured the runner writes the canonical `review-agent-<reviewer>.json`:
+  worst-of verdict fields (`verdict`, `risk_assessment`, `recommendation`, minimum scores and
+  confidence), concatenated findings/issues (reviewer finding IDs kept unique; the ledger still
+  keys findings by fingerprint, never by shard), unioned receipts and `context_receipts` per
+  shard. Adversarial aggregates are re-aggregated from the merged per-reviewer outputs. A partial
+  set of shards leaves the round INCOMPLETE.
+- Completeness checks each shard capture's hash, delivery proof and own-file coverage, so a
+  reviewer claiming other shards' files cannot hide an unread shard. The complexity lens is
+  advisory and runs per shard; report its per-shard lines together.
+
 ## Context Budget
 
 Each reviewer's required context (manifest, prompt, `diff`, inventory, sources, artifacts) must

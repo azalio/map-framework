@@ -623,12 +623,12 @@ def test_too_many_shards_and_oversized_single_file_fail_fast(repo, monkeypatch):
     write_many(6)
     trust_on_main({".map/config.yaml": "review:\n  max_shards: 2\n"})
     monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", shard_budget())
-    result = runner.begin_review_run(branch="feature", provider="codex", round_id="many", base_ref="main")
+    result = runner.begin_review_run(branch="feature", provider="claude", round_id="many", base_ref="main")
     assert result["stop_reason"] == "review_context_budget_exceeded" and result["reason"] == "too_many_shards"
     assert result["shards_needed"] > result["max_shards"] == 2
     assert not runner._read_review_ledger(Path(".map/feature")).get("convergence", {}).get("rounds")
     monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", shard_budget(10_000))
-    result = runner.begin_review_run(branch="feature", provider="codex", round_id="big", base_ref="main")
+    result = runner.begin_review_run(branch="feature", provider="claude", round_id="big", base_ref="main")
     assert result["reason"] == "file_too_large" and result["oversized_paths"]
 
 
@@ -950,3 +950,51 @@ def test_adversarial_shard_aggregates_merge_by_reaggregating_merged_reviewers():
     role = merged["reviewer_status"]["maintainer"]["raw"]
     assert role["receipt"]["covered_files"] == ["a.py", "b.py"]
     assert set(role["context_receipts"]) == {"s01", "s02"}
+
+
+def test_codex_normal_review_reserves_room_for_inlined_role_rubrics(repo, monkeypatch):
+    del repo
+    write_changes()
+    write_many(6)
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", shard_budget())
+    claude = runner.begin_review_run(branch="feature", provider="claude", round_id="rubric", base_ref="main")
+    assert claude["status"] == "success" and claude["shard_ids"], claude
+    runner.abandon_review_round("rubric", reason="retry", branch="feature")
+    codex = runner.begin_review_run(branch="feature", provider="codex", round_id="rubric-codex", base_ref="main")
+    assert codex["status"] == "error" and codex["reason"] == "file_too_large", codex
+    assert codex["total"] >= runner.REVIEW_ROLE_RUBRIC_RESERVE_BYTES
+
+
+def test_adversarial_round_captures_and_merges_per_shard(repo, monkeypatch):
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", shard_budget())
+    write_changes()
+    write_many(6)
+    admitted = runner.begin_review_run(branch="feature", provider="claude", arguments="--adversarial --quick",
+                                      round_id="r", base_ref="main")
+    assert admitted["status"] == "success" and admitted["shard_ids"], admitted
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    row = current_row()
+    reviewers = row["binding"]["scheduled_reviewers"]
+    assert "blind" in reviewers and "monitor" not in reviewers
+    for shard in row["shards"]:
+        built = runner.build_adversarial_review_prompts(branch="feature", reviewers=reviewers, shard=shard["id"])
+        assert built["status"] == "success", built
+        raw = {}
+        for name in reviewers:
+            proof = deliver(built["prompts"][name], name, f"agent-{name}-{shard['id']}")
+            raw[name] = json.dumps({"all_clear": True, "all_clear_rationale": f"{name} {shard['id']} clean",
+                                    "findings": [], "checks_performed": ["read"], "context_receipt": proof,
+                                    "receipt": {"covered_files": shard["files"], "skipped_files": [],
+                                                "denied_access": [], "check_evidence": []}})
+        aggregate = runner.aggregate_adversarial_findings(
+            raw.get("blind"), raw.get("edge_case"), raw.get("acceptance"),
+            {role: raw.get(role) for role in runner.ROLE_REVIEWER_IDS})
+        captured = runner.capture_review_output("adversarial", json.dumps(aggregate), "r", branch="feature",
+                                                shard=shard["id"])
+        assert captured["status"] == "success", captured
+    merged = json.loads(Path(".map/feature/review-agent-adversarial.json").read_text())
+    assert merged["schema_version"] == runner.ADVERSARIAL_AGGREGATE_SCHEMA
+    assert set(merged["reviewer_status"]["blind"]["raw"]["context_receipts"]) == set(admitted["shard_ids"])
+    result = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    assert result["completeness"]["status"] == "COMPLETE", result["completeness"]

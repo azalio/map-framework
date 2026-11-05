@@ -421,6 +421,8 @@ REVIEW_ATTRIBUTION_INLINE_MAX_BYTES = 32 * 1024
 # covers the manifest, protocol text and the compact original prompt.
 REVIEW_CONTEXT_BUDGET_BYTES = 384 * 1024
 REVIEW_CONTEXT_RESERVE_BYTES = 64 * 1024
+# The Codex runner inlines the bundled role rubrics (monitor ~105 KiB) into every normal-review prompt.
+REVIEW_ROLE_RUBRIC_RESERVE_BYTES = 128 * 1024
 REVIEW_CONTEXT_BUDGET_ENV = "MAP_REVIEW_CONTEXT_BUDGET_BYTES"
 REVIEW_MAX_SHARDS = 8
 # Generated sources are skipped only by file name, config pattern or trusted
@@ -9448,15 +9450,18 @@ def begin_review_run(
         skipped_paths = {item["path"] for item in coverage_skips}
         sizes = _review_required_bytes(target, [name for name in target["required_files"] if name not in skipped_paths])
         budget = _review_context_budget(review_config)
-        if sum(sizes.values()) + REVIEW_CONTEXT_RESERVE_BYTES > budget:
-            capacity = budget - REVIEW_CONTEXT_RESERVE_BYTES
+        reserve = REVIEW_CONTEXT_RESERVE_BYTES + (
+            REVIEW_ROLE_RUBRIC_RESERVE_BYTES if provider == "codex" and "monitor" in scheduled_reviewers else 0)
+        if sum(sizes.values()) + reserve > budget:
+            capacity = budget - reserve
             oversized = {name: size for name, size in sizes.items() if size > capacity}
             if oversized:
-                return _review_context_budget_error(sizes, budget, reason="file_too_large", oversized_paths=oversized)
+                return _review_context_budget_error(sizes, budget, reserve=reserve, reason="file_too_large",
+                                                    oversized_paths=oversized)
             planned = _review_plan_shards(sizes, capacity)
             max_shards = _review_max_shards(review_config)
             if len(planned) > max_shards:
-                return _review_context_budget_error(sizes, budget, reason="too_many_shards",
+                return _review_context_budget_error(sizes, budget, reserve=reserve, reason="too_many_shards",
                                                     shards_needed=len(planned), max_shards=max_shards)
             shard_plan = [{"id": f"s{index:02d}", "files": files, "bytes": sum(sizes[name] for name in files)}
                           for index, files in enumerate(planned, 1)]
@@ -10792,8 +10797,8 @@ def _review_shard_problems(row: dict[str, Any], directory: Path, ordering: str, 
             delivery = _review_delivery_problem(row, name, output, ordering, sid)
             if delivery:
                 problems.append(f"{label}:{name}: {delivery}")
-            if reviewer == "adversarial" and name not in ROLE_REVIEWER_IDS:
-                continue  # Hunters carry no coverage receipt; the role reviewers do.
+            if reviewer == "adversarial" and name not in ROLE_REVIEWER_IDS and "receipt" not in output:
+                continue  # A hunter without a receipt claims no coverage; a role reviewer must always have one.
             receipt = output.get("receipt")
             if _review_coverage_receipt_errors(receipt):
                 problems.append(f"{label}:{name}: missing or invalid shard coverage receipt")
@@ -24194,9 +24199,9 @@ def _review_plan_shards(sizes: dict[str, int], capacity: int) -> list[list[str]]
 
 
 def _review_context_budget_error(
-    sizes: dict[str, int], budget: int, **extra: Any,
+    sizes: dict[str, int], budget: int, *, reserve: int = REVIEW_CONTEXT_RESERVE_BYTES, **extra: Any,
 ) -> dict[str, Any]:
-    total = sum(sizes.values()) + REVIEW_CONTEXT_RESERVE_BYTES
+    total = sum(sizes.values()) + reserve
     top = sorted(sizes.items(), key=lambda item: (-item[1], item[0]))[:10]
     return {"status": "error", "stop_reason": "review_context_budget_exceeded", "total": total, "budget": budget,
             "top_paths": [{"path": name, "bytes": size} for name, size in top],
