@@ -12611,9 +12611,18 @@ def _review_row_snapshot(row: dict[str, Any]) -> dict[str, Any]:
     return snapshot
 
 
+def _review_line_mapping(base_text: str, current_text: str) -> list[dict[str, int]]:
+    """Matching line blocks between two revisions; shared by attribution and the admission estimate."""
+    import difflib
+
+
+    return [{"base_start": match.a + 1, "current_start": match.b + 1, "length": match.size}
+            for match in difflib.SequenceMatcher(None, base_text.splitlines(), current_text.splitlines(),
+                                                autojunk=False).get_matching_blocks() if match.size]
+
+
 def _review_attribution(target: dict[str, Any], skipped: frozenset[str] = frozenset()) -> dict[str, Any]:
     import base64
-    import difflib
 
     if not target.get("head"):
         return {"status": "unknown", "reason": "No verified review target", "files": []}
@@ -12640,9 +12649,7 @@ def _review_attribution(target: dict[str, Any], skipped: frozenset[str] = frozen
             encoding = "base64"
         mapping = []
         if encoding == "utf-8" and base_ref:
-            mapping = [{"base_start": match.a + 1, "current_start": match.b + 1, "length": match.size}
-                       for match in difflib.SequenceMatcher(None, base_text.splitlines(), current_text.splitlines(),
-                                                           autojunk=False).get_matching_blocks() if match.size]
+            mapping = _review_line_mapping(base_text, current_text)
         entries.append({"path": name, "base_content": base_text, "current_content": current_text,
                         "encoding": encoding, "line_mapping": mapping,
                         "baseline_known": bool(base_ref),
@@ -13948,17 +13955,32 @@ def _review_repo_source_entry(name: str) -> dict[str, Any]:
             "encoding": encoding, "status": "unchanged", "line_mapping": []}
 
 
+def _review_lazy_entry(row: dict[str, Any], resource_id: str) -> dict[str, Any] | None:
+    """Frozen lazy resource by full id. ``repo:`` and ``check:`` entries never share a key; rows frozen
+    before the namespaces were split stored repo files under the bare path, which stays readable."""
+    lazy = row.get("context_lazy", {})
+    entry = lazy.get(resource_id)
+    if isinstance(entry, dict) and (resource_id.startswith("repo:") or entry.get("kind") == "check"):
+        return entry
+    if resource_id.startswith("repo:"):
+        legacy = lazy.get(resource_id.removeprefix("repo:"))
+        if isinstance(legacy, dict) and legacy.get("kind") != "check":
+            return legacy
+    return None
+
+
 def _review_lazy_check_resource(directory: Path, row: dict[str, Any], resource_id: str) -> tuple[dict[str, Any], bool]:
     """Serve a current runner-witnessed execution-check log as optional, frozen-on-first-use context."""
-    frozen = row.get("context_lazy", {}).get(resource_id)
-    if isinstance(frozen, dict):
-        return frozen, False
     check_id = resource_id.removeprefix("check:")
     check = _read_review_ledger(directory).get("execution_checks", {}).get(check_id)
+    # Intent: always re-validate the runner-witnessed check, even when its log was frozen earlier.
     if not isinstance(check, dict) or not _review_check_valid(directory, check_id, row):
         raise ValueError("Resource is not permitted for this reviewer")
+    frozen = row.get("context_lazy", {}).get(resource_id)
+    if isinstance(frozen, dict) and frozen.get("kind") == "check":
+        return frozen, False
     text = (directory / check["output_artifact"]).read_text(encoding="utf-8")
-    metadata = {**_review_context_store(directory, text), "required": False}
+    metadata = {**_review_context_store(directory, text), "required": False, "kind": "check"}
     row.setdefault("context_lazy", {})[resource_id] = metadata
     return metadata, True
 
@@ -13979,7 +14001,7 @@ def _review_lazy_repo_resource(
     if (manifest.get("context_access") == "diff_only" or not name
             or name not in set(target.get("context_files", [])) or name in own):
         raise ValueError("Resource is not permitted for this reviewer")
-    frozen = row.get("context_lazy", {}).get(name)
+    frozen = _review_lazy_entry(row, resource_id)
     if isinstance(frozen, dict):
         return frozen, False
     entry = _review_repo_source_entry(name)
@@ -14002,7 +14024,7 @@ def _review_lazy_repo_resource(
                 "path": name, "encoding": entry["encoding"], "required": False,
                 "base_sha256": hashlib.sha256(entry["base_content"].encode("utf-8")).hexdigest(),
                 "current_sha256": hashlib.sha256(entry["current_content"].encode("utf-8")).hexdigest()}
-    row.setdefault("context_lazy", {})[name] = metadata
+    row.setdefault("context_lazy", {})[resource_id] = metadata
     return metadata, True
 
 
@@ -14371,10 +14393,8 @@ def ack_review_context(
     key = _review_chunk_key(data)
     resource = key["resource_id"]
     metadata = session.get("available", session["required"]).get(resource)
-    if metadata is None and resource.startswith("repo:"):
-        metadata = row.get("context_lazy", {}).get(resource.removeprefix("repo:"))
-    elif metadata is None and resource.startswith("check:"):
-        metadata = row.get("context_lazy", {}).get(resource)
+    if metadata is None and resource.startswith(("repo:", "check:")):
+        metadata = _review_lazy_entry(row, resource)
     if not isinstance(metadata, dict) or key["context_id"] != session["context_id"]:
         raise ValueError("Acknowledgment resource is not permitted")
     raw = _review_context_read(directory, metadata)
@@ -23650,17 +23670,20 @@ def _review_text_json_size(raw: bytes) -> int:
         return 4 * ((len(raw) + 2) // 3) + 2
 
 
-def _review_source_json_size(base_raw: bytes, current_raw: bytes, hunks: int) -> int:
-    """Size of a frozen source resource as ``_prepare_review_context`` serializes it (both sides share one encoding)."""
+def _review_source_json_size(base_raw: bytes, current_raw: bytes, has_base_ref: bool = True) -> int:
+    """Size of a frozen source resource as ``_prepare_review_context`` serializes it (both sides share one encoding).
+
+    The line mapping is computed by the same function the bundle uses, so its serialized size is exact.
+    """
     try:
         if b"\0" in base_raw or b"\0" in current_raw:
             raise UnicodeError("binary")
-        base_size = len(json.dumps(base_raw.decode("utf-8"), ensure_ascii=True))
-        current_size = len(json.dumps(current_raw.decode("utf-8"), ensure_ascii=True))
+        base_text, current_text = base_raw.decode("utf-8"), current_raw.decode("utf-8")
     except UnicodeError:
-        base_size, current_size = (4 * ((len(raw) + 2) // 3) + 2 for raw in (base_raw, current_raw))
-    # Each matching block of the line mapping serializes to roughly 70 bytes.
-    return base_size + current_size + 70 * (hunks + 1)
+        return sum(4 * ((len(raw) + 2) // 3) + 2 for raw in (base_raw, current_raw)) + 2
+    mapping = _review_line_mapping(base_text, current_text) if has_base_ref else []
+    return (len(json.dumps(base_text, ensure_ascii=True)) + len(json.dumps(current_text, ensure_ascii=True))
+            + len(json.dumps(mapping, sort_keys=True, ensure_ascii=True)))
 
 
 # Per-path JSON envelope plus its manifest entry (digests, path, flags).
@@ -23676,7 +23699,6 @@ def _review_required_bytes(target: dict[str, Any], paths: list[str]) -> dict[str
     base = target.get("base", "")
     base_contents = _review_base_contents(base, paths)
     diff_sizes: dict[str, int] = {}
-    hunk_counts: dict[str, int] = {}
     if base:
         diff = _review_git_bytes("-c", "core.quotepath=false", "diff", "--no-renames", base, "--",
                                  *_review_source_pathspec(paths))
@@ -23684,7 +23706,6 @@ def _review_required_bytes(target: dict[str, Any], paths: list[str]) -> dict[str
             header = _review_diff_header_paths(os.fsdecode(part.split(b"\n", 1)[0]) + "\n")
             if header:
                 diff_sizes[header[1]] = len(part)
-                hunk_counts[header[1]] = part.count(b"\n@@ ")
     sizes = {}
     for name in paths:
         try:
@@ -23692,7 +23713,7 @@ def _review_required_bytes(target: dict[str, Any], paths: list[str]) -> dict[str
             current = os.fsencode(os.readlink(path)) if path.is_symlink() else (path.read_bytes() if path.is_file() else b"")
         except OSError:
             current = b""
-        sizes[name] = (_review_source_json_size(base_contents[name], current, hunk_counts.get(name, 0))
+        sizes[name] = (_review_source_json_size(base_contents[name], current, bool(base))
                        + diff_sizes.get(name, (len(current) + current.count(b"\n") + 400) if not base_contents[name] else 0)
                        + REVIEW_SOURCE_OVERHEAD_BYTES)
     return sizes
@@ -23792,7 +23813,9 @@ def _review_gitattr_regex(pattern: str) -> re.Pattern[str]:
                 body = pattern[index + 1:end]
                 negate = body[:1] in ("!", "^")
                 body = body[1:] if negate else body
-                out.append("[" + ("^" if negate else "") + body.replace("\\", "\\\\") + "]")
+                escaped = body.replace("\\", "\\\\")
+                # Intent: a class never matches the path separator, matching git's wildmatch.
+                out.append("(?!/)[" + ("^" if negate else "") + escaped + "]")
                 index = end + 1
             else:
                 out.append(re.escape(char))
