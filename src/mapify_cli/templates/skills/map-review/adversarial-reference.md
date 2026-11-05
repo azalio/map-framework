@@ -28,7 +28,7 @@ BRANCH=$(python3 .map/scripts/map_utils.py branch)
 BRANCH_DIR=".map/$BRANCH"
 QUICK_ARG=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("--quick" if "edge_case" not in d["scheduled_reviewers"] else "")' "$BRANCH_DIR/review-mode.json") || exit 1
 
-ADV_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_adversarial_review_prompts $QUICK_ARG)
+ADV_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_adversarial_review_prompts $QUICK_ARG ${SHARD:+--shard "$SHARD"})
 
 BLIND_PROMPT=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("blind",{}).get("prompt",""))')
 BLIND_DESC=$(printf '%s' "$ADV_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("prompts",{}).get("blind",{}).get("description",""))')
@@ -114,7 +114,7 @@ REVIEW_ROUND_ID="${REVIEW_ROUND_ID:-$(python3 -c 'import json,sys; print(json.lo
 set -o pipefail
 python3 .map/scripts/map_step_runner.py aggregate_adversarial_findings \
   "${ADV_ARGS[@]}" | python3 .map/scripts/map_step_runner.py capture_review_output \
-  --reviewer adversarial --round-id "$REVIEW_ROUND_ID" --ordering "${ORDERING_LABEL:-}" || exit 1
+  --reviewer adversarial --round-id "$REVIEW_ROUND_ID" --ordering "${ORDERING_LABEL:-}" ${SHARD:+--shard "$SHARD"} || exit 1
 ```
 
 ## Step B.adversarial.4: Present unified adversarial report

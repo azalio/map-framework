@@ -609,7 +609,7 @@ When `--adversarial` is set (with `--cross-ai`: present cross-AI first, then thi
 [%- else %]
 
 ```text
-1. Build prompts:  python3 .map/scripts/map_step_runner.py build_adversarial_review_prompts --reviewers <comma-separated admitted roster>
+1. Build prompts:  python3 .map/scripts/map_step_runner.py build_adversarial_review_prompts --reviewers <comma-separated admitted roster> ${SHARD:+--shard "$SHARD"}
 2. Fan-out:        Task(subagent_type="review-reader", ...) for every role in the admitted roster
                    (edge_case absent under non-strict --quick; security only when admitted) — wait for all
 3. Validate:       Each must return valid JSON per adversarial finding schema; retry ONCE on failure

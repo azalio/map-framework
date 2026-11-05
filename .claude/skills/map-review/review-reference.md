@@ -34,7 +34,9 @@ Unread or explicitly skipped optional context does not make review incomplete.
 Generated files are excluded from `required_files` and recorded in `row.coverage_skips`
 (`snapshot.coverage_skips`, ledger `completeness.skipped_scope`) only when matched by a file
 name pattern (`*.pb.go`, `*.pb.cc`, `*.pb.h`, `*_pb2.py`, `*_pb2_grpc.py`, `zz_generated*`), a
-trusted `review.generated_patterns` entry, or `linguist-generated` in the root `.gitattributes`
+trusted `review.generated_patterns` entry (gitattributes-style: a pattern with a leading or inner slash is
+anchored to the repository root, one without a slash matches the base name at any depth, `*` and `?` never cross
+`/`, and `**/`, `/**`, `/**/` span directories), or `linguist-generated` in the root `.gitattributes`
 of the trusted default revision. A `Code generated` header never skips a file, lockfiles stay
 required, and strict `review.security_gates` disables every skip. Their diff hunks appear as
 one-line stubs. `review.exclude_generated: false` turns skipping off.
@@ -76,6 +78,13 @@ Unsharded rounds never see any of this.
   advisory and runs per shard; report its per-shard lines together.
 
 ## Context Budget
+
+Admission sizes each path the way its resource is serialized (ASCII-escaped JSON or base64 for sources,
+raw text for the diff, plus the manifest entry), so non-ASCII changes are sharded at admission instead of
+failing at prompt build; the plan and budget check run for every new round, not only the first. Execution-check
+logs longer than 16 Ki characters are shortened in the prompt; the full log is the optional resource
+`check:<id>` (fetched like `repo:<path>`). A changed generated file fetched through `repo:<path>` is served
+with its real base and current content (`status: changed_generated_skipped`).
 
 Each reviewer's required context (manifest, prompt, `diff`, inventory, sources, artifacts) must
 fit `review.context_budget_bytes` (trusted config; env `MAP_REVIEW_CONTEXT_BUDGET_BYTES`; default
@@ -206,7 +215,7 @@ Either way it cannot gate the change, and it cannot disappear either.
 Standalone prompt build (the normal fan-out builds these automatically):
 
 ```bash
-python3 .map/scripts/map_step_runner.py build_role_review_prompts \
+python3 .map/scripts/map_step_runner.py build_role_review_prompts ${SHARD:+--shard "$SHARD"} \
   [--roles user_experience,maintainer]
 ```
 
@@ -405,7 +414,7 @@ BRANCH=$(python3 .map/scripts/map_utils.py branch)
 BRANCH_DIR=".map/$BRANCH"
 REVIEW_ROUND_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["round_id"])' "$BRANCH_DIR/review-mode.json")
 python3 .map/scripts/map_step_runner.py capture_review_output --reviewer monitor \
-  --round-id "$REVIEW_ROUND_ID" --ordering "${ORDERING_LABEL:-}" <<'MONITOR_EOF'
+  --round-id "$REVIEW_ROUND_ID" --ordering "${ORDERING_LABEL:-}" ${SHARD:+--shard "$SHARD"} <<'MONITOR_EOF'
 <paste the Monitor JSON envelope verbatim>
 MONITOR_EOF
 ```
