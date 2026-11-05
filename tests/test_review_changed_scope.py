@@ -998,3 +998,69 @@ def test_adversarial_round_captures_and_merges_per_shard(repo, monkeypatch):
     assert set(merged["reviewer_status"]["blind"]["raw"]["context_receipts"]) == set(admitted["shard_ids"])
     result = runner.write_review_verdict_ledger(current_run=True, branch="feature")
     assert result["completeness"]["status"] == "COMPLETE", result["completeness"]
+
+
+@pytest.fixture
+def sharded_predictor(repo, monkeypatch):
+    """Sharded normal round; only monitor and predictor captures matter for these tests."""
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", shard_budget())
+    write_changes()
+    write_many(6)
+    admitted = runner.begin_review_run(branch="feature", provider="claude", round_id="r", base_ref="main")
+    assert admitted["status"] == "success" and len(admitted["shard_ids"]) >= 3, admitted
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    return current_row()["shards"]
+
+
+def capture_predictor_round(shards, defects):
+    """defects: shard index -> (risk, bug_class) or None for a clean low-risk prediction."""
+    for index, shard in enumerate(shards):
+        built = runner.build_review_prompts(branch="feature", shard=shard["id"])
+        assert built["status"] == "success", built
+        receipt = {"covered_files": shard["files"], "skipped_files": [], "denied_access": [], "check_evidence": []}
+        proof = deliver(built["prompts"]["monitor"], "monitor", f"m-{shard['id']}")
+        assert runner.capture_review_output("monitor", json.dumps(monitor_output(proof, shard["files"])), "r",
+                                            branch="feature", shard=shard["id"])["status"] == "success"
+        proof = deliver(built["prompts"]["predictor"], "predictor", f"p-{shard['id']}")
+        defect = defects.get(index)
+        output = {"evidence": [], "risk_assessment": defect[0] if defect else "low",
+                  "predicted_state": {"affected_components": [], "breaking_changes": [], "required_updates": []},
+                  "confidence": {"score": 0.8}, "context_receipt": proof, "receipt": receipt}
+        if defect:
+            output.update({"bug_class": defect[1], "cause": f"cause of {defect[1]}",
+                           "failure_scenario": f"{defect[1]} breaks callers"})
+        assert runner.capture_review_output("predictor", json.dumps(output), "r", branch="feature",
+                                            shard=shard["id"])["status"] == "success"
+
+
+def predictor_findings():
+    ledger = json.loads(Path(".map/feature/review-verdict-ledger.json").read_text())
+    return [item for item in ledger["findings_registry"] if item["source_agent"] == "predictor"]
+
+
+def test_distinct_predictor_defects_from_two_shards_both_reach_the_ledger(sharded_predictor):
+    capture_predictor_round(sharded_predictor, {0: ("high", "race"), 1: ("medium", "leak")})
+    merged = json.loads(Path(".map/feature/review-agent-predictor.json").read_text())
+    assert merged["risk_assessment"] == "high" and merged["bug_class"] == "race"
+    assert [item["bug_class"] for item in merged["additional_defects"]] == ["leak"]
+    runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    findings = predictor_findings()
+    assert sorted(item["bug_class"] for item in findings) == ["leak", "race"]
+    assert len({item["id"] for item in findings}) == 2
+    assert {item["bug_class"]: item["severity"] for item in findings}["race"] != \
+        {item["bug_class"]: item["severity"] for item in findings}["leak"]
+
+
+def test_identical_predictor_defect_from_two_shards_is_one_finding(sharded_predictor):
+    capture_predictor_round(sharded_predictor, {0: ("high", "race"), 1: ("high", "race")})
+    merged = json.loads(Path(".map/feature/review-agent-predictor.json").read_text())
+    assert "additional_defects" not in merged
+    runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    assert [item["bug_class"] for item in predictor_findings()] == ["race"]
+
+
+def test_a_clean_shard_adds_no_predictor_defect(sharded_predictor):
+    capture_predictor_round(sharded_predictor, {1: ("medium", "leak")})
+    merged = json.loads(Path(".map/feature/review-agent-predictor.json").read_text())
+    assert merged["bug_class"] == "leak" and "additional_defects" not in merged

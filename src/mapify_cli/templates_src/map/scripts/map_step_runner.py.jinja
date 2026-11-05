@@ -9845,14 +9845,18 @@ def normalize_review_verdict(
 
     # --- Ingest Predictor risk as a summary finding ---
     predictor_data: dict[str, Any] = predictor_result or {}
-    pred_risk = str(predictor_data.get("risk_assessment") or "").lower()
-    if pred_risk in _PREDICTOR_RISK_MAP:
+    # Intent: sharded rounds merge every shard's distinct defect into additional_defects; each becomes its own finding.
+    extra_defects = [item for item in (predictor_data.get("additional_defects") or []) if isinstance(item, dict)]
+    for defect_index, defect in enumerate([predictor_data, *extra_defects]):
+        pred_risk = str(defect.get("risk_assessment") or "").lower()
+        if pred_risk not in _PREDICTOR_RISK_MAP:
+            continue
         pred_sev = _PREDICTOR_RISK_MAP[pred_risk]
         pred_evidence: list[dict[str, Any]] = []
-        for ev_item in (predictor_data.get("evidence") or []):
+        for ev_item in (defect.get("evidence") or []):
             if isinstance(ev_item, dict):
                 pred_evidence.append(ev_item)
-        pred_state = predictor_data.get("predicted_state") or {}
+        pred_state = (predictor_data if defect_index == 0 else defect).get("predicted_state") or {}
         breaking = (pred_state.get("breaking_changes") or []) if isinstance(pred_state, dict) else []
         breaking_count = len(breaking) if isinstance(breaking, list) else 0
         claim = f"Predictor risk_assessment={pred_risk}"
@@ -9860,12 +9864,12 @@ def normalize_review_verdict(
             claim += f"; {breaking_count} breaking change(s) predicted"
         # Intent: a clean low-risk summary is not a defect requiring refutation.
         if pred_risk != "low" or any(
-            predictor_data.get(field) for field in ("bug_class", "cause", "failure_scenario")
+            defect.get(field) for field in ("bug_class", "cause", "failure_scenario")
         ):
             findings_registry.append({
                 "id": _next_id(),
                 "source_agent": "predictor",
-                **_review_finding_metadata(predictor_data),
+                **_review_finding_metadata(defect),
                 "category": "workflow",
                 "severity": pred_sev,
                 "claim": claim,
@@ -10452,7 +10456,8 @@ def _validate_review_findings(ledger: dict[str, Any], admitted: dict[str, Any]) 
                 if hashlib.sha256(content).hexdigest() != receipt["sha256"]:
                     continue
                 payload = json.loads(content)
-                candidates = ([payload] if owner == "predictor" and not finding.get("resolution_requested") else
+                candidates = ([payload, *(item for item in payload.get("additional_defects", []) if isinstance(item, dict))]
+                              if owner == "predictor" and not finding.get("resolution_requested") else
                               payload.get("resolved_findings" if finding.get("resolution_requested") else
                                           ("issues" if owner == "monitor" else "findings"), []))
                 if any(isinstance(candidate, dict) and (
@@ -10656,9 +10661,10 @@ def _review_worst(key: str, values: list[Any]) -> Any:
 def _review_merge_envelopes(items: list[tuple[str, dict[str, Any]]], owners: dict[str, set[str]]) -> dict[str, Any]:
     """Merge per-shard reviewer envelopes: worst-of verdicts, concatenated findings, unioned receipts."""
     outputs = [output for _, output in items]
-    base = dict(max(outputs, key=lambda out: _REVIEW_VERDICT_ORDERS["risk_assessment"].index(out["risk_assessment"])
-                    if out.get("risk_assessment") in _REVIEW_VERDICT_ORDERS["risk_assessment"] else 99)
-                if all("risk_assessment" in out for out in outputs) else outputs[0])
+    base_source = (max(outputs, key=lambda out: _REVIEW_VERDICT_ORDERS["risk_assessment"].index(out["risk_assessment"])
+                       if out.get("risk_assessment") in _REVIEW_VERDICT_ORDERS["risk_assessment"] else 99)
+                   if all("risk_assessment" in out for out in outputs) else outputs[0])
+    base = dict(base_source)
 
     def present(key: str) -> list[Any]:
         return [out[key] for out in outputs if key in out]
@@ -10697,6 +10703,23 @@ def _review_merge_envelopes(items: list[tuple[str, dict[str, Any]]], owners: dic
             state[key] = union([item for out in outputs for item in out["predicted_state"].get(key, [])
                                 if isinstance(out["predicted_state"].get(key, []), list)])
         base["predicted_state"] = state
+    if all("risk_assessment" in out for out in outputs):
+        # Intent: the worst-risk shard is the primary verdict; every other shard's distinct defect stays its own finding.
+        defect_fields = ("risk_assessment", "bug_class", "cause", "failure_scenario", "evidence_refs", "reachability",
+                         "baseline_attribution", "landmine_evidence", "evidence")
+
+        def identity(out: dict[str, Any]) -> tuple[str, ...]:
+            return tuple(str(out.get(key) or "") for key in ("bug_class", "cause", "failure_scenario"))
+
+        seen = {identity(base)}
+        extras = list(base.get("additional_defects") or [])
+        for out in outputs:
+            claims_defect = out.get("risk_assessment") != "low" or any(identity(out))
+            if out is not base_source and claims_defect and identity(out) not in seen:
+                seen.add(identity(out))
+                extras.append({key: out[key] for key in defect_fields if key in out})
+        if extras:
+            base["additional_defects"] = extras
     for key in ("summary", "all_clear_rationale", "landmine_evidence"):
         joined = [str(value) for value in present(key) if str(value).strip()]
         if joined:
