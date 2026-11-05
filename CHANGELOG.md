@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Isolated-worktree commits use Conventional Commits subjects (`chore(map): merge ST-001 isolated worktree`, `... (wave)`, and `chore(map): checkpoint ST-001 worktree (attempt N)` inside the worktree), so host repos with a Conventional Commits `commit-msg` hook no longer reject wave merges. (#632)
+- In concurrent wave mode the PreToolUse context banner and the post-compact re-prime no longer show a stale `2.2 RESEARCH ... REQUIRED: Persist RESEARCH artifact` after the subtasks finished; while the wave loop is engaged they now show the wave index and per-subtask phases from `subtask_phases` (#630)
 
 ## [3.35.2] - 2026-11-03
 
