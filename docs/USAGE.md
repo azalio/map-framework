@@ -717,9 +717,10 @@ A concurrent second coordinator is blocked by an advisory lock.
 any merge or cleanup. Set the cap before dispatch, or create each separate batch
 only after the previous one has merged, from its new HEAD. Existing candidate
 worktrees survive a width refusal. After an external commit (`EXTERNAL_HEAD_MOVED`),
-`rebase_wave_group <group_key>` re-anchors a group whose candidates have no work onto
-the new HEAD and recreates its worktrees; it refuses (changing nothing) if a candidate
-has committed/uncommitted work or HEAD is not a descendant of the old base. `abort_wave_group` saves unique binary patches
+`rebase_wave_group <group_key>` re-anchors a group onto the new HEAD: unstarted candidates are recreated, candidates
+with committed work are rebased in place. It refuses if a candidate has uncommitted
+edits (`CANDIDATE_HAS_WORK`) or HEAD is not a descendant of the old base; a rebase
+conflict returns `CANDIDATE_REBASE_CONFLICT` and leaves that candidate unchanged. `abort_wave_group` saves unique binary patches
 for every candidate under `.map/<branch>/worktree_attempts/` before deleting any
 worktree. Stop Actors before aborting. If preservation, rollback, or cleanup fails,
 `needs_redispatch` is false and cleanup stops for recovery.

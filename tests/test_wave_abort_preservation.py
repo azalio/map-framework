@@ -666,14 +666,9 @@ def test_rebase_wave_group_is_idempotent(wave_repo: Path) -> None:
     assert m._read_worktree_state(m.get_branch_name()) == state
 
 
-@pytest.mark.parametrize("work", ["committed", "uncommitted"])
-def test_rebase_wave_group_refuses_candidate_work(wave_repo: Path, work: str) -> None:
+def test_rebase_wave_group_refuses_uncommitted_candidate_work(wave_repo: Path) -> None:
     key, paths = group(["task-a", "task-b"])
-    old_base = _git(["rev-parse", "HEAD"], wave_repo).stdout.strip()
     (paths["task-a"] / "work.txt").write_text("precious")
-    if work == "committed":
-        assert _git(["add", "work.txt"], paths["task-a"]).returncode == 0
-        assert _git(["commit", "-qm", "candidate"], paths["task-a"]).returncode == 0
     _external_commit(wave_repo)
     before = m._read_worktree_state(m.get_branch_name())
     result = m.rebase_wave_group(key)
@@ -681,7 +676,65 @@ def test_rebase_wave_group_refuses_candidate_work(wave_repo: Path, work: str) ->
     assert result["worktrees_preserved"] is True
     assert m._read_worktree_state(m.get_branch_name()) == before
     assert (paths["task-a"] / "work.txt").read_text() == "precious"
-    assert _git(["merge-base", "HEAD", "map-wt/task-a-0"], wave_repo).stdout.strip() == old_base
+
+
+def _commit_in(path: Path, name: str, text: str) -> str:
+    (path / name).write_text(text)
+    assert _git(["add", name], path).returncode == 0
+    assert _git(["commit", "-qm", f"candidate {name}"], path).returncode == 0
+    return _git(["rev-parse", "HEAD"], path).stdout.strip()
+
+
+def test_rebase_wave_group_rebases_committed_candidates(wave_repo: Path) -> None:
+    ids = ["task-a", "task-b"]
+    key, paths = group(ids)
+    _commit_in(paths["task-a"], "task-a.txt", "a")
+    new_head = _external_commit(wave_repo)
+    assert m.run_concurrent_wave(ids)["kind"] == "EXTERNAL_HEAD_MOVED"
+
+    result = m.rebase_wave_group(key)
+    assert result["ok"], result
+    assert result["rebased_candidates"] == ["task-a"]
+    assert result["recreated"] == ["task-b"]
+    state = m._read_worktree_state(m.get_branch_name())
+    assert state["wave_groups"][key]["base_sha"] == new_head
+    for sid in ids:
+        assert state["worktrees"][m._wt_slug(sid)]["base_sha"] == new_head
+    assert _git(["merge-base", "HEAD", "map-wt/task-a-0"], wave_repo).stdout.strip() == new_head
+    (paths["task-b"] / "task-b.txt").write_text("b")
+
+    merged = m.run_concurrent_wave(ids)
+    assert merged["ok"], merged
+    assert (wave_repo / "external.txt").exists()
+    assert (wave_repo / "task-a.txt").read_text() == "a"
+    assert (wave_repo / "task-b.txt").read_text() == "b"
+
+
+def test_rebase_wave_group_conflict_leaves_candidates_and_converges(wave_repo: Path) -> None:
+    ids = ["task-a", "task-b"]
+    key, paths = group(ids)
+    old_base = _git(["rev-parse", "HEAD"], wave_repo).stdout.strip()
+    _commit_in(paths["task-a"], "task-a.txt", "a")
+    conflicting = _commit_in(paths["task-b"], "clash.txt", "from candidate\n")
+    new_head = _external_commit(wave_repo, "clash.txt")
+    before_a = _git(["rev-parse", "map-wt/task-a-0"], wave_repo).stdout.strip()
+
+    result = m.rebase_wave_group(key)
+    assert result["kind"] == "CANDIDATE_REBASE_CONFLICT", result
+    assert result["subtask_id"] == "task-b"
+    assert _git(["rev-parse", "map-wt/task-b-0"], wave_repo).stdout.strip() == conflicting
+    assert (paths["task-b"] / "clash.txt").read_text() == "from candidate\n"
+    assert not _git(["status", "--porcelain"], paths["task-b"]).stdout.strip()
+    state = m._read_worktree_state(m.get_branch_name())
+    assert state["wave_groups"][key]["base_sha"] == old_base
+    assert state["worktrees"]["task-b"]["base_sha"] == old_base
+    # task-a (processed first) was already moved; re-running skips it.
+    assert state["worktrees"]["task-a"]["base_sha"] == new_head
+    after_a = _git(["rev-parse", "map-wt/task-a-0"], wave_repo).stdout.strip()
+    assert after_a != before_a
+    again = m.rebase_wave_group(key)
+    assert again["kind"] == "CANDIDATE_REBASE_CONFLICT", again
+    assert _git(["rev-parse", "map-wt/task-a-0"], wave_repo).stdout.strip() == after_a
 
 
 def test_rebase_wave_group_refuses_rewritten_history(wave_repo: Path) -> None:

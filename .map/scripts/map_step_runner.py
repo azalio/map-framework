@@ -24958,14 +24958,17 @@ def rebase_wave_group(
     Recovery verb for ``EXTERNAL_HEAD_MOVED``: a user commit made outside the
     wave invalidates the registered ``base_sha``. Refuses (nothing changed) when
     HEAD is not a descendant of the group base, when a Git operation is active,
-    when the main checkout is dirty, or when ANY candidate holds committed or
-    uncommitted work -- candidate work is never discarded; use
-    ``abort_wave_group`` (which preserves patches) in that case.
+    when the main checkout is dirty, or when ANY candidate has uncommitted edits
+    (``CANDIDATE_HAS_WORK``; use ``abort_wave_group``, which preserves patches).
+    All candidates are preflighted before any is mutated.
 
-    Otherwise recreates every recorded candidate worktree off the new HEAD and
-    rewrites the group and per-worktree ``base_sha``. The group base is written
-    last, so a crash mid-way leaves a state that a re-run converges. Idempotent:
-    when HEAD already equals the group base it is a no-op (``rebased=False``).
+    Candidates without commits are recreated off the new HEAD; candidates with
+    committed work are rebased in place (``git rebase --onto``). A rebase
+    conflict aborts that rebase, leaves the candidate untouched and returns
+    ``CANDIDATE_REBASE_CONFLICT``. Each record's ``base_sha`` moves as it is
+    handled and the group base is written last, so re-runs converge after a
+    partial failure (candidates already at HEAD are skipped). Idempotent: with
+    nothing stale it is a no-op (``rebased=False``).
     """
     if not _wt_is_git_repo():
         return _wt_error(_WT_REASON_NOT_GIT_REPO, "not inside a git work tree")
@@ -25009,53 +25012,78 @@ def rebase_wave_group(
             )
 
     worktrees = state.get("worktrees")
-    records: list[tuple[str, dict[str, object]]] = []
+    # Preflight EVERY candidate before mutating any: "stale" candidates are
+    # classified as unstarted (recreate) or committed (rebase in place).
+    stale: list[tuple[str, dict[str, object], bool]] = []
     for sid in members:
         slug = _wt_slug(str(sid))
         record = worktrees.get(slug) if isinstance(worktrees, dict) and slug else None
         if not isinstance(record, dict):
             continue
         rec_base = str(record.get("base_sha", ""))
+        if rec_base == head:
+            continue  # already re-anchored (re-run after a partial failure)
         wt_path = Path(str(record.get("path", "")))
-        if rec_base != head:
-            ahead = _wt_git(["rev-list", "--count", f"{rec_base}..{record.get('branch', '')}"],
-                            timeout=10)
-            status = (_wt_git(["status", "--porcelain"], cwd=wt_path, timeout=15)
-                      if wt_path.is_dir() else None)
-            has_work = (
-                ahead.returncode != 0 or ahead.stdout.strip() != "0"
-                or status is None or status.returncode != 0
-                or any(ln.strip() and not _wt_is_runtime_state_path(_wt_porcelain_path(ln))
-                       for ln in status.stdout.splitlines())
+        ahead = _wt_git(["rev-list", "--count", f"{rec_base}..{record.get('branch', '')}"],
+                        timeout=10)
+        status = (_wt_git(["status", "--porcelain"], cwd=wt_path, timeout=15)
+                  if wt_path.is_dir() else None)
+        unreadable = (ahead.returncode != 0 or status is None or status.returncode != 0)
+        dirty_tree = status is not None and any(
+            ln.strip() and not _wt_is_runtime_state_path(_wt_porcelain_path(ln))
+            for ln in status.stdout.splitlines()
+        )
+        if unreadable or dirty_tree:
+            return _wt_error(
+                "CANDIDATE_HAS_WORK",
+                f"candidate {sid} has uncommitted edits or an unreadable tree; "
+                "refusing to touch it (abort_wave_group preserves patches)",
+                subtask_id=str(sid), needs_redispatch=False, worktrees_preserved=True,
             )
-            if has_work:
-                return _wt_error(
-                    "CANDIDATE_HAS_WORK",
-                    f"candidate {sid} has committed/uncommitted work or an unreadable tree; "
-                    "refusing to recreate it (abort_wave_group preserves patches)",
-                    subtask_id=str(sid), needs_redispatch=False, worktrees_preserved=True,
-                )
-        records.append((str(sid), record))
+        stale.append((str(sid), record, ahead.stdout.strip() != "0"))
 
-    if head == base and all(str(r.get("base_sha")) == head for _, r in records):
+    if head == base and not stale:
         return {"status": "success", "ok": True, "rebased": False, "group_key": group_key,
-                "base_sha": head, "recreated": []}
+                "base_sha": head, "recreated": [], "rebased_candidates": []}
 
     claude_root = _wt_storage_root("claude")
     recreated: list[str] = []
-    for sid, record in records:
+    rebased_candidates: list[str] = []
+    for sid, record, has_commits in stale:
         wt_path = Path(str(record.get("path", "")))
+        wt_branch = str(record.get("branch", ""))
+        if has_commits:
+            # Intent: replay committed candidate work on the new HEAD in place.
+            replay = _wt_git(["rebase", "--onto", head, str(record.get("base_sha")), wt_branch],
+                             cwd=wt_path, timeout=WORKTREE_VERIFY_TIMEOUT)
+            if replay.returncode != 0:
+                _wt_git(["rebase", "--abort"], cwd=wt_path, timeout=30)
+                return _wt_error(
+                    "CANDIDATE_REBASE_CONFLICT",
+                    f"candidate {sid} does not rebase cleanly onto the new HEAD; left unchanged",
+                    subtask_id=sid, detail=(replay.stderr or replay.stdout).strip()[-500:],
+                    needs_redispatch=False, worktrees_preserved=True,
+                    recreated=recreated, rebased_candidates=rebased_candidates,
+                )
+            state = _read_worktree_state(branch_name)
+            wts = state.get("worktrees")
+            slug = _wt_slug(sid)
+            if isinstance(wts, dict) and slug and isinstance(wts.get(slug), dict):
+                wts[slug]["base_sha"] = head
+            _write_worktree_state(branch_name, state)
+            rebased_candidates.append(sid)
+            continue
         provider = ("claude" if claude_root is not None
                     and claude_root in wt_path.parents else "codex")
         attempt = int(str(record.get("attempt", 0)))
         discarded = discard_subtask_worktree(sid, attempt, branch_name)
         if not discarded.get("ok"):
-            return {**discarded, "recreated": recreated}
+            return {**discarded, "recreated": recreated, "rebased_candidates": rebased_candidates}
         created = create_subtask_worktree(
             sid, attempt, branch_name, provider=provider,
         )
         if not created.get("ok"):
-            return {**created, "recreated": recreated}
+            return {**created, "recreated": recreated, "rebased_candidates": rebased_candidates}
         recreated.append(sid)
 
     state = _read_worktree_state(branch_name)
@@ -25064,7 +25092,8 @@ def rebase_wave_group(
         groups[group_key]["base_sha"] = head
     _write_worktree_state(branch_name, state)
     return {"status": "success", "ok": True, "rebased": True, "group_key": group_key,
-            "base_sha": head, "previous_base_sha": base, "recreated": recreated}
+            "base_sha": head, "previous_base_sha": base, "recreated": recreated,
+            "rebased_candidates": rebased_candidates}
 
 
 def record_group_lifecycle(
