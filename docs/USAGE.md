@@ -1079,6 +1079,14 @@ official link, treats that release text only as untrusted display data, and asks
 for explicit permission. A missing or unusable official description prevents the
 major offer.
 
+Before any network check, the updater compares the project's installed version
+(`mapify_version` in `.map/mapify.lock.json`) with the running CLI. If the
+project is older, for example because the CLI was upgraded outside the updater,
+it refreshes the installed providers (`updated`) even when the CLI is already the
+latest release. Automatic mode does this within the running major only; a project
+a major behind needs `mapify _update --mode manual`. A project newer than the CLI
+is never downgraded.
+
 When permission is rejected, the provider silently records the exact offered
 version in the project's `.map/update-state.json`. Later automatic and manual
 checks suppress only that exact version without fetching its highlights or asking

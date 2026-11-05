@@ -12,6 +12,7 @@ import httpx
 
 from mapify_cli import create_ssl_context
 from mapify_cli.config import load_map_config
+from mapify_cli.install_manifest import read_manifest
 from mapify_cli.update_install import (
     InstallKind,
     PackageUpdateError,
@@ -443,6 +444,41 @@ def _metadata_unavailable_result(
     )
 
 
+def _stale_project_state(
+    project_path: Path,
+    state: UpdateState,
+    current: StableVersion,
+    mode: UpdateMode,
+) -> UpdateState | None:
+    """Return a pending-refresh state when project files predate the running CLI.
+
+    Intent: PyPI-based discovery only asks whether a newer CLI exists, so a CLI
+    upgraded outside the updater (#643) left project files stale while the result
+    stayed ``current``. The lock's ``mapify_version`` is the project's installed
+    version; an older stable value is local proof a refresh is owed. Automatic
+    mode refreshes only within the running major (a major gap needs the explicit
+    manual flow); a newer or unreadable project version never downgrades.
+    """
+    manifest = read_manifest(project_path)
+    if manifest is None:
+        return None
+    installed = StableVersion.parse(manifest.mapify_version)
+    if installed is None or installed >= current:
+        return None
+    if mode is UpdateMode.AUTOMATIC and installed.major != current.major:
+        return None
+    providers = installed_providers(project_path)
+    if not providers:
+        return None
+    return replace(
+        state,
+        last_installed_version=str(current),
+        pending_install_version=None,
+        pending_refresh=True,
+        pending_providers=providers,
+    )
+
+
 def _check_locked(
     project_path: Path,
     current_version: str,
@@ -488,6 +524,14 @@ def _check_locked(
                 )
                 write_update_state(project_path, cleared)
                 progress.state = cleared
+
+        if not progress.state.pending_refresh:
+            stale_state = _stale_project_state(
+                project_path, progress.state, current, mode
+            )
+            if stale_state is not None:
+                write_update_state(project_path, stale_state)
+                progress.state = stale_state
 
         if progress.state.pending_refresh:
             if mode is UpdateMode.AUTOMATIC and not refresh_retry_due(
