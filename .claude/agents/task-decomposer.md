@@ -342,6 +342,7 @@ Return **ONLY** valid JSON in this exact structure:
   - Example: "Use existing RateLimiter middleware, configure for /api/* routes"
 **subtasks[].test_strategy**: Required object with unit/integration/e2e keys plus `scenario_dimensions`. Use "N/A" for levels not applicable.
   - **scenario_dimensions** (required): Object with four keys — `happy_path`, `error`, `edge_case`, `security`. Each describes at least one planned test covering that dimension. Use "N/A" for dimensions not relevant to the subtask. Testing-heavy subtasks must cover at minimum 4 dimensions.
+  - **Repo lint/type gate (MANDATORY for code subtasks)**: when the repo has a lint/type target (Makefile `lint`/`check`, CI lint or type-check step), the subtask's verification MUST include the repo's lint/type target for the touched code, not only build/vet. If the tool may be absent locally, name the install/tools target in the verification step.
   - MUST map `validation_criteria` → tests:
     - For each `VCn:` criterion, include at least one planned test name that covers it.
     - Recommended naming: include `vc<n>` in the test name (e.g., `test_vc1_*`, `TestVC1*`) for deterministic grep-ability.
