@@ -2022,8 +2022,8 @@ def test_incremental_scope_includes_dependent_modules_and_falls_back(branch_work
     assert delivery["status"] == "context_ready", delivery
     if cover_dependency:
         manifest = json.loads((branch_workspace / "review-context-objects" / context_id).read_text())
-        resource_id = next(key for key, metadata in manifest["resources"].items()
-                           if metadata.get("path") == "consumer.py")
+        assert not any(metadata.get("path") == "consumer.py" for metadata in manifest["resources"].values())
+        resource_id = "repo:consumer.py"
         request = {"type": "context_request", "context_id": context_id,
                    "resource_id": resource_id, "offset": 0}
         chunk = runner.serve_review_context("monitor", json.dumps(request), "baseline",

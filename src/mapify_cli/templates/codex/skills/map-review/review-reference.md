@@ -27,8 +27,71 @@ If reviewers could not run for an admitted round, `abandon_review_round` it. A r
 
 Required coverage is the admitted `required_files`: changed paths against the selected base,
 including staged/unstaged/untracked inputs, deletions and both rename sides. The full
-`context_files` inventory remains snapshot-bound and available for dependency checks.
+`context_files` inventory remains snapshot-bound; unchanged files are fetched lazily as
+resource `repo:<path>` (frozen on first fetch) and are never listed in the manifest.
 Unread or explicitly skipped optional context does not make review incomplete.
+
+Generated files are excluded from `required_files` and recorded in `row.coverage_skips`
+(`snapshot.coverage_skips`, ledger `completeness.skipped_scope`) only when matched by a file
+name pattern (`*.pb.go`, `*.pb.cc`, `*.pb.h`, `*_pb2.py`, `*_pb2_grpc.py`, `zz_generated*`), a
+trusted `review.generated_patterns` entry (gitattributes-style: a pattern with a leading or inner slash is
+anchored to the repository root, one without a slash matches the base name at any depth, `*` and `?` never cross
+`/`, and `**/`, `/**`, `/**/` span directories), or `linguist-generated` in the root `.gitattributes`
+of the trusted default revision. A `Code generated` header never skips a file, lockfiles stay
+required, and strict `review.security_gates` disables every skip. Their diff hunks appear as
+one-line stubs. `review.exclude_generated: false` turns skipping off.
+
+Unmodified installed MAP files are skipped too (`rule: mapify-managed`, listed in `skipped_scope`):
+a file whose embedded `MAP-MANAGED` header has a `template_hash` equal to the hash of its own payload
+(fully managed files, and fenced files whose fence is intact with no user tail). Edited payloads,
+user tails, missing or malformed headers and files whose JSON was reformatted stay required.
+**Trust trade-off:** the header is self-attested. A PR author can add a self-consistent header to
+any file and it is skipped (visibly, in `skipped_scope`). Use strict `review.security_gates` when PR
+authors are untrusted; it disables this skip. `review.exclude_mapify_managed: false` opts out.
+
+## Sharded Rounds
+
+When the required scope does not fit one reviewer's budget, admission plans `row.shards`
+(deterministic, directory-aware, disjoint; at most `review.max_shards`, default 8) and returns
+`shard_ids`. A single file above the per-shard capacity or more than `max_shards` shards fails
+admission with `review_context_budget_exceeded` (`reason: file_too_large | too_many_shards`).
+Unsharded rounds never see any of this.
+
+- Every scheduled role reviews every shard; there is no per-role coverage exemption. Loop
+  ordering, then shard, then role. `--adversarial` and `--compare-orderings` work unchanged
+  per shard (orderings x shards x roles).
+- Build with `--shard <id>` (`build_review_prompts`, `build_role_review_prompts`,
+  `build_adversarial_review_prompts`). Without it a sharded round returns
+  `{status: "sharded", shard_ids}`. A shard context carries only that shard's source resources and
+  diff; other shards' files are optional `repo:<path>` context. Delivery, finalization token and
+  `context_receipt` are per shard (`ordering:reviewer#sNN`); bind/serve/ack are unchanged.
+- Capture with `capture_review_output --shard <id>`. Shard captures are stored under
+  `review-shards/` (outside the `review-agent-*` namespace). Once every shard of an
+  (ordering, reviewer) is captured the runner writes the canonical `review-agent-<reviewer>.json`:
+  worst-of verdict fields (`verdict`, `risk_assessment`, `recommendation`, minimum scores and
+  confidence), concatenated findings/issues (reviewer finding IDs kept unique; the ledger still
+  keys findings by fingerprint, never by shard), unioned receipts and `context_receipts` per
+  shard. Adversarial aggregates are re-aggregated from the merged per-reviewer outputs. A partial
+  set of shards leaves the round INCOMPLETE.
+- Completeness checks each shard capture's hash, delivery proof and own-file coverage, so a
+  reviewer claiming other shards' files cannot hide an unread shard. The complexity lens is
+  advisory and runs per shard; report its per-shard lines together.
+
+## Context Budget
+
+Admission sizes each path the way its resource is serialized (ASCII-escaped JSON or base64 for sources,
+raw text for the diff, plus the manifest entry), so non-ASCII changes are sharded at admission instead of
+failing at prompt build; the plan and budget check run for every new round, not only the first. Execution-check
+logs longer than 16 Ki characters are shortened in the prompt; the full log is the optional resource
+`check:<id>` (fetched like `repo:<path>`). A changed generated file fetched through `repo:<path>` is served
+with its real base and current content (`status: changed_generated_skipped`).
+
+Each reviewer's required context (manifest, prompt, `diff`, inventory, sources, artifacts) must
+fit `review.context_budget_bytes` (trusted config; env `MAP_REVIEW_CONTEXT_BUDGET_BYTES`; default
+384 KiB). `begin_review_run` estimates it before consent and returns
+`stop_reason: review_context_budget_exceeded` with `total`, `budget`, `top_paths` and `hints`
+without consuming a round; the prompt builders recheck exact bytes and return no partial prompts.
+Split the change, exclude generated files or raise the budget.
 
 ## Compare Orderings
 
@@ -158,7 +221,7 @@ Either way it cannot gate the change, and it cannot disappear either.
 Standalone prompt build (the normal fan-out builds these automatically):
 
 ```bash
-python3 .map/scripts/map_step_runner.py build_role_review_prompts \
+python3 .map/scripts/map_step_runner.py build_role_review_prompts ${SHARD:+--shard "$SHARD"} \
   [--roles user_experience,maintainer]
 ```
 
@@ -303,8 +366,9 @@ retries, both ordering collections and the advisory complexity lens:
    For an early final response, retain no final capture: create the same request
    shape from the status's next `remaining` resource/offset and continue delivery.
    Required resources include the manifest, full original prompt (unless initially
-   inline), inventory and source resources marked `required`. Unchanged sources
-   are optional dependency context; fetch them only when needed. Blind stays diff-only.
+   inline), the `diff` resource, inventory and source resources marked `required`. Unchanged
+   repository files are optional: fetch `repo:<path>` only when needed. Blind stays diff-only
+   (prompt and `diff` only).
 2. Store the exact returned chunk JSON in a session-specific pending file under
    `.map/<branch>/review-context-delivery/<session-id>/`, then pass that JSON
    verbatim to the **same agent**:
@@ -362,7 +426,7 @@ BRANCH=$(python3 .map/scripts/map_utils.py branch)
 BRANCH_DIR=".map/$BRANCH"
 REVIEW_ROUND_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["round_id"])' "$BRANCH_DIR/review-mode.json")
 python3 .map/scripts/map_step_runner.py capture_review_output --reviewer monitor \
-  --round-id "$REVIEW_ROUND_ID" --ordering "${ORDERING_LABEL:-}" <<'MONITOR_EOF'
+  --round-id "$REVIEW_ROUND_ID" --ordering "${ORDERING_LABEL:-}" ${SHARD:+--shard "$SHARD"} <<'MONITOR_EOF'
 <paste the Monitor JSON envelope verbatim>
 MONITOR_EOF
 ```

@@ -64,6 +64,8 @@ def repo(seed, small_seed, tmp_path, monkeypatch, request):
     source = seed if request.node.originalname in large_cases else small_seed
     shutil.copytree(source, root)
     monkeypatch.chdir(root)
+    # These fixtures intentionally exceed the default byte budget; budget behavior is tested separately.
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", "100000000")
     admission = runner.begin_review_run(branch="feature", round_id="context-round", provider="codex")
     assert admission["status"] == "success", admission
     bundle = runner.create_review_bundle(branch="feature")
@@ -147,7 +149,11 @@ def test_aggregate_context_roundtrip_preserves_prompt_inventory_and_all_sources(
     assert fetch(entry, "monitor", "prompt") == original
     inventory = json.loads(fetch(entry, "monitor", "inventory"))
     assert inventory["snapshot"]["required_files"] == admission["required_files"]
-    assert inventory["snapshot"]["target"] == admission["target"]
+    expected = {key: value for key, value in admission["target"].items() if key != "context_files"}
+    expected["context_files_count"] = len(admission["target"]["context_files"])
+    assert {key: value for key, value in inventory["snapshot"]["target"].items()
+            if key != "context_files_sha256"} == expected
+    assert "context_files_sha256" in inventory["snapshot"]["target"]
     assert inventory["attribution"]["base"] == git(root, "rev-parse", "main")
     source_resources = {key: value for key, value in manifest["resources"].items() if key.startswith("source_") and value.get("required", True)}
     assert len(source_resources) == 36
@@ -165,17 +171,19 @@ def test_aggregate_context_roundtrip_preserves_prompt_inventory_and_all_sources(
 
 @pytest.mark.parametrize("builder,reviewer", [("build_review_prompts", "monitor"),
     ("build_role_review_prompts", "maintainer"), ("build_adversarial_review_prompts", "blind")])
-def test_all_builders_deliver_large_unicode_diff_without_message_overflow(repo, builder, reviewer):
+def test_all_builders_deliver_large_unicode_diff_without_message_overflow(repo, monkeypatch, builder, reviewer):
     """UTF-8 and JSON escaping count toward the unchanged per-message cap."""
     del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", "100000000")
     diff = "diff --git a/x b/x\n+" + ('🙂\\"\x00\n' * 80_000) + "END_OF_DIFF"
     result = getattr(runner, builder)(branch="feature", git_diff_text=diff)
     assert result["status"] == "success", result
     entry = result["prompts"][reviewer]
-    original = fetch(entry, reviewer, "prompt")
+    original = fetch(entry, reviewer, "diff")
     assert len(original.encode()) > runner.REVIEW_PROMPT_MAX_BYTES
     assert diff in original
     assert "END_OF_DIFF" in original
+    assert "END_OF_DIFF" not in fetch(entry, reviewer, "prompt")
     assert len(entry["prompt"].encode()) < 30_000
 
 
@@ -186,7 +194,7 @@ def test_role_access_and_peer_independence_survive_transport(repo):
     result = runner.build_adversarial_review_prompts(branch="feature", spec_text="SPEC_SECRET")
     prompts = result["prompts"]
     blind = json.loads(fetch(prompts["blind"], "blind"))
-    assert set(blind["resources"]) == {"prompt"}
+    assert set(blind["resources"]) == {"prompt", "diff"}
     assert "SPEC_SECRET" not in fetch(prompts["blind"], "blind", "prompt")
     assert "SPEC_SECRET" not in fetch(prompts["edge_case"], "edge_case", "prompt")
     assert "SPEC_SECRET" in fetch(prompts["acceptance"], "acceptance", "prompt")
@@ -297,7 +305,7 @@ def test_manifest_itself_is_chunkable_and_abandoned_context_is_unavailable(repo)
     entry = runner.build_review_prompts(branch="feature")["prompts"]["monitor"]
     manifest = json.loads(fetch(entry, "monitor", chunk_bytes=2048))
     assert len(manifest["resources"]) == 39
-    assert sum(item.get("required", True) for item in manifest["resources"].values()) == 38
+    assert sum(item.get("required", True) for item in manifest["resources"].values()) == 39
     abandoned = runner.abandon_review_round("context-round", reason="source changed", branch="feature")
     assert abandoned["status"] == "success", abandoned
     result = runner.serve_review_context("monitor", json.dumps(request(entry)), "context-round", branch="feature")
@@ -310,6 +318,7 @@ def test_fresh_install_routes_intermediate_context_before_final_validation(seed,
     root = tmp_path / provider
     shutil.copytree(seed, root)
     monkeypatch.chdir(root)
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", "100000000")
     installed = CliRunner().invoke(app, ["init", ".", "--force", "--no-git", "--mcp", "none", "--provider", provider])
     assert installed.exit_code == 0, installed.output
     git(root, "add", ".")

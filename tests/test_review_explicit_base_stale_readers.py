@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.review_context_helpers import original_review_prompt
+from tests.review_context_helpers import review_evidence_text
 from tests.test_review_explicit_base import SCRIPTS, admit, git, runner
 from tests.test_review_explicit_base import stack as stack  # noqa: PLC0414 -- expose pytest fixture
 
@@ -106,7 +106,7 @@ def test_current_scope_readers_still_observe_dirty_work(stack, consumer):
         result = fresh_consumer(consumer)
         assert result["status"] == "success", result
         for name, entry in result["prompts"].items():
-            prompt = original_review_prompt(runner, entry, name, branch="product")
+            prompt = review_evidence_text(runner, entry, name, branch="product")
             assert "+PRODUCT = 558" in prompt, name
             assert "+PARENT_ONLY = 1701" not in prompt, name
 

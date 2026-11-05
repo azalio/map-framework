@@ -130,6 +130,11 @@ class SimulatedHost:
         self.resumed.append(thread_id)
         return "thread"
 
+    def covered_files(self):
+        """Report the whole admitted scope; a shard's own files are always a subset."""
+        row = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
+        return row["required_files"]
+
     def probe(self, context_id="context"):
         return {"context_id": context_id, "boundary": "codex_no_environments", "thread_id": "thread", "environments": [], "mcp_servers": [],
                 "source_read": "host_witnessed", "canary_write": "host_denied_no_environment"}
@@ -141,7 +146,7 @@ class SimulatedHost:
             if state["status"] == "context_ready":
                 return json.dumps({"valid": True, "summary": "Reviewed", "evidence": {}, "verdict": "approved",
                     "issues": [], "passed_checks": [], "failed_checks": [],
-                    "receipt": {"covered_files": ["first.py"], "skipped_files": [], "denied_access": [], "check_evidence": []},
+                    "receipt": {"covered_files": self.covered_files(), "skipped_files": [], "denied_access": [], "check_evidence": []},
                     "context_receipt": {"session_id": state["session_id"], "finalization_token": state["finalization_token"]}})
             delivery = self.on_event.__self__
             complete_result(delivery, response, str(count))
@@ -203,7 +208,8 @@ def test_explicit_optional_resource_starts_at_own_offset(repo):
     complete_result(delivery, response)
     ledger = runner._read_review_ledger(Path(".map/feature"))
     session = ledger["convergence"]["rounds"][-1]["context_sessions"][delivery.state["session_id"]]
-    optional = next(key for key, value in session["available"].items() if value.get("path") == "dependency.py")
+    assert not any(value.get("path") == "dependency.py" for value in session["available"].values())
+    optional = "repo:dependency.py"
     response = delivery.respond({"arguments": {"resource_id": optional}, "callId": "optional"})
     assert json.loads(response["contentItems"][0]["text"])["offset"] == 0
 
@@ -270,7 +276,7 @@ def test_driver_adversarial_roster_and_ordering_sessions(repo, monkeypatch, argu
                 if state["status"] == "context_ready":
                     return json.dumps({"reviewer": state["reviewer"], "all_clear": True,
                         "all_clear_rationale": "Read the changed source", "findings": [], "checks_performed": ["source"],
-                        "receipt": {"covered_files": ["first.py"], "skipped_files": [], "denied_access": [], "check_evidence": []},
+                        "receipt": {"covered_files": self.covered_files(), "skipped_files": [], "denied_access": [], "check_evidence": []},
                         "context_receipt": {"session_id": state["session_id"], "finalization_token": state["finalization_token"]}})
                 self.on_event({"method": "item/completed", "params": {"threadId": self.identity, "item": {
                     "type": "dynamicToolCall", "tool": "review_context", "id": str(count), "status": "completed", **response}}})
@@ -335,3 +341,89 @@ def test_adversarial_preferences_rejected_before_saving(repo, monkeypatch):
         driver.run("feature", review_preferences="Requested focus")
     row = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
     assert "codex_review_preferences" not in row
+
+
+def test_sharded_driver_loops_shards_and_resumes_per_shard(repo, monkeypatch):
+    del repo
+    # Codex inlines the bundled role rubrics; planning reserves their room, so give shards 60 KB each.
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(
+        runner.REVIEW_CONTEXT_RESERVE_BYTES + runner.REVIEW_ROLE_RUBRIC_RESERVE_BYTES + 60_000))
+    scope_tests.write_changes()
+    scope_tests.write_many(6)
+    admission = runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="host")
+    assert admission["status"] == "success" and len(admission["shard_ids"]) >= 2, admission
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    monkeypatch.setattr(driver, "CodexReviewHost", SimulatedHost)
+    SimulatedHost.resumed = []
+    SimulatedHost.interrupt_once = True
+    with pytest.raises(host.HostError, match="interrupted"):
+        driver.run("feature")
+    result = driver.run("feature")
+    assert result["status"] == "success"
+    assert [item["shard"] for item in result["reviewers"]] == admission["shard_ids"]
+    # The interrupted first shard resumed its own saved thread; later shards started fresh threads.
+    assert SimulatedHost.resumed[:2] == ["", "thread"]
+    row = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
+    assert set(row["shard_receipts"]["default:monitor"]) == set(admission["shard_ids"])
+    assert {key for key in row["context_active"]} == {f"default:monitor#{sid}" for sid in admission["shard_ids"]}
+    assert Path(".map/feature/review-agent-monitor.json").exists()
+    # Completed shards are reused without redispatch.
+    resumed = list(SimulatedHost.resumed)
+    again = driver.run("feature")
+    assert all(item.get("reused") for item in again["reviewers"])
+    assert SimulatedHost.resumed == resumed
+    complete = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    assert complete["completeness"]["status"] == "COMPLETE", complete
+    assert complete["code_approval"]["approved"] is True
+
+
+def interrupted_round(monkeypatch):
+    Path("first.py").write_text("value = 2\n")
+    runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="host")
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    monkeypatch.setattr(driver, "CodexReviewHost", SimulatedHost)
+    SimulatedHost.resumed = []
+    SimulatedHost.interrupt_once = True
+    with pytest.raises(host.HostError, match="interrupted"):
+        driver.run("feature")
+    path = Path(".map/feature/review-verdict-ledger.json")
+    ledger = json.loads(path.read_text())
+    return path, ledger, ledger["convergence"]["rounds"][-1]
+
+
+def test_pending_round_from_an_older_runner_is_resumed_on_a_fresh_thread_without_abandon(repo, monkeypatch):
+    del repo
+    path, ledger, row = interrupted_round(monkeypatch)
+    session = next(iter(row["context_sessions"].values()))
+    legacy_id = "0" * 64
+    # Simulate a pre-upgrade manifest: different id, registered without the current runner schema stamp.
+    row["context_manifests"][legacy_id] = {key: value for key, value in row["context_manifests"][session["context_id"]].items()
+                                           if key != "runner_schema"}
+    session["context_id"] = legacy_id
+    # A real legacy session id was derived from the legacy context id, so it differs from the current one.
+    current_sid = next(iter(row["context_sessions"]))
+    row["context_sessions"]["legacy-session"] = row["context_sessions"].pop(current_sid)
+    row["context_active"] = {key: "legacy-session" for key in row["context_active"]}
+    path.write_text(json.dumps(ledger))
+    assert driver.run("feature")["status"] == "success"
+    assert SimulatedHost.resumed[-1] == ""  # a fresh native thread, not a resume of the old one
+    after = json.loads(path.read_text())["convergence"]["rounds"][-1]
+    assert after["round_id"] == "host" and "aborted_at" not in after
+    assert len([r for r in json.loads(path.read_text())["convergence"]["rounds"]]) == 1
+    assert runner.write_review_verdict_ledger(current_run=True, branch="feature")["completeness"]["status"] == "COMPLETE"
+
+
+def test_context_change_within_the_current_runner_generation_still_fails_closed(repo, monkeypatch):
+    del repo
+    path, ledger, row = interrupted_round(monkeypatch)
+    session = next(iter(row["context_sessions"].values()))
+    changed_id = "1" * 64
+    row["context_manifests"][changed_id] = {**row["context_manifests"][session["context_id"]],
+                                            "runner_schema": runner.REVIEW_CONTEXT_RUNNER_SCHEMA}
+    session["context_id"] = changed_id
+    current_sid = next(iter(row["context_sessions"]))
+    row["context_sessions"]["changed-session"] = row["context_sessions"].pop(current_sid)
+    row["context_active"] = {key: "changed-session" for key in row["context_active"]}
+    path.write_text(json.dumps(ledger))
+    with pytest.raises(host.HostError, match="context changed"):
+        driver.run("feature")

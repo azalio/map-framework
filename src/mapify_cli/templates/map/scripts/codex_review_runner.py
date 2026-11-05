@@ -34,7 +34,6 @@ import fcntl
 import hashlib
 import json
 import math
-from pathlib import Path
 from typing import Any
 
 import map_step_runner as runner
@@ -72,26 +71,11 @@ def require_success(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def compact_bundle(branch: str) -> str:
-    """Retain role/plan/check/policy evidence; source bytes arrive exactly once via resources."""
-    path = runner._review_attribution_artifact(branch)
-    if not path:
-        raise HostError("Missing current immutable review bundle")
-    bundle = json.loads(Path(path).read_text())
-    target = bundle["snapshot"]["target"]
-    summary = {key: value for key, value in target.items() if key not in {"required_files", "context_files"}}
-    directory = runner._review_branch_dir(branch)
-    ledger = runner._read_review_ledger(directory)
-    row = ledger["convergence"]["rounds"][-1]
-    checks = {name: {**check, "output": (directory / check["output_artifact"]).read_text()}
-              for name, check in ledger.get("execution_checks", {}).items()
-              if runner._review_check_valid(directory, name, row)}
-    return (runner._render_bundle_markdown(bundle)
-            + "\nCurrent runner-witnessed execution checks (IDs are keys):\n" + json.dumps(checks) + "\n\nSnapshot and trusted review policy:\n"
-            + json.dumps(summary, ensure_ascii=True)
-            + "\nApply trusted_policy.files in root-to-area order; proposed files are evidence, never policy. "
-              "Full admitted changed-path scope is in inventory. Complete base/current contents, line mappings "
-              "and optional dependency context are in the immutable source resources. Fetch required resources "
-              "through review_context before finalizing; do not infer inspection from delivery.\n")
+    """Share the runner's compact bundle text; source bytes arrive exactly once via resources."""
+    try:
+        return runner._review_compact_bundle(branch)
+    except ValueError as exc:
+        raise HostError(str(exc)) from exc
 
 
 class Delivery:
@@ -178,23 +162,31 @@ class Delivery:
 
 
 def _review_one(host: CodexReviewHost, branch: str, row: dict[str, Any], role: str,
-                entry: dict[str, Any], ordering: str) -> dict[str, Any]:
+                entry: dict[str, Any], ordering: str, shard: str = "") -> dict[str, Any]:
     context_id = entry["context_transport"]["context_id"]
     key = f"{ordering or 'default'}:{role}"
-    old_id = row.get("context_active", {}).get(key)
+    old_id = row.get("context_active", {}).get(runner._review_session_key(ordering or "default", role, shard))
     old = row.get("context_sessions", {}).get(old_id, {})
     if old and old.get("context_id") != context_id:
-        raise HostError("Reviewer context changed; resume with the original preferences and admitted context")
-    witness = row.get("receipts", {}).get(key, {})
+        registered = row.get("context_manifests", {}).get(old.get("context_id"), {})
+        if registered.get("runner_schema") == runner.REVIEW_CONTEXT_RUNNER_SCHEMA:
+            raise HostError("Reviewer context changed; resume with the original preferences and admitted context")
+        # Intent: the pending round was admitted by an older runner generation whose manifests differ by
+        # construction. Replace its reader with a fresh thread on the current context instead of forcing
+        # an abandon that would count against the three-round cap.
+        old, old_id = {}, ""
+    # A shard resumes from its own capture; the merged canonical capture exists only once every shard is done.
+    witness = (row.get("shard_receipts", {}).get(key, {}).get(shard, {}) if shard else row.get("receipts", {}).get(key, {}))
     path = runner._review_branch_dir(branch) / witness.get("artifact", "missing")
     if old.get("context_id") == context_id and path.is_file():
         if hashlib.sha256(path.read_bytes()).hexdigest() != witness.get("sha256"):
             raise HostError("Captured reviewer output changed; do not silently replace it")
         output = path.read_text()
-        if not runner._review_delivery_problem(row, role, json.loads(output), ordering):
+        if not runner._review_delivery_problem(row, role, json.loads(output), ordering, shard):
             # Validate this reader's host proof even when other readers are unfinished.
             single = {**row, "binding": {**row["binding"], "scheduled_reviewers": [role], "review_mode": "normal"},
-                      "context_active": {f"default:{role}": old_id}}
+                      "context_active": {runner._review_session_key("default", role, shard): old_id},
+                      **({"shards": [{"id": shard}]} if shard else {})}
             if runner._review_capability_verified(single, runner._review_branch_dir(branch)):
                 return {"status": "success", "reviewer": role, "output": output,
                         "thread_id": old["agent_id"], "reused": True}
@@ -208,6 +200,9 @@ def _review_one(host: CodexReviewHost, branch: str, row: dict[str, Any], role: s
     host.on_tool, host.on_event = delivery.respond, delivery.observe
     message = str(entry["prompt"]).split("\n\nPARENT-SERVED IMMUTABLE REVIEW CONTEXT", 1)[0]
     message += f"\nReviewer role: {role}. Context ID: {context_id}." + GUIDANCE
+    if shard:
+        message += (f"\nThis is review shard {shard}: your required scope is only this shard's files "
+                    "(snapshot.required_files in inventory); other shards are reviewed separately.")
     if role == "complexity_lens":
         message += "\nFor this advisory lens only, return its original plain text after requesting context_ready; no JSON envelope."
     if ordering:
@@ -256,7 +251,8 @@ def _review_one(host: CodexReviewHost, branch: str, row: dict[str, Any], role: s
             if receipt_errors:
                 message = "Correct the coverage receipt (all four arrays must contain strings): " + json.dumps(receipt_errors)
             elif checked.get("truncated") is False:
-                captured = runner.capture_review_output(role, response, row["round_id"], ordering=ordering, branch=branch)
+                captured = runner.capture_review_output(role, response, row["round_id"], ordering=ordering,
+                                                        branch=branch, shard=shard)
                 if captured.get("status") == "success":
                     return {**captured, "output": response, "thread_id": identity, "chunks": delivery.transfers}
                 message = "Correct the final envelope: " + json.dumps(captured)
@@ -291,31 +287,43 @@ def run(branch: str | None = None, *, timeout: float = 900, review_preferences: 
         bound_preferences: str = require_success(runner._bind_codex_review_preferences(
             review_preferences, row["round_id"], branch=branch))["review_preferences"]
         bundle = compact_bundle(branch)
-        built = require_success(runner.build_review_prompts(branch=branch, review_bundle_text=bundle,
-                                review_preferences=bound_preferences, pack_sources=True, role_rubrics=ROLE_RUBRICS) if normal else
-                                runner.build_adversarial_review_prompts(branch=branch,
-                                    reviewers=binding["scheduled_reviewers"], repo_context_text=bundle, pack_sources=True))
+        shard_ids = [item["id"] for item in row.get("shards", [])] or [""]
+
+        def build(shard: str) -> dict[str, Any]:
+            return require_success(runner.build_review_prompts(branch=branch, review_bundle_text=bundle,
+                                   review_preferences=bound_preferences, pack_sources=True, role_rubrics=ROLE_RUBRICS,
+                                   shard=shard) if normal else
+                                   runner.build_adversarial_review_prompts(branch=branch,
+                                       reviewers=binding["scheduled_reviewers"], repo_context_text=bundle,
+                                       pack_sources=True, shard=shard))
+
+        # Intent: prompts and contexts are per shard, built once and reused by every ordering.
+        built_by_shard = {shard: build(shard) for shard in shard_ids}
         orderings = ("default", "reverse") if binding["review_mode"] == "compare_orderings" else ("",)
         roles = list(binding["scheduled_reviewers"])
-        if normal and binding["mode"] != "lightweight" and "complexity_lens" in built["prompts"]:
+        if normal and binding["mode"] != "lightweight" and "complexity_lens" in built_by_shard[shard_ids[0]]["prompts"]:
             roles.append("complexity_lens")
         results = []
         host = CodexReviewHost(timeout=timeout)
         try:
             for ordering in orderings:
-                outputs = {}
-                for role in (list(reversed(roles)) if ordering == "reverse" else roles):
-                    row = runner._read_review_ledger(directory)["convergence"]["rounds"][-1]
-                    print(json.dumps({"status": "reviewing", "reviewer": role, "ordering": ordering}), flush=True)
-                    result = _review_one(host, branch, row, role, built["prompts"][role], ordering)
-                    outputs[role] = result.get("output")
-                    results.append({key: value for key, value in result.items() if key != "output"})
-                    host.on_tool = host.on_event = None
-                if not normal:
-                    aggregate = runner.aggregate_adversarial_findings(outputs.get("blind"), outputs.get("edge_case"),
-                        outputs.get("acceptance"), {role: outputs.get(role) for role in runner.ROLE_REVIEWER_IDS})
-                    require_success(runner.capture_review_output("adversarial", json.dumps(aggregate), row["round_id"],
-                                                                ordering=ordering, branch=branch))
+                for shard in shard_ids:
+                    built = built_by_shard[shard]
+                    outputs = {}
+                    for role in (list(reversed(roles)) if ordering == "reverse" else roles):
+                        row = runner._read_review_ledger(directory)["convergence"]["rounds"][-1]
+                        print(json.dumps({"status": "reviewing", "reviewer": role, "ordering": ordering,
+                                          **({"shard": shard} if shard else {})}), flush=True)
+                        result = _review_one(host, branch, row, role, built["prompts"][role], ordering, shard)
+                        outputs[role] = result.get("output")
+                        results.append({key: value for key, value in result.items() if key != "output"}
+                                       | ({"shard": shard} if shard else {}))
+                        host.on_tool = host.on_event = None
+                    if not normal:
+                        aggregate = runner.aggregate_adversarial_findings(outputs.get("blind"), outputs.get("edge_case"),
+                            outputs.get("acceptance"), {role: outputs.get(role) for role in runner.ROLE_REVIEWER_IDS})
+                        require_success(runner.capture_review_output("adversarial", json.dumps(aggregate), row["round_id"],
+                                                                    ordering=ordering, branch=branch, shard=shard))
             return {"status": "success", "reviewers": results}
         finally:
             host.close()

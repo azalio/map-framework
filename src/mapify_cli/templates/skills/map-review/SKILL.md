@@ -344,10 +344,10 @@ If `DETACHED_STATUS` is `success`, tell reviewer agents to read source files fro
 When compare mode is active, run two review collections with `ordering_label='default'` and `ordering_label='reverse'`, then call `compare-review-runs` and `record-review-ordering` to stage the drift summary. See [review-reference.md](review-reference.md#compare-orderings) for the detailed loop.
 
 ### Step A.2: Launch all parallel calls
-Before launching agents, build the reviewer prompts with `build_review_prompts`. Evidence is NOT truncated. The admitted immutable bundle backs a compact initial prompt and parent-served resources; large original prompts, full file inventory and permitted base/current sources arrive in chunks through Step A.2a. `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is informational and clips nothing. The 512 KiB limit still applies to each initial prompt and serialized context response. On a builder error, stop dispatch and report the reason; never bypass admission or remove evidence to fit.
+Before launching agents, build the reviewer prompts with `build_review_prompts`. Evidence is NOT truncated. The admitted immutable bundle backs a compact initial prompt and parent-served resources; large original prompts, full file inventory and permitted base/current sources arrive in chunks through Step A.2a. `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is informational and clips nothing. The 512 KiB limit still applies to each initial prompt and serialized context response. On a builder error, stop dispatch and report the reason; never bypass admission or remove evidence to fit. If admission returned `shard_ids`, set `SHARD=<id>` and run Steps A.2-A.2c once per ordering and shard (see [Sharded rounds](review-reference.md#sharded-rounds)).
 
 ```bash
-REVIEW_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_review_prompts \
+REVIEW_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_review_prompts ${SHARD:+--shard "$SHARD"} \
   --review-preferences "[paste Review Preferences section above]")
 printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("status") == "success" else json.dumps(d, indent=2))' || exit 1
 MONITOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["monitor"]["prompt"])')
@@ -422,7 +422,7 @@ mkdir -p "$BRANCH_DIR"
 
 REVIEW_ROUND_ID="${REVIEW_ROUND_ID:-$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["round_id"])' ".map/$BRANCH/review-mode.json")}"
 python3 .map/scripts/map_step_runner.py capture_review_output \
-  --reviewer monitor --round-id "$REVIEW_ROUND_ID" --ordering "${ORDERING_LABEL:-}" <<'MONITOR_EOF'
+  --reviewer monitor --round-id "$REVIEW_ROUND_ID" --ordering "${ORDERING_LABEL:-}" ${SHARD:+--shard "$SHARD"} <<'MONITOR_EOF'
 <paste the Monitor JSON envelope verbatim>
 MONITOR_EOF
 ```
@@ -517,7 +517,7 @@ When `--adversarial` is set (with `--cross-ai`: present cross-AI first, then thi
 ### Quick reference
 
 ```text
-1. Build prompts:  python3 .map/scripts/map_step_runner.py build_adversarial_review_prompts --reviewers <comma-separated admitted roster>
+1. Build prompts:  python3 .map/scripts/map_step_runner.py build_adversarial_review_prompts --reviewers <comma-separated admitted roster> ${SHARD:+--shard "$SHARD"}
 2. Fan-out:        Task(subagent_type="review-reader", ...) for every role in the admitted roster
                    (edge_case absent under non-strict --quick; security only when admitted) — wait for all
 3. Validate:       Each must return valid JSON per adversarial finding schema; retry ONCE on failure
