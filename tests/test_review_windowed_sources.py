@@ -15,6 +15,7 @@ from tests.test_review_changed_scope import (
 from tests.test_review_changed_scope import repo as _base_repo
 
 repo = _base_repo
+__all__ = ["repo"]  # pytest discovers the fixture by module attribute; exporting marks it as used
 
 BIG = ".sourcecraft/ci.yaml"
 
