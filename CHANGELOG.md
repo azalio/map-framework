@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.36.0] - 2026-11-05
+
 ### Added
 
 - `rebase_wave_group <group_key>` runner verb recovers a wave group after an external commit (`EXTERNAL_HEAD_MOVED`): re-anchors the group on the new HEAD (unstarted candidates recreated, committed candidates rebased in place), refusing without changes on uncommitted candidate edits, rewritten history or a rebase conflict (#631)
