@@ -375,3 +375,55 @@ def test_sharded_driver_loops_shards_and_resumes_per_shard(repo, monkeypatch):
     complete = runner.write_review_verdict_ledger(current_run=True, branch="feature")
     assert complete["completeness"]["status"] == "COMPLETE", complete
     assert complete["code_approval"]["approved"] is True
+
+
+def interrupted_round(monkeypatch):
+    Path("first.py").write_text("value = 2\n")
+    runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="host")
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    monkeypatch.setattr(driver, "CodexReviewHost", SimulatedHost)
+    SimulatedHost.resumed = []
+    SimulatedHost.interrupt_once = True
+    with pytest.raises(host.HostError, match="interrupted"):
+        driver.run("feature")
+    path = Path(".map/feature/review-verdict-ledger.json")
+    ledger = json.loads(path.read_text())
+    return path, ledger, ledger["convergence"]["rounds"][-1]
+
+
+def test_pending_round_from_an_older_runner_is_resumed_on_a_fresh_thread_without_abandon(repo, monkeypatch):
+    del repo
+    path, ledger, row = interrupted_round(monkeypatch)
+    session = next(iter(row["context_sessions"].values()))
+    legacy_id = "0" * 64
+    # Simulate a pre-upgrade manifest: different id, registered without the current runner schema stamp.
+    row["context_manifests"][legacy_id] = {key: value for key, value in row["context_manifests"][session["context_id"]].items()
+                                           if key != "runner_schema"}
+    session["context_id"] = legacy_id
+    # A real legacy session id was derived from the legacy context id, so it differs from the current one.
+    current_sid = next(iter(row["context_sessions"]))
+    row["context_sessions"]["legacy-session"] = row["context_sessions"].pop(current_sid)
+    row["context_active"] = {key: "legacy-session" for key in row["context_active"]}
+    path.write_text(json.dumps(ledger))
+    assert driver.run("feature")["status"] == "success"
+    assert SimulatedHost.resumed[-1] == ""  # a fresh native thread, not a resume of the old one
+    after = json.loads(path.read_text())["convergence"]["rounds"][-1]
+    assert after["round_id"] == "host" and "aborted_at" not in after
+    assert len([r for r in json.loads(path.read_text())["convergence"]["rounds"]]) == 1
+    assert runner.write_review_verdict_ledger(current_run=True, branch="feature")["completeness"]["status"] == "COMPLETE"
+
+
+def test_context_change_within_the_current_runner_generation_still_fails_closed(repo, monkeypatch):
+    del repo
+    path, ledger, row = interrupted_round(monkeypatch)
+    session = next(iter(row["context_sessions"].values()))
+    changed_id = "1" * 64
+    row["context_manifests"][changed_id] = {**row["context_manifests"][session["context_id"]],
+                                            "runner_schema": runner.REVIEW_CONTEXT_RUNNER_SCHEMA}
+    session["context_id"] = changed_id
+    current_sid = next(iter(row["context_sessions"]))
+    row["context_sessions"]["changed-session"] = row["context_sessions"].pop(current_sid)
+    row["context_active"] = {key: "changed-session" for key in row["context_active"]}
+    path.write_text(json.dumps(ledger))
+    with pytest.raises(host.HostError, match="context changed"):
+        driver.run("feature")

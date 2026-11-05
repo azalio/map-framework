@@ -146,7 +146,13 @@ def _review_one(host: CodexReviewHost, branch: str, row: dict[str, Any], role: s
     old_id = row.get("context_active", {}).get(runner._review_session_key(ordering or "default", role, shard))
     old = row.get("context_sessions", {}).get(old_id, {})
     if old and old.get("context_id") != context_id:
-        raise HostError("Reviewer context changed; resume with the original preferences and admitted context")
+        registered = row.get("context_manifests", {}).get(old.get("context_id"), {})
+        if registered.get("runner_schema") == runner.REVIEW_CONTEXT_RUNNER_SCHEMA:
+            raise HostError("Reviewer context changed; resume with the original preferences and admitted context")
+        # Intent: the pending round was admitted by an older runner generation whose manifests differ by
+        # construction. Replace its reader with a fresh thread on the current context instead of forcing
+        # an abandon that would count against the three-round cap.
+        old, old_id = {}, ""
     # A shard resumes from its own capture; the merged canonical capture exists only once every shard is done.
     witness = (row.get("shard_receipts", {}).get(key, {}).get(shard, {}) if shard else row.get("receipts", {}).get(key, {}))
     path = runner._review_branch_dir(branch) / witness.get("artifact", "missing")

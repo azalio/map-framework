@@ -425,6 +425,8 @@ REVIEW_CONTEXT_RESERVE_BYTES = 64 * 1024
 REVIEW_ROLE_RUBRIC_RESERVE_BYTES = 128 * 1024
 REVIEW_CONTEXT_BUDGET_ENV = "MAP_REVIEW_CONTEXT_BUDGET_BYTES"
 REVIEW_MAX_SHARDS = 8
+# Stamped on every context registry entry so a runner can tell its own contexts from a prior generation's.
+REVIEW_CONTEXT_RUNNER_SCHEMA = 2
 # Largest execution-check log (characters) inlined in a compact prompt; the rest is a lazy check:<id> resource.
 REVIEW_CHECK_PROMPT_CHARS = 16 * 1024
 # Generated sources are skipped only by file name, config pattern or trusted
@@ -14152,7 +14154,8 @@ def _prepare_review_context(
                                                     "original_prompt_bytes": resources["prompt"]["bytes"]}}
         row.setdefault("context_manifests", {})[context_id] = {
             **metadata, "reviewer": reviewer, "bundle_sha256": manifest["bundle_sha256"],
-            "prompt_inline": inline, **({"shard": shard} if shard else {}),
+            "prompt_inline": inline, "runner_schema": REVIEW_CONTEXT_RUNNER_SCHEMA,
+            **({"shard": shard} if shard else {}),
         }
     budget = _review_context_budget(_review_trusted_config(row.get("target", {})))
     required_bytes = {}
