@@ -1064,3 +1064,55 @@ def test_a_clean_shard_adds_no_predictor_defect(sharded_predictor):
     capture_predictor_round(sharded_predictor, {1: ("medium", "leak")})
     merged = json.loads(Path(".map/feature/review-agent-predictor.json").read_text())
     assert merged["bug_class"] == "leak" and "additional_defects" not in merged
+
+
+@pytest.fixture
+def strict_sharded(repo, monkeypatch):
+    """Two shards under strict security gates with a sensitive (auth/) change."""
+    del repo
+    trust_on_main({".map/config.yaml": "review:\n  security_gates: strict\n"})
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(runner.REVIEW_CONTEXT_RESERVE_BYTES + 90_000))
+    write_changes()
+    write_many(4, directories=("auth", "auth_b"))
+    admitted = runner.begin_review_run(branch="feature", provider="claude", round_id="r", base_ref="main")
+    assert admitted["status"] == "success", admitted
+    assert "security" in admitted["scheduled_reviewers"] and len(admitted["shard_ids"]) == 2, admitted
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    return current_row()["shards"]
+
+
+def capture_security(shard, covered):
+    built = runner.build_review_prompts(branch="feature", shard=shard["id"])
+    assert built["status"] == "success", built
+    proof = deliver(built["prompts"]["security"], "security", f"sec-{shard['id']}")
+    output = {"reviewer": "security", "all_clear": True, "all_clear_rationale": "no issue", "findings": [],
+              "checks_performed": ["read"], "context_receipt": proof,
+              "receipt": {"covered_files": list(covered), "skipped_files": [], "denied_access": [], "check_evidence": []}}
+    result = runner.capture_review_output("security", json.dumps(output), "r", branch="feature", shard=shard["id"])
+    assert result["status"] == "success", result
+    return result
+
+
+def security_gate():
+    return runner._review_security_gate(current_row(), Path(".map/feature"))
+
+
+def test_strict_security_gate_blocks_until_every_shard_has_covered_security_capture(strict_sharded):
+    first, second = strict_sharded
+    assert runner._review_gates_strict(current_row()["target"])
+    capture_security(first, first["files"])
+    gate = security_gate()
+    assert gate["status"] == "INCOMPLETE", gate
+    assert any("security receipt" in reason for reason in gate["reasons"]), gate["reasons"]
+    capture_security(second, second["files"])
+    assert security_gate()["status"] == "COMPLETE", security_gate()
+
+
+def test_strict_security_gate_rejects_union_coverage_that_hides_an_unread_shard(strict_sharded):
+    first, second = strict_sharded
+    everything = [*first["files"], *second["files"]]
+    capture_security(first, second["files"])
+    capture_security(second, everything)
+    gate = security_gate()
+    assert gate["status"] == "INCOMPLETE", gate
+    assert any("shard scope is unread or skipped" in reason and first["id"] in reason for reason in gate["reasons"]), gate["reasons"]
