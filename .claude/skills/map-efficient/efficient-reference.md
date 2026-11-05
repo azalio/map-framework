@@ -871,7 +871,10 @@ Failure `kind`s (working branch untouched / rolled back to base, worktrees kept)
 `WAVE_MERGE_CONFLICT` (with `attribution` naming the subtasks that touched each
 conflicted file — fix `affected_files` or re-decompose), `WAVE_VERIFY_FAILED`
 (post-wave gate red), `EXTERNAL_HEAD_MOVED` (a commit landed outside the wave —
-recreate the worktrees off the new HEAD), `WAVE_BASE_MISMATCH`, `DIRTY_TARGET`,
+run `rebase_wave_group <group_key>` to re-anchor the unstarted group and recreate its
+worktrees off the new HEAD; it refuses with `CANDIDATE_HAS_WORK` if any candidate has
+committed or uncommitted work, or `HEAD_NOT_DESCENDANT` if history was rewritten —
+then `abort_wave_group`, which preserves patches), `WAVE_BASE_MISMATCH`, `DIRTY_TARGET`,
 `MERGE_IN_PROGRESS`, plus the per-worktree preflight `kind`s (`VERIFY_FAILED`,
 `BULK_DELETION`, … with `phase:"preflight"`). On any Monitor `valid=false` for a
 single wave subtask, `discard_subtask_worktree` THAT subtask and retry it; call

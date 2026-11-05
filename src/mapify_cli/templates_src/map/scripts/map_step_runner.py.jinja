@@ -24319,6 +24319,124 @@ def begin_wave_group(
     }
 
 
+def rebase_wave_group(
+    group_key: str,
+    branch: str | None = None,
+) -> dict[str, object]:
+    """Move a registered wave group onto the current HEAD after external commits.
+
+    Recovery verb for ``EXTERNAL_HEAD_MOVED``: a user commit made outside the
+    wave invalidates the registered ``base_sha``. Refuses (nothing changed) when
+    HEAD is not a descendant of the group base, when a Git operation is active,
+    when the main checkout is dirty, or when ANY candidate holds committed or
+    uncommitted work -- candidate work is never discarded; use
+    ``abort_wave_group`` (which preserves patches) in that case.
+
+    Otherwise recreates every recorded candidate worktree off the new HEAD and
+    rewrites the group and per-worktree ``base_sha``. The group base is written
+    last, so a crash mid-way leaves a state that a re-run converges. Idempotent:
+    when HEAD already equals the group base it is a no-op (``rebased=False``).
+    """
+    if not _wt_is_git_repo():
+        return _wt_error(_WT_REASON_NOT_GIT_REPO, "not inside a git work tree")
+    if _wt_cwd_is_managed_worktree():
+        return _wt_error("NESTED_WORKTREE", "run rebase_wave_group from the main checkout",
+                         worktrees_preserved=True)
+    branch_name = branch or get_branch_name()
+    state = _read_worktree_state(branch_name)
+    groups = state.get("wave_groups")
+    group = groups.get(group_key) if isinstance(groups, dict) else None
+    if not isinstance(group, dict):
+        return _wt_error("WAVE_GROUP_MISSING", f"group {group_key!r} not registered",
+                         needs_redispatch=False, worktrees_preserved=True)
+    base = group.get("base_sha")
+    members = group.get("subtask_ids")
+    if not isinstance(base, str) or not base or not isinstance(members, list) or not members:
+        return _wt_error("WAVE_GROUP_STATE_INVALID", "invalid registered group",
+                         needs_redispatch=False, worktrees_preserved=True)
+    head = _wt_head_sha()
+    if head is None:
+        return _wt_error("NO_HEAD", "could not resolve HEAD sha", worktrees_preserved=True)
+    active_op = _wt_active_git_operation()
+    if active_op:
+        return _wt_error("ACTIVE_GIT_OP", f"resolve the active {active_op} first",
+                         worktrees_preserved=True)
+    if head != base:
+        ancestor = _wt_git(["merge-base", "--is-ancestor", base, head], timeout=10)
+        if ancestor.returncode != 0:
+            return _wt_error(
+                "HEAD_NOT_DESCENDANT",
+                "HEAD does not descend from the registered group base (history rewritten); "
+                "use abort_wave_group and re-register",
+                base_sha=base, working_head=head, needs_redispatch=False,
+                worktrees_preserved=True,
+            )
+        dirty, dirty_error = _wt_dirty_paths()
+        if dirty_error or dirty:
+            return _wt_error(
+                "DIRTY_MAIN", dirty_error or "commit or stash main-checkout changes first",
+                dirty=dirty[:20], needs_redispatch=False, worktrees_preserved=True,
+            )
+
+    worktrees = state.get("worktrees")
+    records: list[tuple[str, dict[str, object]]] = []
+    for sid in members:
+        slug = _wt_slug(str(sid))
+        record = worktrees.get(slug) if isinstance(worktrees, dict) and slug else None
+        if not isinstance(record, dict):
+            continue
+        rec_base = str(record.get("base_sha", ""))
+        wt_path = Path(str(record.get("path", "")))
+        if rec_base != head:
+            ahead = _wt_git(["rev-list", "--count", f"{rec_base}..{record.get('branch', '')}"],
+                            timeout=10)
+            status = (_wt_git(["status", "--porcelain"], cwd=wt_path, timeout=15)
+                      if wt_path.is_dir() else None)
+            has_work = (
+                ahead.returncode != 0 or ahead.stdout.strip() != "0"
+                or status is None or status.returncode != 0
+                or any(ln.strip() and not _wt_is_runtime_state_path(_wt_porcelain_path(ln))
+                       for ln in status.stdout.splitlines())
+            )
+            if has_work:
+                return _wt_error(
+                    "CANDIDATE_HAS_WORK",
+                    f"candidate {sid} has committed/uncommitted work or an unreadable tree; "
+                    "refusing to recreate it (abort_wave_group preserves patches)",
+                    subtask_id=str(sid), needs_redispatch=False, worktrees_preserved=True,
+                )
+        records.append((str(sid), record))
+
+    if head == base and all(str(r.get("base_sha")) == head for _, r in records):
+        return {"status": "success", "ok": True, "rebased": False, "group_key": group_key,
+                "base_sha": head, "recreated": []}
+
+    claude_root = _wt_storage_root("claude")
+    recreated: list[str] = []
+    for sid, record in records:
+        wt_path = Path(str(record.get("path", "")))
+        provider = ("claude" if claude_root is not None
+                    and claude_root in wt_path.parents else "codex")
+        attempt = int(str(record.get("attempt", 0)))
+        discarded = discard_subtask_worktree(sid, attempt, branch_name)
+        if not discarded.get("ok"):
+            return {**discarded, "recreated": recreated}
+        created = create_subtask_worktree(
+            sid, attempt, branch_name, provider=provider,
+        )
+        if not created.get("ok"):
+            return {**created, "recreated": recreated}
+        recreated.append(sid)
+
+    state = _read_worktree_state(branch_name)
+    groups = state.get("wave_groups")
+    if isinstance(groups, dict) and isinstance(groups.get(group_key), dict):
+        groups[group_key]["base_sha"] = head
+    _write_worktree_state(branch_name, state)
+    return {"status": "success", "ok": True, "rebased": True, "group_key": group_key,
+            "base_sha": head, "previous_base_sha": base, "recreated": recreated}
+
+
 def record_group_lifecycle(
     group_key: str,
     subtask_id: str,
@@ -25571,8 +25689,8 @@ def merge_wave_worktrees(
         return _wt_error(
             "EXTERNAL_HEAD_MOVED",
             f"working branch advanced outside the wave (base={wave_base_sha[:8]}, "
-            f"head={(working_head or '?')[:8]}); recreate the wave worktrees off the "
-            "new HEAD",
+            f"head={(working_head or '?')[:8]}); run rebase_wave_group <group_key> "
+            "to re-anchor unstarted worktrees on the new HEAD",
             base_sha=wave_base_sha,
             working_head=working_head,
         )
@@ -28333,6 +28451,21 @@ if __name__ == "__main__":
         _a = _p.parse_args(sys.argv[2:])
         _pd = Path(_a.project_dir) if _a.project_dir else None
         _wt_r = run_concurrent_wave(_a.group_ids, _a.branch, _pd)
+        print(json.dumps(_wt_r, indent=2))
+        if _wt_r.get("status") == "error" or not _wt_r.get("ok"):
+            sys.exit(1)
+
+    elif func_name == "rebase_wave_group":
+        # CLI: rebase_wave_group <group_key> [--branch B]
+        #
+        # Recovery for EXTERNAL_HEAD_MOVED: re-anchor an unstarted group on HEAD.
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py rebase_wave_group")
+        _p.add_argument("group_key", help="Canonical group key from begin_wave_group")
+        _p.add_argument("--branch", default=None, help="Branch name (default: current branch)")
+        _a = _p.parse_args(sys.argv[2:])
+        _wt_r = rebase_wave_group(_a.group_key, _a.branch)
         print(json.dumps(_wt_r, indent=2))
         if _wt_r.get("status") == "error" or not _wt_r.get("ok"):
             sys.exit(1)
