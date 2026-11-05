@@ -738,7 +738,7 @@ and reports `ROLLBACK_FAILED`. Existing user stashes are never applied or droppe
 - **Provider-specific storage.** Claude Code worktrees live under the gitignored
   `.claude/worktrees/map/` path so Claude can enter them. Codex worktrees remain
   under `<git-common-dir>/map-framework/worktrees/`. The installer adds the
-  Claude path to `.gitignore`; avoid `git clean -fdx` in the main checkout while
+  Claude path to `.git/info/exclude` (`.gitignore` outside a git repo); avoid `git clean -fdx` in the main checkout while
   Claude worktrees are active.
 - **State stays in the main checkout.** MAP runtime state (`.map/<branch>/…`)
   always resolves against the main checkout; state-mutating commands refuse if
@@ -1021,7 +1021,7 @@ may replay observations. This is best-effort at-least-once capture, not an
 exactly-once transaction or a new workflow event store.
 
 Fresh installs and re-running `mapify init` add `.map/**/sessions/` and
-`**/__pycache__/` to the managed root `.gitignore`. This keeps session logs, cursor
+`**/__pycache__/` to `.git/info/exclude` (shared by linked worktrees; the tracked `.gitignore` stays untouched, and is used only outside a git repo, when the repo root differs from the project root, or when a `.gitignore` negation would override the exclude). Privacy entries (`.sofa/`, `.claude/settings.local.json`, `.claude/agent-memory-local/`) stay in `.gitignore`. This keeps session logs, cursor
 sidecars, memory digests and bytecode local while leaving specs and blueprints
 available for version control. Ignore rules do not untrack previously committed
 files; remove those from the index separately if needed.

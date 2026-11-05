@@ -592,7 +592,7 @@ Design decisions (llm-council-reviewed, conv `461b92f9`):
   (`<git-common-dir>/map-framework/worktrees/<branch-key>/<slug>-<attempt>`).
   The branch key includes a SHA-256 digest so distinct Git branch names cannot
   collide after path sanitization. Legacy recorded paths remain usable.
-  The installed `.gitignore` excludes Claude worktrees from scans and commits;
+  The runtime ignore block (including Claude worktrees) is written to `<git-common-dir>/info/exclude`, not the tracked `.gitignore` (non-git projects fall back to `.gitignore`);
   avoid `git clean -fdx` in the main checkout while they are active. Branches are
   `map-wt/<slug>-<attempt>`, unique per (subtask, attempt) so Phase 2 never
   collides; `--attempt` is threaded from day one.
