@@ -67,7 +67,7 @@ def test_pending_third_round_resumes_across_restart(review_git_workspace, flags,
     proc, resumed = ledger_tests._review_cli("begin_review_run", f"--arguments={flags}", "--mode", "lightweight",
                                             "--provider", provider, "--round-id", "3")
     assert proc.returncode == 0 and resumed["resumed"] and not resumed["completed"], resumed
-    assert resumed["target"] == admission["target"]
+    assert resumed["target"] == runner._review_cli_target(admission["target"])  # CLI stdout is compact (#627)
     assert runner.begin_review_run(arguments=flags, mode="lightweight", provider=provider, round_id="4")["status"] == "error"
     corrected = capture(receipt)
     assert corrected["status"] == "success", corrected

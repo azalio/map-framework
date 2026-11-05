@@ -270,3 +270,30 @@ def test_timeout_for_unadmitted_check_rejected(check_workspace):
     result = _cli("begin_review_run", "--mode", "lightweight", "--check-timeouts-json", '{"missing": 2}')
     assert result["status"] == "error", result
     assert not check_workspace.exists()
+
+
+def test_cli_output_is_compact_and_reports_both_modes(check_workspace):
+    """#626/#627/#628: CLI stdout omits policy text and repo inventory; full rows stay on disk."""
+    Path("REVIEW.md").write_text("Политика ревью: " + "x" * 4000 + "\n")
+    subprocess.run(["git", "add", "REVIEW.md"], check=True)
+    subprocess.run(["git", "commit", "-m", "policy"], check=True, capture_output=True)
+    Path("writer.py").write_text("VALUE = 2\n")
+    process = ReviewProcessLifecycle(Path.cwd() / ".map").run([
+        sys.executable, str(RUNNER), "begin_review_run", "--mode", "full", "--required-check", "suite",
+        "--check-specs-json", json.dumps({"suite": [sys.executable, "-c", "print('ok')"]})])
+    admission = json.loads(process.stdout)
+    assert admission["status"] == "success", admission
+    assert admission["mode"] == "full" and admission["review_mode"] == "normal"
+    consent = admission["human_consent"]
+    assert consent["status"] == "not_required" or consent["enforcement"] in ("shadow", "strict")
+    assert "x" * 100 not in process.stdout and "context_files" not in admission["target"]
+    assert admission["target"]["context_files_count"] >= 2
+    assert admission["required_files"] == ["writer.py"]
+    stored = json.loads(check_workspace.read_text())["convergence"]["rounds"][0]["target"]
+    assert "context_files" in stored and stored["trusted_policy"]["files"][0]["content"]
+    gate = ReviewProcessLifecycle(Path.cwd() / ".map").run(
+        [sys.executable, str(RUNNER), "run_test_gate", "--check-id", "suite"])
+    result = json.loads(gate.stdout)
+    assert result["passed"] is True, result
+    assert "before" not in result and "after" not in result and result["target_unchanged"] is True
+    assert "before" in json.loads(check_workspace.read_text())["execution_checks"]["suite"]

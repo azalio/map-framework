@@ -11,6 +11,12 @@ Human consent is a separate snapshot/policy/action-bound `review_consent` hold i
 
 Shadow consent-store errors are reported in admission output and persisted in the review ledger when writable; they do not deny admission or ready. Never reset a corrupt hold store: existing generic hold blockers remain enforced. Strict consent-store errors still fail closed. Gate configuration is read from the pinned trusted revision independently of `REVIEW.md` content validation; invalid root/area policy cannot downgrade a strict configuration.
 
+Admission reports the hold as `human_consent: {status, hold_id, reason, enforcement}`. `enforcement: "shadow"` is informational: it blocks nothing and there is nothing to resolve yet. `enforcement: "strict"` stops at review-ready until verified human consent exists (#523). `status: "not_required"` means the change is not sensitive.
+
+Admission and `run_test_gate` stdout are compact: the target omits trusted-policy file contents and lists `context_files_count` instead of the repository inventory, and a check reports `target_unchanged` instead of full `before`/`after` targets. Full rows stay in `review-verdict-ledger.json`.
+
+If reviewers could not run for an admitted round, `abandon_review_round` it. A review then done outside the harness is reported as such in the summary; it never produces a ledger verdict or approval.
+
 ## Section Rubrics
 
 - Architecture: boundaries, lifecycle, coupling, public API behavior, stage consumption.

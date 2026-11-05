@@ -2810,6 +2810,7 @@ def test_complete_receipts_approve_after_restart(review_git_workspace):
     assert ledger["completeness"]["status"] == "COMPLETE", result
     assert ledger["code_approval"]["approved"] is True
     assert ledger["human_consent"]["status"] == "pending"
+    assert admission["human_consent"]["enforcement"] == "shadow"  # #628: non-blocking label
     assert admission["target"]["security_gate_policy"]["mode"] == "shadow"
     assert runner.get_pending_holds()["resume_blocked"] is False
     proc, gate = _review_cli("write_stage_gate", "review", "ready", "review.md", "clean")
