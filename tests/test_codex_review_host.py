@@ -203,7 +203,8 @@ def test_explicit_optional_resource_starts_at_own_offset(repo):
     complete_result(delivery, response)
     ledger = runner._read_review_ledger(Path(".map/feature"))
     session = ledger["convergence"]["rounds"][-1]["context_sessions"][delivery.state["session_id"]]
-    optional = next(key for key, value in session["available"].items() if value.get("path") == "dependency.py")
+    assert not any(value.get("path") == "dependency.py" for value in session["available"].values())
+    optional = "repo:dependency.py"
     response = delivery.respond({"arguments": {"resource_id": optional}, "callId": "optional"})
     assert json.loads(response["contentItems"][0]["text"])["offset"] == 0
 

@@ -74,8 +74,9 @@ def test_unchanged_context_is_frozen_optional_and_retrievable(repo):
     request = {"type": "context_request", "context_id": context_id, "resource_id": "manifest", "offset": 0}
     response = runner.serve_review_context("monitor", json.dumps(request), "scope", branch="feature")
     manifest = json.loads(response["content"])
-    resource, metadata = next((k, v) for k, v in manifest["resources"].items() if v.get("path") == "dependency.py")
-    assert metadata["required"] is False
+    # Unchanged repository files are no longer enumerated in the manifest (#625).
+    assert not any(v.get("path") == "dependency.py" for v in manifest["resources"].values())
+    resource = "repo:dependency.py"
     # Optional context remains admissible evidence for dependency/reachability findings.
     assert runner._review_refs_checked([
         {"file_path": "dependency.py", "revision": "current", "quote": "value = 1"},
@@ -86,12 +87,16 @@ def test_unchanged_context_is_frozen_optional_and_retrievable(repo):
     ], admitted["target"], {"current"})
     row = json.loads(Path(".map/feature/review-verdict-ledger.json").read_text())["convergence"]["rounds"][-1]
     assert resource not in row["context_sessions"][state["session_id"]]["required"]
+    assert "dependency.py" not in row.get("context_lazy", {})
     request["resource_id"] = resource
     response = runner.serve_review_context("monitor", json.dumps(request), "scope", branch="feature",
                                          session_id=state["session_id"], agent_id="reader")
     assert json.loads(response["content"])["current_content"] == "value = 1\n"
     ack = runner.ack_review_context(state["session_id"], "reader", json.dumps(response), "scope", branch="feature")
     assert ack["status"] == "context_pending"
+    row = json.loads(Path(".map/feature/review-verdict-ledger.json").read_text())["convergence"]["rounds"][-1]
+    assert row["context_lazy"]["dependency.py"]["required"] is False
+    assert row["context_sessions"][state["session_id"]]["offsets"][resource] > 0
     Path("dependency.py").write_text("value = 99\n")
     rejected = runner.serve_review_context("monitor", json.dumps(request), "scope", branch="feature")
     assert rejected["status"] == "error"
@@ -121,7 +126,11 @@ def test_large_inventory_packs_only_changed_sources(repo):
     required = {key for key, value in manifest["resources"].items() if value.get("required", True)}
     assert required == {"prompt", "inventory", "source_pack"}
     sources = [value for value in manifest["resources"].values() if "path" in value]
-    assert len(sources) >= 1250
+    assert {value["path"] for value in sources} == changed
+    inventory = json.loads(runner._review_context_read(Path(".map/feature"), manifest["resources"]["inventory"]))
+    assert "context_files" not in inventory["snapshot"]["target"]
+    assert inventory["snapshot"]["target"]["context_files_count"] >= 1250
+    assert len(inventory["snapshot"]["target"]["context_files_sha256"]) == 64
     packed = runner._review_context_read(directory, manifest["resources"]["source_pack"])
     files = json.loads(packed)["files"]
     assert {item["path"] for item in files} == changed
@@ -366,3 +375,42 @@ def test_strict_security_gates_disable_every_generated_skip(repo):
     admitted = runner.begin_review_run(branch="feature", provider="claude", round_id="strict", base_ref="main")
     assert "x.pb.go" in admitted["required_files"]
     assert "coverage_skips" not in admitted
+
+
+def lazy_request(entry, resource, offset=0):
+    return {"type": "context_request", "context_id": entry["context_transport"]["context_id"],
+            "resource_id": resource, "offset": offset}
+
+
+def test_lazy_repo_lookup_is_limited_to_unchanged_admitted_context_and_frozen_once(repo):
+    del repo
+    Path("first.py").write_text("value = 2\n")
+    runner.begin_review_run(branch="feature", provider="codex", round_id="lazy")
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    built = runner.build_review_prompts(branch="feature")
+    entry = built["prompts"]["monitor"]
+    manifest_request = lazy_request(entry, "manifest")
+    manifest = json.loads(runner.serve_review_context("monitor", json.dumps(manifest_request), "lazy", branch="feature")["content"])
+    assert not any(key.startswith("repo:") for key in manifest["resources"])
+    for denied in ("repo:first.py", "repo:not-tracked.py", "repo:", "repo:../outside"):
+        result = runner.serve_review_context("monitor", json.dumps(lazy_request(entry, denied)), "lazy", branch="feature")
+        assert result["status"] == "error", denied
+    served = runner.serve_review_context("monitor", json.dumps(lazy_request(entry, "repo:dependency.py")), "lazy", branch="feature")
+    assert served["status"] == "context_response"
+    assert json.loads(served["content"])["current_content"] == "value = 1\n"
+    again = runner.serve_review_context("monitor", json.dumps(lazy_request(entry, "repo:dependency.py")), "lazy", branch="feature")
+    assert again["sha256"] == served["sha256"]
+    other = built["prompts"]["user_experience"]
+    shared = runner.serve_review_context("user_experience", json.dumps(lazy_request(other, "repo:dependency.py")), "lazy", branch="feature")
+    assert shared["sha256"] == served["sha256"]
+
+
+def test_diff_only_reviewer_cannot_fetch_repository_context(repo):
+    del repo
+    Path("first.py").write_text("value = 2\n")
+    runner.begin_review_run(branch="feature", provider="codex", arguments="--adversarial", round_id="blind")
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    built = runner.build_adversarial_review_prompts(branch="feature")
+    entry = built["prompts"]["blind"]
+    result = runner.serve_review_context("blind", json.dumps(lazy_request(entry, "repo:dependency.py")), "blind", branch="feature")
+    assert result["status"] == "error"

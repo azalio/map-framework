@@ -147,7 +147,11 @@ def test_aggregate_context_roundtrip_preserves_prompt_inventory_and_all_sources(
     assert fetch(entry, "monitor", "prompt") == original
     inventory = json.loads(fetch(entry, "monitor", "inventory"))
     assert inventory["snapshot"]["required_files"] == admission["required_files"]
-    assert inventory["snapshot"]["target"] == admission["target"]
+    expected = {key: value for key, value in admission["target"].items() if key != "context_files"}
+    expected["context_files_count"] = len(admission["target"]["context_files"])
+    assert {key: value for key, value in inventory["snapshot"]["target"].items()
+            if key != "context_files_sha256"} == expected
+    assert "context_files_sha256" in inventory["snapshot"]["target"]
     assert inventory["attribution"]["base"] == git(root, "rev-parse", "main")
     source_resources = {key: value for key, value in manifest["resources"].items() if key.startswith("source_") and value.get("required", True)}
     assert len(source_resources) == 36
@@ -296,7 +300,7 @@ def test_manifest_itself_is_chunkable_and_abandoned_context_is_unavailable(repo)
     del repo
     entry = runner.build_review_prompts(branch="feature")["prompts"]["monitor"]
     manifest = json.loads(fetch(entry, "monitor", chunk_bytes=2048))
-    assert len(manifest["resources"]) == 39
+    assert len(manifest["resources"]) == 38
     assert sum(item.get("required", True) for item in manifest["resources"].values()) == 38
     abandoned = runner.abandon_review_round("context-round", reason="source changed", branch="feature")
     assert abandoned["status"] == "success", abandoned
