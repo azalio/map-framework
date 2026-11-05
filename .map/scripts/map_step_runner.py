@@ -417,6 +417,18 @@ REVIEW_PROMPT_MAX_BYTES = 512 * 1024
 REVIEW_CONTEXT_CHUNK_BYTES = 64 * 1024
 REVIEW_CONTEXT_INLINE_BYTES = 24 * 1024
 REVIEW_ATTRIBUTION_INLINE_MAX_BYTES = 32 * 1024
+# Total required context one reviewer may be asked to consume (#625); the reserve
+# covers the manifest, protocol text and the compact original prompt.
+REVIEW_CONTEXT_BUDGET_BYTES = 384 * 1024
+REVIEW_CONTEXT_RESERVE_BYTES = 64 * 1024
+REVIEW_CONTEXT_BUDGET_ENV = "MAP_REVIEW_CONTEXT_BUDGET_BYTES"
+# Generated sources are skipped only by file name, config pattern or trusted
+# linguist-generated attribute; a header comment alone never excludes a file.
+REVIEW_GENERATED_NAME_PATTERNS = ("*.pb.go", "*.pb.cc", "*.pb.h", "*_pb2.py", "*_pb2_grpc.py", "zz_generated*")
+REVIEW_LOCKFILE_NAMES = frozenset({
+    "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "go.sum", "Cargo.lock",
+    "poetry.lock", "uv.lock", "Pipfile.lock", "Gemfile.lock", "composer.lock", "mix.lock",
+})
 REVIEW_PROMPT_MIN_BUDGET_TOKENS = 1_024
 REVIEW_PROMPT_BUDGET_ENV = "MAP_REVIEW_PROMPT_BUDGET_TOKENS"
 TOKEN_BUDGET_ARTIFACT_NAME = "token_budget.json"
@@ -9398,6 +9410,8 @@ def begin_review_run(
     if _review_requires_consent(target) and _review_gates_strict(target):
         mode = "full"
         scheduled_reviewers = [*(NORMAL_REVIEWERS if "monitor" in scheduled_reviewers else ADVERSARIAL_REVIEWERS), "security"]
+    review_config = _review_trusted_config(target)
+    coverage_skips = _review_generated_skips(target, review_config, target.get("required_files", []))
     payload: ReviewRun = {
         "schema_version": REVIEW_RUN_SCHEMA, "review_mode": review_mode,
         "scheduled_reviewers": scheduled_reviewers, "arguments": arguments, "mode": mode,
@@ -9465,7 +9479,8 @@ def begin_review_run(
             _prepare_review_inputs(branch_dir, prior, existing)
         return {"status": "success", "resumed": True, "round_id": round_id,
                 "completed": "completed_at" in existing, "human_consent": consent, **dict(payload),
-                **{key: existing.get(key) for key in ("target", "required_files", "policy_hash", "capability")}}
+                **{key: existing.get(key) for key in ("target", "required_files", "policy_hash", "capability")},
+                **({"coverage_skips": existing["coverage_skips"]} if existing.get("coverage_skips") else {})}
     if pending:
         return {"status": "error", "message": "Resume the unfinished review round or explicitly abandon_review_round first"}
     unsuccessful = sum(_review_round_terminal(row) and row.get("verdict") != "PROCEED" for row in rounds)
@@ -9483,7 +9498,10 @@ def begin_review_run(
                "archive_inputs": [path.name for path in previous], "prepared": False,
                "target": target, "policy_hash": policy_hash,
                "capability": _review_capability(dict(payload)), "receipts": {}}
-        row["required_files"] = row["target"].get("required_files", [])
+        skipped = {item["path"] for item in coverage_skips}
+        row["required_files"] = [name for name in row["target"].get("required_files", []) if name not in skipped]
+        if coverage_skips:
+            row["coverage_skips"] = coverage_skips
         rounds.append(row)
         convergence.update({"outcome": "incomplete", "stop_reason": "review_pending",
                             "rounds_to_pass": None})
@@ -9501,7 +9519,8 @@ def begin_review_run(
             "human_consent": consent, "scheduled_reviewers": scheduled_reviewers,
             "archived_inputs": [path.name for path in previous],
             "archive_path": str(archive_path) if archive_path else None,
-            **{key: row[key] for key in ("target", "required_files", "policy_hash", "capability")}}
+            **{key: row[key] for key in ("target", "required_files", "policy_hash", "capability", "coverage_skips")
+               if key in row}}
 
 
 def _adversarial_reviewer_error(parsed: Any) -> str | None:
@@ -10914,7 +10933,10 @@ def _review_completeness(row: dict[str, Any], directory: Path) -> dict[str, Any]
         reasons.extend(security["collection_reasons"])
         if row.get("target", {}).get("security_gate_policy", {}).get("error"):
             reasons.append("Trusted security gate policy is invalid")
-    return {"status": "BLOCKED" if blocked else ("INCOMPLETE" if reasons else "COMPLETE"), "reasons": reasons}
+    result = {"status": "BLOCKED" if blocked else ("INCOMPLETE" if reasons else "COMPLETE"), "reasons": reasons}
+    if row.get("coverage_skips"):
+        result["skipped_scope"] = row["coverage_skips"]
+    return result
 
 
 def _review_check_valid(directory: Path, check_id: str, row: dict[str, Any]) -> bool:
@@ -12357,7 +12379,16 @@ def _render_bundle_markdown(result: dict) -> str:
     return "\n".join(lines)
 
 
-def _review_attribution(target: dict[str, Any]) -> dict[str, Any]:
+def _review_row_snapshot(row: dict[str, Any]) -> dict[str, Any]:
+    """Snapshot object the immutable bundle must carry for an admitted round."""
+    snapshot = {"target": row.get("target"), "policy_hash": row.get("policy_hash"),
+                "required_files": row.get("required_files", [])}
+    if row.get("coverage_skips"):
+        snapshot["coverage_skips"] = row["coverage_skips"]
+    return snapshot
+
+
+def _review_attribution(target: dict[str, Any], skipped: frozenset[str] = frozenset()) -> dict[str, Any]:
     import base64
     import difflib
 
@@ -12365,9 +12396,10 @@ def _review_attribution(target: dict[str, Any]) -> dict[str, Any]:
         return {"status": "unknown", "reason": "No verified review target", "files": []}
     base_ref = target.get("base", "")
     # Source evidence and mandatory coverage use the same selected-base scope.
-    changed = set(_review_changed_paths(base_ref or "HEAD", target.get("required_files", [])))
+    required = [name for name in target.get("required_files", []) if name not in skipped]
+    changed = set(_review_changed_paths(base_ref or "HEAD", required))
     entries = []
-    for name in target.get("required_files", []):
+    for name in required:
         if name not in changed:
             continue
         result = subprocess.run(["git", "show", f"{target['base']}:{name}"],
@@ -12394,7 +12426,8 @@ def _review_attribution(target: dict[str, Any]) -> dict[str, Any]:
                         "status": "unknown" if result is None else ("added" if result.returncode else
                                   ("deleted" if not path.exists() else "present"))})
     diff = _review_git_bytes("diff", "--binary", base_ref or "HEAD", "--",
-                            *_review_source_pathspec(target.get("required_files", [])))
+                            *_review_source_pathspec(required),
+                            *(f":(top,literal,exclude){name}" for name in sorted(skipped)))
     return {"status": "available" if base_ref else "unknown", "base": base_ref, "head": target["head"],
             "reason": "" if base_ref else "No verified review base; only current source is known",
             "diff": diff.decode("utf-8", errors="replace"), "diff_sha256": hashlib.sha256(diff).hexdigest(),
@@ -12571,7 +12604,10 @@ def create_review_bundle(branch: str | None = None) -> dict:
         raise ValueError("Review snapshot or policy changed before bundle creation")
     result["snapshot"] = {"target": target, "policy_hash": row.get("policy_hash") if row else _review_policy(),
                           "required_files": row.get("required_files", []) if row else target.get("required_files", [])}
-    result["attribution"] = _review_attribution(target)
+    skipped_paths = frozenset(item["path"] for item in (row or {}).get("coverage_skips", []))
+    if skipped_paths:
+        result["snapshot"]["coverage_skips"] = row["coverage_skips"] if row else []
+    result["attribution"] = _review_attribution(target, skipped_paths)
 
     # Soft schema validation: warn on drift but still write the bundle.
     # Uses optional ``mapify_cli.schemas`` import (graceful fallback if the package is
@@ -12608,6 +12644,11 @@ def create_review_bundle(branch: str | None = None) -> dict:
                         "snapshot_sha256": hashlib.sha256(snapshot_json.encode()).hexdigest(),
                         "full_snapshot": str(bundle_json_path)}
     snapshot_summary.pop("required_files", None)
+    if "coverage_skips" in snapshot_summary:
+        # Intent: the prompt carries a count and sample; the full list is in review-bundle.json.
+        skips = snapshot_summary.pop("coverage_skips")
+        snapshot_summary["coverage_skips_count"] = len(skips)
+        snapshot_summary["coverage_skips_sample"] = skips[:25]
     prompt_attribution = {key: value for key, value in result["attribution"].items()
                           if key not in {"diff", "files"}}
     prompt_attribution["files"] = []
@@ -15600,10 +15641,7 @@ def write_learning_handoff(
                     loaded = json.loads(bundle_bytes)
                 except (UnicodeDecodeError, ValueError):
                     loaded = None
-                if isinstance(loaded, dict) and loaded.get("snapshot") == {
-                    "target": row.get("target"), "policy_hash": row.get("policy_hash"),
-                    "required_files": row.get("required_files", []),
-                }:
+                if isinstance(loaded, dict) and loaded.get("snapshot") == _review_row_snapshot(row):
                     admitted_bundle = loaded
         pr_handoff = admitted_bundle.get("pr_handoff") if admitted_bundle else None
         admitted_review_handoff = admitted_bundle.get("review_handoff") if admitted_bundle else None
@@ -23597,6 +23635,106 @@ def _review_security_policy(policy: dict[str, Any]) -> dict[str, Any]:
     except (OSError, ValueError, TypeError, AttributeError, ImportError, subprocess.TimeoutExpired) as exc:
         result.update({"mode": "strict", "error": str(exc)})
     return result
+
+
+def _review_trusted_config(target: dict[str, Any]) -> dict[str, Any]:
+    """Return the ``review`` section of .map/config.yaml at the trusted default revision.
+
+    Like the security gate policy this never reads the PR head or working tree.
+    Any failure yields ``{}`` so every consumer falls back to full coverage.
+    """
+    revision = target.get("trusted_policy", {}).get("revision", "") if isinstance(target, dict) else ""
+    if not revision:
+        return {}
+    try:
+        tree = _review_git_bytes("ls-tree", "-z", revision, "--", ".map/config.yaml")
+        if not tree:
+            return {}
+        metadata = tree.split(b"\t", 1)[0].split()
+        if metadata[0] not in {b"100644", b"100755"} or metadata[1] != b"blob":
+            return {}
+        import yaml
+        config = yaml.safe_load(_review_git_bytes("cat-file", "blob", metadata[2].decode("ascii")).decode("utf-8")) or {}
+    except Exception:  # noqa: BLE001 -- unreadable or malformed trusted config degrades to full coverage
+        return {}
+    review = config.get("review") if isinstance(config, dict) else None
+    return review if isinstance(review, dict) else {}
+
+
+def _review_gitattr_regex(pattern: str) -> re.Pattern[str]:
+    """Translate a .gitattributes path pattern into a regex over repository-relative paths."""
+    anchored = "/" in pattern.strip("/")
+    body, index = "", 0
+    pattern = pattern.lstrip("/")
+    while index < len(pattern):
+        if pattern.startswith("**/", index):
+            body, index = body + "(?:.*/)?", index + 3
+        elif pattern.startswith("**", index):
+            body, index = body + ".*", index + 2
+        elif pattern[index] == "*":
+            body, index = body + "[^/]*", index + 1
+        elif pattern[index] == "?":
+            body, index = body + "[^/]", index + 1
+        else:
+            body, index = body + re.escape(pattern[index]), index + 1
+    return re.compile(("" if anchored else "(?:.*/)?") + body)
+
+
+def _review_linguist_generated_rules(revision: str) -> list[tuple[re.Pattern[str], bool, str]]:
+    """Read root .gitattributes from the trusted revision: (regex, generated?, source line)."""
+    try:
+        text = _review_git_bytes("show", f"{revision}:.gitattributes").decode("utf-8")
+    except (OSError, ValueError, UnicodeDecodeError, subprocess.TimeoutExpired):
+        return []
+    rules: list[tuple[re.Pattern[str], bool, str]] = []
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 2 or parts[0].startswith(("#", '"', "[attr]")) or parts[0].endswith("/"):
+            continue
+        state = None
+        for attr in parts[1:]:
+            if attr in {"-linguist-generated", "!linguist-generated"} or attr.lower() == "linguist-generated=false":
+                state = False
+            elif attr == "linguist-generated" or attr.startswith("linguist-generated="):
+                state = True
+        if state is not None:
+            rules.append((_review_gitattr_regex(parts[0]), state, line.strip()))
+    return rules
+
+
+def _review_generated_skips(
+    target: dict[str, Any], review_config: dict[str, Any], paths: list[str],
+) -> list[dict[str, str]]:
+    """Name changed generated sources that need no reviewer coverage (#625).
+
+    Only a file name pattern, a trusted config pattern or the trusted-revision
+    ``linguist-generated`` attribute qualify; file headers never do. Strict
+    security gates and lockfiles always keep full coverage.
+    """
+    if (_review_gates_strict(target) or review_config.get("exclude_generated", True) is not True
+            or not target.get("trusted_policy", {}).get("revision")):
+        return []
+    configured = review_config.get("generated_patterns", [])
+    configured = [item for item in configured if isinstance(item, str) and item] if isinstance(configured, list) else []
+    attributes = _review_linguist_generated_rules(target["trusted_policy"]["revision"])
+    skips = []
+    for path in paths:
+        base = PurePosixPath(path).name
+        if base in REVIEW_LOCKFILE_NAMES:
+            continue
+        rule = next((f"name:{pattern}" for pattern in REVIEW_GENERATED_NAME_PATTERNS
+                     if fnmatch.fnmatchcase(base, pattern)), "")
+        if not rule:
+            rule = next((f"config:{pattern}" for pattern in configured
+                         if fnmatch.fnmatchcase(base, pattern) or fnmatch.fnmatchcase(path, pattern)), "")
+        if not rule:
+            # Intent: gitattributes semantics are last-match-wins.
+            matched = [(state, line) for regex, state, line in attributes if regex.fullmatch(path)]
+            if matched and matched[-1][0]:
+                rule = "gitattributes:linguist-generated"
+        if rule:
+            skips.append({"path": path, "reason": "generated", "rule": rule})
+    return skips
 
 
 @_hold_transaction
