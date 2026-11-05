@@ -743,6 +743,13 @@ groups, so they use atomic wave acceptance and its cleanup. Direct wave acceptan
 also enforces the durable retry budget; bypassing the coordinator cannot clear
 an exhausted count.
 
+**`rebase_wave_group` — external-commit recovery.** Re-anchors a registered group on the
+current HEAD when it descends from the recorded base: recreates each candidate worktree
+(unstarted) or rebases it in place (committed work), and rewrites group and worktree
+`base_sha` (group base last, so re-runs converge). Refuses with `CANDIDATE_HAS_WORK`
+(uncommitted edits), `HEAD_NOT_DESCENDANT`, `DIRTY_MAIN` or `ACTIVE_GIT_OP`; a rebase
+conflict aborts and returns `CANDIDATE_REBASE_CONFLICT`. Never discards candidate work.
+
 **`abort_wave_group` — bounded rollback.** On any sub-batch failure, reverts
 every worktree in the group back to wave base (`discard_subtask_worktree` for
 each member), after persisting a unique binary recovery patch for every candidate.

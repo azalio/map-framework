@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `rebase_wave_group <group_key>` runner verb recovers a wave group after an external commit (`EXTERNAL_HEAD_MOVED`): re-anchors the group on the new HEAD (unstarted candidates recreated, committed candidates rebased in place), refusing without changes on uncommitted candidate edits, rewritten history or a rebase conflict (#631)
+
 ### Fixed
 
 - Isolated-worktree commits use Conventional Commits subjects (`chore(map): merge ST-001 isolated worktree`, `... (wave)`, and `chore(map): checkpoint ST-001 worktree (attempt N)` inside the worktree), so host repos with a Conventional Commits `commit-msg` hook no longer reject wave merges. (#632)
