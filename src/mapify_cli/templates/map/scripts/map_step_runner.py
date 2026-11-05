@@ -24382,22 +24382,55 @@ def _review_context_budget_error(
 
 
 def _review_gitattr_regex(pattern: str) -> re.Pattern[str]:
-    """Translate a .gitattributes path pattern into a regex over repository-relative paths."""
-    anchored = "/" in pattern.strip("/")
-    body, index = "", 0
+    """Compile a gitattributes/gitignore-style path pattern (shared with ``review.generated_patterns``).
+
+    A pattern with a slash (leading or inner) is anchored to the repository root; one without matches the
+    base name at any depth. ``*``/``?`` never cross ``/``; ``**/`` (leading or after ``/``), ``/**`` (trailing)
+    and ``/**/`` span directories; ``[...]`` is a character class; ``\\`` escapes the next character.
+    """
+    anchored = "/" in pattern.rstrip("/")
     pattern = pattern.lstrip("/")
-    while index < len(pattern):
-        if pattern.startswith("**/", index):
-            body, index = body + "(?:.*/)?", index + 3
-        elif pattern.startswith("**", index):
-            body, index = body + ".*", index + 2
-        elif pattern[index] == "*":
-            body, index = body + "[^/]*", index + 1
-        elif pattern[index] == "?":
-            body, index = body + "[^/]", index + 1
+    out: list[str] = []
+    index, size = 0, len(pattern)
+    while index < size:
+        char = pattern[index]
+        if pattern.startswith("**/", index) and (index == 0 or pattern[index - 1] == "/"):
+            out.append("(?:.*/)?")
+            index += 3
+        elif pattern.startswith("/**", index) and index + 3 == size:
+            out.append("/.*")
+            index += 3
+        elif char == "*":
+            while index < size and pattern[index] == "*":
+                index += 1
+            out.append("[^/]*")
+        elif char == "?":
+            out.append("[^/]")
+            index += 1
+        elif char == "[":
+            end = index + 1
+            if end < size and pattern[end] in "!^":
+                end += 1
+            if end < size and pattern[end] == "]":
+                end += 1
+            while end < size and pattern[end] != "]":
+                end += 1
+            if end < size:
+                body = pattern[index + 1:end]
+                negate = body[:1] in ("!", "^")
+                body = body[1:] if negate else body
+                out.append("[" + ("^" if negate else "") + body.replace("\\", "\\\\") + "]")
+                index = end + 1
+            else:
+                out.append(re.escape(char))
+                index += 1
+        elif char == "\\" and index + 1 < size:
+            out.append(re.escape(pattern[index + 1]))
+            index += 2
         else:
-            body, index = body + re.escape(pattern[index]), index + 1
-    return re.compile(("" if anchored else "(?:.*/)?") + body)
+            out.append(re.escape(char))
+            index += 1
+    return re.compile(("" if anchored else "(?:.*/)?") + "".join(out))
 
 
 def _review_linguist_generated_rules(revision: str) -> list[tuple[re.Pattern[str], bool, str]]:
@@ -24566,7 +24599,7 @@ def _review_generated_skips(
                      if fnmatch.fnmatchcase(base, pattern)), "")
         if not rule:
             rule = next((f"config:{pattern}" for pattern in configured
-                         if fnmatch.fnmatchcase(base, pattern) or fnmatch.fnmatchcase(path, pattern)), "")
+                         if _review_gitattr_regex(pattern).fullmatch(path)), "")
         if not rule:
             # Intent: gitattributes semantics are last-match-wins.
             matched = [(state, line) for regex, state, line in attributes if regex.fullmatch(path)]

@@ -1288,3 +1288,33 @@ def test_non_ascii_and_quoted_generated_paths_are_stubbed_and_sharded_correctly(
         # Another shard's file is cut by its (non-ASCII-safe) header, so no body leaks into this shard.
         mine = set(next(item["files"] for item in current_row()["shards"] if item["id"] == shard))
         assert diff.count("+value_0 = 0") == len([name for name in mine if name.startswith("pkg_")])
+
+
+@pytest.mark.parametrize("pattern,matches,misses", [
+    ("/gen.go", ["gen.go"], ["sub/gen.go"]),
+    ("gen.go", ["gen.go", "sub/gen.go", "a/b/gen.go"], ["gen.go.bak"]),
+    ("*.dat", ["x.dat", "deep/er/x.dat"], ["x.dat.txt"]),
+    ("internal/gen/*", ["internal/gen/a.py"], ["internal/gen/x/y.py", "other/internal/gen/a.py"]),
+    ("**/zz.go", ["zz.go", "a/zz.go", "a/b/zz.go"], ["zz.go.x"]),
+    ("a/**/b.go", ["a/b.go", "a/x/b.go", "a/x/y/b.go"], ["c/a/b.go"]),
+    ("gen/**", ["gen/a.go", "gen/x/y.go"], ["gen"]),
+    ("src/*/api.gen.ts", ["src/web/api.gen.ts"], ["src/web/deep/api.gen.ts"]),
+    ("file[0-9].go", ["file3.go", "d/file9.go"], ["filea.go"]),
+    ("a?c.go", ["abc.go"], ["a/c.go"]),
+])
+def test_pattern_semantics_match_gitattributes(pattern, matches, misses):
+    regex = runner._review_gitattr_regex(pattern)
+    assert all(regex.fullmatch(path) for path in matches), pattern
+    assert not any(regex.fullmatch(path) for path in misses), pattern
+
+
+def test_leading_slash_gitattribute_is_root_only_and_config_patterns_do_not_cross_directories(repo):
+    del repo
+    trust_on_main({".gitattributes": "/gen.go linguist-generated\n*.dat linguist-generated\n",
+                   ".map/config.yaml": "review:\n  generated_patterns:\n    - 'internal/gen/*'\n    - 'api/**/v1.ts'\n"})
+    write_changes("gen.go", "sub/gen.go", "deep/er/x.dat", "internal/gen/a.py", "internal/gen/x/y.py",
+                  "api/web/v1.ts", "other/api/v1.ts")
+    admitted = admit("patterns")
+    skipped = {item["path"] for item in admitted["coverage_skips"]}
+    assert skipped == {"gen.go", "deep/er/x.dat", "internal/gen/a.py", "api/web/v1.ts"}, skipped
+    assert {"sub/gen.go", "internal/gen/x/y.py", "other/api/v1.ts"} <= set(admitted["required_files"])
