@@ -1527,3 +1527,36 @@ class TestTerminalStateSuppress:
         ctx = payload["hookSpecificOutput"]["additionalContext"]
         assert "[MAP]" in ctx
         assert "ACTOR" in ctx
+
+
+def test_wave_mode_banner_uses_subtask_phases_not_stale_sequential_step(
+    tmp_path: Path, branch_name: str
+) -> None:
+    state_dir = tmp_path / ".map" / branch_name
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "step_state.json").write_text(
+        json.dumps(
+            {
+                "current_step_id": "2.2",
+                "current_step_phase": "RESEARCH",
+                "current_subtask_id": "ST-023",
+                "plan_approved": True,
+                "execution_waves": [["ST-023", "ST-024"], ["ST-025"]],
+                "current_wave_index": 0,
+                "subtask_phases": {"ST-023": "COMPLETE", "ST-024": "2.3"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code, out, _err = _run_hook(
+        tmp_path, {"tool_name": "Edit", "tool_input": {"file_path": "x"}}
+    )
+
+    assert code == 0
+    context = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+    assert "WAVE 1/2" in context
+    assert "ST-023:COMPLETE" in context
+    assert "ST-024:2.3" in context
+    assert "RESEARCH" not in context
+    assert "Persist RESEARCH artifact" not in context

@@ -96,3 +96,33 @@ def test_post_compact_reprime_warns_on_default_without_artifacts(tmp_path: Path)
     assert code == 0
     assert err == _BRANCH_WARNING
     assert out == "{}"
+
+
+def test_post_compact_reprime_wave_mode_uses_subtask_phases(tmp_path: Path) -> None:
+    branch_dir = tmp_path / ".map" / "default"
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    (branch_dir / "step_state.json").write_text(
+        json.dumps(
+            {
+                "workflow": "map-efficient",
+                "current_step_id": "2.2",
+                "current_step_phase": "RESEARCH",
+                "current_subtask_id": "ST-023",
+                "execution_waves": [["ST-023", "ST-024"], ["ST-025"]],
+                "current_wave_index": 0,
+                "subtask_phases": {"ST-023": "COMPLETE", "ST-024": "2.3"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code, out, _err = _run_hook(tmp_path, {})
+
+    assert code == 0
+    additional = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+    assert "wave=1/2" in additional
+    assert "ST-023:COMPLETE" in additional
+    assert "ST-024:2.3" in additional
+    assert "RESEARCH" not in additional
+    assert "step=2.2" not in additional
+    assert "Required next action" not in additional

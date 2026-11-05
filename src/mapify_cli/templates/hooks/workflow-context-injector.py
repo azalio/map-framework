@@ -501,6 +501,24 @@ def state_string(state: dict, key: str, default: str = "") -> str:
     return default
 
 
+def active_wave_label(state: dict) -> str | None:
+    """Return ``WAVE i/n [ST-x:phase ...]`` when the wave loop is engaged.
+
+    Waves track progress only in ``subtask_phases``; ``current_step_*`` is a
+    stale sequential leftover (advance_wave resets it to 2.2/RESEARCH), so it
+    must not drive the banner while the wave loop is active.
+    """
+    waves = state.get("execution_waves")
+    phases = state.get("subtask_phases")
+    wave_idx = state.get("current_wave_index", 0)
+    if not (isinstance(waves, list) and waves and isinstance(phases, dict) and phases):
+        return None
+    if not isinstance(wave_idx, int) or isinstance(wave_idx, bool):
+        return None
+    per_subtask = " ".join(f"{sid}:{phase}" for sid, phase in phases.items())
+    return f"WAVE {wave_idx + 1}/{len(waves)} [{per_subtask}]"
+
+
 def required_action_for_step(step_id: str, step_phase: str) -> str | None:
     """Return a short required-next-action hint for common steps."""
     if step_id == "1.55":
@@ -713,6 +731,15 @@ def format_reminder(
                 mode = "batch:parallel"
 
     required = required_action_for_step(step_id, step_phase)
+    step_label = f"{step_id} {step_phase}"
+    wave_label = active_wave_label(state)
+    if wave_label:
+        # Wave loop engaged: current_step_*/current_subtask_id are stale
+        # sequential leftovers, so show per-subtask phases instead.
+        step_label = wave_label
+        wave_hint = ""
+        subtask_id = "-"
+        required = None
 
     diag_hint = ""
     diag_file = (
@@ -738,7 +765,7 @@ def format_reminder(
             if len(current_files) > 5:
                 files_hint += f" +{len(current_files) - 5}"
 
-    if not step_id and not step_phase:
+    if not step_id and not step_phase and not wave_label:
         return None
 
     # Context-aware: add goal and subtask title
@@ -772,15 +799,15 @@ def format_reminder(
     except OSError:
         pass
     ts_hint = f" @ {now_utc.strftime('%H:%M:%S.%f')[:-3]}Z (state {state_age_str})"
-    base = f"[MAP]{ts_hint} {step_id} {step_phase}{goal_hint} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{hard_hint}{tag_hint}{authority_hint}"
+    base = f"[MAP]{ts_hint} {step_label}{goal_hint} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{hard_hint}{tag_hint}{authority_hint}"
 
     # Enforce limit: trim goal first, then constraint detail, then word-boundary truncate.
     if len(base) > REMINDER_LIMIT:
         goal_hint = ""
-        base = f"[MAP]{ts_hint} {step_id} {step_phase} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{hard_hint}{tag_hint}{authority_hint}"
+        base = f"[MAP]{ts_hint} {step_label} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{hard_hint}{tag_hint}{authority_hint}"
     if len(base) > REMINDER_LIMIT:
         hard_hint = ""
-        base = f"[MAP]{ts_hint} {step_id} {step_phase} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{tag_hint}{authority_hint}"
+        base = f"[MAP]{ts_hint} {step_label} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{tag_hint}{authority_hint}"
     if len(base) > REMINDER_LIMIT:
         base = _truncate_at_word(base, REMINDER_LIMIT)
 

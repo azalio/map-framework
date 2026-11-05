@@ -110,6 +110,19 @@ def state_string(state: dict, key: str, default: str = "") -> str:
     return default
 
 
+def active_wave_bits(state: dict) -> list[str]:
+    """Return ``wave=i/n`` and ``phases=...`` bits when the wave loop is engaged."""
+    waves = state.get("execution_waves")
+    phases = state.get("subtask_phases")
+    wave_idx = state.get("current_wave_index", 0)
+    if not (isinstance(waves, list) and waves and isinstance(phases, dict) and phases):
+        return []
+    if not isinstance(wave_idx, int) or isinstance(wave_idx, bool):
+        return []
+    per_subtask = " ".join(f"{sid}:{phase}" for sid, phase in phases.items())
+    return [f"wave={wave_idx + 1}/{len(waves)}", f"phases=[{per_subtask}]"]
+
+
 def load_json(path: Path) -> dict | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -209,10 +222,17 @@ def build_reprime(branch: str, branch_dir: Path) -> str | None:
     step_id = state_string(state, "current_step_id")
     subtask_id = state_string(state, "current_subtask_id")
 
+    wave_bits = active_wave_bits(state)
+    if wave_bits:
+        # Wave loop engaged: current_step_*/current_subtask_id are stale
+        # sequential leftovers; subtask_phases is the live progress record.
+        phase = step_id = subtask_id = ""
+
     lines = ["MAP RE-PRIME after compaction:"]
     state_bits = []
     if workflow:
         state_bits.append(f"workflow={workflow}")
+    state_bits.extend(wave_bits)
     if step_id:
         state_bits.append(f"step={step_id}")
     if phase:
