@@ -425,6 +425,7 @@ REVIEW_CONTEXT_RESERVE_BYTES = 64 * 1024
 REVIEW_ROLE_RUBRIC_RESERVE_BYTES = 128 * 1024
 REVIEW_CONTEXT_BUDGET_ENV = "MAP_REVIEW_CONTEXT_BUDGET_BYTES"
 REVIEW_MAX_SHARDS = 8
+REVIEW_MAX_SHARDS_ENV = "MAP_REVIEW_MAX_SHARDS"
 # A changed file whose full source resource would exceed this is delivered as hunks plus N context lines (#642).
 REVIEW_SOURCE_FULL_MAX_BYTES = 48 * 1024
 REVIEW_HUNK_CONTEXT_LINES = 40
@@ -24472,6 +24473,10 @@ def _review_required_bytes(
 
 
 def _review_max_shards(review_config: dict[str, Any]) -> int:
+    """Shard cap: operator-local env, then trusted config, then the default; invalid values are ignored."""
+    raw = os.environ.get(REVIEW_MAX_SHARDS_ENV, "").strip().replace("_", "")
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw)
     value = review_config.get("max_shards")
     return value if type(value) is int and value > 0 else REVIEW_MAX_SHARDS
 
@@ -24521,7 +24526,11 @@ def _review_context_budget_error(
     single_file_hint = (f"A single file's changed hunks (with {REVIEW_HUNK_CONTEXT_LINES} context lines by default) exceed the "
                         "per-reviewer capacity and cannot be sharded: split that file's change into smaller commits or reviews, "
                         "or lower review.hunk_context_lines.")
-    single_file = [single_file_hint] if extra.get("reason") == "file_too_large" else []
+    shard_hint = (f"This change needs {extra.get('shards_needed')} shards but at most {extra.get('max_shards')} are allowed: "
+                  f"set {REVIEW_MAX_SHARDS_ENV}={extra.get('shards_needed')} (operator-local) or raise review.max_shards "
+                  "in the trusted .map/config.yaml.")
+    single_file = ([single_file_hint] if extra.get("reason") == "file_too_large" else
+                   [shard_hint] if extra.get("reason") == "too_many_shards" else [])
     return {"status": "error", "stop_reason": "review_context_budget_exceeded", "total": total, "budget": budget,
             "top_paths": [{"path": name, "bytes": size} for name, size in top],
             "hints": [*single_file, "Split the change into smaller reviews.",

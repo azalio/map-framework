@@ -223,3 +223,47 @@ def test_vc11_blind_diff_only_reviewers_cannot_fetch_full_sources(repo):
     request = {"type": "context_request", "context_id": entry["context_transport"]["context_id"],
                "resource_id": f"current:{BIG}", "offset": 0}
     assert runner.serve_review_context("blind", json.dumps(request), "w", branch="feature")["status"] == "error"
+
+
+def many_files(count=30, lines=900):
+    for index in range(count):
+        directory = Path(f"pkg_{index % 3}")
+        directory.mkdir(exist_ok=True)
+        (directory / f"module_{index:02d}.py").write_text("".join(f"value_{n} = {n}\n" for n in range(lines)))
+
+
+def test_vc12_max_shards_env_overrides_default(repo, monkeypatch):
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(runner.REVIEW_CONTEXT_RESERVE_BYTES + 60_000))
+    many_files()
+    failed = runner.begin_review_run(branch="feature", provider="claude", round_id="m", base_ref="main")
+    assert failed["reason"] == "too_many_shards" and failed["max_shards"] == runner.REVIEW_MAX_SHARDS
+    needed = failed["shards_needed"]
+    monkeypatch.setenv("MAP_REVIEW_MAX_SHARDS", "1")
+    capped = runner.begin_review_run(branch="feature", provider="claude", round_id="m", base_ref="main")
+    assert capped["reason"] == "too_many_shards" and capped["max_shards"] == 1
+    monkeypatch.setenv("MAP_REVIEW_MAX_SHARDS", str(needed))
+    admitted = runner.begin_review_run(branch="feature", provider="claude", round_id="m", base_ref="main")
+    assert admitted["status"] == "success" and len(admitted["shard_ids"]) == needed, admitted
+
+
+@pytest.mark.parametrize("bad", ["0", "-3", "many", ""])
+def test_vc13_invalid_max_shards_env_is_ignored(monkeypatch, bad):
+    monkeypatch.setenv("MAP_REVIEW_MAX_SHARDS", bad)
+    assert runner._review_max_shards({}) == runner.REVIEW_MAX_SHARDS
+    assert runner._review_max_shards({"max_shards": 3}) == 3
+
+
+def test_vc13_env_wins_over_trusted_config(monkeypatch):
+    monkeypatch.setenv("MAP_REVIEW_MAX_SHARDS", "12")
+    assert runner._review_max_shards({"max_shards": 3}) == 12
+
+
+def test_vc14_too_many_shards_hint_names_the_needed_count_and_env(repo, monkeypatch):
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(runner.REVIEW_CONTEXT_RESERVE_BYTES + 60_000))
+    many_files()
+    result = runner.begin_review_run(branch="feature", provider="claude", round_id="h", base_ref="main")
+    assert result["reason"] == "too_many_shards", result
+    hint = " ".join(result["hints"])
+    assert "MAP_REVIEW_MAX_SHARDS" in hint and str(result["shards_needed"]) in hint
