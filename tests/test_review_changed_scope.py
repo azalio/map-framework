@@ -1155,3 +1155,136 @@ def test_digest_ignores_shard_files_of_earlier_rounds(sharded_monitor):
     (stale / "shard-monitor.json").write_text('{"old": false}')
     again = runner.write_review_verdict_ledger(current_run=True, branch="feature")
     assert again["status"] == "success", again
+
+
+def write_cyrillic(count=3, repeat=3000):
+    Path("docs").mkdir(exist_ok=True)
+    for index in range(count):
+        Path(f"docs/note_{index}.md").write_text("Привет, мир! \"кавычки\"\n" * repeat)
+
+
+def exact_required(entry):
+    manifest = shard_manifest(entry)
+    return manifest["resources"]
+
+
+def test_estimate_covers_the_json_encoded_source_resources(repo, monkeypatch):
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", "100000000")
+    write_changes()
+    write_cyrillic()
+    admitted = runner.begin_review_run(branch="feature", provider="claude", round_id="enc", base_ref="main")
+    assert admitted["status"] == "success", admitted
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    built = runner.build_review_prompts(branch="feature")
+    resources = exact_required(built["prompts"]["monitor"])
+    exact = sum(item["bytes"] for key, item in resources.items() if key.startswith("source_") or key == "diff")
+    estimate = sum(runner._review_required_bytes(admitted["target"], admitted["required_files"]).values())
+    assert estimate >= exact, (estimate, exact)
+
+
+def test_non_ascii_change_is_sharded_at_admission_instead_of_failing_at_prompt_build(repo, monkeypatch):
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(runner.REVIEW_CONTEXT_RESERVE_BYTES + 400_000))
+    write_changes()
+    write_cyrillic(repeat=1500)
+    admitted = runner.begin_review_run(branch="feature", provider="claude", round_id="enc", base_ref="main")
+    assert admitted["status"] == "success", admitted
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    ids = admitted.get("shard_ids") or [""]
+    for shard in ids:
+        built = runner.build_review_prompts(branch="feature", shard=shard)
+        assert built["status"] == "success", (shard, built)
+    assert len(ids) >= 2, admitted
+
+
+def serve_lazy(entry, resource, round_id, reviewer="monitor"):
+    request = {"type": "context_request", "context_id": entry["context_transport"]["context_id"],
+               "resource_id": resource, "offset": 0}
+    return runner.serve_review_context(reviewer, json.dumps(request), round_id, branch="feature")
+
+
+def test_changed_generated_file_is_served_with_real_base_and_current(repo):
+    del repo
+    trust_on_main({"gen.pb.go": "OLD GENERATED\n"})
+    git("merge", "-q", "main", "-m", "take generated file into the feature base")
+    Path("gen.pb.go").write_text("NEW GENERATED\n")
+    write_changes()
+    admitted = runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="gen", base_ref="main")
+    assert admitted["status"] == "success" and [item["path"] for item in admitted["coverage_skips"]] == ["gen.pb.go"], admitted
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    entry = runner.build_review_prompts(branch="feature")["prompts"]["monitor"]
+    served = serve_lazy(entry, "repo:gen.pb.go", "gen")
+    assert served["status"] == "context_response", served
+    payload = json.loads(served["content"])
+    assert payload["status"] == "changed_generated_skipped"
+    assert payload["base_content"] == "OLD GENERATED\n" and payload["current_content"] == "NEW GENERATED\n"
+    assert payload["baseline_known"] is True
+
+
+def test_large_check_logs_are_stubbed_in_the_prompt_and_stay_retrievable(repo, monkeypatch):
+    del repo
+    write_changes()
+    runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="chk", base_ref="main")
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    directory = Path(".map/feature")
+    log = "".join(f"line {index} of a very long test log\n" for index in range(20_000))
+    (directory / "check-big.txt").write_text(log)
+    (directory / "check-small.txt").write_text("ok\n")
+    ledger = runner._read_review_ledger(directory)
+    ledger["execution_checks"] = {"big": {"output_artifact": "check-big.txt"}, "small": {"output_artifact": "check-small.txt"}}
+    runner._write_json_file(directory / "review-verdict-ledger.json", ledger)
+    monkeypatch.setattr(runner, "_review_check_valid", lambda *args: True)
+    compact = runner._review_compact_bundle("feature")
+    assert len(compact) < 80_000 and "line 0 of" in compact and "line 19999 of" in compact
+    assert "line 10000 of" not in compact and "optional resource check:big" in compact
+    entry = runner.build_review_prompts(branch="feature")["prompts"]["monitor"]
+    chunks, offset = [], 0
+    while True:
+        request = {"type": "context_request", "context_id": entry["context_transport"]["context_id"],
+                   "resource_id": "check:big", "offset": offset}
+        served = runner.serve_review_context("monitor", json.dumps(request), "chk", branch="feature")
+        assert served["status"] == "context_response", served
+        chunks.append(served["content"])
+        if served["eof"]:
+            break
+        offset = served["next_offset"]
+    assert "".join(chunks) == log
+    unknown = serve_lazy(entry, "check:nope", "chk")
+    assert unknown["status"] == "error"
+
+
+@pytest.mark.parametrize("header,expected", [
+    ("diff --git a/plain.py b/plain.py", ("plain.py", "plain.py")),
+    ("diff --git a/dir with b/space.py b/dir with b/space.py", ("dir with b/space.py", "dir with b/space.py")),
+    ('diff --git "a/caf\\303\\251.pb.go" "b/caf\\303\\251.pb.go"', ("café.pb.go", "café.pb.go")),
+    ('diff --git "a/we\\"ird\\ttab.go" "b/we\\"ird\\ttab.go"', ('we"ird\ttab.go', 'we"ird\ttab.go')),
+    ("diff --git a/old.py b/new.py", ("old.py", "new.py")),
+    ('diff --git a/old.py "b/n\\303\\251w.py"', ("old.py", "néw.py")),
+])
+def test_diff_header_parser_handles_quoted_and_renamed_paths(header, expected):
+    assert runner._review_diff_header_paths(header + "\n") == expected
+    assert runner._review_diff_header_paths("+diff --git a/x b/x\n") is None
+
+
+def test_non_ascii_and_quoted_generated_paths_are_stubbed_and_sharded_correctly(repo, monkeypatch):
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", shard_budget())
+    write_changes()
+    generated = ["api/café.pb.go", 'api/we"ird.pb.go']
+    for name in generated:
+        Path(name).parent.mkdir(exist_ok=True)
+        Path(name).write_text("GENERATED_BODY\n" * 50)
+    write_many(6)
+    admitted = runner.begin_review_run(branch="feature", provider="claude", round_id="quoted", base_ref="main")
+    assert admitted["status"] == "success", admitted
+    assert {item["path"] for item in admitted["coverage_skips"]} == set(generated)
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    for shard in admitted["shard_ids"]:
+        entry = runner.build_review_prompts(branch="feature", shard=shard)["prompts"]["monitor"]
+        diff = read_resource(Path(".map/feature"), entry, "diff")
+        assert "GENERATED_BODY" not in diff
+        assert diff.count("generated file omitted by review coverage policy") == len(generated)
+        # Another shard's file is cut by its (non-ASCII-safe) header, so no body leaks into this shard.
+        mine = set(next(item["files"] for item in current_row()["shards"] if item["id"] == shard))
+        assert diff.count("+value_0 = 0") == len([name for name in mine if name.startswith("pkg_")])
