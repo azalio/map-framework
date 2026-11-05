@@ -28,8 +28,26 @@ If reviewers could not run for an admitted round, `abandon_review_round` it. A r
 
 Required coverage is the admitted `required_files`: changed paths against the selected base,
 including staged/unstaged/untracked inputs, deletions and both rename sides. The full
-`context_files` inventory remains snapshot-bound and available for dependency checks.
+`context_files` inventory remains snapshot-bound; unchanged files are fetched lazily as
+resource `repo:<path>` (frozen on first fetch) and are never listed in the manifest.
 Unread or explicitly skipped optional context does not make review incomplete.
+
+Generated files are excluded from `required_files` and recorded in `row.coverage_skips`
+(`snapshot.coverage_skips`, ledger `completeness.skipped_scope`) only when matched by a file
+name pattern (`*.pb.go`, `*.pb.cc`, `*.pb.h`, `*_pb2.py`, `*_pb2_grpc.py`, `zz_generated*`), a
+trusted `review.generated_patterns` entry, or `linguist-generated` in the root `.gitattributes`
+of the trusted default revision. A `Code generated` header never skips a file, lockfiles stay
+required, and strict `review.security_gates` disables every skip. Their diff hunks appear as
+one-line stubs. `review.exclude_generated: false` turns skipping off.
+
+## Context Budget
+
+Each reviewer's required context (manifest, prompt, `diff`, inventory, sources, artifacts) must
+fit `review.context_budget_bytes` (trusted config; env `MAP_REVIEW_CONTEXT_BUDGET_BYTES`; default
+384 KiB). `begin_review_run` estimates it before consent and returns
+`stop_reason: review_context_budget_exceeded` with `total`, `budget`, `top_paths` and `hints`
+without consuming a round; the prompt builders recheck exact bytes and return no partial prompts.
+Split the change, exclude generated files or raise the budget.
 
 ## Compare Orderings
 [%- if PROVIDER == "codex" %]
@@ -308,8 +326,9 @@ retries, both ordering collections and the advisory complexity lens:
    For an early final response, retain no final capture: create the same request
    shape from the status's next `remaining` resource/offset and continue delivery.
    Required resources include the manifest, full original prompt (unless initially
-   inline), inventory and source resources marked `required`. Unchanged sources
-   are optional dependency context; fetch them only when needed. Blind stays diff-only.
+   inline), the `diff` resource, inventory and source resources marked `required`. Unchanged
+   repository files are optional: fetch `repo:<path>` only when needed. Blind stays diff-only
+   (prompt and `diff` only).
 2. Store the exact returned chunk JSON in a session-specific pending file under
    `.map/<branch>/review-context-delivery/<session-id>/`, then pass that JSON
    verbatim to the **same agent**:
