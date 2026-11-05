@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `mapify _update --mode automatic` no longer reports `current` when the project's installed files (`.map/mapify.lock.json` `mapify_version`) are older than the running CLI, e.g. after the CLI was upgraded outside the updater: the project's providers are refreshed (`updated`) without a network call or the 24 h throttle, then settle at `current`. Automatic mode refreshes within the running major only; a project a major behind gets the existing `major_available` consent result for the running CLI version (approve with `--mode manual --approve-major <v>`, which refreshes without a package install; `--decline-major <v>` is recorded and not repeated). A newer project version is never downgraded; the framework source repo stays skipped (#643)
+
 ## [3.36.0] - 2026-11-05
 
 ### Added

@@ -12,6 +12,7 @@ import httpx
 
 from mapify_cli import create_ssl_context
 from mapify_cli.config import load_map_config
+from mapify_cli.install_manifest import read_manifest
 from mapify_cli.update_install import (
     InstallKind,
     PackageUpdateError,
@@ -175,10 +176,22 @@ def record_declined_major(
     declined = StableVersion.parse(declined_major)
     if current is None:
         raise ValueError("installed MAP version is not a stable version")
-    if declined is None or declined.major <= current.major:
+    if declined is None:
         raise ValueError(
             "declined major must be a stable version above the installed major"
         )
+    if declined.major <= current.major:
+        # Intent: a project a major behind the running CLI is offered the CLI's own
+        # major (#643); that exact offer may be declined too.
+        stale = _stale_project_providers(Path(project_path).resolve(), current)
+        if (
+            declined != current
+            or stale is None
+            or not _major_behind(stale[0], current)
+        ):
+            raise ValueError(
+                "declined major must be a stable version above the installed major"
+            )
 
     project = Path(project_path).resolve()
     with project_update_lock(project, timeout_s=LOCK_TIMEOUT_SECONDS):
@@ -443,6 +456,60 @@ def _metadata_unavailable_result(
     )
 
 
+def _stale_project_providers(
+    project_path: Path, current: StableVersion
+) -> tuple[StableVersion, tuple[str, ...]] | None:
+    """Return (installed version, providers) when project files predate the CLI.
+
+    Intent: PyPI-based discovery only asks whether a newer CLI exists, so a CLI
+    upgraded outside the updater (#643) left project files stale while the result
+    stayed ``current``. The lock's ``mapify_version`` is the project's installed
+    version; an older stable value is local proof a refresh is owed. A newer or
+    unreadable project version never downgrades.
+    """
+    manifest = read_manifest(project_path)
+    if manifest is None:
+        return None
+    installed = StableVersion.parse(manifest.mapify_version)
+    if installed is None or installed >= current:
+        return None
+    providers = installed_providers(project_path)
+    if not providers:
+        return None
+    return installed, providers
+
+
+def _major_behind(installed: StableVersion, current: StableVersion) -> bool:
+    return installed.major < current.major
+
+
+def _stale_project_state(
+    project_path: Path,
+    state: UpdateState,
+    current: StableVersion,
+    mode: UpdateMode,
+) -> UpdateState | None:
+    """Return a pending-refresh state when a stale project may refresh now.
+
+    Same-major staleness refreshes in both modes. A project a MAJOR behind
+    refreshes only in manual mode; automatic mode offers it through the existing
+    major-consent flow instead (see ``_check_locked``).
+    """
+    stale = _stale_project_providers(project_path, current)
+    if stale is None:
+        return None
+    installed, providers = stale
+    if mode is UpdateMode.AUTOMATIC and _major_behind(installed, current):
+        return None
+    return replace(
+        state,
+        last_installed_version=str(current),
+        pending_install_version=None,
+        pending_refresh=True,
+        pending_providers=providers,
+    )
+
+
 def _check_locked(
     project_path: Path,
     current_version: str,
@@ -488,6 +555,14 @@ def _check_locked(
                 )
                 write_update_state(project_path, cleared)
                 progress.state = cleared
+
+        if not progress.state.pending_refresh:
+            stale_state = _stale_project_state(
+                project_path, progress.state, current, mode
+            )
+            if stale_state is not None:
+                write_update_state(project_path, stale_state)
+                progress.state = stale_state
 
         if progress.state.pending_refresh:
             if mode is UpdateMode.AUTOMATIC and not refresh_retry_due(
@@ -567,6 +642,17 @@ def _check_locked(
                     refresh_complete=True,
                 )
             progress.recovered_refresh = True
+            if approved_major == str(current):
+                # Intent: approving the CLI's own major for a project a major
+                # behind is a refresh only; there is no newer package to install.
+                return UpdateResult(
+                    UpdateStatus.UPDATED,
+                    current_version,
+                    installed_version=progress.installed_version,
+                    refreshed_providers=progress.refreshed_providers,
+                    reload_current_skill=True,
+                    refresh_complete=True,
+                )
 
         if mode is UpdateMode.AUTOMATIC and not automatic_check_due(
             progress.state,
@@ -590,6 +676,38 @@ def _check_locked(
                 last_attempt_at=_timestamp(effective_now),
             )
             write_update_state(project_path, progress.state)
+
+        if mode is UpdateMode.AUTOMATIC:
+            stale = _stale_project_providers(project_path, current)
+            if (
+                stale is not None
+                and _major_behind(stale[0], current)
+                and progress.state.declined_major_version != str(current)
+            ):
+                # Intent: a project a major behind the running CLI is stale, not
+                # current (#643). Reuse the major-consent signal: approving
+                # refreshes the project (no package install), declining records
+                # the exact offer so it does not repeat.
+                with httpx.Client(verify=create_ssl_context()) as offer_client:
+                    offer = fetch_release_highlights(current, offer_client)
+                if offer is None:
+                    return _metadata_unavailable_result(
+                        mode,
+                        current_version,
+                        installed_version=progress.installed_version,
+                        refreshed_providers=progress.refreshed_providers,
+                        reload_current_skill=progress.reload_current_skill,
+                        refresh_complete=progress.refresh_complete,
+                    )
+                return UpdateResult(
+                    UpdateStatus.MAJOR_AVAILABLE,
+                    current_version,
+                    installed_version=progress.installed_version,
+                    major=offer,
+                    refreshed_providers=progress.refreshed_providers,
+                    reload_current_skill=progress.reload_current_skill,
+                    refresh_complete=progress.refresh_complete,
+                )
 
         with httpx.Client(verify=create_ssl_context()) as client:
             targets = fetch_version_targets(current, client)
