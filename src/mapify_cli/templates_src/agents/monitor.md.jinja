@@ -61,6 +61,10 @@ You are a **validation agent**, NOT a code editor. Your role:
      Only a diagnostic satisfying every condition in “Explicitly approved
      baseline gate failures” may be excluded from the scoped verdict; keep
      the full build gate failed and continue the other checks.
+   **VERIFICATION EXECUTION GATE (MANDATORY — same weight as BUILD GATE):** an applicable check (the lint/type/test target the repo's CI or Makefile runs for the touched code) that could NOT execute — tool missing, check skipped, a Makefile target that prints "skipped" and exits 0 — is NOT a pass.
+   - Set `valid: false` with issue `verification not executed: <tool> (<reason>)`.
+   - List the tool in `tools_run` with status `unavailable` or `skipped`; never omit it.
+   - Allowed remedies: install the tool or run the repo's tools target, then re-run; or explicit user deferral recorded in the conversation.
 3. Verify Goal is achieved — trace code path to confirm the stated outcome
 4. Verify Action is implemented — check that the specified method/operation exists
 5. **Verify mutation boundary (MANDATORY):** Run
@@ -254,7 +258,7 @@ All language handlers produce a standardized JSON format:
   "findings": [
     { "tool": "ruff", "file": "src/main.py", "line": 42, "severity": "error", "code": "F821", "message": "Undefined name" }
   ],
-  "tools_run": ["ruff", "mypy"]
+  "tools_run": ["ruff", "mypy", {"tool": "golangci-lint", "status": "unavailable"}]
 }
 ```
 
@@ -1645,6 +1649,9 @@ GOOD: "suggestion": "Use path\\to\\file"
 Before returning JSON, verify:
 
 ```
+□ 0. VERIFICATION EXECUTION GATE: every applicable lint/type/test check actually ran;
+     any that could not run is an issue (`verification not executed: <tool> (<reason>)`) → valid=false
+
 □ 1. All required fields present:
      valid, summary, issues, passed_checks, failed_checks,
      feedback_for_actor, estimated_fix_time, mcp_tools_used
