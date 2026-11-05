@@ -28,7 +28,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Generator
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, NoReturn
@@ -300,7 +300,7 @@ def _windows_gitignore_mutex_name(project_stat: os.stat_result) -> str:
 @contextlib.contextmanager
 def _windows_project_gitignore_mutex(
     project_stat: os.stat_result,
-) -> Iterator[None]:
+) -> Generator[None, None, None]:
     """Acquire a process-shared Windows mutex without a filesystem artifact."""
     ctypes: Any = importlib.import_module("ctypes")
     wintypes: Any = importlib.import_module("ctypes.wintypes")
@@ -364,7 +364,7 @@ def _windows_project_gitignore_mutex(
 def _windows_pinned_project_root(
     project_root: Path,
     project_original: os.stat_result,
-) -> Iterator[None]:
+) -> Generator[None, None, None]:
     """Prevent replacement of a Windows project directory during mutation."""
     ctypes: Any = importlib.import_module("ctypes")
     wintypes: Any = importlib.import_module("ctypes.wintypes")
@@ -415,7 +415,7 @@ def _windows_pinned_project_root(
 def _pinned_project_root(
     project_root: Path,
     project_original: os.stat_result,
-) -> Iterator[int | None]:
+) -> Generator[int | None, None, None]:
     """Pin the project identity used by every relative .gitignore operation."""
     if os.name == "nt":
         with _windows_pinned_project_root(project_root, project_original):
@@ -589,7 +589,7 @@ def _unlock_descriptor(descriptor: int) -> None:
 @contextlib.contextmanager
 def _project_gitignore_lock(
     project_root: Path,
-) -> Iterator[tuple[int | None, os.stat_result]]:
+) -> Generator[tuple[int | None, os.stat_result], None, None]:
     """Serialize the complete root .gitignore read/merge/replace transaction."""
     project_original = _validated_project_root_stat(project_root)
     with _pinned_project_root(project_root, project_original) as directory_fd:
@@ -1182,7 +1182,7 @@ def _credentials_transaction_lock(
     sofa_dir: Path,
     sofa_original: os.stat_result,
     directory_fd: int | None,
-) -> Iterator[None]:
+) -> Generator[None, None, None]:
     """Serialize one complete credentials read/merge/write transaction."""
     lock_file = sofa_dir / "credentials.lock"
     descriptor = _open_credentials_lock(

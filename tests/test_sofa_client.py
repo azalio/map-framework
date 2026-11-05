@@ -755,9 +755,9 @@ def test_vc3_cli_and_standalone_share_private_persistent_lock(tmp_path: Path) ->
     if _is_windows():
         pytest.skip("Windows uses a named mutex with no lock file")
     project_root = tmp_path.resolve(strict=True)
-    assert sofa._gitignore_lock_path(project_root) == file_copier._gitignore_lock_path(
+    assert sofa._gitignore_lock_path(
         project_root
-    )
+    ) == file_copier._gitignore_lock_path_for_stat(project_root, os.stat(project_root))
 
     assert sofa.ensure_sofa_gitignore(project_root) is True
 

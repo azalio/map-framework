@@ -89,7 +89,8 @@ def test_refresh_repairs_negated_runtime_patterns(
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     merge_update_runtime_gitignore(tmp_path)
     ignore = tmp_path / ".gitignore"
-    ignore.write_text(ignore.read_text() + negation + "\n")
+    existing = ignore.read_text() if ignore.exists() else ""
+    ignore.write_text(existing + negation + "\n")
     private = tmp_path / private_path
     private.parent.mkdir(parents=True)
     private.write_text("synthetic private data\n")

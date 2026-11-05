@@ -13,9 +13,10 @@ import os
 import secrets
 import shutil
 import stat
+import subprocess
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Generator
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -608,7 +609,7 @@ def _windows_gitignore_mutex_name(project_stat: os.stat_result) -> str:
 @contextlib.contextmanager
 def _windows_project_gitignore_mutex(
     project_stat: os.stat_result,
-) -> Iterator[None]:
+) -> Generator[None, None, None]:
     """Acquire a process-shared Windows mutex without a filesystem artifact."""
     ctypes: Any = importlib.import_module("ctypes")
     wintypes: Any = importlib.import_module("ctypes.wintypes")
@@ -672,7 +673,7 @@ def _windows_project_gitignore_mutex(
 def _windows_pinned_project_root(
     project_root: Path,
     project_original: os.stat_result,
-) -> Iterator[None]:
+) -> Generator[None, None, None]:
     """Prevent replacement of a Windows project directory during mutation."""
     ctypes: Any = importlib.import_module("ctypes")
     wintypes: Any = importlib.import_module("ctypes.wintypes")
@@ -726,7 +727,7 @@ def _windows_pinned_project_root(
 def _pinned_project_root(
     project_root: Path,
     project_original: os.stat_result,
-) -> Iterator[int | None]:
+) -> Generator[int | None, None, None]:
     """Pin the project identity used by every relative .gitignore operation."""
     if os.name == "nt":
         with _windows_pinned_project_root(project_root, project_original):
@@ -763,14 +764,6 @@ def _pinned_project_root(
         yield descriptor
     finally:
         os.close(descriptor)
-
-
-def _gitignore_lock_path(project_root: Path) -> Path:
-    """Resolve the shared lock from stable filesystem identity, not spelling."""
-    return _gitignore_lock_path_for_stat(
-        project_root,
-        _validated_project_root_stat(project_root),
-    )
 
 
 def _unsafe_gitignore_lock(lock_path: Path, reason: str) -> NoReturn:
@@ -900,7 +893,7 @@ def _unlock_descriptor(descriptor: int) -> None:
 @contextlib.contextmanager
 def _project_gitignore_lock(
     project_root: Path,
-) -> Iterator[tuple[int | None, os.stat_result]]:
+) -> Generator[tuple[int | None, os.stat_result], None, None]:
     """Serialize a complete MAP-owned root .gitignore transaction."""
     project_original = _validated_project_root_stat(project_root)
     with _pinned_project_root(project_root, project_original) as directory_fd:
@@ -1220,9 +1213,104 @@ def _has_effective_gitignore_path(lines: list[bytes], required_path: str) -> boo
     )
 
 
+def _git_info_exclude_path(project_root: Path) -> Path | None:
+    """Return ``<git-common-dir>/info/exclude`` for a repo rooted at *project_root*.
+
+    ``info/exclude`` patterns anchor at the repository top level, so a project
+    root that is merely a subdirectory of a repo (or not a repo at all, or git
+    is unavailable) returns None and the caller keeps the tracked ``.gitignore``.
+    Linked worktrees share the common dir, hence one exclude file per clone.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel", "--git-common-dir"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    lines = proc.stdout.splitlines()
+    if proc.returncode != 0 or len(lines) != 2:
+        return None
+    toplevel, common = Path(lines[0]), Path(lines[1])
+    try:
+        if toplevel.resolve() != project_root.resolve():
+            return None
+    except OSError:
+        return None
+    if not common.is_absolute():
+        common = project_root / common
+    return common / "info" / "exclude"
+
+
+def _prepare_info_exclude_directory(exclude: Path) -> None:
+    """Create ``info/`` when missing and require it to be a direct directory."""
+    try:
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        current = os.lstat(exclude.parent)
+    except OSError as exc:
+        _unsafe_project_gitignore(
+            exclude, f"could not prepare {exclude.parent} ({exc})"
+        )
+    if stat.S_ISLNK(current.st_mode) or not stat.S_ISDIR(current.st_mode):
+        _unsafe_project_gitignore(
+            exclude, "the info directory must be a direct directory"
+        )
+
+
 def _has_gitignore_marker(lines: list[bytes], marker: str) -> bool:
     encoded = marker.encode()
     return any(line == encoded or line.startswith(encoded + b" ") for line in lines)
+
+
+def _merge_runtime_exclude(
+    exclude: Path,
+    gitignore_lines: list[bytes],
+    project_root: Path,
+    project_original: os.stat_result,
+) -> bool | None:
+    """Append missing runtime paths to the git exclude file.
+
+    Presence in either file counts (OR).  Returns True when the exclude file
+    was rewritten, False when nothing was needed, and None when a ``.gitignore``
+    negation (which outranks ``info/exclude``) defeats an exclude entry, so the
+    caller must repair the tracked ``.gitignore`` instead.
+    """
+    existing, original = _read_safe_gitignore(exclude, None)
+    exclude_lines = existing.splitlines()
+    # .gitignore outranks info/exclude: evaluate exclude rules first.
+    combined = exclude_lines + gitignore_lines
+    missing = [
+        path
+        for path in _UPDATE_RUNTIME_GITIGNORE_PATHS
+        if not _has_effective_gitignore_path(combined, path)
+    ]
+    if not missing:
+        return False
+    if any(
+        line.startswith(b"!") and _negation_targets_path(line, path.encode())
+        for path in missing
+        for line in gitignore_lines
+    ):
+        return None
+    _prepare_info_exclude_directory(exclude)
+    block: list[bytes] = []
+    if not _has_gitignore_marker(exclude_lines, _UPDATE_RUNTIME_GITIGNORE_MARKER):
+        block.append(_UPDATE_RUNTIME_GITIGNORE_MARKER.encode())
+    block.extend(path.encode() for path in missing)
+    separator = b"" if not existing or existing.endswith(b"\n") else b"\n"
+    _atomic_replace_gitignore(
+        exclude,
+        existing + separator + b"\n".join(block) + b"\n",
+        original,
+        None,
+        project_root,
+        project_original,
+    )
+    return True
 
 
 def _merge_project_gitignore_locked(
@@ -1234,20 +1322,39 @@ def _merge_project_gitignore_locked(
     include_sofa: bool = False,
     include_agent_memory_local: bool = False,
     include_settings_local: bool = False,
+    runtime_exclude: Path | None = None,
 ) -> int:
-    """Append selected MAP-owned blocks while the shared lock is held."""
+    """Append selected MAP-owned blocks while the shared lock is held.
+
+    With ``runtime_exclude`` set, the runtime block goes to that git exclude
+    file instead of the tracked ``.gitignore``; privacy blocks always stay in
+    ``.gitignore``.
+    """
     gitignore = project_root / ".gitignore"
     existing, original = _read_safe_gitignore(gitignore, directory_fd)
     _validate_project_root_unchanged(project_root, project_original)
     existing_lines = existing.splitlines()
 
     additions: list[bytes] = []
+    exclude_changed = False
     if include_runtime:
         missing_runtime_paths = [
             path
             for path in _UPDATE_RUNTIME_GITIGNORE_PATHS
             if not _has_effective_gitignore_path(existing_lines, path)
         ]
+        if runtime_exclude is not None:
+            outcome = _merge_runtime_exclude(
+                runtime_exclude,
+                existing_lines,
+                project_root,
+                project_original,
+            )
+            # None: a .gitignore negation outranks info/exclude, so the
+            # tracked-file repair below still applies.
+            if outcome is not None:
+                exclude_changed = outcome
+                missing_runtime_paths = []
         if missing_runtime_paths:
             runtime_lines: list[bytes] = []
             marker = _UPDATE_RUNTIME_GITIGNORE_MARKER.encode()
@@ -1291,7 +1398,7 @@ def _merge_project_gitignore_locked(
 
     if not additions:
         _validate_gitignore_unchanged(gitignore, original, directory_fd)
-        return 0
+        return 1 if exclude_changed else 0
     separator = b"" if not existing or existing.endswith(b"\n") else b"\n"
     replacement = existing + separator + b"".join(additions)
     _atomic_replace_gitignore(
@@ -1312,11 +1419,17 @@ def _merge_project_gitignore(
     include_sofa: bool = False,
     include_agent_memory_local: bool = False,
     include_settings_local: bool = False,
+    runtime_to_git_exclude: bool = False,
 ) -> int:
     """Safely, atomically, and serially append MAP-owned ignore blocks."""
     project_root = project_path.resolve(strict=True)
     if not project_root.is_dir():
         raise NotADirectoryError(f"MAP project root is not a directory: {project_root}")
+    runtime_exclude = (
+        _git_info_exclude_path(project_root)
+        if include_runtime and runtime_to_git_exclude
+        else None
+    )
     with _project_gitignore_lock(project_root) as (directory_fd, project_original):
         return _merge_project_gitignore_locked(
             project_root,
@@ -1326,6 +1439,7 @@ def _merge_project_gitignore(
             include_sofa=include_sofa,
             include_agent_memory_local=include_agent_memory_local,
             include_settings_local=include_settings_local,
+            runtime_exclude=runtime_exclude,
         )
 
 
@@ -1336,10 +1450,17 @@ def merge_update_runtime_gitignore(
     agent_memory_local: bool = False,
     settings_local: bool = False,
 ) -> int:
-    """Atomically establish runtime and requested privacy ignore entries."""
+    """Atomically establish runtime and requested privacy ignore entries.
+
+    The runtime block is local state, so in a git repo rooted at *project_path*
+    it goes to ``<git-common-dir>/info/exclude`` and leaves the tracked
+    ``.gitignore`` clean; elsewhere it falls back to ``.gitignore``.  Privacy
+    blocks are repo policy and always go to ``.gitignore``.
+    """
     return _merge_project_gitignore(
         project_path,
         include_runtime=True,
+        runtime_to_git_exclude=True,
         include_sofa=sofa,
         include_agent_memory_local=agent_memory_local,
         include_settings_local=settings_local,
