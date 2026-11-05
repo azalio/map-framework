@@ -10796,19 +10796,20 @@ def _review_capability_verified(row: dict[str, Any], directory: Path) -> bool:
     orderings = ("default", "reverse") if row["binding"]["review_mode"] == "compare_orderings" else ("default",)
     for ordering in orderings:
         for role in row["binding"]["scheduled_reviewers"]:
-            identity = row.get("context_active", {}).get(f"{ordering}:{role}")
-            session = row.get("context_sessions", {}).get(identity, {})
-            witness = session.get("host_capability", {})
-            path = directory / witness.get("artifact", "missing-host-proof")
-            if (not path.is_file() or path.is_symlink()
-                    or hashlib.sha256(path.read_bytes()).hexdigest() != witness.get("sha256")):
-                return False
-            proof = json.loads(path.read_text())
-            if (proof.get("boundary") != "codex_no_environments" or proof.get("thread_id") != session.get("agent_id")
-                    or proof.get("context_id") != session.get("context_id") or proof.get("environments") != []
-                    or proof.get("source_read") != "host_witnessed"
-                    or proof.get("canary_write") != "host_denied_no_environment"):
-                return False
+            for shard in [item["id"] for item in row.get("shards", [])] or [""]:
+                identity = row.get("context_active", {}).get(_review_session_key(ordering, role, shard))
+                session = row.get("context_sessions", {}).get(identity, {})
+                witness = session.get("host_capability", {})
+                path = directory / witness.get("artifact", "missing-host-proof")
+                if (not path.is_file() or path.is_symlink()
+                        or hashlib.sha256(path.read_bytes()).hexdigest() != witness.get("sha256")):
+                    return False
+                proof = json.loads(path.read_text())
+                if (proof.get("boundary") != "codex_no_environments" or proof.get("thread_id") != session.get("agent_id")
+                        or proof.get("context_id") != session.get("context_id") or proof.get("environments") != []
+                        or proof.get("source_read") != "host_witnessed"
+                        or proof.get("canary_write") != "host_denied_no_environment"):
+                    return False
     return True
 
 
@@ -13496,30 +13497,70 @@ def _review_transport_active(branch_name: str) -> bool:
     return bool(rounds and not _review_round_terminal(rounds[-1]) and _review_attribution_artifact(branch_name))
 
 
+_REVIEW_DIFF_TRAILER = re.compile(r"\n\n(?:=== |Review scope:|Unresolved findings:|Prioritize the delta)")
+
+
+def _review_rewrite_diff(diff: str, replacement: Callable[[str, str, int], str | None]) -> str:
+    """Replace whole per-file diff parts; labels and scope trailers after a part are preserved."""
+    out = []
+    for part in re.split(r"(?m)^(?=diff --git )", diff):
+        match = re.match(r"diff --git a/(.+?) b/(.+)\n", part)
+        note = replacement(match.group(1), match.group(2), len(part.encode("utf-8"))) if match else None
+        if note is None:
+            out.append(part)
+            continue
+        header = part.split("\n", 1)[0]
+        trailer = _REVIEW_DIFF_TRAILER.search(part, len(header))
+        out.append(f"{header}\n{note}\n" + (part[trailer.start():] if trailer else ""))
+    return "".join(out)
+
+
 def _review_stub_generated_hunks(diff: str, skips: list[dict[str, Any]]) -> str:
     """Replace each skipped generated file's hunks by a one-line stub, keeping all other bytes."""
     paths = {item["path"] for item in skips if isinstance(item, dict) and isinstance(item.get("path"), str)}
     if not paths:
         return diff
-    out = []
-    for part in re.split(r"(?m)^(?=diff --git )", diff):
-        match = re.match(r"diff --git a/(.+?) b/(.+)\n", part)
-        if match and (match.group(1) in paths or match.group(2) in paths):
-            out.append(f"{part.split(chr(10), 1)[0]}\n[generated file omitted by review coverage policy: "
-                       f"{len(part.encode('utf-8'))} diff bytes]\n")
-        else:
-            out.append(part)
-    return "".join(out)
+    return _review_rewrite_diff(diff, lambda old, new, size: (
+        f"[generated file omitted by review coverage policy: {size} diff bytes]"
+        if old in paths or new in paths else None))
 
 
-def _review_diff_resource(branch_name: str, git_diff: str) -> tuple[str, str | None]:
+def _review_shard_gate(branch_name: str, shard: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Resolve a builder's shard argument: (early result, shard row). Unsharded rounds pass through."""
+    rounds = _read_review_ledger(get_branch_dir(branch_name)).get("convergence", {}).get("rounds", [])
+    shards = rounds[-1].get("shards") if rounds and not _review_round_terminal(rounds[-1]) else None
+    if not shards:
+        if shard:
+            return {"status": "error", "message": "The admitted review round is not sharded; omit shard"}, None
+        return None, None
+    ids = [item["id"] for item in shards]
+    if not shard:
+        return {"status": "sharded", "branch": branch_name, "shard_ids": ids,
+                "message": "Round is sharded; build and run prompts once per shard id"}, None
+    chosen = next((item for item in shards if item["id"] == shard), None)
+    if chosen is None:
+        return {"status": "error", "message": f"Unknown review shard {shard!r}; admitted shards: {ids}"}, None
+    return None, chosen
+
+
+def _review_diff_resource(
+    branch_name: str, git_diff: str, shard_row: dict[str, Any] | None = None,
+) -> tuple[str, str | None]:
     """Return (prompt text, resource text); the full diff moves to a required ``diff`` resource."""
     if not _review_transport_active(branch_name):
         return git_diff, None
     row = _read_review_ledger(get_branch_dir(branch_name))["convergence"]["rounds"][-1]
     full = _review_stub_generated_hunks(git_diff, row.get("coverage_skips", []))
+    scope = "complete selected git diff"
+    if shard_row is not None:
+        mine = set(shard_row["files"])
+        others = set(row.get("required_files", [])) - mine
+        full = _review_rewrite_diff(full, lambda old, new, size: (
+            f"[file belongs to another review shard: {size} diff bytes omitted]"
+            if (old in others or new in others) and old not in mine and new not in mine else None))
+        scope = f"git diff for review shard {shard_row['id']}"
     raw = full.encode("utf-8")
-    return (f"[The complete selected git diff ({len(raw)} UTF-8 bytes, SHA-256 {hashlib.sha256(raw).hexdigest()}) "
+    return (f"[The {scope} ({len(raw)} UTF-8 bytes, SHA-256 {hashlib.sha256(raw).hexdigest()}) "
             "is a required parent-served resource named diff; consume every chunk before reviewing. "
             "Generated files skipped by coverage policy appear there as one-line stubs.]"), full
 
@@ -13720,13 +13761,19 @@ def _review_lazy_repo_resource(
     """
     name = resource_id.removeprefix("repo:")
     target = row.get("target", {})
+    own = set(row.get("required_files", []))
+    if manifest.get("shard"):
+        own = set(next((item["files"] for item in row.get("shards", []) if item["id"] == manifest["shard"]), []))
     if (manifest.get("context_access") == "diff_only" or not name
-            or name not in set(target.get("context_files", [])) or name in set(row.get("required_files", []))):
+            or name not in set(target.get("context_files", [])) or name in own):
         raise ValueError("Resource is not permitted for this reviewer")
     frozen = row.get("context_lazy", {}).get(name)
     if isinstance(frozen, dict):
         return frozen, False
     entry = _review_repo_source_entry(name)
+    if name in set(row.get("required_files", [])):
+        # Intent: a file another shard owns is context here, not baseline evidence.
+        entry = {**entry, "base_content": "", "status": "changed_in_other_shard", "baseline_known": False}
     metadata = {**_review_context_store(directory, json.dumps(entry, sort_keys=True, ensure_ascii=True)),
                 "path": name, "encoding": entry["encoding"], "required": False,
                 "base_sha256": hashlib.sha256(entry["base_content"].encode("utf-8")).hexdigest(),
@@ -13738,7 +13785,7 @@ def _review_lazy_repo_resource(
 @_review_transaction
 def _prepare_review_context(
     prompts: dict[str, dict[str, object]], *, branch: str, pack_sources: bool = False,
-    diff_text: str | None = None,
+    diff_text: str | None = None, shard: str = "",
 ) -> dict[str, Any]:
     """Bind parent-served resources to each role without changing its original prompt."""
     directory = _review_branch_dir(branch)
@@ -13760,6 +13807,15 @@ def _prepare_review_context(
     bundle = json.loads(Path(artifact).read_text(encoding="utf-8"))
     snapshot = bundle["snapshot"]
     attribution = bundle["attribution"]
+    shard_row = next((item for item in row.get("shards", []) if item["id"] == shard), None) if shard else None
+    if bool(shard) != bool(row.get("shards")) or (shard and shard_row is None):
+        raise ValueError("Prompt shard does not match the admitted round")
+    if shard_row is not None:
+        # Intent: a shard context carries only its own files as required scope and sources.
+        mine = set(shard_row["files"])
+        snapshot = {**snapshot, "required_files": shard_row["files"],
+                    "shard": {"id": shard, "count": len(row["shards"]), "files": shard_row["files"]}}
+        attribution = {**attribution, "files": [item for item in attribution.get("files", []) if item["path"] in mine]}
     inventory_target = {key: value for key, value in snapshot["target"].items() if key != "context_files"}
     if isinstance(snapshot["target"].get("context_files"), list):
         context_files = snapshot["target"]["context_files"]
@@ -13802,6 +13858,7 @@ def _prepare_review_context(
             "schema_version": "review_context.v1", "reviewer": reviewer,
             "round_id": row["round_id"], "context_access": access,
             "bundle_sha256": row["bundle_receipt"]["sha256"], "resources": resources,
+            **({"shard": shard} if shard else {}),
         }
         metadata = _review_context_store(directory, json.dumps(manifest, sort_keys=True, ensure_ascii=True))
         context_id = metadata["sha256"]
@@ -13811,7 +13868,10 @@ def _prepare_review_context(
         protocol = (
             "\n\nPARENT-SERVED IMMUTABLE REVIEW CONTEXT\n"
             f"Reviewer: {reviewer}. Context access: {access}. Context ID: {context_id}.\n"
-            f"Manifest: {metadata['bytes']} UTF-8 bytes; SHA-256 {context_id}.\n"
+            + (f"This is review shard {shard} of {len(row['shards'])}: your required scope is the files in this shard's "
+               "inventory (snapshot.required_files); other shards are reviewed separately and their files are "
+               "optional context via repo:<path>.\n" if shard else "")
+            + f"Manifest: {metadata['bytes']} UTF-8 bytes; SHA-256 {context_id}.\n"
             + ("The original role prompt is supplied above in full. " if inline else
                "The complete original role instructions, output schema and evidence are in resource prompt. ")
             + "First request and consume the manifest. "
@@ -13845,7 +13905,7 @@ def _prepare_review_context(
                                                     "original_prompt_bytes": resources["prompt"]["bytes"]}}
         row.setdefault("context_manifests", {})[context_id] = {
             **metadata, "reviewer": reviewer, "bundle_sha256": manifest["bundle_sha256"],
-            "prompt_inline": inline,
+            "prompt_inline": inline, **({"shard": shard} if shard else {}),
         }
     budget = _review_context_budget(_review_trusted_config(row.get("target", {})))
     required_bytes = {}
@@ -13965,11 +14025,17 @@ def serve_review_context(
     return result
 
 
+def _review_session_key(ordering: str, reviewer: str, shard: str = "") -> str:
+    """Active-session key; legacy (unsharded) keys are unchanged."""
+    return f"{ordering}:{reviewer}" + (f"#{shard}" if shard else "")
+
+
 def _review_delivery_session(row: dict[str, Any], session_id: str, agent_id: str = "") -> dict[str, Any]:
     """Resolve only the active role/ordering session, optionally fencing the native agent ID."""
     session = row.get("context_sessions", {}).get(session_id)
     if (not isinstance(session, dict)
-            or row.get("context_active", {}).get(f"{session['ordering']}:{session['reviewer']}") != session_id
+            or row.get("context_active", {}).get(
+                _review_session_key(session["ordering"], session["reviewer"], session.get("shard", ""))) != session_id
             or (agent_id and session["agent_id"] != agent_id)):
         raise ValueError("Unknown, replaced or mismatched review delivery session")
     return session
@@ -14034,12 +14100,14 @@ def bind_review_context(
     required = {name: metadata for name, metadata in available.items() if metadata.get("required", True)}
     ordering = ordering or "default"
     session_id = hashlib.sha256(json.dumps([round_id, context_id, reviewer, ordering, agent_id]).encode()).hexdigest()
+    shard = registered.get("shard", "")
     session = row.setdefault("context_sessions", {}).setdefault(session_id, {
+        **({"shard": shard} if shard else {}),
         "context_id": context_id, "reviewer": reviewer, "agent_id": agent_id, "ordering": ordering,
         "required": required, "available": available, "offsets": ({"prompt": required["prompt"]["bytes"]} if registered["prompt_inline"] else {}),
         "pending": None,
     })
-    row.setdefault("context_active", {})[f"{ordering}:{reviewer}"] = session_id
+    row.setdefault("context_active", {})[_review_session_key(ordering, reviewer, shard)] = session_id
     _require_review_delivery_current(row, directory.name)
     _write_json_file(directory / "review-verdict-ledger.json", ledger)
     return _review_delivery_state(session_id, session)
@@ -14150,9 +14218,13 @@ def build_review_prompts(
     git_diff_text: str | None = None,
     pack_sources: bool = False,
     role_rubrics: dict[str, str] | None = None,
+    shard: str = "",
 ) -> dict:
     """Build bounded `/map-review` fan-out prompts for Monitor/Predictor/Evaluator."""
     branch_name = _sanitize_branch(branch) if branch else get_branch_name()
+    early, shard_row = _review_shard_gate(branch_name, shard)
+    if early:
+        return early
     budget = _review_prompt_budget_tokens(budget_tokens)
     review_bundle = (
         review_bundle_text
@@ -14161,7 +14233,7 @@ def build_review_prompts(
               else _read_review_bundle_markdown(branch_name))
     )
     git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text)
-    git_diff, diff_resource = _review_diff_resource(branch_name, git_diff)
+    git_diff, diff_resource = _review_diff_resource(branch_name, git_diff, shard_row)
     minimality = _load_minimality_level(Path.cwd())
     layering = _load_prompt_layering(Path.cwd())
 
@@ -14224,7 +14296,7 @@ def build_review_prompts(
                 "This is standalone diff review, not Actor subtask validation. Use only analytical rules; "
                 "all execution belongs to the runner. The role JSON schema in the prompt takes precedence.")
     transport = _prepare_review_context(prompts, branch=branch_name, pack_sources=pack_sources,
-                                        diff_text=diff_resource)
+                                        diff_text=diff_resource, shard=shard)
     if transport["status"] != "success":
         return transport
 
@@ -14235,6 +14307,7 @@ def build_review_prompts(
     return {
         "status": "success",
         "branch": branch_name,
+        **({"shard": shard} if shard else {}),
         "minimality": minimality,
         "prompt_layering": layering,
         "budget_tokens": budget,
@@ -14595,6 +14668,7 @@ def build_role_review_prompts(
     roles: list[str] | None = None,
     git_diff_text: str | None = None,
     repo_context_text: str | None = None,
+    shard: str = "",
 ) -> dict:
     """Build isolated prompts for the role reviewers (user_experience, maintainer).
 
@@ -14608,11 +14682,14 @@ def build_role_review_prompts(
     {subagent_type, description, prompt, context_access}.
     """
     branch_name = _sanitize_branch(branch) if branch else get_branch_name()
+    early, shard_row = _review_shard_gate(branch_name, shard)
+    if early:
+        return early
     role_ids = roles or list(BASE_ROLE_REVIEWERS)
     layering = _load_prompt_layering(Path.cwd())
 
     git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text)
-    git_diff, diff_resource = _review_diff_resource(branch_name, git_diff)
+    git_diff, diff_resource = _review_diff_resource(branch_name, git_diff, shard_row)
     repo_context = (
         repo_context_text
         if repo_context_text is not None
@@ -14626,7 +14703,7 @@ def build_role_review_prompts(
             role_entry["prompt"] = _review_resolution_request(str(role_entry["prompt"]), review_scope, role_id)
             prompts[role_id] = role_entry
 
-    transport = _prepare_review_context(prompts, branch=branch_name, diff_text=diff_resource)
+    transport = _prepare_review_context(prompts, branch=branch_name, diff_text=diff_resource, shard=shard)
     if transport["status"] != "success":
         return transport
 
@@ -14637,6 +14714,7 @@ def build_role_review_prompts(
     return {
         "status": "success",
         "branch": branch_name,
+        **({"shard": shard} if shard else {}),
         "prompt_layering": layering,
         "review_scope": review_scope,
         "prompts": prompts,
@@ -14651,6 +14729,7 @@ def build_adversarial_review_prompts(
     spec_text: str | None = None,
     repo_context_text: str | None = None,
     pack_sources: bool = False,
+    shard: str = "",
 ) -> dict:
     """Build isolated prompts for the adversarial fan-out.
 
@@ -14665,11 +14744,14 @@ def build_adversarial_review_prompts(
     Returns dict with 'prompts' key mapping reviewer_id to {subagent_type, description, prompt}.
     """
     branch_name = _sanitize_branch(branch) if branch else get_branch_name()
+    early, shard_row = _review_shard_gate(branch_name, shard)
+    if early:
+        return early
     reviewer_ids = reviewers or list(ADVERSARIAL_REVIEWERS)
     layering = _load_prompt_layering(Path.cwd())
 
     git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text)
-    git_diff, diff_resource = _review_diff_resource(branch_name, git_diff)
+    git_diff, diff_resource = _review_diff_resource(branch_name, git_diff, shard_row)
 
     spec_context = spec_text if spec_text is not None else _read_spec_for_review(branch_name)
     repo_context = repo_context_text if repo_context_text is not None else _read_repo_summary_for_review(branch_name)
@@ -14706,7 +14788,7 @@ def build_adversarial_review_prompts(
         }
 
     transport = _prepare_review_context(prompts, branch=branch_name, pack_sources=pack_sources,
-                                        diff_text=diff_resource)
+                                        diff_text=diff_resource, shard=shard)
     if transport["status"] != "success":
         return transport
 
@@ -14717,6 +14799,7 @@ def build_adversarial_review_prompts(
     return {
         "status": "success",
         "branch": branch_name,
+        **({"shard": shard} if shard else {}),
         "prompt_layering": layering,
         "review_scope": review_scope,
         "prompts": prompts,
@@ -28113,14 +28196,16 @@ if __name__ == "__main__":
         _p.add_argument("--branch", default=None)
         _p.add_argument("--budget-tokens", type=int, default=None)
         _p.add_argument("--review-preferences", default="")
+        _p.add_argument("--shard", default="", help="Shard ID (sNN) when admission returned shard_ids")
         _args = _p.parse_args(sys.argv[2:])
         result = build_review_prompts(
             branch=_args.branch,
             review_preferences=_args.review_preferences,
             budget_tokens=_args.budget_tokens,
+            shard=_args.shard,
         )
         print(json.dumps(result, indent=2, ensure_ascii=True))
-        if result.get("status") != "success":
+        if result.get("status") not in {"success", "sharded"}:
             sys.exit(1)
 
     elif func_name == "build_adversarial_review_prompts":
@@ -28142,6 +28227,7 @@ if __name__ == "__main__":
                 + ", ".join(ROLE_REVIEWER_IDS)
             ),
         )
+        _p.add_argument("--shard", default="", help="Shard ID (sNN) when admission returned shard_ids")
         _args = _p.parse_args(sys.argv[2:])
         reviewer_ids = None
         if _args.reviewers:
@@ -28157,9 +28243,10 @@ if __name__ == "__main__":
         result = build_adversarial_review_prompts(
             branch=_args.branch,
             reviewers=reviewer_ids,
+            shard=_args.shard,
         )
         print(json.dumps(result, indent=2, ensure_ascii=True))
-        if result.get("status") != "success":
+        if result.get("status") not in {"success", "sharded"}:
             sys.exit(1)
 
     elif func_name == "build_role_review_prompts":
@@ -28175,15 +28262,16 @@ if __name__ == "__main__":
                 + " (dashed spelling accepted; default: all)"
             ),
         )
+        _p.add_argument("--shard", default="", help="Shard ID (sNN) when admission returned shard_ids")
         _args = _p.parse_args(sys.argv[2:])
         role_ids = None
         if _args.roles:
             role_ids = _parse_reviewer_ids(_args.roles, ROLE_REVIEWER_IDS)
             if role_ids is None:
                 sys.exit(1)
-        result = build_role_review_prompts(branch=_args.branch, roles=role_ids)
+        result = build_role_review_prompts(branch=_args.branch, roles=role_ids, shard=_args.shard)
         print(json.dumps(result, indent=2, ensure_ascii=True))
-        if result.get("status") != "success":
+        if result.get("status") not in {"success", "sharded"}:
             sys.exit(1)
 
     elif func_name == "aggregate_adversarial_findings":

@@ -630,3 +630,112 @@ def test_too_many_shards_and_oversized_single_file_fail_fast(repo, monkeypatch):
     monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", shard_budget(10_000))
     result = runner.begin_review_run(branch="feature", provider="codex", round_id="big", base_ref="main")
     assert result["reason"] == "file_too_large" and result["oversized_paths"]
+
+
+@pytest.fixture
+def sharded(repo, monkeypatch):
+    """A three-way sharded admitted round with its immutable bundle."""
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", shard_budget())
+    write_changes()
+    write_many(6)
+    admitted = runner.begin_review_run(branch="feature", provider="codex", arguments="--adversarial",
+                                      round_id="sharded", base_ref="main")
+    assert admitted["status"] == "success", admitted
+    assert len(admitted["shard_ids"]) >= 2
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    row = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
+    return admitted, row
+
+
+def shard_manifest(entry):
+    directory = Path(".map/feature")
+    return json.loads((directory / "review-context-objects" / entry["context_transport"]["context_id"]).read_text())
+
+
+def test_builders_require_a_shard_on_a_sharded_round(sharded):
+    admitted, _ = sharded
+    for name in ("build_adversarial_review_prompts", "build_role_review_prompts"):
+        result = getattr(runner, name)(branch="feature")
+        assert result["status"] == "sharded" and result["shard_ids"] == admitted["shard_ids"], name
+        assert "prompts" not in result
+        bad = getattr(runner, name)(branch="feature", shard="s99")
+        assert bad["status"] == "error", name
+    # Normal-mode prompts need a normal round; the same gate applies to that builder.
+    assert runner.build_review_prompts(branch="feature", shard="s99")["status"] == "error"
+
+
+def test_shard_manifest_is_scoped_to_its_own_files_and_diff(sharded):
+    _admitted, row = sharded
+    directory = Path(".map/feature")
+    seen_sources = []
+    for shard in row["shards"]:
+        built = runner.build_adversarial_review_prompts(branch="feature", shard=shard["id"])
+        assert built["status"] == "success" and built["shard"] == shard["id"]
+        entry = built["prompts"]["acceptance"]
+        manifest = shard_manifest(entry)
+        assert manifest["shard"] == shard["id"]
+        paths = {item["path"] for item in manifest["resources"].values() if "path" in item}
+        assert paths == set(shard["files"])
+        seen_sources.append(paths)
+        inventory = json.loads(runner._review_context_read(directory, manifest["resources"]["inventory"]))
+        assert inventory["snapshot"]["required_files"] == shard["files"]
+        assert inventory["snapshot"]["shard"]["id"] == shard["id"]
+        diff = runner._review_context_read(directory, manifest["resources"]["diff"]).decode()
+        assert diff.count("+value_0 = 0") == len([name for name in shard["files"] if name != "first.py"])
+        assert diff.count("+value = 2") == int("first.py" in shard["files"])
+        assert "belongs to another review shard" in diff
+        blind = shard_manifest(built["prompts"]["blind"])
+        assert set(blind["resources"]) == {"prompt", "diff"}
+    assert set().union(*seen_sources) == set(row["required_files"])
+    assert sum(len(item) for item in seen_sources) == len(row["required_files"])
+
+
+def test_shard_context_cannot_serve_another_shards_sources_but_allows_them_as_repo_context(sharded):
+    _, row = sharded
+    first, second = row["shards"][0], row["shards"][1]
+    built = runner.build_adversarial_review_prompts(branch="feature", shard=first["id"])
+    entry = built["prompts"]["edge_case"]
+    context_id = entry["context_transport"]["context_id"]
+
+    def serve(resource):
+        request = {"type": "context_request", "context_id": context_id, "resource_id": resource, "offset": 0}
+        return runner.serve_review_context("edge_case", json.dumps(request), "sharded", branch="feature")
+
+    own = serve(f"repo:{first['files'][0]}")
+    assert own["status"] == "error", "a shard's own required file is delivered as a source resource, not repo context"
+    other = serve(f"repo:{second['files'][0]}")
+    assert other["status"] == "context_response"
+    payload = json.loads(other["content"])
+    assert payload["status"] == "changed_in_other_shard" and payload["baseline_known"] is False
+    manifest = shard_manifest(entry)
+    assert all(item["path"] in first["files"] for item in manifest["resources"].values() if "path" in item)
+
+
+def test_shard_sessions_are_independent_and_use_shard_scoped_keys(sharded):
+    _, row = sharded
+    contexts = {}
+    for shard in row["shards"][:2]:
+        built = runner.build_adversarial_review_prompts(branch="feature", shard=shard["id"])
+        contexts[shard["id"]] = built["prompts"]["acceptance"]["context_transport"]["context_id"]
+    assert len(set(contexts.values())) == len(contexts)
+    states = {sid: runner.bind_review_context("acceptance", cid, f"agent-{sid}", "sharded", branch="feature")
+              for sid, cid in contexts.items()}
+    active = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]["context_active"]
+    for sid, state in states.items():
+        assert active[f"default:acceptance#{sid}"] == state["session_id"]
+    assert len({state["session_id"] for state in states.values()}) == len(states)
+    # Rebuilding the same shard is idempotent.
+    again = runner.build_adversarial_review_prompts(branch="feature", shard=row["shards"][0]["id"])
+    assert again["prompts"]["acceptance"]["context_transport"]["context_id"] == contexts[row["shards"][0]["id"]]
+
+
+def test_diff_rewrite_preserves_labels_and_scope_trailers():
+    diff = ("diff --git a/a.py b/a.py\n+one\n\n=== untracked source additions ===\n"
+            "diff --git a/b.py b/b.py\n+two\n\nReview scope: {\"kind\": \"full\"}")
+    rewritten = runner._review_rewrite_diff(diff, lambda old, new, size: "[gone]" if old == "b.py" else None)
+    assert "+one" in rewritten and "+two" not in rewritten
+    assert "=== untracked source additions ===" in rewritten
+    assert rewritten.endswith('Review scope: {"kind": "full"}')
+    rewritten = runner._review_rewrite_diff(diff, lambda old, new, size: "[gone]" if old == "a.py" else None)
+    assert "=== untracked source additions ===" in rewritten and "+two" in rewritten
