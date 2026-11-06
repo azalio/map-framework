@@ -507,3 +507,53 @@ def test_vc_rewritten_batch_body_cannot_advance_delivery(repository):
     assert acknowledge(state, file_ack(state, served, proof))["status"] == "error"
     assert runner.review_context_status(state["session_id"], "delivery-round",
                                         branch="feature")["status"] == "context_pending"
+
+
+def context_files_dir():
+    return Path(".map/feature/review-context-files")
+
+
+def test_vc_session_files_are_deleted_once_its_delivery_is_complete(repository):
+    del repository
+    state = bind(prepare()["monitor"])
+    served = serve_file(state)
+    assert Path(served["path"]).is_file()
+    ready = deliver_all_files(acknowledge(state, file_ack(state, served, read_nonce(served))))
+    assert ready["status"] == "context_ready"
+    assert not (context_files_dir() / state["session_id"]).exists()
+    ledger = json.loads(Path(".map/feature/review-verdict-ledger.json").read_text())
+    files = ledger["convergence"]["rounds"][-1]["context_sessions"][state["session_id"]]["files"]
+    assert files and all(len(record["sha256"]) == 64 and len(record["nonce_sha256"]) == 64 for record in files.values())
+    assert runner.review_context_status(state["session_id"], "delivery-round",
+                                        branch="feature")["status"] == "context_ready"
+
+
+def test_vc_incomplete_session_keeps_its_file_for_retries(repository):
+    del repository
+    state = bind(prepare()["monitor"])
+    served = serve_file(state)
+    assert Path(served["path"]).is_file()
+    assert serve_file(state) == served
+
+
+def test_vc_abandoning_a_round_removes_every_context_file(repository):
+    del repository
+    state = bind(prepare()["monitor"])
+    served = serve_file(state)
+    assert Path(served["path"]).is_file()
+    result = runner.abandon_review_round("delivery-round", "operator abandoned", branch="feature")
+    assert result["status"] == "success", result
+    assert not context_files_dir().exists()
+
+
+def test_vc_completing_a_round_removes_every_context_file(repository):
+    del repository
+    state = bind(prepare()["monitor"])
+    served = serve_file(state)
+    assert Path(served["path"]).is_file()
+    ledger_path = Path(".map/feature/review-verdict-ledger.json")
+    ledger = json.loads(ledger_path.read_text())
+    row = ledger["convergence"]["rounds"][-1]
+    runner._review_purge_context_files(ledger_path.parent, None)
+    assert not context_files_dir().exists()
+    assert row["round_id"] == "delivery-round"

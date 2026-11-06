@@ -9311,6 +9311,26 @@ def _update_review_convergence(convergence: dict[str, Any], *, passed: bool = Fa
     })
 
 
+def _review_purge_context_files(directory: Path, session_id: str | None) -> None:
+    """Delete served context copies of one session, or of every session when ``session_id`` is None.
+
+    The copies duplicate frozen objects (about 150 MB per large round); the ledger keeps only digests.
+    """
+    import shutil
+
+    root = directory / "review-context-files"
+    target = root if session_id is None else root / session_id
+    try:
+        if target.is_symlink():
+            target.unlink()
+        elif target.is_dir():
+            shutil.rmtree(target)
+        if session_id is not None and root.is_dir() and not any(root.iterdir()):
+            root.rmdir()
+    except OSError:
+        pass  # Intent: cleanup is best effort; a stuck copy must never fail a delivery or a round transition.
+
+
 @_review_transaction
 def abandon_review_round(round_id: str, reason: str, *, branch: str | None = None) -> dict[str, Any]:
     """Explicitly close an unusable admission without clearing findings or refunding its attempt."""
@@ -9338,6 +9358,7 @@ def abandon_review_round(round_id: str, reason: str, *, branch: str | None = Non
         ledger["journal"].update({"current_verdict": "REVISE", "basis": ledger["verdict_basis"],
                                   "matches_previous": ledger["journal"].get("previous_verdict") == "REVISE"})
     _write_json_file(directory / "review-verdict-ledger.json", ledger)
+    _review_purge_context_files(directory, None)
     return {"status": "success", "round_id": round_id, "abandoned": True, "convergence": convergence}
 
 
@@ -11258,6 +11279,7 @@ def _complete_review_round(
     if completeness["status"] == "COMPLETE":
         row.update({"completed_at": time.time(), "submission_digest": digest,
                     "covered_files": sorted(set.intersection(*coverage)) if coverage else []})
+        _review_purge_context_files(directory, None)
     row["verdict"] = ledger["computed_verdict"]
     row["completeness"] = completeness
     ledger["findings_verdict"] = ledger["computed_verdict"]
@@ -15085,10 +15107,13 @@ def _review_ack_context_file(
     _review_rebind_context_file(directory, ledger, session, session_id, resource, record)
     session["offsets"][resource] = len(raw)
     session["pending"] = None
-    if all(session["offsets"].get(name, 0) == item["bytes"] for name, item in session["required"].items()):
+    complete = all(session["offsets"].get(name, 0) == item["bytes"] for name, item in session["required"].items())
+    if complete:
         session.setdefault("finalization_token", os.urandom(24).hex())
     _require_review_delivery_current(row, directory.name)
     _write_json_file(directory / "review-verdict-ledger.json", ledger)
+    if complete:
+        _review_purge_context_files(directory, session_id)
     return _review_delivery_state(session_id, session)
 
 
@@ -15114,10 +15139,13 @@ def _review_ack_context_batch(
         _review_context_read(directory, session["required"][name])
         session["offsets"][name] = session["required"][name]["bytes"]
     session["pending"] = None
-    if all(session["offsets"].get(name, 0) == item["bytes"] for name, item in session["required"].items()):
+    complete = all(session["offsets"].get(name, 0) == item["bytes"] for name, item in session["required"].items())
+    if complete:
         session.setdefault("finalization_token", os.urandom(24).hex())
     _require_review_delivery_current(row, directory.name)
     _write_json_file(directory / "review-verdict-ledger.json", ledger)
+    if complete:
+        _review_purge_context_files(directory, session_id)
     return _review_delivery_state(session_id, session)
 
 
