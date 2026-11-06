@@ -350,3 +350,10 @@ def test_file_reader_prompt_asks_for_the_batch_first(repository):
     prompt = built["prompts"]["monitor"]["prompt"]
     assert '"resource_id": "*required"' in prompt
     assert 'First request resource_id "*required"' in prompt
+
+
+def test_unread_role_rubric_is_not_reported_as_denied_review_scope():
+    prompt = runner._render_review_prompt(runner.REVIEW_PROMPT_SPECS["monitor"], "B", "P", "D")
+    assert "If unavailable, report denied_access" not in prompt
+    assert "never list it in skipped_files or denied_access" in prompt
+    assert "denied_access names only required review scope the parent refused to serve" in prompt

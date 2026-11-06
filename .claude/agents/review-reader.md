@@ -47,7 +47,8 @@ Delivery is parent_acknowledged; it does not prove inspection or capability.
 After receiving needed evidence, return the role's envelope with an additional receipt object:
 `receipt={covered_files:[],skipped_files:[],denied_access:[],check_evidence:[check_id]}`.
 List only paths actually inspected in covered_files; report skipped scope and denied
-required access honestly. Reading claims are self_reported, not tool_witnessed.
+required access honestly. denied_access names only required review scope the parent
+refused to serve; an unread role rubric file is neither skipped nor denied scope. Reading claims are self_reported, not tool_witnessed.
 check_evidence contains only current runner-issued check IDs present in the prompt;
 never claim you ran tests, treat a proposed command as a result, or invent an ID.
 Keep findings even when collection is incomplete. Return output to the parent;
