@@ -13,6 +13,7 @@ from tests.test_review_changed_scope import (
     write_changes,
 )
 from tests.test_review_changed_scope import repo as _base_repo
+from tests.test_review_roster_budget import required_bytes
 from tests.test_review_windowed_sources import (
     admit_and_build,
     big_lines,
@@ -131,7 +132,7 @@ def test_vc27_carried_findings_are_measured_at_admission(repo, monkeypatch):
     overhead = runner._review_fixed_overhead_bytes(
         admitted["target"], "claude", admitted["scheduled_reviewers"], "feature", admitted["required_files"], [], {},
         ledger["findings_registry"])
-    assert overhead >= exact and overhead > 2 * carried, (overhead, exact, carried)
+    assert overhead >= exact and overhead > carried, (overhead, exact, carried)
 
 
 def test_vc28_windowed_mapping_is_correct_inside_windows_and_full_in_the_lazy_resource(repo):
@@ -193,3 +194,77 @@ def test_vc31_a_failing_report_never_aborts_admission(repo, monkeypatch):
     monkeypatch.setattr(runner, "build_prior_stage_consumption_report", broken)
     admitted = runner.begin_review_run(branch="feature", provider="claude", round_id="boom", base_ref="main")
     assert admitted["status"] == "success", admitted
+
+
+def seed_findings(count, who="maintainer"):
+    directory = Path(".map/feature")
+    directory.mkdir(parents=True, exist_ok=True)
+    ledger: dict = runner._read_review_ledger(directory) or {"schema_version": "review_verdict_ledger.v1"}
+    ledger["findings_registry"] = [
+        {"id": f"F-{index:04d}", "status": "active", "source_agent": who, "originating_reviewer": who,
+         "claim": "A carried claim that must be rechecked. " * 10, "affected_files": ["a.py"],
+         "bug_class": "logic", "cause": "c" * 100, "failure_scenario": "f" * 100,
+         # Registry-only bulk that the per-reviewer section does not render.
+         "evidence_log": "e" * 700} for index in range(count)]
+    runner._write_json_file(directory / "review-verdict-ledger.json", ledger)
+    return ledger["findings_registry"]
+
+
+def commit_big_base(name="big.py"):
+    Path(name).write_text("".join(big_lines()))
+    git("add", ".")
+    git("commit", "-qm", "big")
+    git("branch", "-f", "main", "HEAD")
+
+
+def test_vc32_rename_to_a_skipped_generated_file_leaves_a_stub_for_the_old_side(repo):
+    del repo
+    commit_big_base()
+    git("mv", "big.py", "zz_generated_big.go")
+    Path("zz_generated_big.go").write_text("".join(big_lines()).replace("step_03000", "step_CHANGED"))
+    admitted, entry = admit_and_build("gen")
+    assert [item["path"] for item in admitted["coverage_skips"]] == ["zz_generated_big.go"]
+    old = json.loads(read_resource(Path(".map/feature"), entry, resource_key(entry, "big.py")))
+    assert old["status"] == "renamed_to" and old["renamed_to"] == "zz_generated_big.go" and old["base_content"] == ""
+
+
+def test_vc33_unstaged_move_reports_deleted_and_added_causes(repo):
+    del repo
+    commit_big_base()
+    Path("big.py").rename("big2.py")
+    result = runner.begin_review_run(branch="feature", provider="claude", round_id="mv", base_ref="main")
+    assert result["reason"] == "file_too_large", result
+    assert result["oversized_causes"] == {"big.py": "deleted", "big2.py": "added"}
+    hints = " ".join(result["hints"])
+    assert "deleted file" in hints and "newly added" in hints and "changed hunks" not in hints
+
+
+def test_vc34_many_carried_findings_admit_when_the_exact_bytes_fit(repo):
+    del repo
+    write_changes("a.py", "b.py")
+    rows = seed_findings(110)
+    # Old rule charged twice the full registry JSON (> budget); the rendered section is smaller than the rows.
+    assert 2 * len(json.dumps(rows)) > runner.REVIEW_CONTEXT_BUDGET_BYTES - 90_000
+    admitted = runner.begin_review_run(branch="feature", provider="claude", round_id="carry", base_ref="main")
+    assert admitted["status"] == "success", {k: admitted.get(k) for k in ("reason", "oversized_paths", "total", "budget")}
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    built = runner.build_review_prompts(branch="feature")
+    assert built["status"] == "success", {k: v for k, v in built.items() if k != "prompts"}
+    exact = max(required_bytes(entry) for entry in built["prompts"].values())
+    sizes = runner._review_required_bytes(admitted["target"], admitted["required_files"])
+    reserve = runner._review_fixed_overhead_bytes(
+        admitted["target"], "claude", admitted["scheduled_reviewers"], "feature", admitted["required_files"], [], {}, rows)
+    assert sum(sizes.values()) + reserve >= exact, (sum(sizes.values()) + reserve, exact)
+
+
+def test_vc35_overhead_alone_over_budget_is_reported_as_fixed_overhead(repo):
+    del repo
+    write_changes("a.py", "b.py")
+    seed_findings(1500)
+    result = runner.begin_review_run(branch="feature", provider="claude", round_id="carry", base_ref="main")
+    assert result["stop_reason"] == "review_context_budget_exceeded", result
+    assert result["reason"] == "fixed_overhead_too_large" and "oversized_paths" not in result
+    breakdown = result["overhead_breakdown"]
+    assert breakdown["worst_role"] == "maintainer" and breakdown["carried_findings"] > 1_000_000
+    assert {"role_prompt", "execution_checks_in_prompt", "trusted_policy_in_prompt"} <= set(breakdown)
+    assert any("carried findings" in hint for hint in result["hints"])

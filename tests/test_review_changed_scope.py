@@ -963,7 +963,9 @@ def test_codex_normal_review_reserves_room_for_inlined_role_rubrics(repo, monkey
     assert claude["status"] == "success" and claude["shard_ids"], claude
     runner.abandon_review_round("rubric", reason="retry", branch="feature")
     codex = runner.begin_review_run(branch="feature", provider="codex", round_id="rubric-codex", base_ref="main")
-    assert codex["status"] == "error" and codex["reason"] == "file_too_large", codex
+    # The inlined rubrics alone (not any one file) overflow this small budget.
+    assert codex["status"] == "error" and codex["reason"] == "fixed_overhead_too_large", codex
+    assert codex["overhead_breakdown"]["role_rubric"] >= runner.REVIEW_ROLE_RUBRIC_RESERVE_BYTES
     assert codex["total"] >= runner.REVIEW_ROLE_RUBRIC_RESERVE_BYTES
 
 

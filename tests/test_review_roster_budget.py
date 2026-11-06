@@ -93,7 +93,7 @@ def test_vc16_the_scenario_is_tight_enough_to_catch_a_small_reserve(repo, monkey
     del repo
     monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(BUDGET))
     monkeypatch.setenv("MAP_REVIEW_MAX_SHARDS", "40")
-    monkeypatch.setattr(runner, "_review_fixed_overhead_bytes", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(runner, "_review_fixed_overhead", lambda *_args, **_kwargs: {"total": 0, "breakdown": {}})
     seed_near_full_shards()
     admitted = runner.begin_review_run(branch="feature", provider="claude", round_id="roster", base_ref="main")
     assert admitted["status"] == "success", admitted

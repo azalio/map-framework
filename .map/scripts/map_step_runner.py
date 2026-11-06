@@ -9465,13 +9465,19 @@ def begin_review_run(
                                        review_config)
         budget = _review_context_budget(review_config)
         # Intent: plan against the measured worst per-reviewer non-source bytes, never below the default floor.
-        reserve = max(REVIEW_CONTEXT_RESERVE_BYTES, _review_fixed_overhead_bytes(
+        overhead = _review_fixed_overhead(
             target, provider, scheduled_reviewers, branch_dir.name,
             [name for name in target["required_files"] if name not in skipped_paths], coverage_skips,
             check_specs, [row for row in prior.get("findings_registry", [])
-                          if isinstance(row, dict) and row.get("status") in {"active", "downgraded"}]))
+                          if isinstance(row, dict) and row.get("status") in {"active", "downgraded"}])
+        reserve = max(REVIEW_CONTEXT_RESERVE_BYTES, overhead["total"])
         if sum(sizes.values()) + reserve > budget:
             capacity = budget - reserve
+            if capacity < REVIEW_SOURCE_OVERHEAD_BYTES * 2:
+                # Intent: no changed file can fit next to the fixed context, so naming files as oversized would mislead.
+                return _review_context_budget_error(sizes, budget, reserve=reserve, reason="fixed_overhead_too_large",
+                                                    fixed_overhead=overhead["total"],
+                                                    overhead_breakdown=overhead["breakdown"])
             oversized = {name: size for name, size in sizes.items() if size > capacity}
             if oversized:
                 return _review_context_budget_error(sizes, budget, reserve=reserve, reason="file_too_large",
@@ -12777,8 +12783,11 @@ def _review_attribution(target: dict[str, Any], skipped: frozenset[str] = frozen
     # Source evidence and mandatory coverage use the same selected-base scope.
     required = [name for name in target.get("required_files", []) if name not in skipped]
     changed = set(_review_changed_paths(base_ref or "HEAD", required))
-    renames = _review_rename_pairs(base_ref, required)
-    moved_away = {old: new for new, old in renames.items()}
+    # Intent: pair renames before coverage skips apply, so the old side of a rename whose new side is a skipped
+    # generated file still becomes a stub instead of shipping its whole base.
+    all_pairs = _review_rename_pairs(base_ref, list(target.get("required_files", [])))
+    renames = {new: old for new, old in all_pairs.items() if new in required}
+    moved_away = {old: new for new, old in all_pairs.items() if old in required}
     entries = []
     for name in required:
         if name not in changed:
@@ -24622,6 +24631,8 @@ def _review_oversized_causes(target: dict[str, Any], names: list[str]) -> dict[s
             causes[name] = "no_base"
         elif b"\0" in before or b"\0" in current or not _review_utf8(before) or not _review_utf8(current):
             causes[name] = "binary"
+        elif not Path(name).exists():
+            causes[name] = "deleted"
         elif not before:
             causes[name] = "added"
         else:
@@ -24647,10 +24658,12 @@ def _review_required_bytes(
     """
     full_max, context = _review_window_config(review_config or {})
     base = target.get("base", "")
-    base_contents = _review_base_contents(base, paths)
     diff_sizes: dict[str, int] = {}
-    renames = _review_rename_pairs(base, paths)
-    moved_away = set(renames.values())
+    # Intent: pair against the whole admitted scope, matching the attribution (skipped generated sides included).
+    all_pairs = _review_rename_pairs(base, sorted({*paths, *target.get("required_files", [])}))
+    renames = {new: old for new, old in all_pairs.items() if new in paths}
+    moved_away = {old for new, old in all_pairs.items() if old in paths}
+    base_contents = _review_base_contents(base, sorted({*paths, *renames.values()}))
     if base:
         # Intent: same rename policy as the diff the prompts carry, so a moved file is counted once.
         diff = _review_git_bytes("-c", "core.quotepath=false", "diff", base, "--",
@@ -24697,6 +24710,16 @@ def _review_fixed_overhead_bytes(
     required_paths: list[str], coverage_skips: list[dict[str, Any]],
     check_specs: dict[str, list[str]] | None = None, carried_findings: list[dict[str, Any]] | None = None,
 ) -> int:
+    """Worst per-reviewer non-source bytes (see ``_review_fixed_overhead`` for the breakdown)."""
+    return _review_fixed_overhead(target, provider, scheduled_reviewers, branch_name, required_paths,
+                                  coverage_skips, check_specs, carried_findings)["total"]
+
+
+def _review_fixed_overhead(
+    target: dict[str, Any], provider: str, scheduled_reviewers: list[str], branch_name: str,
+    required_paths: list[str], coverage_skips: list[dict[str, Any]],
+    check_specs: dict[str, list[str]] | None = None, carried_findings: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Worst per-reviewer required bytes that are not changed-file sources, measured with the real renderers.
 
     Renders every prompt a round will build (normal fan-out, role reviewers, complexity lens or the
@@ -24722,7 +24745,11 @@ def _review_fixed_overhead_bytes(
                      "plan_review", "code_review", "verification_summary", "qa", "pr_draft", "active_issues")},
                  "pr_handoff": {"summary": "x" * 2048}, "acceptance_coverage": {}, "prior_stage_consumption": {}}
         fallback_bytes = 2 * REVIEW_OVERHEAD_MARGIN_BYTES
-    carried_bytes = len(json.dumps(carried_findings or [], ensure_ascii=True)) if carried_findings else 0
+    # Intent: measure carried findings with the functions that render them: each reviewer's own section and the
+    # review-scope trailer that the diff carries.
+    carried_scope = {"kind": "full", "reason": "x" * 160, "unresolved_findings": list(carried_findings or [])}
+    trailer_bytes = (len(("\n\nReview scope: " + json.dumps(carried_scope)).encode("utf-8"))
+                     if carried_findings else 0)
     bundle_text = _render_bundle_markdown({
         "branch": branch_name, "generated_at": "0000-00-00T00:00:00+00:00", "artifacts": artifacts,
         "bundle_path_json": str(directory / "review-bundle.json"), **state})
@@ -24731,6 +24758,8 @@ def _review_fixed_overhead_bytes(
     checks = {name: _review_check_prompt_entry(name, {"exit_code": 0, "command": argv, "duration_seconds": 99999.9,
                                                       "output_sha256": "0" * 64}, 10**9)
               for name, argv in (check_specs or {}).items()}
+    checks_bytes = len(json.dumps(checks, ensure_ascii=True).encode("utf-8"))
+    policy_bytes = len(_review_policy_text(target.get("trusted_policy") or {}).encode("utf-8"))
     bundle_text = _review_compact_text(bundle_text, target, checks)
     try:
         frozen = json.dumps(_freeze_review_artifacts(directory, artifacts), sort_keys=True, ensure_ascii=True)
@@ -24766,18 +24795,24 @@ def _review_fixed_overhead_bytes(
         renders.append((role, _render_role_reviewer_prompt(spec, role, diff_stub, bundle_text, layering,
                                                            trusted_policy=target.get("trusted_policy")),
                         spec["context_access"]))
-    worst = 0
+    worst, worst_parts = 0, {}
     for role, prompt, access in renders:
-        size = len(prompt.encode("utf-8")) + REVIEW_OVERHEAD_MARGIN_BYTES // 4
+        parts = {"role_prompt": len(prompt.encode("utf-8")), "slack": REVIEW_OVERHEAD_MARGIN_BYTES // 4,
+                 "carried_findings": trailer_bytes + len(_review_resolution_request(
+                     "", {"unresolved_findings": list(carried_findings or [])}, role).encode("utf-8"))}
         if provider == "codex" and "monitor" in scheduled_reviewers and role in {"monitor", "predictor", "evaluator"}:
-            size += _review_rubric_bytes(role)
+            parts["role_rubric"] = _review_rubric_bytes(role)
         if access != "diff_only":
-            size += inventory
+            parts["inventory"] = inventory
         if access == "diff_plus_spec_plus_artifacts":
-            size += len(frozen.encode("utf-8"))
-        worst = max(worst, size)
-    # Intent: carried findings reach a prompt twice (its own section and the review-scope trailer of the diff).
-    return worst + REVIEW_OVERHEAD_MARGIN_BYTES + fallback_bytes + 2 * carried_bytes
+            parts["task_artifacts"] = len(frozen.encode("utf-8"))
+        size = sum(parts.values())
+        if size > worst:
+            worst, worst_parts = size, {"worst_role": role, **parts}
+    total = worst + REVIEW_OVERHEAD_MARGIN_BYTES + fallback_bytes
+    return {"total": total, "breakdown": {**worst_parts, "margin": REVIEW_OVERHEAD_MARGIN_BYTES + fallback_bytes,
+                                           "execution_checks_in_prompt": checks_bytes,
+                                           "trusted_policy_in_prompt": policy_bytes}}
 
 
 def _review_plain_digits(raw: str) -> bool:
@@ -24844,6 +24879,8 @@ def _review_context_budget_error(
                  "or review it in its own round with a larger review.context_budget_bytes.",
         "binary": "A binary or non-UTF-8 file is delivered whole (base64) and cannot be windowed: exclude it from the "
                   "review or shrink it.",
+        "deleted": "A deleted file (or the old side of an unpaired move) is delivered with its whole base: stage the move "
+                   "(`git mv`) so it is paired and windowed, or review the deletion in its own round.",
         "no_base": "No verified review base: sources are delivered whole. Admit with a base_ref so large files can be "
                    "windowed to their changed hunks.",
     }
@@ -24852,8 +24889,17 @@ def _review_context_budget_error(
     shard_hint = (f"This change needs {extra.get('shards_needed')} shards but at most {extra.get('max_shards')} are allowed: "
                   f"set {REVIEW_MAX_SHARDS_ENV}={extra.get('shards_needed')} (operator-local) or raise review.max_shards "
                   "in the trusted .map/config.yaml.")
+    breakdown = extra.get("overhead_breakdown", {})
+    overhead_hint = (f"The fixed per-reviewer context alone is {extra.get('fixed_overhead')} bytes of the {budget}-byte "
+                     f"budget (worst reviewer {breakdown.get('worst_role')}: role prompt {breakdown.get('role_prompt')}, "
+                     f"carried findings {breakdown.get('carried_findings')}, inventory {breakdown.get('inventory', 0)}, "
+                     f"task artifacts {breakdown.get('task_artifacts', 0)}; execution checks "
+                     f"{breakdown.get('execution_checks_in_prompt')} and trusted policy "
+                     f"{breakdown.get('trusted_policy_in_prompt')} are inside the prompt). Resolve or close carried findings, "
+                     "trim the task artifacts, or raise the budget.")
     single_file = ([single_file_hint] if extra.get("reason") == "file_too_large" else
-                   [shard_hint] if extra.get("reason") == "too_many_shards" else [])
+                   [shard_hint] if extra.get("reason") == "too_many_shards" else
+                   [overhead_hint] if extra.get("reason") == "fixed_overhead_too_large" else [])
     return {"status": "error", "stop_reason": "review_context_budget_exceeded", "total": total, "budget": budget,
             "top_paths": [{"path": name, "bytes": size} for name, size in top],
             "hints": [*single_file, "Split the change into smaller reviews.",
