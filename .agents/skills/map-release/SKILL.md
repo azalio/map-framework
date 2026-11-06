@@ -83,8 +83,8 @@ Execute all 12 gates. Read the full gate scripts in [release-reference.md § Pha
 Run the Phase 2 reference block with `RELEASE_REQUEST` set to the release argument
 (empty when none). It never asks: an explicit `X.Y.Z` or `patch`/`minor`/`major`
 argument wins, otherwise the recommended bump is chosen from `[Unreleased]`
-(`BREAKING` or `### Removed` → MAJOR, `### Added`/`### Changed` → MINOR, else
-PATCH) and a version that does not move forward aborts. Carry exactly the printed
+(an entry starting with `BREAKING` or a `### Removed`/`### Breaking` section → MAJOR,
+`### Added`/`### Changed` → MINOR, else PATCH) and a version that does not move forward aborts. Carry exactly the printed
 `BUMP_TYPE` and `NEW_VERSION` into Phase 3 and 4; each command runs in a fresh shell.
 
 See [release-reference.md § Phase 2](release-reference.md#phase-2-version-determination).

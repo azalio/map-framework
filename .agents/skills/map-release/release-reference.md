@@ -191,8 +191,10 @@ else
   case "$REQUEST" in
     patch|minor|major) BUMP_TYPE="$REQUEST" ;;
     *)
-      # Recommended bump: breaking/removed -> major, added/changed -> minor, else patch.
-      if grep -qE 'BREAKING' <<< "$UNRELEASED" || grep -qE '^### Removed' <<< "$UNRELEASED"; then
+      # Recommended bump: explicit breaking markers -> major, added/changed -> minor, else patch.
+      # Only an entry that STARTS with BREAKING (or a Removed/Breaking section) counts; the word
+      # inside prose (e.g. an entry describing this rule) must not force a major release.
+      if grep -qE '^- (\*\*)?BREAKING' <<< "$UNRELEASED" || grep -qE '^### (Removed|Breaking)' <<< "$UNRELEASED"; then
         BUMP_TYPE=major
       elif grep -qE '^### (Added|Changed)' <<< "$UNRELEASED"; then
         BUMP_TYPE=minor
@@ -215,7 +217,7 @@ echo "NEW_VERSION=$NEW_VERSION"
 ```
 
 **Semantic Versioning Rules (applied above):**
-- **MAJOR (X.0.0):** `BREAKING` anywhere in `[Unreleased]`, or a `### Removed` section
+- **MAJOR (X.0.0):** an entry starting with `BREAKING` (or `**BREAKING**`), or a `### Removed` / `### Breaking` section
 - **MINOR (x.Y.0):** an `### Added` or `### Changed` section
 - **PATCH (x.y.Z):** only fixes
 
