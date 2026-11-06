@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `/map-review` frozen task artifacts no longer consume the per-reviewer budget (#648): the required `artifacts` resource now carries only a bounded specification (16 KiB, whole lines; over the cap it is truncated and the full text is lazy) plus an index of every frozen task artifact (`resource_id`, `bytes`, `sha256`, purpose). Plan, blueprint, verification summary and test contracts/handoffs are optional lazy `artifact:<file name>` resources (frozen from the hash-verified bundle on first use, digest-checked, separate namespace from `repo:`/`check:`/`base:`/`current:`/`risk:`, not served to diff-only or role reviewers without artifact access). The acceptance reviewer's prompt inlines the same bounded spec and points to the lazy plan; the admission estimate uses the same view, so it stays at or above the exact bytes.
+
 ## [3.37.0] - 2026-11-06
 
 ### Changed

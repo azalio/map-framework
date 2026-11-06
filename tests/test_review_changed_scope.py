@@ -154,9 +154,13 @@ def test_full_task_artifacts_are_frozen_and_role_scoped(repo):
     built = runner.build_review_prompts(branch="feature", review_bundle_text="Compact summary", pack_sources=True)
     entry = built["prompts"]["monitor"]
     manifest = json.loads((directory / "review-context-objects" / entry["context_transport"]["context_id"]).read_text())
-    frozen = json.loads(runner._review_context_read(directory, manifest["resources"]["artifacts"]))
-    assert frozen["spec"][0]["content"] == specification
-    assert frozen["task_plan"][0]["content"] == "PLAN_CONTEXT_MARKER\n"
+    view = json.loads(runner._review_context_read(directory, manifest["resources"]["artifacts"]))
+    assert view["spec"]["content"] == specification and view["spec"]["truncated"] is False
+    assert "PLAN_CONTEXT_MARKER" not in json.dumps(view["spec"])
+    assert {item["resource_id"] for item in view["index"]} == {"artifact:spec_feature.md", "artifact:task_plan_feature.md"}
+    request = lazy_request(entry, "artifact:task_plan_feature.md")
+    served = runner.serve_review_context("monitor", json.dumps(request), "artifacts", branch="feature")
+    assert served["content"] == "PLAN_CONTEXT_MARKER\n"
     for role in ("user_experience", "maintainer"):
         entry = built["prompts"][role]
         manifest = json.loads((directory / "review-context-objects" / entry["context_transport"]["context_id"]).read_text())
@@ -549,8 +553,8 @@ def test_prompt_build_rejects_any_reviewer_over_budget_without_partial_prompts(r
     (directory / "spec_feature.md").write_text("A requirement.\n" * 12_000)
     runner.begin_review_run(branch="feature", provider="codex", round_id="exact", base_ref="main")
     assert runner.create_review_bundle(branch="feature")["status"] == "success"
-    # Admission passed (artifacts are not in the estimate); the exact check sees the frozen spec.
-    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(runner.REVIEW_CONTEXT_RESERVE_BYTES + 100_000))
+    # Admission passed; the exact check sees the bounded spec, the prompt and the inventory against a tight budget.
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", "30000")
     result = runner.build_review_prompts(branch="feature")
     assert result["status"] == "error" and result["stop_reason"] == "review_context_budget_exceeded", result
     assert "prompts" not in result
