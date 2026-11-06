@@ -137,8 +137,8 @@ def test_aggregate_context_roundtrip_preserves_prompt_inventory_and_all_sources(
     root, admission, bundle = repo
     assert Path(bundle["bundle_path_md"]).stat().st_size > runner.REVIEW_PROMPT_MAX_BYTES
     with monkeypatch.context() as patch:
-        patch.setattr(runner, "_prepare_review_context", lambda *args, **kwargs: {"status": "success"})
-        patch.setattr(runner, "_review_prompt_size_error", lambda *args: None)
+        patch.setattr(runner, "_prepare_review_context", lambda *_args, **_kwargs: {"status": "success"})
+        patch.setattr(runner, "_review_prompt_size_error", lambda *_args: None)
         original = runner.build_review_prompts(branch="feature")["prompts"]["monitor"]["prompt"]
     result = runner.build_review_prompts(branch="feature")
     assert result["status"] == "success", result

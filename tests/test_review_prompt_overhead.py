@@ -50,7 +50,7 @@ def admit_with_checks(monkeypatch, provider="claude", arguments=""):
                             "output_sha256": hashlib.sha256(log.encode()).hexdigest()}
     ledger["execution_checks"] = checks
     runner._write_json_file(directory / "review-verdict-ledger.json", ledger)
-    monkeypatch.setattr(runner, "_review_check_valid", lambda *args: True)
+    monkeypatch.setattr(runner, "_review_check_valid", lambda *_args: True)
     return admitted
 
 
