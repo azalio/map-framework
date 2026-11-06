@@ -59,12 +59,13 @@ def assert_fits(built, budget, label):
 
 
 def check_round(provider, arguments, monkeypatch, label):
-    # Codex inlines ~240 KiB of role rubrics and the acceptance reader receives the spec twice (prompt and
+    # Codex inlines ~240 KiB of role rubrics and the acceptance reader receives the bounded spec twice (prompt and
     # artifacts), so those rosters need a larger budget to leave room for sources.
     budget = BUDGET if provider == "claude" and "--adversarial" not in arguments else CODEX_BUDGET
     monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(budget))
     monkeypatch.setenv("MAP_REVIEW_MAX_SHARDS", "40")
-    seed_near_full_shards()
+    # Task artifacts are lazy now, so the adversarial rosters need more source bytes to still need shards.
+    seed_near_full_shards(files=48 if "--adversarial" in arguments else 24)
     admitted = runner.begin_review_run(branch="feature", provider=provider, arguments=arguments,
                                       round_id="roster", base_ref="main")
     assert admitted["status"] == "success", (label, admitted)
@@ -89,8 +90,9 @@ def check_round(provider, arguments, monkeypatch, label):
 
 
 def test_vc16_the_scenario_is_tight_enough_to_catch_a_small_reserve(repo, monkeypatch):
-    """Negative proof: with the overhead measurement disabled the same shards overflow at prompt build."""
+    """Negative proof: with the overhead measurement disabled and a small reserve the same shards overflow at prompt build."""
     del repo
+    monkeypatch.setattr(runner, "REVIEW_CONTEXT_RESERVE_BYTES", 20_000)
     monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(BUDGET))
     monkeypatch.setenv("MAP_REVIEW_MAX_SHARDS", "40")
     monkeypatch.setattr(runner, "_review_fixed_overhead", lambda *_args, **_kwargs: {"total": 0, "breakdown": {}})

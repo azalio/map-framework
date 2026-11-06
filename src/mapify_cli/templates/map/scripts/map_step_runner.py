@@ -416,6 +416,9 @@ REVIEW_PROMPT_DEFAULT_BUDGET_TOKENS = 12_000
 REVIEW_PROMPT_MAX_BYTES = 512 * 1024
 REVIEW_CONTEXT_CHUNK_BYTES = 64 * 1024
 REVIEW_CONTEXT_INLINE_BYTES = 24 * 1024
+# Only a bounded specification travels inline with every task-artifact reader; plan, blueprint and the
+# other frozen task artifacts are optional lazy ``artifact:<name>`` resources behind an inline index (#648).
+REVIEW_SPEC_INLINE_BYTES = 16 * 1024
 REVIEW_ATTRIBUTION_INLINE_MAX_BYTES = 32 * 1024
 # Total required context one reviewer may be asked to consume (#625); the reserve
 # covers the manifest, protocol text and the compact original prompt.
@@ -14160,6 +14163,80 @@ def _review_context_read(directory: Path, metadata: dict[str, Any]) -> bytes:
     return raw
 
 
+REVIEW_ARTIFACT_PURPOSES = {
+    "spec": "Frozen specification and requirements",
+    "task_plan": "Task plan and subtask breakdown",
+    "blueprint": "Machine-readable blueprint: subtasks, dependencies and validation criteria",
+    "verification_summary": "Verification summary recorded for the implementation",
+    "test_contracts": "Frozen test contract for one subtask",
+    "test_handoffs": "Test handoff record for one subtask",
+}
+
+
+def _review_bounded_text(text: str, cap: int, *, escaped: bool) -> tuple[str, bool]:
+    """Longest whole-line prefix whose delivered size fits ``cap`` (JSON-escaped when ``escaped``, else UTF-8 bytes)."""
+    def size(value: str) -> int:
+        return len(json.dumps(value, ensure_ascii=True)) - 2 if escaped else len(value.encode("utf-8"))
+
+    if size(text) <= cap:
+        return text, False
+    low, high = 0, len(text)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if size(text[:middle]) <= cap:
+            low = middle
+        else:
+            high = middle - 1
+    head = text[:low]
+    cut = head.rfind("\n")
+    return (head[:cut + 1] if cut > 0 else head), True
+
+
+def _review_artifacts_view(frozen: dict[str, Any]) -> dict[str, Any]:
+    """The ``artifacts`` resource: a bounded specification plus an index of optional ``artifact:<name>`` resources.
+
+    Plan, blueprint and the other frozen task artifacts are not inlined: they live in the frozen bundle and are
+    fetched lazily by name (digest-checked like ``repo:``), so they never consume the per-reviewer budget.
+    """
+    index: list[dict[str, Any]] = []
+    spec: dict[str, Any] | None = None
+    for kind, entries in frozen.items():
+        for entry in entries:
+            raw = entry["content"].encode("utf-8")
+            name = Path(entry["path"]).name
+            index.append({"resource_id": f"artifact:{name}", "kind": kind, "bytes": len(raw),
+                          "sha256": hashlib.sha256(raw).hexdigest(),
+                          "purpose": REVIEW_ARTIFACT_PURPOSES.get(kind, "Frozen task artifact")})
+            if kind == "spec" and spec is None:
+                head, truncated = _review_bounded_text(entry["content"], REVIEW_SPEC_INLINE_BYTES, escaped=True)
+                spec = {"resource_id": f"artifact:{name}", "bytes": len(raw), "truncated": truncated, "content": head}
+    return {"schema": "review_artifacts.v2", "index": index, **({"spec": spec} if spec else {}),
+            "note": ("Only the specification (bounded) is inline. Request resource_id artifact:<name> from the index "
+                     "for the full text of any artifact; each is frozen and digest-checked.")}
+
+
+def _review_lazy_artifact_resource(
+    directory: Path, row: dict[str, Any], manifest: dict[str, Any], resource_id: str,
+) -> tuple[dict[str, Any], bool]:
+    """Serve ``artifact:<name>``: one frozen task artifact from the hash-verified admitted bundle, frozen on first use."""
+    if manifest.get("context_access") != "diff_plus_spec_plus_artifacts" or "artifacts" not in manifest.get("resources", {}):
+        raise ValueError("Resource is not permitted for this reviewer")
+    frozen = _review_lazy_entry(row, resource_id)
+    if isinstance(frozen, dict):
+        return frozen, False
+    artifact = _review_attribution_artifact(directory.name)
+    if not artifact:
+        raise ValueError("Review bundle changed before context delivery")
+    name = resource_id.removeprefix("artifact:")
+    context = json.loads(Path(artifact).read_text(encoding="utf-8")).get("context_artifacts", {})
+    match = next((entry for entries in context.values() for entry in entries if Path(entry["path"]).name == name), None)
+    if not name or match is None:
+        raise ValueError("Resource is not permitted for this reviewer")
+    metadata = {**_review_context_store(directory, match["content"]), "path": name, "required": False, "kind": "artifact"}
+    row.setdefault("context_lazy", {})[resource_id] = metadata
+    return metadata, True
+
+
 def _review_repo_source_entry(name: str) -> dict[str, Any]:
     """Read one unchanged repository file as a frozen source entry (lazy ``repo:<path>`` context)."""
     path = Path(name)
@@ -14179,7 +14256,7 @@ def _review_repo_source_entry(name: str) -> dict[str, Any]:
             "encoding": encoding, "status": "unchanged", "line_mapping": []}
 
 
-LAZY_KINDS = frozenset({"check", "full_source", "risk"})
+LAZY_KINDS = frozenset({"check", "full_source", "risk", "artifact"})
 
 
 def _review_lazy_entry(row: dict[str, Any], resource_id: str) -> dict[str, Any] | None:
@@ -14386,7 +14463,7 @@ def _prepare_review_context(
             resources.update({"inventory": inventory, **sources})
         if access == "diff_plus_spec_plus_artifacts" and bundle.get("context_artifacts"):
             resources["artifacts"] = _review_context_store(directory, json.dumps(
-                bundle["context_artifacts"], sort_keys=True, ensure_ascii=True))
+                _review_artifacts_view(bundle["context_artifacts"]), sort_keys=True, ensure_ascii=True))
         manifest = {
             "schema_version": "review_context.v1", "reviewer": reviewer,
             "round_id": row["round_id"], "context_access": access,
@@ -14416,7 +14493,9 @@ def _prepare_review_context(
                "Consume source resources marked required (source_pack or source_NNNNNN) for changed-path base/current contents and line mappings. "
                "Unchanged repository files are optional dependency context: request resource_id repo:<path> "
                "for a tracked path only when needed (the full tree is not listed; inventory carries its count and digest). "
-               "If present, consume the artifacts resource for full frozen task inputs. "
+               "If present, consume the artifacts resource: the bounded specification plus an index of optional "
+               "frozen task artifacts (plan, blueprint, verification, test contracts); request resource_id "
+               "artifact:<name> from that index only when the review needs the full text. "
                + ("A source marked windowed carries only its changed hunks with surrounding numbered lines; request "
                   "resource_id base:<path> or current:<path> for its full content when the window is insufficient. "
                   if has_windowed else ""))
@@ -14524,6 +14603,8 @@ def serve_review_context(
         metadata, lazy_frozen = _review_lazy_full_resource(directory, row, manifest, resource_id)
     elif not isinstance(metadata, dict) and resource_id.startswith("risk:"):
         metadata, lazy_frozen = _review_lazy_risk_resource(directory, row, manifest, resource_id)
+    elif not isinstance(metadata, dict) and resource_id.startswith("artifact:"):
+        metadata, lazy_frozen = _review_lazy_artifact_resource(directory, row, manifest, resource_id)
     if not isinstance(metadata, dict):
         raise ValueError("Resource is not permitted for this reviewer")
     raw = manifest_bytes if resource_id == "manifest" else _review_context_read(directory, metadata)
@@ -14687,7 +14768,7 @@ def ack_review_context(
     key = _review_chunk_key(data)
     resource = key["resource_id"]
     metadata = session.get("available", session["required"]).get(resource)
-    if metadata is None and resource.startswith(("repo:", "check:", "base:", "current:", "risk:")):
+    if metadata is None and resource.startswith(("repo:", "check:", "base:", "current:", "risk:", "artifact:")):
         metadata = _review_lazy_entry(row, resource)
     if not isinstance(metadata, dict) or key["context_id"] != session["context_id"]:
         raise ValueError("Acknowledgment resource is not permitted")
@@ -15323,7 +15404,8 @@ def build_adversarial_review_prompts(
     git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text)
     git_diff, diff_resource = _review_diff_resource(branch_name, git_diff, shard_row)
 
-    spec_context = spec_text if spec_text is not None else _read_spec_for_review(branch_name)
+    spec_context = spec_text if spec_text is not None else _read_spec_for_review(
+        branch_name, bounded=_review_transport_active(branch_name))
     repo_context = repo_context_text if repo_context_text is not None else _read_repo_summary_for_review(branch_name)
 
     prompts: dict[str, dict[str, object]] = {}
@@ -15377,22 +15459,36 @@ def build_adversarial_review_prompts(
     }
 
 
-def _read_spec_for_review(branch_name: str) -> str:
-    """Read spec and plan artifacts for the acceptance reviewer."""
+def _read_spec_for_review(branch_name: str, *, bounded: bool = False) -> str:
+    """Read spec and plan artifacts for the acceptance reviewer.
+
+    ``bounded`` (review transport) inlines at most REVIEW_SPEC_INLINE_BYTES of the specification and points to
+    the optional lazy ``artifact:<name>`` resources for the rest, instead of inlining spec and plan whole.
+    """
     branch_dir = get_branch_dir(branch_name)
     parts: list[str] = []
 
     spec_path = branch_dir / f"spec_{branch_name}.md"
     if spec_path.exists():
         try:
-            parts.append(spec_path.read_text(encoding="utf-8"))
+            text = spec_path.read_text(encoding="utf-8")
+            if bounded:
+                text, truncated = _review_bounded_text(text, REVIEW_SPEC_INLINE_BYTES, escaped=False)
+                if truncated:
+                    text += (f"\n\n[specification truncated to {REVIEW_SPEC_INLINE_BYTES} bytes; the full text is the "
+                             f"optional resource artifact:{spec_path.name}]")
+            parts.append(text)
         except OSError:
             pass
 
     plan_path = branch_dir / f"task_plan_{branch_name}.md"
     if plan_path.exists():
         try:
-            parts.append(plan_path.read_text(encoding="utf-8"))
+            if bounded:
+                parts.append(f"[task plan: {plan_path.stat().st_size} bytes, not inlined; the full text is the "
+                             f"optional resource artifact:{plan_path.name}]")
+            else:
+                parts.append(plan_path.read_text(encoding="utf-8"))
         except OSError:
             pass
 
@@ -24744,7 +24840,10 @@ def _review_fixed_overhead(
                  "review_handoff": {field: "x" * 501 for field in (
                      "plan_review", "code_review", "verification_summary", "qa", "pr_draft", "active_issues")},
                  "pr_handoff": {"summary": "x" * 2048}, "acceptance_coverage": {}, "prior_stage_consumption": {}}
-        fallback_bytes = 2 * REVIEW_OVERHEAD_MARGIN_BYTES
+        # Intent: the fallback already models every handoff field at its worst size and the margin covers the
+        # unmeasured coverage reports (on a real 15-shard snapshot the exact bytes were ~45% below the estimate),
+        # so a failing report builder no longer doubles the margin (it used to add 32 KiB).
+        fallback_bytes = 0
     # Intent: measure carried findings with the functions that render them: each reviewer's own section and the
     # review-scope trailer that the diff carries.
     carried_scope = {"kind": "full", "reason": "x" * 160, "unresolved_findings": list(carried_findings or [])}
@@ -24762,10 +24861,11 @@ def _review_fixed_overhead(
     policy_bytes = len(_review_policy_text(target.get("trusted_policy") or {}).encode("utf-8"))
     bundle_text = _review_compact_text(bundle_text, target, checks)
     try:
-        frozen = json.dumps(_freeze_review_artifacts(directory, artifacts), sort_keys=True, ensure_ascii=True)
+        frozen = json.dumps(_review_artifacts_view(_freeze_review_artifacts(directory, artifacts)),
+                            sort_keys=True, ensure_ascii=True)
     except (OSError, ValueError):
         frozen = ""
-    spec_text = _read_spec_for_review(branch_name)
+    spec_text = _read_spec_for_review(branch_name, bounded=True)
     diff_stub = "d" * REVIEW_DIFF_STUB_CHARS
     path_bytes = sum(3 * len(json.dumps(name, ensure_ascii=True)) + 40 for name in required_paths)
     inventory = (len(json.dumps(summary, ensure_ascii=True)) + path_bytes
@@ -24797,7 +24897,7 @@ def _review_fixed_overhead(
                         spec["context_access"]))
     worst, worst_parts = 0, {}
     for role, prompt, access in renders:
-        parts = {"role_prompt": len(prompt.encode("utf-8")), "slack": REVIEW_OVERHEAD_MARGIN_BYTES // 4,
+        parts = {"role_prompt": len(prompt.encode("utf-8")),
                  "carried_findings": trailer_bytes + len(_review_resolution_request(
                      "", {"unresolved_findings": list(carried_findings or [])}, role).encode("utf-8"))}
         if provider == "codex" and "monitor" in scheduled_reviewers and role in {"monitor", "predictor", "evaluator"}:
@@ -24809,8 +24909,11 @@ def _review_fixed_overhead(
         size = sum(parts.values())
         if size > worst:
             worst, worst_parts = size, {"worst_role": role, **parts}
-    total = worst + REVIEW_OVERHEAD_MARGIN_BYTES + fallback_bytes
-    return {"total": total, "breakdown": {**worst_parts, "margin": REVIEW_OVERHEAD_MARGIN_BYTES + fallback_bytes,
+    # Intent: a flat 16 KiB margin plus 1% of the measured overhead; the per-role slack that used to stack on
+    # top of it is gone (#648), the estimate stays at or above the exact bytes with the same margin.
+    margin = REVIEW_OVERHEAD_MARGIN_BYTES + worst // 100 + fallback_bytes
+    total = worst + margin
+    return {"total": total, "breakdown": {**worst_parts, "margin": margin,
                                            "execution_checks_in_prompt": checks_bytes,
                                            "trusted_policy_in_prompt": policy_bytes}}
 

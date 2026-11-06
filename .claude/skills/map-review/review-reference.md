@@ -64,8 +64,16 @@ The complete `shadow_risk` record is the optional resource `risk:shadow`.
 ## Shard Capacity
 
 Shards are packed to the per-reviewer budget minus a measured overhead (the worst scheduled reviewer's
-rendered prompt, inventory, frozen task artifacts and, for Codex, inlined role rubrics, plus a margin;
+rendered prompt, inventory, the `artifacts` index with a bounded spec and, for Codex, inlined role rubrics, plus a margin;
 never below 64 KiB), also for unsharded rounds.
+
+## Task Artifacts
+
+Only a bounded specification (16 KiB, whole lines) is inline in the required `artifacts` resource, with an
+index of every frozen task artifact (`resource_id`, `bytes`, `sha256`, purpose). Plan, blueprint,
+verification summary and test contracts/handoffs are optional lazy resources `artifact:<file name>`: request
+one only when the review needs it. They are frozen from the admitted bundle on first use and digest-checked
+like `repo:`; a reviewer without artifact access (diff-only, user experience, maintainer) cannot fetch them.
 
 ## Windowed Large Files
 
