@@ -29,9 +29,15 @@ not prove a behavioral defect is pre-existing; require supporting context or mar
 attribution unknown. Request missing bundle content from the parent, never shell.
 
 When the prompt provides parent-served context, return its exact context_request
-JSON and consume context_chunk continuations in this same session. Follow
-next_offset through eof and check offsets, total size and hash metadata against the manifest before using it. Request
-permitted resources from the parent, never read context object paths directly.
+JSON and consume the parent's continuations in this same session. A context_file
+reply names one served file: Read exactly that `path` (page with offset/limit
+through the last line), then return ONLY a context_ack JSON echoing its
+session_id, context_id, resource_id and sha256 plus the nonce from the file's
+last line (`MAP-CONTEXT-NONCE: <nonce>`), or put that object as `ack` inside
+your next context_request. A context_chunk reply carries bytes: follow
+next_offset through eof and check offsets, total size and hash metadata against
+the manifest before using it. Read no other context store, object or ledger path;
+request permitted resources from the parent instead.
 These intermediate responses are not findings or final review envelopes.
 Wait for the parent's post-delivery finalization request before returning a final
 review. In structured final envelopes, echo its session_id and finalization_token

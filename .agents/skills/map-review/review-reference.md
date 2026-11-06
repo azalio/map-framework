@@ -393,21 +393,41 @@ bind its new ID and redeliver all required resources. Another role, agent or
 ordering cannot borrow delivery progress.
 
 Apply this loop before final-schema validation for every reviewer, including
-retries, both ordering collections and the advisory complexity lens:
+retries, both ordering collections and the advisory complexity lens.
+
+`serve_review_context` has two delivery modes, chosen with `--delivery`:
+
+- `file` (CLI default; for readers with a Read tool such as Claude `review-reader`):
+  the whole resource is served as a small pointer, so its bytes never pass through
+  the parent:
+  `{"status":"context_response","type":"context_file","context_id":"<id>","resource_id":"<rid>","session_id":"<sid>","path":"<abs path>","sha256":"<view sha256>","bytes":<view bytes>,"resource_sha256":"<frozen sha256>","resource_bytes":<frozen bytes>,"nonce_line":"last"}`.
+  The path is `.map/<branch>/review-context-files/<session-id>/<view-sha256>.txt`:
+  a line-oriented view of the frozen object (JSON expanded, multi-line or long
+  strings printed verbatim as numbered `TEXT` blocks) followed by one last line
+  `MAP-CONTEXT-NONCE: <random>`. `sha256`/`bytes` cover the view without that
+  line; only the nonce digest is stored in the ledger. The reviewer Reads exactly
+  that path and returns
+  `{"type":"context_ack","session_id":"<sid>","context_id":"<id>","resource_id":"<rid>","sha256":"<view sha256>","nonce":"<nonce>"}`,
+  or sends the same object as `ack` inside its next `context_request`.
+- `chunk` (fallback for readers without file Read, such as Codex): byte ranges of
+  at most `--chunk-bytes` are relayed through the parent as `context_chunk` JSON.
 
 1. Use `review_context_status` to recover pending work. An existing `pending_chunk`
-   takes priority over `remaining`: replay its resource and offset with
-   `--chunk-bytes` equal to `next_offset - offset` (or smaller), even if another
-   resource appears first in `remaining`. For an agent's
-   `context_request`, call `serve_review_context` with its payload on stdin and
-   `--reviewer <original-role> --round-id <round> --session-id <session> --agent-id <bound-agent>`.
+   takes priority over `remaining`. A pending `context_file` is replayed with
+   `--delivery file` (same path and nonce); a pending byte range is replayed at its
+   resource and offset with `--delivery chunk --chunk-bytes` equal to
+   `next_offset - offset` (or smaller), even if another resource appears first in
+   `remaining`. For an agent's `context_request`, call `serve_review_context` with
+   its payload on stdin and
+   `--reviewer <original-role> --round-id <round> --session-id <session> --agent-id <bound-agent>`
+   `--delivery chunk` (native Codex readers cannot be trusted to Read files).
    For an early final response, retain no final capture: create the same request
    shape from the status's next `remaining` resource/offset and continue delivery.
    Required resources include the manifest, full original prompt (unless initially
    inline), the `diff` resource, inventory and source resources marked `required`. Unchanged
    repository files are optional: fetch `repo:<path>` only when needed. Blind stays diff-only
    (prompt and `diff` only).
-2. Store the exact returned chunk JSON in a session-specific pending file under
+2. Store the exact returned JSON in a session-specific pending file under
    `.map/<branch>/review-context-delivery/<session-id>/`, then pass that JSON
    verbatim to the **same agent**:
 
@@ -415,12 +435,20 @@ retries, both ordering collections and the advisory complexity lens:
 followup_task(target=<same agent_id>, message=<context_response JSON>)
 ```
 
-3. Only after the host accepts that followup, pipe the exact stored chunk JSON to
-   `ack_review_context --session-id <session> --agent-id <bound-agent> --round-id <round>`.
-   Serving bytes alone never advances delivery. Do not ACK failed, truncated or
-   unconfirmed host submissions. Crash after acceptance but before ACK: replay the
-   same frozen chunk to the same agent, then ACK; duplicate bytes are identified by
-   offsets/hashes. An ACK replay is idempotent. Continue until `context_ready`.
+3. Acknowledge with `ack_review_context --session-id <session> --agent-id <bound-agent> --round-id <round>`.
+   For a `context_file`, pipe the reviewer's own `context_ack` (or its next
+   `context_request` carrying `ack`) to it; the runner checks the nonce against the
+   served file, so a wrong nonce or another session's nonce is rejected. When the
+   reviewer's reply is a `context_request` with `ack`, run `ack_review_context` first
+   and then `serve_review_context` on the same payload; when it is a bare
+   `context_ack` (`serve_review_context` classifies it as `status:"context_ack"`),
+   serve the next `remaining` resource yourself. For a `context_chunk`, only after
+   the host accepts the followup, pipe the exact stored chunk JSON. Serving bytes
+   alone never advances delivery. Do not ACK failed, truncated or unconfirmed host
+   submissions. Crash after acceptance but before ACK: replay the same pending file
+   or chunk to the same agent, then ACK. An ACK replay is idempotent. Continue until
+   `context_ready`; no `finalization_token` exists before every required resource
+   is acknowledged.
 4. The ready result includes a persisted `finalization_token`. Send a NEW request
    to the same agent: all required context has arrived; finalize now and include
    `context_receipt={session_id,finalization_token}` in the final JSON envelope.
@@ -433,7 +461,7 @@ followup_task(target=<same agent_id>, message=<context_response JSON>)
    The runner independently fences capture and ledger
    completeness; delivery does not prove source inspection or grant approval.
 
-Use `--chunk-bytes 8192` with a shell-tool output budget of at least 65536 tokens
+In chunk mode, use `--chunk-bytes 8192` with a shell-tool output budget of at least 65536 tokens
 (roughly 50 KiB worst-case JSON escaping); use 1024 for a 10000-token capture
 budget. Never forward truncated tool output. A smaller same-offset retry atomically
 replaces the pending chunk without advancing progress; ACK of the superseded
@@ -441,7 +469,7 @@ larger chunk is rejected. The CLI allows 4–65536 source bytes and keeps the 51
 serialized-response limit. Preserve the currently pending tuple on recovery.
 
 `not_context_request` classifies a response; it does NOT prove delivery complete.
-Context requests and queued early finals never consume a malformed-final retry or a
+Context requests, context ACKs and queued early finals never consume a malformed-final retry or a
 review round. A malformed response to the finalization request consumes the one
 malformed-final retry; it cannot be captured without valid receipts.
 Do not increment the dispatch counter for same-agent continuations.

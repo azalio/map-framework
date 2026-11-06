@@ -349,7 +349,8 @@ def test_fresh_install_routes_intermediate_context_before_final_validation(seed,
     binding = invoke("bind_review_context", "--reviewer", "monitor", "--agent-id", "installed-native-agent",
                      "--context-id", entry["context_transport"]["context_id"], "--round-id", "installed-round")
     assert binding["status"] == "context_pending"
-    response = invoke("serve_review_context", "--reviewer", "monitor", "--round-id", "installed-round", "--chunk-bytes", "1024",
+    response = invoke("serve_review_context", "--reviewer", "monitor", "--round-id", "installed-round",
+                      "--delivery", "chunk", "--chunk-bytes", "1024",
                       "--session-id", binding["session_id"], "--agent-id", "installed-native-agent",
                       payload=json.dumps(request(entry)))
     assert response["status"] == "context_response"

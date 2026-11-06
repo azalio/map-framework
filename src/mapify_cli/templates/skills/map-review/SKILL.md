@@ -344,7 +344,7 @@ If `DETACHED_STATUS` is `success`, tell reviewer agents to read source files fro
 When compare mode is active, run two review collections with `ordering_label='default'` and `ordering_label='reverse'`, then call `compare-review-runs` and `record-review-ordering` to stage the drift summary. See [review-reference.md](review-reference.md#compare-orderings) for the detailed loop.
 
 ### Step A.2: Launch all parallel calls
-Before launching agents, build the reviewer prompts with `build_review_prompts`. Evidence is NOT truncated. The admitted immutable bundle backs a compact initial prompt and parent-served resources; large original prompts, full file inventory and permitted base/current sources arrive in chunks through Step A.2a. `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is informational and clips nothing. The 512 KiB limit still applies to each initial prompt and serialized context response. On a builder error, stop dispatch and report the reason; never bypass admission or remove evidence to fit. If admission returned `shard_ids`, set `SHARD=<id>` and run Steps A.2-A.2c once per ordering and shard (see [Sharded rounds](review-reference.md#sharded-rounds)).
+Before launching agents, build the reviewer prompts with `build_review_prompts`. Evidence is NOT truncated. The admitted immutable bundle backs a compact initial prompt and parent-served resources; large original prompts, full file inventory and permitted base/current sources arrive through Step A.2a as served context files the reviewer reads itself (chunks for readers without Read). `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is informational and clips nothing. The 512 KiB limit still applies to each initial prompt and serialized context response. On a builder error, stop dispatch and report the reason; never bypass admission or remove evidence to fit. If admission returned `shard_ids`, set `SHARD=<id>` and run Steps A.2-A.2c once per ordering and shard (see [Sharded rounds](review-reference.md#sharded-rounds)).
 
 ```bash
 REVIEW_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_review_prompts ${SHARD:+--shard "$SHARD"} \
@@ -380,7 +380,7 @@ When enabled (`minimality != off`), the complexity lens is advisory only. It lis
 
 ### Step A.2a: Deliver requested context to the same reviewer (MANDATORY)
 
-Before final JSON validation, follow [Parent-served context loop](review-reference.md#parent-served-context-loop-step-a2a): run `serve_review_context` for every response, including retries, adversarial roles and the complexity lens. Continue the same agent for `context_response`; responses to the post-delivery finalization request proceed to Step A.2b even with missing or invalid receipts. Discard queued early finals; context requests never consume final-response retries or become captured reviews. Denied/stale context leaves collection incomplete.
+Before final JSON validation, follow [Parent-served context loop](review-reference.md#parent-served-context-loop-step-a2a): run `serve_review_context` for every response, including retries, adversarial roles and the complexity lens. Continue the same agent for `context_response` and acknowledge `context_ack` nonces; responses to the post-delivery finalization request proceed to Step A.2b even with missing or invalid receipts. Discard queued early finals; context requests never consume final-response retries or become captured reviews. Denied/stale context leaves collection incomplete.
 
 ### Step A.2b: Truncated-response gate (MANDATORY — post-fan-out, pre-verification)
 
