@@ -14827,7 +14827,7 @@ def _review_ack_context_file(
             or not isinstance(resource, str)):
         raise ValueError("Acknowledgment does not match the issued session")
     metadata = session.get("available", session["required"]).get(resource)
-    if metadata is None and resource.startswith(("repo:", "check:", "base:", "current:", "risk:")):
+    if metadata is None and resource.startswith(("repo:", "check:", "base:", "current:", "risk:", "artifact:")):
         metadata = _review_lazy_entry(row, resource)
     if not isinstance(metadata, dict):
         raise ValueError("Acknowledgment resource is not permitted")

@@ -170,3 +170,23 @@ def test_vc3_estimate_covers_the_acceptance_roster_prompt(repo):
     estimate = runner._review_fixed_overhead_bytes(admitted["target"], "claude", admitted["scheduled_reviewers"],
                                                    "feature", admitted["required_files"], [])
     assert estimate >= exact, (estimate, exact)
+
+
+def test_lazy_artifact_is_acknowledged_through_file_delivery(repo):
+    del repo
+    _, admitted = admit_with_artifacts(provider="claude", round_id="art-file")
+    entry = runner.build_review_prompts(branch="feature", pack_sources=True)["prompts"]["monitor"]
+    context_id = entry["context_transport"]["context_id"]
+    state = runner.bind_review_context("monitor", context_id, "native-agent", admitted["round_id"], branch="feature")
+    assert state["status"] == "context_pending", state
+    request = {"type": "context_request", "context_id": context_id,
+               "resource_id": "artifact:blueprint.json", "offset": 0}
+    served = runner.serve_review_context("monitor", json.dumps(request), admitted["round_id"], branch="feature",
+                                         session_id=state["session_id"], agent_id="native-agent", delivery="file")
+    assert served["type"] == "context_file", served
+    nonce = Path(served["path"]).read_text(encoding="utf-8").splitlines()[-1].removeprefix("MAP-CONTEXT-NONCE: ")
+    proof = {"type": "context_ack", "session_id": state["session_id"], "context_id": context_id,
+             "resource_id": "artifact:blueprint.json", "sha256": served["sha256"], "nonce": nonce}
+    acked = runner.ack_review_context(state["session_id"], "native-agent", json.dumps(proof), admitted["round_id"],
+                                      branch="feature")
+    assert acked["status"] in {"context_pending", "context_ready"}, acked
