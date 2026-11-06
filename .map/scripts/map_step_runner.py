@@ -14447,7 +14447,8 @@ def _review_embed_proof(view: str, total_bytes: int) -> tuple[str, str, int]:
         output = list(base)
         for fragment, slot in sorted(zip(fragments, chosen, strict=True), key=lambda item: item[1], reverse=True):
             target = base[slot]
-            indent = re.match(r"\s*", target).group(0) if re.match(r'^\s*"', target) else "  "
+            leading = re.match(r'(\s*)"', target)
+            indent = leading.group(1) if leading else "  "
             output.insert(slot, f'{indent}{rng.choice(vocabulary)}: "{fragment}",')
         instruction = (f"proof: {count} fragments, each a standalone lowercase hex token of exactly {length} "
                        "characters in another line; the proof is all fragments concatenated in file order")
