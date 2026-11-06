@@ -1400,7 +1400,7 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 │  /map-release (7-phase release workflow):                       │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │ Phase 1: 12 validation gates (tests, lint, CI, etc.)     │   │
-│  │ Phase 2: Version determination (user decides bump type)  │   │
+│  │ Phase 2: Version determination (recommended, no prompt)  │   │
 │  │ Phase 3: Execute bump-version.sh                         │   │
 │  │ Phase 4: Push tag (⚠️ IRREVERSIBLE)                      │   │
 │  │ Phase 5: Monitor CI/CD, create GitHub release            │   │
@@ -1907,8 +1907,8 @@ Follow-up review prompts add unresolved finding IDs before capture, routed to th
 
 **Workflow:** 7 sequential phases with validation gates (no AI agents).
 Claude `/map-release` and Codex `$map-release` render from shared provider-aware
-sources, including the supporting reference. Provider-specific confirmation UX
-remains explicit; the release policy is shared.
+sources, including the supporting reference. Invoking the release is the
+authorization; neither provider prompts the operator, and hard gates abort.
 
 Gate 11 and the pre-push gate verify CI for `git merge-base HEAD origin/main`.
 Only `CHANGELOG.md`, `pyproject.toml` and `src/mapify_cli/__init__.py` may change
@@ -1924,7 +1924,7 @@ stop the workflow; watch failure alone does not bypass or replace this gate.
 
 **Phases:**
 1. Pre-release validation (12 gates: tests, lint, CI, security, CHANGELOG)
-2. Version determination (user chooses bump type)
+2. Version determination (recommended bump from `[Unreleased]`, or the forced argument)
 3. Execute bump-version.sh (updates pyproject.toml, CHANGELOG, creates tag)
 4. Push tag (⚠️ IRREVERSIBLE - triggers CI/CD)
 5. Monitor the release workflow for the tag's exact commit; it creates the GitHub Release automatically
@@ -1933,7 +1933,7 @@ stop the workflow; watch failure alone does not bypass or replace this gate.
 
 **Unique Characteristics:**
 - **No AI agents** - bash scripts + GitHub CLI orchestration
-- **User confirmation required** before irreversible tag push
+- **No operator prompts** — invoking the release authorizes it; tag push happens only after the Phase 4.1 re-verification passes
 - **Rollback procedures documented** for each failure scenario
 
 **Use for:**

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `/map-release` never prompts: invoking it is the authorization. Phase 2 picks the recommended bump from `[Unreleased]` (`BREAKING`/`### Removed` → major, `### Added`/`### Changed` → minor, else patch) unless the argument forces `patch|minor|major` or `X.Y.Z`; versions must move forward. The tag push no longer asks for YES once the Phase 4.1 re-verification passes, a CHANGELOG gap makes the agent add the missing entries itself, and mypy/security-audit failures are hard stops.
+
 ### Fixed
 
 - `mapify _update --mode automatic` no longer reports `current` when the project's installed files (`.map/mapify.lock.json` `mapify_version`) are older than the running CLI, e.g. after the CLI was upgraded outside the updater: the project's providers are refreshed (`updated`) without a network call or the 24 h throttle, then settle at `current`. Automatic mode refreshes within the running major only; a project a major behind gets the existing `major_available` consent result for the running CLI version (approve with `--mode manual --approve-major <v>`, which refreshes without a package install; `--decline-major <v>` is recorded and not repeated). A newer project version is never downgraded; the framework source repo stays skipped (#643)

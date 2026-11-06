@@ -11,7 +11,7 @@ For `updated`, re-read this invoked skill's installed `SKILL.md`, skip its alrea
 
 # MAP Framework Release Workflow
 
-**CRITICAL INSTRUCTION:** This is an **automated sequential workflow with IRREVERSIBLE operations**. You MUST execute ALL validation gates and get explicit user confirmation before pushing tags.
+**CRITICAL INSTRUCTION:** This is an **automated sequential workflow with IRREVERSIBLE operations**. You MUST execute ALL validation gates; any failing gate aborts the release. Invoking this skill is the operator's authorization to publish the version Phase 2 computes — never ask the operator questions.
 
 **🚨 ABSOLUTELY FORBIDDEN 🚨**
 
@@ -20,7 +20,7 @@ You are **STRICTLY PROHIBITED** from:
 ❌ Skipping validation gates to save time — every gate exists for a reason
 ❌ Pushing tags without CI confirmation — tag push triggers release workflow immediately
 ❌ Assuming tests passed without checking — always verify CI status explicitly
-❌ Proceeding without user confirmation on IRREVERSIBLE steps — tag push cannot be undone easily
+❌ Pushing a tag when any gate or the Phase 4.1 re-verification did not pass in this run — tag push cannot be undone easily
 ❌ Creating releases without updating CHANGELOG.md — users need to know what changed
 ❌ Pushing tag without verifying `__version__` in `__init__.py` — CRITICAL: bump-version.sh has known bug
 ❌ Any variation of "I'll optimize the release process" — follow the workflow exactly
@@ -38,7 +38,7 @@ parallel_tool_policy: validation_gates_only
 
 - Use deeper reasoning for version selection, release safety, CI interpretation, and rollback decisions.
 - Parallelize only independent pre-release validation gates when their outputs do not depend on one another.
-- Keep version bumping, commits, tags, pushes, PyPI verification, and any irreversible or state-mutating operation sequential with the required user confirmation gates.
+- Keep version bumping, commits, tags, pushes, PyPI verification, and any irreversible or state-mutating operation sequential, each gated by the preceding verification block.
 
 ## Workflow Overview
 
@@ -47,7 +47,7 @@ This workflow orchestrates a complete package release through 7 sequential phase
 ```
 Phase 1: Pre-Release Validation (12 gates)
    ↓
-Phase 2: Version Determination (user decision)
+Phase 2: Version Determination (recommended bump, no prompt)
    ↓
 Phase 3: Execute Version Bump Script (updates code + git commit + tag)
    ↓
@@ -80,19 +80,18 @@ Execute all 12 gates. Read the full gate scripts in [release-reference.md § Pha
 
 ## Phase 2: Version Determination
 
-Read CHANGELOG.md `[Unreleased]` section to determine bump type (MAJOR/MINOR/PATCH/EXPLICIT).
-Get current version from `pyproject.toml`.
+Run the Phase 2 reference block with `RELEASE_REQUEST` set to the release argument
+(empty when none). It never asks: an explicit `X.Y.Z` or `patch`/`minor`/`major`
+argument wins, otherwise the recommended bump is chosen from `[Unreleased]`
+(`BREAKING` or `### Removed` → MAJOR, `### Added`/`### Changed` → MINOR, else
+PATCH) and a version that does not move forward aborts. Carry exactly the printed
+`BUMP_TYPE` and `NEW_VERSION` into Phase 3 and 4; each command runs in a fresh shell.
 
-Ask the user directly for PATCH / MINOR / MAJOR / EXPLICIT, and wait for their answer.
-
-For EXPLICIT, ask separately for the exact version. Carry only the user's approved
-`BUMP_TYPE` and exact `NEW_VERSION` into Phase 3; each command runs in a fresh shell.
-
-See [release-reference.md § Phase 2](release-reference.md#phase-2-version-determination) for the full question/option block.
+See [release-reference.md § Phase 2](release-reference.md#phase-2-version-determination).
 
 ## Phase 3: Execute Version Bump Script
 
-Show the exact approved version and bump type, then execute the Phase 3 reference
+Show the exact Phase 2 version and bump type, then execute the Phase 3 reference
 blocks with those values explicitly supplied in each invocation. Never rely on
 variables left by a previous shell. Verify the version-derived `vX.Y.Z` tag points
 to HEAD and both version fields match it using the Phase 3.3 reference block.
@@ -105,16 +104,13 @@ If `__version__` mismatches, follow the fix procedure in [release-reference.md �
 
 Re-verify: on main branch, exact merge-base CI completed successfully with matching
 `headSha`, only the three allowed metadata files changed, version-derived tag
-points to HEAD and does not already exist on remote. Then request **explicit user
-confirmation** (YES / NO / REVIEW options).
-
-Ask the user directly and wait; only an unambiguous YES authorizes pushing.
+points to HEAD and does not already exist on remote. Then push without asking —
+invoking the release is the authorization. If the version, commit or tag changed
+since Phase 2, stop and re-run Phases 2–4.1 instead of pushing.
 
 Read [release-reference.md § Phase 4](release-reference.md#phase-4-push-commit-and-tag-irreversible)
-for the confirmation and push blocks. Recompute the tag in the push invocation;
-consent for an earlier version or commit does not authorize a changed release.
-
-If user aborts: stop workflow, exit gracefully. Tag remains local only.
+for the verification and push blocks. Recompute the tag in the push invocation and
+pass `NEW_VERSION` so a changed release aborts.
 
 ## Phase 5: CI/CD Monitoring
 
@@ -136,7 +132,7 @@ Print release statistics (version, tag, PyPI URL, GitHub Release URL, CI run). O
 
 - **NEVER skip validation gates** — all 12 gates must pass before Phase 4
 - **NEVER push tag without CI confirmation** — verify CI passed on main before Phase 4
-- **NEVER proceed without user confirmation on IRREVERSIBLE operations**
+- **NEVER push unless Phase 4.1 passed in this run for the Phase 2 version** — no operator prompt replaces a gate
 - **ALWAYS monitor CI/CD pipeline** — don't assume success
 - **ALWAYS verify PyPI availability** before declaring success
 
@@ -147,10 +143,10 @@ Print release statistics (version, tag, PyPI URL, GitHub Release URL, CI run). O
 | 1 | Pytest tests | ❌ NO |
 | 2 | Pyright + hook lint | ❌ NO |
 | 3 | Ruff lint | ❌ NO |
-| 4 | Mypy types | ⚠️ Review |
+| 4 | Mypy types | ❌ NO |
 | 5 | Package build | ❌ NO |
 | 6 | Twine check | ❌ NO |
-| 7 | Security audit | ⚠️ Review |
+| 7 | Security audit | ❌ NO (update the vulnerable pin first) |
 | 8 | Git branch | ❌ NO |
 | 9 | Git clean | ❌ NO |
 | 10 | Git sync | ❌ NO |
@@ -162,8 +158,8 @@ Begin now with the release request above. Read the relevant [release-reference.m
 ## Examples
 
 ```
-$map-release                            # full release workflow; bump type chosen at the confirmation gate
-$map-release patch                      # hint to the version-determination phase
+$map-release                            # full release; recommended bump chosen from [Unreleased]
+$map-release patch                      # force a bump type (patch|minor|major)
 ```
 
 ## Troubleshooting

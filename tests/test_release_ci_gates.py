@@ -524,3 +524,49 @@ def test_monitor_rejects_multiple_json_documents(
     assert result.returncode != 0, result.stdout + result.stderr
     if "raw" in case:
         assert not any(call[:3] == ["gh", "run", "watch"] for call in calls)
+
+
+def _changelog(unreleased: str) -> str:
+    return f"# Changelog\n\n## [Unreleased]\n\n{unreleased}\n## [1.2.3] - 2026-01-01\n\n### Fixed\n\n- old\n"
+
+
+@pytest.mark.parametrize(("unreleased", "request_arg", "expected"), [
+    ("### Fixed\n\n- a fix\n", "", "patch 1.2.4"),
+    ("### Added\n\n- a verb\n\n### Fixed\n\n- a fix\n", "", "minor 1.3.0"),
+    ("### Changed\n\n- behaviour\n", "", "minor 1.3.0"),
+    ("### Removed\n\n- old flag\n", "", "major 2.0.0"),
+    ("### Changed\n\n- BREAKING: new config schema\n", "", "major 2.0.0"),
+    ("### Fixed\n\n- a fix\n", "minor", "minor 1.3.0"),
+    ("### Added\n\n- x\n", "1.2.9", "1.2.9 1.2.9"),
+    ("### Fixed\n\n- a fix\n", "ship the scim fixes", "patch 1.2.4"),
+])
+def test_version_is_chosen_without_asking(
+    installed_reference: str, tmp_path: Path, unreleased: str, request_arg: str, expected: str
+) -> None:
+    """Phase 2 picks the recommended bump deterministically; the operator is never asked."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(_changelog(unreleased), encoding="utf-8")
+    block = bash_blocks(installed_reference, "## Phase 2")[0]
+    result = subprocess.run(["bash", "-c", block], cwd=tmp_path, capture_output=True, text=True,
+                            env={**os.environ, "RELEASE_REQUEST": request_arg}, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    found = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    assert f"{found['BUMP_TYPE']} {found['NEW_VERSION']}" == expected
+
+
+@pytest.mark.parametrize("request_arg", ["1.2.3", "1.0.0"])
+def test_version_never_moves_backwards(installed_reference: str, tmp_path: Path, request_arg: str) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(_changelog("### Fixed\n\n- a fix\n"), encoding="utf-8")
+    block = bash_blocks(installed_reference, "## Phase 2")[0]
+    result = subprocess.run(["bash", "-c", block], cwd=tmp_path, capture_output=True, text=True,
+                            env={**os.environ, "RELEASE_REQUEST": request_arg}, check=False)
+    assert result.returncode != 0
+    assert "ABORT" in result.stdout + result.stderr
+
+
+def test_release_never_asks_the_operator(installed_reference: str) -> None:
+    """Invoking the release is the authorization: no interactive prompts anywhere."""
+    assert "AskUserQuestion" not in installed_reference
+    assert "read -p" not in installed_reference
+    assert "Only YES permits" not in installed_reference
