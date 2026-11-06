@@ -14242,6 +14242,8 @@ def _review_lazy_artifact_resource(
     return metadata, True
 
 REVIEW_CONTEXT_FILE_HEADER = "MAP-CONTEXT-FILE v1"
+# File-delivery resource id that serves every unacknowledged required resource in one view file.
+REVIEW_CONTEXT_BATCH_RESOURCE = "*required"
 REVIEW_CONTEXT_NONCE_PREFIX = "MAP-CONTEXT-NONCE: "
 # A JSON container stays on one view line up to this many characters; longer ones expand.
 REVIEW_CONTEXT_VIEW_INLINE_CHARS = 160
@@ -14574,8 +14576,10 @@ def _prepare_review_context(
         metadata = _review_context_store(directory, json.dumps(manifest, sort_keys=True, ensure_ascii=True))
         context_id = metadata["sha256"]
         inline = len(original.encode("utf-8")) <= REVIEW_CONTEXT_INLINE_BYTES
+        # Codex readers have no file Read and take chunks; the rest fetch all required context at once.
+        batch = row["binding"].get("provider") != "codex"
         request = {"type": "context_request", "context_id": context_id,
-                   "resource_id": "manifest", "offset": 0}
+                   "resource_id": REVIEW_CONTEXT_BATCH_RESOURCE if batch else "manifest", "offset": 0}
         ack = {"type": "context_ack", "session_id": "<session_id>", "context_id": context_id,
                "resource_id": "<resource_id>", "sha256": "<sha256>", "nonce": "<nonce>"}
         protocol = (
@@ -14587,6 +14591,10 @@ def _prepare_review_context(
             + f"Manifest: {metadata['bytes']} UTF-8 bytes; SHA-256 {context_id}.\n"
             + ("The original role prompt is supplied above in full. " if inline else
                "The complete original role instructions, output schema and evidence are in resource prompt. ")
+            + ("First request resource_id \"*required\": the parent answers with one context_file holding every "
+               "required resource named below (its resources field lists them); Read it through the last line and "
+               "acknowledge it once. If the parent instead serves single resources, consume them as follows. "
+               if batch else "")
             + "First request and consume the manifest. "
             + ("" if inline else "Then request every chunk of resource prompt before reviewing. ")
             + ("" if diff_resource is None else
@@ -14713,6 +14721,10 @@ def serve_review_context(
     if (manifest["reviewer"] != reviewer or manifest["round_id"] != round_id
             or manifest["bundle_sha256"] != row["bundle_receipt"]["sha256"]):
         raise ValueError("Context manifest does not match the admitted review")
+    if resource_id == REVIEW_CONTEXT_BATCH_RESOURCE:
+        if delivery != "file" or session is None:
+            raise ValueError("Batch context delivery requires file delivery through a bound session")
+        return _review_serve_context_batch(directory, ledger, row, session, session_id, context_id)
     lazy_frozen = False
     metadata = registered if resource_id == "manifest" else manifest["resources"].get(resource_id)
     if not isinstance(metadata, dict) and resource_id.startswith("repo:"):
@@ -14786,16 +14798,53 @@ def _review_serve_context_file(
     same file and nonce, which keeps parent retries idempotent.
     """
     view = _review_context_view(resource_id, raw, metadata["sha256"]).encode("utf-8")
+    return _review_publish_context_file(directory, ledger, row, session, session_id, context_id, resource_id, view,
+                                        metadata["sha256"], len(raw),
+                                        session["offsets"].get(resource_id, 0) == len(raw))
+
+
+def _review_serve_context_batch(
+    directory: Path, ledger: dict[str, Any], row: dict[str, Any], session: dict[str, Any], session_id: str,
+    context_id: str,
+) -> dict[str, Any]:
+    """Publish every unacknowledged required resource as one view file proved by one nonce.
+
+    A reviewer then needs one round trip instead of one per resource; its ACK marks exactly the
+    listed resources delivered. The per-resource views are concatenated unchanged.
+    """
+    names = [name for name, item in session["required"].items()
+             if session["offsets"].get(name, 0) != item["bytes"]]
+    if not names:
+        raise ValueError("Every required context resource is already acknowledged")
+    views, digests, total = [], [], 0
+    for name in names:
+        metadata = session["required"][name]
+        raw = _review_context_read(directory, metadata)
+        views.append(_review_context_view(name, raw, metadata["sha256"]))
+        digests.append(f"{name}:{metadata['sha256']}")
+        total += len(raw)
+    resource_sha256 = hashlib.sha256("\n".join(digests).encode("utf-8")).hexdigest()
+    return _review_publish_context_file(directory, ledger, row, session, session_id, context_id,
+                                        REVIEW_CONTEXT_BATCH_RESOURCE, "".join(views).encode("utf-8"),
+                                        resource_sha256, total, False, resources=names)
+
+
+def _review_publish_context_file(
+    directory: Path, ledger: dict[str, Any], row: dict[str, Any], session: dict[str, Any], session_id: str,
+    context_id: str, resource_id: str, view: bytes, resource_sha256: str, resource_bytes: int, done: bool,
+    *, resources: list[str] | None = None,
+) -> dict[str, Any]:
+    """Write the view with a fresh nonce footer, or reuse the pending one, and record the pending proof."""
     view_sha256 = hashlib.sha256(view).hexdigest()
     path = _review_context_file_path(directory, session_id, view_sha256)
-    done = session["offsets"].get(resource_id, 0) == len(raw)
     pending = session.get("pending")
     if not done and pending and (pending.get("type") != "context_file" or pending["resource_id"] != resource_id):
         raise ValueError("A pending delivery must be acknowledged or retried before another resource")
     result = {"status": "context_response", "type": "context_file", "context_id": context_id,
               "resource_id": resource_id, "session_id": session_id, "path": str(path.resolve()),
-              "sha256": view_sha256, "bytes": len(view), "resource_sha256": metadata["sha256"],
-              "resource_bytes": len(raw), "nonce_line": "last"}
+              "sha256": view_sha256, "bytes": len(view), "resource_sha256": resource_sha256,
+              "resource_bytes": resource_bytes, "nonce_line": "last",
+              **({"resources": resources} if resources is not None else {})}
     record = session.setdefault("files", {}).get(resource_id)
     nonce = ""
     if isinstance(record, dict) and record.get("sha256") == view_sha256 and path.is_file():
@@ -14804,7 +14853,8 @@ def _review_serve_context_file(
              and path.read_bytes() == view + (REVIEW_CONTEXT_NONCE_PREFIX + nonce + "\n").encode("utf-8"))
     if not reuse:
         nonce = os.urandom(16).hex()
-        record = {"sha256": view_sha256, "bytes": len(view), "nonce_sha256": _review_nonce_digest(nonce)}
+        record = {"sha256": view_sha256, "bytes": len(view), "nonce_sha256": _review_nonce_digest(nonce),
+                  **({"resources": resources} if resources is not None else {})}
     _require_review_delivery_current(row, directory.name)
     if not reuse:
         atomic_write_text(path, view.decode("utf-8") + REVIEW_CONTEXT_NONCE_PREFIX + nonce + "\n")
@@ -14812,7 +14862,8 @@ def _review_serve_context_file(
     if not done:
         session.pop("finalization_token", None)
         session["pending"] = {key: result[key] for key in (
-            "type", "context_id", "resource_id", "sha256", "bytes", "resource_sha256", "resource_bytes")}
+            "type", "context_id", "resource_id", "sha256", "bytes", "resource_sha256", "resource_bytes",
+            *(("resources",) if resources is not None else ()))}
     _write_json_file(directory / "review-verdict-ledger.json", ledger)
     return result
 
@@ -14826,6 +14877,8 @@ def _review_ack_context_file(
     if (proof.get("session_id") != session_id or proof.get("context_id") != session["context_id"]
             or not isinstance(resource, str)):
         raise ValueError("Acknowledgment does not match the issued session")
+    if resource == REVIEW_CONTEXT_BATCH_RESOURCE:
+        return _review_ack_context_batch(directory, ledger, row, session, session_id, proof)
     metadata = session.get("available", session["required"]).get(resource)
     if metadata is None and resource.startswith(("repo:", "check:", "base:", "current:", "risk:", "artifact:")):
         metadata = _review_lazy_entry(row, resource)
@@ -14845,6 +14898,35 @@ def _review_ack_context_file(
     if pending.get("type") != "context_file" or pending.get("resource_id") != resource:
         raise ValueError("Acknowledgment is not the current pending context file")
     session["offsets"][resource] = len(raw)
+    session["pending"] = None
+    if all(session["offsets"].get(name, 0) == item["bytes"] for name, item in session["required"].items()):
+        session.setdefault("finalization_token", os.urandom(24).hex())
+    _require_review_delivery_current(row, directory.name)
+    _write_json_file(directory / "review-verdict-ledger.json", ledger)
+    return _review_delivery_state(session_id, session)
+
+
+def _review_ack_context_batch(
+    directory: Path, ledger: dict[str, Any], row: dict[str, Any], session: dict[str, Any], session_id: str,
+    proof: dict[str, Any],
+) -> dict[str, Any]:
+    """Accept one nonce for a batch file and mark every listed resource delivered; replay is idempotent."""
+    record = session.get("files", {}).get(REVIEW_CONTEXT_BATCH_RESOURCE)
+    nonce = proof.get("nonce")
+    if (not isinstance(record, dict) or proof.get("sha256") != record.get("sha256")
+            or not isinstance(nonce, str)
+            or not hmac.compare_digest(_review_nonce_digest(nonce), str(record.get("nonce_sha256")))):
+        raise ValueError("Context file nonce or digest does not match the served file")
+    names = record.get("resources") or []
+    pending = session.get("pending") or {}
+    if pending.get("resource_id") != REVIEW_CONTEXT_BATCH_RESOURCE or pending.get("sha256") != record["sha256"]:
+        if names and all(session["offsets"].get(name, 0) == session["required"][name]["bytes"] for name in names):
+            _require_review_delivery_current(row, directory.name)
+            return _review_delivery_state(session_id, session)
+        raise ValueError("Acknowledgment is not the current pending context file")
+    for name in names:
+        _review_context_read(directory, session["required"][name])
+        session["offsets"][name] = session["required"][name]["bytes"]
     session["pending"] = None
     if all(session["offsets"].get(name, 0) == item["bytes"] for name, item in session["required"].items()):
         session.setdefault("finalization_token", os.urandom(24).hex())

@@ -34,7 +34,8 @@ reply names one served file: Read exactly that `path` (page with offset/limit
 through the last line), then return ONLY a context_ack JSON echoing its
 session_id, context_id, resource_id and sha256 plus the nonce from the file's
 last line (`MAP-CONTEXT-NONCE: <nonce>`), or put that object as `ack` inside
-your next context_request. A context_chunk reply carries bytes: follow
+your next context_request. A context_file whose resource_id is `*required`
+holds every listed required resource in one file; one ack covers all of them. A context_chunk reply carries bytes: follow
 next_offset through eof and check offsets, total size and hash metadata against
 the manifest before using it. Read no other context store, object or ledger path;
 request permitted resources from the parent instead.

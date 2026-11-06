@@ -273,3 +273,80 @@ def test_view_text_blocks_reconstruct_every_string_exactly():
     assert blocks['$["current_content"]'] == content + "\n"
     assert blocks['$["long"]'] == "x" * 1500
     assert max(len(line) for line in lines if not line.startswith("x" * 100)) <= 200
+
+
+def serve_batch(state):
+    payload = {"type": "context_request", "context_id": state["context_id"],
+               "resource_id": "*required", "offset": 0}
+    return runner.serve_review_context(state["reviewer"], json.dumps(payload), "delivery-round",
+                                         branch="feature", session_id=state["session_id"],
+                                         agent_id=state["agent_id"], delivery="file")
+
+
+def test_one_batch_file_delivers_every_remaining_required_resource(repository):
+    """One served file and one nonce cover all unacknowledged required resources (#650 scaling)."""
+    del repository
+    state = bind(prepare()["monitor"])
+    first = serve_file(state)
+    state = acknowledge(state, file_ack(state, first, read_nonce(first)))
+    assert state["status"] == "context_pending" and state["remaining_count"] >= 2
+    session = json.loads(Path(".map/feature/review-verdict-ledger.json").read_text())[
+        "convergence"]["rounds"][-1]["context_sessions"][state["session_id"]]
+    expected = [name for name, item in session["required"].items()
+                if session["offsets"].get(name, 0) != item["bytes"]]
+    served = serve_batch(state)
+    assert served["type"] == "context_file" and served["resource_id"] == "*required", served
+    assert served["resources"] == expected
+    body = Path(served["path"]).read_text(encoding="utf-8")
+    for name in expected:
+        assert f"resource_id: {name}\n" in body
+    assert first["resource_id"] not in served["resources"]
+    assert serve_batch(state) == served
+    assert serve_file(state, expected[0])["status"] == "error"
+    assert acknowledge(state, file_ack(state, served, "0" * 32))["status"] == "error"
+    ready = acknowledge(state, file_ack(state, served, read_nonce(served)))
+    assert ready["status"] == "context_ready" and ready["finalization_token"], ready
+    assert runner.capture_review_output("monitor", json.dumps(final_envelope(ready)), "delivery-round",
+                                          branch="feature")["status"] == "success"
+
+
+def test_batch_request_through_cli_reaches_ready_in_one_round_trip(repository):
+    del repository
+    state = bind(prepare()["monitor"])
+    request = {"type": "context_request", "context_id": state["context_id"], "resource_id": "*required",
+               "offset": 0}
+    served = cli("serve_review_context", "--reviewer", "monitor", "--round-id", "delivery-round",
+                 "--session-id", state["session_id"], "--agent-id", state["agent_id"],
+                 "--delivery", "file", payload=json.dumps(request))
+    assert "manifest" in served["resources"]
+    ready = cli("ack_review_context", "--session-id", state["session_id"], "--agent-id", state["agent_id"],
+                "--round-id", "delivery-round", payload=json.dumps(file_ack(state, served, read_nonce(served))))
+    assert ready["status"] == "context_ready", ready
+
+
+def test_batch_request_requires_file_delivery(repository):
+    del repository
+    state = bind(prepare()["monitor"])
+    payload = {"type": "context_request", "context_id": state["context_id"], "resource_id": "*required",
+               "offset": 0}
+    result = runner.serve_review_context("monitor", json.dumps(payload), "delivery-round", branch="feature",
+                                           session_id=state["session_id"], agent_id=state["agent_id"],
+                                           delivery="chunk")
+    assert result["status"] == "error"
+
+
+def test_codex_prompt_keeps_single_resource_requests(repository):
+    del repository
+    assert '"*required"' not in prepare()["monitor"]["prompt"]
+
+
+def test_file_reader_prompt_asks_for_the_batch_first(repository):
+    del repository
+    admitted = runner.begin_review_run(round_id="claude-round", provider="claude", branch="feature")
+    assert admitted["status"] == "success", admitted
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    built = runner.build_review_prompts(branch="feature")
+    assert built["status"] == "success", built
+    prompt = built["prompts"]["monitor"]["prompt"]
+    assert '"resource_id": "*required"' in prompt
+    assert 'First request resource_id "*required"' in prompt

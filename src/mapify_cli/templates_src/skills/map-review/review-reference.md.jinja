@@ -418,6 +418,10 @@ retries, both ordering collections and the advisory complexity lens.
   that path and returns
   `{"type":"context_ack","session_id":"<sid>","context_id":"<id>","resource_id":"<rid>","sha256":"<view sha256>","nonce":"<nonce>"}`,
   or sends the same object as `ack` inside its next `context_request`.
+  A request for `resource_id` `"*required"` (file delivery only) serves one such
+  file holding every still-unacknowledged required resource; the response adds
+  `resources` (their ids) and one nonce ACK marks all of them delivered. Prompts for
+  file readers ask for it first, so delivery takes one round trip per reviewer.
 - `chunk` (fallback for readers without file Read, such as Codex): byte ranges of
   at most `--chunk-bytes` are relayed through the parent as `context_chunk` JSON.
 
