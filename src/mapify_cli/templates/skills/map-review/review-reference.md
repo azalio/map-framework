@@ -49,10 +49,40 @@ user tails, missing or malformed headers and files whose JSON was reformatted st
 any file and it is skipped (visibly, in `skipped_scope`). Use strict `review.security_gates` when PR
 authors are untrusted; it disables this skip. `review.exclude_mapify_managed: false` opts out.
 
+## Compact Prompt Context
+
+Execution checks appear as one line each (exit code, duration, command, `output_sha256`, size and the
+`check:<id>` resource for the full log). The trusted policy text appears once per prompt as UTF-8, marked
+`[trusted-policy:<hash>]`; `shadow_risk` is a summary (tier, reason count and sample, digest) and the
+inventory resource carries hashes and counts. Request `check:<id>` when a log is needed.
+
+Windowed sources carry `line_mapping_scope: "windowed"`: their `line_mapping` covers only the delivered
+windows, so a line outside every window is unknown, not new. `base:<path>` / `current:<path>` return the full
+mapping. A renamed file is windowed against its old blob (`renamed_from`); the old path is a `renamed_to` stub.
+The complete `shadow_risk` record is the optional resource `risk:shadow`.
+
+## Shard Capacity
+
+Shards are packed to the per-reviewer budget minus a measured overhead (the worst scheduled reviewer's
+rendered prompt, inventory, frozen task artifacts and, for Codex, inlined role rubrics, plus a margin;
+never below 64 KiB), also for unsharded rounds.
+
+## Windowed Large Files
+
+A changed text file whose full base+current source resource would exceed `review.full_source_max_bytes`
+(trusted config, default 48 KiB) is a required **windowed** source: its diff hunks plus
+`review.hunk_context_lines` (default 40) numbered lines of base and current context, marked
+`"windowed": true`. Reading it counts as delivery for that file; report it in `covered_files` as usual.
+When the window is not enough to judge a finding, request the optional full content as
+`resource_id` `base:<path>` or `current:<path>` (frozen on first use, same delivery guard as `repo:`;
+never available to diff-only/blind reviewers). Small files, binary/non-UTF-8 files and files without a
+verified base keep the full-content resource. A single file whose windowed hunks still exceed the
+shard capacity fails admission with `file_too_large`; split that change.
+
 ## Sharded Rounds
 
 When the required scope does not fit one reviewer's budget, admission plans `row.shards`
-(deterministic, directory-aware, disjoint; at most `review.max_shards`, default 8) and returns
+(deterministic, directory-aware, disjoint; at most `review.max_shards`, default 8; the operator-local env `MAP_REVIEW_MAX_SHARDS` (positive int, invalid values ignored) overrides the trusted config and the default, and the `too_many_shards` error hints the exact count needed) and returns
 `shard_ids`. A single file above the per-shard capacity or more than `max_shards` shards fails
 admission with `review_context_budget_exceeded` (`reason: file_too_large | too_many_shards`).
 Unsharded rounds never see any of this.

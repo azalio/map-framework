@@ -666,7 +666,7 @@ def test_builders_require_a_shard_on_a_sharded_round(sharded):
 
 
 def test_shard_manifest_is_scoped_to_its_own_files_and_diff(sharded):
-    _admitted, row = sharded
+    row = sharded[1]
     directory = Path(".map/feature")
     seen_sources = []
     for shard in row["shards"]:
@@ -733,11 +733,11 @@ def test_shard_sessions_are_independent_and_use_shard_scoped_keys(sharded):
 def test_diff_rewrite_preserves_labels_and_scope_trailers():
     diff = ("diff --git a/a.py b/a.py\n+one\n\n=== untracked source additions ===\n"
             "diff --git a/b.py b/b.py\n+two\n\nReview scope: {\"kind\": \"full\"}")
-    rewritten = runner._review_rewrite_diff(diff, lambda old, new, size: "[gone]" if old == "b.py" else None)
+    rewritten = runner._review_rewrite_diff(diff, lambda old, _new, _size: "[gone]" if old == "b.py" else None)
     assert "+one" in rewritten and "+two" not in rewritten
     assert "=== untracked source additions ===" in rewritten
     assert rewritten.endswith('Review scope: {"kind": "full"}')
-    rewritten = runner._review_rewrite_diff(diff, lambda old, new, size: "[gone]" if old == "a.py" else None)
+    rewritten = runner._review_rewrite_diff(diff, lambda old, _new, _size: "[gone]" if old == "a.py" else None)
     assert "=== untracked source additions ===" in rewritten and "+two" in rewritten
 
 
@@ -778,7 +778,7 @@ def monitor_output(proof, covered, *, verdict="approved", skipped=()):
                         "denied_access": [], "check_evidence": []}}
 
 
-def capture_shard(row, shard, covered=None, *, ordering="", **kwargs):
+def capture_shard(_row, shard, covered=None, *, ordering="", **kwargs):
     built = runner.build_review_prompts(branch="feature", shard=shard["id"])
     assert built["status"] == "success", built
     proof = deliver(built["prompts"]["monitor"], "monitor", f"agent-{ordering}-{shard['id']}", ordering)
@@ -792,6 +792,7 @@ def current_row():
 
 
 def test_shard_captures_merge_into_one_canonical_capture_only_when_complete(sharded_monitor):
+    del sharded_monitor
     shards = current_row()["shards"]
     first = capture_shard(current_row(), shards[0])
     assert first["status"] == "success" and first["merged"] is False
@@ -804,6 +805,7 @@ def test_shard_captures_merge_into_one_canonical_capture_only_when_complete(shar
     partial = runner.write_review_verdict_ledger(current_run=True, branch="feature")
     assert partial["completeness"]["status"] == "INCOMPLETE", partial
     assert partial["code_approval"]["approved"] is False
+    last = first
     for shard in shards[1:]:
         last = capture_shard(current_row(), shard)
     assert last["merged"] is True and last["shards_missing"] == []
@@ -961,7 +963,9 @@ def test_codex_normal_review_reserves_room_for_inlined_role_rubrics(repo, monkey
     assert claude["status"] == "success" and claude["shard_ids"], claude
     runner.abandon_review_round("rubric", reason="retry", branch="feature")
     codex = runner.begin_review_run(branch="feature", provider="codex", round_id="rubric-codex", base_ref="main")
-    assert codex["status"] == "error" and codex["reason"] == "file_too_large", codex
+    # The inlined rubrics alone (not any one file) overflow this small budget.
+    assert codex["status"] == "error" and codex["reason"] == "fixed_overhead_too_large", codex
+    assert codex["overhead_breakdown"]["role_rubric"] >= runner.REVIEW_ROLE_RUBRIC_RESERVE_BYTES
     assert codex["total"] >= runner.REVIEW_ROLE_RUBRIC_RESERVE_BYTES
 
 
@@ -1236,8 +1240,10 @@ def test_large_check_logs_are_stubbed_in_the_prompt_and_stay_retrievable(repo, m
     runner._write_json_file(directory / "review-verdict-ledger.json", ledger)
     monkeypatch.setattr(runner, "_review_check_valid", lambda *args: True)
     compact = runner._review_compact_bundle("feature")
-    assert len(compact) < 80_000 and "line 0 of" in compact and "line 19999 of" in compact
-    assert "line 10000 of" not in compact and "optional resource check:big" in compact
+    # One compact line per check: digest, size and a pointer; no log text in the prompt.
+    assert len(compact) < 20_000 and "line 0 of" not in compact and "line 19999 of" not in compact
+    assert '"output_resource": "check:big"' in compact and '"output_resource": "check:small"' in compact
+    assert f'"output_chars": {len(log)}' in compact
     entry = runner.build_review_prompts(branch="feature")["prompts"]["monitor"]
     chunks, offset = [], 0
     while True:
