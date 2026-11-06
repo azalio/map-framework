@@ -14750,9 +14750,13 @@ def _prepare_review_context(
                               "context_transport": {"context_id": context_id, "round_id": row["round_id"],
                                                     "manifest_bytes": metadata["bytes"],
                                                     "original_prompt_bytes": resources["prompt"]["bytes"]}}
+        previous = row.get("context_manifests", {}).get(context_id)
+        # Intent: prompts frozen before file delivery only know context_chunk, so a registry entry that predates
+        # the marker keeps chunk delivery even when its prompts are rebuilt; only new Read-capable readers get files.
+        file_delivery = batch and (previous is None or previous.get("file_delivery") is True)
         row.setdefault("context_manifests", {})[context_id] = {
             **metadata, "reviewer": reviewer, "bundle_sha256": manifest["bundle_sha256"],
-            "prompt_inline": inline, "runner_schema": REVIEW_CONTEXT_RUNNER_SCHEMA,
+            "prompt_inline": inline, "runner_schema": REVIEW_CONTEXT_RUNNER_SCHEMA, "file_delivery": file_delivery,
             **({"shard": shard} if shard else {}),
         }
     budget = _review_context_budget(_review_trusted_config(row.get("target", {})))
@@ -14801,14 +14805,12 @@ def serve_review_context(
                 "message": "Intermediate delivery proof: pipe it to ack_review_context, then continue delivery."}
     if not isinstance(request, dict) or request.get("type") != "context_request":
         return {"status": "not_context_request"}
-    if delivery not in {"chunk", "file"}:
-        raise ValueError("Context delivery must be chunk or file")
+    if delivery not in {"chunk", "file", "auto"}:
+        raise ValueError("Context delivery must be chunk, file or auto")
     if type(chunk_bytes) is not int or not 4 <= chunk_bytes <= REVIEW_CONTEXT_CHUNK_BYTES:
         raise ValueError("Context chunk size must be between 4 and 65536 bytes")
     if set(request) - {"ack"} != {"type", "context_id", "resource_id", "offset"}:
         raise ValueError("Invalid context_request fields")
-    if delivery == "file" and not session_id:
-        raise ValueError("File delivery requires a bound delivery session (--session-id and --agent-id)")
     context_id, resource_id, offset = request["context_id"], request["resource_id"], request["offset"]
     if (not isinstance(context_id, str) or not isinstance(resource_id, str)
             or type(offset) is not int or offset < 0):
@@ -14822,6 +14824,11 @@ def serve_review_context(
     registered = row.get("context_manifests", {}).get(context_id)
     if not isinstance(registered, dict) or registered.get("reviewer") != reviewer:
         raise ValueError("Context was not issued to this reviewer")
+    if delivery == "auto":
+        # Intent: auto serves files only to a bound session of a round whose frozen prompts know context_file.
+        delivery = "file" if registered.get("file_delivery") is True and session_id else "chunk"
+    if delivery == "file" and not session_id:
+        raise ValueError("File delivery requires a bound delivery session (--session-id and --agent-id)")
     session = None
     if session_id:
         if not agent_id:
@@ -30975,7 +30982,8 @@ if __name__ == "__main__":
         _p.add_argument("--session-id", default="")
         _p.add_argument("--agent-id", default="")
         # file: reviewers with a Read tool get a context_file pointer; chunk: parent-relayed bytes.
-        _p.add_argument("--delivery", choices=("file", "chunk"), default="file")
+        # auto: file for rounds admitted with file-aware prompts, chunk for rounds that predate file delivery.
+        _p.add_argument("--delivery", choices=("auto", "file", "chunk"), default="auto")
         _p.add_argument("--branch", default=None)
         _args = _p.parse_args(sys.argv[2:])
         result = serve_review_context(_args.reviewer, sys.stdin.read(), _args.round_id,

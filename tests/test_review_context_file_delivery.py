@@ -557,3 +557,66 @@ def test_vc_completing_a_round_removes_every_context_file(repository):
     runner._review_purge_context_files(ledger_path.parent, None)
     assert not context_files_dir().exists()
     assert row["round_id"] == "delivery-round"
+
+
+def claude_round():
+    """A Read-capable (Claude) round whose prompts know file delivery; returns its bound monitor session."""
+    admitted = runner.begin_review_run(round_id="claude-round", provider="claude", branch="feature")
+    assert admitted["status"] == "success", admitted
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    built = runner.build_review_prompts(branch="feature")
+    assert built["status"] == "success", built
+    context_id = built["prompts"]["monitor"]["context_transport"]["context_id"]
+    return runner.bind_review_context("monitor", context_id, "native-agent", "claude-round", branch="feature")
+
+
+def strip_file_delivery_marker():
+    """Model a round admitted by 3.37.0: its manifests carry no file-delivery marker."""
+    path = Path(".map/feature/review-verdict-ledger.json")
+    ledger = json.loads(path.read_text())
+    for entry in ledger["convergence"]["rounds"][-1]["context_manifests"].values():
+        entry.pop("file_delivery", None)
+    path.write_text(json.dumps(ledger))
+
+
+def cli_serve(state, resource, *extra):
+    request = {"type": "context_request", "context_id": state["context_id"], "resource_id": resource, "offset": 0}
+    return cli("serve_review_context", "--reviewer", "monitor", "--round-id", "claude-round",
+               "--session-id", state["session_id"], "--agent-id", state["agent_id"], *extra,
+               payload=json.dumps(request))
+
+
+def test_vc_new_read_capable_round_defaults_to_file_delivery(repository):
+    del repository
+    state = claude_round()
+    assert cli_serve(state, "*required")["type"] == "context_file"
+
+
+def test_vc_codex_round_defaults_to_chunk_delivery(repository):
+    del repository
+    state = bind(prepare()["monitor"])
+    request = {"type": "context_request", "context_id": state["context_id"],
+               "resource_id": state["remaining"][0]["resource_id"], "offset": 0}
+    served = cli("serve_review_context", "--reviewer", "monitor", "--round-id", "delivery-round",
+                 "--session-id", state["session_id"], "--agent-id", state["agent_id"], payload=json.dumps(request))
+    assert served["type"] == "context_chunk", served
+
+
+def test_vc_round_admitted_before_file_delivery_resumes_with_chunk_by_default(repository):
+    del repository
+    state = claude_round()
+    strip_file_delivery_marker()
+    # Resuming on the new runner rebuilds the prompts; the frozen ones still only know context_chunk.
+    assert runner.build_review_prompts(branch="feature")["status"] == "success"
+    ledger = json.loads(Path(".map/feature/review-verdict-ledger.json").read_text())
+    assert not any(entry.get("file_delivery") for entry in
+                   ledger["convergence"]["rounds"][-1]["context_manifests"].values())
+    served = cli_serve(state, state["remaining"][0]["resource_id"])
+    assert served["type"] == "context_chunk", served
+    # The whole delivery of the pending round completes by chunks through the CLI default.
+    while state["status"] == "context_pending":
+        chunk = cli_serve(state, state["remaining"][0]["resource_id"])
+        assert chunk["type"] == "context_chunk", chunk
+        state = cli("ack_review_context", "--session-id", state["session_id"], "--agent-id", state["agent_id"],
+                    "--round-id", "claude-round", payload=json.dumps(chunk))
+    assert state["status"] == "context_ready"

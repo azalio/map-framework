@@ -399,9 +399,11 @@ ordering cannot borrow delivery progress.
 Apply this loop before final-schema validation for every reviewer, including
 retries, both ordering collections and the advisory complexity lens.
 
-`serve_review_context` has two delivery modes, chosen with `--delivery`:
+`serve_review_context` has two delivery modes, chosen with `--delivery`; the CLI default `auto` picks `file` for
+rounds admitted with file-aware prompts and `chunk` for rounds admitted by an older runner (3.37.0 and earlier), whose
+frozen prompts only know `context_chunk`, and for Codex:
 
-- `file` (CLI default; for readers with a Read tool such as Claude `review-reader`):
+- `file` (for readers with a Read tool such as Claude `review-reader`):
   the whole resource is served as a small pointer, so its bytes never pass through
   the parent:
   `{"status":"context_response","type":"context_file","context_id":"<id>","resource_id":"<rid>","session_id":"<sid>","path":"<abs path>","sha256":"<file sha256>","bytes":<file bytes>,"resource_sha256":"<frozen sha256>","resource_bytes":<frozen bytes>}`.
