@@ -49,6 +49,13 @@ user tails, missing or malformed headers and files whose JSON was reformatted st
 any file and it is skipped (visibly, in `skipped_scope`). Use strict `review.security_gates` when PR
 authors are untrusted; it disables this skip. `review.exclude_mapify_managed: false` opts out.
 
+## Compact Prompt Context
+
+Execution checks appear as one line each (exit code, duration, command, `output_sha256`, size and the
+`check:<id>` resource for the full log). The trusted policy text appears once per prompt as UTF-8, marked
+`[trusted-policy:<hash>]`; `shadow_risk` is a summary (tier, reason count and sample, digest) and the
+inventory resource carries hashes and counts. Request `check:<id>` when a log is needed.
+
 ## Shard Capacity
 
 Shards are packed to the per-reviewer budget minus a measured overhead (the worst scheduled reviewer's

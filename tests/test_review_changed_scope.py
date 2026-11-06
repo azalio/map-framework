@@ -1236,8 +1236,10 @@ def test_large_check_logs_are_stubbed_in_the_prompt_and_stay_retrievable(repo, m
     runner._write_json_file(directory / "review-verdict-ledger.json", ledger)
     monkeypatch.setattr(runner, "_review_check_valid", lambda *args: True)
     compact = runner._review_compact_bundle("feature")
-    assert len(compact) < 80_000 and "line 0 of" in compact and "line 19999 of" in compact
-    assert "line 10000 of" not in compact and "optional resource check:big" in compact
+    # One compact line per check: digest, size and a pointer; no log text in the prompt.
+    assert len(compact) < 20_000 and "line 0 of" not in compact and "line 19999 of" not in compact
+    assert '"output_resource": "check:big"' in compact and '"output_resource": "check:small"' in compact
+    assert f'"output_chars": {len(log)}' in compact
     entry = runner.build_review_prompts(branch="feature")["prompts"]["monitor"]
     chunks, offset = [], 0
     while True:
