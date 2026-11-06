@@ -56,6 +56,11 @@ Execution checks appear as one line each (exit code, duration, command, `output_
 `[trusted-policy:<hash>]`; `shadow_risk` is a summary (tier, reason count and sample, digest) and the
 inventory resource carries hashes and counts. Request `check:<id>` when a log is needed.
 
+Windowed sources carry `line_mapping_scope: "windowed"`: their `line_mapping` covers only the delivered
+windows, so a line outside every window is unknown, not new. `base:<path>` / `current:<path>` return the full
+mapping. A renamed file is windowed against its old blob (`renamed_from`); the old path is a `renamed_to` stub.
+The complete `shadow_risk` record is the optional resource `risk:shadow`.
+
 ## Shard Capacity
 
 Shards are packed to the per-reviewer budget minus a measured overhead (the worst scheduled reviewer's

@@ -9468,13 +9468,15 @@ def begin_review_run(
         reserve = max(REVIEW_CONTEXT_RESERVE_BYTES, _review_fixed_overhead_bytes(
             target, provider, scheduled_reviewers, branch_dir.name,
             [name for name in target["required_files"] if name not in skipped_paths], coverage_skips,
-            check_specs))
+            check_specs, [row for row in prior.get("findings_registry", [])
+                          if isinstance(row, dict) and row.get("status") in {"active", "downgraded"}]))
         if sum(sizes.values()) + reserve > budget:
             capacity = budget - reserve
             oversized = {name: size for name, size in sizes.items() if size > capacity}
             if oversized:
                 return _review_context_budget_error(sizes, budget, reserve=reserve, reason="file_too_large",
-                                                    oversized_paths=oversized)
+                                                    oversized_paths=oversized,
+                                                    oversized_causes=_review_oversized_causes(target, sorted(oversized)))
             planned = _review_plan_shards(sizes, capacity)
             max_shards = _review_max_shards(review_config)
             if len(planned) > max_shards:
@@ -12652,11 +12654,10 @@ def _review_line_mapping(base_text: str, current_text: str) -> list[dict[str, in
                                                 autojunk=False).get_matching_blocks() if match.size]
 
 
-def _review_window_hunks(
-    base_text: str, current_text: str, mapping: list[dict[str, int]], context: int,
-) -> list[dict[str, Any]]:
-    """Changed regions of two revisions with ``context`` surrounding lines, as numbered base/current text."""
-    base_lines, current_lines = base_text.splitlines(), current_text.splitlines()
+def _review_window_ranges(
+    base_lines: list[str], current_lines: list[str], mapping: list[dict[str, int]], context: int,
+) -> list[list[int]]:
+    """Merged ``[base_start, base_end, current_start, current_end)`` ranges (0-based) around every changed region."""
     regions: list[tuple[int, int, int, int]] = []
     base_pos = current_pos = 0
     sentinel = {"base_start": len(base_lines) + 1, "current_start": len(current_lines) + 1, "length": 0}
@@ -12673,6 +12674,34 @@ def _review_window_hunks(
             windows[-1][1], windows[-1][3] = max(windows[-1][1], window[1]), max(windows[-1][3], window[3])
         else:
             windows.append(window)
+    return windows
+
+
+def _review_window_mapping(mapping: list[dict[str, int]], windows: list[list[int]]) -> list[dict[str, int]]:
+    """Matching line blocks clipped to the delivered windows (a block pairs base line i with current line j)."""
+    clipped: list[dict[str, int]] = []
+    first = 0
+    for block in mapping:
+        base0, current0, length = block["base_start"] - 1, block["current_start"] - 1, block["length"]
+        while first < len(windows) and windows[first][1] <= base0:
+            first += 1
+        index = first
+        while index < len(windows) and windows[index][0] < base0 + length:
+            window = windows[index]
+            low = max(0, window[0] - base0, window[2] - current0)
+            high = min(length, window[1] - base0, window[3] - current0)
+            if low < high:
+                clipped.append({"base_start": base0 + low + 1, "current_start": current0 + low + 1,
+                                "length": high - low})
+            index += 1
+    return clipped
+
+
+def _review_window_hunks(
+    base_text: str, current_text: str, windows: list[list[int]],
+) -> list[dict[str, Any]]:
+    """Numbered base/current text of each window."""
+    base_lines, current_lines = base_text.splitlines(), current_text.splitlines()
     return [{"base_start": a + 1, "current_start": c + 1,
              "base": "\n".join(f"{number}: {base_lines[number - 1]}" for number in range(a + 1, b + 1)),
              "current": "\n".join(f"{number}: {current_lines[number - 1]}" for number in range(c + 1, d + 1))}
@@ -12691,11 +12720,14 @@ def _review_windowed_fields(
             + len(json.dumps(mapping, sort_keys=True, ensure_ascii=True)))
     if full <= full_max:
         return None
-    fields = {"windowed": True, "context_lines": context,
+    windows = _review_window_ranges(base_text.splitlines(), current_text.splitlines(), mapping, context)
+    fields = {"windowed": True, "context_lines": context, "line_mapping_scope": "windowed",
               "window_note": ("Windowed source: only changed hunks with surrounding lines are included "
-                              "(numbered 'line: text'). Full content is available on demand as optional "
-                              "resources base:<path> and current:<path>."),
-              "hunks": _review_window_hunks(base_text, current_text, mapping, context)}
+                              "(numbered 'line: text') and line_mapping covers only those windows. Full content "
+                              "and the full line mapping are available on demand as optional resources "
+                              "base:<path> and current:<path>."),
+              "line_mapping": _review_window_mapping(mapping, windows),
+              "hunks": _review_window_hunks(base_text, current_text, windows)}
     return fields if len(json.dumps(fields, sort_keys=True, ensure_ascii=True)) < full else None
 
 
@@ -12707,8 +12739,33 @@ def _review_window_source(source: dict[str, Any], full_max: int, context: int) -
                                      source["line_mapping"], full_max, context)
     if fields is None:
         return source
+    kept = {key: source[key] for key in ("renamed_from",) if key in source}
     return {"path": source["path"], "encoding": "utf-8", "status": source["status"],
-            "baseline_known": True, "line_mapping": [], **fields}
+            "baseline_known": True, **kept, **fields}
+
+
+def _review_rename_pairs(base: str, names: list[str]) -> dict[str, str]:
+    """``new path -> old path`` for renames detected between ``base`` and the worktree (both sides admitted).
+
+    Shared by the attribution and the admission estimate, so both treat a moved file as one change.
+    """
+    if not base:
+        return {}
+    out = _review_git_bytes("-c", "core.quotepath=false", "diff", "-M", "--name-status", "-z", base, "--",
+                            *_review_source_pathspec(names)).split(b"\0")
+    admitted = set(names)
+    pairs: dict[str, str] = {}
+    index = 0
+    while index < len(out):
+        status = out[index].decode("ascii", errors="replace")
+        if status.startswith("R") and index + 2 < len(out):
+            old, new = os.fsdecode(out[index + 1]), os.fsdecode(out[index + 2])
+            if old in admitted and new in admitted:
+                pairs[new] = old
+            index += 3
+        else:
+            index += 2 if status else 1
+    return pairs
 
 
 def _review_attribution(target: dict[str, Any], skipped: frozenset[str] = frozenset()) -> dict[str, Any]:
@@ -12720,11 +12777,19 @@ def _review_attribution(target: dict[str, Any], skipped: frozenset[str] = frozen
     # Source evidence and mandatory coverage use the same selected-base scope.
     required = [name for name in target.get("required_files", []) if name not in skipped]
     changed = set(_review_changed_paths(base_ref or "HEAD", required))
+    renames = _review_rename_pairs(base_ref, required)
+    moved_away = {old: new for new, old in renames.items()}
     entries = []
     for name in required:
         if name not in changed:
             continue
-        result = subprocess.run(["git", "show", f"{target['base']}:{name}"],
+        if name in moved_away:
+            # Intent: the old side of a rename is covered by the new path's entry, which carries the old base.
+            entries.append({"path": name, "base_content": "", "current_content": "", "encoding": "utf-8",
+                            "line_mapping": [], "baseline_known": True, "status": "renamed_to",
+                            "renamed_to": moved_away[name]})
+            continue
+        result = subprocess.run(["git", "show", f"{target['base']}:{renames.get(name, name)}"],
                                 capture_output=True, timeout=10, check=False) if base_ref else None
         base = result.stdout if result is not None and result.returncode == 0 else b""
         path = Path(name)
@@ -12743,8 +12808,10 @@ def _review_attribution(target: dict[str, Any], skipped: frozenset[str] = frozen
         entries.append({"path": name, "base_content": base_text, "current_content": current_text,
                         "encoding": encoding, "line_mapping": mapping,
                         "baseline_known": bool(base_ref),
-                        "status": "unknown" if result is None else ("added" if result.returncode else
-                                  ("deleted" if not path.exists() else "present"))})
+                        **({"renamed_from": renames[name]} if name in renames else {}),
+                        "status": "unknown" if result is None else (
+                            "renamed" if name in renames and not result.returncode else
+                            "added" if result.returncode else ("deleted" if not path.exists() else "present"))})
     diff = _review_git_bytes("diff", "--binary", base_ref or "HEAD", "--",
                             *_review_source_pathspec(required),
                             *(f":(top,literal,exclude){name}" for name in sorted(skipped)))
@@ -13796,6 +13863,7 @@ def _review_prompt_target_summary(target: dict[str, Any]) -> dict[str, Any]:
         summary["shadow_risk"] = {
             **{key: value for key, value in risk.items() if key != "reasons"},
             "reasons_count": len(reasons), "reasons_sample": reasons[:REVIEW_RISK_REASON_SAMPLE],
+            **({"full_record_resource": "risk:shadow"} if len(reasons) > REVIEW_RISK_REASON_SAMPLE else {}),
             "sha256": hashlib.sha256(json.dumps(risk, sort_keys=True, ensure_ascii=True).encode()).hexdigest()}
     return summary
 
@@ -14102,16 +14170,20 @@ def _review_repo_source_entry(name: str) -> dict[str, Any]:
             "encoding": encoding, "status": "unchanged", "line_mapping": []}
 
 
+LAZY_KINDS = frozenset({"check", "full_source", "risk"})
+
+
 def _review_lazy_entry(row: dict[str, Any], resource_id: str) -> dict[str, Any] | None:
     """Frozen lazy resource by full id. ``repo:`` and ``check:`` entries never share a key; rows frozen
     before the namespaces were split stored repo files under the bare path, which stays readable."""
     lazy = row.get("context_lazy", {})
     entry = lazy.get(resource_id)
-    if isinstance(entry, dict) and (resource_id.startswith("repo:") or entry.get("kind") in {"check", "full_source"}):
+    if isinstance(entry, dict) and (resource_id.startswith("repo:") or entry.get("kind") in LAZY_KINDS):
         return entry
     if resource_id.startswith("repo:"):
         legacy = lazy.get(resource_id.removeprefix("repo:"))
-        if isinstance(legacy, dict) and legacy.get("kind") != "check":
+        # Intent: only kind-less (legacy repo) entries live under a bare key; typed entries never match a repo path.
+        if isinstance(legacy, dict) and "kind" not in legacy:
             return legacy
     return None
 
@@ -14128,6 +14200,25 @@ def _review_lazy_check_resource(directory: Path, row: dict[str, Any], resource_i
         return frozen, False
     text = (directory / check["output_artifact"]).read_text(encoding="utf-8")
     metadata = {**_review_context_store(directory, text), "required": False, "kind": "check"}
+    row.setdefault("context_lazy", {})[resource_id] = metadata
+    return metadata, True
+
+
+def _review_lazy_risk_resource(
+    directory: Path, row: dict[str, Any], manifest: dict[str, Any], resource_id: str,
+) -> tuple[dict[str, Any], bool]:
+    """Serve ``risk:shadow``: the complete shadow-risk record the compact prompt only summarises."""
+    if resource_id != "risk:shadow" or manifest.get("context_access") == "diff_only":
+        raise ValueError("Resource is not permitted for this reviewer")
+    frozen = _review_lazy_entry(row, resource_id)
+    if isinstance(frozen, dict):
+        return frozen, False
+    artifact = _review_attribution_artifact(directory.name)
+    if not artifact:
+        raise ValueError("Review bundle changed before context delivery")
+    risk = json.loads(Path(artifact).read_text(encoding="utf-8"))["snapshot"]["target"].get("shadow_risk", {})
+    metadata = {**_review_context_store(directory, json.dumps({"shadow_risk": risk}, sort_keys=True, ensure_ascii=True)),
+                "required": False, "kind": "risk"}
     row.setdefault("context_lazy", {})[resource_id] = metadata
     return metadata, True
 
@@ -14155,7 +14246,9 @@ def _review_lazy_full_resource(
     if source is None:
         raise ValueError("Resource is not permitted for this reviewer")
     payload = {"path": name, "side": side, "encoding": source["encoding"], "status": source["status"],
-               "content": source[f"{side}_content"]}
+               "content": source[f"{side}_content"], "line_mapping": source["line_mapping"],
+               "line_mapping_scope": "full",
+               **({"renamed_from": source["renamed_from"]} if "renamed_from" in source else {})}
     metadata = {**_review_context_store(directory, json.dumps(payload, sort_keys=True, ensure_ascii=True)),
                 "path": name, "encoding": source["encoding"], "required": False, "kind": "full_source"}
     row.setdefault("context_lazy", {})[resource_id] = metadata
@@ -14420,6 +14513,8 @@ def serve_review_context(
         metadata, lazy_frozen = _review_lazy_check_resource(directory, row, resource_id)
     elif not isinstance(metadata, dict) and resource_id.startswith(("base:", "current:")):
         metadata, lazy_frozen = _review_lazy_full_resource(directory, row, manifest, resource_id)
+    elif not isinstance(metadata, dict) and resource_id.startswith("risk:"):
+        metadata, lazy_frozen = _review_lazy_risk_resource(directory, row, manifest, resource_id)
     if not isinstance(metadata, dict):
         raise ValueError("Resource is not permitted for this reviewer")
     raw = manifest_bytes if resource_id == "manifest" else _review_context_read(directory, metadata)
@@ -14583,7 +14678,7 @@ def ack_review_context(
     key = _review_chunk_key(data)
     resource = key["resource_id"]
     metadata = session.get("available", session["required"]).get(resource)
-    if metadata is None and resource.startswith(("repo:", "check:", "base:", "current:")):
+    if metadata is None and resource.startswith(("repo:", "check:", "base:", "current:", "risk:")):
         metadata = _review_lazy_entry(row, resource)
     if not isinstance(metadata, dict) or key["context_id"] != session["context_id"]:
         raise ValueError("Acknowledgment resource is not permitted")
@@ -24377,8 +24472,8 @@ def _review_trusted_config(target: dict[str, Any]) -> dict[str, Any]:
 def _review_context_budget(review_config: dict[str, Any]) -> int:
     """Total required bytes one reviewer may consume: env, trusted config, then the default."""
     def positive(value: Any) -> int:
-        if isinstance(value, str) and value.strip().replace("_", "").isdigit():
-            value = int(value.strip().replace("_", ""))
+        if isinstance(value, str) and _review_plain_digits(value.strip()):
+            value = int(value.strip())
         return value if type(value) is int and value > 0 else 0
 
     return (positive(os.environ.get(REVIEW_CONTEXT_BUDGET_ENV)) or positive(review_config.get("context_budget_bytes"))
@@ -24502,13 +24597,44 @@ def _review_source_json_size(
     mapping = _review_line_mapping(base_text, current_text) if has_base_ref else []
     windowed = _review_windowed_fields(base_text, current_text, mapping, full_max, context) if has_base_ref else None
     if windowed is not None:
-        return len(json.dumps(windowed, sort_keys=True, ensure_ascii=True)) + len(json.dumps([]))
+        return len(json.dumps(windowed, sort_keys=True, ensure_ascii=True))
     return (len(json.dumps(base_text, ensure_ascii=True)) + len(json.dumps(current_text, ensure_ascii=True))
             + len(json.dumps(mapping, sort_keys=True, ensure_ascii=True)))
 
 
 # Per-path JSON envelope plus its manifest entry (digests, path, flags).
 REVIEW_SOURCE_OVERHEAD_BYTES = 800
+
+
+def _review_oversized_causes(target: dict[str, Any], names: list[str]) -> dict[str, str]:
+    """Why each oversized path could not be windowed: ``hunks``, ``added``, ``binary`` or ``no_base``."""
+    base = target.get("base", "")
+    renames = _review_rename_pairs(base, list(target.get("required_files", [])))
+    contents = _review_base_contents(base, [renames.get(name, name) for name in names])
+    causes: dict[str, str] = {}
+    for name in names:
+        before = contents[renames.get(name, name)]
+        try:
+            current = Path(name).read_bytes() if Path(name).is_file() else b""
+        except OSError:
+            current = b""
+        if not base:
+            causes[name] = "no_base"
+        elif b"\0" in before or b"\0" in current or not _review_utf8(before) or not _review_utf8(current):
+            causes[name] = "binary"
+        elif not before:
+            causes[name] = "added"
+        else:
+            causes[name] = "hunks"
+    return causes
+
+
+def _review_utf8(raw: bytes) -> bool:
+    try:
+        raw.decode("utf-8")
+    except UnicodeError:
+        return False
+    return True
 
 
 def _review_required_bytes(
@@ -24523,8 +24649,11 @@ def _review_required_bytes(
     base = target.get("base", "")
     base_contents = _review_base_contents(base, paths)
     diff_sizes: dict[str, int] = {}
+    renames = _review_rename_pairs(base, paths)
+    moved_away = set(renames.values())
     if base:
-        diff = _review_git_bytes("-c", "core.quotepath=false", "diff", "--no-renames", base, "--",
+        # Intent: same rename policy as the diff the prompts carry, so a moved file is counted once.
+        diff = _review_git_bytes("-c", "core.quotepath=false", "diff", base, "--",
                                  *_review_source_pathspec(paths))
         for part in re.split(rb"(?m)^(?=diff --git )", diff):
             header = _review_diff_header_paths(os.fsdecode(part.split(b"\n", 1)[0]) + "\n")
@@ -24532,13 +24661,18 @@ def _review_required_bytes(
                 diff_sizes[header[1]] = len(part)
     sizes = {}
     for name in paths:
+        if name in moved_away:
+            # Intent: the attribution keeps a tiny stub for the old side of a rename.
+            sizes[name] = REVIEW_SOURCE_OVERHEAD_BYTES + 256
+            continue
         try:
             path = Path(name)
             current = os.fsencode(os.readlink(path)) if path.is_symlink() else (path.read_bytes() if path.is_file() else b"")
         except OSError:
             current = b""
-        sizes[name] = (_review_source_json_size(base_contents[name], current, bool(base), full_max, context)
-                       + diff_sizes.get(name, (len(current) + current.count(b"\n") + 400) if not base_contents[name] else 0)
+        base_raw = base_contents[renames.get(name, name)]
+        sizes[name] = (_review_source_json_size(base_raw, current, bool(base), full_max, context)
+                       + diff_sizes.get(name, (len(current) + current.count(b"\n") + 400) if not base_raw else 0)
                        + REVIEW_SOURCE_OVERHEAD_BYTES)
     return sizes
 
@@ -24561,7 +24695,7 @@ def _review_rubric_bytes(role: str) -> int:
 def _review_fixed_overhead_bytes(
     target: dict[str, Any], provider: str, scheduled_reviewers: list[str], branch_name: str,
     required_paths: list[str], coverage_skips: list[dict[str, Any]],
-    check_specs: dict[str, list[str]] | None = None,
+    check_specs: dict[str, list[str]] | None = None, carried_findings: list[dict[str, Any]] | None = None,
 ) -> int:
     """Worst per-reviewer required bytes that are not changed-file sources, measured with the real renderers.
 
@@ -24575,10 +24709,20 @@ def _review_fixed_overhead_bytes(
     artifacts = _review_bundle_inventory(branch_name, directory)
     # Intent: admission reads the source inventory exactly once, so the code state is a worst-case stand-in
     # (the rendered section only shows counts and a 200-character diff stat).
-    state = _review_bundle_state(branch_name, code_state={
+    code_state = {
         "status": "success", "git_ref": "0" * 40, "branch": branch_name, "diff_base_ref": "0" * 40,
         "diff_range": "0" * 90, "files_changed": list(required_paths), "diff_stat": "0" * 200,
-        "uncommitted_files_changed": []})
+        "uncommitted_files_changed": []}
+    fallback_bytes = 0
+    try:
+        state = _review_bundle_state(branch_name, code_state=code_state)
+    except Exception:  # noqa: BLE001 -- an estimate must never abort admission; fall back to a conservative one
+        state = {"code_state": code_state,
+                 "review_handoff": {field: "x" * 501 for field in (
+                     "plan_review", "code_review", "verification_summary", "qa", "pr_draft", "active_issues")},
+                 "pr_handoff": {"summary": "x" * 2048}, "acceptance_coverage": {}, "prior_stage_consumption": {}}
+        fallback_bytes = 2 * REVIEW_OVERHEAD_MARGIN_BYTES
+    carried_bytes = len(json.dumps(carried_findings or [], ensure_ascii=True)) if carried_findings else 0
     bundle_text = _render_bundle_markdown({
         "branch": branch_name, "generated_at": "0000-00-00T00:00:00+00:00", "artifacts": artifacts,
         "bundle_path_json": str(directory / "review-bundle.json"), **state})
@@ -24632,13 +24776,19 @@ def _review_fixed_overhead_bytes(
         if access == "diff_plus_spec_plus_artifacts":
             size += len(frozen.encode("utf-8"))
         worst = max(worst, size)
-    return worst + REVIEW_OVERHEAD_MARGIN_BYTES
+    # Intent: carried findings reach a prompt twice (its own section and the review-scope trailer of the diff).
+    return worst + REVIEW_OVERHEAD_MARGIN_BYTES + fallback_bytes + 2 * carried_bytes
+
+
+def _review_plain_digits(raw: str) -> bool:
+    """True only for a plain ASCII decimal number (no sign, separators or Unicode digits)."""
+    return raw.isascii() and raw.isdigit()
 
 
 def _review_max_shards(review_config: dict[str, Any]) -> int:
     """Shard cap: operator-local env, then trusted config, then the default; invalid values are ignored."""
-    raw = os.environ.get(REVIEW_MAX_SHARDS_ENV, "").strip().replace("_", "")
-    if raw.isdigit() and int(raw) > 0:
+    raw = os.environ.get(REVIEW_MAX_SHARDS_ENV, "").strip()
+    if _review_plain_digits(raw) and int(raw) > 0:
         return int(raw)
     value = review_config.get("max_shards")
     return value if type(value) is int and value > 0 else REVIEW_MAX_SHARDS
@@ -24686,9 +24836,19 @@ def _review_context_budget_error(
 ) -> dict[str, Any]:
     total = sum(sizes.values()) + reserve
     top = sorted(sizes.items(), key=lambda item: (-item[1], item[0]))[:10]
-    single_file_hint = (f"A single file's changed hunks (with {REVIEW_HUNK_CONTEXT_LINES} context lines by default) exceed the "
-                        "per-reviewer capacity and cannot be sharded: split that file's change into smaller commits or reviews, "
-                        "or lower review.hunk_context_lines.")
+    cause_hints = {
+        "hunks": (f"A single file's changed hunks (with {REVIEW_HUNK_CONTEXT_LINES} context lines by default) exceed the "
+                  "per-reviewer capacity and cannot be sharded: split that file's change into smaller commits or reviews, "
+                  "or lower review.hunk_context_lines."),
+        "added": "A newly added file has no base to window against and is delivered whole: split it into smaller files "
+                 "or review it in its own round with a larger review.context_budget_bytes.",
+        "binary": "A binary or non-UTF-8 file is delivered whole (base64) and cannot be windowed: exclude it from the "
+                  "review or shrink it.",
+        "no_base": "No verified review base: sources are delivered whole. Admit with a base_ref so large files can be "
+                   "windowed to their changed hunks.",
+    }
+    causes = sorted(set(extra.get("oversized_causes", {}).values()) or {"hunks"})
+    single_file_hint = " ".join(cause_hints[cause] for cause in causes)
     shard_hint = (f"This change needs {extra.get('shards_needed')} shards but at most {extra.get('max_shards')} are allowed: "
                   f"set {REVIEW_MAX_SHARDS_ENV}={extra.get('shards_needed')} (operator-local) or raise review.max_shards "
                   "in the trusted .map/config.yaml.")
