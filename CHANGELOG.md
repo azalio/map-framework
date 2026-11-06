@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `mapify _update` no longer appends the runtime ignore block to the tracked `.gitignore` of a linked worktree whose `.gitignore` carries unrelated negations (#649, regression of #634). The negation check treated `!trivy/bdu-db/data/**` as able to defeat the wildcard runtime entry `**/__pycache__/`, forcing the `.gitignore` fallback; a negation now defeats a wildcard entry only when it is not scoped under a literal directory the entry never names. When the `.gitignore` fallback is still needed, `mapify` prints the reason to stderr instead of switching silently.
+
 ## [3.37.0] - 2026-11-06
 
 ### Changed
