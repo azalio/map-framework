@@ -29,6 +29,7 @@ TESTING:
 
 [% include "_partials/python-version-guard.py.jinja" %]
 import ast
+import bisect
 import fnmatch
 import hashlib
 import hmac
@@ -14315,28 +14316,38 @@ def _review_context_view(resource_id: str, raw: bytes, resource_sha256: str, *, 
         if final_newline:
             parts = parts[:-1]
         pieces = _review_split_text_parts(parts, part_bytes)
-        for number, piece in enumerate(pieces, 1):
+        for number, (piece, continues) in enumerate(pieces, 1):
             last = number == len(pieces)
-            marker = "" if len(pieces) == 1 else f" part={number}/{len(pieces)}"
+            marker = ("" if len(pieces) == 1 else f" part={number}/{len(pieces)}") + (" cont=true" if continues else "")
             lines.append(f"=== TEXT {index} {path} lines={len(piece)} first_line={len(lines) + 2} "
                          f"final_newline={str(final_newline if last else True).lower()}{marker} ===")
             lines.extend(piece)
     return "\n".join(lines) + "\n"
 
 
-def _review_split_text_parts(parts: list[str], part_bytes: int) -> list[list[str]]:
-    """Cut text lines into consecutive pieces of about ``part_bytes``; ``0`` keeps one piece."""
+def _review_split_text_parts(parts: list[str], part_bytes: int) -> list[tuple[list[str], bool]]:
+    """Cut text lines into consecutive ``(lines, continues)`` pieces of about ``part_bytes``; ``0`` keeps one.
+
+    A single line longer than ``part_bytes`` is cut into character chunks; every chunk after the first
+    opens a piece flagged ``continues`` (``cont=true``): its first line continues the previous piece's
+    last line with no newline between them.
+    """
     if part_bytes <= 0:
-        return [parts]
-    pieces: list[list[str]] = [[]]
+        return [(parts, False)]
+    pieces: list[tuple[list[str], bool]] = [([], False)]
     size = 0
     for line in parts:
-        pieces[-1].append(line)
-        size += len(line.encode("utf-8")) + 1
-        if size >= part_bytes:
-            pieces.append([])
-            size = 0
-    if not pieces[-1] and len(pieces) > 1:
+        chunks = [line[offset:offset + part_bytes] for offset in range(0, len(line), part_bytes)] or [line]
+        for position, chunk in enumerate(chunks):
+            if position:
+                pieces.append(([], True))
+                size = 0
+            pieces[-1][0].append(chunk)
+            size += len(chunk.encode("utf-8")) + 1
+            if size >= part_bytes and (position == len(chunks) - 1):
+                pieces.append(([], False))
+                size = 0
+    if not pieces[-1][0] and len(pieces) > 1:
         pieces.pop()
     return pieces
 
@@ -14373,7 +14384,7 @@ def _review_context_slots(lines: list[str]) -> tuple[list[int], list[str]]:
     index = 0
     while index < len(lines):
         line = lines[index]
-        header = re.fullmatch(r"=== TEXT \d+ .* lines=(\d+) first_line=\d+ final_newline=\w+(?: part=\d+/\d+)? ===", line)
+        header = re.fullmatch(r"=== TEXT \d+ .* lines=(\d+) first_line=\d+ final_newline=\w+(?: [a-z]+=\S+)* ===", line)
         if header:
             slots.append(index)
             section = "text"
@@ -14391,6 +14402,37 @@ def _review_context_slots(lines: list[str]) -> tuple[list[int], list[str]]:
                 keys.append(pair.group(1))
         index += 1
     return [slot for slot in slots if slot >= 2], keys
+
+
+def _review_band_slots(rng: random.Random, lines: list[str], slots: list[int], count: int) -> list[int]:
+    """One slot per equal byte band, at the legal slot nearest a random offset inside the band.
+
+    Bands are measured in bytes of the published view, so a few KiB of JSON metadata cannot soak up
+    fragments that should be spread over hundreds of KiB of text.
+    """
+    offsets, position = [], 0
+    starts = []
+    for line in lines:
+        starts.append(position)
+        position += len(line.encode("utf-8")) + 1
+    offsets = [starts[slot] for slot in slots]
+    width = position / count
+    used: set[int] = set()
+    chosen: list[int] = []
+    for band in range(count):
+        target = (band + rng.random()) * width
+        after = bisect.bisect_left(offsets, target)
+        order = sorted(range(max(0, after - 4), min(len(slots), after + 4)), key=lambda j: abs(offsets[j] - target))
+        free = [j for j in order if j not in used]
+        index = free[0] if free else (order[0] if order else after - 1)
+        # Intent: widen the search only when every neighbour is taken; slots are dense next to any target.
+        if not free:
+            remaining = [j for j in range(len(slots)) if j not in used]
+            if remaining:
+                index = min(remaining, key=lambda j: abs(offsets[j] - target))
+        used.add(index)
+        chosen.append(slots[index])
+    return chosen
 
 
 def _review_embed_proof(view: str, total_bytes: int) -> tuple[str, str, int]:
@@ -14414,11 +14456,7 @@ def _review_embed_proof(view: str, total_bytes: int) -> tuple[str, str, int]:
     for _ in range(32):
         length = rng.choice(lengths)
         fragments = ["".join(rng.choice("0123456789abcdef") for _ in range(length)) for _ in range(count)]
-        if len(slots) >= count:
-            groups = [slots[(group * len(slots)) // count:((group + 1) * len(slots)) // count] for group in range(count)]
-            chosen = [rng.choice(group) for group in groups]
-        else:
-            chosen = sorted(rng.choice(slots) for _ in range(count))
+        chosen = _review_band_slots(rng, base, slots, count)
         output = list(base)
         for fragment, slot in sorted(zip(fragments, chosen, strict=True), key=lambda item: item[1], reverse=True):
             target = base[slot]
@@ -14445,7 +14483,7 @@ def _review_renumber_text_blocks(lines: list[str]) -> list[str]:
     result = list(lines)
     index = 0
     while index < len(result):
-        header = re.fullmatch(r"(=== TEXT \d+ .* lines=(\d+) first_line=)\d+( final_newline=\w+(?: part=\d+/\d+)? ===)", result[index])
+        header = re.fullmatch(r"(=== TEXT \d+ .* lines=(\d+) first_line=)\d+( final_newline=\w+(?: [a-z]+=\S+)* ===)", result[index])
         if header:
             result[index] = f"{header.group(1)}{index + 2}{header.group(3)}"
             index += 1 + int(header.group(2))
@@ -14925,6 +14963,11 @@ def _review_fragment_count(total_bytes: int) -> int:
                                                   -(-total_bytes // REVIEW_CONTEXT_FRAGMENT_BYTES)))
 
 
+def _review_part_bytes(resource_bytes: int) -> int:
+    """TEXT part size: fine enough that every proof band has several legal fragment slots."""
+    return max(256, resource_bytes // (4 * _review_fragment_count(resource_bytes)))
+
+
 def _review_serve_context_file(
     directory: Path, ledger: dict[str, Any], row: dict[str, Any], session: dict[str, Any], session_id: str,
     context_id: str, resource_id: str, metadata: dict[str, Any], raw: bytes,
@@ -14978,8 +15021,7 @@ def _review_publish_context_file(
     resource_bytes: int, done: bool, *, resources: list[str] | None = None,
 ) -> dict[str, Any]:
     """Write the view with fresh proof fragments, or reuse the pending file, and record the pending proof."""
-    count = _review_fragment_count(resource_bytes)
-    view = render(max(256, resource_bytes // (2 * count)))
+    view = render(_review_part_bytes(resource_bytes))
     view_sha256 = hashlib.sha256(view.encode("utf-8")).hexdigest()
     path = _review_context_file_path(directory, session_id, view_sha256)
     pending = session.get("pending")

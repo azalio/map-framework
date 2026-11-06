@@ -415,10 +415,12 @@ frozen prompts only know `context_chunk`, and for Codex:
   The path is `.map/<branch>/review-context-files/<session-id>/<view-sha256>.txt`:
   a line-oriented view of the frozen object (JSON expanded, multi-line or long
   strings printed verbatim as numbered `TEXT` blocks, long blocks cut into
-  `part=n/total` pieces). `sha256`/`bytes` cover the file exactly as published.
+  `part=n/total` pieces; an overlong single line is cut into pieces flagged `cont=true`,
+  whose first line continues the previous piece's last line with no newline). `sha256`/`bytes` cover the file exactly as published.
   The proof is k hex fragments, k = ceil(bytes / 16 KiB) clamped to [4, 64], written
   as ordinary pair lines (`"<key from the view>": "<hex>",`) at runner-chosen random
-  places spread through the body: before pair lines of the JSON section and between
+  places spread through the body, one per equal byte band of the file (text-heavy
+  files are covered as densely as metadata-heavy ones): before pair lines of the JSON section and between
   text parts or blocks, never on the first or last lines. There is no fixed prefix,
   marker, announced position or layout hint; the file's line 2 gives only the
   fragment count and the per-file token length (the length is chosen so no

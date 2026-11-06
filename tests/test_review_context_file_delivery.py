@@ -1,6 +1,7 @@
 """Direct file delivery: the reviewer reads a served path and proves it with a nonce (#650)."""
 
 import hashlib
+import itertools
 import json
 import re
 from pathlib import Path
@@ -624,3 +625,58 @@ def test_vc_round_admitted_before_file_delivery_resumes_with_chunk_by_default(re
         state = cli("ack_review_context", "--session-id", state["session_id"], "--agent-id", state["agent_id"],
                     "--round-id", "claude-round", payload=json.dumps(chunk))
     assert state["status"] == "context_ready"
+
+
+def _fragment_offsets(text):
+    lines = text.split("\n")
+    header = PROOF_LINE.match(lines[1])
+    assert header
+    pattern = re.compile(rf"(?<![0-9A-Za-z])[0-9a-f]{{{header.group(2)}}}(?![0-9A-Za-z])")
+    offsets, position = [], 0
+    for number, line in enumerate(lines):
+        if number >= 2 and pattern.search(line):
+            offsets.append(position)
+        position += len(line.encode()) + 1
+    return offsets, len(text.encode()), int(header.group(1))
+
+
+def _assert_fragments_follow_byte_bands(resource):
+    raw = json.dumps(resource, sort_keys=True).encode()
+    view = runner._review_context_view("source_000000", raw, "0" * 64, part_bytes=runner._review_part_bytes(len(raw)))
+    text, _, count = runner._review_embed_proof(view, len(raw))
+    offsets, size, found = _fragment_offsets(text)
+    assert found == count == len(offsets)
+    band = size / count
+    gaps = [offsets[0], *(b - a for a, b in itertools.pairwise(offsets)), size - offsets[-1]]
+    assert max(gaps) <= 2.5 * band, (max(gaps), band)
+    assert len({int(offset // band) for offset in offsets}) >= count * 0.7
+    assert offsets[0] < 2.5 * band and size - offsets[-1] < 2.5 * band
+
+
+def test_vc_fragments_follow_byte_bands_for_json_heavy_plus_text_heavy_resource():
+    code = "".join(f"    value_{n} = compute({n})\n" for n in range(16000))
+    resource = {f"meta_{n:03d}": f"value {n}" for n in range(200)}
+    resource.update({"path": "a.py", "current_content": code})
+    assert len(code) > 400_000
+    _assert_fragments_follow_byte_bands(resource)
+
+
+def test_vc_fragments_follow_byte_bands_for_one_huge_single_line_string():
+    resource = {"path": "min.js", "current_content": "x" * 300_000}
+    _assert_fragments_follow_byte_bands(resource)
+
+
+def test_vc_split_single_line_string_parts_reassemble_exactly():
+    content = "head\n" + "y" * 50_000 + "\ntail\n"
+    raw = json.dumps({"path": "a.js", "current_content": content}, sort_keys=True).encode()
+    view = runner._review_context_view("source_000000", raw, "0" * 64, part_bytes=4096)
+    lines = view.split("\n")
+    rebuilt = ""
+    for line in lines:
+        header = re.fullmatch(r"=== TEXT \d+ .* lines=(\d+) first_line=(\d+) final_newline=(\w+)((?: [a-z]+=\S+)*) ===", line)
+        if not header:
+            continue
+        start = int(header.group(2)) - 1
+        joined = "\n".join(lines[start:start + int(header.group(1))])
+        rebuilt += joined if "cont=true" in header.group(4) else (("\n" if rebuilt else "") + joined)
+    assert rebuilt + "\n" == content
