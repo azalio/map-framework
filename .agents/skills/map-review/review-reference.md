@@ -90,7 +90,7 @@ shard capacity fails admission with `file_too_large`; split that change.
 ## Sharded Rounds
 
 When the required scope does not fit one reviewer's budget, admission plans `row.shards`
-(deterministic, directory-aware, disjoint) and returns `shard_ids` plus `shard_count`. The
+(deterministic, directory-aware, disjoint) and returns `shard_ids`, `shard_count` and `reviewer_sessions` (shards x scheduled roles x orderings, the native sessions the round runs). The
 shard count is whatever the measured plan needs; only a safety ceiling of 64 stops a runaway
 plan. An explicit operator cap replaces that ceiling: the operator-local env `MAP_REVIEW_MAX_SHARDS`
 (positive int, invalid values ignored), else the trusted `review.max_shards`. A single file above

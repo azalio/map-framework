@@ -9516,6 +9516,7 @@ def begin_review_run(
                 return _review_context_budget_error(
                     sizes, budget, reserve=reserve, reason="too_many_shards", shards_needed=len(planned),
                     max_shards=max_shards,
+                    reviewer_sessions=_review_reviewer_sessions(len(planned), scheduled_reviewers, review_mode),
                     max_shards_source="explicit" if _review_explicit_max_shards(review_config) else "ceiling")
             shard_plan = [{"id": f"s{index:02d}", "files": files, "bytes": sum(sizes[name] for name in files)}
                           for index, files in enumerate(planned, 1)]
@@ -12660,12 +12661,20 @@ def _render_bundle_markdown(result: dict) -> str:
     return "\n".join(lines)
 
 
+def _review_reviewer_sessions(shards: int, scheduled_reviewers: list[str], review_mode: str) -> int:
+    """Native reviewer sessions a round runs: shards x scheduled roles x orderings."""
+    return max(shards, 1) * len(scheduled_reviewers) * (2 if review_mode == "compare_orderings" else 1)
+
+
 def _review_shard_summary(row: dict[str, Any]) -> dict[str, Any]:
-    """Admission output names shards without repeating their file lists."""
+    """Admission output names shards without repeating their file lists and reports the session count."""
     shards = row.get("shards")
+    binding = row.get("binding", {})
+    sessions = {"reviewer_sessions": _review_reviewer_sessions(
+        len(shards or []), binding.get("scheduled_reviewers", []), binding.get("review_mode", "normal"))}
     if not shards:
-        return {}
-    return {"shard_ids": [item["id"] for item in shards], "shard_count": len(shards),
+        return sessions
+    return {"shard_ids": [item["id"] for item in shards], "shard_count": len(shards), **sessions,
             "shards": [{"id": item["id"], "files_count": len(item["files"]), "bytes": item["bytes"]} for item in shards]}
 
 
@@ -25504,9 +25513,10 @@ def _review_context_budget_error(
     }
     causes = sorted(set(extra.get("oversized_causes", {}).values()) or {"hunks"})
     single_file_hint = " ".join(cause_hints[cause] for cause in causes)
-    shard_hint = (f"This change needs {extra.get('shards_needed')} shards but at most {extra.get('max_shards')} are allowed: "
-                  f"set {REVIEW_MAX_SHARDS_ENV}={extra.get('shards_needed')} (operator-local) or raise review.max_shards "
-                  "in the trusted .map/config.yaml.")
+    shard_hint = (f"This change needs {extra.get('shards_needed')} shards ({extra.get('reviewer_sessions')} reviewer "
+                  f"sessions: shards x scheduled roles x orderings) but at most {extra.get('max_shards')} shards are "
+                  f"allowed: set {REVIEW_MAX_SHARDS_ENV}={extra.get('shards_needed')} (operator-local) or raise "
+                  "review.max_shards in the trusted .map/config.yaml.")
     breakdown = extra.get("overhead_breakdown", {})
     overhead_hint = (f"The fixed per-reviewer context alone is {extra.get('fixed_overhead')} bytes of the {budget}-byte "
                      f"budget (worst reviewer {breakdown.get('worst_role')}: role prompt {breakdown.get('role_prompt')}, "

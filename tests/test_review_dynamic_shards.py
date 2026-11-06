@@ -50,3 +50,39 @@ def test_default_ceiling_is_high_and_explicit_caps_win(monkeypatch):
     assert runner._review_max_shards({"max_shards": 3}) == 3
     monkeypatch.setenv("MAP_REVIEW_MAX_SHARDS", "100")
     assert runner._review_max_shards({"max_shards": 3}) == 100
+
+
+def test_vc_admission_reports_reviewer_sessions(repo, monkeypatch):
+    del repo
+    admitted = admit(monkeypatch)
+    roles = len(admitted["scheduled_reviewers"])
+    assert admitted["reviewer_sessions"] == admitted["shard_count"] * roles >= 12 * roles
+
+
+def test_vc_unsharded_admission_reports_reviewer_sessions(repo, monkeypatch):
+    del repo
+    monkeypatch.delenv("MAP_REVIEW_MAX_SHARDS", raising=False)
+    admitted = runner.begin_review_run(branch="feature", provider="claude", round_id="solo", base_ref="main")
+    assert admitted["status"] == "success", admitted
+    assert admitted["reviewer_sessions"] == len(admitted["scheduled_reviewers"])
+
+
+def test_vc_compare_orderings_doubles_the_session_count(repo, monkeypatch):
+    del repo
+    monkeypatch.delenv("MAP_REVIEW_MAX_SHARDS", raising=False)
+    admitted = runner.begin_review_run(branch="feature", provider="claude", round_id="orders", base_ref="main",
+                                       arguments="--adversarial --compare-orderings")
+    assert admitted["status"] == "success", admitted
+    assert admitted["reviewer_sessions"] == 2 * len(admitted["scheduled_reviewers"])
+
+
+def test_vc_too_many_shards_error_surfaces_the_session_count(repo, monkeypatch):
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_MAX_SHARDS", "4")
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(runner.REVIEW_CONTEXT_RESERVE_BYTES + 60_000))
+    many_files(count=12)
+    result = runner.begin_review_run(branch="feature", provider="claude", round_id="dyn", base_ref="main")
+    assert result["reason"] == "too_many_shards" and result["max_shards"] == 4, result
+    roles = len(runner.NORMAL_REVIEWERS)
+    assert result["reviewer_sessions"] == result["shards_needed"] * roles
+    assert f"{result['reviewer_sessions']} reviewer sessions" in " ".join(result["hints"])
