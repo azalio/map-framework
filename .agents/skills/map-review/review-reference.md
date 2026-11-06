@@ -404,25 +404,40 @@ retries, both ordering collections and the advisory complexity lens.
 - `file` (CLI default; for readers with a Read tool such as Claude `review-reader`):
   the whole resource is served as a small pointer, so its bytes never pass through
   the parent:
-  `{"status":"context_response","type":"context_file","context_id":"<id>","resource_id":"<rid>","session_id":"<sid>","path":"<abs path>","sha256":"<view sha256>","bytes":<view bytes>,"resource_sha256":"<frozen sha256>","resource_bytes":<frozen bytes>,"nonce_line":"last"}`.
+  `{"status":"context_response","type":"context_file","context_id":"<id>","resource_id":"<rid>","session_id":"<sid>","path":"<abs path>","sha256":"<file sha256>","bytes":<file bytes>,"resource_sha256":"<frozen sha256>","resource_bytes":<frozen bytes>}`.
   The path is `.map/<branch>/review-context-files/<session-id>/<view-sha256>.txt`:
   a line-oriented view of the frozen object (JSON expanded, multi-line or long
-  strings printed verbatim as numbered `TEXT` blocks) followed by one last line
-  `MAP-CONTEXT-NONCE: <random>`. `sha256`/`bytes` cover the view without that
-  line; only the nonce digest is stored in the ledger. The reviewer Reads exactly
-  that path and returns
-  `{"type":"context_ack","session_id":"<sid>","context_id":"<id>","resource_id":"<rid>","sha256":"<view sha256>","nonce":"<nonce>"}`,
+  strings printed verbatim as numbered `TEXT` blocks, long blocks cut into
+  `part=n/total` pieces). `sha256`/`bytes` cover the file exactly as published.
+  The proof is k hex fragments, k = ceil(bytes / 16 KiB) clamped to [4, 64], written
+  as ordinary pair lines (`"<key from the view>": "<hex>",`) at runner-chosen random
+  places spread through the body: before pair lines of the JSON section and between
+  text parts or blocks, never on the first or last lines. There is no fixed prefix,
+  marker, announced position or layout hint; the file's line 2 gives only the
+  fragment count and the per-file token length (the length is chosen so no
+  ordinary content of the file has that shape). Fragments are not stored: the
+  ledger keeps `sha256(concatenation)` only, compared in constant time. The reviewer
+  reads the whole file in order, collects every fragment and returns
+  `{"type":"context_ack","session_id":"<sid>","context_id":"<id>","resource_id":"<rid>","sha256":"<file sha256>","nonce":"<fragments concatenated in file order>"}`,
   or sends the same object as `ack` inside its next `context_request`.
+  At ACK the runner re-reads the file and requires the exact published bytes
+  (`sha256`), so a body rewritten after serving cannot advance delivery. A pending
+  file answered wrongly three times is invalidated and must be served again, which
+  publishes fresh fragments. Threat model: the proof is reviewer-or-parent-witnessed
+  (the parent can read the file too) and raises the cost of acknowledging unread
+  context; it does not prove comprehension, and a reader that deliberately scans
+  for the stated token shape can still collect the fragments without reading the
+  content.
   A request for `resource_id` `"*required"` (file delivery only) serves one such
   file holding every still-unacknowledged required resource; the response adds
-  `resources` (their ids) and one nonce ACK marks all of them delivered. Prompts for
+  `resources` (their ids) and one proof ACK marks all of them delivered. Prompts for
   file readers ask for it first, so delivery takes one round trip per reviewer.
 - `chunk` (fallback for readers without file Read, such as Codex): byte ranges of
   at most `--chunk-bytes` are relayed through the parent as `context_chunk` JSON.
 
 1. Use `review_context_status` to recover pending work. An existing `pending_chunk`
    takes priority over `remaining`. A pending `context_file` is replayed with
-   `--delivery file` (same path and nonce); a pending byte range is replayed at its
+   `--delivery file` (same path and proof); a pending byte range is replayed at its
    resource and offset with `--delivery chunk --chunk-bytes` equal to
    `next_offset - offset` (or smaller), even if another resource appears first in
    `remaining`. For an agent's `context_request`, call `serve_review_context` with
@@ -445,8 +460,8 @@ followup_task(target=<same agent_id>, message=<context_response JSON>)
 
 3. Acknowledge with `ack_review_context --session-id <session> --agent-id <bound-agent> --round-id <round>`.
    For a `context_file`, pipe the reviewer's own `context_ack` (or its next
-   `context_request` carrying `ack`) to it; the runner checks the nonce against the
-   served file, so a wrong nonce or another session's nonce is rejected. When the
+   `context_request` carrying `ack`) to it; the runner checks the fragment proof against
+   the served file, so a wrong proof or another session's proof is rejected. When the
    reviewer's reply is a `context_request` with `ack`, run `ack_review_context` first
    and then `serve_review_context` on the same payload; when it is a bare
    `context_ack` (`serve_review_context` classifies it as `status:"context_ack"`),

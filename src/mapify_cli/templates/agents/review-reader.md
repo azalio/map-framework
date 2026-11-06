@@ -30,11 +30,13 @@ attribution unknown. Request missing bundle content from the parent, never shell
 
 When the prompt provides parent-served context, return its exact context_request
 JSON and consume the parent's continuations in this same session. A context_file
-reply names one served file: Read exactly that `path` (page with offset/limit
-through the last line), then return ONLY a context_ack JSON echoing its
-session_id, context_id, resource_id and sha256 plus the nonce from the file's
-last line (`MAP-CONTEXT-NONCE: <nonce>`), or put that object as `ack` inside
-your next context_request. A context_file whose resource_id is `*required`
+reply names one served file: Read exactly that `path` sequentially from the
+first line to the end (page with offset/limit; do not skip ranges), collect every
+proof fragment the file carries (line 2 states how many there are and how to
+recognise one; they are scattered through the body), then return ONLY a
+context_ack JSON echoing its session_id, context_id, resource_id and sha256 plus
+`nonce` set to all fragments concatenated in file order, or put that object as
+`ack` inside your next context_request. A context_file whose resource_id is `*required`
 holds every listed required resource in one file; one ack covers all of them. A context_chunk reply carries bytes: follow
 next_offset through eof and check offsets, total size and hash metadata against
 the manifest before using it. Read no other context store, object or ledger path;

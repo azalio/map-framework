@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,18 @@ from tests.test_review_context_delivery import repository as _repository
 repository = _repository
 __all__ = ["repository"]
 
-NONCE_PREFIX = "MAP-CONTEXT-NONCE: "
+PROOF_LINE = re.compile(r"^proof: (\d+) fragments, each a standalone lowercase hex token of exactly (\d+) characters")
+
+
+def proof_fragments(path):
+    """What a sequential reader does: take the format from line 2, then collect every matching token in order."""
+    lines = Path(path).read_text(encoding="utf-8").split("\n")
+    header = PROOF_LINE.match(lines[1])
+    assert header, lines[1]
+    pattern = re.compile(rf"(?<![0-9A-Za-z])[0-9a-f]{{{header.group(2)}}}(?![0-9A-Za-z])")
+    found = pattern.findall("\n".join(lines[2:]))
+    assert len(found) == int(header.group(1))
+    return found
 
 
 def serve_file(state, resource=None):
@@ -31,10 +43,8 @@ def serve_file(state, resource=None):
 
 
 def read_nonce(served):
-    """What the reviewer does with its Read tool: open exactly the served path and take the last line."""
-    lines = Path(served["path"]).read_text(encoding="utf-8").splitlines()
-    assert lines[-1].startswith(NONCE_PREFIX)
-    return lines[-1].removeprefix(NONCE_PREFIX)
+    """The proof a reader returns: every fragment of the served file, concatenated in file order."""
+    return "".join(proof_fragments(served["path"]))
 
 
 def file_ack(state, served, nonce):
@@ -56,7 +66,7 @@ def deliver_all_files(state):
     return state
 
 
-def test_context_file_is_a_small_pointer_and_never_carries_the_nonce_or_bytes(repository):
+def test_context_file_is_a_small_pointer_and_never_carries_the_proof_or_bytes(repository):
     state = bind(prepare()["monitor"])
     served = serve_file(state, "prompt")
     assert served["status"] == "context_response"
@@ -68,11 +78,11 @@ def test_context_file_is_a_small_pointer_and_never_carries_the_nonce_or_bytes(re
     assert path.is_relative_to((repository / ".map/feature/review-context-files").resolve())
     nonce = read_nonce(served)
     assert nonce and nonce not in json.dumps(served)
+    assert "nonce_line" not in served
     body = path.read_bytes()
-    view = body[: body.rindex(NONCE_PREFIX.encode())]
-    assert len(view) == served["bytes"]
-    assert hashlib.sha256(view).hexdigest() == served["sha256"]
-    assert path.name.startswith(served["sha256"])
+    assert b"MAP-CONTEXT-NONCE" not in body
+    assert len(body) == served["bytes"]
+    assert hashlib.sha256(body).hexdigest() == served["sha256"]
     assert len(json.dumps(served).encode()) < 1024
     # The served file carries the complete original text line by line, so Read can page through it.
     prompt = runner._review_context_read(repository / ".map/feature", state_resource(state, "prompt"))
@@ -357,3 +367,143 @@ def test_unread_role_rubric_is_not_reported_as_denied_review_scope():
     assert "If unavailable, report denied_access" not in prompt
     assert "never list it in skipped_files or denied_access" in prompt
     assert "denied_access names only required review scope the parent refused to serve" in prompt
+
+
+def served_batch_file():
+    state = bind(prepare()["monitor"])
+    return state, serve_batch(state)
+
+
+def fragment_line_numbers(path):
+    lines = Path(path).read_text(encoding="utf-8").split("\n")
+    length = int(PROOF_LINE.match(lines[1]).group(2))
+    pattern = re.compile(rf"(?<![0-9A-Za-z])[0-9a-f]{{{length}}}(?![0-9A-Za-z])")
+    return lines, [number for number, line in enumerate(lines) if number >= 2 and pattern.search(line)]
+
+
+def test_vc_proof_has_no_fixed_marker_or_grep_handle(repository):
+    """A single Grep for the old marker yields nothing; the proof is scattered through the body."""
+    del repository
+    _, served = served_batch_file()
+    body = Path(served["path"]).read_text(encoding="utf-8")
+    assert "NONCE" not in body and "nonce" not in body.lower()
+    assert "nonce_line" not in served and "last line" not in body
+    lines, numbers = fragment_line_numbers(served["path"])
+    assert len(numbers) >= 4
+    last_content = max(index for index, line in enumerate(lines) if line.strip())
+    assert numbers[0] > 1 and numbers[-1] < last_content
+    # Each fragment line is syntactically a pair line of the view, with no fixed prefix.
+    for number in numbers:
+        assert re.fullmatch(r'\s*"[^"\n]+": "[0-9a-f]+",', lines[number]), lines[number]
+    assert len({re.match(r'\s*("[^"\n]+")', lines[number]).group(1) for number in numbers}) > 1
+
+
+def test_vc_fragment_count_scales_with_bytes_and_is_spread_through_the_body():
+    resource = {"path": "a.py", "current_content": "".join(f"line {n}\n" for n in range(20000))}
+    raw = json.dumps(resource, sort_keys=True).encode()
+    view = runner._review_context_view("source_000000", raw, "0" * 64, part_bytes=4096)
+    for size, expected in ((100, 4), (16 * 1024 * 40, 40), (16 * 1024 * 500, 64)):
+        text, proof, count = runner._review_embed_proof(view, size)
+        assert count == expected and len(proof) % count == 0
+    lines = text.split("\n")
+    header = PROOF_LINE.match(lines[1])
+    pattern = re.compile(rf"(?<![0-9A-Za-z])[0-9a-f]{{{header.group(2)}}}(?![0-9A-Za-z])")
+    numbers = [number for number, line in enumerate(lines) if number >= 2 and pattern.search(line)]
+    assert len(numbers) == 64
+    quarters = [sum(1 for n in numbers if lo <= n / len(lines) < lo + 0.25) for lo in (0, 0.25, 0.5, 0.75)]
+    assert all(quarter >= 8 for quarter in quarters), quarters
+
+
+def test_vc_text_blocks_stay_exact_and_first_line_tracks_the_published_file():
+    content = "".join(f"row {n}\n" for n in range(3000))
+    raw = json.dumps({"path": "a.py", "current_content": content}, sort_keys=True).encode()
+    view = runner._review_context_view("source_000000", raw, "0" * 64, part_bytes=2048)
+    text, _, _ = runner._review_embed_proof(view, len(raw))
+    lines = text.split("\n")
+    rebuilt = []
+    for number, line in enumerate(lines):
+        header = re.fullmatch(r"=== TEXT \d+ .* lines=(\d+) first_line=(\d+) final_newline=(\w+).*===", line)
+        if header:
+            count, first = int(header.group(1)), int(header.group(2))
+            assert first == number + 2
+            rebuilt.extend(lines[first - 1:first - 1 + count])
+    assert "\n".join(rebuilt) + "\n" == content
+
+
+def test_vc_partial_or_reordered_fragments_are_rejected(repository):
+    del repository
+    state, served = served_batch_file()
+    fragments = proof_fragments(served["path"])
+    for wrong in ("".join(fragments[:-1]), "".join(reversed(fragments))):
+        assert acknowledge(state, file_ack(state, served, wrong))["status"] == "error"
+    separated = " ".join(fragments)
+    assert acknowledge(state, file_ack(state, served, separated))["status"] == "context_ready"
+
+
+def test_vc_fragments_are_never_stored_in_the_ledger(repository):
+    del repository
+    state = bind(prepare()["monitor"])
+    served = serve_file(state)
+    ledger = Path(".map/feature/review-verdict-ledger.json").read_text()
+    assert all(fragment not in ledger for fragment in proof_fragments(served["path"]))
+    assert hashlib.sha256(read_nonce(served).encode()).hexdigest() in ledger
+
+
+def test_vc_proof_comparison_is_constant_time(repository, monkeypatch):
+    del repository
+    state = bind(prepare()["monitor"])
+    served = serve_file(state)
+    calls = []
+    original = runner.hmac.compare_digest
+    monkeypatch.setattr(runner.hmac, "compare_digest", lambda a, b: calls.append((a, b)) or original(a, b))
+    acknowledge(state, file_ack(state, served, "0" * 32))
+    assert calls
+
+
+def test_vc_three_wrong_proofs_invalidate_the_delivery_and_reserve_gives_fresh_fragments(repository):
+    del repository
+    state = bind(prepare()["monitor"])
+    served = serve_file(state)
+    old_proof = read_nonce(served)
+    for attempt in range(3):
+        result = acknowledge(state, file_ack(state, served, "0" * 32))
+        assert result["status"] == "error"
+        assert ("invalidated" in result["message"]) is (attempt == 2)
+    # The right proof no longer works once the delivery was invalidated.
+    assert acknowledge(state, file_ack(state, served, old_proof))["status"] == "error"
+    again = serve_file(state)
+    assert again["type"] == "context_file" and again["sha256"] != served["sha256"]
+    assert read_nonce(again) != old_proof
+    assert acknowledge(state, file_ack(state, again, old_proof))["status"] == "error"
+    assert acknowledge(state, file_ack(state, again, read_nonce(again)))["status"] in {
+        "context_pending", "context_ready"}
+
+
+def test_vc_ack_rebinds_content_a_rewritten_body_is_rejected(repository):
+    del repository
+    state = bind(prepare()["monitor"])
+    served = serve_file(state)
+    path = Path(served["path"])
+    proof = read_nonce(served)
+    original = path.read_text(encoding="utf-8")
+    path.write_text(original.replace("resource_id", "resource_ID", 1), encoding="utf-8")
+    assert path.read_text(encoding="utf-8") != original
+    before = runner.review_context_status(state["session_id"], "delivery-round", branch="feature")
+    result = acknowledge(state, file_ack(state, served, proof))
+    assert result["status"] == "error" and "changed after publication" in result["message"]
+    after = runner.review_context_status(state["session_id"], "delivery-round", branch="feature")
+    assert (after["remaining"], after["remaining_count"]) == (before["remaining"], before["remaining_count"])
+    fresh = serve_file(state)
+    assert acknowledge(state, file_ack(state, fresh, read_nonce(fresh)))["status"] in {
+        "context_pending", "context_ready"}
+
+
+def test_vc_rewritten_batch_body_cannot_advance_delivery(repository):
+    del repository
+    state, served = served_batch_file()
+    path = Path(served["path"])
+    proof = read_nonce(served)
+    path.write_text(path.read_text(encoding="utf-8").replace("resource_id", "resource_ID", 1), encoding="utf-8")
+    assert acknowledge(state, file_ack(state, served, proof))["status"] == "error"
+    assert runner.review_context_status(state["session_id"], "delivery-round",
+                                        branch="feature")["status"] == "context_pending"

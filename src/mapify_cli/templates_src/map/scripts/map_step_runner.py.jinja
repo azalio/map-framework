@@ -14221,19 +14221,26 @@ def _review_lazy_artifact_resource(
 REVIEW_CONTEXT_FILE_HEADER = "MAP-CONTEXT-FILE v1"
 # File-delivery resource id that serves every unacknowledged required resource in one view file.
 REVIEW_CONTEXT_BATCH_RESOURCE = "*required"
-REVIEW_CONTEXT_NONCE_PREFIX = "MAP-CONTEXT-NONCE: "
+# Proof fragments: k = ceil(bytes / 16 KiB) clamped to [4, 64], hex tokens of a per-file length.
+REVIEW_CONTEXT_FRAGMENT_BYTES = 16 * 1024
+REVIEW_CONTEXT_FRAGMENTS_MIN = 4
+REVIEW_CONTEXT_FRAGMENTS_MAX = 64
+# A pending file proof that is answered wrongly this many times is invalidated and must be served again.
+REVIEW_CONTEXT_MAX_WRONG_ACKS = 3
 # A JSON container stays on one view line up to this many characters; longer ones expand.
 REVIEW_CONTEXT_VIEW_INLINE_CHARS = 160
 # Strings with a newline or longer than this move to a verbatim TEXT block.
 REVIEW_CONTEXT_VIEW_TEXT_CHARS = 1000
 
 
-def _review_context_view(resource_id: str, raw: bytes, resource_sha256: str) -> str:
+def _review_context_view(resource_id: str, raw: bytes, resource_sha256: str, *, part_bytes: int = 0) -> str:
     """Render a frozen resource as line-oriented text a Read tool can page through.
 
     JSON resources are compact single lines, so a reviewer could not page them; the view expands
     containers and moves multi-line or long strings into numbered ``TEXT`` blocks printed verbatim.
     The frozen object stays the integrity anchor (``resource_sha256``); the view carries every value.
+    With ``part_bytes`` a long TEXT block is cut into consecutive parts (``part=n/total``) so the
+    published file has natural places between parts for proof fragments.
     """
     text = raw.decode("utf-8")
     try:
@@ -14269,17 +14276,38 @@ def _review_context_view(resource_id: str, raw: bytes, resource_sha256: str) -> 
              f"resource_bytes: {len(raw)}",
              "layout: the JSON section shows the frozen resource; a string shown as \"<<TEXT k>>\"",
              "layout: is printed verbatim in block TEXT k, whose header gives its line count and the file line",
-             "layout: where the text starts. The last line holds the delivery nonce.",
+             "layout: where the text starts.",
              "=== JSON ===", *body.split("\n")]
     for index, (path, value_text) in enumerate(texts, 1):
         final_newline = value_text.endswith("\n")
         parts = value_text.split("\n")
         if final_newline:
             parts = parts[:-1]
-        lines.append(f"=== TEXT {index} {path} lines={len(parts)} first_line={len(lines) + 2} "
-                     f"final_newline={str(final_newline).lower()} ===")
-        lines.extend(parts)
+        pieces = _review_split_text_parts(parts, part_bytes)
+        for number, piece in enumerate(pieces, 1):
+            last = number == len(pieces)
+            marker = "" if len(pieces) == 1 else f" part={number}/{len(pieces)}"
+            lines.append(f"=== TEXT {index} {path} lines={len(piece)} first_line={len(lines) + 2} "
+                         f"final_newline={str(final_newline if last else True).lower()}{marker} ===")
+            lines.extend(piece)
     return "\n".join(lines) + "\n"
+
+
+def _review_split_text_parts(parts: list[str], part_bytes: int) -> list[list[str]]:
+    """Cut text lines into consecutive pieces of about ``part_bytes``; ``0`` keeps one piece."""
+    if part_bytes <= 0:
+        return [parts]
+    pieces: list[list[str]] = [[]]
+    size = 0
+    for line in parts:
+        pieces[-1].append(line)
+        size += len(line.encode("utf-8")) + 1
+        if size >= part_bytes:
+            pieces.append([])
+            size = 0
+    if not pieces[-1] and len(pieces) > 1:
+        pieces.pop()
+    return pieces
 
 
 def _review_context_file_path(directory: Path, session_id: str, view_sha256: str) -> Path:
@@ -14297,13 +14325,101 @@ def _review_nonce_digest(nonce: str) -> str:
     return hashlib.sha256(nonce.encode("utf-8")).hexdigest()
 
 
-def _review_context_file_nonce(path: Path) -> str:
-    """Return the nonce footer of a served file, or an empty string when it is missing or malformed."""
-    try:
-        last = path.read_text(encoding="utf-8").rsplit("\n", 2)[-2]
-    except (OSError, UnicodeError, IndexError):
-        return ""
-    return last.removeprefix(REVIEW_CONTEXT_NONCE_PREFIX) if last.startswith(REVIEW_CONTEXT_NONCE_PREFIX) else ""
+def _review_normalize_proof(value: str) -> str:
+    """A proof is the fragments' hex characters in order; separators a reader adds are ignored."""
+    return re.sub(r"[^0-9a-f]", "", value.lower())
+
+
+def _review_fragment_pattern(length: int) -> re.Pattern[str]:
+    return re.compile(rf"(?<![0-9A-Za-z])[0-9a-f]{{{length}}}(?![0-9A-Za-z])")
+
+
+def _review_context_slots(lines: list[str]) -> tuple[list[int], list[str]]:
+    """Insertion indices (before the line) and the key vocabulary of the view, skipping verbatim text."""
+    slots: list[int] = []
+    keys: list[str] = []
+    section = ""
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        header = re.fullmatch(r"=== TEXT \d+ .* lines=(\d+) first_line=\d+ final_newline=\w+(?: part=\d+/\d+)? ===", line)
+        if header:
+            slots.append(index)
+            section = "text"
+            index += 1 + int(header.group(1))
+            continue
+        if line.startswith("MAP-CONTEXT-FILE"):
+            slots.append(index)
+            section = "head"
+        elif line == "=== JSON ===":
+            section = "json"
+        elif section == "json":
+            pair = re.match(r'^\s*("[^"\n]*"): ', line)
+            if pair:
+                slots.append(index)
+                keys.append(pair.group(1))
+        index += 1
+    return [slot for slot in slots if slot >= 2], keys
+
+
+def _review_embed_proof(view: str, total_bytes: int) -> tuple[str, str, int]:
+    """Embed k proof fragments into a view; return ``(file_text, proof, k)``.
+
+    Fragments are hex tokens of one per-file length, written as ordinary pair lines at runner-chosen
+    random slots spread through the body (before pair lines and between text parts). The length is chosen
+    so no ordinary content of the view matches the token shape, and a single instruction line (line 2)
+    names the count and shape, never positions. The proof is the ordered concatenation of the fragments.
+    """
+    rng = random.SystemRandom()
+    count = _review_fragment_count(total_bytes)
+    base = view.split("\n")[:-1]
+    slots, keys = _review_context_slots(base)
+    if not slots:
+        slots = [len(base) - 1]
+    vocabulary = sorted(set(keys)) or ['"path"', '"status"', '"encoding"', '"bytes"', '"sha256"']
+    lengths = [size for size in range(9, 21) if not _review_fragment_pattern(size).search(view)]
+    if not lengths:
+        raise ValueError("Context view has no free proof-fragment length")
+    for _ in range(32):
+        length = rng.choice(lengths)
+        fragments = ["".join(rng.choice("0123456789abcdef") for _ in range(length)) for _ in range(count)]
+        if len(slots) >= count:
+            groups = [slots[(group * len(slots)) // count:((group + 1) * len(slots)) // count] for group in range(count)]
+            chosen = [rng.choice(group) for group in groups]
+        else:
+            chosen = sorted(rng.choice(slots) for _ in range(count))
+        output = list(base)
+        for fragment, slot in sorted(zip(fragments, chosen, strict=True), key=lambda item: item[1], reverse=True):
+            target = base[slot]
+            indent = re.match(r"\s*", target).group(0) if re.match(r'^\s*"', target) else "  "
+            output.insert(slot, f'{indent}{rng.choice(vocabulary)}: "{fragment}",')
+        instruction = (f"proof: {count} fragments, each a standalone lowercase hex token of exactly {length} "
+                       "characters in another line; the proof is all fragments concatenated in file order")
+        output.insert(1, instruction)
+        found = _review_fragment_pattern(length).findall("\n".join(output[2:]))
+        if found == _review_fragments_in_order(output, fragments):
+            return "\n".join(_review_renumber_text_blocks(output)) + "\n", "".join(found), count
+    raise ValueError("Could not embed unambiguous proof fragments")
+
+
+def _review_fragments_in_order(output: list[str], fragments: list[str]) -> list[str]:
+    """Fragments in the order they appear in ``output`` (insertion at a shared slot keeps relative order)."""
+    text = "\n".join(output)
+    return sorted(fragments, key=text.index)
+
+
+def _review_renumber_text_blocks(lines: list[str]) -> list[str]:
+    """Rewrite every TEXT header's ``first_line`` to the final line number of its first text line."""
+    result = list(lines)
+    index = 0
+    while index < len(result):
+        header = re.fullmatch(r"(=== TEXT \d+ .* lines=(\d+) first_line=)\d+( final_newline=\w+(?: part=\d+/\d+)? ===)", result[index])
+        if header:
+            result[index] = f"{header.group(1)}{index + 2}{header.group(3)}"
+            index += 1 + int(header.group(2))
+        else:
+            index += 1
+    return result
 
 
 def _review_context_ack_proof(data: Any) -> dict[str, Any] | None:
@@ -14594,7 +14710,8 @@ def _prepare_review_context(
             "The parent will continue this SAME reviewer with context_file or context_chunk JSON. "
             "For context_file, Read exactly its path and no other file, paging with offset/limit through the last "
             "line, then return ONLY " + json.dumps(ack) + " with sha256 copied from the context_file and nonce "
-            "copied from the file's last line (after MAP-CONTEXT-NONCE: ); you may instead send that object as "
+            "set to the file's proof: line 2 of the file says how to recognise its proof fragments; read the whole "
+            "file in order, collect every fragment and concatenate them in file order; you may instead send that object as "
             "\"ack\" inside your next context_request. For context_chunk, concatenate content in "
             "byte-offset order through eof, using next_offset for the next request; never skip or guess bytes. "
             "A context_request or context_ack is intermediate, not a final review or a malformed-response retry. "
@@ -14651,7 +14768,7 @@ def serve_review_context(
 
     ``delivery="chunk"`` relays bytes through the parent. ``delivery="file"`` serves the whole resource
     as a small ``context_file`` pointer to a per-session view file; the reviewer reads it itself and the
-    parent acknowledges with the nonce from its last line, so the bytes never pass through the parent.
+    parent acknowledges with the proof fragments found in it, so the bytes never pass through the parent.
     """
     try:
         request = json.loads(payload)
@@ -14764,77 +14881,90 @@ def serve_review_context(
     return result
 
 
+def _review_fragment_count(total_bytes: int) -> int:
+    return min(REVIEW_CONTEXT_FRAGMENTS_MAX, max(REVIEW_CONTEXT_FRAGMENTS_MIN,
+                                                  -(-total_bytes // REVIEW_CONTEXT_FRAGMENT_BYTES)))
+
+
 def _review_serve_context_file(
     directory: Path, ledger: dict[str, Any], row: dict[str, Any], session: dict[str, Any], session_id: str,
     context_id: str, resource_id: str, metadata: dict[str, Any], raw: bytes,
 ) -> dict[str, Any]:
-    """Publish one whole resource as a per-session view file whose last line is a fresh nonce.
+    """Publish one whole resource as a per-session view file carrying proof fragments.
 
-    Only the nonce digest is persisted, so neither the response nor the ledger reveals the nonce:
-    echoing it proves the reviewer opened the served file. Serving again before the ACK reuses the
-    same file and nonce, which keeps parent retries idempotent.
+    Only the digest of the proof is persisted, so neither the response nor the ledger reveals it:
+    echoing the fragments in order proves the served file was opened and scanned (by the reviewer or
+    by a parent that can read the file too). Serving again before the ACK reuses the same file,
+    which keeps parent retries idempotent.
     """
-    view = _review_context_view(resource_id, raw, metadata["sha256"]).encode("utf-8")
-    return _review_publish_context_file(directory, ledger, row, session, session_id, context_id, resource_id, view,
-                                        metadata["sha256"], len(raw),
-                                        session["offsets"].get(resource_id, 0) == len(raw))
+    return _review_publish_context_file(
+        directory, ledger, row, session, session_id, context_id, resource_id,
+        lambda part_bytes: _review_context_view(resource_id, raw, metadata["sha256"], part_bytes=part_bytes),
+        metadata["sha256"], len(raw), session["offsets"].get(resource_id, 0) == len(raw))
 
 
 def _review_serve_context_batch(
     directory: Path, ledger: dict[str, Any], row: dict[str, Any], session: dict[str, Any], session_id: str,
     context_id: str,
 ) -> dict[str, Any]:
-    """Publish every unacknowledged required resource as one view file proved by one nonce.
+    """Publish every unacknowledged required resource as one view file proved by one fragment set.
 
     A reviewer then needs one round trip instead of one per resource; its ACK marks exactly the
-    listed resources delivered. The per-resource views are concatenated unchanged.
+    listed resources delivered.
     """
     names = [name for name, item in session["required"].items()
              if session["offsets"].get(name, 0) != item["bytes"]]
     if not names:
         raise ValueError("Every required context resource is already acknowledged")
-    views, digests, total = [], [], 0
+    raws, digests = {}, []
     for name in names:
         metadata = session["required"][name]
-        raw = _review_context_read(directory, metadata)
-        views.append(_review_context_view(name, raw, metadata["sha256"]))
+        raws[name] = _review_context_read(directory, metadata)
         digests.append(f"{name}:{metadata['sha256']}")
-        total += len(raw)
+    total = sum(len(raw) for raw in raws.values())
     resource_sha256 = hashlib.sha256("\n".join(digests).encode("utf-8")).hexdigest()
+
+    def render(part_bytes: int) -> str:
+        return "".join(_review_context_view(name, raws[name], session["required"][name]["sha256"],
+                                            part_bytes=part_bytes) for name in names)
+
     return _review_publish_context_file(directory, ledger, row, session, session_id, context_id,
-                                        REVIEW_CONTEXT_BATCH_RESOURCE, "".join(views).encode("utf-8"),
-                                        resource_sha256, total, False, resources=names)
+                                        REVIEW_CONTEXT_BATCH_RESOURCE, render, resource_sha256, total, False,
+                                        resources=names)
 
 
 def _review_publish_context_file(
     directory: Path, ledger: dict[str, Any], row: dict[str, Any], session: dict[str, Any], session_id: str,
-    context_id: str, resource_id: str, view: bytes, resource_sha256: str, resource_bytes: int, done: bool,
-    *, resources: list[str] | None = None,
+    context_id: str, resource_id: str, render: Callable[[int], str], resource_sha256: str,
+    resource_bytes: int, done: bool, *, resources: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Write the view with a fresh nonce footer, or reuse the pending one, and record the pending proof."""
-    view_sha256 = hashlib.sha256(view).hexdigest()
+    """Write the view with fresh proof fragments, or reuse the pending file, and record the pending proof."""
+    count = _review_fragment_count(resource_bytes)
+    view = render(max(256, resource_bytes // (2 * count)))
+    view_sha256 = hashlib.sha256(view.encode("utf-8")).hexdigest()
     path = _review_context_file_path(directory, session_id, view_sha256)
     pending = session.get("pending")
     if not done and pending and (pending.get("type") != "context_file" or pending["resource_id"] != resource_id):
         raise ValueError("A pending delivery must be acknowledged or retried before another resource")
+    record = session.setdefault("files", {}).get(resource_id)
+    reuse = (isinstance(record, dict) and record.get("view_sha256") == view_sha256 and path.is_file()
+             and hashlib.sha256(path.read_bytes()).hexdigest() == record.get("sha256"))
+    if not reuse:
+        text, proof, _ = _review_embed_proof(view, resource_bytes)
+        data = text.encode("utf-8")
+        record = {"view_sha256": view_sha256, "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data),
+                  "nonce_sha256": _review_nonce_digest(proof), "wrong_acks": 0,
+                  **({"resources": resources} if resources is not None else {})}
+        _require_review_delivery_current(row, directory.name)
+        atomic_write_text(path, text)
+    if not isinstance(record, dict):
+        raise ValueError("Context file record is missing")
     result = {"status": "context_response", "type": "context_file", "context_id": context_id,
               "resource_id": resource_id, "session_id": session_id, "path": str(path.resolve()),
-              "sha256": view_sha256, "bytes": len(view), "resource_sha256": resource_sha256,
-              "resource_bytes": resource_bytes, "nonce_line": "last",
+              "sha256": record["sha256"], "bytes": record["bytes"], "resource_sha256": resource_sha256,
+              "resource_bytes": resource_bytes,
               **({"resources": resources} if resources is not None else {})}
-    record = session.setdefault("files", {}).get(resource_id)
-    nonce = ""
-    if isinstance(record, dict) and record.get("sha256") == view_sha256 and path.is_file():
-        nonce = _review_context_file_nonce(path)
-    reuse = (bool(nonce) and isinstance(record, dict) and _review_nonce_digest(nonce) == record.get("nonce_sha256")
-             and path.read_bytes() == view + (REVIEW_CONTEXT_NONCE_PREFIX + nonce + "\n").encode("utf-8"))
-    if not reuse:
-        nonce = os.urandom(16).hex()
-        record = {"sha256": view_sha256, "bytes": len(view), "nonce_sha256": _review_nonce_digest(nonce),
-                  **({"resources": resources} if resources is not None else {})}
     _require_review_delivery_current(row, directory.name)
-    if not reuse:
-        atomic_write_text(path, view.decode("utf-8") + REVIEW_CONTEXT_NONCE_PREFIX + nonce + "\n")
     session["files"][resource_id] = record
     if not done:
         session.pop("finalization_token", None)
@@ -14845,11 +14975,68 @@ def _review_publish_context_file(
     return result
 
 
+def _review_invalidate_context_file(
+    directory: Path, ledger: dict[str, Any], session: dict[str, Any], session_id: str, key: str,
+) -> None:
+    """Drop a served file and its proof so the next request publishes fresh fragments."""
+    record = session.get("files", {}).pop(key, None)
+    pending = session.get("pending")
+    if isinstance(pending, dict) and pending.get("resource_id") == key:
+        session["pending"] = None
+    if isinstance(record, dict) and record.get("view_sha256"):
+        try:
+            _review_context_file_path(directory, session_id, record["view_sha256"]).unlink(missing_ok=True)
+        except (OSError, ValueError):
+            pass  # Intent: invalidation must still persist even if the stale copy is already gone.
+    _write_json_file(directory / "review-verdict-ledger.json", ledger)
+
+
+def _review_verify_file_proof(
+    directory: Path, ledger: dict[str, Any], session: dict[str, Any], session_id: str, key: str,
+    proof: dict[str, Any], *, delivered: bool,
+) -> dict[str, Any]:
+    """Check a file proof: published digest, constant-time fragment comparison, wrong-answer budget.
+
+    The reviewer-supplied ``nonce`` is the ordered concatenation of the served file's fragments. A pending
+    resource answered wrongly ``REVIEW_CONTEXT_MAX_WRONG_ACKS`` times is invalidated and must be served again.
+    """
+    record = session.get("files", {}).get(key)
+    nonce = proof.get("nonce")
+    if (isinstance(record, dict) and proof.get("sha256") == record.get("sha256") and isinstance(nonce, str)
+            and hmac.compare_digest(_review_nonce_digest(_review_normalize_proof(nonce)),
+                                    str(record.get("nonce_sha256")))):
+        return record
+    if isinstance(record, dict) and not delivered:
+        record["wrong_acks"] = int(record.get("wrong_acks", 0)) + 1
+        if record["wrong_acks"] >= REVIEW_CONTEXT_MAX_WRONG_ACKS:
+            _review_invalidate_context_file(directory, ledger, session, session_id, key)
+            raise ValueError("Context file proof failed repeatedly; the delivery was invalidated, "
+                             "request the resource again for a fresh file")
+        _write_json_file(directory / "review-verdict-ledger.json", ledger)
+    raise ValueError("Context file proof or digest does not match the served file")
+
+
+def _review_rebind_context_file(
+    directory: Path, ledger: dict[str, Any], session: dict[str, Any], session_id: str, key: str,
+    record: dict[str, Any],
+) -> None:
+    """At ACK time the file on disk must still be the exact bytes published (content re-binding)."""
+    if not record.get("view_sha256"):
+        return  # Intent: a file published before re-binding existed carries no published-bytes digest.
+    try:
+        data: bytes | None = _review_context_file_path(directory, session_id, record["view_sha256"]).read_bytes()
+    except (OSError, ValueError):
+        data = None
+    if data is None or hashlib.sha256(data).hexdigest() != record.get("sha256"):
+        _review_invalidate_context_file(directory, ledger, session, session_id, key)
+        raise ValueError("Served context file changed after publication; request the resource again")
+
+
 def _review_ack_context_file(
     directory: Path, ledger: dict[str, Any], row: dict[str, Any], session: dict[str, Any], session_id: str,
     proof: dict[str, Any],
 ) -> dict[str, Any]:
-    """Accept a reviewer's nonce echo for a served file; replaying an accepted proof is idempotent."""
+    """Accept a reviewer's fragment echo for a served file; replaying an accepted proof is idempotent."""
     resource = proof.get("resource_id")
     if (proof.get("session_id") != session_id or proof.get("context_id") != session["context_id"]
             or not isinstance(resource, str)):
@@ -14862,18 +15049,15 @@ def _review_ack_context_file(
     if not isinstance(metadata, dict):
         raise ValueError("Acknowledgment resource is not permitted")
     raw = _review_context_read(directory, metadata)
-    record = session.get("files", {}).get(resource)
-    nonce = proof.get("nonce")
-    if (not isinstance(record, dict) or proof.get("sha256") != record.get("sha256")
-            or not isinstance(nonce, str)
-            or not hmac.compare_digest(_review_nonce_digest(nonce), str(record.get("nonce_sha256")))):
-        raise ValueError("Context file nonce or digest does not match the served file")
-    if session["offsets"].get(resource, 0) == len(raw):
+    delivered = session["offsets"].get(resource, 0) == len(raw)
+    record = _review_verify_file_proof(directory, ledger, session, session_id, resource, proof, delivered=delivered)
+    if delivered:
         _require_review_delivery_current(row, directory.name)
         return _review_delivery_state(session_id, session)
     pending = session.get("pending") or {}
     if pending.get("type") != "context_file" or pending.get("resource_id") != resource:
         raise ValueError("Acknowledgment is not the current pending context file")
+    _review_rebind_context_file(directory, ledger, session, session_id, resource, record)
     session["offsets"][resource] = len(raw)
     session["pending"] = None
     if all(session["offsets"].get(name, 0) == item["bytes"] for name, item in session["required"].items()):
@@ -14887,20 +15071,20 @@ def _review_ack_context_batch(
     directory: Path, ledger: dict[str, Any], row: dict[str, Any], session: dict[str, Any], session_id: str,
     proof: dict[str, Any],
 ) -> dict[str, Any]:
-    """Accept one nonce for a batch file and mark every listed resource delivered; replay is idempotent."""
+    """Accept one proof for a batch file and mark every listed resource delivered; replay is idempotent."""
     record = session.get("files", {}).get(REVIEW_CONTEXT_BATCH_RESOURCE)
-    nonce = proof.get("nonce")
-    if (not isinstance(record, dict) or proof.get("sha256") != record.get("sha256")
-            or not isinstance(nonce, str)
-            or not hmac.compare_digest(_review_nonce_digest(nonce), str(record.get("nonce_sha256")))):
-        raise ValueError("Context file nonce or digest does not match the served file")
-    names = record.get("resources") or []
+    names = (record.get("resources") or []) if isinstance(record, dict) else []
+    delivered = bool(names) and all(
+        session["offsets"].get(name, 0) == session["required"][name]["bytes"] for name in names)
+    record = _review_verify_file_proof(directory, ledger, session, session_id, REVIEW_CONTEXT_BATCH_RESOURCE,
+                                       proof, delivered=delivered)
     pending = session.get("pending") or {}
     if pending.get("resource_id") != REVIEW_CONTEXT_BATCH_RESOURCE or pending.get("sha256") != record["sha256"]:
-        if names and all(session["offsets"].get(name, 0) == session["required"][name]["bytes"] for name in names):
+        if delivered:
             _require_review_delivery_current(row, directory.name)
             return _review_delivery_state(session_id, session)
         raise ValueError("Acknowledgment is not the current pending context file")
+    _review_rebind_context_file(directory, ledger, session, session_id, REVIEW_CONTEXT_BATCH_RESOURCE, record)
     for name in names:
         _review_context_read(directory, session["required"][name])
         session["offsets"][name] = session["required"][name]["bytes"]

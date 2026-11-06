@@ -184,7 +184,8 @@ def test_lazy_artifact_is_acknowledged_through_file_delivery(repo):
     served = runner.serve_review_context("monitor", json.dumps(request), admitted["round_id"], branch="feature",
                                          session_id=state["session_id"], agent_id="native-agent", delivery="file")
     assert served["type"] == "context_file", served
-    nonce = Path(served["path"]).read_text(encoding="utf-8").splitlines()[-1].removeprefix("MAP-CONTEXT-NONCE: ")
+    from tests.test_review_context_file_delivery import read_nonce
+    nonce = read_nonce(served)
     proof = {"type": "context_ack", "session_id": state["session_id"], "context_id": context_id,
              "resource_id": "artifact:blueprint.json", "sha256": served["sha256"], "nonce": nonce}
     acked = runner.ack_review_context(state["session_id"], "native-agent", json.dumps(proof), admitted["round_id"],

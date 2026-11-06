@@ -455,7 +455,7 @@ When enabled (`minimality != off`), the complexity lens is advisory only. It lis
 
 ### Step A.2a: Deliver requested context to the same reviewer (MANDATORY)
 
-Before final JSON validation, follow [Parent-served context loop](review-reference.md#parent-served-context-loop-step-a2a): run `serve_review_context` for every response, including retries, adversarial roles and the complexity lens. Continue the same agent for `context_response` and acknowledge `context_ack` nonces; responses to the post-delivery finalization request proceed to Step A.2b even with missing or invalid receipts. Discard queued early finals; context requests never consume final-response retries or become captured reviews. Denied/stale context leaves collection incomplete.
+Before final JSON validation, follow [Parent-served context loop](review-reference.md#parent-served-context-loop-step-a2a): run `serve_review_context` for every response, including retries, adversarial roles and the complexity lens. Continue the same agent for `context_response` and acknowledge `context_ack` proofs; responses to the post-delivery finalization request proceed to Step A.2b even with missing or invalid receipts. Discard queued early finals; context requests never consume final-response retries or become captured reviews. Denied/stale context leaves collection incomplete.
 
 ### Step A.2b: Truncated-response gate (MANDATORY — post-fan-out, pre-verification)
 
