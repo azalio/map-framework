@@ -376,7 +376,9 @@ def served_batch_file():
 
 def fragment_line_numbers(path):
     lines = Path(path).read_text(encoding="utf-8").split("\n")
-    length = int(PROOF_LINE.match(lines[1]).group(2))
+    header = PROOF_LINE.match(lines[1])
+    assert header is not None, lines[1]
+    length = int(header.group(2))
     pattern = re.compile(rf"(?<![0-9A-Za-z])[0-9a-f]{{{length}}}(?![0-9A-Za-z])")
     return lines, [number for number, line in enumerate(lines) if number >= 2 and pattern.search(line)]
 
@@ -395,7 +397,8 @@ def test_vc_proof_has_no_fixed_marker_or_grep_handle(repository):
     # Each fragment line is syntactically a pair line of the view, with no fixed prefix.
     for number in numbers:
         assert re.fullmatch(r'\s*"[^"\n]+": "[0-9a-f]+",', lines[number]), lines[number]
-    assert len({re.match(r'\s*("[^"\n]+")', lines[number]).group(1) for number in numbers}) > 1
+    keys = {match.group(1) for number in numbers if (match := re.match(r'\s*("[^"\n]+")', lines[number]))}
+    assert len(keys) > 1
 
 
 def test_vc_fragment_count_scales_with_bytes_and_is_spread_through_the_body():
@@ -407,6 +410,7 @@ def test_vc_fragment_count_scales_with_bytes_and_is_spread_through_the_body():
         assert count == expected and len(proof) % count == 0
     lines = text.split("\n")
     header = PROOF_LINE.match(lines[1])
+    assert header is not None, lines[1]
     pattern = re.compile(rf"(?<![0-9A-Za-z])[0-9a-f]{{{header.group(2)}}}(?![0-9A-Za-z])")
     numbers = [number for number, line in enumerate(lines) if number >= 2 and pattern.search(line)]
     assert len(numbers) == 64
