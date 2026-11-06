@@ -186,3 +186,63 @@ def test_symlinked_exclude_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(UpdateRuntimeGitignoreSecurityError):
         merge_update_runtime_gitignore(tmp_path)
     assert victim.read_text() == "keep\n"
+
+
+_UNRELATED_NEGATIONS = (
+    "!.claude/skills/iam-chart-upgrade\n"
+    "!.claude/rules/\n"
+    "!.claude/rules/learned/\n"
+    "!trivy/bdu-db/data/\n"
+    "!trivy/bdu-db/data/**\n"
+    "!sladm/data/\n"
+    "!sladm/data/components/\n"
+    "!sladm/data/components/.gitkeep\n"
+)
+
+
+def _linked_worktree(tmp_path: Path) -> tuple[Path, Path]:
+    main = tmp_path / "clones" / "quantum"
+    _init_repo(main)
+    _git(main, "-c", "user.name=t", "-c", "user.email=t@t", "commit",
+         "--allow-empty", "-q", "-m", "init")
+    linked = tmp_path / "workspaces" / "quantum" / "wt"
+    linked.parent.mkdir(parents=True)
+    _git(main, "worktree", "add", "-q", str(linked), "-b", "side")
+    return main, linked
+
+
+def test_linked_worktree_unrelated_negations_keep_gitignore_clean(
+    tmp_path: Path,
+) -> None:
+    main, linked = _linked_worktree(tmp_path)
+    (linked / ".gitignore").write_text(_UNRELATED_NEGATIONS)
+
+    merge_update_runtime_gitignore(linked)
+
+    assert (linked / ".gitignore").read_text() == _UNRELATED_NEGATIONS
+    exclude = (main / ".git" / "info" / "exclude").read_text().splitlines()
+    for path in _UPDATE_RUNTIME_GITIGNORE_PATHS:
+        assert path in exclude
+
+
+def test_fallback_to_gitignore_is_reported_on_stderr(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _, linked = _linked_worktree(tmp_path)
+    (linked / ".gitignore").write_text("!.map/**\n")
+
+    merge_update_runtime_gitignore(linked)
+
+    assert "negation" in capsys.readouterr().err
+    assert MARKER in (linked / ".gitignore").read_text()
+
+
+def test_generic_pycache_negation_still_forces_gitignore_repair(
+    tmp_path: Path,
+) -> None:
+    _, linked = _linked_worktree(tmp_path)
+    (linked / ".gitignore").write_text("!__pycache__/\n")
+
+    merge_update_runtime_gitignore(linked)
+
+    assert "**/__pycache__/" in (linked / ".gitignore").read_text().splitlines()
