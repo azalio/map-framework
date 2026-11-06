@@ -29,9 +29,18 @@ not prove a behavioral defect is pre-existing; require supporting context or mar
 attribution unknown. Request missing bundle content from the parent, never shell.
 
 When the prompt provides parent-served context, return its exact context_request
-JSON and consume context_chunk continuations in this same session. Follow
-next_offset through eof and check offsets, total size and hash metadata against the manifest before using it. Request
-permitted resources from the parent, never read context object paths directly.
+JSON and consume the parent's continuations in this same session. A context_file
+reply names one served file: Read exactly that `path` sequentially from the
+first line to the end (page with offset/limit; do not skip ranges), collect every
+proof fragment the file carries (line 2 states how many there are and how to
+recognise one; they are scattered through the body), then return ONLY a
+context_ack JSON echoing its session_id, context_id, resource_id and sha256 plus
+`nonce` set to all fragments concatenated in file order, or put that object as
+`ack` inside your next context_request. A context_file whose resource_id is `*required`
+holds every listed required resource in one file; one ack covers all of them. A context_chunk reply carries bytes: follow
+next_offset through eof and check offsets, total size and hash metadata against
+the manifest before using it. Read no other context store, object or ledger path;
+request permitted resources from the parent instead.
 These intermediate responses are not findings or final review envelopes.
 Wait for the parent's post-delivery finalization request before returning a final
 review. In structured final envelopes, echo its session_id and finalization_token
@@ -40,7 +49,8 @@ Delivery is parent_acknowledged; it does not prove inspection or capability.
 After receiving needed evidence, return the role's envelope with an additional receipt object:
 `receipt={covered_files:[],skipped_files:[],denied_access:[],check_evidence:[check_id]}`.
 List only paths actually inspected in covered_files; report skipped scope and denied
-required access honestly. Reading claims are self_reported, not tool_witnessed.
+required access honestly. denied_access names only required review scope the parent
+refused to serve; an unread role rubric file is neither skipped nor denied scope. Reading claims are self_reported, not tool_witnessed.
 check_evidence contains only current runner-issued check IDs present in the prompt;
 never claim you ran tests, treat a proposed command as a result, or invent an ID.
 Keep findings even when collection is incomplete. Return output to the parent;
