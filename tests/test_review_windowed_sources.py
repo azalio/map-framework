@@ -232,16 +232,15 @@ def many_files(count=30, lines=900):
         (directory / f"module_{index:02d}.py").write_text("".join(f"value_{n} = {n}\n" for n in range(lines)))
 
 
-def test_vc12_max_shards_env_overrides_default(repo, monkeypatch):
+def test_vc12_max_shards_env_caps_the_measured_plan(repo, monkeypatch):
     del repo
     monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(runner.REVIEW_CONTEXT_RESERVE_BYTES + 60_000))
     many_files()
-    failed = runner.begin_review_run(branch="feature", provider="claude", round_id="m", base_ref="main")
-    assert failed["reason"] == "too_many_shards" and failed["max_shards"] == runner.REVIEW_MAX_SHARDS
-    needed = failed["shards_needed"]
     monkeypatch.setenv("MAP_REVIEW_MAX_SHARDS", "1")
     capped = runner.begin_review_run(branch="feature", provider="claude", round_id="m", base_ref="main")
     assert capped["reason"] == "too_many_shards" and capped["max_shards"] == 1
+    needed = capped["shards_needed"]
+    assert runner.REVIEW_MAX_SHARDS >= needed > 8
     monkeypatch.setenv("MAP_REVIEW_MAX_SHARDS", str(needed))
     admitted = runner.begin_review_run(branch="feature", provider="claude", round_id="m", base_ref="main")
     assert admitted["status"] == "success" and len(admitted["shard_ids"]) == needed, admitted
@@ -262,6 +261,7 @@ def test_vc13_env_wins_over_trusted_config(monkeypatch):
 def test_vc14_too_many_shards_hint_names_the_needed_count_and_env(repo, monkeypatch):
     del repo
     monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(runner.REVIEW_CONTEXT_RESERVE_BYTES + 60_000))
+    monkeypatch.setenv("MAP_REVIEW_MAX_SHARDS", "2")
     many_files()
     result = runner.begin_review_run(branch="feature", provider="claude", round_id="h", base_ref="main")
     assert result["reason"] == "too_many_shards", result

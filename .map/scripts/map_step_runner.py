@@ -428,7 +428,9 @@ REVIEW_CONTEXT_RESERVE_BYTES = 64 * 1024
 # The Codex runner inlines the bundled role rubrics (monitor ~105 KiB) into every normal-review prompt.
 REVIEW_ROLE_RUBRIC_RESERVE_BYTES = 128 * 1024
 REVIEW_CONTEXT_BUDGET_ENV = "MAP_REVIEW_CONTEXT_BUDGET_BYTES"
-REVIEW_MAX_SHARDS = 8
+# Safety ceiling against runaway shard plans; admission otherwise takes the shard count the measured
+# plan needs. An explicit operator cap (env or trusted review.max_shards) replaces it.
+REVIEW_MAX_SHARDS = 64
 REVIEW_MAX_SHARDS_ENV = "MAP_REVIEW_MAX_SHARDS"
 # A changed file whose full source resource would exceed this is delivered as hunks plus N context lines (#642).
 REVIEW_SOURCE_FULL_MAX_BYTES = 48 * 1024
@@ -9490,8 +9492,10 @@ def begin_review_run(
             planned = _review_plan_shards(sizes, capacity)
             max_shards = _review_max_shards(review_config)
             if len(planned) > max_shards:
-                return _review_context_budget_error(sizes, budget, reserve=reserve, reason="too_many_shards",
-                                                    shards_needed=len(planned), max_shards=max_shards)
+                return _review_context_budget_error(
+                    sizes, budget, reserve=reserve, reason="too_many_shards", shards_needed=len(planned),
+                    max_shards=max_shards,
+                    max_shards_source="explicit" if _review_explicit_max_shards(review_config) else "ceiling")
             shard_plan = [{"id": f"s{index:02d}", "files": files, "bytes": sum(sizes[name] for name in files)}
                           for index, files in enumerate(planned, 1)]
     policy_hash = _review_policy(dict(payload), trusted_policy=target["trusted_policy"])
@@ -12639,7 +12643,7 @@ def _review_shard_summary(row: dict[str, Any]) -> dict[str, Any]:
     shards = row.get("shards")
     if not shards:
         return {}
-    return {"shard_ids": [item["id"] for item in shards],
+    return {"shard_ids": [item["id"] for item in shards], "shard_count": len(shards),
             "shards": [{"id": item["id"], "files_count": len(item["files"]), "bytes": item["bytes"]} for item in shards]}
 
 
@@ -25126,13 +25130,18 @@ def _review_plain_digits(raw: str) -> bool:
     return raw.isascii() and raw.isdigit()
 
 
-def _review_max_shards(review_config: dict[str, Any]) -> int:
-    """Shard cap: operator-local env, then trusted config, then the default; invalid values are ignored."""
+def _review_explicit_max_shards(review_config: dict[str, Any]) -> int | None:
+    """Operator shard cap: operator-local env, then trusted config; invalid values are ignored."""
     raw = os.environ.get(REVIEW_MAX_SHARDS_ENV, "").strip()
     if _review_plain_digits(raw) and int(raw) > 0:
         return int(raw)
     value = review_config.get("max_shards")
-    return value if type(value) is int and value > 0 else REVIEW_MAX_SHARDS
+    return value if type(value) is int and value > 0 else None
+
+
+def _review_max_shards(review_config: dict[str, Any]) -> int:
+    """Shard limit: an explicit operator cap, else the safety ceiling."""
+    return _review_explicit_max_shards(review_config) or REVIEW_MAX_SHARDS
 
 
 def _review_shard_units(paths: list[str], sizes: dict[str, int], capacity: int, depth: int = 0) -> list[list[str]]:
