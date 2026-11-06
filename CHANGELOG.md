@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `/map-review` frozen task artifacts no longer consume the per-reviewer budget (#648): the required `artifacts` resource now carries only a bounded specification (16 KiB, whole lines; over the cap it is truncated and the full text is lazy) plus an index of every frozen task artifact (`resource_id`, `bytes`, `sha256`, purpose). Plan, blueprint, verification summary and test contracts/handoffs are optional lazy `artifact:<file name>` resources (frozen from the hash-verified bundle on first use, digest-checked, separate namespace from `repo:`/`check:`/`base:`/`current:`/`risk:`, not served to diff-only or role reviewers without artifact access). The acceptance reviewer's prompt inlines the same bounded spec and points to the lazy plan; the admission estimate uses the same view, so it stays at or above the exact bytes.
+- `mapify _update` no longer appends the runtime ignore block to the tracked `.gitignore` of a linked worktree whose `.gitignore` carries unrelated negations (#649, regression of #634). The negation check treated `!trivy/bdu-db/data/**` as able to defeat the wildcard runtime entry `**/__pycache__/`, forcing the `.gitignore` fallback; a negation now defeats a wildcard entry only when it is not scoped under a literal directory the entry never names. When the `.gitignore` fallback is still needed, `mapify` prints the reason to stderr instead of switching silently.
 
 ## [3.37.0] - 2026-11-06
 

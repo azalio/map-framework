@@ -14,6 +14,7 @@ import secrets
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Generator
@@ -1266,6 +1267,31 @@ def _has_gitignore_marker(lines: list[bytes], marker: str) -> bool:
     return any(line == encoded or line.startswith(encoded + b" ") for line in lines)
 
 
+def _negation_defeats_exclude_entry(negation: bytes, required: bytes) -> bool:
+    """Return whether a ``.gitignore`` negation really overrides an exclude entry.
+
+    Literal entries keep ``_negation_targets_path`` semantics.  For wildcard
+    entries (``**/__pycache__/``, ``.map/**/sessions/``) a negation counts only
+    when it names the entry's basename (``!src/__pycache__/``) or is scoped in a
+    MAP-owned root the runtime block covers (``!.map/scripts/**``).  A blanket
+    re-include under an unrelated directory (``!trivy/bdu-db/data/**``) only
+    re-includes that user subtree and must not push the whole runtime block
+    into the tracked ``.gitignore`` (#649).
+    """
+    if not _negation_targets_path(negation, required):
+        return False
+    base = required.rstrip(b"/")
+    if b"*" not in base:
+        return True
+    pattern = _canonical_gitignore_line(negation[1:]).strip(b"/")
+    return base.rsplit(b"/", 1)[-1] in pattern or pattern.split(b"/", 1)[0] in (
+        b".map",
+        b".claude",
+        b".codex",
+        b".agents",
+    )
+
+
 def _merge_runtime_exclude(
     exclude: Path,
     gitignore_lines: list[bytes],
@@ -1291,7 +1317,7 @@ def _merge_runtime_exclude(
     if not missing:
         return False
     if any(
-        line.startswith(b"!") and _negation_targets_path(line, path.encode())
+        line.startswith(b"!") and _negation_defeats_exclude_entry(line, path.encode())
         for path in missing
         for line in gitignore_lines
     ):
@@ -1355,6 +1381,13 @@ def _merge_project_gitignore_locked(
             if outcome is not None:
                 exclude_changed = outcome
                 missing_runtime_paths = []
+            else:
+                print(
+                    "[mapify: a .gitignore negation overrides info/exclude for "
+                    "a runtime path; writing the runtime block to the tracked "
+                    ".gitignore instead]",
+                    file=sys.stderr,
+                )
         if missing_runtime_paths:
             runtime_lines: list[bytes] = []
             marker = _UPDATE_RUNTIME_GITIGNORE_MARKER.encode()
@@ -1430,6 +1463,13 @@ def _merge_project_gitignore(
         if include_runtime and runtime_to_git_exclude
         else None
     )
+    if include_runtime and runtime_to_git_exclude and runtime_exclude is None:
+        print(
+            "[mapify: info/exclude is unavailable for this project (not a "
+            "repository root, or the repository query failed); writing the "
+            "runtime block to .gitignore]",
+            file=sys.stderr,
+        )
     with _project_gitignore_lock(project_root) as (directory_fd, project_original):
         return _merge_project_gitignore_locked(
             project_root,
