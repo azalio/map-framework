@@ -23,7 +23,7 @@ Or install globally:
     mapify check
 """
 
-__version__ = "3.36.0"
+__version__ = "3.37.0"
 
 # MUST stay the first import: it turns "this interpreter is older than 3.11" into
 # a message that says so, instead of the ImportError raised by `from datetime

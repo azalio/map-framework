@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.37.0] - 2026-11-06
+
 ### Changed
 
 - `/map-release` never prompts: invoking it is the authorization. Phase 2 picks the recommended bump from `[Unreleased]` (an entry starting with the breaking marker, or a Removed/Breaking section → major, `### Added`/`### Changed` → minor, else patch) unless the argument forces `patch|minor|major` or `X.Y.Z`; versions must move forward. The tag push no longer asks for YES once the Phase 4.1 re-verification passes, a CHANGELOG gap makes the agent add the missing entries itself, and mypy/security-audit failures are hard stops.
