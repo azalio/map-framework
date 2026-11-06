@@ -4047,19 +4047,20 @@ class TestMapReleaseSharedSourceCodexRender:
             assert not re.search(r"(?<![A-Za-z0-9_./-])/map-", codex)
             assert "$map-release" in codex and "/map-release" in claude
             assert "AskUserQuestion" not in codex
-            assert "AskUserQuestion" in claude
+            assert "AskUserQuestion" not in claude  # release never prompts the operator
             assert "[%" not in codex and "<%" not in codex
 
-    def test_user_decisions_remain_binding_on_both_providers(self) -> None:
+    def test_release_is_autonomous_on_both_providers(self) -> None:
         for provider in ("claude", "codex"):
             reference = self._render("release-reference.md.jinja", provider)
-            assert "ask a separate question for the exact" in reference
-            assert "Only YES permits Phase 4.3" in reference
-            assert "never interpret REVIEW, silence" in reference
-            assert "user-approved exact version" in reference
-            if provider == "codex":
-                assert "do not continue until they answer" in reference
-                assert "Accept only an unambiguous YES" in reference
+            skill = self._render("SKILL.md.jinja", provider)
+            assert "never ask the operator" in reference
+            assert "Phase 2 exact version" in reference
+            assert "differs from Phase 2" in reference
+            assert "never ask the operator questions" in skill
+            for text in (reference, skill):
+                assert "read -p" not in text
+                assert "Only YES permits" not in text
 
     def test_gate_blocks_are_identical_across_provider_outputs(self) -> None:
         for heading in ("### Gate 11:", "### 4.1 Pre-Push"):

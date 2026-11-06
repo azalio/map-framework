@@ -160,36 +160,10 @@ if [[ -n "$LAST_TAG" ]]; then
     awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md
     echo ""
 
-    # Ask user to update CHANGELOG
-    read -p "CHANGELOG appears incomplete. Update it now? (y/n): " UPDATE_CHANGELOG
-
-    if [[ "$UPDATE_CHANGELOG" == "y" ]]; then
-      echo ""
-      echo "Suggested CHANGELOG entries (review and add manually):"
-      echo "────────────────────────────────────────────────────────"
-      git log ${LAST_TAG}..HEAD --no-merges --format="%s (%h)" | while read -r commit_msg; do
-        if [[ "$commit_msg" =~ ^feat ]]; then
-          echo "### Changed"
-          echo "- ${commit_msg#feat*: }"
-        elif [[ "$commit_msg" =~ ^fix ]]; then
-          echo "### Fixed"
-          echo "- ${commit_msg#fix*: }"
-        elif [[ "$commit_msg" =~ ^docs ]]; then
-          echo "### Documentation"
-          echo "- ${commit_msg#docs*: }"
-        else
-          echo "### Changed"
-          echo "- $commit_msg"
-        fi
-      done
-      echo "────────────────────────────────────────────────────────"
-      echo ""
-      echo "Please update CHANGELOG.md manually, then re-run the release."
-      exit 1
-    else
-      read -p "Continue with potentially incomplete CHANGELOG? (y/N): " PROCEED_ANYWAY
-      [[ "$PROCEED_ANYWAY" != "y" ]] && exit 1
-    fi
+    # Never prompt: the release agent reconciles the CHANGELOG itself.
+    echo "ACTION: add the missing user-visible entries to [Unreleased] from the commits above"
+    echo "        in a docs(changelog) commit, then re-run Phase 1 Gates 8-12."
+    exit 2
   fi
 else
   echo "ℹ️  No previous tag found, skipping completeness check"
@@ -198,50 +172,56 @@ fi
 
 ## Phase 2: Version Determination
 
+Invoking the release is the authorization: never ask the operator. Run this block
+with `RELEASE_REQUEST` set to the release argument (empty when none). An explicit
+`X.Y.Z` or `patch`/`minor`/`major` argument wins; anything else selects the
+recommended bump from `[Unreleased]`.
+
 ```bash
-# Get current version from pyproject.toml
+set -euo pipefail
 CURRENT_VERSION=$(grep -m1 -E '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
-echo "Current version: $CURRENT_VERSION"
-
-# Read CHANGELOG unreleased section
-UNRELEASED_CHANGES=$(awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md)
+SEMVER='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+[[ "$CURRENT_VERSION" =~ $SEMVER ]] || { echo "ABORT: invalid current version '$CURRENT_VERSION'"; exit 1; }
+UNRELEASED=$(awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md)
+REQUEST=$(printf '%s' "${RELEASE_REQUEST:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+IFS=. read -r MAJ MIN PAT <<< "$CURRENT_VERSION"
+if [[ "$REQUEST" =~ $SEMVER ]]; then
+  BUMP_TYPE="$REQUEST"; NEW_VERSION="$REQUEST"
+else
+  case "$REQUEST" in
+    patch|minor|major) BUMP_TYPE="$REQUEST" ;;
+    *)
+      # Recommended bump: breaking/removed -> major, added/changed -> minor, else patch.
+      if grep -qE 'BREAKING' <<< "$UNRELEASED" || grep -qE '^### Removed' <<< "$UNRELEASED"; then
+        BUMP_TYPE=major
+      elif grep -qE '^### (Added|Changed)' <<< "$UNRELEASED"; then
+        BUMP_TYPE=minor
+      else
+        BUMP_TYPE=patch
+      fi ;;
+  esac
+  case "$BUMP_TYPE" in
+    major) NEW_VERSION="$((MAJ + 1)).0.0" ;;
+    minor) NEW_VERSION="$MAJ.$((MIN + 1)).0" ;;
+    patch) NEW_VERSION="$MAJ.$MIN.$((PAT + 1))" ;;
+  esac
+fi
+IFS=. read -r NMAJ NMIN NPAT <<< "$NEW_VERSION"
+if (( NMAJ < MAJ || (NMAJ == MAJ && (NMIN < MIN || (NMIN == MIN && NPAT <= PAT))) )); then
+  echo "ABORT: $NEW_VERSION does not move forward from $CURRENT_VERSION"; exit 1
+fi
+echo "BUMP_TYPE=$BUMP_TYPE"
+echo "NEW_VERSION=$NEW_VERSION"
 ```
 
-**Semantic Versioning Rules:**
-- **MAJOR (X.0.0):** Breaking changes, incompatible API/workflow changes
-- **MINOR (x.Y.0):** New features, backward-compatible additions
-- **PATCH (x.y.Z):** Bug fixes and minor improvements
+**Semantic Versioning Rules (applied above):**
+- **MAJOR (X.0.0):** `BREAKING` anywhere in `[Unreleased]`, or a `### Removed` section
+- **MINOR (x.Y.0):** an `### Added` or `### Changed` section
+- **PATCH (x.y.Z):** only fixes
 
-
-Use `AskUserQuestion` with these options:
-
-```
-AskUserQuestion(
-  questions=[
-    {
-      question: "What type of version bump should be performed for this release?",
-      header: "Version Bump",
-      multiSelect: false,
-      options: [
-        {label: "PATCH (x.y.Z)", description: "Bug fixes and minor improvements only."},
-        {label: "MINOR (x.Y.0)", description: "New features, backward compatible additions."},
-        {label: "MAJOR (X.0.0)", description: "Breaking changes, incompatible API/workflow changes."},
-        {label: "EXPLICIT (X.Y.Z)", description: "Specify exact version number manually."}
-      ]
-    }
-  ]
-)
-```
-
-
-
-For EXPLICIT, ask a separate question for the exact `X.Y.Z` value; selecting the
-option alone supplies no version. Validate `^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`.
-Calculate the proposed `NEW_VERSION` from the user's bump choice and current
-version (or their explicit version). Show the exact result before execution.
-Supply `BUMP_TYPE` (`patch`, `minor`, `major`, or the exact version) and
-`NEW_VERSION` explicitly to **each** Phase 3 shell invocation, using only these
-approved values. Missing values abort; never assume a previous shell survives.
+Print the selected bump and version, then carry exactly these `BUMP_TYPE` and
+`NEW_VERSION` values into **each** Phase 3 and Phase 4 shell invocation. Missing
+values abort; never assume a previous shell survives.
 
 ## Phase 3: Execute Version Bump Script
 
@@ -249,9 +229,9 @@ approved values. Missing values abort; never assume a previous shell survives.
 
 ```bash
 set -euo pipefail
-: "${BUMP_TYPE:?Supply the user-approved bump type for this invocation}"
-: "${NEW_VERSION:?Supply the user-approved exact version for this invocation}"
-[[ "$NEW_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "ABORT: invalid approved version"; exit 1; }
+: "${BUMP_TYPE:?Supply the Phase 2 bump type for this invocation}"
+: "${NEW_VERSION:?Supply the Phase 2 exact version for this invocation}"
+[[ "$NEW_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "ABORT: invalid Phase 2 version"; exit 1; }
 echo "Version Bump Script Will Execute:"
 echo "1. Update pyproject.toml: version = \"$NEW_VERSION\""
 echo "2. Update CHANGELOG.md: [Unreleased] → [$NEW_VERSION] - $(date +%Y-%m-%d)"
@@ -264,11 +244,11 @@ echo "Changes will be committed locally but NOT pushed yet."
 
 ```bash
 set -euo pipefail
-: "${BUMP_TYPE:?Supply the user-approved bump type for this invocation}"
-: "${NEW_VERSION:?Supply the user-approved exact version for this invocation}"
-[[ "$NEW_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "ABORT: invalid approved version"; exit 1; }
-[[ "$BUMP_TYPE" =~ ^(patch|minor|major)$ || "$BUMP_TYPE" == "$NEW_VERSION" ]] || { echo "ABORT: invalid approved bump type"; exit 1; }
-# Intent: use the approved exact version so a changed current version cannot alter the bump.
+: "${BUMP_TYPE:?Supply the Phase 2 bump type for this invocation}"
+: "${NEW_VERSION:?Supply the Phase 2 exact version for this invocation}"
+[[ "$NEW_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "ABORT: invalid Phase 2 version"; exit 1; }
+[[ "$BUMP_TYPE" =~ ^(patch|minor|major)$ || "$BUMP_TYPE" == "$NEW_VERSION" ]] || { echo "ABORT: invalid Phase 2 bump type"; exit 1; }
+# Intent: use the Phase 2 exact version so a changed current version cannot alter the bump.
 ./scripts/bump-version.sh --yes "$NEW_VERSION"
 ```
 
@@ -360,31 +340,13 @@ REMOTE_TAG=$(git ls-remote --tags origin "refs/tags/$LAST_TAG" "refs/tags/$LAST_
 echo "✅ Pre-push safety checks passed"
 ```
 
-### 4.2 User Confirmation
+### 4.2 Authorization
 
-
-```
-AskUserQuestion(
-  questions=[
-    {
-      question: "⚠️ IRREVERSIBLE OPERATION ⚠️\n\nPushing tag will immediately:\n1. Trigger GitHub Actions release workflow\n2. Build and publish package to PyPI\n3. Create public GitHub release\n\nVersion: $LAST_TAG\nTarget: origin/main\n\nDo you want to proceed?",
-      header: "Confirm Push",
-      multiSelect: false,
-      options: [
-        {label: "YES - Push Tag", description: "⚠️ IRREVERSIBLE - Proceed with release."},
-        {label: "NO - Abort Release", description: "Stop. Tag remains local only."},
-        {label: "REVIEW - Show Details", description: "Show full commit, tag, and CHANGELOG before deciding."}
-      ]
-    }
-  ]
-)
-```
-
-
-
-If `REVIEW`: show `git show`, `git tag -l -n50 "$LAST_TAG"`, and CHANGELOG excerpt, then ask again.
-Only YES permits Phase 4.3. Repeat Phase 4.1 and ask again if the commit or version
-changes; never interpret REVIEW, silence, or an earlier bump choice as push consent.
+Invoking the release authorizes publishing the version computed in Phase 2; do not
+ask the operator. Proceed to 4.3 only when 4.1 printed its success line in this
+run. Before pushing, print the version, release commit and tag. If anything
+changed since Phase 2 (version, commit, tag), stop and re-run Phases 2–4.1 instead
+of pushing.
 
 ### 4.3 Push
 
@@ -396,7 +358,8 @@ LAST_TAG="v$PYPROJECT_VERSION"
 TAG_COMMIT=$(git rev-parse "$LAST_TAG^{commit}")
 HEAD_COMMIT=$(git rev-parse HEAD)
 [[ "$TAG_COMMIT" == "$HEAD_COMMIT" ]] || { echo "ABORT: release tag does not point to HEAD"; exit 1; }
-# Execute only after the user approved this exact tag and commit in Phase 4.2.
+: "${NEW_VERSION:?Supply the Phase 2 version for this invocation}"
+[[ "$PYPROJECT_VERSION" == "$NEW_VERSION" ]] || { echo "ABORT: release version $PYPROJECT_VERSION differs from Phase 2 ($NEW_VERSION)"; exit 1; }
 git push origin main
 git push origin "$LAST_TAG"
 PUSH_TIMESTAMP=$(date +%s)
@@ -559,9 +522,9 @@ You CANNOT delete packages from PyPI. Only option is yank.
 ### Scenario 5: PyPI Not Available After 5+ Minutes
 
 ```bash
-# Supply the exact release run ID from Phase 5 and the approved exact version.
+# Supply the exact release run ID from Phase 5 and the Phase 2 exact version.
 : "${RUN_ID:?Supply the verified release run ID for this invocation}"
-: "${TAG_VERSION:?Supply the approved exact release version for this invocation}"
+: "${TAG_VERSION:?Supply the Phase 2 exact release version for this invocation}"
 gh run view "$RUN_ID" --log | grep -A 10 "pypi-publish"
 # Check https://status.python.org/
 # Wait up to 15 minutes, probing the simple index pip resolves against —
@@ -590,15 +553,14 @@ gh run view <run-id> --log
 ## MCP Tools
 
 - **`mcp__sequential-thinking__sequentialthinking`** — complex decision making for version bump
-
-- **`AskUserQuestion`** (built-in) — explicit confirmation for IRREVERSIBLE operations
-
+- Invoking the release is the authorization; the workflow never prompts the operator. Hard gates abort instead.
 
 ## Examples
 
 ```
-/map-release                            # full release workflow; bump type chosen at confirmation gate
-/map-release patch                      # hint to version-determination phase
+/map-release                            # full release; recommended bump chosen from [Unreleased]
+/map-release patch                      # force a bump type (patch|minor|major)
+/map-release 4.0.0                      # force an exact version (must move forward)
 ```
 
 ## Troubleshooting

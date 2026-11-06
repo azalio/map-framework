@@ -125,9 +125,12 @@ automatically patched. Changes are staged, never committed.
 
 ## Package release workflow (`/map-release`, `$map-release`)
 
-Claude and Codex use the same release templates and CI gate policy. The workflow
-still requires an explicit version decision and confirmation before an irreversible
-tag push; ordinary feature fixes do not authorize publication.
+Claude and Codex use the same release templates and CI gate policy. Invoking the
+release is the authorization: it never prompts. Phase 2 picks the recommended bump
+from `[Unreleased]` (`BREAKING` or `### Removed` → major, `### Added`/`### Changed`
+→ minor, else patch) unless the argument forces `patch|minor|major` or an exact
+`X.Y.Z`; any failing gate aborts instead of asking. `/map-release` stays
+manual-only, so ordinary feature work never publishes on its own.
 
 Before release and again before push, the gate refreshes `origin/main` and verifies
 CI for `git merge-base HEAD origin/main`. Local commits after that base may change
