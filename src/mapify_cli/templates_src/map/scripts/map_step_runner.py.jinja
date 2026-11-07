@@ -9338,28 +9338,146 @@ def review_round_scope(branch: str | None = None) -> dict[str, Any]:
         return {"kind": "full", "reason": f"Cannot establish reusable impact/baseline: {exc}"}
 
 
-def _scoped_review_diff(branch: str | None, supplied: str | None) -> tuple[str, dict[str, Any]]:
+# Every delivered line stays below this many characters so a Read tool pages it; the published context view
+# splits longer text and the carried-findings renderers never emit a longer line.
+REVIEW_CONTEXT_MAX_LINE_CHARS = 2000
+REVIEW_CARRIED_CLAIM_CHARS = 200
+REVIEW_CARRIED_FILES_SHOWN = 3
+REVIEW_CARRIED_PATH_CHARS = 160
+REVIEW_CARRIED_LINE_BUDGET = 1800
+REVIEW_CARRIED_HEADER = "Carried findings (compact"
+
+
+def _review_line_value(value: Any) -> str:
+    return str(value).strip()[:40] if isinstance(value, (str, int)) and not isinstance(value, bool) else ""
+
+
+def _review_finding_line(row: dict[str, Any]) -> str:
+    """Best-effort line reference of a ledger finding ('' when it carries none)."""
+    for key in ("line_range", "line"):
+        found = _review_line_value(row.get(key))
+        if found:
+            return found
+    evidence = row.get("evidence")
+    for item in evidence if isinstance(evidence, list) else []:
+        if isinstance(item, dict) and item.get("source") == "finding_location" and isinstance(item.get("quote"), str):
+            try:
+                located = json.loads(item["quote"])
+            except ValueError:
+                continue
+            if isinstance(located, dict):
+                found = _review_line_value(located.get("line_range", located.get("line")))
+                if found:
+                    return found
+    return ""
+
+
+def _review_finding_files(row: dict[str, Any]) -> list[str]:
+    files = row.get("affected_files")
+    return [name for name in files if isinstance(name, str) and name] if isinstance(files, list) else []
+
+
+def _review_compact_finding(row: dict[str, Any], *, id_key: str = "id") -> str:
+    """One bounded JSON line for a carried finding: id, severity, file:line, short claim and status."""
+    files = _review_finding_files(row)
+    line = _review_finding_line(row)
+    first = files[0][:REVIEW_CARRIED_PATH_CHARS] if files else ""
+    entry: dict[str, Any] = {
+        id_key: str(row["id"])[:64], "severity": str(row.get("severity", ""))[:32],
+        "file": f"{first}:{line}" if first and line else first,
+        "claim": " ".join(str(row.get("claim", "")).split())[:REVIEW_CARRIED_CLAIM_CHARS],
+        "status": str(row.get("status", ""))[:32]}
+    if len(files) > 1:
+        entry["more_files"] = [name[:REVIEW_CARRIED_PATH_CHARS] for name in files[1:REVIEW_CARRIED_FILES_SHOWN]]
+        if len(files) > REVIEW_CARRIED_FILES_SHOWN:
+            entry["files_total"] = len(files)
+    text = json.dumps(entry, ensure_ascii=True)
+    # Intent: escaping can inflate non-ASCII text; shrink the optional parts until the line is safe to Read.
+    while len(text) > REVIEW_CARRIED_LINE_BUDGET and (entry.get("more_files") or len(entry["claim"]) > 20):
+        if entry.get("more_files"):
+            entry.pop("more_files")
+        else:
+            entry["claim"] = entry["claim"][:len(entry["claim"]) // 2]
+        text = json.dumps(entry, ensure_ascii=True)
+    return text
+
+
+def _review_carried_relevant(
+    rows: list[dict[str, Any]], shard_files: set[str] | None, required_files: set[str],
+) -> list[dict[str, Any]]:
+    """Findings a shard must see: those touching its files, plus the ones no shard owns.
+
+    Intent: a finding without an affected file, or whose files are all outside the admitted scope, belongs to
+    no shard, so every shard lists it (compactly; the full row is only a lazy resource). An unsharded round
+    (``shard_files`` is None) lists every finding.
+    """
+    if shard_files is None:
+        return list(rows)
+    kept = []
+    for row in rows:
+        files = set(_review_finding_files(row))
+        if not files or not files & required_files or files & shard_files:
+            kept.append(row)
+    return kept
+
+
+def _review_carried_block(rows: list[dict[str, Any]], total: int) -> str:
+    """Compact carried-findings listing for a diff trailer: a header line and one JSON line per finding."""
+    if not rows:
+        return ""
+    return (f"{REVIEW_CARRIED_HEADER}; {len(rows)} of {total} relevant to this review, one JSON object per line; "
+            "the full ledger row of any finding is the optional resource_id finding:<id>)\n"
+            + "\n".join(_review_compact_finding(row) for row in sorted(rows, key=lambda item: str(item.get("id")))))
+
+
+def _review_scope_trailer(scope: dict[str, Any], rows: list[dict[str, Any]], total: int | None = None) -> str:
+    """Review-scope trailer: the small scope JSON on short lines plus the compact carried-findings block."""
+    head = {key: value for key, value in scope.items() if key != "unresolved_findings"}
+    head["carried_findings"] = len(rows)
+    block = _review_carried_block(rows, len(rows) if total is None else total)
+    return "Review scope: " + json.dumps(head, indent=1) + ("\n" + block if block else "")
+
+
+def _review_public_scope(scope: dict[str, Any]) -> dict[str, Any]:
+    """Builder output form of a scope: carried findings as compact entries, never as full ledger rows."""
+    rows = [row for row in scope.get("unresolved_findings", []) if isinstance(row, dict) and isinstance(row.get("id"), str)]
+    public = {key: value for key, value in scope.items() if key != "unresolved_findings"}
+    public["carried_findings"] = [json.loads(_review_compact_finding(row)) for row in rows]
+    return public
+
+
+def _scoped_review_diff(
+    branch: str | None, supplied: str | None, shard_row: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any]]:
     _review_admitted_binding(branch)
     scope = review_round_scope(branch)
+    required: set[str] = set()
     try:
         prior = _read_review_ledger(_review_branch_dir(branch))
         unresolved = [row for row in prior.get("findings_registry", []) if row.get("status") in {"active", "downgraded"}]
+        rounds = prior.get("convergence", {}).get("rounds", [])
+        if rounds and not _review_round_terminal(rounds[-1]):
+            required = set(rounds[-1].get("required_files", []))
     except (OSError, ValueError, TypeError):
         unresolved = []
+    total = len(unresolved)
+    unresolved = _review_carried_relevant(unresolved, set(shard_row["files"]) if shard_row else None, required)
     scope["unresolved_findings"] = unresolved
     if supplied is not None:
         scope = {"kind": "full", "reason": "Caller-supplied diff has no reusable target proof", "unresolved_findings": unresolved}
-        return supplied + ("\n\nUnresolved findings: " + json.dumps(unresolved) if unresolved else ""), scope
+        block = _review_carried_block(unresolved, total)
+        return supplied + ("\n\n" + block if block else ""), scope
     if scope["kind"] == "incremental":
         try:
             diff = _review_git("diff", scope["delta_base"], scope["head"])
             return (diff + "\n\nPrioritize the delta, affected dependencies and unresolved findings. "
                     "Receipt coverage must still satisfy the admitted required_files scope; incremental prioritization "
                     "does not exempt remaining required paths. Report unread paths as skipped; "
-                    "never claim coverage from prioritization alone.\n" + json.dumps(scope)), scope
+                    "never claim coverage from prioritization alone.\n"
+                    + _review_scope_trailer(scope, unresolved, total)), scope
         except (OSError, ValueError, subprocess.TimeoutExpired):
-            scope = {"kind": "full", "reason": "Delta unavailable; full review required"}
-    return _read_git_diff_for_review(branch) + "\n\nReview scope: " + json.dumps(scope), scope
+            scope = {"kind": "full", "reason": "Delta unavailable; full review required", "unresolved_findings": unresolved}
+    return _read_git_diff_for_review(branch) + "\n\n" + _review_scope_trailer(scope, unresolved, total), scope
 
 
 def _prepare_review_inputs(directory: Path, ledger: dict[str, Any], row: dict[str, Any]) -> list[str]:
@@ -11334,7 +11452,7 @@ def _review_security_gate(row: dict[str, Any], directory: Path) -> dict[str, Any
 _REVIEW_DISTINCT_RESOURCE = re.compile(r"\bsource_(?:\d+|pack)\b")
 _REVIEW_COMMON_RESOURCE = re.compile(
     r"(?:resource(?:_id)?[\s:=]+)?(?:manifest|prompt|diff|inventory|artifacts)")
-_REVIEW_VALUE_PREFIXES = ("repo:", "base:", "current:", "artifact:", "risk:", "check:")
+_REVIEW_VALUE_PREFIXES = ("repo:", "base:", "current:", "artifact:", "risk:", "check:", "finding:")
 
 
 def _review_denied_path(text: str) -> str:
@@ -11365,7 +11483,7 @@ def _review_denied_split(row: dict[str, Any], denied: list[str]) -> tuple[list[s
         blocked = False
         if prefix == "check:":
             blocked = any(check in folded for check in checks)
-        elif prefix in {"artifact:", "risk:"}:
+        elif prefix in {"artifact:", "risk:", "finding:"}:
             blocked = False
         else:
             subject = folded.removeprefix(prefix)
@@ -14112,27 +14230,30 @@ requires independent admitted captures with checked evidence, not copied agreeme
 
 def _review_resolution_request(prompt: str, scope: dict[str, Any], reviewer: str) -> str:
     """Assign carried findings to their originating reviewer before first capture."""
-    findings = [
-        {"finding_id": row["id"], "claim": row.get("claim", ""),
-         "affected_files": row.get("affected_files", []),
-         "bug_class": row.get("bug_class"), "cause": row.get("cause"),
-         "failure_scenario": row.get("failure_scenario")}
-        for row in scope.get("unresolved_findings", [])
-        if isinstance(row, dict) and isinstance(row.get("id"), str)
-        and (reviewer in _review_reporters(row) if row.get("source_agent") == "adversarial"
-             else reviewer == row.get("originating_reviewer", row.get("source_agent")))
-    ]
+    findings = [row for row in scope.get("unresolved_findings", [])
+                if isinstance(row, dict) and isinstance(row.get("id"), str) and _review_finding_owned_by(row, reviewer)]
     if not findings:
         return prompt
     return (prompt + "\n\n<carried_findings_for_this_reviewer>\n"
             "Before this round is finalized, re-check EVERY finding_id below. "
+            "Each line is a compact summary (finding_id, severity, file:line, short claim, status); "
+            "request resource_id finding:<id> for the full ledger row (evidence, bug_class, cause, failure_scenario). "
             "For each proven fix or refutation, put a structured object in resolved_findings "
-            "with the same finding_id; copy bug_class/cause verbatim or omit them (a restated "
+            "with the same finding_id; copy bug_class/cause verbatim from the full row or omit them (a restated "
             "failure_scenario is allowed); describe the re-check in a nonempty evidence string; add checked evidence_refs, "
             "reachability, baseline_attribution and bounded sibling_search. "
             "If it remains valid or evidence is insufficient, report it as unresolved; "
             "an all_clear verdict or prose saying fixed does not close it.\n"
-            + json.dumps(findings, ensure_ascii=True) + "\n</carried_findings_for_this_reviewer>")
+            + "\n".join(_review_compact_finding(row, id_key="finding_id")
+                        for row in sorted(findings, key=lambda item: str(item.get("id"))))
+            + "\n</carried_findings_for_this_reviewer>")
+
+
+def _review_finding_owned_by(row: dict[str, Any], reviewer: str) -> bool:
+    """True when ``reviewer`` originated (or independently reported) the carried finding."""
+    if row.get("source_agent") == "adversarial":
+        return reviewer in _review_reporters(row)
+    return reviewer == row.get("originating_reviewer", row.get("source_agent"))
 
 
 REVIEW_RISK_REASON_SAMPLE = 5
@@ -14223,7 +14344,8 @@ def _review_transport_active(branch_name: str) -> bool:
     return bool(rounds and not _review_round_terminal(rounds[-1]) and _review_attribution_artifact(branch_name))
 
 
-_REVIEW_DIFF_TRAILER = re.compile(r"\n\n(?:=== |Review scope:|Unresolved findings:|Prioritize the delta)")
+_REVIEW_DIFF_TRAILER = re.compile(
+    r"\n\n(?:=== |Review scope:|Unresolved findings:|Carried findings \(compact|Prioritize the delta)")
 
 
 def _review_rewrite_diff(diff: str, replacement: Callable[[str, str, int, str], str | None]) -> str:
@@ -14562,6 +14684,31 @@ def _review_lazy_artifact_resource(
     row.setdefault("context_lazy", {})[resource_id] = metadata
     return metadata, True
 
+
+def _review_lazy_finding_resource(
+    directory: Path, row: dict[str, Any], manifest: dict[str, Any], reviewer: str, resource_id: str,
+) -> tuple[dict[str, Any], bool]:
+    """Serve ``finding:<id>``: the full ledger row of one carried finding, frozen on first use.
+
+    The compact listing in the diff trailer and the resolution section carries only a summary; the row
+    (evidence, validation, reachability, ...) is optional context. A diff-only reviewer receives it only for
+    a finding it originated, because the row would otherwise expose other reviewers' evidence to a blind one.
+    """
+    finding_id = resource_id.removeprefix("finding:")
+    registry = _read_review_ledger(directory).get("findings_registry", [])
+    source = next((item for item in registry if isinstance(item, dict) and item.get("id") == finding_id), None)
+    if (not finding_id or source is None or source.get("status") not in {"active", "downgraded"}
+            or (manifest.get("context_access") == "diff_only" and not _review_finding_owned_by(source, reviewer))):
+        raise ValueError("Resource is not permitted for this reviewer")
+    frozen = _review_lazy_entry(row, resource_id)
+    if isinstance(frozen, dict):
+        return frozen, False
+    metadata = {**_review_context_store(directory, json.dumps(source, sort_keys=True, ensure_ascii=True)),
+                "required": False, "kind": "finding"}
+    row.setdefault("context_lazy", {})[resource_id] = metadata
+    return metadata, True
+
+
 REVIEW_CONTEXT_FILE_HEADER = "MAP-CONTEXT-FILE v1"
 # File-delivery resource id that serves every unacknowledged required resource in one view file.
 REVIEW_CONTEXT_BATCH_RESOURCE = "*required"
@@ -14834,7 +14981,7 @@ def _review_repo_source_entry(name: str) -> dict[str, Any]:
             "encoding": encoding, "status": "unchanged", "line_mapping": []}
 
 
-LAZY_KINDS = frozenset({"check", "full_source", "risk", "artifact"})
+LAZY_KINDS = frozenset({"check", "full_source", "risk", "artifact", "finding"})
 
 
 def _review_lazy_entry(row: dict[str, Any], resource_id: str) -> dict[str, Any] | None:
@@ -15253,6 +15400,8 @@ def serve_review_context(
         metadata, lazy_frozen = _review_lazy_risk_resource(directory, row, manifest, resource_id)
     elif not isinstance(metadata, dict) and resource_id.startswith("artifact:"):
         metadata, lazy_frozen = _review_lazy_artifact_resource(directory, row, manifest, resource_id)
+    elif not isinstance(metadata, dict) and resource_id.startswith("finding:"):
+        metadata, lazy_frozen = _review_lazy_finding_resource(directory, row, manifest, reviewer, resource_id)
     if not isinstance(metadata, dict):
         raise ValueError("Resource is not permitted for this reviewer")
     raw = manifest_bytes if resource_id == "manifest" else _review_context_read(directory, metadata)
@@ -15312,7 +15461,8 @@ def _review_fragment_count(total_bytes: int) -> int:
 
 def _review_part_bytes(resource_bytes: int) -> int:
     """TEXT part size: fine enough that every proof band has several legal fragment slots."""
-    return max(256, resource_bytes // (4 * _review_fragment_count(resource_bytes)))
+    # Intent: a part is also the longest line a published file can hold, so cap it at the safe Read width.
+    return min(REVIEW_CONTEXT_MAX_LINE_CHARS, max(256, resource_bytes // (4 * _review_fragment_count(resource_bytes))))
 
 
 def _review_serve_context_file(
@@ -15474,7 +15624,7 @@ def _review_ack_context_file(
     if resource == REVIEW_CONTEXT_BATCH_RESOURCE:
         return _review_ack_context_batch(directory, ledger, row, session, session_id, proof)
     metadata = session.get("available", session["required"]).get(resource)
-    if metadata is None and resource.startswith(("repo:", "check:", "base:", "current:", "risk:", "artifact:")):
+    if metadata is None and resource.startswith(("repo:", "check:", "base:", "current:", "risk:", "artifact:", "finding:")):
         metadata = _review_lazy_entry(row, resource)
     if not isinstance(metadata, dict):
         raise ValueError("Acknowledgment resource is not permitted")
@@ -15661,7 +15811,7 @@ def _review_apply_ack(
     key = _review_chunk_key(data)
     resource = key["resource_id"]
     metadata = session.get("available", session["required"]).get(resource)
-    if metadata is None and resource.startswith(("repo:", "check:", "base:", "current:", "risk:", "artifact:")):
+    if metadata is None and resource.startswith(("repo:", "check:", "base:", "current:", "risk:", "artifact:", "finding:")):
         metadata = _review_lazy_entry(row, resource)
     if not isinstance(metadata, dict) or key["context_id"] != session["context_id"]:
         raise ValueError("Acknowledgment resource is not permitted")
@@ -15803,7 +15953,7 @@ def build_review_prompts(
         else (_review_compact_bundle(branch_name) if _review_transport_active(branch_name)
               else _read_review_bundle_markdown(branch_name))
     )
-    git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text)
+    git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text, shard_row)
     git_diff, diff_resource = _review_diff_resource(branch_name, git_diff, shard_row)
     minimality = _load_minimality_level(Path.cwd())
     layering = _load_prompt_layering(Path.cwd())
@@ -15883,7 +16033,7 @@ def build_review_prompts(
         "prompt_layering": layering,
         "budget_tokens": budget,
         "budget_env": REVIEW_PROMPT_BUDGET_ENV,
-        "review_scope": review_scope,
+        "review_scope": _review_public_scope(review_scope),
         "prompts": prompts,
     }
 
@@ -16269,7 +16419,7 @@ def build_role_review_prompts(
     role_ids = roles or list(BASE_ROLE_REVIEWERS)
     layering = _load_prompt_layering(Path.cwd())
 
-    git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text)
+    git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text, shard_row)
     git_diff, diff_resource = _review_diff_resource(branch_name, git_diff, shard_row)
     repo_context = (
         repo_context_text
@@ -16297,7 +16447,7 @@ def build_role_review_prompts(
         "branch": branch_name,
         **({"shard": shard} if shard else {}),
         "prompt_layering": layering,
-        "review_scope": review_scope,
+        "review_scope": _review_public_scope(review_scope),
         "prompts": prompts,
         "roles_requested": role_ids,
     }
@@ -16331,7 +16481,7 @@ def build_adversarial_review_prompts(
     reviewer_ids = reviewers or list(ADVERSARIAL_REVIEWERS)
     layering = _load_prompt_layering(Path.cwd())
 
-    git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text)
+    git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text, shard_row)
     git_diff, diff_resource = _review_diff_resource(branch_name, git_diff, shard_row)
 
     spec_context = spec_text if spec_text is not None else _read_spec_for_review(
@@ -16383,7 +16533,7 @@ def build_adversarial_review_prompts(
         "branch": branch_name,
         **({"shard": shard} if shard else {}),
         "prompt_layering": layering,
-        "review_scope": review_scope,
+        "review_scope": _review_public_scope(review_scope),
         "prompts": prompts,
         "reviewers_requested": reviewer_ids,
     }
@@ -25171,8 +25321,9 @@ def _review_fixed_overhead(
         fallback_bytes = 0
     # Intent: measure carried findings with the functions that render them: each reviewer's own section and the
     # review-scope trailer that the diff carries.
-    carried_scope = {"kind": "full", "reason": "x" * 160, "unresolved_findings": list(carried_findings or [])}
-    trailer_bytes = (len(("\n\nReview scope: " + json.dumps(carried_scope)).encode("utf-8"))
+    # Worst case for any shard: it lists every carried finding (a single-shard or unsharded round does).
+    carried_scope = {"kind": "full", "reason": "x" * 160}
+    trailer_bytes = (len(("\n\n" + _review_scope_trailer(carried_scope, list(carried_findings))).encode("utf-8"))
                      if carried_findings else 0)
     bundle_text = _render_bundle_markdown({
         "branch": branch_name, "generated_at": "0000-00-00T00:00:00+00:00", "artifacts": artifacts,

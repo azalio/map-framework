@@ -265,6 +265,6 @@ def test_vc35_overhead_alone_over_budget_is_reported_as_fixed_overhead(repo):
     assert result["stop_reason"] == "review_context_budget_exceeded", result
     assert result["reason"] == "fixed_overhead_too_large" and "oversized_paths" not in result
     breakdown = result["overhead_breakdown"]
-    assert breakdown["worst_role"] == "maintainer" and breakdown["carried_findings"] > 1_000_000
+    assert breakdown["worst_role"] == "maintainer" and breakdown["carried_findings"] > 500_000
     assert {"role_prompt", "execution_checks_in_prompt", "trusted_policy_in_prompt"} <= set(breakdown)
     assert any("carried findings" in hint for hint in result["hints"])

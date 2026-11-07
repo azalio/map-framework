@@ -66,6 +66,17 @@ windows, so a line outside every window is unknown, not new. `base:<path>` / `cu
 mapping. A renamed file is windowed against its old blob (`renamed_from`); the old path is a `renamed_to` stub.
 The complete `shadow_risk` record is the optional resource `risk:shadow`.
 
+## Carried Findings
+
+Findings carried from an earlier round are listed compactly (#664): one JSON line each with id, severity,
+`file:line`, a claim cut to 200 characters and status, in the diff's review-scope trailer and, for the
+originating reviewer, in `<carried_findings_for_this_reviewer>`. A shard lists only the findings whose affected
+files it owns, plus findings with no affected file or none inside the admitted scope (every shard lists those,
+compactly). The full ledger row (evidence, validation, reachability, `bug_class`, `cause`) is the optional lazy
+resource `finding:<id>`, frozen and digest-checked like the others; a diff-only reviewer may fetch it only for
+a finding it originated. Resolve through `resolved_findings` exactly as before; copy `bug_class`/`cause` from
+the full row or omit them. No published context line exceeds 2,000 characters.
+
 ## Shard Capacity
 
 Shards are packed to the per-reviewer budget minus a measured overhead (the worst scheduled reviewer's
