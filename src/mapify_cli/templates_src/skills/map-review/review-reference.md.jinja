@@ -15,6 +15,10 @@ Admission reports the hold as `human_consent: {status, hold_id, reason, enforcem
 
 Admission and `run_test_gate` stdout are compact: the target omits trusted-policy file contents and lists `context_files_count` instead of the repository inventory, and a check reports `target_unchanged` instead of full `before`/`after` targets. Full rows stay in `review-verdict-ledger.json`.
 
+Resolutions in `resolved_findings` are matched by `finding_id` plus exact `bug_class` and `cause` (copy them verbatim from the carried finding, or omit them). A restated `failure_scenario` is accepted and kept as `resolution_scenario_note`; describe the re-check in `evidence`. An invalid resolution (unknown id, missing evidence, non-originating reviewer, `bug_class`/`cause` mismatch) is rejected on its own: the finding stays open and the ledger lists it under `rejected_resolutions` with the offending `fields`; the rest of the round is still recorded.
+
+Recovery after a failed `write_review_verdict_ledger`: fix or re-capture the offending reviewer output and re-run `write_review_verdict_ledger` for the same round. Only rounds that reached a computed verdict count toward the three-attempt cap; abandoning a round that never produced a verdict (recorded as `abandoned_without_verdict`) does not spend an attempt.
+
 If reviewers could not run for an admitted round, `abandon_review_round` it. A review then done outside the harness is reported as such in the summary; it never produces a ledger verdict or approval.
 
 ## Section Rubrics

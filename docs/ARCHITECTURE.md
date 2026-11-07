@@ -1164,8 +1164,9 @@ Current delta captured:
   publication history, timestamps and stop reason. Reviewer/tool retries and
   comparison orderings belong to one round. Admission and finalization serialize
   canonical mutations; repeated submissions do not consume another iteration.
-  Three unsuccessful attempts (completed unsuccessful or explicitly abandoned
-  rounds) stop automatic admission for reconsideration, never approval.
+  Three unsuccessful attempts (rounds that reached a computed non-PROCEED verdict:
+  completed, or abandoned after a verdict; a round abandoned with no verdict is
+  `abandoned_without_verdict` and spends none) stop automatic admission for reconsideration, never approval.
   `abandon_review_round` records a terminal audit event without reusable coverage;
   retries preserve the budget and findings, and stale captures/finalizers fail.
   Legacy direct writes are rejected once bounded admission is active.
@@ -1889,7 +1890,7 @@ Their output is governed by a **five-part contract** — `problem` (one line + `
 
 **Evidence-First Review Contracts:** Monitor, Predictor, and Evaluator prompts require `evidence[]` before verdict, risk, or score fields. Evidence entries include file path, line range, quote, and relevance so reviewers can trace HIGH/CRITICAL issues, breaking-change claims, and low quality scores back to concrete bundle or diff material.
 
-Follow-up review prompts add unresolved finding IDs before capture, routed to the originating reviewer or every listed reporter for an adversarial finding. The ledger only closes an ID through a checked `resolved_findings` object from an applicable reviewer; completed round captures remain immutable. A Predictor `risk_assessment=low` with a nonempty `breaking_changes` summary is advisory unless it also reports a concrete defect with bug class, cause or failure scenario.
+Follow-up review prompts add unresolved finding IDs before capture, routed to the originating reviewer or every listed reporter for an adversarial finding. The ledger only closes an ID through a checked `resolved_findings` object from an applicable reviewer, matched by `finding_id` plus exact `bug_class`/`cause` (a restated `failure_scenario` becomes `resolution_scenario_note`); an invalid resolution is rejected individually into `rejected_resolutions` and its finding stays open; completed round captures remain immutable. A Predictor `risk_assessment=low` with a nonempty `breaking_changes` summary is advisory unless it also reports a concrete defect with bug class, cause or failure scenario.
 
 **Generic JSON Prompt Contracts:** Skill prompts that ask an agent to return JSON via `Output JSON with:` must be backed by either an evidence-first contract or a reusable reference in `.claude/references/map-json-output-contracts.md`. The regression suite scans development skills and `src/mapify_cli/templates/skills/` so future prompt edits cannot add vague unsupported JSON verdicts, summaries, or risk fields without a concrete output contract.
 

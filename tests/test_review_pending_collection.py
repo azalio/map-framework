@@ -14,6 +14,15 @@ branch_workspace = ledger_tests.branch_workspace
 review_git_workspace = ledger_tests.review_git_workspace
 
 
+def _record_computed_verdict(workspace: Path, round_id: str) -> None:
+    """Stamp a pending round as having reached a (blocking) verdict, as a written ledger would."""
+    path = workspace / "review-verdict-ledger.json"
+    ledger = json.loads(path.read_text())
+    row = next(item for item in ledger["convergence"]["rounds"] if item["round_id"] == round_id)
+    row.update({"verdict": "BLOCK", "completeness": {"status": "INCOMPLETE", "reasons": ["earlier attempt"]}})
+    path.write_text(json.dumps(ledger))
+
+
 @pytest.mark.parametrize("flags", ["", "--compare-orderings", "--adversarial", "--adversarial --compare-orderings"])
 @pytest.mark.parametrize("gap", ["scope", "denied", "check", "codex"])
 def test_pending_third_round_resumes_across_restart(review_git_workspace, flags, gap):
@@ -25,6 +34,7 @@ def test_pending_third_round_resumes_across_restart(review_git_workspace, flags,
     provider = "codex" if gap == "codex" else "claude"
     for round_id in ("1", "2"):
         assert runner.begin_review_run(arguments=flags, mode="lightweight", provider=provider, round_id=round_id)["status"] == "success"
+        _record_computed_verdict(workspace, round_id)
         assert runner.abandon_review_round(round_id, reason="Explicitly cancel earlier attempt")["status"] == "success"
     admission = runner.begin_review_run(arguments=flags, mode="lightweight", provider=provider, round_id="3")
     assert admission["status"] == "success", admission
