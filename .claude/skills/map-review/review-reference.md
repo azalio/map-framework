@@ -683,3 +683,9 @@ large and quote-heavy; prefer the file flags written in Step A.2c.
 - Missing bundle: rerun `create_review_bundle` before agents.
 - Oversized reviewer prompt: nothing is clipped and no `token_budget.json` entry is written for review — `MAP_REVIEW_PROMPT_BUDGET_TOKENS` is reported, not enforced. Admitted rounds deliver the full prompt through the context manifest (Step A.2a). Legacy builder calls without an admitted bundle retain the oversized-prompt error; run `begin_review_run` and `create_review_bundle` first.
 - Monitor invalid: treat as hard stop and record `REVISE` or `BLOCK`.
+
+### Delivery protocol notes (#655-#657)
+
+- Order is fixed: ack, then finalization token, then final. A reviewer's handback is only the JSON envelope. A refused final names what to send back (the `context_ack` JSON, the next `context_request` or the `context_receipt`).
+- A `context_request` may carry the previous `context_ack` as `ack`; the runner applies it before serving. Optional resources (`repo:`, `artifact:`, `base:`, `current:`, `risk:`, `check:`) never reset an issued token.
+- `denied_access` blocks only for required files/resources; other entries are informational. For readers with sources an added file's diff hunks are a stub pointing at its `source_*` resource.

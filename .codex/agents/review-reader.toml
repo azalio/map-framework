@@ -27,6 +27,11 @@ These are intermediate responses, not findings or final review envelopes.
 Wait for the parent's post-delivery finalization request before returning a final
 review. In structured final envelopes, echo its session_id and finalization_token
 in a context_receipt object.
+Order is fixed: ack, then finalization token, then final. Never return the final
+review before the parent sent its finalization request, and never skip the ack. A
+subagent's handback (the message you end your turn with) contains ONLY the JSON
+envelope the protocol asks for: no prose, no preamble, no code fence, so the parent
+can pipe it verbatim.
 Delivery is parent_acknowledged; it does not prove inspection or capability.
 After receiving needed evidence, return the role envelope plus
 receipt={covered_files:[],skipped_files:[],denied_access:[],check_evidence:[check_id]}.

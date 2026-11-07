@@ -6,6 +6,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -91,10 +92,10 @@ def cli(*args, payload=None):
 
 
 def test_chunk_pair_fingerprints_once_per_publication(repository, monkeypatch):
-    """Serve and ACK each retain one fresh guard without rediscovering trusted policy."""
+    """Serve and ACK each re-check cheap signals without recomputing the target or trusted policy."""
     del repository
     state = bind(prepare()["monitor"])
-    counts = {"_review_target": 0, "_review_trusted_policy": 0}
+    counts = {"_review_target_compute": 0, "_review_trusted_policy": 0}
 
     def observe(name):
         """Count actual expensive observations while preserving their implementation."""
@@ -111,7 +112,8 @@ def test_chunk_pair_fingerprints_once_per_publication(repository, monkeypatch):
     chunk = serve(state)
     assert chunk["status"] == "context_response"
     assert acknowledge(state, chunk)["status"] == "context_pending"
-    assert counts == {"_review_target": 2, "_review_trusted_policy": 2}
+    # Intent: the snapshot fingerprint is cached by cheap signals, so a publication pair rediscovers nothing.
+    assert counts == {"_review_target_compute": 0, "_review_trusted_policy": 0}
 
 
 @pytest.mark.parametrize("operation", ["serve", "bind", "status", "ack", "ack_replay"])
@@ -259,7 +261,7 @@ def test_compare_orderings_and_adversarial_aggregate_require_each_session(reposi
     entry = prepare("compare_orderings")["blind"]
     ready = deliver_all(bind(entry, role="blind", ordering="default"))
     reverse = bind(entry, role="blind", agent="reverse-agent", ordering="reverse")
-    statuses = {role: {"status": "not_run"} for role in runner.ADVERSARIAL_REVIEWERS}
+    statuses: dict[str, dict[str, Any]] = {role: {"status": "not_run"} for role in runner.ADVERSARIAL_REVIEWERS}
     statuses["blind"] = {"status": "ok", "raw": final_envelope(ready)}
     payload = json.dumps({"reviewer_status": statuses})
     assert runner.capture_review_output("adversarial", payload, "delivery-round", ordering="default", branch="feature")["status"] == "success"
