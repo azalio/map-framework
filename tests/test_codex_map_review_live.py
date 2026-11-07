@@ -20,6 +20,7 @@ import pytest
 from typer.testing import CliRunner
 
 from mapify_cli import app
+from tests.load_tolerance import LOAD_DEADLINE
 from tests.review_process_lifecycle import ReviewProcessLifecycle
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -36,7 +37,7 @@ def test_concurrent_review_admission_counts_once_and_fences_stale_capture(tmp_pa
                                   stderr=subprocess.PIPE) for _ in range(3)]
     outputs = []
     for process in processes:
-        stdout, stderr = process.communicate(timeout=30)
+        stdout, stderr = process.communicate(timeout=LOAD_DEADLINE)
         assert process.returncode == 0, stderr
         outputs.append(json.loads(stdout))
     assert {item["round_id"] for item in outputs} == {"round-1"}

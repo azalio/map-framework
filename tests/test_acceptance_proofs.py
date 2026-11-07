@@ -1,11 +1,15 @@
 """Acceptance is derived from frozen contracts and runner-witnessed evidence."""
 
+import fcntl
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
+
+from tests.load_tolerance import LOAD_DEADLINE
 
 RUNNER = Path(__file__).resolve().parents[1] / "src/mapify_cli/templates/map/scripts/map_step_runner.py"
 
@@ -103,29 +107,42 @@ def test_current_evidence_detects_staleness_and_corruption(acceptance_workspace,
     assert cli("evaluate_acceptance")["allowed"] is False
 
 
-def test_runner_interruption_preserves_owner_and_requires_new_attempt(acceptance_workspace):
-    import time
+def _wait_for(predicate, what):
+    deadline = time.monotonic() + LOAD_DEADLINE
+    while not predicate():
+        assert time.monotonic() < deadline, f"Timed out waiting for {what}"
+        time.sleep(.02)
 
+
+def _lease_free(lock: Path) -> bool:
+    with lock.open("a") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        return True
+
+
+def test_runner_interruption_preserves_owner_and_requires_new_attempt(acceptance_workspace):
     Path("proof.py").write_text(
         "import time\nfrom pathlib import Path\nPath('.map/started').touch()\n"
         "while not Path('.map/release').exists(): time.sleep(.02)\n"
     )
-    assert freeze(timeout=1.0)["status"] == "success"
+    # The proof blocks until released, so its own deadline must outlast any load delay.
+    assert freeze(timeout=LOAD_DEADLINE * 2)["status"] == "success"
     proc = subprocess.Popen([sys.executable, str(RUNNER), "run_acceptance_proofs"],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
-        deadline = time.monotonic() + 5
-        while not Path(".map/started").exists() and time.monotonic() < deadline:
-            time.sleep(.02)
-        assert Path(".map/started").exists()
+        _wait_for(Path(".map/started").exists, "the frozen proof to start")
         old_attempt = json.loads((acceptance_workspace / "acceptance-proofs.json").read_text())["attempts"][-1]["attempt_id"]
         proc.kill()
-        proc.wait(timeout=3)
+        proc.wait(timeout=LOAD_DEADLINE)
         blocked = cli("run_acceptance_proofs")
-        assert blocked["status"] == "error" and "still running" in blocked["message"]
+        assert blocked.get("status") == "error" and "still running" in blocked.get("message", ""), blocked
         assert cli("evaluate_acceptance")["allowed"] is False
         Path(".map/release").touch()
-        time.sleep(1.2)
+        # Readiness signal: the surviving owner releases the lease once the proof ends.
+        _wait_for(lambda: _lease_free(acceptance_workspace / ".review-execution.lock"), "owner lease release")
         assert cli("evaluate_acceptance")["allowed"] is False
         recovered = cli("run_acceptance_proofs")
         assert recovered["requirements"][0]["status"] == "proven", recovered
@@ -136,7 +153,7 @@ def test_runner_interruption_preserves_owner_and_requires_new_attempt(acceptance
         Path(".map/release").touch()
         if proc.poll() is None:
             proc.kill()
-        proc.communicate(timeout=5)
+        proc.communicate(timeout=LOAD_DEADLINE)
 
 
 def test_independent_revision_keeps_full_audit_and_invalidates_receipts(acceptance_workspace):
