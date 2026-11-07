@@ -58,12 +58,14 @@ def test_vc4_mixed_denials_block_and_name_only_the_required_one(review_git_works
     assert completeness["informational_denied_access"] == ["default:monitor: optional-rubric.md"]
 
 
-ROW = {"required_files": ["src/app/main.py", "go.sum"], "binding": {"required_checks": ["suite"]}}
+ROW = {"required_files": ["src/app/main.py", "src/app/auth.py", "go.sum"], "binding": {"required_checks": ["suite"]}}
 
 
 @pytest.mark.parametrize("denied", [
     "src/app/", "src/app", "./src/app/", "src/**", "src/app/*.py", "SRC/APP/MAIN.PY", "src\\app\\main.py",
     "source_000001 (permission denied)", "resource diff", "*required", "check:suite", "GO.SUM",
+    "./src//app/auth.py", "src/./app/auth.py", "diff", "diff (permission denied)", "resource_id: manifest",
+    "repo:src//app/auth.py", "./",
 ])
 def test_vc5_required_scope_forms_block(denied):
     required, informational = runner._review_denied_split(ROW, [denied])
@@ -71,7 +73,10 @@ def test_vc5_required_scope_forms_block(denied):
 
 
 @pytest.mark.parametrize("denied", ["docs/other.md", ".claude/agents/monitor.md", "role rubric (optional)",
-                                    "src/other/", "tests/**"])
+                                    "src/other/", "tests/**",
+                                    "repo:docs/manifest.md", "repo:docs/diff-guide.md",
+                                    "repo:.claude/agents/prompt-rules.md", "repo:docs/artifacts.md",
+                                    "artifact:inventory-notes", "the diff was too large", "check:other-suite"])
 def test_vc6_outside_required_scope_stays_informational(denied):
     required, informational = runner._review_denied_split(ROW, [denied])
     assert required == [] and informational == [denied]

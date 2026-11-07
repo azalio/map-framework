@@ -36,6 +36,7 @@ import hmac
 import json
 import math
 import os
+import posixpath
 import random
 import re
 import shlex
@@ -11257,44 +11258,60 @@ def _review_security_gate(row: dict[str, Any], directory: Path) -> dict[str, Any
             "reasons": [*reasons, *finding_reasons], "collection_reasons": reasons}
 
 
-_REVIEW_RESOURCE_WORD = re.compile(r"\b(?:manifest|prompt|diff|inventory|artifacts|source_pack|source_\d+)\b")
+_REVIEW_DISTINCT_RESOURCE = re.compile(r"\bsource_(?:\d+|pack)\b")
+_REVIEW_COMMON_RESOURCE = re.compile(
+    r"(?:resource(?:_id)?[\s:=]+)?(?:manifest|prompt|diff|inventory|artifacts)")
+_REVIEW_VALUE_PREFIXES = ("repo:", "base:", "current:", "artifact:", "risk:", "check:")
 
 
-def _review_denied_normalize(text: str) -> str:
-    """Casefolded, slash-normalised form of a denied entry or path (prefixes and ./ removed)."""
-    value = text.strip().replace("\\", "/").casefold()
-    for prefix in ("repo:", "base:", "current:"):
-        value = value.removeprefix(prefix)
-    while value.startswith("./"):
-        value = value[2:]
-    return value
+def _review_denied_path(text: str) -> str:
+    """Casefolded relative path form: backslashes to slashes, ``//`` and ``/./`` collapsed, no leading ``./``."""
+    value = posixpath.normpath(text.strip().replace("\\", "/").casefold())
+    return "" if value == "." else value
 
 
 def _review_denied_split(row: dict[str, Any], denied: list[str]) -> tuple[list[str], list[str]]:
     """Split denied_access into (required-scope hits, informational rest).
 
     Intent: only a refusal that touches required scope can make the evidence incomplete; a denied optional
-    rubric or dependency is reported but never blocks. Matching errs toward blocking: exact paths, a path
-    mentioned in free text, a directory or glob covering any required path, resource ids anywhere in the text,
-    the ``*required`` batch and required ``check:`` ids all count.
+    rubric or dependency is reported but never blocks. Matching errs toward blocking for paths (exact, mentioned
+    in free text, covering directory or glob) but resource ids count only as whole tokens: ``source_NNNNNN``,
+    ``source_pack``, ``*required`` anywhere, and manifest/prompt/diff/inventory/artifacts only when the entry is
+    that word (optionally ``resource <word>`` and a trailing parenthetical). A ``repo:``/``base:``/``current:``
+    entry is judged by its path alone, ``artifact:``/``risk:`` entries are optional resources, and ``check:<id>``
+    blocks only for a required check id.
     """
-    required = [_review_denied_normalize(name) for name in row.get("required_files", [])
-                if isinstance(name, str) and name]
+    required = [_review_denied_path(name) for name in row.get("required_files", []) if isinstance(name, str) and name]
     checks = [f"check:{name}".casefold() for name in row.get("binding", {}).get("required_checks", [])
               if isinstance(name, str) and name]
     hits: list[str] = []
     rest: list[str] = []
     for item in denied:
-        text = _review_denied_normalize(item)
-        bare = text.rstrip("/")
-        blocked = ("*required" in text or bool(_REVIEW_RESOURCE_WORD.search(text))
-                   or any(check in text for check in checks))
-        if not blocked:
-            for path in required:
-                if (path == bare or path in text or fnmatch.fnmatchcase(path, text)
-                        or fnmatch.fnmatchcase(path, bare) or (bare and path.startswith(bare + "/"))):
-                    blocked = True
-                    break
+        folded = item.strip().replace("\\", "/").casefold()
+        prefix = next((value for value in _REVIEW_VALUE_PREFIXES if folded.startswith(value)), "")
+        blocked = False
+        if prefix == "check:":
+            blocked = any(check in folded for check in checks)
+        elif prefix in {"artifact:", "risk:"}:
+            blocked = False
+        else:
+            subject = folded.removeprefix(prefix)
+            if not prefix:
+                bare = re.sub(r"\s*\(.*\)\s*$", "", folded).strip()
+                blocked = ("*required" in folded or bool(_REVIEW_DISTINCT_RESOURCE.search(folded))
+                           or bool(_REVIEW_COMMON_RESOURCE.fullmatch(bare)))
+            if not blocked:
+                texts = {_review_denied_path(subject), *(_review_denied_path(token) for token in subject.split())}
+                texts.discard("")
+                whole = _review_denied_path(subject)
+                if not whole and subject.strip() and required:
+                    blocked = True  # Intent: a denied repository root covers every required path.
+                for path in ([] if blocked else required):
+                    if (path in whole or any(
+                            path == text or fnmatch.fnmatchcase(path, text)
+                            or path.startswith(text.rstrip("/") + "/") for text in texts)):
+                        blocked = True
+                        break
         (hits if blocked else rest).append(item)
     return hits, rest
 
