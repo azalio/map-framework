@@ -65,8 +65,8 @@ def warm_with(binding, *, settle=True):
         calls = []
         original = runner._review_target_compute
 
-        def counted(*args, _original=original, **kwargs):
-            calls.append(1)
+        def counted(*args, _original=original, _calls=calls, **kwargs):
+            _calls.append(1)
             return _original(*args, **kwargs)
 
         runner._review_target_compute = counted
