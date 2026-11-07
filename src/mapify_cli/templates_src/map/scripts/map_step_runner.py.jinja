@@ -9338,28 +9338,239 @@ def review_round_scope(branch: str | None = None) -> dict[str, Any]:
         return {"kind": "full", "reason": f"Cannot establish reusable impact/baseline: {exc}"}
 
 
-def _scoped_review_diff(branch: str | None, supplied: str | None) -> tuple[str, dict[str, Any]]:
+# Every delivered line stays below this many characters so a Read tool pages it; the published context view
+# splits longer text and the carried-findings renderers never emit a longer line.
+REVIEW_CONTEXT_MAX_LINE_CHARS = 2000
+REVIEW_CARRIED_CLAIM_CHARS = 200
+REVIEW_CARRIED_FILES_SHOWN = 3
+REVIEW_CARRIED_PATH_CHARS = 160
+REVIEW_CARRIED_LINE_BUDGET = 1800
+REVIEW_CARRIED_HEADER = "Carried findings (compact"
+REVIEW_SCOPE_REASON_CHARS = 400
+REVIEW_INCREMENTAL_NOTE = (
+    "Prioritize the delta, affected dependencies and unresolved findings. "
+    "Receipt coverage must still satisfy the admitted required_files scope; incremental prioritization "
+    "does not exempt remaining required paths. Report unread paths as skipped; "
+    "never claim coverage from prioritization alone.\n")
+
+
+def _review_line_value(value: Any) -> str:
+    return str(value).strip()[:40] if isinstance(value, (str, int)) and not isinstance(value, bool) else ""
+
+
+def _review_finding_line(row: dict[str, Any]) -> str:
+    """Best-effort line reference of a ledger finding ('' when it carries none)."""
+    for key in ("line_range", "line"):
+        found = _review_line_value(row.get(key))
+        if found:
+            return found
+    evidence = row.get("evidence")
+    for item in evidence if isinstance(evidence, list) else []:
+        if isinstance(item, dict) and item.get("source") == "finding_location" and isinstance(item.get("quote"), str):
+            try:
+                located = json.loads(item["quote"])
+            except ValueError:
+                continue
+            if isinstance(located, dict):
+                found = _review_line_value(located.get("line_range", located.get("line")))
+                if found:
+                    return found
+    return ""
+
+
+def _review_finding_files(row: dict[str, Any]) -> list[str]:
+    files = row.get("affected_files")
+    return [name for name in files if isinstance(name, str) and name] if isinstance(files, list) else []
+
+
+def _review_escaped_len(text: str) -> int:
+    return len(json.dumps(text, ensure_ascii=True)) - 2
+
+
+def _review_clip_escaped(text: str, limit: int) -> tuple[str, bool]:
+    """Longest prefix whose JSON-escaped (ASCII) size fits ``limit``, and whether anything was cut."""
+    if _review_escaped_len(text) <= limit:
+        return text, False
+    low, high = 0, len(text)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if _review_escaped_len(text[:middle]) <= limit:
+            low = middle
+        else:
+            high = middle - 1
+    return text[:low], True
+
+
+def _review_compact_finding(row: dict[str, Any], *, id_key: str = "id") -> str:
+    """One bounded JSON line for a carried finding: id, severity, file:line, short claim and status.
+
+    This is the listing for reviewers that did not originate the finding. Anything shortened is marked
+    (``shortened`` names the fields); the originating reviewer's section carries the untruncated values.
+    """
+    files = _review_finding_files(row)
+    shortened: list[str] = []
+
+    def clip(label: str, text: str, limit: int) -> str:
+        clipped, cut = _review_clip_escaped(text, limit)
+        if cut:
+            shortened.append(label)
+        return clipped
+
+    first = clip("file", files[0], REVIEW_CARRIED_PATH_CHARS) if files else ""
+    line = clip("line", _review_finding_line(row), 40)
+    entry: dict[str, Any] = {
+        id_key: clip("id", str(row["id"]), 64), "severity": clip("severity", str(row.get("severity", "")), 32),
+        "file": f"{first}:{line}" if first and line else first,
+        "claim": clip("claim", " ".join(str(row.get("claim", "")).split())[:REVIEW_CARRIED_CLAIM_CHARS], 600),
+        "status": clip("status", str(row.get("status", "")), 32)}
+    if len(files) > 1:
+        entry["more_files"] = [clip("more_files", name, REVIEW_CARRIED_PATH_CHARS)
+                               for name in files[1:REVIEW_CARRIED_FILES_SHOWN]]
+        if len(files) > REVIEW_CARRIED_FILES_SHOWN:
+            entry["files_total"] = len(files)
+    if len(str(row.get("claim", "")).strip()) > REVIEW_CARRIED_CLAIM_CHARS and "claim" not in shortened:
+        shortened.append("claim")
+    if shortened:
+        entry["shortened"] = sorted(set(shortened))
+    text = json.dumps(entry, ensure_ascii=True)
+    # Intent: escaping can inflate non-ASCII text; shrink the optional parts until the line is safe to Read.
+    while len(text) > REVIEW_CARRIED_LINE_BUDGET:
+        if entry.get("more_files"):
+            entry.pop("more_files")
+            entry["shortened"] = sorted({*entry.get("shortened", []), "more_files"})
+        elif len(entry["claim"]) > 20:
+            entry["claim"] = entry["claim"][:len(entry["claim"]) // 2]
+            entry["shortened"] = sorted({*entry.get("shortened", []), "claim"})
+        elif len(entry["file"]) > 40:
+            entry["file"] = _review_clip_escaped(entry["file"], 40)[0]
+            entry["shortened"] = sorted({*entry.get("shortened", []), "file"})
+        else:
+            entry = {id_key: _review_clip_escaped(str(row["id"]), 40)[0], "shortened": ["all"]}
+        text = json.dumps(entry, ensure_ascii=True)
+    return text
+
+
+# One wrapped chunk of a long value stays well below the line cap even after JSON escaping.
+REVIEW_RESOLUTION_CHUNK_CHARS = 1200
+
+
+def _review_wrap_value(value: str) -> Any:
+    """A string that fits one line stays a string; a longer one becomes ``{"parts": [...]}`` (join, no separator)."""
+    if _review_escaped_len(value) <= REVIEW_RESOLUTION_CHUNK_CHARS:
+        return value
+    parts, rest = [], value
+    while rest:
+        chunk, _ = _review_clip_escaped(rest, REVIEW_RESOLUTION_CHUNK_CHARS)
+        chunk = chunk or rest[:1]
+        parts.append(chunk)
+        rest = rest[len(chunk):]
+    return {"parts": parts}
+
+
+def _review_resolution_entry(row: dict[str, Any]) -> str:
+    """Everything the originating reviewer needs to resolve or re-report a finding, untruncated and line-wrapped."""
+    entry: dict[str, Any] = {"finding_id": row["id"], "severity": row.get("severity", ""), "status": row.get("status", ""),
+                             "category": row.get("category", "")}
+    line = _review_finding_line(row)
+    if line:
+        entry["line"] = line
+    entry["affected_files"] = [_review_wrap_value(name) for name in _review_finding_files(row)]
+    # Intent: the identity key hashes these location fields under their original names (never line numbers),
+    # so a re-report must repeat them exactly.
+    locations = []
+    for item in _review_evidence(row.get("evidence")):
+        if item.get("source") != "finding_location":
+            continue
+        try:
+            details = json.loads(item.get("quote", ""))
+        except (ValueError, TypeError):
+            continue
+        if isinstance(details, dict):
+            locations.append({key: _review_wrap_value(value) if isinstance(value, str) else value
+                              for key, value in details.items() if key not in {"line", "line_range"}})
+    if locations:
+        entry["finding_location"] = locations
+    for field in ("claim", "bug_class", "cause", "failure_scenario"):
+        value = row.get(field)
+        if isinstance(value, str) and value:
+            entry[field] = _review_wrap_value(value)
+    return json.dumps(entry, indent=1, ensure_ascii=True)
+
+
+def _review_carried_relevant(
+    rows: list[dict[str, Any]], shard_files: set[str] | None, required_files: set[str],
+) -> list[dict[str, Any]]:
+    """Findings a shard must see: those touching its files, plus the ones no shard owns.
+
+    Intent: a finding without an affected file, or whose files are all outside the admitted scope, belongs to
+    no shard, so every shard lists it (compactly; the full row is only a lazy resource). An unsharded round
+    (``shard_files`` is None) lists every finding.
+    """
+    if shard_files is None:
+        return list(rows)
+    kept = []
+    for row in rows:
+        files = set(_review_finding_files(row))
+        if not files or not files & required_files or files & shard_files:
+            kept.append(row)
+    return kept
+
+
+def _review_carried_block(rows: list[dict[str, Any]], total: int) -> str:
+    """Compact carried-findings listing for a diff trailer: a header line and one JSON line per finding."""
+    if not rows:
+        return ""
+    return (f"{REVIEW_CARRIED_HEADER}; {len(rows)} of {total} relevant to this review, one JSON object per line; "
+            "the full ledger row of any finding is the optional resource_id finding:<id>)\n"
+            + "\n".join(_review_compact_finding(row) for row in sorted(rows, key=lambda item: str(item.get("id")))))
+
+
+def _review_scope_trailer(scope: dict[str, Any], rows: list[dict[str, Any]], total: int | None = None) -> str:
+    """Review-scope trailer: the small scope JSON on short lines plus the compact carried-findings block."""
+    head = {key: value for key, value in scope.items() if key != "unresolved_findings"}
+    if isinstance(head.get("reason"), str):
+        head["reason"] = head["reason"][:REVIEW_SCOPE_REASON_CHARS]
+    head["carried_findings"] = len(rows)
+    block = _review_carried_block(rows, len(rows) if total is None else total)
+    return "Review scope: " + json.dumps(head, indent=1) + ("\n" + block if block else "")
+
+
+def _review_public_scope(scope: dict[str, Any]) -> dict[str, Any]:
+    """Builder output form of a scope: carried findings as compact entries, never as full ledger rows."""
+    rows = [row for row in scope.get("unresolved_findings", []) if isinstance(row, dict) and isinstance(row.get("id"), str)]
+    public = {key: value for key, value in scope.items() if key != "unresolved_findings"}
+    public["carried_findings"] = [json.loads(_review_compact_finding(row)) for row in rows]
+    return public
+
+
+def _scoped_review_diff(
+    branch: str | None, supplied: str | None, shard_row: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any]]:
     _review_admitted_binding(branch)
     scope = review_round_scope(branch)
+    required: set[str] = set()
     try:
         prior = _read_review_ledger(_review_branch_dir(branch))
         unresolved = [row for row in prior.get("findings_registry", []) if row.get("status") in {"active", "downgraded"}]
+        rounds = prior.get("convergence", {}).get("rounds", [])
+        if rounds and not _review_round_terminal(rounds[-1]):
+            required = set(rounds[-1].get("required_files", []))
     except (OSError, ValueError, TypeError):
         unresolved = []
+    total = len(unresolved)
+    unresolved = _review_carried_relevant(unresolved, set(shard_row["files"]) if shard_row else None, required)
     scope["unresolved_findings"] = unresolved
     if supplied is not None:
         scope = {"kind": "full", "reason": "Caller-supplied diff has no reusable target proof", "unresolved_findings": unresolved}
-        return supplied + ("\n\nUnresolved findings: " + json.dumps(unresolved) if unresolved else ""), scope
+        block = _review_carried_block(unresolved, total)
+        return supplied + ("\n\n" + block if block else ""), scope
     if scope["kind"] == "incremental":
         try:
             diff = _review_git("diff", scope["delta_base"], scope["head"])
-            return (diff + "\n\nPrioritize the delta, affected dependencies and unresolved findings. "
-                    "Receipt coverage must still satisfy the admitted required_files scope; incremental prioritization "
-                    "does not exempt remaining required paths. Report unread paths as skipped; "
-                    "never claim coverage from prioritization alone.\n" + json.dumps(scope)), scope
+            return diff + "\n\n" + REVIEW_INCREMENTAL_NOTE + _review_scope_trailer(scope, unresolved, total), scope
         except (OSError, ValueError, subprocess.TimeoutExpired):
-            scope = {"kind": "full", "reason": "Delta unavailable; full review required"}
-    return _read_git_diff_for_review(branch) + "\n\nReview scope: " + json.dumps(scope), scope
+            scope = {"kind": "full", "reason": "Delta unavailable; full review required", "unresolved_findings": unresolved}
+    return _read_git_diff_for_review(branch) + "\n\n" + _review_scope_trailer(scope, unresolved, total), scope
 
 
 def _prepare_review_inputs(directory: Path, ledger: dict[str, Any], row: dict[str, Any]) -> list[str]:
@@ -11334,7 +11545,7 @@ def _review_security_gate(row: dict[str, Any], directory: Path) -> dict[str, Any
 _REVIEW_DISTINCT_RESOURCE = re.compile(r"\bsource_(?:\d+|pack)\b")
 _REVIEW_COMMON_RESOURCE = re.compile(
     r"(?:resource(?:_id)?[\s:=]+)?(?:manifest|prompt|diff|inventory|artifacts)")
-_REVIEW_VALUE_PREFIXES = ("repo:", "base:", "current:", "artifact:", "risk:", "check:")
+_REVIEW_VALUE_PREFIXES = ("repo:", "base:", "current:", "artifact:", "risk:", "check:", "finding:")
 
 
 def _review_denied_path(text: str) -> str:
@@ -11365,7 +11576,7 @@ def _review_denied_split(row: dict[str, Any], denied: list[str]) -> tuple[list[s
         blocked = False
         if prefix == "check:":
             blocked = any(check in folded for check in checks)
-        elif prefix in {"artifact:", "risk:"}:
+        elif prefix in {"artifact:", "risk:", "finding:"}:
             blocked = False
         else:
             subject = folded.removeprefix(prefix)
@@ -14112,27 +14323,31 @@ requires independent admitted captures with checked evidence, not copied agreeme
 
 def _review_resolution_request(prompt: str, scope: dict[str, Any], reviewer: str) -> str:
     """Assign carried findings to their originating reviewer before first capture."""
-    findings = [
-        {"finding_id": row["id"], "claim": row.get("claim", ""),
-         "affected_files": row.get("affected_files", []),
-         "bug_class": row.get("bug_class"), "cause": row.get("cause"),
-         "failure_scenario": row.get("failure_scenario")}
-        for row in scope.get("unresolved_findings", [])
-        if isinstance(row, dict) and isinstance(row.get("id"), str)
-        and (reviewer in _review_reporters(row) if row.get("source_agent") == "adversarial"
-             else reviewer == row.get("originating_reviewer", row.get("source_agent")))
-    ]
+    findings = [row for row in scope.get("unresolved_findings", [])
+                if isinstance(row, dict) and isinstance(row.get("id"), str) and _review_finding_owned_by(row, reviewer)]
     if not findings:
         return prompt
     return (prompt + "\n\n<carried_findings_for_this_reviewer>\n"
-            "Before this round is finalized, re-check EVERY finding_id below. "
+            "Before this round is finalized, re-check EVERY finding_id below. Each entry below is complete and "
+            "untruncated: the full affected_files, claim, bug_class, cause and failure_scenario. A value shown as "
+            "{\"parts\": [...]} is one string split into chunks: join the chunks with no separator. "
+            "(The optional resource finding:<id> adds the evidence rows.) "
             "For each proven fix or refutation, put a structured object in resolved_findings "
-            "with the same finding_id; copy bug_class/cause verbatim or omit them (a restated "
+            "with the same finding_id; copy bug_class/cause verbatim from the entry or omit them (a restated "
             "failure_scenario is allowed); describe the re-check in a nonempty evidence string; add checked evidence_refs, "
-            "reachability, baseline_attribution and bounded sibling_search. "
-            "If it remains valid or evidence is insufficient, report it as unresolved; "
-            "an all_clear verdict or prose saying fixed does not close it.\n"
-            + json.dumps(findings, ensure_ascii=True) + "\n</carried_findings_for_this_reviewer>")
+            "reachability, baseline_attribution and bounded sibling_search whose searched_scope and occurrences "
+            "cover EVERY path in the entry's affected_files. "
+            "If it remains valid or evidence is insufficient, report it as unresolved with the same bug_class, "
+            "cause and failure_scenario; an all_clear verdict or prose saying fixed does not close it.\n"
+            + "\n".join(_review_resolution_entry(row) for row in sorted(findings, key=lambda item: str(item.get("id"))))
+            + "\n</carried_findings_for_this_reviewer>")
+
+
+def _review_finding_owned_by(row: dict[str, Any], reviewer: str) -> bool:
+    """True when ``reviewer`` originated (or independently reported) the carried finding."""
+    if row.get("source_agent") == "adversarial":
+        return reviewer in _review_reporters(row)
+    return reviewer == row.get("originating_reviewer", row.get("source_agent"))
 
 
 REVIEW_RISK_REASON_SAMPLE = 5
@@ -14223,7 +14438,8 @@ def _review_transport_active(branch_name: str) -> bool:
     return bool(rounds and not _review_round_terminal(rounds[-1]) and _review_attribution_artifact(branch_name))
 
 
-_REVIEW_DIFF_TRAILER = re.compile(r"\n\n(?:=== |Review scope:|Unresolved findings:|Prioritize the delta)")
+_REVIEW_DIFF_TRAILER = re.compile(
+    r"\n\n(?:=== |Review scope:|Unresolved findings:|Carried findings \(compact|Prioritize the delta)")
 
 
 def _review_rewrite_diff(diff: str, replacement: Callable[[str, str, int, str], str | None]) -> str:
@@ -14562,6 +14778,32 @@ def _review_lazy_artifact_resource(
     row.setdefault("context_lazy", {})[resource_id] = metadata
     return metadata, True
 
+
+def _review_lazy_finding_resource(
+    directory: Path, row: dict[str, Any], manifest: dict[str, Any], reviewer: str, resource_id: str,
+) -> tuple[dict[str, Any], bool]:
+    """Serve ``finding:<id>``: the full ledger row of one carried finding, frozen on first use.
+
+    The compact listing in the diff trailer and the resolution section carries only a summary; the row
+    (evidence, validation, reachability, ...) is optional context. A diff-only reviewer receives it only for
+    a finding whose evidence it authored (``originating_reviewer``): a merged adversarial row also carries
+    evidence from reviewers with spec or artifact access, which a blind co-reporter must not read.
+    """
+    finding_id = resource_id.removeprefix("finding:")
+    registry = _read_review_ledger(directory).get("findings_registry", [])
+    source = next((item for item in registry if isinstance(item, dict) and item.get("id") == finding_id), None)
+    if (not finding_id or source is None or source.get("status") not in {"active", "downgraded"}
+            or (manifest.get("context_access") == "diff_only" and source.get("originating_reviewer") != reviewer)):
+        raise ValueError("Resource is not permitted for this reviewer")
+    frozen = _review_lazy_entry(row, resource_id)
+    if isinstance(frozen, dict):
+        return frozen, False
+    metadata = {**_review_context_store(directory, json.dumps(source, sort_keys=True, ensure_ascii=True)),
+                "required": False, "kind": "finding"}
+    row.setdefault("context_lazy", {})[resource_id] = metadata
+    return metadata, True
+
+
 REVIEW_CONTEXT_FILE_HEADER = "MAP-CONTEXT-FILE v1"
 # File-delivery resource id that serves every unacknowledged required resource in one view file.
 REVIEW_CONTEXT_BATCH_RESOURCE = "*required"
@@ -14575,6 +14817,8 @@ REVIEW_CONTEXT_MAX_WRONG_ACKS = 3
 REVIEW_CONTEXT_VIEW_INLINE_CHARS = 160
 # Strings with a newline or longer than this move to a verbatim TEXT block.
 REVIEW_CONTEXT_VIEW_TEXT_CHARS = 1000
+REVIEW_CONTEXT_VIEW_KEY_CHARS = 200
+REVIEW_CONTEXT_VIEW_PATH_CHARS = 200
 
 
 def _review_context_view(resource_id: str, raw: bytes, resource_sha256: str, *, part_bytes: int = 0) -> str:
@@ -14596,19 +14840,32 @@ def _review_context_view(resource_id: str, raw: bytes, resource_sha256: str, *, 
     texts: list[tuple[str, str]] = []
 
     def render(node: Any, depth: int, path: str) -> str:
-        if isinstance(node, str) and ("\n" in node or len(node) > REVIEW_CONTEXT_VIEW_TEXT_CHARS):
+        if isinstance(node, str) and ("\n" in node or len(json.dumps(node, ensure_ascii=False)) > REVIEW_CONTEXT_VIEW_TEXT_CHARS):
             texts.append((path, node))
             return json.dumps(f"<<TEXT {len(texts)}>>")
         if isinstance(node, dict):
-            pairs = [f"{json.dumps(key, ensure_ascii=False)}: "
-                     + render(item, depth + 1, f"{path}[{json.dumps(key, ensure_ascii=False)}]")
-                     for key, item in node.items()]
+            pairs = []
+            for key, item in node.items():
+                if len(json.dumps(key, ensure_ascii=False)) > REVIEW_CONTEXT_VIEW_KEY_CHARS:
+                    # Intent: a key longer than a line moves to a verbatim TEXT block like a long string value.
+                    texts.append((f"{path}#key", key))
+                    shown = json.dumps(f"<<TEXT {len(texts)}>>")
+                    label = f"{path}[<<TEXT {len(texts)}>>]"
+                else:
+                    shown = json.dumps(key, ensure_ascii=False)
+                    label = f"{path}[{shown}]"
+                pairs.append(f"{shown}: " + render(item, depth + 1, label))
             opening, closing = "{", "}"
         elif isinstance(node, list):
             pairs = [render(item, depth + 1, f"{path}[{index}]") for index, item in enumerate(node)]
             opening, closing = "[", "]"
         else:
-            return json.dumps(node, ensure_ascii=False)
+            scalar = json.dumps(node, ensure_ascii=False)
+            if len(scalar) > REVIEW_CONTEXT_VIEW_TEXT_CHARS:
+                # Intent: a huge number (or any scalar wider than a line) is printed verbatim in a TEXT block.
+                texts.append((path, scalar))
+                return json.dumps(f"<<TEXT {len(texts)}>>")
+            return scalar
         compact = opening + ", ".join(pairs) + closing
         if "\n" not in compact and len(compact) <= REVIEW_CONTEXT_VIEW_INLINE_CHARS:
             return compact
@@ -14631,10 +14888,36 @@ def _review_context_view(resource_id: str, raw: bytes, resource_sha256: str, *, 
         for number, (piece, continues) in enumerate(pieces, 1):
             last = number == len(pieces)
             marker = ("" if len(pieces) == 1 else f" part={number}/{len(pieces)}") + (" cont=true" if continues else "")
-            lines.append(f"=== TEXT {index} {path} lines={len(piece)} first_line={len(lines) + 2} "
-                         f"final_newline={str(final_newline if last else True).lower()}{marker} ===")
+            shown_path = path if len(path) <= REVIEW_CONTEXT_VIEW_PATH_CHARS else (
+                path[:REVIEW_CONTEXT_VIEW_PATH_CHARS // 2] + "..." + hashlib.sha256(path.encode("utf-8")).hexdigest()[:12])
+            lines.append(_review_text_header(index, shown_path, len(piece), len(lines) + 2,
+                                             str(final_newline if last else True).lower(), marker))
             lines.extend(piece)
     return "\n".join(lines) + "\n"
+
+
+def _review_text_header(index: int, shown_path: str, line_count: int, first_line: int, final_newline: str, marker: str) -> str:
+    return (f"=== TEXT {index} {shown_path} lines={line_count} first_line={first_line} "
+            f"final_newline={final_newline}{marker} ===")
+
+
+# Longest TEXT path the estimate assumes (resource payload keys such as $["current_content"] are far shorter).
+REVIEW_VIEW_PATH_ESTIMATE = 40
+
+
+def _review_view_overhead(size: int) -> int:
+    """Upper bound of the bytes the published view adds to a ``size``-byte text resource.
+
+    The view cuts text into parts of ``_review_part_bytes(size)`` and prefixes each part with a header line;
+    the bound is the part count (one spare for a cut at a block boundary) times the widest header for that size.
+    """
+    if size <= 0:
+        return 0
+    part = _review_part_bytes(size)
+    parts = -(-size // part) + 1
+    header = _review_text_header(parts, "$" + "x" * REVIEW_VIEW_PATH_ESTIMATE, size, size, "false",
+                                 f" part={parts}/{parts} cont=true")
+    return parts * (len(header) + 1)
 
 
 def _review_split_text_parts(parts: list[str], part_bytes: int) -> list[tuple[list[str], bool]]:
@@ -14644,19 +14927,22 @@ def _review_split_text_parts(parts: list[str], part_bytes: int) -> list[tuple[li
     opens a piece flagged ``continues`` (``cont=true``): its first line continues the previous piece's
     last line with no newline between them.
     """
-    if part_bytes <= 0:
+    # Intent: no published line is longer than the Read-safe cap, with or without part cutting.
+    width = min(part_bytes, REVIEW_CONTEXT_MAX_LINE_CHARS) if part_bytes > 0 else REVIEW_CONTEXT_MAX_LINE_CHARS
+    if part_bytes <= 0 and all(len(line) <= width for line in parts):
         return [(parts, False)]
+    limit = part_bytes if part_bytes > 0 else float("inf")
     pieces: list[tuple[list[str], bool]] = [([], False)]
     size = 0
     for line in parts:
-        chunks = [line[offset:offset + part_bytes] for offset in range(0, len(line), part_bytes)] or [line]
+        chunks = [line[offset:offset + width] for offset in range(0, len(line), width)] or [line]
         for position, chunk in enumerate(chunks):
             if position:
                 pieces.append(([], True))
                 size = 0
             pieces[-1][0].append(chunk)
             size += len(chunk.encode("utf-8")) + 1
-            if size >= part_bytes and (position == len(chunks) - 1):
+            if size >= limit and (position == len(chunks) - 1):
                 pieces.append(([], False))
                 size = 0
     if not pieces[-1][0] and len(pieces) > 1:
@@ -14834,7 +15120,7 @@ def _review_repo_source_entry(name: str) -> dict[str, Any]:
             "encoding": encoding, "status": "unchanged", "line_mapping": []}
 
 
-LAZY_KINDS = frozenset({"check", "full_source", "risk", "artifact"})
+LAZY_KINDS = frozenset({"check", "full_source", "risk", "artifact", "finding"})
 
 
 def _review_lazy_entry(row: dict[str, Any], resource_id: str) -> dict[str, Any] | None:
@@ -15253,6 +15539,8 @@ def serve_review_context(
         metadata, lazy_frozen = _review_lazy_risk_resource(directory, row, manifest, resource_id)
     elif not isinstance(metadata, dict) and resource_id.startswith("artifact:"):
         metadata, lazy_frozen = _review_lazy_artifact_resource(directory, row, manifest, resource_id)
+    elif not isinstance(metadata, dict) and resource_id.startswith("finding:"):
+        metadata, lazy_frozen = _review_lazy_finding_resource(directory, row, manifest, reviewer, resource_id)
     if not isinstance(metadata, dict):
         raise ValueError("Resource is not permitted for this reviewer")
     raw = manifest_bytes if resource_id == "manifest" else _review_context_read(directory, metadata)
@@ -15312,7 +15600,8 @@ def _review_fragment_count(total_bytes: int) -> int:
 
 def _review_part_bytes(resource_bytes: int) -> int:
     """TEXT part size: fine enough that every proof band has several legal fragment slots."""
-    return max(256, resource_bytes // (4 * _review_fragment_count(resource_bytes)))
+    # Intent: a part is also the longest line a published file can hold, so cap it at the safe Read width.
+    return min(REVIEW_CONTEXT_MAX_LINE_CHARS, max(256, resource_bytes // (4 * _review_fragment_count(resource_bytes))))
 
 
 def _review_serve_context_file(
@@ -15474,7 +15763,7 @@ def _review_ack_context_file(
     if resource == REVIEW_CONTEXT_BATCH_RESOURCE:
         return _review_ack_context_batch(directory, ledger, row, session, session_id, proof)
     metadata = session.get("available", session["required"]).get(resource)
-    if metadata is None and resource.startswith(("repo:", "check:", "base:", "current:", "risk:", "artifact:")):
+    if metadata is None and resource.startswith(("repo:", "check:", "base:", "current:", "risk:", "artifact:", "finding:")):
         metadata = _review_lazy_entry(row, resource)
     if not isinstance(metadata, dict):
         raise ValueError("Acknowledgment resource is not permitted")
@@ -15661,7 +15950,7 @@ def _review_apply_ack(
     key = _review_chunk_key(data)
     resource = key["resource_id"]
     metadata = session.get("available", session["required"]).get(resource)
-    if metadata is None and resource.startswith(("repo:", "check:", "base:", "current:", "risk:", "artifact:")):
+    if metadata is None and resource.startswith(("repo:", "check:", "base:", "current:", "risk:", "artifact:", "finding:")):
         metadata = _review_lazy_entry(row, resource)
     if not isinstance(metadata, dict) or key["context_id"] != session["context_id"]:
         raise ValueError("Acknowledgment resource is not permitted")
@@ -15803,7 +16092,7 @@ def build_review_prompts(
         else (_review_compact_bundle(branch_name) if _review_transport_active(branch_name)
               else _read_review_bundle_markdown(branch_name))
     )
-    git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text)
+    git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text, shard_row)
     git_diff, diff_resource = _review_diff_resource(branch_name, git_diff, shard_row)
     minimality = _load_minimality_level(Path.cwd())
     layering = _load_prompt_layering(Path.cwd())
@@ -15883,7 +16172,7 @@ def build_review_prompts(
         "prompt_layering": layering,
         "budget_tokens": budget,
         "budget_env": REVIEW_PROMPT_BUDGET_ENV,
-        "review_scope": review_scope,
+        "review_scope": _review_public_scope(review_scope),
         "prompts": prompts,
     }
 
@@ -16269,7 +16558,7 @@ def build_role_review_prompts(
     role_ids = roles or list(BASE_ROLE_REVIEWERS)
     layering = _load_prompt_layering(Path.cwd())
 
-    git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text)
+    git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text, shard_row)
     git_diff, diff_resource = _review_diff_resource(branch_name, git_diff, shard_row)
     repo_context = (
         repo_context_text
@@ -16297,7 +16586,7 @@ def build_role_review_prompts(
         "branch": branch_name,
         **({"shard": shard} if shard else {}),
         "prompt_layering": layering,
-        "review_scope": review_scope,
+        "review_scope": _review_public_scope(review_scope),
         "prompts": prompts,
         "roles_requested": role_ids,
     }
@@ -16331,7 +16620,7 @@ def build_adversarial_review_prompts(
     reviewer_ids = reviewers or list(ADVERSARIAL_REVIEWERS)
     layering = _load_prompt_layering(Path.cwd())
 
-    git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text)
+    git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text, shard_row)
     git_diff, diff_resource = _review_diff_resource(branch_name, git_diff, shard_row)
 
     spec_context = spec_text if spec_text is not None else _read_spec_for_review(
@@ -16383,7 +16672,7 @@ def build_adversarial_review_prompts(
         "branch": branch_name,
         **({"shard": shard} if shard else {}),
         "prompt_layering": layering,
-        "review_scope": review_scope,
+        "review_scope": _review_public_scope(review_scope),
         "prompts": prompts,
         "reviewers_requested": reviewer_ids,
     }
@@ -25105,9 +25394,10 @@ def _review_required_bytes(
         except OSError:
             current = b""
         base_raw = base_contents[renames.get(name, name)]
-        sizes[name] = (_review_source_json_size(base_raw, current, bool(base), full_max, context)
-                       + diff_sizes.get(name, (len(current) + current.count(b"\n") + 400) if not base_raw else 0)
-                       + REVIEW_SOURCE_OVERHEAD_BYTES)
+        text_size = (_review_source_json_size(base_raw, current, bool(base), full_max, context)
+                     + diff_sizes.get(name, (len(current) + current.count(b"\n") + 400) if not base_raw else 0)
+                     + REVIEW_SOURCE_OVERHEAD_BYTES)
+        sizes[name] = text_size + _review_view_overhead(text_size)
     return sizes
 
 
@@ -25171,9 +25461,13 @@ def _review_fixed_overhead(
         fallback_bytes = 0
     # Intent: measure carried findings with the functions that render them: each reviewer's own section and the
     # review-scope trailer that the diff carries.
-    carried_scope = {"kind": "full", "reason": "x" * 160, "unresolved_findings": list(carried_findings or [])}
-    trailer_bytes = (len(("\n\nReview scope: " + json.dumps(carried_scope)).encode("utf-8"))
-                     if carried_findings else 0)
+    # Worst case for any shard: it lists every carried finding (a single-shard or unsharded round does).
+    # Intent: the worst trailer is the incremental one: every required path in affected_files, two commit ids, a
+    # maximal reason and the prioritisation sentence, followed by the compact carried-findings block.
+    carried_scope = {"kind": "incremental", "reason": "x" * REVIEW_SCOPE_REASON_CHARS, "affected_files": list(required_paths),
+                     "delta_base": "0" * 40, "head": "0" * 40}
+    trailer_bytes = len(("\n\n" + REVIEW_INCREMENTAL_NOTE + _review_scope_trailer(
+        carried_scope, list(carried_findings or []))).encode("utf-8"))
     bundle_text = _render_bundle_markdown({
         "branch": branch_name, "generated_at": "0000-00-00T00:00:00+00:00", "artifacts": artifacts,
         "bundle_path_json": str(directory / "review-bundle.json"), **state})
@@ -25231,6 +25525,7 @@ def _review_fixed_overhead(
             parts["inventory"] = inventory
         if access == "diff_plus_spec_plus_artifacts":
             parts["task_artifacts"] = len(frozen.encode("utf-8"))
+        parts["published_view"] = _review_view_overhead(sum(parts.values()))
         size = sum(parts.values())
         if size > worst:
             worst, worst_parts = size, {"worst_role": role, **parts}

@@ -2121,6 +2121,23 @@ def test_round_keeps_omitted_unresolved_findings(branch_workspace):
     assert "RVF-001" in runner.build_adversarial_review_prompts()["prompts"]["blind"]["prompt"]
 
 
+def test_non_transport_originating_section_is_self_sufficient(branch_workspace):
+    """Without an attribution artifact there is no context server, so the inline section must carry everything."""
+    runner = cast(Any, map_step_runner)
+    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="first")
+    capture = branch_workspace / "review-agent-monitor.json"
+    capture.write_text(json.dumps(_monitor_with_critical()))
+    runner.write_review_verdict_ledger(current_run=True)
+    assert runner.abandon_review_round("first", reason="Continue findings review in a new attempt")["status"] == "success"
+    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="second")
+    prompt = runner.build_review_prompts(review_bundle_text="bundle")["prompts"]["monitor"]["prompt"]
+    assert "context_transport" not in runner.build_review_prompts(review_bundle_text="bundle")["prompts"]["monitor"]
+    section = prompt.split("<carried_findings_for_this_reviewer>")[1].split("</carried_findings_for_this_reviewer>")[0]
+    assert '"finding_id": "RVF-001"' in section and '"claim"' in section and '"affected_files"' in section
+    assert "EVERY path" in section
+    assert max(len(line) for line in section.split("\n")) <= 2000
+
+
 def test_carried_finding_requests_only_its_originator():
     runner = cast(Any, map_step_runner)
     scope = {"unresolved_findings": [

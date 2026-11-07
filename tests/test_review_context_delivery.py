@@ -94,6 +94,9 @@ def cli(*args, payload=None):
 def test_chunk_pair_fingerprints_once_per_publication(repository, monkeypatch):
     """Serve and ACK each re-check cheap signals without recomputing the target or trusted policy."""
     del repository
+    # Intent: a file crossing the shipped 10 s racy window between bind and serve changes its signature token
+    # (under load that happens); treating every file as recently touched keeps the signature age-independent.
+    monkeypatch.setattr(runner, "_REVIEW_RACY_NS", 10**18)
     state = bind(prepare()["monitor"])
     counts = {"_review_target_compute": 0, "_review_trusted_policy": 0}
 

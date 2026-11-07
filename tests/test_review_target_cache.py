@@ -47,13 +47,42 @@ def reset(counts):
     counts["target"] = counts["policy"] = 0
 
 
+def warm_with(binding, *, settle=True):
+    """Populate the cache and wait until an observation is a hit.
+
+    Git may touch the index while a computation runs (racy-git smudging), and a file touched inside the racy
+    window joins the signature as bytes. Under load that makes a stored entry unreusable once the file ages
+    out, so one pass is not enough: repeat until a full pass beyond the window recomputes nothing.
+    """
+    if not settle:  # an uncacheable target (submodule) never produces a hit
+        runner._review_target(binding)
+        time.sleep(1.2)
+        runner._review_target(binding)
+        return runner._review_target(binding)
+    for _ in range(8):
+        runner._review_target(binding)
+        time.sleep(1.2)  # leave the (shortened) racy window so later observations compare stable signatures
+        calls = []
+        original = runner._review_target_compute
+
+        def counted(*args, _original=original, _calls=calls, **kwargs):
+            _calls.append(1)
+            return _original(*args, **kwargs)
+
+        runner._review_target_compute = counted
+        try:
+            first = runner._review_target(binding)
+            runner._review_target(binding)
+        finally:
+            runner._review_target_compute = original
+        if not calls:
+            return first
+    raise AssertionError("the target cache never settled into a reusable entry")
+
+
 def warm():
     """Populate the cache the way a real caller does and make sure a repeat observation is a hit."""
-    runner._review_target({})
-    time.sleep(1.2)  # leave the (shortened) racy window so later observations compare stable signatures
-    first = runner._review_target({})
-    runner._review_target({})
-    return first
+    return warm_with({})
 
 
 def test_vc1_serve_ack_capture_in_one_state_never_recompute_the_target(repository, computations):
@@ -179,13 +208,6 @@ def commit_on(ref, files, message):
     subprocess.run(["git", "update-ref", ref, created], check=True)
 
 
-def warm_with(binding):
-    runner._review_target(binding)
-    time.sleep(1.2)
-    runner._review_target(binding)
-    return runner._review_target(binding)
-
-
 def test_vc8_explicit_base_still_notices_a_default_ref_move(repository):
     del repository
     subprocess.run(["git", "branch", "devel", "main"], check=True)
@@ -235,7 +257,7 @@ def test_vc12_submodule_checkout_move_is_never_served_from_cache(repository, tmp
     subprocess.run(["git", "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(source), "sm"],
                    check=True)
     subprocess.run(["git", "commit", "-qm", "add sm"], check=True)
-    warm_with({})
+    warm_with({}, settle=False)
     subprocess.run(["git", "-C", "sm", "checkout", "-q", "HEAD~1"], check=True)
     assert runner._review_target({}) == runner._review_target_compute({})
 
