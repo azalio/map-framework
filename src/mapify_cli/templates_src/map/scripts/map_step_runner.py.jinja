@@ -10689,6 +10689,7 @@ def _retain_review_findings(
             finding["affected_files"] = sorted(affected)
         registry[key] = finding
     rejected: list[dict[str, Any]] = []
+    accepted_ids: set[str] = set()
     for resolution in resolutions or []:
         finding = next((row for row in registry.values() if row["id"] == resolution.get("finding_id")), None)
         reviewer = resolution.get("source_agent")
@@ -10733,6 +10734,7 @@ def _retain_review_findings(
         finding["resolution_requested"] = True
         finding["transition_evidence"] = resolution["evidence"]
         finding["resolution_reviewer"] = reviewer
+        accepted_ids.add(finding["id"])
     ledger["rejected_resolutions"] = rejected
     ledger["findings_registry"] = list(registry.values())
     if admitted is not None:
@@ -10742,7 +10744,9 @@ def _retain_review_findings(
         if closed.get("resolved_by"):
             # Intent: never claim a finding stays open when another resolution for it was accepted.
             item["superseded"] = True
-            item["reason"] += "; another resolution for this finding was accepted"
+            item["reason"] += ("; another resolution for this finding in this round was accepted"
+                               if item["finding_id"] in accepted_ids
+                               else "; the finding was already closed in an earlier round")
     repeats = _apply_review_objections(
         ledger["findings_registry"], objections, ledger["not_verified"], ledger["escalation_reasons"],
     )
@@ -11750,7 +11754,7 @@ def write_review_verdict_ledger(
     if rejected_resolutions:
         md_lines += ["", "## Rejected Resolutions", ""]
         for item in rejected_resolutions:
-            outcome = "finding closed by another accepted resolution" if item.get("superseded") else "finding stays open"
+            outcome = "finding is already closed" if item.get("superseded") else "finding stays open"
             md_lines.append(f"- [{item.get('finding_id')}] from {item.get('source_agent')}: "
                             f"{item.get('reason')} (fields: {', '.join(item.get('fields', []))}); {outcome}")
 

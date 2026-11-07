@@ -141,9 +141,9 @@ def test_vc5_duplicate_resolutions_do_not_claim_a_closed_finding_stays_open(revi
     result = _resolve_many(admission, [bad, good] if bad_first else [good, bad])
     assert result["findings_verdict"] == "PROCEED"
     assert [(item["fields"], item.get("superseded")) for item in result["rejected_resolutions"]] == [(["cause"], True)]
-    assert "another resolution for this finding was accepted" in result["rejected_resolutions"][0]["reason"]
+    assert "in this round was accepted" in result["rejected_resolutions"][0]["reason"]
     markdown = (review_git_workspace / "review-verdict-ledger.md").read_text()
-    assert "stays open" not in markdown and "another resolution for this finding was accepted" in markdown
+    assert "stays open" not in markdown and "another resolution for this finding in this round was accepted" in markdown
 
 
 def test_vc1_input_error_rounds_still_consume_the_attempt_cap(review_git_workspace):
@@ -208,3 +208,18 @@ def test_vc3_adversarial_resolutions_match_by_finding_id_not_shared_bug_class(re
     assert registry[ids[1]].get("resolved_by"), registry[ids[1]]
     assert not registry[ids[0]].get("resolved_by"), "finding picked up another finding's resolution evidence"
     assert result["findings_verdict"] != "PROCEED"
+
+
+def test_vc5_rejection_against_a_finding_closed_in_an_earlier_round_says_so(review_git_workspace):
+    admission = _carry_one_finding()
+    assert _resolve_many(admission, [ledger_tests._bound_resolution()])["findings_verdict"] == "PROCEED"
+    third = runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="third", arguments="recheck", provider="claude")
+    assert third["status"] == "success", third
+    assert runner.create_review_bundle()["status"] == "success"
+    bad = {**ledger_tests._bound_resolution(), "cause": "some other cause"}
+    again = _resolve_many(third, [bad], round_id="third")
+    item = again["rejected_resolutions"][0]
+    assert item["superseded"] is True
+    assert "already closed in an earlier round" in item["reason"]
+    assert "in this round" not in item["reason"]
+    assert "already closed in an earlier round" in (review_git_workspace / "review-verdict-ledger.md").read_text()
