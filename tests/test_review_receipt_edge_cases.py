@@ -130,7 +130,7 @@ def test_begin_review_run_missing_yaml_records_unverified_capability(receipt_wor
     assert resumed["resumed"] is True
     assert resumed["capability"] == capability
     abandoned = runner.abandon_review_round("receipt", reason="PyYAML is now available")
-    assert abandoned["convergence"]["attempted_rounds"] == 1
+    assert abandoned["convergence"]["attempted_rounds"] == 0  # no verdict was computed, so no attempt is spent
     recovered = runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="recovered", provider="claude")
     assert recovered["status"] == "success", recovered
     assert recovered["capability"]["status"] == "verified"

@@ -138,7 +138,8 @@ def test_resolution_cannot_replace_the_finding_cause(evidence_review):
     resolution = {**_issue(), "finding_id": finding["id"], "evidence": "another cause is fixed",
                   "cause": "different underlying cause"}
     result = _round(runner, "substitute", [], [resolution])
-    assert result["status"] == "error"
+    assert result["status"] == "success"
+    assert [item["fields"] for item in result["rejected_resolutions"]] == [["cause"]]
     preserved = json.loads(evidence_review.read_text())["findings_registry"][0]
     assert preserved["cause"] == "removed zero guard"
     assert preserved["status"] != "tombstoned"
