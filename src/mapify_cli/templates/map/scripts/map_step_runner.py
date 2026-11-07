@@ -61,6 +61,7 @@ import hmac
 import json
 import math
 import os
+import posixpath
 import random
 import re
 import shlex
@@ -9036,9 +9037,8 @@ def _review_shadow_risk(
             "uncertain": unknown, "reasons": reasons, "relaxation_authorized": False}
 
 
-def _review_policy(
-    binding: dict[str, Any] | None = None, *, trusted_policy: dict[str, Any] | None = None,
-) -> str:
+def _review_policy_names(binding: dict[str, Any] | None = None) -> list[str]:
+    """Every working-tree file the policy hash reads (also the cache watch list)."""
     binding = binding or {}
     names = {"CLAUDE.md", "AGENTS.md", ".map/config.yaml", ".map/config.yml", ".map/config.json"}
     names.update(binding.get("policy_files", []))
@@ -9048,8 +9048,16 @@ def _review_policy(
                     ".map/*/spec_*.md", ".map/*/blueprint.json", ".map/*/test_contract_*.md",
                     ".map/*/task_plan_*.md", ".map/*/verification-summary.md", ".map/*/test_handoff_*.json"):
         names.update(str(path) for path in Path(".").glob(pattern) if path.is_file())
+    return sorted(names)
+
+
+def _review_policy(
+    binding: dict[str, Any] | None = None, *, trusted_policy: dict[str, Any] | None = None,
+) -> str:
+    binding = binding or {}
+    names = _review_policy_names(binding)
     policy = {"schema": "review_receipt.v1", "criteria": _VERDICT_TABLE_ID,
-              "binding": binding, "files": [_review_file_entry(name) for name in sorted(names)],
+              "binding": binding, "files": [_review_file_entry(name) for name in names],
               "trusted_policy": _review_trusted_policy() if trusted_policy is None else trusted_policy}
     return hashlib.sha256(json.dumps(policy, sort_keys=True).encode()).hexdigest()
 
@@ -9123,7 +9131,129 @@ def _review_admitted_binding(branch: str | None = None) -> dict[str, Any]:
     return binding
 
 
+REVIEW_TARGET_CACHE_SCHEMA = "review_target_cache.v1"
+# Intent: a file touched this recently may change again inside one timestamp tick, so its bytes join the signature.
+_REVIEW_RACY_NS = 10_000_000_000
+
+
+def _review_stat_token(path: str, now_ns: int) -> list[Any]:
+    """lstat identity of one watched path; recently touched regular files and links also contribute their bytes."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return ["missing"]
+    token: list[Any] = [info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino]
+    if now_ns - max(info.st_mtime_ns, info.st_ctime_ns) < _REVIEW_RACY_NS:
+        try:
+            if stat.S_ISLNK(info.st_mode):
+                data = os.fsencode(os.readlink(path))
+            elif stat.S_ISREG(info.st_mode):
+                data = Path(path).read_bytes()
+            else:
+                data = b""
+            token.append(hashlib.sha256(data).hexdigest())
+        except OSError:
+            token.append("unreadable")
+    return token
+
+
+def _review_target_signature(binding: dict[str, Any]) -> str | None:
+    """Cheap digest of every signal the target reads: refs, HEAD, index, git config and stat of watched files.
+
+    Any change to one of these changes the digest, so a cached target is only reused for an identical
+    observation. None means the target must not be cached (signals unavailable, or submodules present whose
+    checkout state this signature does not cover); the caller then computes it fresh.
+    """
+    try:
+        now_ns = time.time_ns()
+        head, *git_files = _review_git(
+            "rev-parse", "HEAD", "--git-path", "index", "--git-path", "config", "--git-path", "config.worktree",
+            "--git-path", "info/exclude", "--git-path", "info/attributes").splitlines()
+        # Intent: the trusted policy always comes from the default ref, in default and explicit-base mode alike.
+        default: list[str] = []
+        for name in _REVIEW_BASE_CANDIDATE_REFS:
+            revision = _review_git_optional(["rev-parse", "--verify", f"{name}^{{commit}}"])
+            if revision:
+                default = [name, revision, _review_git("merge-base", revision, "HEAD")]
+                break
+        bases = {default[2]} if default else set()
+        anchor: list[Any] = ["default", default]
+        if "base_ref" in binding:
+            base, tip = _review_explicit_base(binding["base_ref"])
+            anchor.append(["explicit", binding["base_ref"], tip, base])
+            bases.add(base)
+        elif not default:
+            return None
+        if re.search(rb"(?:^|\0)160000 ", _review_git_bytes("ls-files", "--stage", "-z")):
+            return None  # Intent: a submodule's own checkout and dirt are not covered by this signature.
+        names: set[str] = set()
+        for base in sorted(bases) or ["HEAD"]:
+            names.update(_review_source_paths(base or "HEAD"))
+        home = Path.home()
+        xdg = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+        outside = [home / ".gitconfig", xdg / "git" / "config", xdg / "git" / "attributes", xdg / "git" / "ignore",
+                   Path("/etc/gitconfig")]
+        outside.extend(Path(value) for value in (
+            _review_git_optional(["config", "--path", key]) for key in ("core.attributesFile", "core.excludesFile"))
+            if value)
+        watched = sorted({*names, *_review_policy_names({}), *git_files, *(str(path) for path in outside)})
+        digest = hashlib.sha256(json.dumps([REVIEW_TARGET_CACHE_SCHEMA, os.getcwd(), head, anchor]).encode())
+        for name in watched:
+            digest.update(json.dumps([name, _review_stat_token(name, now_ns)]).encode())
+        return digest.hexdigest()
+    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
+        return None
+
+
+def _review_target_cache_path(binding: dict[str, Any]) -> Path:
+    try:
+        code = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    except OSError:
+        code = ""
+    key = hashlib.sha256(json.dumps([REVIEW_TARGET_CACHE_SCHEMA, os.getcwd(), binding.get("base_ref"), code]).encode())
+    return Path(".map/.review-target-cache") / f"{key.hexdigest()}.json"
+
+
 def _review_target(binding: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Return the review target, reusing a cached one only for an identical cheap-signal observation.
+
+    Staleness detection is unchanged: the signature covers HEAD, the default/explicit base refs, the index and
+    git config files, and the stat identity (plus bytes for recently touched files) of every file the full
+    computation reads. Any difference recomputes. Unverifiable targets and failures are never cached.
+    """
+    binding = {} if binding is None else binding
+    signature = _review_target_signature(binding)
+    if signature is None:
+        return _review_target_compute(binding)
+    path = _review_target_cache_path(binding)
+    try:
+        cached = json.loads(path.read_text(encoding="utf-8"))
+        if (isinstance(cached, dict) and cached.get("schema") == REVIEW_TARGET_CACHE_SCHEMA
+                and cached.get("signature") == signature and isinstance(cached.get("target"), dict)):
+            return cached["target"]
+    except (OSError, ValueError):
+        pass
+    target: dict[str, Any] = {}
+    # Intent: git may refresh the index while computing; retry once so such a self-inflicted change is not cached stale.
+    for _ in range(2):
+        target = _review_target_compute(binding)
+        after = _review_target_signature(binding)
+        if after is not None and after == signature:
+            if "head" in target:
+                try:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    atomic_write_text(path, json.dumps({"schema": REVIEW_TARGET_CACHE_SCHEMA,
+                                                        "signature": signature, "target": target}))
+                except (OSError, TypeError, ValueError):
+                    pass  # Intent: the cache is an optimization; a failed write must never fail a review.
+            break
+        if after is None:
+            break
+        signature = after
+    return target
+
+
+def _review_target_compute(binding: dict[str, Any] | None = None) -> dict[str, Any]:
     """Bind bytes, modes, index, local inputs and merge state without decoding Git paths."""
     # Reuse only observations from this calculation; every caller starts fresh.
     inputs: _ReviewTargetInputs = {"base": None, "names": [], "changed": set()}
@@ -11137,7 +11267,8 @@ def _review_security_gate(row: dict[str, Any], directory: Path) -> dict[str, Any
                 or not isinstance(receipt.get("skipped_files"), list)
                 or any(not isinstance(name, str) for name in receipt["skipped_files"])
                 or set(row.get("required_files", [])) & set(receipt["skipped_files"])
-                or receipt.get("denied_access") != []):
+                or not isinstance(receipt.get("denied_access"), list)
+                or _review_denied_split(row, receipt["denied_access"])[0]):
             reasons.append(f"{ordering}: incomplete security coverage")
         verdict_error = _adversarial_reviewer_error(output)
         if verdict_error or (output.get("all_clear") is False and output.get("findings") == []):
@@ -11152,9 +11283,68 @@ def _review_security_gate(row: dict[str, Any], directory: Path) -> dict[str, Any
             "reasons": [*reasons, *finding_reasons], "collection_reasons": reasons}
 
 
+_REVIEW_DISTINCT_RESOURCE = re.compile(r"\bsource_(?:\d+|pack)\b")
+_REVIEW_COMMON_RESOURCE = re.compile(
+    r"(?:resource(?:_id)?[\s:=]+)?(?:manifest|prompt|diff|inventory|artifacts)")
+_REVIEW_VALUE_PREFIXES = ("repo:", "base:", "current:", "artifact:", "risk:", "check:")
+
+
+def _review_denied_path(text: str) -> str:
+    """Casefolded relative path form: backslashes to slashes, ``//`` and ``/./`` collapsed, no leading ``./``."""
+    value = posixpath.normpath(text.strip().replace("\\", "/").casefold())
+    return "" if value == "." else value
+
+
+def _review_denied_split(row: dict[str, Any], denied: list[str]) -> tuple[list[str], list[str]]:
+    """Split denied_access into (required-scope hits, informational rest).
+
+    Intent: only a refusal that touches required scope can make the evidence incomplete; a denied optional
+    rubric or dependency is reported but never blocks. Matching errs toward blocking for paths (exact, mentioned
+    in free text, covering directory or glob) but resource ids count only as whole tokens: ``source_NNNNNN``,
+    ``source_pack``, ``*required`` anywhere, and manifest/prompt/diff/inventory/artifacts only when the entry is
+    that word (optionally ``resource <word>`` and a trailing parenthetical). A ``repo:``/``base:``/``current:``
+    entry is judged by its path alone, ``artifact:``/``risk:`` entries are optional resources, and ``check:<id>``
+    blocks only for a required check id.
+    """
+    required = [_review_denied_path(name) for name in row.get("required_files", []) if isinstance(name, str) and name]
+    checks = [f"check:{name}".casefold() for name in row.get("binding", {}).get("required_checks", [])
+              if isinstance(name, str) and name]
+    hits: list[str] = []
+    rest: list[str] = []
+    for item in denied:
+        folded = item.strip().replace("\\", "/").casefold()
+        prefix = next((value for value in _REVIEW_VALUE_PREFIXES if folded.startswith(value)), "")
+        blocked = False
+        if prefix == "check:":
+            blocked = any(check in folded for check in checks)
+        elif prefix in {"artifact:", "risk:"}:
+            blocked = False
+        else:
+            subject = folded.removeprefix(prefix)
+            if not prefix:
+                bare = re.sub(r"\s*\(.*\)\s*$", "", folded).strip()
+                blocked = ("*required" in folded or bool(_REVIEW_DISTINCT_RESOURCE.search(folded))
+                           or bool(_REVIEW_COMMON_RESOURCE.fullmatch(bare)))
+            if not blocked:
+                texts = {_review_denied_path(subject), *(_review_denied_path(token) for token in subject.split())}
+                texts.discard("")
+                whole = _review_denied_path(subject)
+                if not whole and subject.strip() and required:
+                    blocked = True  # Intent: a denied repository root covers every required path.
+                for path in ([] if blocked else required):
+                    if (path in whole or any(
+                            path == text or fnmatch.fnmatchcase(path, text)
+                            or path.startswith(text.rstrip("/") + "/") for text in texts)):
+                        blocked = True
+                        break
+        (hits if blocked else rest).append(item)
+    return hits, rest
+
+
 def _review_completeness(row: dict[str, Any], directory: Path) -> dict[str, Any]:
     """Check evidence collection independently of whether collected findings block approval."""
     reasons: list[str] = []
+    informational: list[str] = []
     blocked = bool(row.get("target", {}).get("conflicts"))
     if blocked:
         reasons.append("Unresolved Git conflicts")
@@ -11198,7 +11388,9 @@ def _review_completeness(row: dict[str, Any], directory: Path) -> dict[str, Any]
                 if _review_coverage_receipt_errors(receipt):
                     reasons.append(f"{ordering}:{name}: missing or invalid reviewer coverage receipt")
                     continue
-                if receipt["denied_access"]:
+                required_denied, optional_denied = _review_denied_split(row, receipt["denied_access"])
+                informational.extend(f"{ordering}:{name}: {item}" for item in optional_denied)
+                if required_denied:
                     blocked = True
                     reasons.append(f"{ordering}:{name}: required access denied")
                 if (set(row.get("required_files", [])) - set(receipt["covered_files"])
@@ -11215,6 +11407,8 @@ def _review_completeness(row: dict[str, Any], directory: Path) -> dict[str, Any]
     result = {"status": "BLOCKED" if blocked else ("INCOMPLETE" if reasons else "COMPLETE"), "reasons": reasons}
     if row.get("coverage_skips"):
         result["skipped_scope"] = row["coverage_skips"]
+    if informational:
+        result["informational_denied_access"] = informational
     return result
 
 
@@ -13968,12 +14162,12 @@ def _review_transport_active(branch_name: str) -> bool:
 _REVIEW_DIFF_TRAILER = re.compile(r"\n\n(?:=== |Review scope:|Unresolved findings:|Prioritize the delta)")
 
 
-def _review_rewrite_diff(diff: str, replacement: Callable[[str, str, int], str | None]) -> str:
+def _review_rewrite_diff(diff: str, replacement: Callable[[str, str, int, str], str | None]) -> str:
     """Replace whole per-file diff parts; labels and scope trailers after a part are preserved."""
     out = []
     for part in re.split(r"(?m)^(?=diff --git )", diff):
         header_paths = _review_diff_header_paths(part.split("\n", 1)[0] + "\n")
-        note = replacement(header_paths[0], header_paths[1], len(part.encode("utf-8"))) if header_paths else None
+        note = replacement(header_paths[0], header_paths[1], len(part.encode("utf-8")), part) if header_paths else None
         if note is None:
             out.append(part)
             continue
@@ -13988,9 +14182,38 @@ def _review_stub_generated_hunks(diff: str, skips: list[dict[str, Any]]) -> str:
     paths = {item["path"] for item in skips if isinstance(item, dict) and isinstance(item.get("path"), str)}
     if not paths:
         return diff
-    return _review_rewrite_diff(diff, lambda old, new, size: (
+    return _review_rewrite_diff(diff, lambda old, new, size, _part: (
         f"[generated file omitted by review coverage policy: {size} diff bytes]"
         if old in paths or new in paths else None))
+
+
+def _review_stub_added_hunks(diff: str, stubs: dict[str, str]) -> str:
+    """Replace each added regular file's hunks by a stub naming the source resource that holds its content.
+
+    The extended header lines (new file mode, index) stay, so an added executable remains visible; symlinks
+    and gitlinks are never stubbed because sources carry no mode.
+    """
+    if not stubs:
+        return diff
+
+    def stub(old: str, new: str, size: int, part: str) -> str | None:
+        if new not in stubs or old != new:
+            return None
+        trailer = _REVIEW_DIFF_TRAILER.search(part, len(part.split("\n", 1)[0]))
+        body = part[:trailer.start()] if trailer else part
+        extended: list[str] = []
+        for line in body.split("\n")[1:]:
+            if line.startswith(("--- ", "+++ ", "@@", "Binary files", "GIT binary patch")):
+                break
+            extended.append(line)
+        modes = [line.split()[-1] for line in extended if line.startswith("new file mode ")]
+        if modes != ["100644"] and modes != ["100755"]:
+            return None
+        note = (f"[added file omitted from diff: {size} diff bytes; its complete content is in "
+                f"required resource {stubs[new]} (current_content)]")
+        return "\n".join([*extended, note])
+
+    return _review_rewrite_diff(diff, stub)
 
 
 def _review_shard_gate(branch_name: str, shard: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
@@ -14023,7 +14246,7 @@ def _review_diff_resource(
     if shard_row is not None:
         mine = set(shard_row["files"])
         others = set(row.get("required_files", [])) - mine
-        full = _review_rewrite_diff(full, lambda old, new, size: (
+        full = _review_rewrite_diff(full, lambda old, new, size, _part: (
             f"[file belongs to another review shard: {size} diff bytes omitted]"
             if (old in others or new in others) and old not in mine and new not in mine else None))
         scope = f"git diff for review shard {shard_row['id']}"
@@ -14742,14 +14965,31 @@ def _prepare_review_context(
     if pack_sources and delivered:
         sources["source_pack"] = {**_review_context_store(directory, json.dumps(
             {"files": delivered}, sort_keys=True, ensure_ascii=True)), "required": True}
-    diff_resource = _review_context_store(directory, diff_text) if diff_text is not None else None
+    # Intent: an added file's hunks duplicate its full source resource, so readers with sources get a stub;
+    # diff-only readers (no sources) keep the complete diff.
+    stubs = {source["path"]: ("source_pack" if pack_sources else f"source_{index:06d}")
+             for index, source in enumerate(delivered)
+             if source.get("status") == "added" and source.get("encoding") == "utf-8" and not source.get("windowed")
+             and (pack_sources or sources[f"source_{index:06d}"]["required"])}
+    diff_variants: dict[bool, dict[str, Any] | None] = {}
+
+    def diff_for(access: str) -> dict[str, Any] | None:
+        if diff_text is None:
+            return None
+        stub = access != "diff_only" and bool(stubs)
+        if stub not in diff_variants:
+            diff_variants[stub] = _review_context_store(
+                directory, _review_stub_added_hunks(diff_text, stubs) if stub else diff_text)
+        return diff_variants[stub]
+
     prepared = {}
     for reviewer, entry in prompts.items():
         original = str(entry["prompt"])
         resources = {"prompt": _review_context_store(directory, original)}
+        access = str(entry.get("context_access", "diff_plus_spec_plus_artifacts"))
+        diff_resource = diff_for(access)
         if diff_resource is not None:
             resources["diff"] = diff_resource
-        access = str(entry.get("context_access", "diff_plus_spec_plus_artifacts"))
         if access != "diff_only":
             resources.update({"inventory": inventory, **sources})
         if access == "diff_plus_spec_plus_artifacts" and bundle.get("context_artifacts"):
@@ -14786,7 +15026,9 @@ def _prepare_review_context(
             + "First request and consume the manifest. "
             + ("" if inline else "Then request every chunk of resource prompt before reviewing. ")
             + ("" if diff_resource is None else
-               "Request every chunk of resource diff: it holds the complete selected Git diff the prompt omits. ")
+               "Request every chunk of resource diff: it holds the complete selected Git diff the prompt omits"
+               + ("; an added file's hunks are replaced there by a stub naming the required source resource that "
+                  "holds its full content. " if access != "diff_only" and stubs else ". "))
             + ("" if access == "diff_only" else
                "Consume inventory for the complete admitted file list, base/head and snapshot. "
                "Consume source resources marked required (source_pack or source_NNNNNN) for changed-path base/current contents and line mappings. "
@@ -14810,6 +15052,10 @@ def _prepare_review_context(
             "\"ack\" inside your next context_request. For context_chunk, concatenate content in "
             "byte-offset order through eof, using next_offset for the next request; never skip or guess bytes. "
             "A context_request or context_ack is intermediate, not a final review or a malformed-response retry. "
+            "Order is fixed: ack, then finalization token, then final; never skip the ack and never answer the "
+            "final before the parent's finalization request. Your handback (the message that ends your turn) "
+            "contains ONLY the JSON object the protocol asks for, with no prose before or after it "
+            "(for complexity_lens, only the lens text), so the parent can pipe it verbatim. "
             "The parent durably acknowledges delivery to your bound agent session. Do not finalize until "
             "the parent sends a finalization request after all required resources were delivered. "
             + ("Then return the original plain-text lens output. " if reviewer == "complexity_lens" else
@@ -14909,6 +15155,14 @@ def serve_review_context(
         session = _review_delivery_session(row, session_id, agent_id)
         if session["context_id"] != context_id or session["reviewer"] != reviewer:
             raise ValueError("Context request does not belong to this delivery session")
+    embedded = request.get("ack")
+    acked_state: dict[str, Any] | None = None
+    if embedded is not None:
+        # Intent: the prompt lets a request carry the previous ack; apply it atomically, then serve.
+        if session is None or not isinstance(embedded, dict) or embedded.get("type") != "context_ack":
+            raise ValueError("An embedded ack must be a context_ack object sent through a bound delivery session")
+        acked_state = _review_apply_ack(directory, ledger, row, session_id, agent_id, {
+            **embedded, "session_id": embedded.get("session_id", session_id)})
     _review_admitted_binding(branch)
     if not _review_attribution_artifact(directory.name):
         raise ValueError("Review bundle changed before context delivery")
@@ -14920,6 +15174,8 @@ def serve_review_context(
     if resource_id == REVIEW_CONTEXT_BATCH_RESOURCE:
         if delivery != "file" or session is None:
             raise ValueError("Batch context delivery requires file delivery through a bound session")
+        if acked_state is not None and acked_state["status"] == "context_ready":
+            return acked_state  # Intent: the embedded ack completed delivery; nothing is left to serve.
         return _review_serve_context_batch(directory, ledger, row, session, session_id, context_id)
     lazy_frozen = False
     metadata = registered if resource_id == "manifest" else manifest["resources"].get(resource_id)
@@ -14973,7 +15229,9 @@ def serve_review_context(
                         or key["next_offset"] > pending["next_offset"]):
             raise ValueError("A pending chunk must be acknowledged or retried at the same offset without enlargement")
         if end > prefix:
-            session.pop("finalization_token", None)
+            # Intent: serving an optional resource must not burn a token already issued for the required set.
+            if resource_id in session["required"]:
+                session.pop("finalization_token", None)
             session["pending"] = key
         result["session_id"] = session_id
     if len(json.dumps(result, ensure_ascii=True).encode("utf-8")) > REVIEW_PROMPT_MAX_BYTES:
@@ -15073,7 +15331,9 @@ def _review_publish_context_file(
     _require_review_delivery_current(row, directory.name)
     session["files"][resource_id] = record
     if not done:
-        session.pop("finalization_token", None)
+        # Intent: only a required (or batch) serve resets the token; optional serves keep the issued one valid.
+        if resource_id == REVIEW_CONTEXT_BATCH_RESOURCE or resource_id in session["required"]:
+            session.pop("finalization_token", None)
         session["pending"] = {key: result[key] for key in (
             "type", "context_id", "resource_id", "sha256", "bytes", "resource_sha256", "resource_bytes",
             *(("resources",) if resources is not None else ()))}
@@ -15258,7 +15518,8 @@ def _review_delivery_load(branch: str | None, round_id: str) -> tuple[Path, dict
 
 
 def _require_review_delivery_current(row: dict[str, Any], branch: str) -> None:
-    """Fence publication with fresh snapshot, policy and bundle bytes, never cached state."""
+    """Fence publication with a snapshot, policy and bundle check; the snapshot comes from the signature-guarded
+    cache (any input change recomputes), the bundle is re-read."""
     if not _review_binding_current(row) or not _review_attribution_artifact(branch):
         raise ValueError("Review snapshot, policy or bundle changed during context delivery")
 
@@ -15320,8 +15581,14 @@ def ack_review_context(
     directory, ledger, row = _review_delivery_load(branch, round_id)
     if not agent_id:
         raise ValueError("Acknowledgment requires the bound native agent ID")
+    return _review_apply_ack(directory, ledger, row, session_id, agent_id, json.loads(payload))
+
+
+def _review_apply_ack(
+    directory: Path, ledger: dict[str, Any], row: dict[str, Any], session_id: str, agent_id: str, data: Any,
+) -> dict[str, Any]:
+    """Apply one acknowledgment inside an already-held ledger transaction (standalone or embedded in a request)."""
     session = _review_delivery_session(row, session_id, agent_id)
-    data = json.loads(payload)
     proof = _review_context_ack_proof(data)
     if proof is not None:
         return _review_ack_context_file(directory, ledger, row, session, session_id, proof)
@@ -15357,6 +15624,37 @@ def ack_review_context(
     return _review_delivery_state(session_id, session)
 
 
+def _review_delivery_guidance(row: dict[str, Any], reviewer: str, ordering: str, shard: str) -> str:
+    """Tell the parent exactly what to send the reviewer next, from the durable session state."""
+    key = _review_session_key(ordering or "default", reviewer, shard)
+    session_id = row.get("context_active", {}).get(key)
+    session = row.get("context_sessions", {}).get(session_id) if isinstance(session_id, str) else None
+    if not isinstance(session, dict):
+        return (" Next step: no delivery session is bound for this reviewer; run bind_review_context after "
+                "dispatching it, then deliver the required context.")
+    state = _review_delivery_state(session_id, session)
+    pending = session.get("pending")
+    if isinstance(pending, dict):
+        if pending.get("type") == "context_file":
+            ack = {"type": "context_ack", "session_id": session_id, "context_id": session["context_id"],
+                   "resource_id": pending["resource_id"], "sha256": pending["sha256"],
+                   "nonce": "<every proof fragment of the served file, concatenated in file order>"}
+            return (" Next step: the reviewer has not acknowledged the served context file. Ask it to Read that file "
+                    "through the last line and reply with ONLY this JSON (nonce filled in), then pipe the reply to "
+                    f"ack_review_context: {json.dumps(ack)}")
+        return (f" Next step: acknowledge the pending chunk of {pending.get('resource_id')} "
+                "(ack_review_context with the context_chunk JSON you served), then continue delivery.")
+    if state["status"] == "context_pending":
+        request = {"type": "context_request", "context_id": session["context_id"],
+                   "resource_id": state["remaining"][0]["resource_id"], "offset": state["remaining"][0]["offset"]}
+        return (" Next step: required context is not delivered yet. Serve it with serve_review_context for "
+                f"this request, then acknowledge it: {json.dumps(request)}")
+    receipt = {"session_id": session_id, "finalization_token": state["finalization_token"]}
+    return (" Next step: delivery is complete. Send the reviewer a finalization request and require its final "
+            "reply to be ONLY the JSON envelope (no prose) containing "
+            f"\"context_receipt\": {json.dumps(receipt)}")
+
+
 def _review_delivery_problem(
     row: dict[str, Any], reviewer: str, output: dict[str, Any], ordering: str, shard: str = "",
 ) -> str:
@@ -15379,19 +15677,25 @@ def _review_delivery_problem(
             if problem:
                 return f"shard {sid}: {problem}"
         return ""
+    def refuse(message: str) -> str:
+        try:
+            return message + _review_delivery_guidance(row, reviewer, ordering, shard)
+        except (ValueError, TypeError, KeyError):
+            return message
+
     proof = output.get("context_receipt")
     if not isinstance(proof, dict) or not isinstance(proof.get("session_id"), str):
-        return "Missing post-delivery context_receipt; finish context delivery before finalization"
+        return refuse("Missing post-delivery context_receipt; finish context delivery before finalization.")
     try:
         session = _review_delivery_session(row, proof["session_id"])
         state = _review_delivery_state(proof["session_id"], session)
     except (ValueError, TypeError, KeyError):
-        return "Invalid or replaced context delivery session"
+        return refuse("Invalid or replaced context delivery session.")
     if (session["reviewer"] != reviewer or session["ordering"] != (ordering or "default")
             or session.get("shard", "") != shard
             or state["status"] != "context_ready"
             or proof.get("finalization_token") != state.get("finalization_token")):
-        return "Context delivery is incomplete or final response predates its finalization request"
+        return refuse("Context delivery is incomplete or final response predates its finalization request.")
     return ""
 
 
@@ -21259,7 +21563,7 @@ def list_plans() -> dict:
         return {"status": "success", "plans": []}
     plans: list[dict[str, object]] = []
     for entry in sorted(map_root.iterdir()):
-        if not entry.is_dir() or entry.name == "scripts":
+        if not entry.is_dir() or entry.name == "scripts" or entry.name.startswith("."):
             continue
         branch_name = entry.name
         blueprint_path = entry / "blueprint.json"

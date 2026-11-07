@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -24,6 +25,8 @@ def test_admission_reads_source_inventory_once_and_rechecks_live_changes(policy_
         return original(*args)
 
     monkeypatch.setattr(runner, "_review_git_bytes", record)
+    # Intent: this pins the full target computation; the cheap-signal cache lists the inventory on its own.
+    monkeypatch.setattr(runner, "_review_target_signature", lambda _binding: None)
     admitted = runner.begin_review_run(branch="feature")
     assert admitted["status"] == "success", admitted
     inventories = [args for args in calls if args[:3] == ("ls-files", "-z", "--cached")]
@@ -157,6 +160,7 @@ def test_security_findings_consume_complete_rounds_but_missing_coverage_stays_pe
     directory = Path(".map/feature")
     previous_capture = None
     previous_receipt = None
+    ledger: dict[str, Any] = {}
     for number in range(1, 4 if gap is None else 2):
         admission = runner.begin_review_run(branch="feature", provider="claude", round_id=str(number))
         assert admission["status"] == "success", admission

@@ -2829,7 +2829,7 @@ def test_receipt_gaps_never_approve_but_keep_findings(review_git_workspace, defe
     if defect == "scope":
         receipt["covered_files"] = []
     elif defect == "denied":
-        receipt["denied_access"] = ["writer.py"]
+        receipt["denied_access"] = [admission["required_files"][0]]
     elif defect == "check":
         receipt["check_evidence"] = ["fabricated-pass"]
     envelope = {**_monitor_with_critical(), "receipt": receipt}

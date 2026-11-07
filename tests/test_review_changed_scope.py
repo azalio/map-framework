@@ -2,6 +2,7 @@
 
 import importlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -195,22 +196,21 @@ def test_unknown_base_does_not_label_changed_sources_unchanged(repo, name):
     assert source["baseline_known"] is False
 
 
-def test_unreadable_optional_file_cannot_bypass_snapshot_binding(repo, monkeypatch):
+def test_unreadable_optional_file_cannot_bypass_snapshot_binding(repo):
     del repo
     Path("first.py").write_text("value = 2\n")
     runner.begin_review_run(branch="feature", provider="codex", round_id="unreadable")
     assert runner.create_review_bundle(branch="feature")["status"] == "success"
-    original = Path.read_bytes
-
-    def unreadable(path):
-        if path.name == "dependency.py":
-            raise PermissionError("optional source is unreadable")
-        return original(path)
-
-    monkeypatch.setattr(Path, "read_bytes", unreadable)
-    result = runner.build_review_prompts(branch="feature")
-    assert result["status"] == "error", result
-    assert runner._review_target().get("reusable") is False
+    if os.geteuid() == 0:
+        pytest.skip("permission bits do not restrict root")
+    # Intent: a real permission change (not a patched reader) updates the file's ctime, which the cache signature sees.
+    Path("dependency.py").chmod(0)
+    try:
+        result = runner.build_review_prompts(branch="feature")
+        assert result["status"] == "error", result
+        assert runner._review_target().get("reusable") is False
+    finally:
+        Path("dependency.py").chmod(0o644)
 
 
 def test_blind_review_receives_untracked_source_as_diff(repo):
@@ -449,7 +449,12 @@ def test_original_prompt_is_compact_and_full_diff_is_a_required_resource(repo):
     assert len(prompt.encode()) < 40_000
     diff = read_resource(directory, entry, "diff")
     assert diff.count("# changed line") == 4000
-    assert "UNTRACKED_DIFF_MARKER" in diff
+    # The added file's hunks are a stub; its content ships once, in the required source resource.
+    assert "UNTRACKED_DIFF_MARKER" not in diff and "added file omitted from diff" in diff
+    manifest = shard_manifest(entry)
+    source_id = next(name for name, item in manifest["resources"].items() if item.get("path") == "new file.py")
+    assert source_id in diff
+    assert "UNTRACKED_DIFF_MARKER" in read_resource(directory, entry, source_id)
     assert "diff --git a/api/types.pb.go b/api/types.pb.go" in diff
     assert "// api/types.pb.go" not in diff
     assert "generated file omitted by review coverage policy" in diff
@@ -686,7 +691,7 @@ def test_shard_manifest_is_scoped_to_its_own_files_and_diff(sharded):
         assert inventory["snapshot"]["required_files"] == shard["files"]
         assert inventory["snapshot"]["shard"]["id"] == shard["id"]
         diff = runner._review_context_read(directory, manifest["resources"]["diff"]).decode()
-        assert diff.count("+value_0 = 0") == len([name for name in shard["files"] if name != "first.py"])
+        assert diff.count("added file omitted from diff") == len([name for name in shard["files"] if name != "first.py"])
         assert diff.count("+value = 2") == int("first.py" in shard["files"])
         assert "belongs to another review shard" in diff
         blind = shard_manifest(built["prompts"]["blind"])
@@ -737,11 +742,11 @@ def test_shard_sessions_are_independent_and_use_shard_scoped_keys(sharded):
 def test_diff_rewrite_preserves_labels_and_scope_trailers():
     diff = ("diff --git a/a.py b/a.py\n+one\n\n=== untracked source additions ===\n"
             "diff --git a/b.py b/b.py\n+two\n\nReview scope: {\"kind\": \"full\"}")
-    rewritten = runner._review_rewrite_diff(diff, lambda old, _new, _size: "[gone]" if old == "b.py" else None)
+    rewritten = runner._review_rewrite_diff(diff, lambda old, _new, _size, _part: "[gone]" if old == "b.py" else None)
     assert "+one" in rewritten and "+two" not in rewritten
     assert "=== untracked source additions ===" in rewritten
     assert rewritten.endswith('Review scope: {"kind": "full"}')
-    rewritten = runner._review_rewrite_diff(diff, lambda old, _new, _size: "[gone]" if old == "a.py" else None)
+    rewritten = runner._review_rewrite_diff(diff, lambda old, _new, _size, _part: "[gone]" if old == "a.py" else None)
     assert "=== untracked source additions ===" in rewritten and "+two" in rewritten
 
 
@@ -1297,7 +1302,7 @@ def test_non_ascii_and_quoted_generated_paths_are_stubbed_and_sharded_correctly(
         assert diff.count("generated file omitted by review coverage policy") == len(generated)
         # Another shard's file is cut by its (non-ASCII-safe) header, so no body leaks into this shard.
         mine = set(next(item["files"] for item in current_row()["shards"] if item["id"] == shard))
-        assert diff.count("+value_0 = 0") == len([name for name in mine if name.startswith("pkg_")])
+        assert diff.count("added file omitted from diff") == len([name for name in mine if name.startswith("pkg_")])
 
 
 @pytest.mark.parametrize("pattern,matches,misses", [
