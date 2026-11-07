@@ -52,7 +52,7 @@ def seed_carried(count: int = FINDING_COUNT, files: list[str] | None = None) -> 
 def carried_shards(repo, monkeypatch):
     """A sharded adversarial round admitted on top of 132 carried findings."""
     del repo
-    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", shard_budget(260_000))
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", shard_budget(300_000))
     write_changes()
     write_many(6)
     rows = seed_carried()
@@ -145,7 +145,7 @@ def test_vc4_the_originating_reviewer_sees_and_can_resolve_its_findings(carried_
         section = prompt.split("<carried_findings_for_this_reviewer>")[1].split("</carried_findings_for_this_reviewer>")[0]
         assert all(f'"{finding["id"]}"' in section for finding in mine), shard["id"]
         assert "finding:<id>" in section and "resolved_findings" in section
-        assert len(section) < 60_000
+        assert len(section) < 120_000
         # Resolution still goes through the structured resolved_findings object (#659).
         assert "structured object in resolved_findings" in section
 
@@ -324,3 +324,67 @@ def test_vc6_a_blind_co_reporter_cannot_fetch_evidence_authored_by_others(carrie
         fetch_review_resource(runner, built["prompts"]["blind"], "blind", "finding:RVF-900", branch="feature")
     text = fetch_review_resource(runner, built["prompts"]["acceptance"], "acceptance", "finding:RVF-900", branch="feature")
     assert "SPEC-ONLY-EVIDENCE" in text
+
+
+def _rebuild(entry, **runner_fields):
+    """The re-report a reviewer can build from the section alone, plus the fields the runner assigns on ingest."""
+    report = {**runner_fields, "category": entry["category"], "claim": joined(entry["claim"])}
+    for field in ("bug_class", "cause", "failure_scenario"):
+        if field in entry:
+            report[field] = joined(entry[field])
+    report["evidence"] = [
+        {"source": "finding_location",
+         "quote": json.dumps({key: joined(value) for key, value in details.items()}, sort_keys=True)}
+        for details in entry.get("finding_location", [])]
+    return report
+
+
+@pytest.mark.parametrize("complete", [True, False])
+@pytest.mark.parametrize("row", [
+    {"id": "RVF-600", "source_agent": "monitor", "originating_reviewer": "monitor", "category": "correctness",
+     "claim": "Monitor claim", "affected_files": ["svc/a.py"], "status": "active",
+     "evidence": [{"source": "finding_location", "quote": json.dumps({
+         "file": "svc/a.py", "line": 7, "location": "svc/a.py:7", "failure_scenario": "boom"}, sort_keys=True)}]},
+    {"id": "RVF-601", "source_agent": "monitor", "originating_reviewer": "monitor", "category": "correctness",
+     "claim": "Monitor claim", "affected_files": ["svc/b.py"], "status": "active",
+     "evidence": [{"source": "finding_location", "quote": json.dumps({"path": "svc/b.py", "line_range": "3-9"})}]},
+    {"id": "RVF-602", "source_agent": "adversarial", "originating_reviewer": "blind", "reported_by": ["blind"],
+     "category": "correctness", "claim": "Adversarial claim", "affected_files": ["svc/c.py"], "status": "active",
+     "evidence": [{"source": "finding_location", "quote": json.dumps({
+         "file_path": "svc/c.py", "symbol": "Worker.run", "failure_mode": "drops the batch"}, sort_keys=True)}]}])
+def test_vc5_identity_fields_are_repeated_for_monitor_and_adversarial_rows(row, complete):
+    row = dict(row)
+    if complete:
+        row.update(bug_class="lost-write", cause="flush ignores the marker", failure_scenario="two flushes race")
+    reviewer = row["originating_reviewer"]
+    prompt = runner._review_resolution_request("base", {"unresolved_findings": [row]}, reviewer)
+    (entry,) = parse_entries(prompt.split("<carried_findings_for_this_reviewer>")[1])
+    assert entry["finding_location"] and not any("line" in details for details in entry["finding_location"])
+    runner_fields = {"source_agent": row["source_agent"], "originating_reviewer": row["originating_reviewer"]}
+    report = _rebuild(entry, **runner_fields)
+    report["evidence"][0]["quote"] = json.dumps(
+        {**json.loads(report["evidence"][0]["quote"]), "line": 99}, sort_keys=True)
+    assert runner._review_finding_key(report) == runner._review_finding_key(row)
+
+
+def test_vc3_an_oversized_number_moves_to_a_text_block():
+    raw = ('{"n": ' + "9" * 3000 + "}").encode()
+    view = runner._review_context_view("x", raw, "0" * 64, part_bytes=runner._review_part_bytes(len(raw)))
+    assert max_line(view) <= SAFE_LINE_CHARS and "9" * 100 in view
+    plain = runner._review_context_view("x", raw, "0" * 64)
+    assert max_line(plain) <= SAFE_LINE_CHARS
+    listed = json.dumps([10**400, {"k": 1.5}]).encode()
+    assert max_line(runner._review_context_view("x", listed, "0" * 64)) <= SAFE_LINE_CHARS
+
+
+@pytest.mark.parametrize("shape", ["diff", "json"])
+def test_vc8_the_estimate_covers_the_published_view_of_a_one_megabyte_resource(shape):
+    if shape == "diff":
+        raw = "".join(f"+value_{index} = {index}\n" for index in range(60_000)).encode()
+    else:
+        raw = json.dumps({"current_content": "".join(f"line {index}\n" for index in range(110_000))}).encode()
+    assert len(raw) > 900_000
+    view = runner._review_context_view("x", raw, "0" * 64, part_bytes=runner._review_part_bytes(len(raw)))
+    published = len(view.encode())
+    assert shape == "json" or published > len(raw), "the diff view must add headers for this test to mean anything"
+    assert len(raw) + runner._review_view_overhead(len(raw)) >= published, (len(raw), published)

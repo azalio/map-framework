@@ -9475,6 +9475,21 @@ def _review_resolution_entry(row: dict[str, Any]) -> str:
     if line:
         entry["line"] = line
     entry["affected_files"] = [_review_wrap_value(name) for name in _review_finding_files(row)]
+    # Intent: the identity key hashes these location fields under their original names (never line numbers),
+    # so a re-report must repeat them exactly.
+    locations = []
+    for item in _review_evidence(row.get("evidence")):
+        if item.get("source") != "finding_location":
+            continue
+        try:
+            details = json.loads(item.get("quote", ""))
+        except (ValueError, TypeError):
+            continue
+        if isinstance(details, dict):
+            locations.append({key: _review_wrap_value(value) if isinstance(value, str) else value
+                              for key, value in details.items() if key not in {"line", "line_range"}})
+    if locations:
+        entry["finding_location"] = locations
     for field in ("claim", "bug_class", "cause", "failure_scenario"):
         value = row.get(field)
         if isinstance(value, str) and value:
@@ -14845,7 +14860,12 @@ def _review_context_view(resource_id: str, raw: bytes, resource_sha256: str, *, 
             pairs = [render(item, depth + 1, f"{path}[{index}]") for index, item in enumerate(node)]
             opening, closing = "[", "]"
         else:
-            return json.dumps(node, ensure_ascii=False)
+            scalar = json.dumps(node, ensure_ascii=False)
+            if len(scalar) > REVIEW_CONTEXT_VIEW_TEXT_CHARS:
+                # Intent: a huge number (or any scalar wider than a line) is printed verbatim in a TEXT block.
+                texts.append((path, scalar))
+                return json.dumps(f"<<TEXT {len(texts)}>>")
+            return scalar
         compact = opening + ", ".join(pairs) + closing
         if "\n" not in compact and len(compact) <= REVIEW_CONTEXT_VIEW_INLINE_CHARS:
             return compact
@@ -14870,10 +14890,34 @@ def _review_context_view(resource_id: str, raw: bytes, resource_sha256: str, *, 
             marker = ("" if len(pieces) == 1 else f" part={number}/{len(pieces)}") + (" cont=true" if continues else "")
             shown_path = path if len(path) <= REVIEW_CONTEXT_VIEW_PATH_CHARS else (
                 path[:REVIEW_CONTEXT_VIEW_PATH_CHARS // 2] + "..." + hashlib.sha256(path.encode("utf-8")).hexdigest()[:12])
-            lines.append(f"=== TEXT {index} {shown_path} lines={len(piece)} first_line={len(lines) + 2} "
-                         f"final_newline={str(final_newline if last else True).lower()}{marker} ===")
+            lines.append(_review_text_header(index, shown_path, len(piece), len(lines) + 2,
+                                             str(final_newline if last else True).lower(), marker))
             lines.extend(piece)
     return "\n".join(lines) + "\n"
+
+
+def _review_text_header(index: int, shown_path: str, line_count: int, first_line: int, final_newline: str, marker: str) -> str:
+    return (f"=== TEXT {index} {shown_path} lines={line_count} first_line={first_line} "
+            f"final_newline={final_newline}{marker} ===")
+
+
+# Longest TEXT path the estimate assumes (resource payload keys such as $["current_content"] are far shorter).
+REVIEW_VIEW_PATH_ESTIMATE = 40
+
+
+def _review_view_overhead(size: int) -> int:
+    """Upper bound of the bytes the published view adds to a ``size``-byte text resource.
+
+    The view cuts text into parts of ``_review_part_bytes(size)`` and prefixes each part with a header line;
+    the bound is the part count (one spare for a cut at a block boundary) times the widest header for that size.
+    """
+    if size <= 0:
+        return 0
+    part = _review_part_bytes(size)
+    parts = -(-size // part) + 1
+    header = _review_text_header(parts, "$" + "x" * REVIEW_VIEW_PATH_ESTIMATE, size, size, "false",
+                                 f" part={parts}/{parts} cont=true")
+    return parts * (len(header) + 1)
 
 
 def _review_split_text_parts(parts: list[str], part_bytes: int) -> list[tuple[list[str], bool]]:
@@ -25350,9 +25394,10 @@ def _review_required_bytes(
         except OSError:
             current = b""
         base_raw = base_contents[renames.get(name, name)]
-        sizes[name] = (_review_source_json_size(base_raw, current, bool(base), full_max, context)
-                       + diff_sizes.get(name, (len(current) + current.count(b"\n") + 400) if not base_raw else 0)
-                       + REVIEW_SOURCE_OVERHEAD_BYTES)
+        text_size = (_review_source_json_size(base_raw, current, bool(base), full_max, context)
+                     + diff_sizes.get(name, (len(current) + current.count(b"\n") + 400) if not base_raw else 0)
+                     + REVIEW_SOURCE_OVERHEAD_BYTES)
+        sizes[name] = text_size + _review_view_overhead(text_size)
     return sizes
 
 
@@ -25480,6 +25525,7 @@ def _review_fixed_overhead(
             parts["inventory"] = inventory
         if access == "diff_plus_spec_plus_artifacts":
             parts["task_artifacts"] = len(frozen.encode("utf-8"))
+        parts["published_view"] = _review_view_overhead(sum(parts.values()))
         size = sum(parts.values())
         if size > worst:
             worst, worst_parts = size, {"worst_role": role, **parts}
