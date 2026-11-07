@@ -9346,6 +9346,12 @@ REVIEW_CARRIED_FILES_SHOWN = 3
 REVIEW_CARRIED_PATH_CHARS = 160
 REVIEW_CARRIED_LINE_BUDGET = 1800
 REVIEW_CARRIED_HEADER = "Carried findings (compact"
+REVIEW_SCOPE_REASON_CHARS = 400
+REVIEW_INCREMENTAL_NOTE = (
+    "Prioritize the delta, affected dependencies and unresolved findings. "
+    "Receipt coverage must still satisfy the admitted required_files scope; incremental prioritization "
+    "does not exempt remaining required paths. Report unread paths as skipped; "
+    "never claim coverage from prioritization alone.\n")
 
 
 def _review_line_value(value: Any) -> str:
@@ -9377,29 +9383,103 @@ def _review_finding_files(row: dict[str, Any]) -> list[str]:
     return [name for name in files if isinstance(name, str) and name] if isinstance(files, list) else []
 
 
+def _review_escaped_len(text: str) -> int:
+    return len(json.dumps(text, ensure_ascii=True)) - 2
+
+
+def _review_clip_escaped(text: str, limit: int) -> tuple[str, bool]:
+    """Longest prefix whose JSON-escaped (ASCII) size fits ``limit``, and whether anything was cut."""
+    if _review_escaped_len(text) <= limit:
+        return text, False
+    low, high = 0, len(text)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if _review_escaped_len(text[:middle]) <= limit:
+            low = middle
+        else:
+            high = middle - 1
+    return text[:low], True
+
+
 def _review_compact_finding(row: dict[str, Any], *, id_key: str = "id") -> str:
-    """One bounded JSON line for a carried finding: id, severity, file:line, short claim and status."""
+    """One bounded JSON line for a carried finding: id, severity, file:line, short claim and status.
+
+    This is the listing for reviewers that did not originate the finding. Anything shortened is marked
+    (``shortened`` names the fields); the originating reviewer's section carries the untruncated values.
+    """
     files = _review_finding_files(row)
-    line = _review_finding_line(row)
-    first = files[0][:REVIEW_CARRIED_PATH_CHARS] if files else ""
+    shortened: list[str] = []
+
+    def clip(label: str, text: str, limit: int) -> str:
+        clipped, cut = _review_clip_escaped(text, limit)
+        if cut:
+            shortened.append(label)
+        return clipped
+
+    first = clip("file", files[0], REVIEW_CARRIED_PATH_CHARS) if files else ""
+    line = clip("line", _review_finding_line(row), 40)
     entry: dict[str, Any] = {
-        id_key: str(row["id"])[:64], "severity": str(row.get("severity", ""))[:32],
+        id_key: clip("id", str(row["id"]), 64), "severity": clip("severity", str(row.get("severity", "")), 32),
         "file": f"{first}:{line}" if first and line else first,
-        "claim": " ".join(str(row.get("claim", "")).split())[:REVIEW_CARRIED_CLAIM_CHARS],
-        "status": str(row.get("status", ""))[:32]}
+        "claim": clip("claim", " ".join(str(row.get("claim", "")).split())[:REVIEW_CARRIED_CLAIM_CHARS], 600),
+        "status": clip("status", str(row.get("status", "")), 32)}
     if len(files) > 1:
-        entry["more_files"] = [name[:REVIEW_CARRIED_PATH_CHARS] for name in files[1:REVIEW_CARRIED_FILES_SHOWN]]
+        entry["more_files"] = [clip("more_files", name, REVIEW_CARRIED_PATH_CHARS)
+                               for name in files[1:REVIEW_CARRIED_FILES_SHOWN]]
         if len(files) > REVIEW_CARRIED_FILES_SHOWN:
             entry["files_total"] = len(files)
+    if len(str(row.get("claim", "")).strip()) > REVIEW_CARRIED_CLAIM_CHARS and "claim" not in shortened:
+        shortened.append("claim")
+    if shortened:
+        entry["shortened"] = sorted(set(shortened))
     text = json.dumps(entry, ensure_ascii=True)
     # Intent: escaping can inflate non-ASCII text; shrink the optional parts until the line is safe to Read.
-    while len(text) > REVIEW_CARRIED_LINE_BUDGET and (entry.get("more_files") or len(entry["claim"]) > 20):
+    while len(text) > REVIEW_CARRIED_LINE_BUDGET:
         if entry.get("more_files"):
             entry.pop("more_files")
-        else:
+            entry["shortened"] = sorted({*entry.get("shortened", []), "more_files"})
+        elif len(entry["claim"]) > 20:
             entry["claim"] = entry["claim"][:len(entry["claim"]) // 2]
+            entry["shortened"] = sorted({*entry.get("shortened", []), "claim"})
+        elif len(entry["file"]) > 40:
+            entry["file"] = _review_clip_escaped(entry["file"], 40)[0]
+            entry["shortened"] = sorted({*entry.get("shortened", []), "file"})
+        else:
+            entry = {id_key: _review_clip_escaped(str(row["id"]), 40)[0], "shortened": ["all"]}
         text = json.dumps(entry, ensure_ascii=True)
     return text
+
+
+# One wrapped chunk of a long value stays well below the line cap even after JSON escaping.
+REVIEW_RESOLUTION_CHUNK_CHARS = 1200
+
+
+def _review_wrap_value(value: str) -> Any:
+    """A string that fits one line stays a string; a longer one becomes ``{"parts": [...]}`` (join, no separator)."""
+    if _review_escaped_len(value) <= REVIEW_RESOLUTION_CHUNK_CHARS:
+        return value
+    parts, rest = [], value
+    while rest:
+        chunk, _ = _review_clip_escaped(rest, REVIEW_RESOLUTION_CHUNK_CHARS)
+        chunk = chunk or rest[:1]
+        parts.append(chunk)
+        rest = rest[len(chunk):]
+    return {"parts": parts}
+
+
+def _review_resolution_entry(row: dict[str, Any]) -> str:
+    """Everything the originating reviewer needs to resolve or re-report a finding, untruncated and line-wrapped."""
+    entry: dict[str, Any] = {"finding_id": row["id"], "severity": row.get("severity", ""), "status": row.get("status", ""),
+                             "category": row.get("category", "")}
+    line = _review_finding_line(row)
+    if line:
+        entry["line"] = line
+    entry["affected_files"] = [_review_wrap_value(name) for name in _review_finding_files(row)]
+    for field in ("claim", "bug_class", "cause", "failure_scenario"):
+        value = row.get(field)
+        if isinstance(value, str) and value:
+            entry[field] = _review_wrap_value(value)
+    return json.dumps(entry, indent=1, ensure_ascii=True)
 
 
 def _review_carried_relevant(
@@ -9433,6 +9513,8 @@ def _review_carried_block(rows: list[dict[str, Any]], total: int) -> str:
 def _review_scope_trailer(scope: dict[str, Any], rows: list[dict[str, Any]], total: int | None = None) -> str:
     """Review-scope trailer: the small scope JSON on short lines plus the compact carried-findings block."""
     head = {key: value for key, value in scope.items() if key != "unresolved_findings"}
+    if isinstance(head.get("reason"), str):
+        head["reason"] = head["reason"][:REVIEW_SCOPE_REASON_CHARS]
     head["carried_findings"] = len(rows)
     block = _review_carried_block(rows, len(rows) if total is None else total)
     return "Review scope: " + json.dumps(head, indent=1) + ("\n" + block if block else "")
@@ -9470,11 +9552,7 @@ def _scoped_review_diff(
     if scope["kind"] == "incremental":
         try:
             diff = _review_git("diff", scope["delta_base"], scope["head"])
-            return (diff + "\n\nPrioritize the delta, affected dependencies and unresolved findings. "
-                    "Receipt coverage must still satisfy the admitted required_files scope; incremental prioritization "
-                    "does not exempt remaining required paths. Report unread paths as skipped; "
-                    "never claim coverage from prioritization alone.\n"
-                    + _review_scope_trailer(scope, unresolved, total)), scope
+            return diff + "\n\n" + REVIEW_INCREMENTAL_NOTE + _review_scope_trailer(scope, unresolved, total), scope
         except (OSError, ValueError, subprocess.TimeoutExpired):
             scope = {"kind": "full", "reason": "Delta unavailable; full review required", "unresolved_findings": unresolved}
     return _read_git_diff_for_review(branch) + "\n\n" + _review_scope_trailer(scope, unresolved, total), scope
@@ -14235,17 +14313,18 @@ def _review_resolution_request(prompt: str, scope: dict[str, Any], reviewer: str
     if not findings:
         return prompt
     return (prompt + "\n\n<carried_findings_for_this_reviewer>\n"
-            "Before this round is finalized, re-check EVERY finding_id below. "
-            "Each line is a compact summary (finding_id, severity, file:line, short claim, status); "
-            "request resource_id finding:<id> for the full ledger row (evidence, bug_class, cause, failure_scenario). "
+            "Before this round is finalized, re-check EVERY finding_id below. Each entry below is complete and "
+            "untruncated: the full affected_files, claim, bug_class, cause and failure_scenario. A value shown as "
+            "{\"parts\": [...]} is one string split into chunks: join the chunks with no separator. "
+            "(The optional resource finding:<id> adds the evidence rows.) "
             "For each proven fix or refutation, put a structured object in resolved_findings "
-            "with the same finding_id; copy bug_class/cause verbatim from the full row or omit them (a restated "
+            "with the same finding_id; copy bug_class/cause verbatim from the entry or omit them (a restated "
             "failure_scenario is allowed); describe the re-check in a nonempty evidence string; add checked evidence_refs, "
-            "reachability, baseline_attribution and bounded sibling_search. "
-            "If it remains valid or evidence is insufficient, report it as unresolved; "
-            "an all_clear verdict or prose saying fixed does not close it.\n"
-            + "\n".join(_review_compact_finding(row, id_key="finding_id")
-                        for row in sorted(findings, key=lambda item: str(item.get("id"))))
+            "reachability, baseline_attribution and bounded sibling_search whose searched_scope and occurrences "
+            "cover EVERY path in the entry's affected_files. "
+            "If it remains valid or evidence is insufficient, report it as unresolved with the same bug_class, "
+            "cause and failure_scenario; an all_clear verdict or prose saying fixed does not close it.\n"
+            + "\n".join(_review_resolution_entry(row) for row in sorted(findings, key=lambda item: str(item.get("id"))))
             + "\n</carried_findings_for_this_reviewer>")
 
 
@@ -14692,13 +14771,14 @@ def _review_lazy_finding_resource(
 
     The compact listing in the diff trailer and the resolution section carries only a summary; the row
     (evidence, validation, reachability, ...) is optional context. A diff-only reviewer receives it only for
-    a finding it originated, because the row would otherwise expose other reviewers' evidence to a blind one.
+    a finding whose evidence it authored (``originating_reviewer``): a merged adversarial row also carries
+    evidence from reviewers with spec or artifact access, which a blind co-reporter must not read.
     """
     finding_id = resource_id.removeprefix("finding:")
     registry = _read_review_ledger(directory).get("findings_registry", [])
     source = next((item for item in registry if isinstance(item, dict) and item.get("id") == finding_id), None)
     if (not finding_id or source is None or source.get("status") not in {"active", "downgraded"}
-            or (manifest.get("context_access") == "diff_only" and not _review_finding_owned_by(source, reviewer))):
+            or (manifest.get("context_access") == "diff_only" and source.get("originating_reviewer") != reviewer)):
         raise ValueError("Resource is not permitted for this reviewer")
     frozen = _review_lazy_entry(row, resource_id)
     if isinstance(frozen, dict):
@@ -14722,6 +14802,8 @@ REVIEW_CONTEXT_MAX_WRONG_ACKS = 3
 REVIEW_CONTEXT_VIEW_INLINE_CHARS = 160
 # Strings with a newline or longer than this move to a verbatim TEXT block.
 REVIEW_CONTEXT_VIEW_TEXT_CHARS = 1000
+REVIEW_CONTEXT_VIEW_KEY_CHARS = 200
+REVIEW_CONTEXT_VIEW_PATH_CHARS = 200
 
 
 def _review_context_view(resource_id: str, raw: bytes, resource_sha256: str, *, part_bytes: int = 0) -> str:
@@ -14743,13 +14825,21 @@ def _review_context_view(resource_id: str, raw: bytes, resource_sha256: str, *, 
     texts: list[tuple[str, str]] = []
 
     def render(node: Any, depth: int, path: str) -> str:
-        if isinstance(node, str) and ("\n" in node or len(node) > REVIEW_CONTEXT_VIEW_TEXT_CHARS):
+        if isinstance(node, str) and ("\n" in node or len(json.dumps(node, ensure_ascii=False)) > REVIEW_CONTEXT_VIEW_TEXT_CHARS):
             texts.append((path, node))
             return json.dumps(f"<<TEXT {len(texts)}>>")
         if isinstance(node, dict):
-            pairs = [f"{json.dumps(key, ensure_ascii=False)}: "
-                     + render(item, depth + 1, f"{path}[{json.dumps(key, ensure_ascii=False)}]")
-                     for key, item in node.items()]
+            pairs = []
+            for key, item in node.items():
+                if len(json.dumps(key, ensure_ascii=False)) > REVIEW_CONTEXT_VIEW_KEY_CHARS:
+                    # Intent: a key longer than a line moves to a verbatim TEXT block like a long string value.
+                    texts.append((f"{path}#key", key))
+                    shown = json.dumps(f"<<TEXT {len(texts)}>>")
+                    label = f"{path}[<<TEXT {len(texts)}>>]"
+                else:
+                    shown = json.dumps(key, ensure_ascii=False)
+                    label = f"{path}[{shown}]"
+                pairs.append(f"{shown}: " + render(item, depth + 1, label))
             opening, closing = "{", "}"
         elif isinstance(node, list):
             pairs = [render(item, depth + 1, f"{path}[{index}]") for index, item in enumerate(node)]
@@ -14778,7 +14868,9 @@ def _review_context_view(resource_id: str, raw: bytes, resource_sha256: str, *, 
         for number, (piece, continues) in enumerate(pieces, 1):
             last = number == len(pieces)
             marker = ("" if len(pieces) == 1 else f" part={number}/{len(pieces)}") + (" cont=true" if continues else "")
-            lines.append(f"=== TEXT {index} {path} lines={len(piece)} first_line={len(lines) + 2} "
+            shown_path = path if len(path) <= REVIEW_CONTEXT_VIEW_PATH_CHARS else (
+                path[:REVIEW_CONTEXT_VIEW_PATH_CHARS // 2] + "..." + hashlib.sha256(path.encode("utf-8")).hexdigest()[:12])
+            lines.append(f"=== TEXT {index} {shown_path} lines={len(piece)} first_line={len(lines) + 2} "
                          f"final_newline={str(final_newline if last else True).lower()}{marker} ===")
             lines.extend(piece)
     return "\n".join(lines) + "\n"
@@ -14791,19 +14883,22 @@ def _review_split_text_parts(parts: list[str], part_bytes: int) -> list[tuple[li
     opens a piece flagged ``continues`` (``cont=true``): its first line continues the previous piece's
     last line with no newline between them.
     """
-    if part_bytes <= 0:
+    # Intent: no published line is longer than the Read-safe cap, with or without part cutting.
+    width = min(part_bytes, REVIEW_CONTEXT_MAX_LINE_CHARS) if part_bytes > 0 else REVIEW_CONTEXT_MAX_LINE_CHARS
+    if part_bytes <= 0 and all(len(line) <= width for line in parts):
         return [(parts, False)]
+    limit = part_bytes if part_bytes > 0 else float("inf")
     pieces: list[tuple[list[str], bool]] = [([], False)]
     size = 0
     for line in parts:
-        chunks = [line[offset:offset + part_bytes] for offset in range(0, len(line), part_bytes)] or [line]
+        chunks = [line[offset:offset + width] for offset in range(0, len(line), width)] or [line]
         for position, chunk in enumerate(chunks):
             if position:
                 pieces.append(([], True))
                 size = 0
             pieces[-1][0].append(chunk)
             size += len(chunk.encode("utf-8")) + 1
-            if size >= part_bytes and (position == len(chunks) - 1):
+            if size >= limit and (position == len(chunks) - 1):
                 pieces.append(([], False))
                 size = 0
     if not pieces[-1][0] and len(pieces) > 1:
@@ -25322,9 +25417,12 @@ def _review_fixed_overhead(
     # Intent: measure carried findings with the functions that render them: each reviewer's own section and the
     # review-scope trailer that the diff carries.
     # Worst case for any shard: it lists every carried finding (a single-shard or unsharded round does).
-    carried_scope = {"kind": "full", "reason": "x" * 160}
-    trailer_bytes = (len(("\n\n" + _review_scope_trailer(carried_scope, list(carried_findings))).encode("utf-8"))
-                     if carried_findings else 0)
+    # Intent: the worst trailer is the incremental one: every required path in affected_files, two commit ids, a
+    # maximal reason and the prioritisation sentence, followed by the compact carried-findings block.
+    carried_scope = {"kind": "incremental", "reason": "x" * REVIEW_SCOPE_REASON_CHARS, "affected_files": list(required_paths),
+                     "delta_base": "0" * 40, "head": "0" * 40}
+    trailer_bytes = len(("\n\n" + REVIEW_INCREMENTAL_NOTE + _review_scope_trailer(
+        carried_scope, list(carried_findings or []))).encode("utf-8"))
     bundle_text = _render_bundle_markdown({
         "branch": branch_name, "generated_at": "0000-00-00T00:00:00+00:00", "artifacts": artifacts,
         "bundle_path_json": str(directory / "review-bundle.json"), **state})

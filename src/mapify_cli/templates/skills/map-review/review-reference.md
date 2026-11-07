@@ -68,12 +68,15 @@ The complete `shadow_risk` record is the optional resource `risk:shadow`.
 ## Carried Findings
 
 Findings carried from an earlier round are listed compactly (#664): one JSON line each with id, severity,
-`file:line`, a claim cut to 200 characters and status, in the diff's review-scope trailer and, for the
-originating reviewer, in `<carried_findings_for_this_reviewer>`. A shard lists only the findings whose affected
+`file:line`, a claim cut to 200 characters and status in the diff's review-scope trailer (anything shortened is
+named in a `shortened` field). The originating reviewer's `<carried_findings_for_this_reviewer>` section is the
+complete, untruncated record needed to resolve or re-report: every `affected_files` path, claim, `bug_class`,
+`cause` and `failure_scenario`; a value too long for one line is `{"parts": [...]}` (join without a separator).
+It works without a context server. A shard lists only the findings whose affected
 files it owns, plus findings with no affected file or none inside the admitted scope (every shard lists those,
 compactly). The full ledger row (evidence, validation, reachability, `bug_class`, `cause`) is the optional lazy
 resource `finding:<id>`, frozen and digest-checked like the others; a diff-only reviewer may fetch it only for
-a finding it originated. Resolve through `resolved_findings` exactly as before; copy `bug_class`/`cause` from
+a finding whose evidence it authored. Resolve through `resolved_findings` exactly as before; copy `bug_class`/`cause` from
 the full row or omit them. No published context line exceeds 2,000 characters.
 
 ## Shard Capacity

@@ -165,7 +165,8 @@ def test_vc5_admission_estimate_covers_the_exact_compact_rendering(repo, monkeyp
     overhead = runner._review_fixed_overhead(
         admitted["target"], "claude", admitted["scheduled_reviewers"], "feature", admitted["required_files"], [], {}, rows)
     assert overhead["total"] >= exact, (overhead["total"], exact)
-    assert overhead["breakdown"]["carried_findings"] < 150_000
+    # The originating reviewer's section is complete by design; it is far below the full ledger rows.
+    assert overhead["breakdown"]["carried_findings"] < len(json.dumps(rows, ensure_ascii=True)) / 2
 
 
 def test_vc6_a_plan_that_cannot_fit_fails_fast_with_a_breakdown(repo, monkeypatch):
@@ -178,3 +179,148 @@ def test_vc6_a_plan_that_cannot_fit_fails_fast_with_a_breakdown(repo, monkeypatc
     assert result["reason"] == "fixed_overhead_too_large"
     assert result["overhead_breakdown"]["carried_findings"] > 0
     assert not runner._read_review_ledger(Path(".map/feature")).get("convergence", {}).get("rounds")
+
+
+def parse_entries(section):
+    """The JSON objects of an originating-reviewer section, in order."""
+    decoder = json.JSONDecoder()
+    body = section[section.index("\n{") + 1:]
+    body = body.split("\n</carried_findings_for_this_reviewer>")[0]
+    entries, position = [], 0
+    while position < len(body):
+        if body[position].isspace():
+            position += 1
+            continue
+        value, position = decoder.raw_decode(body, position)
+        entries.append(value)
+    return entries
+
+
+def joined(value):
+    return "".join(value["parts"]) if isinstance(value, dict) else value
+
+
+LONG_PATH = "deep/" + "segment/" * 24 + "module.py"
+
+
+def five_file_row():
+    files = ["pkg_a/one.py", "pkg_a/two.py", "pkg_b/three.py", "pkg_b/four.py", LONG_PATH]
+    assert len(LONG_PATH) > 160
+    return {"id": "RVF-500", "status": "active", "severity": "important", "category": "correctness",
+            "source_agent": "role", "originating_reviewer": "maintainer", "affected_files": files,
+            "claim": "Retry loses writes when the queue is flushed twice. " * 20, "line_range": "10-12",
+            "bug_class": "lost-write", "cause": "flush ignores the pending marker " * 5,
+            "failure_scenario": "two flushes race and the second drops the first batch " * 3,
+            "evidence": [{"source": "finding_location", "quote": json.dumps({"file": files[0], "line": 10})}]}
+
+
+def test_vc7_originating_section_is_complete_untruncated_and_short_lined():
+    row = five_file_row()
+    prompt = runner._review_resolution_request("base", {"unresolved_findings": [row]}, "maintainer")
+    section = prompt.split("<carried_findings_for_this_reviewer>")[1].split("</carried_findings_for_this_reviewer>")[0]
+    (entry,) = parse_entries(section)
+    # Resolution needs every affected file inside searched_scope, so none may be cut or omitted.
+    assert [joined(name) for name in entry["affected_files"]] == row["affected_files"]
+    assert joined(entry["claim"]) == row["claim"] and len(row["claim"]) > 200
+    assert joined(entry["bug_class"]) == row["bug_class"] and joined(entry["cause"]) == row["cause"]
+    assert joined(entry["failure_scenario"]) == row["failure_scenario"]
+    assert "EVERY path" in section and "affected_files" in section
+    assert max_line(prompt) <= SAFE_LINE_CHARS
+    assert runner._review_resolution_request("base", {"unresolved_findings": [row]}, "predictor") == "base"
+
+
+def test_vc7_very_long_values_wrap_instead_of_being_cut():
+    row = five_file_row()
+    row["cause"] = "cause text " * 600
+    row["affected_files"] = ["x/" + "d" * 4000 + ".py"]
+    prompt = runner._review_resolution_request("base", {"unresolved_findings": [row]}, "maintainer")
+    section = prompt.split("<carried_findings_for_this_reviewer>")[1]
+    (entry,) = parse_entries(section)
+    assert joined(entry["cause"]) == row["cause"] and isinstance(entry["cause"], dict)
+    assert joined(entry["affected_files"][0]) == row["affected_files"][0]
+    assert max_line(prompt) <= SAFE_LINE_CHARS
+
+
+def test_vc7_the_compact_listing_marks_what_it_shortens():
+    row = five_file_row()
+    row["affected_files"] = [LONG_PATH, *row["affected_files"][:4]]
+    entry = json.loads(runner._review_compact_finding(row))
+    assert LONG_PATH not in json.dumps(entry)
+    assert "file" in entry["shortened"] and "claim" in entry["shortened"]
+    assert entry["files_total"] == 5
+    short = json.loads(runner._review_compact_finding({**row, "affected_files": ["a.py"], "claim": "short"}))
+    assert "shortened" not in short and short["file"] == "a.py:10-12"
+
+
+def test_vc7_the_incremental_trailer_uses_short_lines_and_a_bounded_reason():
+    rows = [five_file_row()]
+    scope = {"kind": "incremental", "reason": "r" * 5000, "affected_files": [f"p/{n}.py" for n in range(300)],
+             "delta_base": "0" * 40, "head": "1" * 40}
+    trailer = runner._review_scope_trailer(scope, rows)
+    assert max_line(trailer) <= SAFE_LINE_CHARS and "r" * 401 not in trailer
+
+
+@pytest.mark.parametrize("value", [
+    {"log": "\x1b[0m" * 250}, {"path": "\\" * 999}, {"k" * 5000: 1}, {"nested": {"k" * 3000: ["v" * 900] * 4}},
+    {"emoji": "\U0001F600" * 990}, {"text": "a" * 10000}])
+def test_vc3_the_published_view_never_exceeds_the_line_cap(value):
+    raw = json.dumps(value).encode()
+    with_parts = runner._review_context_view("x", raw, "0" * 64, part_bytes=runner._review_part_bytes(len(raw)))
+    plain = runner._review_context_view("x", raw, "0" * 64)
+    assert max_line(with_parts) <= SAFE_LINE_CHARS, max_line(with_parts)
+    assert max_line(plain) <= SAFE_LINE_CHARS, max_line(plain)
+
+
+def test_vc3_a_compact_line_with_wide_text_stays_within_its_budget():
+    row = {"id": "F-" + "1" * 60, "severity": "high", "affected_files": ["\U0001F600" * 300] * 5, "status": "active",
+           "claim": "\U0001F600" * 300, "line_range": "\U0001F600" * 40}
+    assert len(runner._review_compact_finding(row)) <= runner.REVIEW_CARRIED_LINE_BUDGET
+
+
+def test_vc4_the_estimate_counts_the_incremental_trailer_and_a_long_reason(repo, monkeypatch):
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", "420000")
+    write_changes("a.py", "b.py")
+    rows = seed_carried(40, files=["a.py", "b.py"])
+    admitted = runner.begin_review_run(branch="feature", provider="claude", round_id="carry", base_ref="main")
+    assert admitted["status"] == "success", {k: admitted.get(k) for k in ("reason", "overhead_breakdown")}
+    overhead = runner._review_fixed_overhead(
+        admitted["target"], "claude", admitted["scheduled_reviewers"], "feature", admitted["required_files"], [], {}, rows)
+    scope = {"kind": "incremental", "reason": "r" * 5000, "affected_files": admitted["required_files"],
+             "delta_base": "0" * 40, "head": "1" * 40}
+    exact = len(("\n\n" + runner.REVIEW_INCREMENTAL_NOTE + runner._review_scope_trailer(scope, rows)).encode())
+    assert overhead["breakdown"]["carried_findings"] >= exact
+
+
+def test_vc5_a_re_reported_finding_keeps_its_identity_from_the_inline_section():
+    row = five_file_row()
+    prompt = runner._review_resolution_request("base", {"unresolved_findings": [row]}, "maintainer")
+    (entry,) = parse_entries(prompt.split("<carried_findings_for_this_reviewer>")[1])
+    report = {"source_agent": "role", "originating_reviewer": "maintainer", "category": entry["category"],
+              "claim": joined(entry["claim"]), "bug_class": joined(entry["bug_class"]), "cause": joined(entry["cause"]),
+              "failure_scenario": joined(entry["failure_scenario"]),
+              "evidence": [{"source": "finding_location",
+                            "quote": json.dumps({"file": joined(entry["affected_files"][0]), "line": 99})}]}
+    assert runner._review_finding_key(report) == runner._review_finding_key(row)
+    drop = {"bug_class", "cause", "failure_scenario"}
+    incomplete = {key: value for key, value in row.items() if key not in drop}
+    report_incomplete = {key: value for key, value in report.items() if key not in drop}
+    assert runner._review_finding_key(report_incomplete) == runner._review_finding_key(incomplete)
+
+
+def test_vc6_a_blind_co_reporter_cannot_fetch_evidence_authored_by_others(carried_shards):
+    _, ledger_row, _rows = carried_shards
+    shard = ledger_row["shards"][0]
+    directory = Path(".map/feature")
+    ledger = runner._read_review_ledger(directory)
+    merged = {"id": "RVF-900", "status": "active", "severity": "important", "source_agent": "adversarial",
+              "reported_by": ["acceptance", "blind"], "originating_reviewer": "acceptance",
+              "claim": "merged", "affected_files": [shard["files"][0]],
+              "evidence": [{"source": "spec", "quote": "SPEC-ONLY-EVIDENCE"}]}
+    ledger["findings_registry"] = [*ledger["findings_registry"], merged]
+    runner._write_json_file(directory / "review-verdict-ledger.json", ledger)
+    built = build_shard(shard["id"])
+    with pytest.raises(AssertionError):
+        fetch_review_resource(runner, built["prompts"]["blind"], "blind", "finding:RVF-900", branch="feature")
+    text = fetch_review_resource(runner, built["prompts"]["acceptance"], "acceptance", "finding:RVF-900", branch="feature")
+    assert "SPEC-ONLY-EVIDENCE" in text
