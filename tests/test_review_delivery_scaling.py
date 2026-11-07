@@ -211,3 +211,16 @@ def test_vc14_prompts_state_the_order_and_json_only_handback(repository):
         text = (ROOT / relative).read_text(encoding="utf-8")
         assert "handback" in text and "ONLY the JSON" in text, relative
     assert serve_batch  # imported helper stays exercised by the batch tests above
+
+
+def test_vc15_added_executable_and_symlink_keep_their_mode_in_the_diff(added_repository):
+    del added_repository
+    Path("tool.sh").write_text("#!/bin/sh\necho EXEC_BODY_MARKER\n")
+    Path("tool.sh").chmod(0o755)
+    Path("link").symlink_to("dep.py")
+    subprocess.run(["git", "add", "tool.sh", "link"], check=True)
+    subprocess.run(["git", "commit", "-qm", "modes"], check=True)
+    entry = prepare()["monitor"]
+    diff = fetch_review_resource(runner, entry, "monitor", "diff", branch="feature")
+    assert "new file mode 100755" in diff and "EXEC_BODY_MARKER" not in diff
+    assert "new file mode 120000" in diff and "+dep.py" in diff  # symlinks are never stubbed

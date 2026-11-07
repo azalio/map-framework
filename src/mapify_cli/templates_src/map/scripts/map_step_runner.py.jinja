@@ -9107,7 +9107,7 @@ def _review_admitted_binding(branch: str | None = None) -> dict[str, Any]:
 
 REVIEW_TARGET_CACHE_SCHEMA = "review_target_cache.v1"
 # Intent: a file touched this recently may change again inside one timestamp tick, so its bytes join the signature.
-_REVIEW_RACY_NS = 3_000_000_000
+_REVIEW_RACY_NS = 10_000_000_000
 
 
 def _review_stat_token(path: str, now_ns: int) -> list[Any]:
@@ -9135,31 +9135,47 @@ def _review_target_signature(binding: dict[str, Any]) -> str | None:
     """Cheap digest of every signal the target reads: refs, HEAD, index, git config and stat of watched files.
 
     Any change to one of these changes the digest, so a cached target is only reused for an identical
-    observation. None means the signals could not be gathered; the caller then skips the cache entirely.
+    observation. None means the target must not be cached (signals unavailable, or submodules present whose
+    checkout state this signature does not cover); the caller then computes it fresh.
     """
     try:
         now_ns = time.time_ns()
-        head, *git_files = _review_git("rev-parse", "HEAD", "--git-path", "index", "--git-path", "config",
-                                       "--git-path", "info/exclude").splitlines()
+        head, *git_files = _review_git(
+            "rev-parse", "HEAD", "--git-path", "index", "--git-path", "config", "--git-path", "config.worktree",
+            "--git-path", "info/exclude", "--git-path", "info/attributes").splitlines()
+        # Intent: the trusted policy always comes from the default ref, in default and explicit-base mode alike.
+        default: list[str] = []
+        for name in _REVIEW_BASE_CANDIDATE_REFS:
+            revision = _review_git_optional(["rev-parse", "--verify", f"{name}^{{commit}}"])
+            if revision:
+                default = [name, revision, _review_git("merge-base", revision, "HEAD")]
+                break
+        bases = {default[2]} if default else set()
+        anchor: list[Any] = ["default", default]
         if "base_ref" in binding:
-            tip, base = _review_explicit_base(binding["base_ref"])
-            anchor = ["explicit", binding["base_ref"], tip, base]
-        else:
-            anchor = []
-            for name in _REVIEW_BASE_CANDIDATE_REFS:
-                revision = _review_git_optional(["rev-parse", "--verify", f"{name}^{{commit}}"])
-                if revision:
-                    anchor = ["default", name, revision, _review_git("merge-base", revision, "HEAD")]
-                    break
-            if not anchor:
-                return None
-            base = anchor[3]
-        watched = sorted({*_review_source_paths(base or "HEAD"), *_review_policy_names({}), *git_files})
+            base, tip = _review_explicit_base(binding["base_ref"])
+            anchor.append(["explicit", binding["base_ref"], tip, base])
+            bases.add(base)
+        elif not default:
+            return None
+        if re.search(rb"(?:^|\0)160000 ", _review_git_bytes("ls-files", "--stage", "-z")):
+            return None  # Intent: a submodule's own checkout and dirt are not covered by this signature.
+        names: set[str] = set()
+        for base in sorted(bases) or ["HEAD"]:
+            names.update(_review_source_paths(base or "HEAD"))
+        home = Path.home()
+        xdg = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+        outside = [home / ".gitconfig", xdg / "git" / "config", xdg / "git" / "attributes", xdg / "git" / "ignore",
+                   Path("/etc/gitconfig")]
+        outside.extend(Path(value) for value in (
+            _review_git_optional(["config", "--path", key]) for key in ("core.attributesFile", "core.excludesFile"))
+            if value)
+        watched = sorted({*names, *_review_policy_names({}), *git_files, *(str(path) for path in outside)})
         digest = hashlib.sha256(json.dumps([REVIEW_TARGET_CACHE_SCHEMA, os.getcwd(), head, anchor]).encode())
         for name in watched:
             digest.update(json.dumps([name, _review_stat_token(name, now_ns)]).encode())
         return digest.hexdigest()
-    except (OSError, ValueError, subprocess.TimeoutExpired):
+    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
         return None
 
 
@@ -11241,30 +11257,45 @@ def _review_security_gate(row: dict[str, Any], directory: Path) -> dict[str, Any
             "reasons": [*reasons, *finding_reasons], "collection_reasons": reasons}
 
 
-_REVIEW_RESOURCE_ID = re.compile(r"(?:manifest|prompt|diff|inventory|artifacts|source_pack|source_\d+)")
+_REVIEW_RESOURCE_WORD = re.compile(r"\b(?:manifest|prompt|diff|inventory|artifacts|source_pack|source_\d+)\b")
+
+
+def _review_denied_normalize(text: str) -> str:
+    """Casefolded, slash-normalised form of a denied entry or path (prefixes and ./ removed)."""
+    value = text.strip().replace("\\", "/").casefold()
+    for prefix in ("repo:", "base:", "current:"):
+        value = value.removeprefix(prefix)
+    while value.startswith("./"):
+        value = value[2:]
+    return value
 
 
 def _review_denied_split(row: dict[str, Any], denied: list[str]) -> tuple[list[str], list[str]]:
     """Split denied_access into (required-scope hits, informational rest).
 
-    Intent: only a refusal that touches a required file or required resource can make the evidence
-    incomplete; a denied optional rubric or dependency is reported but never blocks. Matching errs toward
-    blocking: a denial that merely mentions a required path counts as a hit.
+    Intent: only a refusal that touches required scope can make the evidence incomplete; a denied optional
+    rubric or dependency is reported but never blocks. Matching errs toward blocking: exact paths, a path
+    mentioned in free text, a directory or glob covering any required path, resource ids anywhere in the text,
+    the ``*required`` batch and required ``check:`` ids all count.
     """
-    required_files = [name for name in row.get("required_files", []) if isinstance(name, str) and name]
+    required = [_review_denied_normalize(name) for name in row.get("required_files", [])
+                if isinstance(name, str) and name]
+    checks = [f"check:{name}".casefold() for name in row.get("binding", {}).get("required_checks", [])
+              if isinstance(name, str) and name]
     hits: list[str] = []
     rest: list[str] = []
     for item in denied:
-        text = item.strip()
-        bare = text.removeprefix("./")
-        for prefix in ("repo:", "base:", "current:"):
-            bare = bare.removeprefix(prefix)
-        bare = bare.removeprefix("./")
-        if (_REVIEW_RESOURCE_ID.fullmatch(bare) or bare in required_files
-                or any(name in text for name in required_files)):
-            hits.append(item)
-        else:
-            rest.append(item)
+        text = _review_denied_normalize(item)
+        bare = text.rstrip("/")
+        blocked = ("*required" in text or bool(_REVIEW_RESOURCE_WORD.search(text))
+                   or any(check in text for check in checks))
+        if not blocked:
+            for path in required:
+                if (path == bare or path in text or fnmatch.fnmatchcase(path, text)
+                        or fnmatch.fnmatchcase(path, bare) or (bare and path.startswith(bare + "/"))):
+                    blocked = True
+                    break
+        (hits if blocked else rest).append(item)
     return hits, rest
 
 
@@ -14089,12 +14120,12 @@ def _review_transport_active(branch_name: str) -> bool:
 _REVIEW_DIFF_TRAILER = re.compile(r"\n\n(?:=== |Review scope:|Unresolved findings:|Prioritize the delta)")
 
 
-def _review_rewrite_diff(diff: str, replacement: Callable[[str, str, int], str | None]) -> str:
+def _review_rewrite_diff(diff: str, replacement: Callable[[str, str, int, str], str | None]) -> str:
     """Replace whole per-file diff parts; labels and scope trailers after a part are preserved."""
     out = []
     for part in re.split(r"(?m)^(?=diff --git )", diff):
         header_paths = _review_diff_header_paths(part.split("\n", 1)[0] + "\n")
-        note = replacement(header_paths[0], header_paths[1], len(part.encode("utf-8"))) if header_paths else None
+        note = replacement(header_paths[0], header_paths[1], len(part.encode("utf-8")), part) if header_paths else None
         if note is None:
             out.append(part)
             continue
@@ -14109,18 +14140,38 @@ def _review_stub_generated_hunks(diff: str, skips: list[dict[str, Any]]) -> str:
     paths = {item["path"] for item in skips if isinstance(item, dict) and isinstance(item.get("path"), str)}
     if not paths:
         return diff
-    return _review_rewrite_diff(diff, lambda old, new, size: (
+    return _review_rewrite_diff(diff, lambda old, new, size, _part: (
         f"[generated file omitted by review coverage policy: {size} diff bytes]"
         if old in paths or new in paths else None))
 
 
 def _review_stub_added_hunks(diff: str, stubs: dict[str, str]) -> str:
-    """Replace each added file's hunks by a stub naming the source resource that already carries its full content."""
+    """Replace each added regular file's hunks by a stub naming the source resource that holds its content.
+
+    The extended header lines (new file mode, index) stay, so an added executable remains visible; symlinks
+    and gitlinks are never stubbed because sources carry no mode.
+    """
     if not stubs:
         return diff
-    return _review_rewrite_diff(diff, lambda old, new, size: (
-        f"[added file omitted from diff: {size} diff bytes; its complete content is in required resource "
-        f"{stubs[new]} (current_content)]" if new in stubs and old == new else None))
+
+    def stub(old: str, new: str, size: int, part: str) -> str | None:
+        if new not in stubs or old != new:
+            return None
+        trailer = _REVIEW_DIFF_TRAILER.search(part, len(part.split("\n", 1)[0]))
+        body = part[:trailer.start()] if trailer else part
+        extended: list[str] = []
+        for line in body.split("\n")[1:]:
+            if line.startswith(("--- ", "+++ ", "@@", "Binary files", "GIT binary patch")):
+                break
+            extended.append(line)
+        modes = [line.split()[-1] for line in extended if line.startswith("new file mode ")]
+        if modes != ["100644"] and modes != ["100755"]:
+            return None
+        note = (f"[added file omitted from diff: {size} diff bytes; its complete content is in "
+                f"required resource {stubs[new]} (current_content)]")
+        return "\n".join([*extended, note])
+
+    return _review_rewrite_diff(diff, stub)
 
 
 def _review_shard_gate(branch_name: str, shard: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
@@ -14153,7 +14204,7 @@ def _review_diff_resource(
     if shard_row is not None:
         mine = set(shard_row["files"])
         others = set(row.get("required_files", [])) - mine
-        full = _review_rewrite_diff(full, lambda old, new, size: (
+        full = _review_rewrite_diff(full, lambda old, new, size, _part: (
             f"[file belongs to another review shard: {size} diff bytes omitted]"
             if (old in others or new in others) and old not in mine and new not in mine else None))
         scope = f"git diff for review shard {shard_row['id']}"
@@ -15425,7 +15476,8 @@ def _review_delivery_load(branch: str | None, round_id: str) -> tuple[Path, dict
 
 
 def _require_review_delivery_current(row: dict[str, Any], branch: str) -> None:
-    """Fence publication with fresh snapshot, policy and bundle bytes, never cached state."""
+    """Fence publication with a snapshot, policy and bundle check; the snapshot comes from the signature-guarded
+    cache (any input change recomputes), the bundle is re-read."""
     if not _review_binding_current(row) or not _review_attribution_artifact(branch):
         raise ValueError("Review snapshot, policy or bundle changed during context delivery")
 
@@ -20864,7 +20916,7 @@ def list_plans() -> dict:
         return {"status": "success", "plans": []}
     plans: list[dict[str, object]] = []
     for entry in sorted(map_root.iterdir()):
-        if not entry.is_dir() or entry.name == "scripts":
+        if not entry.is_dir() or entry.name == "scripts" or entry.name.startswith("."):
             continue
         branch_name = entry.name
         blueprint_path = entry / "blueprint.json"

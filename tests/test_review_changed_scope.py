@@ -742,11 +742,11 @@ def test_shard_sessions_are_independent_and_use_shard_scoped_keys(sharded):
 def test_diff_rewrite_preserves_labels_and_scope_trailers():
     diff = ("diff --git a/a.py b/a.py\n+one\n\n=== untracked source additions ===\n"
             "diff --git a/b.py b/b.py\n+two\n\nReview scope: {\"kind\": \"full\"}")
-    rewritten = runner._review_rewrite_diff(diff, lambda old, _new, _size: "[gone]" if old == "b.py" else None)
+    rewritten = runner._review_rewrite_diff(diff, lambda old, _new, _size, _part: "[gone]" if old == "b.py" else None)
     assert "+one" in rewritten and "+two" not in rewritten
     assert "=== untracked source additions ===" in rewritten
     assert rewritten.endswith('Review scope: {"kind": "full"}')
-    rewritten = runner._review_rewrite_diff(diff, lambda old, _new, _size: "[gone]" if old == "a.py" else None)
+    rewritten = runner._review_rewrite_diff(diff, lambda old, _new, _size, _part: "[gone]" if old == "a.py" else None)
     assert "=== untracked source additions ===" in rewritten and "+two" in rewritten
 
 
