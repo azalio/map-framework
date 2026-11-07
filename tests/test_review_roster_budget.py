@@ -96,6 +96,8 @@ def test_vc16_the_scenario_is_tight_enough_to_catch_a_small_reserve(repo, monkey
     monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(BUDGET))
     monkeypatch.setenv("MAP_REVIEW_MAX_SHARDS", "40")
     monkeypatch.setattr(runner, "_review_fixed_overhead", lambda *_args, **_kwargs: {"total": 0, "breakdown": {}})
+    # Added-file hunks are stubbed now; disabling that restores the duplicated bytes this scenario is sized against.
+    monkeypatch.setattr(runner, "_review_stub_added_hunks", lambda diff, _stubs: diff)
     seed_near_full_shards()
     admitted = runner.begin_review_run(branch="feature", provider="claude", round_id="roster", base_ref="main")
     assert admitted["status"] == "success", admitted

@@ -145,14 +145,13 @@ def test_next_request_may_carry_the_previous_files_nonce(repository):
     advanced_state = runner.review_context_status(state["session_id"], "delivery-round", branch="feature")
     following = {"type": "context_request", "context_id": state["context_id"], "resource_id": "inventory",
                  "offset": 0, "ack": file_ack(state, served, read_nonce(served))}
-    assert runner.serve_review_context("monitor", json.dumps(following), "delivery-round", branch="feature",
-                                         session_id=state["session_id"], agent_id=state["agent_id"],
-                                         delivery="file")["status"] == "error"
-    acked = acknowledge(state, following)
-    assert acked["remaining_count"] == advanced_state["remaining_count"] - 1
+    # The embedded ack is applied atomically, then the requested resource is served.
     nxt = runner.serve_review_context("monitor", json.dumps(following), "delivery-round", branch="feature",
                                         session_id=state["session_id"], agent_id=state["agent_id"], delivery="file")
-    assert nxt["type"] == "context_file" and nxt["resource_id"] == "inventory"
+    assert nxt["type"] == "context_file" and nxt["resource_id"] == "inventory", nxt
+    acked = runner.review_context_status(state["session_id"], "delivery-round", branch="feature")
+    assert acked["remaining_count"] == advanced_state["remaining_count"] - 1
+    assert acknowledge(state, following)["status"] == "context_pending"  # replaying the accepted ack is idempotent
 
 
 def test_pending_file_blocks_other_resources_and_chunk_acks(repository):

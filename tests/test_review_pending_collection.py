@@ -36,7 +36,7 @@ def test_pending_third_round_resumes_across_restart(review_git_workspace, flags,
         incomplete["covered_files"] = []
         incomplete["skipped_files"] = ["writer.py"]
     elif gap == "denied":
-        incomplete["denied_access"] = ["writer.py"]
+        incomplete["denied_access"] = [admission["required_files"][0]]
     elif gap == "check":
         incomplete["check_evidence"] = ["unrecorded-check"]
 
