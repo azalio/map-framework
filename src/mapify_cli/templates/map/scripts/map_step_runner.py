@@ -9297,13 +9297,22 @@ def _review_round_terminal(row: dict[str, Any]) -> bool:
     return "completed_at" in row or "aborted_at" in row
 
 
+def _review_round_has_verdict(row: dict[str, Any]) -> bool:
+    """True once a ledger write recorded a computed verdict for the round.
+
+    ``verdict_recorded_at`` is the explicit marker; ``completeness`` (stored together with the verdict)
+    classifies rows written by 3.37.0, which had no marker.
+    """
+    return "verdict_recorded_at" in row or "completeness" in row
+
+
 def _review_round_consumes_attempt(row: dict[str, Any]) -> bool:
     """A round spends budget only once it reached a computed verdict.
 
     The verdict and its completeness receipt are stored together, so a row without
     ``completeness`` never produced a verdict (this also classifies rounds abandoned by older versions).
     """
-    return "completed_at" in row or ("aborted_at" in row and "completeness" in row)
+    return "completed_at" in row or ("aborted_at" in row and _review_round_has_verdict(row))
 
 
 def _review_unsuccessful_attempts(rounds: list[dict[str, Any]]) -> int:
@@ -9347,7 +9356,11 @@ def _review_purge_context_files(directory: Path, session_id: str | None) -> None
 
 @_review_transaction
 def abandon_review_round(round_id: str, reason: str, *, branch: str | None = None) -> dict[str, Any]:
-    """Explicitly close an unusable admission without clearing findings or refunding its attempt."""
+    """Explicitly close an unusable admission without clearing findings or erasing a recorded verdict.
+
+    A round whose ledger write already recorded a verdict keeps spending its attempt; a round abandoned
+    before any verdict was recorded spends none (``abandoned_without_verdict``).
+    """
     if not reason.strip():
         raise ValueError("Abandonment requires an explicit operator reason")
     directory = _review_branch_dir(branch)
@@ -9363,7 +9376,7 @@ def abandon_review_round(round_id: str, reason: str, *, branch: str | None = Non
         return {"status": "success", "round_id": round_id, "abandoned": True, "convergence": convergence}
     if _review_round_terminal(row) or row is not rounds[-1]:
         raise ValueError("Only the pending review round may be abandoned")
-    if "completeness" not in row:
+    if not _review_round_has_verdict(row):
         # Intent: abandoning a round that never produced a verdict must not burn a convergence attempt.
         row["abandoned_without_verdict"] = True
     row.update({"aborted_at": time.time(), "verdict": "ABANDONED", "abandon_reason": reason})
@@ -10492,12 +10505,20 @@ def _validate_review_findings(ledger: dict[str, Any], admitted: dict[str, Any]) 
                     payload = json.loads(artifact.read_text(encoding="utf-8"))
                     candidates = payload.get("resolved_findings" if finding.get("resolution_requested") else "findings", [])
                     for candidate in candidates:
-                        identity_fields = (("bug_class", "cause") if finding.get("resolution_requested")
-                                           else ("bug_class", "cause", "failure_scenario"))
-                        if not isinstance(candidate, dict) or not all(candidate.get(key) and candidate.get(key) == finding.get(key)
-                                for key in identity_fields):
+                        if not isinstance(candidate, dict):
                             continue
-                        row = {**candidate, "id": finding["id"], "source_agent": "role", "originating_reviewer": reviewer,
+                        if finding.get("resolution_requested") and "finding_id" in candidate:
+                            # Intent: a resolution names its finding; bug_class/cause may be omitted but never differ.
+                            matches = candidate["finding_id"] == finding["id"] and all(
+                                candidate.get(key) in (None, finding.get(key)) for key in ("bug_class", "cause"))
+                        else:
+                            matches = all(candidate.get(key) and candidate.get(key) == finding.get(key)
+                                          for key in ("bug_class", "cause", "failure_scenario"))
+                        if not matches:
+                            continue
+                        inherited = {key: finding[key] for key in ("bug_class", "cause", "failure_scenario")
+                                     if finding.get(key) is not None}
+                        row = {**inherited, **candidate, "id": finding["id"], "source_agent": "role", "originating_reviewer": reviewer,
                                "resolution_requested": finding.get("resolution_requested", False), "resolution_reviewer": reviewer,
                                "known_sibling_occurrences": finding.get("known_sibling_occurrences", []),
                                "affected_files": finding.get("affected_files", [])}
@@ -10741,6 +10762,12 @@ def _retain_review_findings(
     ledger["findings_registry"] = list(registry.values())
     if admitted is not None:
         _validate_review_findings(ledger, admitted)
+    for item in rejected:
+        closed = next((row for row in registry.values() if row["id"] == item["finding_id"]), {})
+        if closed.get("resolved_by"):
+            # Intent: never claim a finding stays open when another resolution for it was accepted.
+            item["superseded"] = True
+            item["reason"] += "; another resolution for this finding was accepted"
     repeats = _apply_review_objections(
         ledger["findings_registry"], objections, ledger["not_verified"], ledger["escalation_reasons"],
     )
@@ -11325,6 +11352,7 @@ def _complete_review_round(
                     "covered_files": sorted(set.intersection(*coverage)) if coverage else []})
         _review_purge_context_files(directory, None)
     row["verdict"] = ledger["computed_verdict"]
+    row.setdefault("verdict_recorded_at", time.time())
     row["completeness"] = completeness
     ledger["findings_verdict"] = ledger["computed_verdict"]
     security = _review_security_gate(row, directory)
@@ -11680,6 +11708,11 @@ def write_review_verdict_ledger(
             raise ValueError("Current review admission is missing")
         if input_errors and not completed_retry:
             ledger["convergence"] = prior["convergence"]
+            for pending_row in ledger["convergence"]["rounds"]:
+                if pending_row["round_id"] == run.get("round_id") and not _review_round_terminal(pending_row):
+                    # Intent: a verdict was written to the ledger, so the round has spent its attempt.
+                    pending_row["verdict"] = ledger["computed_verdict"]
+                    pending_row.setdefault("verdict_recorded_at", time.time())
             ledger["completeness"] = _review_completeness(admitted, branch_dir)
             ledger["code_approval"] = {"approved": False}
             ledger["execution_check_history"] = prior.get("execution_check_history", [])
@@ -11742,8 +11775,9 @@ def write_review_verdict_ledger(
     if rejected_resolutions:
         md_lines += ["", "## Rejected Resolutions", ""]
         for item in rejected_resolutions:
+            outcome = "finding closed by another accepted resolution" if item.get("superseded") else "finding stays open"
             md_lines.append(f"- [{item.get('finding_id')}] from {item.get('source_agent')}: "
-                            f"{item.get('reason')} (fields: {', '.join(item.get('fields', []))}); finding stays open")
+                            f"{item.get('reason')} (fields: {', '.join(item.get('fields', []))}); {outcome}")
 
     md_lines += [
         "",
