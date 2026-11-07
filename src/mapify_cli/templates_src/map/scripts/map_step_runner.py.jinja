@@ -9402,10 +9402,32 @@ def _review_round_terminal(row: dict[str, Any]) -> bool:
     return "completed_at" in row or "aborted_at" in row
 
 
+def _review_round_has_verdict(row: dict[str, Any]) -> bool:
+    """True once a ledger write recorded a computed verdict for the round.
+
+    ``verdict_recorded_at`` is the explicit marker; ``completeness`` (stored together with the verdict)
+    classifies rows written by 3.37.0, which had no marker.
+    """
+    return "verdict_recorded_at" in row or "completeness" in row
+
+
+def _review_round_consumes_attempt(row: dict[str, Any]) -> bool:
+    """A round spends budget only once it reached a computed verdict.
+
+    The verdict and its completeness receipt are stored together, so a row without
+    ``completeness`` never produced a verdict (this also classifies rounds abandoned by older versions).
+    """
+    return "completed_at" in row or ("aborted_at" in row and _review_round_has_verdict(row))
+
+
+def _review_unsuccessful_attempts(rounds: list[dict[str, Any]]) -> int:
+    return sum(_review_round_consumes_attempt(row) and row.get("verdict") != "PROCEED" for row in rounds)
+
+
 def _update_review_convergence(convergence: dict[str, Any], *, passed: bool = False) -> None:
     rounds = convergence["rounds"]
-    attempted = sum(_review_round_terminal(row) for row in rounds)
-    unsuccessful = sum(_review_round_terminal(row) and row.get("verdict") != "PROCEED" for row in rounds)
+    attempted = sum(_review_round_consumes_attempt(row) for row in rounds)
+    unsuccessful = _review_unsuccessful_attempts(rounds)
     capped = not passed and unsuccessful >= 3
     convergence.update({
         "completed_rounds": sum("completed_at" in row for row in rounds),
@@ -9439,7 +9461,11 @@ def _review_purge_context_files(directory: Path, session_id: str | None) -> None
 
 @_review_transaction
 def abandon_review_round(round_id: str, reason: str, *, branch: str | None = None) -> dict[str, Any]:
-    """Explicitly close an unusable admission without clearing findings or refunding its attempt."""
+    """Explicitly close an unusable admission without clearing findings or erasing a recorded verdict.
+
+    A round whose ledger write already recorded a verdict keeps spending its attempt; a round abandoned
+    before any verdict was recorded spends none (``abandoned_without_verdict``).
+    """
     if not reason.strip():
         raise ValueError("Abandonment requires an explicit operator reason")
     directory = _review_branch_dir(branch)
@@ -9455,6 +9481,9 @@ def abandon_review_round(round_id: str, reason: str, *, branch: str | None = Non
         return {"status": "success", "round_id": round_id, "abandoned": True, "convergence": convergence}
     if _review_round_terminal(row) or row is not rounds[-1]:
         raise ValueError("Only the pending review round may be abandoned")
+    if not _review_round_has_verdict(row):
+        # Intent: abandoning a round that never produced a verdict must not burn a convergence attempt.
+        row["abandoned_without_verdict"] = True
     row.update({"aborted_at": time.time(), "verdict": "ABANDONED", "abandon_reason": reason})
     _update_review_convergence(convergence)
     # A seed/previous clean verdict is not approval of an abandoned review.
@@ -9670,8 +9699,7 @@ def begin_review_run(
                 **_review_shard_summary(existing)}
     if pending:
         return {"status": "error", "message": "Resume the unfinished review round or explicitly abandon_review_round first"}
-    unsuccessful = sum(_review_round_terminal(row) and row.get("verdict") != "PROCEED" for row in rounds)
-    if unsuccessful >= 3:
+    if _review_unsuccessful_attempts(rounds) >= 3:
         return {"status": "error", "stop_reason": "reconsider_approach",
                 "message": "Three unsuccessful review/fix rounds; reconsider the approach. No fourth automatic round."}
     if (convergence.get("outcome") == "passed" and rounds[-1]["binding"] == dict(payload)
@@ -10582,10 +10610,20 @@ def _validate_review_findings(ledger: dict[str, Any], admitted: dict[str, Any]) 
                     payload = json.loads(artifact.read_text(encoding="utf-8"))
                     candidates = payload.get("resolved_findings" if finding.get("resolution_requested") else "findings", [])
                     for candidate in candidates:
-                        if not isinstance(candidate, dict) or not all(candidate.get(key) and candidate.get(key) == finding.get(key)
-                                for key in ("bug_class", "cause", "failure_scenario")):
+                        if not isinstance(candidate, dict):
                             continue
-                        row = {**candidate, "id": finding["id"], "source_agent": "role", "originating_reviewer": reviewer,
+                        if finding.get("resolution_requested") and "finding_id" in candidate:
+                            # Intent: a resolution names its finding; bug_class/cause may be omitted but never differ.
+                            matches = candidate["finding_id"] == finding["id"] and all(
+                                candidate.get(key) in (None, finding.get(key)) for key in ("bug_class", "cause"))
+                        else:
+                            matches = all(candidate.get(key) and candidate.get(key) == finding.get(key)
+                                          for key in ("bug_class", "cause", "failure_scenario"))
+                        if not matches:
+                            continue
+                        inherited = {key: finding[key] for key in ("bug_class", "cause", "failure_scenario")
+                                     if finding.get(key) is not None}
+                        row = {**inherited, **candidate, "id": finding["id"], "source_agent": "role", "originating_reviewer": reviewer,
                                "resolution_requested": finding.get("resolution_requested", False), "resolution_reviewer": reviewer,
                                "known_sibling_occurrences": finding.get("known_sibling_occurrences", []),
                                "affected_files": finding.get("affected_files", [])}
@@ -10648,8 +10686,9 @@ def _validate_review_findings(ledger: dict[str, Any], admitted: dict[str, Any]) 
                                           ("issues" if owner == "monitor" else "findings"), []))
                 if any(isinstance(candidate, dict) and (
                     (candidate.get("finding_id") == finding["id"] and all(
-                        field in candidate and candidate[field] == finding.get(field)
-                        for field in ("bug_class", "cause", "failure_scenario", "evidence_refs", "reachability",
+                        (field not in candidate or candidate[field] == finding.get(field)) if field in {"bug_class", "cause"}
+                        else (field in candidate and candidate[field] == finding.get(field))
+                        for field in ("bug_class", "cause", "evidence_refs", "reachability",
                                       "baseline_attribution", "sibling_search")
                     )) if finding.get("resolution_requested") else
                     all(candidate.get(field) == finding.get(field) for field in ("bug_class", "cause", "failure_scenario"))
@@ -10727,6 +10766,14 @@ def _review_known_occurrences(finding: dict[str, Any]) -> list[dict[str, Any]]:
     return [known[key] for key in sorted(known)]
 
 
+def _reject_review_resolution(
+    rejected: list[dict[str, Any]], resolution: dict[str, Any], reason: str, fields: list[str],
+) -> None:
+    # Intent: a bad resolution leaves its finding open (fail-closed) without losing the collected round.
+    rejected.append({"finding_id": str(resolution.get("finding_id")),
+                     "source_agent": resolution.get("source_agent"), "reason": reason, "fields": fields})
+
+
 def _retain_review_findings(
     ledger: dict[str, Any], prior: dict[str, Any], resolutions: list[dict[str, Any]] | None = None,
     objections: list[dict[str, Any]] | None = None,
@@ -10771,39 +10818,65 @@ def _retain_review_findings(
         if affected:
             finding["affected_files"] = sorted(affected)
         registry[key] = finding
+    rejected: list[dict[str, Any]] = []
+    accepted_ids: set[str] = set()
     for resolution in resolutions or []:
         finding = next((row for row in registry.values() if row["id"] == resolution.get("finding_id")), None)
-        if finding is None or not str(resolution.get("evidence") or "").strip():
-            raise ValueError("Resolution requires an existing finding ID and re-review evidence")
+        reviewer = resolution.get("source_agent")
+        if finding is None:
+            _reject_review_resolution(rejected, resolution, "Resolution names an unknown finding ID", ["finding_id"])
+            continue
+        if not str(resolution.get("evidence") or "").strip():
+            _reject_review_resolution(rejected, resolution, "Resolution requires nonempty re-review evidence", ["evidence"])
+            continue
         owners = _review_reporters(finding) if finding["source_agent"] == "adversarial" else [
             finding.get("originating_reviewer", finding["source_agent"])
         ]
-        if resolution.get("source_agent") not in owners:
-            raise ValueError("Only the originating reviewer may resolve an open finding")
+        if reviewer not in owners:
+            _reject_review_resolution(rejected, resolution, "Only the originating reviewer may resolve an open finding", ["source_agent"])
+            continue
+        mismatched = [field for field in ("bug_class", "cause")
+                      if field in resolution and finding.get(field) is not None and resolution[field] != finding[field]]
+        if mismatched:
+            _reject_review_resolution(rejected, resolution, "Resolution cannot substitute another finding " + " or ".join(mismatched), mismatched)
+            continue
         finding.setdefault("identity_key", _review_finding_key(finding))
-        if any(field in resolution and finding.get(field) is not None and resolution[field] != finding[field]
-               for field in ("bug_class", "cause", "failure_scenario")):
-            raise ValueError("Resolution cannot substitute another finding cause or scenario")
         known = _review_known_occurrences(finding)
         if known:
             finding["known_sibling_occurrences"] = known
         affected = set(finding.get("affected_files", [])) | _review_affected_files(finding)
         if affected:
             finding["affected_files"] = sorted(affected)
-        for field in ("bug_class", "cause", "failure_scenario", "evidence_refs", "reachability",
-                      "baseline_attribution", "sibling_search"):
+        for field in ("bug_class", "cause", "evidence_refs", "reachability", "baseline_attribution", "sibling_search"):
             if field in resolution:
                 finding[field] = resolution[field]
-            elif field not in {"bug_class", "cause", "failure_scenario"}:
+            elif field not in {"bug_class", "cause"}:
                 finding.pop(field, None)
+        finding.pop("resolution_scenario_note", None)
+        restated = resolution.get("failure_scenario")
+        if finding.get("failure_scenario") is None and "failure_scenario" in resolution:
+            finding["failure_scenario"] = restated  # legacy row: the checked reconstruction fills the missing field
+        elif isinstance(restated, str) and restated.strip() and restated != finding.get("failure_scenario"):
+            # Intent: a restated scenario is the reviewer's wording, not a substitution; keep the original identity.
+            finding["resolution_scenario_note"] = restated
         finding.pop("resolved_by", None)
         finding.pop("validation", None)
         finding["resolution_requested"] = True
         finding["transition_evidence"] = resolution["evidence"]
-        finding["resolution_reviewer"] = resolution["source_agent"]
+        finding["resolution_reviewer"] = reviewer
+        accepted_ids.add(finding["id"])
+    ledger["rejected_resolutions"] = rejected
     ledger["findings_registry"] = list(registry.values())
     if admitted is not None:
         _validate_review_findings(ledger, admitted)
+    for item in rejected:
+        closed = next((row for row in registry.values() if row["id"] == item["finding_id"]), {})
+        if closed.get("resolved_by"):
+            # Intent: never claim a finding stays open when another resolution for it was accepted.
+            item["superseded"] = True
+            item["reason"] += ("; another resolution for this finding in this round was accepted"
+                               if item["finding_id"] in accepted_ids
+                               else "; the finding was already closed in an earlier round")
     repeats = _apply_review_objections(
         ledger["findings_registry"], objections, ledger["not_verified"], ledger["escalation_reasons"],
     )
@@ -11452,6 +11525,7 @@ def _complete_review_round(
                     "covered_files": sorted(set.intersection(*coverage)) if coverage else []})
         _review_purge_context_files(directory, None)
     row["verdict"] = ledger["computed_verdict"]
+    row.setdefault("verdict_recorded_at", time.time())
     row["completeness"] = completeness
     ledger["findings_verdict"] = ledger["computed_verdict"]
     security = _review_security_gate(row, directory)
@@ -11807,6 +11881,11 @@ def write_review_verdict_ledger(
             raise ValueError("Current review admission is missing")
         if input_errors and not completed_retry:
             ledger["convergence"] = prior["convergence"]
+            for pending_row in ledger["convergence"]["rounds"]:
+                if pending_row["round_id"] == run.get("round_id") and not _review_round_terminal(pending_row):
+                    # Intent: a verdict was written to the ledger, so the round has spent its attempt.
+                    pending_row["verdict"] = ledger["computed_verdict"]
+                    pending_row.setdefault("verdict_recorded_at", time.time())
             ledger["completeness"] = _review_completeness(admitted, branch_dir)
             ledger["code_approval"] = {"approved": False}
             ledger["execution_check_history"] = prior.get("execution_check_history", [])
@@ -11865,6 +11944,14 @@ def write_review_verdict_ledger(
         for nv in not_verified_list:
             md_lines.append(f"- {nv}")
 
+    rejected_resolutions = list(ledger.get("rejected_resolutions") or [])
+    if rejected_resolutions:
+        md_lines += ["", "## Rejected Resolutions", ""]
+        for item in rejected_resolutions:
+            outcome = "finding is already closed" if item.get("superseded") else "finding stays open"
+            md_lines.append(f"- [{item.get('finding_id')}] from {item.get('source_agent')}: "
+                            f"{item.get('reason')} (fields: {', '.join(item.get('fields', []))}); {outcome}")
+
     md_lines += [
         "",
         "## Journal",
@@ -11917,6 +12004,7 @@ def write_review_verdict_ledger(
         "not_verified_count": len(not_verified_list),
         "escalation_required": bool(escalation_reasons_list),
         "input_errors": input_errors,
+        "rejected_resolutions": rejected_resolutions,
         "findings_verdict": ledger.get("findings_verdict", verdict),
         "completeness": ledger.get("completeness", {"status": "INCOMPLETE", "reasons": ["Legacy unverified review"]}),
         "code_approval": ledger.get("code_approval", {"approved": False}),
@@ -13594,7 +13682,7 @@ ROLE_FINDING_SCHEMA: dict[str, object] = {
     ],
     "checks_performed": ["<string — list what was actually checked>"],
     "receipt": REVIEW_COVERAGE_RECEIPT_SCHEMA,
-    "resolved_findings": "<array — required when closing carried findings: objects with finding_id, a nonempty evidence string, bug_class, cause, failure_scenario, evidence_refs, reachability, baseline_attribution and sibling_search>",
+    "resolved_findings": "<array — required when closing carried findings: objects with finding_id, a nonempty evidence string describing the re-check, evidence_refs, reachability, baseline_attribution and sibling_search; bug_class and cause only if copied verbatim from the carried finding (otherwise omit); failure_scenario may be restated>",
 }
 
 
@@ -13674,7 +13762,7 @@ AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
             ],
             "passed_checks": ["<string>"],
             "failed_checks": ["<string>"],
-            "resolved_findings": "<array — required when closing carried findings: objects with finding_id, a nonempty evidence string, bug_class, cause, failure_scenario, evidence_refs, reachability, baseline_attribution and sibling_search>",
+            "resolved_findings": "<array — required when closing carried findings: objects with finding_id, a nonempty evidence string describing the re-check, evidence_refs, reachability, baseline_attribution and sibling_search; bug_class and cause only if copied verbatim from the carried finding (otherwise omit); failure_scenario may be restated>",
         },
     },
     "predictor": {
@@ -13711,7 +13799,7 @@ AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
             "evidence_refs": "<array — required when risk_assessment is not low or a concrete defect is claimed: current source references>",
             "reachability": "<object — required when risk_assessment is not low or a concrete defect is claimed: status, reason and current evidence_refs>",
             "baseline_attribution": "<object — required when risk_assessment is not low or a concrete defect is claimed: status, reason, current and baseline evidence_refs>",
-            "resolved_findings": "<array — required when closing carried findings: objects with finding_id, a nonempty evidence string, bug_class, cause, failure_scenario, evidence_refs, reachability, baseline_attribution and sibling_search>",
+            "resolved_findings": "<array — required when closing carried findings: objects with finding_id, a nonempty evidence string describing the re-check, evidence_refs, reachability, baseline_attribution and sibling_search; bug_class and cause only if copied verbatim from the carried finding (otherwise omit); failure_scenario may be restated>",
         },
     },
     "evaluator": {
@@ -13755,7 +13843,7 @@ AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
                     "rationale": "<string>",
                 }
             ],
-            "resolved_findings": "<array — required when closing carried findings: objects with finding_id, a nonempty evidence string, bug_class, cause, failure_scenario, evidence_refs, reachability, baseline_attribution and sibling_search>",
+            "resolved_findings": "<array — required when closing carried findings: objects with finding_id, a nonempty evidence string describing the re-check, evidence_refs, reachability, baseline_attribution and sibling_search; bug_class and cause only if copied verbatim from the carried finding (otherwise omit); failure_scenario may be restated>",
         },
     },
     # Actor is not a review-prompt role (it has no REVIEW_PROMPT_SPECS entry),
@@ -14010,8 +14098,9 @@ content. Report missing evidence explicitly as unknown/insufficient evidence.
 The runner checks citations against the admitted snapshot; matching quotes are
 citation witnesses, not semantic proof. Pre-existing attribution is separate
 from validity. Positive unreachable counter-evidence can refute; unknown cannot.
-For re-review, submit resolved_findings with finding_id, a nonempty evidence string, the original cause and
-scenario, checked counter-evidence, and sibling_search: searched_scope (explicit
+For re-review, submit resolved_findings referencing the finding by finding_id, with a nonempty evidence string describing
+the re-check, bug_class and cause copied verbatim from the carried finding (or omitted; a mismatch
+rejects that resolution and the finding stays open), an optional restated scenario, checked counter-evidence, and sibling_search: searched_scope (explicit
 paths covering original affected files, at most 100), method, occurrences (file_path,
 symbol/location or line_range to distinguish same-file sites, disposition and evidence_refs),
 uncertainty and scope_expansion. Unresolved occurrences, uncertainty or required
@@ -14038,8 +14127,8 @@ def _review_resolution_request(prompt: str, scope: dict[str, Any], reviewer: str
     return (prompt + "\n\n<carried_findings_for_this_reviewer>\n"
             "Before this round is finalized, re-check EVERY finding_id below. "
             "For each proven fix or refutation, put a structured object in resolved_findings "
-            "with the same finding_id, original cause/scenario (or a checked reconstruction "
-            "for a legacy row), a nonempty evidence string, checked evidence_refs, "
+            "with the same finding_id; copy bug_class/cause verbatim or omit them (a restated "
+            "failure_scenario is allowed); describe the re-check in a nonempty evidence string; add checked evidence_refs, "
             "reachability, baseline_attribution and bounded sibling_search. "
             "If it remains valid or evidence is insufficient, report it as unresolved; "
             "an all_clear verdict or prose saying fixed does not close it.\n"
@@ -15888,7 +15977,7 @@ ADVERSARIAL_FINDING_SCHEMA: dict[str, object] = {
         }
     ],
     "checks_performed": ["<string — list what was actually checked>"],
-    "resolved_findings": "<array — required when closing carried findings: objects with finding_id, a nonempty evidence string, bug_class, cause, failure_scenario, evidence_refs, reachability, baseline_attribution and sibling_search>",
+    "resolved_findings": "<array — required when closing carried findings: objects with finding_id, a nonempty evidence string describing the re-check, evidence_refs, reachability, baseline_attribution and sibling_search; bug_class and cause only if copied verbatim from the carried finding (otherwise omit); failure_scenario may be restated>",
 }
 
 

@@ -1909,8 +1909,11 @@ def test_role_resolution_cannot_close_another_role_finding(branch_workspace, own
     for role, envelope in envelopes.items():
         (branch_workspace / f"review-agent-{role}.json").write_text(json.dumps(envelope))
     result = runner.write_review_verdict_ledger(current_run=True)
-    assert result["status"] == "error"
-    assert "originating reviewer" in result["message"]
+    assert result["status"] == "success", result
+    assert result["computed_verdict"] != "PROCEED"
+    assert [(item["finding_id"], item["source_agent"], item["fields"]) for item in result["rejected_resolutions"]] == [
+        (target["id"], other, ["source_agent"])]
+    assert "originating reviewer" in result["rejected_resolutions"][0]["reason"]
 
 
 def test_incomplete_round_recovers_without_counting_and_rejects_stale_finalizer(review_git_workspace):
@@ -2458,11 +2461,15 @@ def test_real_aggregate_merges_reporters_without_changing_identity(review_git_wo
     admission = runner.begin_review_run(arguments="--adversarial", round_id="3")
     runner.create_review_bundle()
     result = _capture_aggregate(_captured_adversarial_resolution(runner, admission, "3", resolver), "3")
-    assert result["status"] == expected, result
+    assert result["status"] == "success", result
     if expected == "success":
         assert result.get("findings_verdict", result["computed_verdict"]) == "PROCEED"
+        assert result["rejected_resolutions"] == []
     else:
-        assert "originating reviewer" in result["message"]
+        # A non-originating reviewer's resolution is rejected on its own; the finding stays open.
+        assert result["computed_verdict"] != "PROCEED"
+        assert [item["fields"] for item in result["rejected_resolutions"]] == [["source_agent"]]
+        assert "originating reviewer" in result["rejected_resolutions"][0]["reason"]
 
 
 @pytest.mark.parametrize("evidence", ["old text", ["x", None, 4, {"source": "finding_location", "quote": "{"}],
@@ -3081,7 +3088,8 @@ def test_explicit_abandonment_recovers_changed_target_without_reset(review_git_w
     assert row["aborted_at"] > 0 and "completed_at" not in row
     assert row["abandon_reason"] == "Target changed while reviewers were running"
     assert ledger["convergence"]["completed_rounds"] == 1
-    assert ledger["convergence"]["attempted_rounds"] == 2
+    assert ledger["convergence"]["attempted_rounds"] == 1  # the stuck round never produced a verdict
+    assert row["abandoned_without_verdict"] is True
     assert ledger["computed_verdict"] == "BLOCK"
     for field in ("findings_registry", "finding_history", "publication_history"):
         assert ledger[field] == before[field]
@@ -3100,7 +3108,7 @@ def test_explicit_abandonment_recovers_changed_target_without_reset(review_git_w
                                 quote="VALUE = 2" if changed_path == "writer.py" else "VALUE = 1")
     result = runner.write_review_verdict_ledger(current_run=True)
     assert result.get("findings_verdict", result["computed_verdict"]) == "PROCEED"
-    assert result["convergence"]["rounds_to_pass"] == 3
+    assert result["convergence"]["rounds_to_pass"] == 2  # the verdict-less stuck round is not an attempt
     assert result["convergence"]["completed_rounds"] == 2
     assert runner.abandon_review_round("recovery", reason="cannot abandon completed")["status"] == "error"
 
@@ -3113,7 +3121,10 @@ def test_abandon_cli_preserves_three_attempt_cap_across_processes(review_git_wor
         admission = _admit_receipt_review(runner, round_id=round_id)
         _capture_complete_monitor(runner, admission, round_id)
         runner.write_review_verdict_ledger(current_run=True)
-    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="3")
+    admission = _admit_receipt_review(runner, round_id="3")
+    partial = {**_monitor_with_critical(), "receipt": {"covered_files": [], "skipped_files": [admission["required_files"][0]],
+                                                      "denied_access": [], "check_evidence": []}}
+    assert runner.capture_review_output("monitor", json.dumps(partial), "3")["status"] == "success"
     incomplete = runner.write_review_verdict_ledger(current_run=True)
     assert incomplete["convergence"]["completed_rounds"] == 2
     Path("untracked.py").write_text("VALUE = 3\n")
@@ -3169,7 +3180,8 @@ def test_abandoned_capture_never_establishes_review_coverage(review_git_workspac
     ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
     assert ledger["computed_verdict"] == "REVISE"
     assert ledger["convergence"]["completed_rounds"] == 0
-    assert ledger["convergence"]["attempted_rounds"] == 1
+    assert ledger["convergence"]["attempted_rounds"] == 0  # no verdict was computed for this round
+    assert ledger["convergence"]["rounds"][0]["abandoned_without_verdict"] is True
     assert "covered_files" not in ledger["convergence"]["rounds"][0]
     assert runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="2")["status"] == "success"
     assert runner.review_round_scope()["kind"] == "full"
