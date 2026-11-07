@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.load_tolerance import LOAD_DEADLINE, run_ps
 from tests.review_process_lifecycle import ReviewProcessLifecycle
 
 pytestmark = pytest.mark.timeout(120)
@@ -24,7 +25,7 @@ def test_process_inspection_requests_unlimited_command_width(tmp_path, monkeypat
                + f"python {SUPERVISOR} supervise {lifecycle.root}/attempt 3 5 python -c pass")
 
     def snapshot(argv, **kwargs):
-        assert kwargs["timeout"] == 2
+        assert kwargs["timeout"] > 2  # load-tolerant bound, not a fixed 2 s window
         # Deterministically model Linux ps width truncation on every platform.
         visible_command = command if "-ww" in argv else command[:80]
         output = (f"900 1 900 Ss {visible_command}\n"
@@ -69,7 +70,7 @@ def test_review_finalizer_restores_fault_and_waits_for_owned_processes(tmp_path,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     env={**os.environ, "PATH": str(shim) + os.pathsep + os.environ["PATH"]},
                 )
-            lifecycle.wait_for_file(attempt / "supervisor.json", timeout=8)
+            lifecycle.wait_for_file(attempt / "supervisor.json", timeout=LOAD_DEADLINE)
             receipt = json.loads((attempt / "supervisor.json").read_text())
             assert receipt["status"] == "cleanup_blocked", receipt
             assert fault.exists(), "check must activate the inspection fault"
@@ -98,17 +99,14 @@ def test_review_finalizer_restores_fault_and_waits_for_owned_processes(tmp_path,
         finally:
             fault.unlink(missing_ok=True)
             if owner is not None:
-                owner.wait(timeout=8)
+                owner.wait(timeout=LOAD_DEADLINE)
     assert not fault.exists()
     assert lifecycle.live_processes() == []
 
 
 def _runtime_snapshot(pids):
     """Observe known identities even after their supervisor has disappeared."""
-    result = subprocess.run(
-        ["/bin/ps", "-ww", "-axo", "pid=,ppid=,pgid=,stat=,command="],
-        capture_output=True, text=True, timeout=2, check=True,
-    )
+    result = run_ps(["/bin/ps", "-ww", "-axo", "pid=,ppid=,pgid=,stat=,command="])
     return [line.strip() for line in result.stdout.splitlines()
             if line.strip() and int(line.split()[0]) in pids]
 
@@ -124,7 +122,9 @@ def test_runtime_cleanup_precedes_fixture_teardown(tmp_path, outcome):
     lease_path = tmp_path / "lease"
     # Exercise cleanup, not startup speed under CI scheduling. Deadline cases
     # also need headroom for four interpreter starts and pre-timeout lease checks.
-    check_timeout = 15 if outcome in {"success", "failure"} else 5
+    # Released explicitly in success/failure; the deadline cases must still expire,
+    # so give them a bound that covers interpreter starts under load.
+    check_timeout = LOAD_DEADLINE if outcome in {"success", "failure"} else LOAD_DEADLINE / 6
     # An ordinary grandchild closes inherited FDs. Keep it alive past wrapper
     # success/failure so command completion alone cannot satisfy the assertion.
     child = (
@@ -153,14 +153,14 @@ def test_runtime_cleanup_precedes_fixture_teardown(tmp_path, outcome):
         f" Path({str(ready)!r}).write_text(str(owner.pid))\n"
         f" while not Path({str(marker)!r}).exists(): time.sleep(.01)\n"
         + (" time.sleep(30)\n" if outcome == "parent-sigkill" else
-           "" if outcome == "parent-exit" else f" owner.wait(timeout={check_timeout + 8})\n")
+           "" if outcome == "parent-exit" else f" owner.wait(timeout={check_timeout + LOAD_DEADLINE})\n")
     )
-    lifecycle = ReviewProcessLifecycle(tmp_path, timeout=check_timeout + 8)
+    lifecycle = ReviewProcessLifecycle(tmp_path, timeout=check_timeout + LOAD_DEADLINE)
     with lifecycle:
         lifecycle.recover(release.touch)
         with subprocess.Popen([sys.executable, "-c", parent_code]) as parent:
             try:
-                lifecycle.wait_for_file(marker, timeout=8)
+                lifecycle.wait_for_file(marker, timeout=LOAD_DEADLINE)
                 identities = json.loads(marker.read_text())
                 identities.update(supervisor=int(ready.read_text()), parent=parent.pid)
                 before = _runtime_snapshot(set(identities.values()))
@@ -168,7 +168,7 @@ def test_runtime_cleanup_precedes_fixture_teardown(tmp_path, outcome):
                 if outcome == "parent-sigkill":
                     parent.kill()
                 if outcome in {"parent-exit", "parent-sigkill"}:
-                    assert parent.wait(timeout=3) == (-9 if outcome == "parent-sigkill" else 0)
+                    assert parent.wait(timeout=LOAD_DEADLINE) == (-9 if outcome == "parent-sigkill" else 0)
                 else:
                     assert parent.poll() is None, "ordinary caller must wait for supervision"
                 # Caller exit must NOT release ownership of the live group.
@@ -176,11 +176,11 @@ def test_runtime_cleanup_precedes_fixture_teardown(tmp_path, outcome):
                     fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 if outcome in {"success", "failure"}:
                     release.touch()
-                lifecycle.wait_for_file(attempt / "supervisor.json", timeout=8)
+                lifecycle.wait_for_file(attempt / "supervisor.json", timeout=LOAD_DEADLINE)
                 receipt = json.loads((attempt / "supervisor.json").read_text())
-                parent_exit = parent.wait(timeout=3)
+                parent_exit = parent.wait(timeout=LOAD_DEADLINE)
                 assert parent_exit == (-9 if outcome == "parent-sigkill" else 0)
-                deadline = time.monotonic() + 3
+                deadline = time.monotonic() + LOAD_DEADLINE
                 while True:
                     after = _runtime_snapshot(set(identities.values()))
                     live = [row for row in after if not row.split()[3].startswith("Z")]
@@ -200,7 +200,7 @@ def test_runtime_cleanup_precedes_fixture_teardown(tmp_path, outcome):
             finally:
                 if parent.poll() is None:
                     parent.kill()
-                parent.wait(timeout=3)
+                parent.wait(timeout=LOAD_DEADLINE)
 
 
 @pytest.mark.parametrize("fault_kind", ["preflight", "missing-command", "cleanup-inspection"])
@@ -227,13 +227,13 @@ def test_abnormal_supervisor_releases_only_after_runtime_recovery(tmp_path, faul
             fcntl.flock(lease, fcntl.LOCK_EX)
             owner = subprocess.Popen(
                 [sys.executable, str(SUPERVISOR), "supervise", str(attempt),
-                 str(lease.fileno()), "2", *command],
+                 str(lease.fileno()), str(LOAD_DEADLINE), *command],
                 pass_fds=(lease.fileno(),), start_new_session=True,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 env={**os.environ, "PATH": str(shim) + os.pathsep + os.environ["PATH"]},
             )
         try:
-            lifecycle.wait_for_file(attempt / "supervisor.json", timeout=8)
+            lifecycle.wait_for_file(attempt / "supervisor.json", timeout=LOAD_DEADLINE)
             blocked = json.loads((attempt / "supervisor.json").read_text())
             before = lifecycle.live_processes()
             if fault_kind == "cleanup-inspection":
@@ -242,7 +242,7 @@ def test_abnormal_supervisor_releases_only_after_runtime_recovery(tmp_path, faul
                 with (tmp_path / "lease").open() as lease, pytest.raises(BlockingIOError):
                     fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 fault.unlink()  # Explicit runtime recovery, NOT fixture teardown.
-            exit_code = owner.wait(timeout=8)
+            exit_code = owner.wait(timeout=LOAD_DEADLINE)
             after = _runtime_snapshot({owner.pid, *(int(row.split()[0]) for row in before)})
             receipt = json.loads((attempt / "supervisor.json").read_text())
             evidence = {"pid": owner.pid, "exit_code": exit_code, "before": before,
@@ -255,4 +255,31 @@ def test_abnormal_supervisor_releases_only_after_runtime_recovery(tmp_path, faul
                 fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
         finally:
             fault.unlink(missing_ok=True)
-            owner.wait(timeout=8)
+            owner.wait(timeout=LOAD_DEADLINE)
+
+
+def test_hung_process_inspection_is_still_detected_after_retries(tmp_path):
+    """Retrying a slow `ps` must not hide a genuinely hung one."""
+    attempt = tmp_path / "attempt"
+    attempt.mkdir()
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    ps = shim / "ps"
+    ps.write_text("#!/bin/sh\nexec sleep 60\n")
+    ps.chmod(0o755)
+    marker = tmp_path / "ran"
+    command = [sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"]
+    with ReviewProcessLifecycle(tmp_path), (tmp_path / "lease").open("w") as lease:
+        fcntl.flock(lease, fcntl.LOCK_EX)
+        owner = subprocess.Popen(
+            [sys.executable, str(SUPERVISOR), "supervise", str(attempt),
+             str(lease.fileno()), str(LOAD_DEADLINE), *command],
+            pass_fds=(lease.fileno(),), start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env={**os.environ, "PATH": str(shim) + os.pathsep + os.environ["PATH"],
+                 "MAP_REVIEW_PS_TIMEOUT": "0.3"},
+        )
+        assert owner.wait(timeout=LOAD_DEADLINE) == 0
+        receipt = json.loads((attempt / "supervisor.json").read_text())
+        assert receipt["status"] == "error" and receipt["passed"] is False, receipt
+        assert not marker.exists(), "check must not launch when inspection hangs"

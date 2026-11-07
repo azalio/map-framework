@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.load_tolerance import LOAD_DEADLINE, run_ps
 from tests.review_process_lifecycle import ReviewProcessLifecycle
 
 pytestmark = pytest.mark.timeout(120)
@@ -77,9 +78,11 @@ def test_invalid_check_timeout_rejected_without_admission(check_workspace, timeo
 
 
 def _alive(pid):
-    result = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "stat="], capture_output=True,
-                            text=True, check=False, timeout=2)
-    return bool(result.stdout.strip()) and not result.stdout.strip().startswith("Z")
+    try:
+        result = run_ps(["/bin/ps", "-p", str(pid), "-o", "stat="])
+    except subprocess.CalledProcessError as exc:  # ps exits 1 when the pid is gone
+        result = exc
+    return bool((result.stdout or "").strip()) and not result.stdout.strip().startswith("Z")
 
 
 @pytest.mark.parametrize("kill_runner", [False, True])
@@ -93,15 +96,20 @@ def test_nested_check_keeps_lease_until_descendant_stops(check_workspace, kill_r
     wrapper = ("import subprocess,sys; "
                f"subprocess.run([sys.executable, '-c', {child!r}], "
                "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)")
+    # Intent: the check must still be alive when the runner is killed, however slow
+    # the host is. The killed-runner variant therefore ends via `release`, not a
+    # short wall-clock deadline; the other variant exercises the timeout path with
+    # a bound that also covers interpreter start-up under load.
+    check_timeout = LOAD_DEADLINE * 2 if kill_runner else LOAD_DEADLINE / 6
     admitted = _cli("begin_review_run", "--mode", "lightweight", "--round-id", "nested",
                     "--required-check", "suite", "--check-specs-json",
                     json.dumps({"suite": [sys.executable, "-c", wrapper]}),
-                    "--check-timeouts-json", json.dumps({"suite": 1.5}))
+                    "--check-timeouts-json", json.dumps({"suite": check_timeout}))
     assert admitted["status"] == "success", admitted
     process = subprocess.Popen([sys.executable, str(RUNNER), "run_test_gate", "--check-id", "suite"],
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
-        deadline = time.monotonic() + 30
+        deadline = time.monotonic() + LOAD_DEADLINE
         while not marker.exists() and time.monotonic() < deadline:
             time.sleep(.02)
         assert marker.exists()
@@ -109,21 +117,29 @@ def test_nested_check_keeps_lease_until_descendant_stops(check_workspace, kill_r
         first = json.loads(check_workspace.read_text())["execution_checks"]["suite"]["attempt_id"]
         if kill_runner:
             process.kill()
-            process.wait(timeout=3)
+            process.wait(timeout=LOAD_DEADLINE)
             assert _alive(pid)
             blocked = _cli("run_test_gate", "--check-id", "suite")
             assert blocked["status"] == "error" and "still running" in blocked["message"], blocked
-            deadline = time.monotonic() + 30
+            assert _alive(pid), "lease was held while the nested check had already stopped"
+            release.touch()
+            deadline = time.monotonic() + LOAD_DEADLINE
             while _alive(pid) and time.monotonic() < deadline:
                 time.sleep(.02)
         else:
-            stdout, stderr = process.communicate(timeout=8)
+            stdout, stderr = process.communicate(timeout=LOAD_DEADLINE)
             assert stdout, stderr
             result = json.loads(stdout)
             assert result["passed"] is False and result["exit_code"] is None, result
         assert not _alive(pid), "lease was released while ordinary nested check survived"
         release.touch()
-        retried = _cli("run_test_gate", "--check-id", "suite")
+        # Readiness signal: the surviving owner frees the lease after group cleanup.
+        deadline = time.monotonic() + LOAD_DEADLINE
+        while True:
+            retried = _cli("run_test_gate", "--check-id", "suite")
+            if "still running" not in retried.get("message", "") or time.monotonic() > deadline:
+                break
+            time.sleep(.05)
         assert retried["passed"] is True, retried
         assert retried["attempt_id"] != first
         if kill_runner:

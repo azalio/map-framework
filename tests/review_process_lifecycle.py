@@ -11,9 +11,11 @@ from collections.abc import Callable
 from pathlib import Path
 from types import TracebackType
 
+from tests.load_tolerance import LOAD_DEADLINE, run_ps
+
 
 class ReviewProcessLifecycle:
-    def __init__(self, root: Path, timeout: float = 12):
+    def __init__(self, root: Path, timeout: float = LOAD_DEADLINE):
         self.root = root.resolve()
         self.timeout = timeout
         self._recoveries: list[Callable[[], object]] = []
@@ -34,7 +36,7 @@ class ReviewProcessLifecycle:
     def recover(self, callback: Callable[[], object]) -> None:
         self._recoveries.append(callback)
 
-    def run(self, command: list[str], *, timeout: float = 30,
+    def run(self, command: list[str], *, timeout: float = LOAD_DEADLINE,
             cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
         self.root.mkdir(parents=True, exist_ok=True)
         # Files, not PIPEs: inherited descriptors cannot trap communicate() after
@@ -51,8 +53,7 @@ class ReviewProcessLifecycle:
                                                stderr_path.read_text(errors="replace"))
 
     def live_processes(self) -> list[str]:
-        result = subprocess.run(["/bin/ps", "-ww", "-axo", "pid=,ppid=,pgid=,stat=,command="],
-                                capture_output=True, text=True, timeout=2, check=True)
+        result = run_ps(["/bin/ps", "-ww", "-axo", "pid=,ppid=,pgid=,stat=,command="])
         rows = [line.split(None, 4) for line in result.stdout.splitlines() if line.strip()]
         if not rows or any(len(row) != 5 or not all(value.isdigit() for value in row[:3]) for row in rows):
             raise RuntimeError("Cannot parse process ownership inspection")

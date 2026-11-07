@@ -23,9 +23,29 @@ def _write(path: Path, value: dict) -> None:
     temporary.replace(path)
 
 
+def _inspection_timeout() -> float:
+    """Per-attempt `ps` bound; MAP_REVIEW_PS_TIMEOUT overrides the 5 s default."""
+    try:
+        value = float(os.environ.get("MAP_REVIEW_PS_TIMEOUT", "5"))
+    except ValueError:
+        return 5.0
+    return value if 0 < value < float("inf") else 5.0
+
+
 def _live_group(group: int) -> bool:
-    scan = subprocess.run(["ps", "-axo", "pid=,pgid=,stat="], capture_output=True,
-                          text=True, timeout=5, check=True)
+    # Intent: a loaded host can starve `ps` past one window; retry a timeout so
+    # only a persistently hung inspection counts as "cannot prove quiescence".
+    attempts = 3
+    scan = None
+    for attempt in range(attempts):
+        try:
+            scan = subprocess.run(["ps", "-axo", "pid=,pgid=,stat="], capture_output=True,
+                                  text=True, timeout=_inspection_timeout(), check=True)
+            break
+        except subprocess.TimeoutExpired:
+            if attempt == attempts - 1:
+                raise
+    assert scan is not None
     rows = [line.split() for line in scan.stdout.splitlines() if line.strip()]
     if not rows or any(len(row) != 3 or not row[0].isdigit() or not row[1].isdigit() for row in rows):
         raise ValueError("Cannot parse process-group inspection")
