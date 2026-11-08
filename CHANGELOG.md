@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`$map-plan` (Codex) spec template no longer drifts from `plan-reference.md` (#653).** The Codex skill wrote the spec from an inline heredoc with 8 sections, missing `## Contradiction` and the `mapify:requirements-index:v1` block that the next step calls MANDATORY, so the forward-coverage gate silently skipped. Both the heredoc body and `plan-reference.md` `## Spec Template` now render from one partial (`templates_src/_partials/plan-spec-template.md.jinja`), and `test_map_plan_spec_template_matches_reference` asserts they stay byte-identical.
+
 ## [3.38.1] - 2026-11-08
 
 ### Fixed

@@ -4668,3 +4668,73 @@ def test_provider_leak_patterns_detect_leaks() -> None:
     assert _provider_leaks('Task(subagent_type="x") /map-review', _CLAUDE_ONLY_LEAKS)
     assert _provider_leaks("spawn_agent(x) $map-review", _CODEX_ONLY_LEAKS)
     assert not _provider_leaks("use $map-review", _CLAUDE_ONLY_LEAKS)
+
+
+# --- #653: Codex map-plan spec heredoc must match plan-reference Spec Template ---
+
+_PLAN_SKILL_DIRS = (
+    ".agents/skills/map-plan",
+    "src/mapify_cli/templates/codex/skills/map-plan",
+    ".claude/skills/map-plan",
+    "src/mapify_cli/templates/skills/map-plan",
+)
+_REQ_INDEX_SENTINELS = (
+    "<!-- mapify:requirements-index:v1 -->",
+    "<!-- /mapify:requirements-index:v1 -->",
+)
+
+
+def _reference_spec_template(reference: str) -> str:
+    match = re.search(
+        r"^## Spec Template\n\n````markdown\n(.*?)^````$", reference, re.MULTILINE | re.DOTALL
+    )
+    assert match, "plan-reference.md lost its ````markdown Spec Template block"
+    return match.group(1)
+
+
+def _inline_spec_template(skill: str) -> str | None:
+    match = re.search(r"<< 'SPEC_EOF'\n(.*?)^SPEC_EOF$", skill, re.MULTILINE | re.DOTALL)
+    return match.group(1) if match else None
+
+
+def _spec_template_drift(skill: str, reference: str) -> list[str]:
+    """Problems with how a map-plan SKILL.md defines the spec vs the reference."""
+    expected = _reference_spec_template(reference)
+    inline = _inline_spec_template(skill)
+    if inline is None:
+        if "plan-reference.md#spec-template" in skill:
+            return []
+        return ["no inline spec template and no plan-reference.md#spec-template pointer"]
+    problems: list[str] = []
+    want = re.findall(r"^#{2,3} .+$", expected, re.MULTILINE)
+    got = re.findall(r"^#{2,3} .+$", inline, re.MULTILINE)
+    if got != want:
+        problems.append(f"inline spec sections {got} != reference sections {want}")
+    for sentinel in _REQ_INDEX_SENTINELS:
+        if sentinel not in inline:
+            problems.append(f"inline spec template lacks {sentinel}")
+    if inline != expected:
+        problems.append("inline spec template is not byte-identical to the reference")
+    return problems
+
+
+@pytest.mark.parametrize("rel_dir", _PLAN_SKILL_DIRS)
+def test_map_plan_spec_template_matches_reference(rel_dir: str) -> None:
+    base = _REPO_ROOT / rel_dir
+    skill = (base / "SKILL.md").read_text(encoding="utf-8")
+    reference = (base / "plan-reference.md").read_text(encoding="utf-8")
+    assert _spec_template_drift(skill, reference) == []
+
+
+def test_spec_template_drift_detects_missing_sections() -> None:
+    reference = (_REPO_ROOT / ".agents/skills/map-plan/plan-reference.md").read_text(
+        encoding="utf-8"
+    )
+    stale = (
+        "cat > spec.md << 'SPEC_EOF'\n# Spec: [Title]\n\n## Decisions Made\n"
+        "\n## Open Questions\nSPEC_EOF\n"
+    )
+    problems = " ".join(_spec_template_drift(stale, reference))
+    assert "## Contradiction" in problems
+    assert "mapify:requirements-index:v1" in problems
+    assert _spec_template_drift("no template here", reference)

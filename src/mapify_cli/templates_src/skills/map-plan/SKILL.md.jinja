@@ -488,74 +488,16 @@ Questions for this task:
 Please answer both before I proceed.
 ```
 
-After answers are collected, write the spec:
+After answers are collected, write the spec. The heredoc body is rendered from the same source as [plan-reference.md](plan-reference.md#spec-template) `## Spec Template`, so the two cannot drift; keep every section, including `## Contradiction` and the `mapify:requirements-index:v1` block:
 
-```
+````
 exec_command:
   cmd: |
     BRANCH=$(python3 .map/scripts/map_utils.py branch)
     mkdir -p .map/${BRANCH}
     cat > .map/${BRANCH}/spec_${BRANCH}.md << 'SPEC_EOF'
-# Spec: [Title]
-
-**Date:** $(date -u +%Y-%m-%d)
-**Branch:** ${BRANCH}
-
-## Decisions Made
-
-| # | Question | Decision | Rationale |
-|---|----------|----------|-----------|
-| 1 | [question] | [decision] | [rationale] |
-
-## Invariants
-
-Hard constraints — violating any invariant is a blocker.
-
-- [e.g., "All API endpoints require auth except /health and /login"]
-
-## Constraints
-
-```yaml
-constraints:
-  max_files: null
-  max_subtasks: null
-  scope_glob: null
-```
-
-## Edge Cases
-
-| # | Edge Case | Expected Behavior | Priority |
-|---|-----------|-------------------|----------|
-| 1 | [case] | [behavior] | must-handle |
-
-Priority: must-handle / should-handle / won't-handle
-
-## Acceptance Criteria
-
-| ID | Criterion | Verification Method |
-|----|-----------|-------------------|
-| AC-1 | [criterion] | [test command or manual check] |
-
-## Security Boundaries
-
-*(Include for security-critical tasks; omit for cosmetic/internal changes)*
-
-- Trust boundary: [...]
-- Auth model: [...]
-
-## Out of Scope
-
-- [explicitly excluded items]
-
-### Already Implemented
-
-- ["<feature part>" -> `file:line` proof] — decomposer must NOT create subtasks for these (Step 0.5 gate)
-
-## Open Questions
-
-- [anything unresolved]
-SPEC_EOF
-```
+[% include "_partials/plan-spec-template.md.jinja" %]SPEC_EOF
+````
 [% endif %]
 **Requirements Index (MANDATORY):** After writing the spec, populate the `mapify:requirements-index:v1` sentinel-wrapped fenced YAML block (defined in the spec template) with exactly ONE `{id, kind}` entry per acceptance criterion, invariant, hard constraint, and cross-cutting requirement. `kind` must be one of `acceptance_criterion | invariant | hard_constraint | cross_cutting`. IDs must be canonical: prefix in `{AC, INV, HC, CCR}`, no leading zeros, uppercase (e.g. `AC-1`, `INV-2`, `HC-3`). These IDs are **exactly** the keys the decomposer must map in `coverage_map` — the forward-completeness gate diffs the index IDs against `coverage_map` keys to detect uncovered requirements.
 

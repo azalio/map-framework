@@ -337,9 +337,9 @@ Questions for this task:
 Please answer both before I proceed.
 ```
 
-After answers are collected, write the spec:
+After answers are collected, write the spec. The heredoc body is rendered from the same source as [plan-reference.md](plan-reference.md#spec-template) `## Spec Template`, so the two cannot drift; keep every section, including `## Contradiction` and the `mapify:requirements-index:v1` block:
 
-```
+````
 exec_command:
   cmd: |
     BRANCH=$(python3 .map/scripts/map_utils.py branch)
@@ -347,64 +347,61 @@ exec_command:
     cat > .map/${BRANCH}/spec_${BRANCH}.md << 'SPEC_EOF'
 # Spec: [Title]
 
-**Date:** $(date -u +%Y-%m-%d)
-**Branch:** ${BRANCH}
-
 ## Decisions Made
-
 | # | Question | Decision | Rationale |
-|---|----------|----------|-----------|
-| 1 | [question] | [decision] | [rationale] |
+
+## Contradiction
+State the core design tension.
 
 ## Invariants
-
-Hard constraints — violating any invariant is a blocker.
-
-- [e.g., "All API endpoints require auth except /health and /login"]
+- Non-negotiable system truths.
 
 ## Constraints
-
-```yaml
-constraints:
-  max_files: null
-  max_subtasks: null
-  scope_glob: null
-```
+- Hard and soft constraints with rationale.
 
 ## Edge Cases
-
-| # | Edge Case | Expected Behavior | Priority |
-|---|-----------|-------------------|----------|
-| 1 | [case] | [behavior] | must-handle |
-
-Priority: must-handle / should-handle / won't-handle
+- Failure and boundary cases.
 
 ## Acceptance Criteria
+- AC-1: Observable outcome.
 
-| ID | Criterion | Verification Method |
-|----|-----------|-------------------|
-| AC-1 | [criterion] | [test command or manual check] |
+## Requirements Index
+
+This block IS the visible, authoritative requirements section — NOT a hidden parallel artifact.
+Do not maintain a separate list elsewhere; update this block whenever criteria change.
+Downstream tooling (the forward-completeness gate) locates the index ONLY by the sentinel pair
+below; a sentinel-shaped string in prose outside the fenced block is ignored.
+
+Rules:
+- `kind` is a CLOSED vocabulary: `acceptance_criterion` | `invariant` | `hard_constraint` | `cross_cutting`
+- `id` is canonical: prefix in {AC, INV, HC, CCR}, a hyphen, then digits with NO leading zeros, uppercase prefix
+  (e.g. `AC-1` not `ac-01`, `INV-2` not `INV-02`)
+
+<!-- mapify:requirements-index:v1 -->
+```yaml
+requirements:
+  - id: AC-1
+    kind: acceptance_criterion
+  - id: INV-1
+    kind: invariant
+  - id: HC-1
+    kind: hard_constraint
+```
+<!-- /mapify:requirements-index:v1 -->
 
 ## Security Boundaries
-
-*(Include for security-critical tasks; omit for cosmetic/internal changes)*
-
-- Trust boundary: [...]
-- Auth model: [...]
+- Trust boundaries and sensitive flows.
 
 ## Out of Scope
-
-- [explicitly excluded items]
+- Explicit exclusions.
 
 ### Already Implemented
-
-- ["<feature part>" -> `file:line` proof] — decomposer must NOT create subtasks for these (Step 0.5 gate)
+- Feature parts the request asked for that already exist, each with `file:line` proof. The decomposer must NOT create subtasks for these (see Step 0.5: Already-Implemented Gate).
 
 ## Open Questions
-
-- [anything unresolved]
+- Questions that must be answered before decomposition or execution.
 SPEC_EOF
-```
+````
 
 **Requirements Index (MANDATORY):** After writing the spec, populate the `mapify:requirements-index:v1` sentinel-wrapped fenced YAML block (defined in the spec template) with exactly ONE `{id, kind}` entry per acceptance criterion, invariant, hard constraint, and cross-cutting requirement. `kind` must be one of `acceptance_criterion | invariant | hard_constraint | cross_cutting`. IDs must be canonical: prefix in `{AC, INV, HC, CCR}`, no leading zeros, uppercase (e.g. `AC-1`, `INV-2`, `HC-3`). These IDs are **exactly** the keys the decomposer must map in `coverage_map` — the forward-completeness gate diffs the index IDs against `coverage_map` keys to detect uncovered requirements.
 
