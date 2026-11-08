@@ -338,7 +338,7 @@ It uses the context-window usage Claude Code pre-computes on stdin (`used_percen
 
 **Non-destructive wiring.** Because a `statusLine` fully owns the status row, MAP installs it only when you do **not** already have one. At install time it checks for a `statusLine` in `~/.claude/settings.json`, the project `.claude/settings.json`, and `.claude/settings.local.json`; if any exists, MAP leaves it untouched and prints `Existing statusLine detected — MAP statusline not wired`. Otherwise it merges its `statusLine` into `.claude/settings.local.json` (a user-owned file MAP never re-renders, so there is no upgrade drift or `.bak` churn). To disable it later, remove the `statusLine` key from `.claude/settings.local.json`. Claude provider only — `statusLine` is a Claude Code concept.
 
-When active prompt builders enforce a context budget, they also append a compact decision to `.map/<branch>/token_budget.json`. `/map-efficient` Actor `<map_context>` generation records the configured `MAP_CONTEXT_BLOCK_BUDGET_TOKENS`, estimated tokens before/after enforcement, clipped section labels such as `plan_overview` or `repo_delta`, and references to the blueprint, task plan, and step state artifacts. Use this report when a workflow appears to have missing context: if only low-priority sections were clipped, continue; if required evidence was clipped, either raise the relevant budget or split the workflow before rerunning. `/map-review` no longer participates: its reviewer prompts are not clipped, so it writes no token-budget entry (see the review section below).
+No built-in prompt builder clips context any more: `/map-efficient` Actor `<map_context>` and `/map-review` reviewer prompts are emitted in full, so neither writes a `.map/<branch>/token_budget.json` entry, and `MAP_CONTEXT_BLOCK_BUDGET_TOKENS` has no effect. `record_token_budget_decision` in `.map/scripts/map_step_runner.py` remains for callers that want their own accounting; each entry records the prompt path, configured budget, estimated tokens before/after, clipped sections, and artifact references.
 
 Planning artifacts distinguish blocking requirements from negotiable preferences. `/map-plan` and `/map-efficient` blueprint validation now require top-level `hard_constraints` and `soft_constraints`: every hard constraint id must be owned in `coverage_map` and cited in the owning subtask's `validation_criteria`, while a soft constraint can be omitted only when it includes `tradeoff_rationale`. Subtasks may also carry `requiredness`, `pruneable`, and `prune_rationale` so optional work is separated from explicit, acceptance-critical, repo-required, safety-required, or ambiguous work. This lets reviewers see whether a requirement was implemented, blocked, intentionally traded off, or parked for explicit user approval before Actor starts.
 
@@ -352,7 +352,7 @@ The **affected-files drift check** treats paths explicitly listed in a direct or
 
 Two additional structural checks run unconditionally: an **entry-point existence check** confirms that a non-empty plan has at least one subtask with no dependencies (a plan with no starting point cannot execute); and a **max dependency depth** check emits a warning when the longest dependency chain exceeds `MAX_DEPENDENCY_DEPTH` (default 5, overridable via `MAP_MAX_DEPENDENCY_DEPTH` — a hard error threshold is deliberate; the current warn-first default allows gradual adoption).
 
-Implementation note: `/map-learn` is now maintained skill-first. The canonical slash surface lives in `.claude/skills/map-learn/SKILL.md`; MAP no longer ships a duplicate `.claude/commands/map-learn.md`, so there is only one place to update the learning workflow. The slash surface now advertises an optional `[workflow-summary]` argument, but zero-argument mode still auto-loads `.map/<branch>/learning-handoff.md` when present.
+Implementation note: `/map-learn` is now maintained skill-first. The canonical slash surface lives in `.claude/skills/map-learn/SKILL.md`; MAP no longer ships a duplicate `.claude/commands/map-learn.md`, so there is only one place to update the learning workflow. The slash surface now advertises an optional `[workflow-summary]` argument, but zero-argument mode still auto-loads `.map/<branch>/learning-handoff.md` when present. <!-- drift-ignore -->
 
 ## Offline historical review corpus
 
@@ -479,7 +479,7 @@ Before launching reviewers, `/map-review` admits a snapshot, creates its immutab
 
 Two role reviewers run in that same fan-out by default — no flag, no opt-in. `user_experience` asks one question: did the change make the ALREADY SHIPPED functionality harder or less convenient (extra mandatory steps on the old path, confusable flags such as `--release` vs `--from-release`, an explicitly-supplied value silently overridden instead of rejected), judged both as a human in a terminal and as a CI script. `maintainer` asks whether the next person can extend this without re-reading every line: branch-scoped plan/tracker IDs left in comments, implementation vocabulary in help/error text, errors the user cannot diagnose from one run, copy-paste, a decision computed in two places, version checks named by release number instead of capability, embedded shell/SQL/YAML in string literals, a setting carried through layers that only pass it on, a function name that promises more than its body does, a shared mechanism named after its first application, and files placed against the local convention — in four separate passes (correctness, setting propagation, names and boundaries, file structure). Both roles treat existing signatures, names, fields and responsibility splits as under review, review an attached plan as well as the code, and never modify the working tree. Every role finding must arrive with all five contract parts — `problem` (role, priority, every `file:line`), `current_code` verbatim, `proposed_code` applicable as a patch (imports, every call site, source→destination for moves), a MEASURABLE `why_better`, and its `cost` — plus a `verified_by` tier (`read`, `test_run`, `needs_environment`), or it is dropped as `contract_incomplete`, reported and never counted toward the verdict. Proposed patches are checked by reading only; the presentation states once that they were not built, linted or tested. Where it is dropped depends on the path: on the normal fan-out the ledger tombstones it and names it in `not_verified`, and when its severity is above `minor` it also sets `escalation_required`, so a CRITICAL or IMPORTANT claim lost to a missing `cost` costs the run its PROCEED instead of vanishing; under `--adversarial` the aggregator excludes it from the printed findings but retains it in `ledger_findings`, so the ledger applies the same tombstone and escalation policy. Under `--adversarial` both roles join the reviewer set (five reviewers; `--quick` drops only the Edge Case Hunter). To build just their prompts: `python3 .map/scripts/map_step_runner.py build_role_review_prompts [--roles user_experience,maintainer]`.
 
-At closeout `/map-review` computes its verdict instead of choosing one. Each reviewer's JSON envelope is written to `.map/<branch>/review-agent-<role>.json`, and `python3 .map/scripts/map_step_runner.py write_review_verdict_ledger --monitor-file … --predictor-file … --evaluator-file … --user-experience-file … --maintainer-file …` normalizes them into `.map/<branch>/review-verdict-ledger.json` plus a human-readable `.md`. The decision table counts every finding whose status is `active` or `downgraded`. Current admitted reviews require checked refutation or evidence-backed resolution before a finding may be tombstoned. Legacy status transformations cannot bypass validation; `needs_investigation` means "severity not established", not "low severity". A finding that lacks `reach_evidence`, that a reviewer asserts predates the PR, or that an operator contests on a checkable channel is downgraded to `needs_investigation` and still counted, so no metadata gap, self-attested claim or unverified objection can erase a blocking finding from the gate. Missing, unreadable or malformed scheduled reviewer output is itself a finding. Valid reviewers reporting no findings are an observed clean review; an empty findings array without reviewer evidence is not.
+At closeout `/map-review` computes its verdict instead of choosing one. Each reviewer's JSON envelope is written to `.map/<branch>/review-agent-<role>.json`, and `python3 .map/scripts/map_step_runner.py write_review_verdict_ledger --monitor-file … --predictor-file … --evaluator-file … --user-experience-file … --maintainer-file …` normalizes them into `.map/<branch>/review-verdict-ledger.json` plus a human-readable `.md`. The decision table counts every finding whose status is `active` or `downgraded`. Current admitted reviews require checked refutation or evidence-backed resolution before a finding may be tombstoned. Legacy status transformations cannot bypass validation; `needs_investigation` means "severity not established", not "low severity". A finding that lacks `reach_evidence`, that a reviewer asserts predates the PR, or that an operator contests on a checkable channel is downgraded to `needs_investigation` and still counted, so no metadata gap, self-attested claim or unverified objection can erase a blocking finding from the gate. Missing, unreadable or malformed scheduled reviewer output is itself a finding. Valid reviewers reporting no findings are an observed clean review; an empty findings array without reviewer evidence is not. <!-- drift-ignore -->
 
 `begin_review_run` admits a review/fix round before collecting reviewer output. A round is the whole iteration, not one reviewer response, tool retry or prompt ordering. Retrying an unfinished round resumes its identity and captures rather than archiving them again. A new admitted round archives previous reviewer inputs and the review gate, preserving the ledger and objections. The persisted review mode identifies the current roster; closeout passes its scheduled inputs, including missing files, rather than reusing whichever files remain on the branch. A clean adversarial review carries its validated reviewer statuses alongside `ledger_findings`, so zero findings is distinct from zero observed reviewers. Missing or malformed scheduled output remains an input-integrity finding.
 
@@ -551,7 +551,7 @@ If `.map/config.yaml` sets `minimality` to `lite`, `full`, or `ultra`, the same 
 
 The order of sections inside each fan-out prompt is controlled by `prompt_layering` in `.map/config.yaml`. The default `docs_first` puts the variable `<documents>` (bundle, preferences, diff) before the stable `<task>`/`<instructions>`/`<expected_output>` contract — best for model attention/recency. Setting `prompt_layering: stable_first` reorders the stable contract ahead of the documents so it becomes a byte-identical prefix across repeated same-role dispatches. This was the conjectured precondition for a prefix-cache hit, but (#231, resolved) the layering choice is **cache-neutral** at the Claude Code Task layer: the harness owns the API call and `cache_control`, and MAP's stable/variable seam is mid-block, so it can never be a cache boundary. `stable_first` is kept opt-in because it still changes token order/attention (not a behavior no-op) and is never silently remapped to `docs_first`. See "Prompt Layering & Prefix Caching" in `docs/ARCHITECTURE.md`. An absent or invalid value falls back to `docs_first`.
 
-This helper writes nothing to `.map/<branch>/token_budget.json` — that file records `/map-efficient` Actor `<map_context>` decisions only. A suspicious review result is therefore never explained by token-budget clipping: reviewers receive the whole bundle and the selected review diff; scope selection and full-review fallback are recorded separately.
+This helper writes nothing to `.map/<branch>/token_budget.json`; no built-in prompt builder clips context. A suspicious review result is therefore never explained by token-budget clipping: reviewers receive the whole bundle and the selected review diff; scope selection and full-review fallback are recorded separately.
 
 `verification-summary.md` and review bundles now include an **Acceptance Coverage** section derived from `blueprint.json`. Every `coverage_map` tag is marked `covered` only when the tag appears in downstream verification, QA, test-contract, handoff, PR draft, or review artifacts; otherwise reviewers see `missing_evidence` before approving.
 
@@ -822,7 +822,7 @@ execution.max_wave_retries: 3          # max whole-group rollback+restart attemp
 
 **Requirements for concurrent dispatch:** `worktree.isolation` must be `auto` or
 `required`. Setting `execution.concurrent_dispatch: true` with isolation `off`
-produces a hard `ConfigError` abort — the gate fails closed rather than degrading
+raises `DispatchGateError` (hard abort) — the gate fails closed rather than degrading
 silently. Before fan-out, the gate also resolves live isolation: with `auto`, a
 dirty merge target, unsupported worktrees, or a non-git directory selects sequential
 dispatch and reports `isolation_active: false`, `degraded_reason`, and `warning`.
@@ -1237,9 +1237,7 @@ are present, `mapify check`/`doctor` operate in codex mode. The default provider
   - [How It Works](#how-it-works)
   - [Cost Comparison Example](#cost-comparison-example)
 - [Hooks System](#-hooks-system)
-  - [Prompt Clarification](#prompt-clarification-prompt-improver-hook)
-  - [Sequential Hook Processing](#sequential-hook-processing)
-  - [Disabling Prompt-Improver](#disabling-prompt-improver)
+  - [UserPromptSubmit Hooks](#userpromptsubmit-hooks)
   - [Other Active Hooks](#other-active-hooks)
 - [Verification Results and Early Termination](#-verification-results-and-early-termination)
   - [Verification Results Tracking](#verification-results-tracking)
@@ -2741,8 +2739,7 @@ PreToolUse and Stop hooks that run before/after tool execution:
 
 | Hook | Type | Purpose |
 |------|------|---------|
-| `block-secrets.py` | PreToolUse | Blocks access to .env, credentials, private keys |
-| `block-dangerous.sh` | PreToolUse | Blocks rm -rf, force push to main, git reset --hard |
+| `safety-guardrails.py` | PreToolUse | Denies access to .env, credentials, private keys, and dangerous commands (rm -rf, force push to main, git reset --hard) |
 | `end-of-turn.sh` | Stop | Gates changed files only (syntax/secrets/.env); honors `stop_hook_active` |
 
 **Enforcement:** Hard (deterministic exit codes)
@@ -2756,38 +2753,38 @@ Layer 1 (CLAUDE.md): Agent should know not to edit .env
     ↓ (but agent might miss this)
 Layer 2 (settings.json): permissions.deny blocks Edit(./.env*)
     ↓ (but might be bypassed via path traversal)
-Layer 3 (block-secrets.py): Hook intercepts, returns exit 2
+Layer 3 (safety-guardrails.py): Hook intercepts, returns permissionDecision: deny
     → BLOCKED with clear error message
 ```
 
 ### Security Hooks in Detail
 
-#### block-secrets.py (PreToolUse)
+#### safety-guardrails.py (PreToolUse)
 
-Blocks Read/Edit/Write operations on sensitive files:
+One merged hook (matcher `Edit|Write|Read|MultiEdit|Bash`) that answers with
+`permissionDecision: deny` instead of an exit code. Its default patterns can be
+overridden in `.map/config.yaml` (`dangerous_file_patterns`, `dangerous_commands`,
+`safe_path_prefixes`, `strict_sensitive_names`).
 
-**Blocked patterns:**
+**Sensitive files (denied):**
 - `.env`, `.env.local`, `.env.production`
-- `credentials.json`, `secrets.yaml`
-- Private keys (`id_rsa`, `*_private.key`)
-- AWS credentials, GCP service accounts
+- `credentials*`, `secrets.json` / `secrets.yaml` / `secrets.toml`
+- Private keys (`id_rsa`, `id_ed25519`, `*.pem`, `*.key`, names matching `private[_-]?key`)
+- Password and token files (`password.*` / `passwords.*` / `token.*` / `tokens.*` with a json, yaml, toml or txt extension)
 
 **Example:**
 ```bash
 # Attempting to read .env
 Read('.env')
-→ Exit 2: "Blocked: sensitive file detected (.env)"
+→ permissionDecision: deny (sensitive file)
 ```
 
-#### block-dangerous.sh (PreToolUse)
-
-Blocks dangerous Bash commands:
-
-**Blocked patterns:**
-- `rm -rf /` or `rm -rf *`
+**Dangerous commands (denied):**
+- `rm -rf /` (except subpaths of temp roots such as `/tmp/<dir>`), `rm -rf *`, `rm -rf ..`
 - `git push --force origin main`
 - `git push --force origin master`
 - `git reset --hard`
+- Fork bomb, `chmod -R 777 /`, writes to `/dev/sd*`
 
 **Allowed:**
 - `rm -rf ./node_modules` (scoped deletion)
@@ -2872,7 +2869,7 @@ MAP Framework tracks verification results from hooks and supports early workflow
 
 ### Verification Results Tracking
 
-The end-of-turn hook (`end-of-turn.sh`) records verification results to `.map/verification_results_<branch>.json`. This provides machine-readable verification status for CI/CD integration.
+`mapify_cli.verification_recorder` records verification results to `.map/verification_results_<branch>.json` (see [Manual Verification Recording](#manual-verification-recording)). This provides machine-readable verification status for CI/CD integration. The end-of-turn hook (`end-of-turn.sh`) does not write this file: it only checks changed files and reports critical issues.
 
 **File location:** `.map/verification_results_<branch>.json`
 
@@ -2924,13 +2921,7 @@ The `overall` field follows strict aggregation rules:
 
 ### Skipped Status Explained
 
-Checks return `skipped` when they cannot run due to missing prerequisites:
-
-**Common skip scenarios:**
-- `check_secrets`: No staged files to check
-- `check_mypy`: No mypy configuration found
-- `npm lint`: `node_modules` directory missing
-- `cargo clippy`: Not in a Rust project
+A recipe is recorded as `skipped` when the caller could not run it, for example because a prerequisite is missing (no staged files, no tool configuration). The recorder does not decide this: the caller passes the status, and the Python API (`record_verification_result`) also accepts an optional `skip_reason`.
 
 **Example skipped result:**
 ```json
@@ -3034,9 +3025,9 @@ This enables detailed logging from hooks, showing:
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| Hook not recording results | verification_recorder not installed | Run `pip install mapify-cli` |
-| Missing duration_ms | SECONDS variable not working | Ensure bash 4.0+ |
-| Wrong branch in filename | Git not initialized | Initialize git or results go to `_default.json` |
+| No results file | Nothing called the recorder (hooks do not record results) | Record results with `python -m mapify_cli.verification_recorder` |
+| Missing duration_ms | The optional `duration_ms` argument was omitted | Pass `duration_ms` as the fifth argument |
+| Wrong branch in filename | An empty branch name was passed | Pass the branch name; an empty one uses `default` as the `<branch>` part of the filename |
 | `overall: unknown` unexpectedly | All checks skipped | Run checks manually to verify setup |
 
 #### Manual Verification Recording
@@ -3143,107 +3134,29 @@ If you run `/clear` during a workflow:
 
 MAP Framework uses Claude Code hooks to enhance your workflow experience.
 
-### Prompt Clarification (Prompt-Improver Hook)
+### UserPromptSubmit Hooks
 
-**Enabled by default** - Automatically disambiguates vague prompts before execution.
+MAP ships three non-blocking `UserPromptSubmit` hooks. Each one adds `additionalContext` only when its condition matches and otherwise stays silent:
 
-**What it does:**
-1. **Evaluates prompt clarity** using conversation history
-2. **For vague prompts** (e.g., "fix the bug"):
-   - Creates research plan (TodoWrite)
-   - Gathers context from codebase, docs, web
-   - Asks 1-6 grounded questions with specific options
-3. **For clear prompts**: Proceeds immediately
+| Hook | Purpose |
+|------|---------|
+| `detect-clarification-triggers.py` | Detects clarification-invitation language ("ask if unclear", "спрашивай") and long-running/async language ("background job", "webhook", "в фоне") in English and Russian, and reminds the planner to run the deep interview or the Durability Audit |
+| `context-meter.py` | Reads the live transcript token usage and, past the configured threshold, nudges Claude to run `/compact <focus>` (silent when the policy is `never`) |
+| `map-memory-recall.py` | Injects ranked recalled session memory |
 
-**Example flow:**
-```
-User: "fix the error"
+> **Note:** Claude Code runs all matching hooks; their `additionalContext` outputs are concatenated. The order is not guaranteed.
 
-MAP: [Prompt Improver Hook seeking clarification]
-     [Research: Found 3 recent errors in logs]
-
-     Which error needs fixing?
-     ○ TypeError in src/components/Map.tsx (recent change)
-     ○ API timeout in src/services/osmService.ts
-     ○ Other (paste error message)
-
-User: [Selects option]
-
-MAP: [Proceeds with full context]
-```
-
-**Bypass options:**
-- `* your prompt` - Skip evaluation (remove `*` prefix)
-- `/command` - Slash commands bypass automatically
-- `# memorize` - Memorize feature bypasses automatically
-
-**Token overhead:**
-- ~300 tokens per wrapped prompt
-- Only adds questions when genuinely needed
-- Better outcomes on first try = overall efficiency
-
-**Design philosophy:**
-- **Rarely intervene** - Most prompts pass through
-- **Trust user intent** - Research before asking
-- **Transparent** - Evaluation visible in conversation
-- **Max 1-6 questions** - Focused clarification
-
-### Multi-Hook Processing
-
-MAP uses **multiple UserPromptSubmit hooks** that run in parallel:
-
-1. **Prompt-Improver** – Disambiguates vague prompts (wraps prompt with evaluation instructions)
-2. **Pattern Injection** – Adds relevant patterns, and suggests workflows and skills
-
-> **Note:** Claude Code executes all matching hooks in parallel. Each hook's `additionalContext` output is concatenated and added to the prompt. The order is not guaranteed, but both enhancements are applied.
-
-> **Implementation detail:** Prompt improvement, pattern injection, and workflow suggestions are handled within the `improve-prompt.py` hook (`.claude/hooks/improve-prompt.py`).
-
-**Benefits:**
-- Both hooks enhance the prompt with different types of context
-- Prompt-Improver adds evaluation wrapper, Pattern Injection adds patterns/workflows/skills
-- Modular design (hooks can be disabled independently)
-- Parallel execution (efficient)
-
-### Disabling Prompt-Improver
-
-If you prefer direct execution without clarification:
-
-**Option 1: Use bypass prefix**
-```bash
-* implement user authentication  # Skips improvement
-```
-
-**Option 2: Remove from `.claude/settings.json`**
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      // Comment out or remove Prompt-Improver hook
-      {
-        "description": "Enhance prompts with clarification and pattern context",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 .claude/hooks/improve-prompt.py"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+To disable one, remove its entry from `UserPromptSubmit` in `.claude/settings.json` (or use `/hooks`).
 
 ### Other Active Hooks
 
-MAP Framework includes additional hooks for security and quality:
-
 | Hook | Event | Purpose |
 |------|-------|---------|
-| `improve-prompt.py` | UserPromptSubmit | Prompt clarification and enhancement |
-| `block-secrets.py` | PreToolUse | Block access to sensitive files |
-| `block-dangerous.sh` | PreToolUse | Block dangerous shell commands |
+| `safety-guardrails.py` | PreToolUse | Denies access to sensitive files and dangerous shell commands |
+| `workflow-gate.py` | PreToolUse | Blocks edits outside Actor-related phases of an active MAP workflow |
+| `workflow-context-injector.py` | PreToolUse | Injects a short MAP workflow reminder before edits and significant Bash commands |
 | `end-of-turn.sh` | Stop | Quality gates on changed files (syntax, secrets, .env) |
+| `scrub-internal-ids.py` | Stop | Removes leaked MAP-internal IDs from run-changed code comments |
 
 **Configuration:** See `.claude/settings.json` for hook configuration (or manage via `/hooks`).
 
