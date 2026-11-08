@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `/map-review` admission no longer rejects a 39 KB Russian-language file as `file_too_large` (#666). The estimate and the frozen context resources were JSON with `ensure_ascii=True`, so every Cyrillic character cost 6 bytes (`\uXXXX`) instead of 2 UTF-8 bytes, and an added file's hunks were counted as a full second copy even though source readers get a stub. Resources, manifests and the artifacts view are now serialized with non-ASCII kept literal (`_review_json_text`: quotes, backslashes, C0 controls, DEL, U+0085, U+2028 and U+2029 stay escaped, so a line view never breaks; a lone surrogate falls back to escapes) and the estimate and the exact checks count UTF-8 bytes. Frozen objects of an existing round are never re-serialized (digests are of the stored bytes); a prompt rebuilt after upgrading simply freezes new objects. An added file is charged source plus stub for readers that receive sources and the full diff for diff-only readers, whichever is larger. The fixed per-reviewer overhead is now computed per shard and per role: the compact carried-findings trailer lists only the findings relevant to the shard (plus fileless and out-of-scope ones), each role's full originating section only the relevant findings it owns, with the same renderers the builders use; the planner packs against the floor, measures every planned shard and splits any that overflows, so the estimate stays at or above the exact bytes for every shard and role. Every `review_context_budget_exceeded` error (`file_too_large`, `too_many_shards`, `fixed_overhead_too_large`, and the prompt-build check) carries `fixed_overhead` and `overhead_breakdown`. On a real 217-file, 132-carried-finding snapshot: the 39 KB `scim.md` estimate 128,847 to 43,474 bytes, admission succeeds without an override (17 shards), per-shard carried findings 11-30 KB instead of the 137,910-byte global worst case, and all 17 shards x 5 roles build within the 393,216-byte budget.
+
 ## [3.38.0] - 2026-11-07
 
 ### Fixed

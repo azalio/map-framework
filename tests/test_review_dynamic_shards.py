@@ -8,7 +8,7 @@ repo = _base_repo
 __all__ = ["repo"]
 
 
-def admit(monkeypatch, files=12):
+def admit(monkeypatch, files=48):
     monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(runner.REVIEW_CONTEXT_RESERVE_BYTES + 60_000))
     monkeypatch.delenv("MAP_REVIEW_MAX_SHARDS", raising=False)
     many_files(count=files)
@@ -26,7 +26,7 @@ def test_explicit_cap_still_reports_too_many_shards(repo, monkeypatch):
     del repo
     monkeypatch.setenv("MAP_REVIEW_MAX_SHARDS", "4")
     monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(runner.REVIEW_CONTEXT_RESERVE_BYTES + 60_000))
-    many_files(count=12)
+    many_files(count=24)
     result = runner.begin_review_run(branch="feature", provider="claude", round_id="dyn", base_ref="main")
     assert result["reason"] == "too_many_shards" and result["max_shards"] == 4, result
     assert result["max_shards_source"] == "explicit"
@@ -80,7 +80,7 @@ def test_vc_too_many_shards_error_surfaces_the_session_count(repo, monkeypatch):
     del repo
     monkeypatch.setenv("MAP_REVIEW_MAX_SHARDS", "4")
     monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(runner.REVIEW_CONTEXT_RESERVE_BYTES + 60_000))
-    many_files(count=12)
+    many_files(count=24)
     result = runner.begin_review_run(branch="feature", provider="claude", round_id="dyn", base_ref="main")
     assert result["reason"] == "too_many_shards" and result["max_shards"] == 4, result
     roles = len(runner.NORMAL_REVIEWERS)

@@ -1084,7 +1084,7 @@ def strict_sharded(repo, monkeypatch):
     """Two shards under strict security gates with a sensitive (auth/) change."""
     del repo
     trust_on_main({".map/config.yaml": "review:\n  security_gates: strict\n"})
-    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(runner.REVIEW_CONTEXT_RESERVE_BYTES + 90_000))
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(runner.REVIEW_CONTEXT_RESERVE_BYTES + 70_000))
     write_changes()
     write_many(4, directories=("auth", "auth_b"))
     admitted = runner.begin_review_run(branch="feature", provider="claude", round_id="r", base_ref="main")
@@ -1198,7 +1198,7 @@ def test_estimate_covers_the_json_encoded_source_resources(repo, monkeypatch):
 
 def test_non_ascii_change_is_sharded_at_admission_instead_of_failing_at_prompt_build(repo, monkeypatch):
     del repo
-    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(runner.REVIEW_CONTEXT_RESERVE_BYTES + 400_000))
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(runner.REVIEW_CONTEXT_RESERVE_BYTES + 130_000))
     write_changes()
     write_cyrillic(repeat=1500)
     admitted = runner.begin_review_run(branch="feature", provider="claude", round_id="enc", base_ref="main")

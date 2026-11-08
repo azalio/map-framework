@@ -65,7 +65,7 @@ def check_round(provider, arguments, monkeypatch, label):
     monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(budget))
     monkeypatch.setenv("MAP_REVIEW_MAX_SHARDS", "40")
     # Task artifacts are lazy now, so the adversarial rosters need more source bytes to still need shards.
-    seed_near_full_shards(files=48 if "--adversarial" in arguments else 24)
+    seed_near_full_shards(files=48 if "--adversarial" in arguments or provider == "codex" else 24)
     admitted = runner.begin_review_run(branch="feature", provider=provider, arguments=arguments,
                                       round_id="roster", base_ref="main")
     assert admitted["status"] == "success", (label, admitted)
