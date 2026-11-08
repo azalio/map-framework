@@ -11277,6 +11277,25 @@ def _review_merge_shard_outputs(reviewer: str, items: list[tuple[str, dict[str, 
     return aggregate
 
 
+def _review_receipt_paths(names: list[str]) -> set[str]:
+    """Repo-relative receipt paths: the repository root is stripped and ``./`` collapsed (#668).
+
+    An absolute path outside the repository stays absolute, so it never covers scope.
+    """
+    roots = {os.getcwd(), str(Path.cwd().resolve())}
+    normalized: set[str] = set()
+    for name in names:
+        value = posixpath.normpath(name) if name else name
+        if posixpath.isabs(value):
+            for root in roots:
+                relative = posixpath.relpath(value, root)
+                if relative != "." and not relative.startswith("../") and relative != "..":
+                    value = relative
+                    break
+        normalized.add(value)
+    return normalized
+
+
 def _review_shard_problems(row: dict[str, Any], directory: Path, ordering: str, reviewer: str) -> list[str]:
     """Verify every shard capture of one (ordering, reviewer): file hash, delivery proof and own-file coverage."""
     problems: list[str] = []
@@ -11302,7 +11321,8 @@ def _review_shard_problems(row: dict[str, Any], directory: Path, ordering: str, 
             receipt = output.get("receipt")
             if _review_coverage_receipt_errors(receipt):
                 problems.append(f"{label}:{name}: missing or invalid shard coverage receipt")
-            elif set(shard["files"]) - set(receipt["covered_files"]) or set(shard["files"]) & set(receipt["skipped_files"]):
+            elif (set(shard["files"]) - _review_receipt_paths(receipt["covered_files"])
+                  or set(shard["files"]) & _review_receipt_paths(receipt["skipped_files"])):
                 problems.append(f"{label}:{name}: shard scope is unread or skipped")
     return problems
 
@@ -11554,10 +11574,10 @@ def _review_security_gate(row: dict[str, Any], directory: Path) -> dict[str, Any
         receipt = output["receipt"]
         covered = receipt.get("covered_files")
         if (not isinstance(covered, list) or any(not isinstance(name, str) for name in covered)
-                or set(row.get("required_files", [])) - set(covered)
+                or set(row.get("required_files", [])) - _review_receipt_paths(covered)
                 or not isinstance(receipt.get("skipped_files"), list)
                 or any(not isinstance(name, str) for name in receipt["skipped_files"])
-                or set(row.get("required_files", [])) & set(receipt["skipped_files"])
+                or set(row.get("required_files", [])) & _review_receipt_paths(receipt["skipped_files"])
                 or not isinstance(receipt.get("denied_access"), list)
                 or _review_denied_split(row, receipt["denied_access"])[0]):
             reasons.append(f"{ordering}: incomplete security coverage")
@@ -11684,8 +11704,8 @@ def _review_completeness(row: dict[str, Any], directory: Path) -> dict[str, Any]
                 if required_denied:
                     blocked = True
                     reasons.append(f"{ordering}:{name}: required access denied")
-                if (set(row.get("required_files", [])) - set(receipt["covered_files"])
-                        or set(row.get("required_files", [])) & set(receipt["skipped_files"])):
+                if (set(row.get("required_files", [])) - _review_receipt_paths(receipt["covered_files"])
+                        or set(row.get("required_files", [])) & _review_receipt_paths(receipt["skipped_files"])):
                     reasons.append(f"{ordering}:{name}: required scope is unread or skipped")
                 for check_id in set(receipt["check_evidence"]) | set(binding.get("required_checks", [])):
                     if not _review_check_valid(directory, check_id, row):
@@ -11759,7 +11779,7 @@ def _complete_review_round(
             if not isinstance(covered, list) or any(not isinstance(name, str) for name in covered):
                 coverage.append(set())
             else:
-                coverage.append(set(covered))
+                coverage.append(_review_receipt_paths(covered))
     # Findings may be published while evidence collection is still pending.
     # Only a complete collection seals the payload and consumes a round; an
     # incomplete/blocked receipt must remain replaceable under this admission.
@@ -13880,7 +13900,7 @@ REVIEW_FINDING_EVIDENCE_SCHEMA: dict[str, object] = {
 }
 
 REVIEW_COVERAGE_RECEIPT_SCHEMA = {
-    "covered_files": ["<string — actual source path inspected, including supplied source content>"],
+    "covered_files": ["<string — repo-relative source path inspected, including supplied source content>"],
     "skipped_files": ["<string — required source path not inspected; [] when none>"],
     "denied_access": ["<string — source path or resource whose access was denied; [] when none>"],
     "check_evidence": ["<string — current runner-issued check ID; [] when no check receipt is available>"],
