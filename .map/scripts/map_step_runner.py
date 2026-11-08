@@ -9408,12 +9408,36 @@ def _review_finding_files(row: dict[str, Any]) -> list[str]:
     return [name for name in files if isinstance(name, str) and name] if isinstance(files, list) else []
 
 
+# Intent: the context budget is UTF-8 BYTES, so review resources keep non-ASCII text literal (a Cyrillic character
+# is 2 bytes, not a 6-byte \uXXXX escape). json already escapes quotes, backslashes and C0 controls; the
+# remaining characters some line splitters treat as breaks are escaped here too.
+_REVIEW_JSON_LINE_BREAKS = re.compile("[\x7f\x85\u2028\u2029\ud800-\udfff]")
+
+
+def _review_json_text(value: Any, **options: Any) -> str:
+    """JSON text with UTF-8 characters kept literal; only controls, line-break characters and lone surrogates are escaped.
+
+    Intent: a lone surrogate (an undecodable file name) has no UTF-8 form, so just that character becomes a
+    ``\\udXXX`` escape (json.loads restores it); the rest of the object, including Cyrillic content, stays literal.
+    """
+    text = json.dumps(value, ensure_ascii=False, **options)
+    return _REVIEW_JSON_LINE_BREAKS.sub(lambda match: f"\\u{ord(match.group()):04x}", text)
+
+
+_REVIEW_LONE_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def _review_json_size(value: Any, **options: Any) -> int:
+    """UTF-8 byte size of ``_review_json_text`` (the budget unit)."""
+    return len(_review_json_text(value, **options).encode("utf-8"))
+
+
 def _review_escaped_len(text: str) -> int:
-    return len(json.dumps(text, ensure_ascii=True)) - 2
+    return len(_review_json_text(text)) - 2
 
 
 def _review_clip_escaped(text: str, limit: int) -> tuple[str, bool]:
-    """Longest prefix whose JSON-escaped (ASCII) size fits ``limit``, and whether anything was cut."""
+    """Longest prefix whose JSON-escaped size fits ``limit``, and whether anything was cut."""
     if _review_escaped_len(text) <= limit:
         return text, False
     low, high = 0, len(text)
@@ -9457,7 +9481,7 @@ def _review_compact_finding(row: dict[str, Any], *, id_key: str = "id") -> str:
         shortened.append("claim")
     if shortened:
         entry["shortened"] = sorted(set(shortened))
-    text = json.dumps(entry, ensure_ascii=True)
+    text = _review_json_text(entry)
     # Intent: escaping can inflate non-ASCII text; shrink the optional parts until the line is safe to Read.
     while len(text) > REVIEW_CARRIED_LINE_BUDGET:
         if entry.get("more_files"):
@@ -9471,7 +9495,7 @@ def _review_compact_finding(row: dict[str, Any], *, id_key: str = "id") -> str:
             entry["shortened"] = sorted({*entry.get("shortened", []), "file"})
         else:
             entry = {id_key: _review_clip_escaped(str(row["id"]), 40)[0], "shortened": ["all"]}
-        text = json.dumps(entry, ensure_ascii=True)
+        text = _review_json_text(entry)
     return text
 
 
@@ -9519,7 +9543,7 @@ def _review_resolution_entry(row: dict[str, Any]) -> str:
         value = row.get(field)
         if isinstance(value, str) and value:
             entry[field] = _review_wrap_value(value)
-    return json.dumps(entry, indent=1, ensure_ascii=True)
+    return _review_json_text(entry, indent=1)
 
 
 def _review_carried_relevant(
@@ -9859,38 +9883,21 @@ def begin_review_run(
         and _review_binding_current(last_round))
     if "required_files" in target and not open_rounds and not reuses_admission:
         skipped_paths = {item["path"] for item in coverage_skips}
-        sizes = _review_required_bytes(target, [name for name in target["required_files"] if name not in skipped_paths],
-                                       review_config)
+        admitted_paths = [name for name in target["required_files"] if name not in skipped_paths]
+        sizes = _review_required_bytes(target, admitted_paths, review_config)
         budget = _review_context_budget(review_config)
-        # Intent: plan against the measured worst per-reviewer non-source bytes, never below the default floor.
-        overhead = _review_fixed_overhead(
-            target, provider, scheduled_reviewers, branch_dir.name,
-            [name for name in target["required_files"] if name not in skipped_paths], coverage_skips,
-            check_specs, [row for row in prior.get("findings_registry", [])
-                          if isinstance(row, dict) and row.get("status") in {"active", "downgraded"}])
-        reserve = max(REVIEW_CONTEXT_RESERVE_BYTES, overhead["total"])
-        if sum(sizes.values()) + reserve > budget:
-            capacity = budget - reserve
-            if capacity < REVIEW_SOURCE_OVERHEAD_BYTES * 2:
-                # Intent: no changed file can fit next to the fixed context, so naming files as oversized would mislead.
-                return _review_context_budget_error(sizes, budget, reserve=reserve, reason="fixed_overhead_too_large",
-                                                    fixed_overhead=overhead["total"],
-                                                    overhead_breakdown=overhead["breakdown"])
-            oversized = {name: size for name, size in sizes.items() if size > capacity}
-            if oversized:
-                return _review_context_budget_error(sizes, budget, reserve=reserve, reason="file_too_large",
-                                                    oversized_paths=oversized,
-                                                    oversized_causes=_review_oversized_causes(target, sorted(oversized)))
-            planned = _review_plan_shards(sizes, capacity)
-            max_shards = _review_max_shards(review_config)
-            if len(planned) > max_shards:
-                return _review_context_budget_error(
-                    sizes, budget, reserve=reserve, reason="too_many_shards", shards_needed=len(planned),
-                    max_shards=max_shards,
-                    reviewer_sessions=_review_reviewer_sessions(len(planned), scheduled_reviewers, review_mode),
-                    max_shards_source="explicit" if _review_explicit_max_shards(review_config) else "ceiling")
-            shard_plan = [{"id": f"s{index:02d}", "files": files, "bytes": sum(sizes[name] for name in files)}
-                          for index, files in enumerate(planned, 1)]
+        # Intent: plan against the measured per-shard, per-role non-source bytes, never below the default floor.
+        measure = _review_overhead_model(target, provider, scheduled_reviewers, branch_dir.name, admitted_paths,
+                                         coverage_skips, check_specs)
+        planned_error, planned = _review_plan_admission(
+            target, sizes, budget, review_config, measure,
+            [row for row in prior.get("findings_registry", [])
+             if isinstance(row, dict) and row.get("status") in {"active", "downgraded"}],
+            scheduled_reviewers, review_mode)
+        if planned_error:
+            return planned_error
+        shard_plan = [{"id": f"s{index:02d}", "files": files, "bytes": sum(sizes[name] for name in files)}
+                      for index, files in enumerate(planned, 1)]
     policy_hash = _review_policy(dict(payload), trusted_policy=target["trusted_policy"])
     consent: dict[str, Any] = {"status": "not_required"}
     if _review_requires_consent(target):
@@ -13253,10 +13260,9 @@ def _review_windowed_fields(
     """Windowed replacement for an oversized text source, or None when the full source is kept.
 
     Single serializer for the admission estimate and the frozen resource: a source is windowed only
-    when its full ASCII-JSON size exceeds ``full_max`` and the window is actually smaller.
+    when its full UTF-8 JSON size exceeds ``full_max`` and the window is actually smaller.
     """
-    full = (len(json.dumps(base_text, ensure_ascii=True)) + len(json.dumps(current_text, ensure_ascii=True))
-            + len(json.dumps(mapping, sort_keys=True, ensure_ascii=True)))
+    full = _review_json_size(base_text) + _review_json_size(current_text) + _review_json_size(mapping, sort_keys=True)
     if full <= full_max:
         return None
     windows = _review_window_ranges(base_text.splitlines(), current_text.splitlines(), mapping, context)
@@ -13267,7 +13273,7 @@ def _review_windowed_fields(
                               "base:<path> and current:<path>."),
               "line_mapping": _review_window_mapping(mapping, windows),
               "hunks": _review_window_hunks(base_text, current_text, windows)}
-    return fields if len(json.dumps(fields, sort_keys=True, ensure_ascii=True)) < full else None
+    return fields if _review_json_size(fields, sort_keys=True) < full else None
 
 
 def _review_window_source(source: dict[str, Any], full_max: int, context: int) -> dict[str, Any]:
@@ -14743,7 +14749,7 @@ REVIEW_ARTIFACT_PURPOSES = {
 def _review_bounded_text(text: str, cap: int, *, escaped: bool) -> tuple[str, bool]:
     """Longest whole-line prefix whose delivered size fits ``cap`` (JSON-escaped when ``escaped``, else UTF-8 bytes)."""
     def size(value: str) -> int:
-        return len(json.dumps(value, ensure_ascii=True)) - 2 if escaped else len(value.encode("utf-8"))
+        return _review_json_size(value) - 2 if escaped else len(value.encode("utf-8"))
 
     if size(text) <= cap:
         return text, False
@@ -14823,7 +14829,7 @@ def _review_lazy_finding_resource(
     frozen = _review_lazy_entry(row, resource_id)
     if isinstance(frozen, dict):
         return frozen, False
-    metadata = {**_review_context_store(directory, json.dumps(source, sort_keys=True, ensure_ascii=True)),
+    metadata = {**_review_context_store(directory, _review_json_text(source, sort_keys=True)),
                 "required": False, "kind": "finding"}
     row.setdefault("context_lazy", {})[resource_id] = metadata
     return metadata, True
@@ -14865,19 +14871,19 @@ def _review_context_view(resource_id: str, raw: bytes, resource_sha256: str, *, 
     texts: list[tuple[str, str]] = []
 
     def render(node: Any, depth: int, path: str) -> str:
-        if isinstance(node, str) and ("\n" in node or len(json.dumps(node, ensure_ascii=False)) > REVIEW_CONTEXT_VIEW_TEXT_CHARS):
+        if isinstance(node, str) and ("\n" in node or len(_review_json_text(node)) > REVIEW_CONTEXT_VIEW_TEXT_CHARS):
             texts.append((path, node))
             return json.dumps(f"<<TEXT {len(texts)}>>")
         if isinstance(node, dict):
             pairs = []
             for key, item in node.items():
-                if len(json.dumps(key, ensure_ascii=False)) > REVIEW_CONTEXT_VIEW_KEY_CHARS:
+                if len(_review_json_text(key)) > REVIEW_CONTEXT_VIEW_KEY_CHARS:
                     # Intent: a key longer than a line moves to a verbatim TEXT block like a long string value.
                     texts.append((f"{path}#key", key))
                     shown = json.dumps(f"<<TEXT {len(texts)}>>")
                     label = f"{path}[<<TEXT {len(texts)}>>]"
                 else:
-                    shown = json.dumps(key, ensure_ascii=False)
+                    shown = _review_json_text(key)
                     label = f"{path}[{shown}]"
                 pairs.append(f"{shown}: " + render(item, depth + 1, label))
             opening, closing = "{", "}"
@@ -14885,7 +14891,7 @@ def _review_context_view(resource_id: str, raw: bytes, resource_sha256: str, *, 
             pairs = [render(item, depth + 1, f"{path}[{index}]") for index, item in enumerate(node)]
             opening, closing = "[", "]"
         else:
-            scalar = json.dumps(node, ensure_ascii=False)
+            scalar = _review_json_text(node)
             if len(scalar) > REVIEW_CONTEXT_VIEW_TEXT_CHARS:
                 # Intent: a huge number (or any scalar wider than a line) is printed verbatim in a TEXT block.
                 texts.append((path, scalar))
@@ -14898,13 +14904,23 @@ def _review_context_view(resource_id: str, raw: bytes, resource_sha256: str, *, 
         return opening + "\n" + ",\n".join(pad + pair for pair in pairs) + "\n" + " " * depth + closing
 
     body = render(value, 0, "$")
-    lines = [REVIEW_CONTEXT_FILE_HEADER, f"resource_id: {resource_id}", f"resource_sha256: {resource_sha256}",
+
+    def escape(text: str) -> str:
+        # Intent: header fields and TEXT blocks are printed verbatim and must encode as UTF-8, so a lone
+        # surrogate (an undecodable file name) is shown as a \\udXXX escape; the frozen resource keeps the value.
+        return _REVIEW_LONE_SURROGATE.sub(lambda match: f"\\u{ord(match.group()):04x}", text)
+
+    escaped = any(_REVIEW_LONE_SURROGATE.search(text) for text in (resource_id, *(item for pair in texts for item in pair)))
+    lines = [REVIEW_CONTEXT_FILE_HEADER, f"resource_id: {escape(resource_id)}", f"resource_sha256: {resource_sha256}",
              f"resource_bytes: {len(raw)}",
              "layout: the JSON section shows the frozen resource; a string shown as \"<<TEXT k>>\"",
              "layout: is printed verbatim in block TEXT k, whose header gives its line count and the file line",
              "layout: where the text starts.",
+             *(["layout: a lone surrogate (undecodable file name) is shown as a \\udXXX escape in this file."] if escaped else []),
              "=== JSON ===", *body.split("\n")]
     for index, (path, value_text) in enumerate(texts, 1):
+        path = escape(path)
+        value_text = escape(value_text)
         final_newline = value_text.endswith("\n")
         parts = value_text.split("\n")
         if final_newline:
@@ -15192,7 +15208,7 @@ def _review_lazy_risk_resource(
     if not artifact:
         raise ValueError("Review bundle changed before context delivery")
     risk = json.loads(Path(artifact).read_text(encoding="utf-8"))["snapshot"]["target"].get("shadow_risk", {})
-    metadata = {**_review_context_store(directory, json.dumps({"shadow_risk": risk}, sort_keys=True, ensure_ascii=True)),
+    metadata = {**_review_context_store(directory, _review_json_text({"shadow_risk": risk}, sort_keys=True)),
                 "required": False, "kind": "risk"}
     row.setdefault("context_lazy", {})[resource_id] = metadata
     return metadata, True
@@ -15224,7 +15240,7 @@ def _review_lazy_full_resource(
                "content": source[f"{side}_content"], "line_mapping": source["line_mapping"],
                "line_mapping_scope": "full",
                **({"renamed_from": source["renamed_from"]} if "renamed_from" in source else {})}
-    metadata = {**_review_context_store(directory, json.dumps(payload, sort_keys=True, ensure_ascii=True)),
+    metadata = {**_review_context_store(directory, _review_json_text(payload, sort_keys=True)),
                 "path": name, "encoding": source["encoding"], "required": False, "kind": "full_source"}
     row.setdefault("context_lazy", {})[resource_id] = metadata
     return metadata, True
@@ -15265,7 +15281,7 @@ def _review_lazy_repo_resource(
             base_text, entry = base64.b64encode(base_raw).decode(), {**entry, "encoding": "base64"}
         entry = {**entry, "base_content": base_text, "status": "changed_generated_skipped",
                  "baseline_known": bool(target.get("base"))}
-    metadata = {**_review_context_store(directory, json.dumps(entry, sort_keys=True, ensure_ascii=True)),
+    metadata = {**_review_context_store(directory, _review_json_text(entry, sort_keys=True)),
                 "path": name, "encoding": entry["encoding"], "required": False,
                 "base_sha256": hashlib.sha256(entry["base_content"].encode("utf-8")).hexdigest(),
                 "current_sha256": hashlib.sha256(entry["current_content"].encode("utf-8")).hexdigest()}
@@ -15316,10 +15332,10 @@ def _prepare_review_context(
         inventory_target["context_files_count"] = len(context_files)
         inventory_target["context_files_sha256"] = hashlib.sha256(
             json.dumps(context_files, ensure_ascii=True).encode("utf-8")).hexdigest()
-    inventory = _review_context_store(directory, json.dumps(
+    inventory = _review_context_store(directory, _review_json_text(
         {"snapshot": {**snapshot, "target": inventory_target}, "attribution": {key: value for key, value in attribution.items()
                                                if key not in {"files", "diff"}}},
-        sort_keys=True, ensure_ascii=True,
+        sort_keys=True,
     ))
     sources = {}
     required_paths = set(snapshot["required_files"])
@@ -15329,7 +15345,7 @@ def _prepare_review_context(
     # Unchanged repository files are not enumerated: reviewers fetch them lazily as repo:<path>.
     for index, (source, full) in enumerate(zip(delivered, attribution.get("files", []))):
         sources[f"source_{index:06d}"] = {
-            **_review_context_store(directory, json.dumps(source, sort_keys=True, ensure_ascii=True)),
+            **_review_context_store(directory, _review_json_text(source, sort_keys=True)),
             "path": source["path"], "encoding": source["encoding"],
             "required": not pack_sources and source["path"] in required_paths,
             "base_sha256": hashlib.sha256(full["base_content"].encode("utf-8")).hexdigest(),
@@ -15338,8 +15354,8 @@ def _prepare_review_context(
         }
     has_windowed = any(item.get("windowed") for item in delivered)
     if pack_sources and delivered:
-        sources["source_pack"] = {**_review_context_store(directory, json.dumps(
-            {"files": delivered}, sort_keys=True, ensure_ascii=True)), "required": True}
+        sources["source_pack"] = {**_review_context_store(directory, _review_json_text(
+            {"files": delivered}, sort_keys=True)), "required": True}
     # Intent: an added file's hunks duplicate its full source resource, so readers with sources get a stub;
     # diff-only readers (no sources) keep the complete diff.
     stubs = {source["path"]: ("source_pack" if pack_sources else f"source_{index:06d}")
@@ -15368,15 +15384,15 @@ def _prepare_review_context(
         if access != "diff_only":
             resources.update({"inventory": inventory, **sources})
         if access == "diff_plus_spec_plus_artifacts" and bundle.get("context_artifacts"):
-            resources["artifacts"] = _review_context_store(directory, json.dumps(
-                _review_artifacts_view(bundle["context_artifacts"]), sort_keys=True, ensure_ascii=True))
+            resources["artifacts"] = _review_context_store(directory, _review_json_text(
+                _review_artifacts_view(bundle["context_artifacts"]), sort_keys=True))
         manifest = {
             "schema_version": "review_context.v1", "reviewer": reviewer,
             "round_id": row["round_id"], "context_access": access,
             "bundle_sha256": row["bundle_receipt"]["sha256"], "resources": resources,
             **({"shard": shard} if shard else {}),
         }
-        metadata = _review_context_store(directory, json.dumps(manifest, sort_keys=True, ensure_ascii=True))
+        metadata = _review_context_store(directory, _review_json_text(manifest, sort_keys=True))
         context_id = metadata["sha256"]
         inline = len(original.encode("utf-8")) <= REVIEW_CONTEXT_INLINE_BYTES
         # Codex readers have no file Read and take chunks; the rest fetch all required context at once.
@@ -15462,8 +15478,22 @@ def _prepare_review_context(
             item["bytes"] for item in manifest_resources.values() if item.get("required", True))
     if any(size > budget for size in required_bytes.values()):
         # Intent: never hand out some prompts and not others; the whole fan-out stops.
+        worst_reviewer = max(required_bytes, key=lambda name: required_bytes[name])
+        worst_meta = row["context_manifests"][prepared[worst_reviewer]["context_transport"]["context_id"]]
+        worst_resources = json.loads(_review_context_read(directory, worst_meta))["resources"]
+        # Intent: the non-source part of the worst reviewer's required context, so operators see why capacity is small.
+        # Intent: same schema as the admission errors; the diff and source resources are the per-path part, so
+        # fixed_overhead is the manifest, prompt, inventory and task artifacts of the worst reviewer.
+        exact_parts = {name: item["bytes"] for name, item in worst_resources.items() if item.get("required", True)}
+        changed_file_bytes = sum(size for name, size in exact_parts.items() if name == "diff" or name.startswith("source"))
+        exact_breakdown = {"worst_role": worst_reviewer, "role_prompt": exact_parts.get("prompt", 0),
+                           "inventory": exact_parts.get("inventory", 0), "task_artifacts": exact_parts.get("artifacts", 0),
+                           "manifest": worst_meta["bytes"], "sources_and_diff": changed_file_bytes}
+        exact_fixed = required_bytes[worst_reviewer] - changed_file_bytes
         return {"status": "error", "stop_reason": "review_context_budget_exceeded", "branch": branch,
-                "budget": budget, "required_bytes": required_bytes,
+                "budget": budget, "required_bytes": required_bytes, "total": required_bytes[worst_reviewer],
+                **_review_overhead_fields({"total": exact_fixed, "breakdown": exact_breakdown}, budget,
+                                          f"reviewer {worst_reviewer}", reserve_floor=False),
                 "message": "A reviewer's required context exceeds the per-reviewer budget; no prompt was returned.",
                 "hints": ["Split the change into smaller reviews.",
                           f"Raise review.context_budget_bytes in the trusted .map/config.yaml or set {REVIEW_CONTEXT_BUDGET_ENV}."]}
@@ -15682,15 +15712,31 @@ def _review_publish_context_file(
     resource_bytes: int, done: bool, *, resources: list[str] | None = None,
 ) -> dict[str, Any]:
     """Write the view with fresh proof fragments, or reuse the pending file, and record the pending proof."""
-    view = render(_review_part_bytes(resource_bytes))
-    view_sha256 = hashlib.sha256(view.encode("utf-8")).hexdigest()
-    path = _review_context_file_path(directory, session_id, view_sha256)
     pending = session.get("pending")
     if not done and pending and (pending.get("type") != "context_file" or pending["resource_id"] != resource_id):
         raise ValueError("A pending delivery must be acknowledged or retried before another resource")
     record = session.setdefault("files", {}).get(resource_id)
-    reuse = (isinstance(record, dict) and record.get("view_sha256") == view_sha256 and path.is_file()
-             and hashlib.sha256(path.read_bytes()).hexdigest() == record.get("sha256"))
+    # Intent: a pending file that is intact on disk is authoritative: a retry returns it even when the renderer
+    # changed since (an upgrade mid-delivery), because the reviewer may already hold that exact file and proof.
+    held_path = None
+    if (not done and isinstance(record, dict) and isinstance(pending, dict) and pending.get("resource_sha256") == resource_sha256
+            and record.get("view_sha256") and (resources is None or record.get("resources") == resources)):
+        try:
+            candidate = _review_context_file_path(directory, session_id, record["view_sha256"])
+            if candidate.is_file() and hashlib.sha256(candidate.read_bytes()).hexdigest() == record.get("sha256"):
+                held_path = candidate
+        except (OSError, ValueError):
+            held_path = None
+    view = ""
+    view_sha256 = ""
+    if held_path is not None:
+        path, reuse = held_path, True
+    else:
+        view = render(_review_part_bytes(resource_bytes))
+        view_sha256 = hashlib.sha256(view.encode("utf-8")).hexdigest()
+        path = _review_context_file_path(directory, session_id, view_sha256)
+        reuse = (isinstance(record, dict) and record.get("view_sha256") == view_sha256 and path.is_file()
+                 and hashlib.sha256(path.read_bytes()).hexdigest() == record.get("sha256"))
     if not reuse:
         text, proof, _ = _review_embed_proof(view, resource_bytes)
         data = text.encode("utf-8")
@@ -25892,6 +25938,31 @@ def _review_diff_header_paths(line: str) -> tuple[str, str] | None:
     return (rest[2:positions[0]], rest[positions[0] + 3:]) if positions else None
 
 
+def _review_base_missing(base: str, names: list[str]) -> set[str]:
+    """Paths that do not exist at the review base (an existing empty blob is NOT missing).
+
+    This is the signal the attribution uses for an ``added`` source (``cat-file -e`` fails), so the admission
+    estimate stubs the same files the delivery stubs.
+    """
+    if not base:
+        return set(names)
+    missing: set[str] = set()
+    batchable = [name for name in names if "\n" not in name]
+    if batchable:
+        result = subprocess.run(["git", "cat-file", "--batch-check"],
+                                input=b"".join(f"{base}:".encode() + os.fsencode(name) + b"\n" for name in batchable),
+                                capture_output=True, timeout=60, check=False)
+        lines = result.stdout.split(b"\n")
+        for index, name in enumerate(batchable):
+            if index >= len(lines) or lines[index].endswith(b" missing"):
+                missing.add(name)
+    for name in names:
+        if "\n" in name and subprocess.run(["git", "cat-file", "-e", f"{base}:{name}"], capture_output=True,
+                                           timeout=10, check=False).returncode:
+            missing.add(name)
+    return missing
+
+
 def _review_base_contents(base: str, names: list[str]) -> dict[str, bytes]:
     """Blob contents at the review base through one ``cat-file --batch`` process; absent paths are empty."""
     contents = {name: b"" for name in names}
@@ -25920,11 +25991,11 @@ def _review_base_contents(base: str, names: list[str]) -> dict[str, bytes]:
 
 
 def _review_text_json_size(raw: bytes) -> int:
-    """Serialized size of one side of a source resource: ASCII-escaped JSON text, else base64."""
+    """Serialized size of one side of a source resource: UTF-8 JSON text, else base64."""
     try:
         if b"\0" in raw:
             raise UnicodeError("binary")
-        return len(json.dumps(raw.decode("utf-8"), ensure_ascii=True))
+        return _review_json_size(raw.decode("utf-8"))
     except UnicodeError:
         return 4 * ((len(raw) + 2) // 3) + 2
 
@@ -25946,9 +26017,8 @@ def _review_source_json_size(
     mapping = _review_line_mapping(base_text, current_text) if has_base_ref else []
     windowed = _review_windowed_fields(base_text, current_text, mapping, full_max, context) if has_base_ref else None
     if windowed is not None:
-        return len(json.dumps(windowed, sort_keys=True, ensure_ascii=True))
-    return (len(json.dumps(base_text, ensure_ascii=True)) + len(json.dumps(current_text, ensure_ascii=True))
-            + len(json.dumps(mapping, sort_keys=True, ensure_ascii=True)))
+        return _review_json_size(windowed, sort_keys=True)
+    return _review_json_size(base_text) + _review_json_size(current_text) + _review_json_size(mapping, sort_keys=True)
 
 
 # Per-path JSON envelope plus its manifest entry (digests, path, flags).
@@ -25980,6 +26050,15 @@ def _review_oversized_causes(target: dict[str, Any], names: list[str]) -> dict[s
     return causes
 
 
+def _review_stub_eligible_name(name: str) -> bool:
+    """True when the delivered diff still names ``name`` exactly, so its added hunks can be stubbed.
+
+    Intent: the diff the prompts carry is decoded with replacement characters, so an undecodable (surrogateescape)
+    file name no longer matches its source path and its hunks stay in the diff; the estimate must charge them.
+    """
+    return _review_utf8(os.fsencode(name))
+
+
 def _review_utf8(raw: bytes) -> bool:
     try:
         raw.decode("utf-8")
@@ -25993,8 +26072,10 @@ def _review_required_bytes(
 ) -> dict[str, int]:
     """Estimate each path's required context the way resources are serialized (not raw sizes).
 
-    A source resource is JSON with ``ensure_ascii`` (non-ASCII becomes 6-byte escapes), and the diff
-    resource is raw text. Per-path sizes let a sharding planner reuse the estimate.
+    A source resource is JSON with non-ASCII kept literal (UTF-8 bytes, controls escaped), and the diff
+    resource is raw text. An added file's hunks are stubbed for readers that receive its source, so those
+    readers are charged source + stub, and diff-only readers the full diff: the estimate takes the larger.
+    Per-path sizes let a sharding planner reuse the estimate.
     """
     full_max, context = _review_window_config(review_config or {})
     base = target.get("base", "")
@@ -26004,6 +26085,8 @@ def _review_required_bytes(
     renames = {new: old for new, old in all_pairs.items() if new in paths}
     moved_away = {old for new, old in all_pairs.items() if old in paths}
     base_contents = _review_base_contents(base, sorted({*paths, *renames.values()}))
+    # Intent: "added" is the delivery's own signal (path absent at the base), not "empty at the base".
+    added = _review_base_missing(base, [name for name in paths if name not in renames]) if base else set()
     if base:
         # Intent: same rename policy as the diff the prompts carry, so a moved file is counted once.
         diff = _review_git_bytes("-c", "core.quotepath=false", "diff", base, "--",
@@ -26024,9 +26107,19 @@ def _review_required_bytes(
         except OSError:
             current = b""
         base_raw = base_contents[renames.get(name, name)]
-        text_size = (_review_source_json_size(base_raw, current, bool(base), full_max, context)
-                     + diff_sizes.get(name, (len(current) + current.count(b"\n") + 400) if not base_raw else 0)
-                     + REVIEW_SOURCE_OVERHEAD_BYTES)
+        source_size = _review_source_json_size(base_raw, current, bool(base), full_max, context)
+        diff_size = diff_sizes.get(name, (len(current) + current.count(b"\n") + 400) if name in added or not base_raw else 0)
+        if (base and name in added and name not in renames and current and not Path(name).is_symlink()
+                and _review_stub_eligible_name(name) and _review_utf8(current)
+                and b"\0" not in current and _review_windowed_fields(
+                    "", current.decode("utf-8"), _review_line_mapping("", current.decode("utf-8")),
+                    full_max, context) is None):
+            # Intent: mirrors _prepare_review_context: an added regular UTF-8 file that is not windowed has its
+            # hunks replaced by a stub for every reader that receives sources; diff-only readers keep the diff.
+            stub = 2 * len(os.fsencode(name)) + 512
+            text_size = max(source_size + stub + REVIEW_SOURCE_OVERHEAD_BYTES, diff_size)
+        else:
+            text_size = source_size + diff_size + REVIEW_SOURCE_OVERHEAD_BYTES
         sizes[name] = text_size + _review_view_overhead(text_size)
     return sizes
 
@@ -26060,8 +26153,26 @@ def _review_fixed_overhead(
     target: dict[str, Any], provider: str, scheduled_reviewers: list[str], branch_name: str,
     required_paths: list[str], coverage_skips: list[dict[str, Any]],
     check_specs: dict[str, list[str]] | None = None, carried_findings: list[dict[str, Any]] | None = None,
+    shard_files: set[str] | None = None,
 ) -> dict[str, Any]:
-    """Worst per-reviewer required bytes that are not changed-file sources, measured with the real renderers.
+    """Overhead of one shard (``shard_files``) or of an unsharded round (None); see ``_review_overhead_model``."""
+    return _review_overhead_model(target, provider, scheduled_reviewers, branch_name, required_paths,
+                                  coverage_skips, check_specs)(list(carried_findings or []), shard_files)
+
+
+def _review_overhead_model(
+    target: dict[str, Any], provider: str, scheduled_reviewers: list[str], branch_name: str,
+    required_paths: list[str], coverage_skips: list[dict[str, Any]],
+    check_specs: dict[str, list[str]] | None = None,
+) -> Callable[[list[dict[str, Any]], set[str] | None], dict[str, Any]]:
+    """Render everything that does not depend on carried findings once; return ``measure(carried, shard_files)``.
+
+    ``measure`` adds the carried-findings text the way the prompt builders deliver it: the compact trailer
+    lists only the findings relevant to the shard (all of them for an unsharded round) and each role's
+    section lists, in full originating form, only the relevant findings that role owns. The result is the
+    worst role of that shard.
+
+    Worst per-reviewer required bytes that are not changed-file sources, measured with the real renderers.
 
     Renders every prompt a round will build (normal fan-out, role reviewers, complexity lens or the
     adversarial roster) from the same bundle inputs the bundle writer uses, with a diff stub in place of
@@ -26089,15 +26200,12 @@ def _review_fixed_overhead(
         # unmeasured coverage reports (on a real 15-shard snapshot the exact bytes were ~45% below the estimate),
         # so a failing report builder no longer doubles the margin (it used to add 32 KiB).
         fallback_bytes = 0
-    # Intent: measure carried findings with the functions that render them: each reviewer's own section and the
-    # review-scope trailer that the diff carries.
-    # Worst case for any shard: it lists every carried finding (a single-shard or unsharded round does).
-    # Intent: the worst trailer is the incremental one: every required path in affected_files, two commit ids, a
-    # maximal reason and the prioritisation sentence, followed by the compact carried-findings block.
+    # Intent: measure carried findings with the functions that render them (see ``measure`` below). The worst
+    # trailer is the incremental one: every required path in affected_files, two commit ids, a maximal reason
+    # and the prioritisation sentence, followed by the compact carried-findings block.
     carried_scope = {"kind": "incremental", "reason": "x" * REVIEW_SCOPE_REASON_CHARS, "affected_files": list(required_paths),
                      "delta_base": "0" * 40, "head": "0" * 40}
-    trailer_bytes = len(("\n\n" + REVIEW_INCREMENTAL_NOTE + _review_scope_trailer(
-        carried_scope, list(carried_findings or []))).encode("utf-8"))
+    required_set = set(required_paths)
     bundle_text = _render_bundle_markdown({
         "branch": branch_name, "generated_at": "0000-00-00T00:00:00+00:00", "artifacts": artifacts,
         "bundle_path_json": str(directory / "review-bundle.json"), **state})
@@ -26106,19 +26214,18 @@ def _review_fixed_overhead(
     checks = {name: _review_check_prompt_entry(name, {"exit_code": 0, "command": argv, "duration_seconds": 99999.9,
                                                       "output_sha256": "0" * 64}, 10**9)
               for name, argv in (check_specs or {}).items()}
-    checks_bytes = len(json.dumps(checks, ensure_ascii=True).encode("utf-8"))
+    checks_bytes = _review_json_size(checks)
     policy_bytes = len(_review_policy_text(target.get("trusted_policy") or {}).encode("utf-8"))
     bundle_text = _review_compact_text(bundle_text, target, checks)
     try:
-        frozen = json.dumps(_review_artifacts_view(_freeze_review_artifacts(directory, artifacts)),
-                            sort_keys=True, ensure_ascii=True)
+        frozen = _review_json_text(_review_artifacts_view(_freeze_review_artifacts(directory, artifacts)),
+                                   sort_keys=True)
     except (OSError, ValueError):
         frozen = ""
     spec_text = _read_spec_for_review(branch_name, bounded=True)
     diff_stub = "d" * REVIEW_DIFF_STUB_CHARS
-    path_bytes = sum(3 * len(json.dumps(name, ensure_ascii=True)) + 40 for name in required_paths)
-    inventory = (len(json.dumps(summary, ensure_ascii=True)) + path_bytes
-                 + len(json.dumps(coverage_skips, ensure_ascii=True)) + 4096)
+    path_bytes = sum(3 * _review_json_size(name) + 40 for name in required_paths)
+    inventory = _review_json_size(summary) + path_bytes + _review_json_size(coverage_skips) + 4096
 
     renders: list[tuple[str, str, str]] = []  # (role, prompt, context_access)
     if "monitor" in scheduled_reviewers:
@@ -26144,28 +26251,39 @@ def _review_fixed_overhead(
         renders.append((role, _render_role_reviewer_prompt(spec, role, diff_stub, bundle_text, layering,
                                                            trusted_policy=target.get("trusted_policy")),
                         spec["context_access"]))
-    worst, worst_parts = 0, {}
+    fixed_parts: list[tuple[str, dict[str, int]]] = []
     for role, prompt, access in renders:
-        parts = {"role_prompt": len(prompt.encode("utf-8")),
-                 "carried_findings": trailer_bytes + len(_review_resolution_request(
-                     "", {"unresolved_findings": list(carried_findings or [])}, role).encode("utf-8"))}
+        base_parts = {"role_prompt": len(prompt.encode("utf-8"))}
         if provider == "codex" and "monitor" in scheduled_reviewers and role in {"monitor", "predictor", "evaluator"}:
-            parts["role_rubric"] = _review_rubric_bytes(role)
+            base_parts["role_rubric"] = _review_rubric_bytes(role)
         if access != "diff_only":
-            parts["inventory"] = inventory
+            base_parts["inventory"] = inventory
         if access == "diff_plus_spec_plus_artifacts":
-            parts["task_artifacts"] = len(frozen.encode("utf-8"))
-        parts["published_view"] = _review_view_overhead(sum(parts.values()))
-        size = sum(parts.values())
-        if size > worst:
-            worst, worst_parts = size, {"worst_role": role, **parts}
-    # Intent: a flat 16 KiB margin plus 1% of the measured overhead; the per-role slack that used to stack on
-    # top of it is gone (#648), the estimate stays at or above the exact bytes with the same margin.
-    margin = REVIEW_OVERHEAD_MARGIN_BYTES + worst // 100 + fallback_bytes
-    total = worst + margin
-    return {"total": total, "breakdown": {**worst_parts, "margin": margin,
-                                           "execution_checks_in_prompt": checks_bytes,
-                                           "trusted_policy_in_prompt": policy_bytes}}
+            base_parts["task_artifacts"] = len(frozen.encode("utf-8"))
+        fixed_parts.append((role, base_parts))
+
+    def measure(carried: list[dict[str, Any]], shard_files: set[str] | None) -> dict[str, Any]:
+        relevant = _review_carried_relevant(carried, shard_files, required_set)
+        trailer_bytes = len(("\n\n" + REVIEW_INCREMENTAL_NOTE + _review_scope_trailer(
+            carried_scope, relevant, len(carried))).encode("utf-8"))
+        worst, worst_parts = 0, {}
+        for role, base_parts in fixed_parts:
+            parts = {"role_prompt": base_parts["role_prompt"],
+                     "carried_findings": trailer_bytes + len(_review_resolution_request(
+                         "", {"unresolved_findings": relevant}, role).encode("utf-8")),
+                     **{key: value for key, value in base_parts.items() if key != "role_prompt"}}
+            parts["published_view"] = _review_view_overhead(sum(parts.values()))
+            size = sum(parts.values())
+            if size > worst:
+                worst, worst_parts = size, {"worst_role": role, **parts}
+        # Intent: a flat 16 KiB margin plus 1% of the measured overhead; the per-role slack that used to stack on
+        # top of it is gone (#648), the estimate stays at or above the exact bytes with the same margin.
+        margin = REVIEW_OVERHEAD_MARGIN_BYTES + worst // 100 + fallback_bytes
+        return {"total": worst + margin, "breakdown": {**worst_parts, "margin": margin,
+                                                       "execution_checks_in_prompt": checks_bytes,
+                                                       "trusted_policy_in_prompt": policy_bytes}}
+
+    return measure
 
 
 def _review_plain_digits(raw: str) -> bool:
@@ -26224,6 +26342,96 @@ def _review_plan_shards(sizes: dict[str, int], capacity: int) -> list[list[str]]
     return shards
 
 
+# Keys every budget error's ``overhead_breakdown`` carries (0 when a part does not apply to the scope).
+REVIEW_OVERHEAD_COMMON_KEYS = ("role_prompt", "inventory", "task_artifacts")
+
+
+def _review_overhead_fields(measured: dict[str, Any], budget: int, scope: str, *, reserve_floor: bool = True) -> dict[str, Any]:
+    """One schema for every ``review_context_budget_exceeded`` error.
+
+    ``fixed_overhead``: required bytes of one reviewer that are not changed-file sources (admission: measured
+    prompt, carried findings, inventory, task artifacts, view and margin; prompt-build: the same parts, exact).
+    ``overhead_breakdown``: its parts (``role_prompt``, ``inventory`` and ``task_artifacts`` always present).
+    ``scope``: what was measured ("unsharded", "minimum shard", "shard of <path>", "worst shard", "reviewer <role>").
+    ``capacity``: bytes left for sources next to ``fixed_overhead`` (the default reserve is the floor at admission).
+    """
+    total = int(measured["total"])
+    breakdown = {**{key: 0 for key in REVIEW_OVERHEAD_COMMON_KEYS}, **measured["breakdown"]}
+    return {"fixed_overhead": total, "overhead_breakdown": breakdown, "scope": scope,
+            "capacity": budget - (max(REVIEW_CONTEXT_RESERVE_BYTES, total) if reserve_floor else total)}
+
+
+def _review_plan_admission(
+    target: dict[str, Any], sizes: dict[str, int], budget: int, review_config: dict[str, Any],
+    measure: Callable[[list[dict[str, Any]], set[str] | None], dict[str, Any]], carried: list[dict[str, Any]],
+    scheduled_reviewers: list[str], review_mode: str,
+) -> tuple[dict[str, Any] | None, list[list[str]]]:
+    """Budget admission: ``(error, [])`` or ``(None, shards)``; no shards means one unsharded round fits.
+
+    The fixed per-reviewer context depends on the shard: the compact carried-findings trailer lists only the
+    findings relevant to the shard's files and each role's full section only the ones it owns. The planner
+    packs against the floor (fileless findings only), measures every planned shard with its real findings, and
+    splits any shard that overflows, so a shard's estimate is never below its exact bytes for any role.
+    """
+    overhead = measure(carried, None)
+    reserve = max(REVIEW_CONTEXT_RESERVE_BYTES, overhead["total"])
+    if sum(sizes.values()) + reserve <= budget:
+        return None, []
+    floor = measure(carried, set())
+    floor_reserve = max(REVIEW_CONTEXT_RESERVE_BYTES, floor["total"])
+    capacity = budget - floor_reserve
+    if capacity < REVIEW_SOURCE_OVERHEAD_BYTES * 2:
+        # Intent: no changed file can fit next to the fixed context, so naming files as oversized would mislead.
+        return _review_context_budget_error(sizes, budget, reserve=floor_reserve, reason="fixed_overhead_too_large",
+                                            **_review_overhead_fields(floor, budget, "minimum shard")), []
+    oversized = {name: size for name, size in sizes.items() if size > capacity}
+    overflow_overhead, overflow_scope = floor, "minimum shard"
+    final: list[list[str]] = []
+    worst_overhead = floor
+    pending = list(reversed(_review_plan_shards(sizes, capacity)))
+    while pending:
+        files = pending.pop()
+        measured = measure(carried, set(files))
+        need = sum(sizes[name] for name in files) + max(REVIEW_CONTEXT_RESERVE_BYTES, measured["total"])
+        if need <= budget:
+            final.append(files)
+            if measured["total"] > worst_overhead["total"]:
+                worst_overhead = measured
+        elif len(files) == 1:
+            if budget - max(REVIEW_CONTEXT_RESERVE_BYTES, measured["total"]) < REVIEW_SOURCE_OVERHEAD_BYTES * 2:
+                # Intent: this file's own carried findings leave no room for any source, so the file is not the cause.
+                return _review_context_budget_error(
+                    sizes, budget, reserve=max(REVIEW_CONTEXT_RESERVE_BYTES, measured["total"]),
+                    reason="fixed_overhead_too_large",
+                    **_review_overhead_fields(measured, budget, f"shard of {files[0]}")), []
+            if files[0] not in oversized:
+                overflow_overhead, overflow_scope = measured, f"shard of {files[0]}"
+            oversized[files[0]] = sizes[files[0]]
+        else:
+            # Intent: split the overflowing shard by size, keeping directories together where they fit.
+            total = sum(sizes[name] for name in files)
+            halves = _review_plan_shards({name: sizes[name] for name in files},
+                                         max(max(sizes[name] for name in files), -(-total // 2)))
+            if len(halves) < 2:
+                halves = [files[:len(files) // 2], files[len(files) // 2:]]
+            pending.extend(reversed(halves))
+    if oversized:
+        return _review_context_budget_error(
+            sizes, budget, reserve=max(REVIEW_CONTEXT_RESERVE_BYTES, overflow_overhead["total"]),
+            reason="file_too_large", oversized_paths=oversized,
+            oversized_causes=_review_oversized_causes(target, sorted(oversized)),
+            **_review_overhead_fields(overflow_overhead, budget, overflow_scope)), []
+    max_shards = _review_max_shards(review_config)
+    if len(final) > max_shards:
+        return _review_context_budget_error(
+            sizes, budget, reserve=max(REVIEW_CONTEXT_RESERVE_BYTES, worst_overhead["total"]),
+            reason="too_many_shards", shards_needed=len(final),
+            max_shards=max_shards, reviewer_sessions=_review_reviewer_sessions(len(final), scheduled_reviewers, review_mode),
+            max_shards_source="explicit" if _review_explicit_max_shards(review_config) else "ceiling",
+            **_review_overhead_fields(worst_overhead, budget, "worst shard")), []
+    return None, final
+
+
 def _review_context_budget_error(
     sizes: dict[str, int], budget: int, *, reserve: int = REVIEW_CONTEXT_RESERVE_BYTES, **extra: Any,
 ) -> dict[str, Any]:
@@ -26256,8 +26464,8 @@ def _review_context_budget_error(
                      f"{breakdown.get('execution_checks_in_prompt')} and trusted policy "
                      f"{breakdown.get('trusted_policy_in_prompt')} are inside the prompt). Resolve or close carried findings, "
                      "trim the task artifacts, or raise the budget.")
-    single_file = ([single_file_hint] if extra.get("reason") == "file_too_large" else
-                   [shard_hint] if extra.get("reason") == "too_many_shards" else
+    single_file = ([single_file_hint, overhead_hint] if extra.get("reason") == "file_too_large" else
+                   [shard_hint, overhead_hint] if extra.get("reason") == "too_many_shards" else
                    [overhead_hint] if extra.get("reason") == "fixed_overhead_too_large" else [])
     return {"status": "error", "stop_reason": "review_context_budget_exceeded", "total": total, "budget": budget,
             "top_paths": [{"path": name, "bytes": size} for name, size in top],
