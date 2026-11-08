@@ -33,6 +33,24 @@ cargo clippy -- -D warnings
 cargo test
 ```
 
+## Docs Drift
+
+`.map/scripts/docs_drift.py` (stdlib only) checks claims outside fenced code blocks:
+
+| Kind | Claim | Resolved when |
+|------|-------|---------------|
+| `missing_path` | backticked repo path (`src/app.py`, `docs/x.md`) | exists at repo root, next to the doc, as a path suffix anywhere, or is named as a literal in source (runtime artifacts the code writes) |
+| `missing_link` | relative Markdown link target | exists relative to the doc |
+| `unknown_flag` | `--flag` inside backticks | the literal flag appears in the source corpus |
+| `flag_default_mismatch` | `--flag` (default: `X`) | source definition (`default=`, typer `Option(X, "--flag")`) agrees, or has no literal default |
+| `undefined_symbol` | backticked `snake_case`, `camelCase`, `CONST_NAME`, `dotted.key` | the identifier appears in the source corpus |
+
+The source corpus is every non-doc text file (`*.md`, `*.rst`, `*.txt` excluded) outside VCS, virtualenv, cache, build, and `.map/` dirs.
+
+Skipped on purpose: fenced code blocks (examples), URLs, absolute and home paths, placeholders and globs (`<path>`, `{x}`, `$VAR`, `*.py`, `...`), hyphenated names, plain lowercase words, and paths under ignored dirs.
+
+Known false positives: flags built dynamically (`f"--{role}-file"`) and third-party names (`HF_TOKEN`). Silence a line with `<!-- drift-ignore -->` on the line itself or alone on the line above. Behavioral prose ("retries 3 times") is never decided mechanically; lines that mention a resolved code reference plus a number or behavior verb become `semantic_candidates` for the fresh-context reader.
+
 ## Active Issues
 
 When verification finds unresolved work, keep the report read-only but record a durable handoff where the repo has active-issues helpers. The issue should name the failing command, the owning subtask when known, and the exact recommended workflow to resume.

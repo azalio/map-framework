@@ -243,6 +243,16 @@ Once routed, `/map-auto` drives the chain by invoking the existing slash workflo
 
 **End state:** a committed feature branch. `/map-auto` never opens a pull request, never polls CI, and never merges — it reports the committed branch and the recorded phases, then stops.
 
+## Docs drift report (`/map-check --docs`)
+
+`/map-check --docs [paths...]` (`$map-check --docs` on Codex) lists only the claims in checked-in docs that no longer match the source. It is read-only: it never edits a doc, and fixes go through `/map-fast` or `/map-efficient`.
+
+1. A deterministic pre-pass, `python3 .map/scripts/docs_drift.py [paths...]` (stdlib only, no LLM), checks the claims outside fenced code blocks: backticked repo paths (`missing_path`), relative Markdown links (`missing_link`), backticked command-line flags that appear nowhere in source (`unknown_flag`), a documented flag default that disagrees with the `default=` / typer `Option(<default>, "--flag")` definition (`flag_default_mismatch`, cites `source:line`), and backticked identifiers or dotted config keys defined nowhere in source (`undefined_symbol`).
+2. Lines with behavioral claims next to a resolved code reference ("retries 3 times", "written by X") become `semantic_candidates`. The skill hands only those lines to one fresh-context reader. The reader cites `source:line` for every divergence and lists the files it actually read.
+3. The report goes to `.map/drift/<YYYY-MM-DD>.md` plus `.json`: one section per doc, each divergence as `doc:line`, or `No drift detected` for a clean doc.
+
+Default docs are `README.md` and `docs/**/*.md`; a directory argument expands to its Markdown files. The script also accepts `--repo-root`, `--out-dir` and `--date`. With no docs it prints `"status": "no_docs"` and writes nothing. URLs, placeholders (`<path>`), globs, paths under VCS/cache/`.map` dirs and fenced examples are skipped. A path the source itself names (a runtime artifact such as `step_state.json`) is not drift. Silence a known false positive, for example a dynamically built flag, with `<!-- drift-ignore -->` on the line or alone on the line above.
+
 ## Canonical Flows
 
 ### Standard flow

@@ -2,9 +2,9 @@
 [% set cmd = "/" if PROVIDER == "claude" else "$" -%]
 name: map-check
 description: |
-  Run quality gates (lint, types, tests) and verify MAP workflow completion. Use when user asks to run checks, validate a workflow, or confirm a MAP run is done. Do NOT use to plan or execute new tasks; use map-plan or map-efficient.
+  Run quality gates (lint, types, tests), verify MAP workflow completion, or report docs-vs-code drift (--docs). Use when user asks to run checks, validate a workflow, confirm a MAP run is done, or check whether README/docs still match the source. Do NOT use to plan or execute new tasks; use map-plan or map-efficient.
 [% if PROVIDER == "claude" %]effort: low
-argument-hint: "[focus area]"
+argument-hint: "[focus area] | --docs [paths...]"
 [% else %][% endif -%]
 ---
 [% include "_partials/auto-update-preflight.md.jinja" %]
@@ -29,6 +29,8 @@ parallel_tool_policy: independent_checks_only
 - Do not fix failures from inside `<% cmd %>map-check`; report the failing gate and hand off to the workflow that should own the fix.
 - Do not decompose, research, or implement new subtasks from this skill.
 - Do not run extra audits after the requested quality gates and MAP completion checks have a clear pass/fail result.
+
+Mode selection: an argument starting with `--docs` always selects Mode 3 (docs drift). Otherwise Mode 1 or Mode 2 is chosen by whether `step_state.json` exists.
 
 ## Mode 1: Standalone Quality Check (No MAP workflow)
 
@@ -79,6 +81,34 @@ cargo test
 ### Output (Standalone Mode)
 
 Report checks run, pass/fail status, first actionable failure, and next action. Then STOP. There is no MAP workflow to verify.
+
+## Mode 3: Docs Drift Report (`<% cmd %>map-check --docs [paths...]`)
+
+Read-only: report ONLY the claims in checked-in docs that no longer match source. Never edit a doc here; fixes go through the normal workflows.
+
+1. Deterministic pre-pass (no LLM). Default docs are `README.md` and `docs/**/*.md`; pass paths or directories to narrow:
+   ```bash
+   python3 .map/scripts/docs_drift.py [paths...] > /tmp/map-docs-drift.json
+   jq '{status, summary, report_md}' /tmp/map-docs-drift.json
+   ```
+   It writes `.map/drift/<YYYY-MM-DD>.md` and `.json`: one section per doc, each divergence as `doc:line` (plus `source:line` for flag defaults), or `No drift detected`. `status: "no_docs"` means nothing to check: report that and STOP.
+2. Semantic pass. Only if `semantic_candidates` is non-empty, dispatch ONE fresh-context reader with the candidate lines (doc, line, text) from the JSON — not your own conclusions:
+```text
+[% if PROVIDER == "claude" %]Task(
+  subagent_type="research-agent",
+  description="Docs drift semantic check",
+  prompt="""
+[% else %]spawn_agent(
+  agent_type="researcher",
+  task_name="docs_drift_semantic_check",
+  message="""
+[% endif %]For each listed doc line, decide whether its behavioral claim (counts, defaults, who reads/writes what) still matches the current source. Read the cited source; do not trust other docs, transcripts, or summaries. Report ONLY divergences, each with `doc:line`, the claim, and `source:line` evidence. Unverifiable -> `needs_investigation`. End with `Files read:` listing every file you actually opened. Do not edit files.
+<candidate lines>
+"""
+)
+```
+3. Append the reader's divergences to the report under `## Semantic findings (fresh-context reader)` with its `Files read:` receipt. Mechanical findings stay as written.
+4. Output: report path, divergence count per doc, and next action (fix via `<% cmd %>map-fast` / `<% cmd %>map-efficient`). Then STOP. False positives and the `<!-- drift-ignore -->` marker: see [check-reference.md](check-reference.md#docs-drift).
 
 ## Mode 2: MAP Workflow Verification
 
