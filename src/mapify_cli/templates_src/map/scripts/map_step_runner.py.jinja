@@ -25420,6 +25420,15 @@ def _review_oversized_causes(target: dict[str, Any], names: list[str]) -> dict[s
     return causes
 
 
+def _review_stub_eligible_name(name: str) -> bool:
+    """True when the delivered diff still names ``name`` exactly, so its added hunks can be stubbed.
+
+    Intent: the diff the prompts carry is decoded with replacement characters, so an undecodable (surrogateescape)
+    file name no longer matches its source path and its hunks stay in the diff; the estimate must charge them.
+    """
+    return _review_utf8(os.fsencode(name))
+
+
 def _review_utf8(raw: bytes) -> bool:
     try:
         raw.decode("utf-8")
@@ -25471,7 +25480,7 @@ def _review_required_bytes(
         source_size = _review_source_json_size(base_raw, current, bool(base), full_max, context)
         diff_size = diff_sizes.get(name, (len(current) + current.count(b"\n") + 400) if name in added or not base_raw else 0)
         if (base and name in added and name not in renames and current and not Path(name).is_symlink()
-                and _review_utf8(current)
+                and _review_stub_eligible_name(name) and _review_utf8(current)
                 and b"\0" not in current and _review_windowed_fields(
                     "", current.decode("utf-8"), _review_line_mapping("", current.decode("utf-8")),
                     full_max, context) is None):

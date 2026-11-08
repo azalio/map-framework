@@ -394,3 +394,19 @@ def test_vc10_a_surrogate_in_the_resource_id_or_a_long_path_still_encodes_in_the
     runner._review_context_view("source_000000", raw, "0" * 64).encode("utf-8")
     plain = runner._review_context_view("repo:ok.py", b'{"a": 1}', "0" * 64)
     assert "lone surrogate" not in plain
+
+
+def test_vc11_an_undecodable_name_keeps_its_added_diff_in_the_estimate_on_every_platform(repo, monkeypatch):
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", "100000000")
+    write_changes()
+    Path("later_bad.md").write_text("Привет, мир! " * 2500, encoding="utf-8")
+    admitted = runner.begin_review_run(branch="feature", provider="claude", round_id="bad2", base_ref="main")
+    assert admitted["status"] == "success", admitted
+    stubbed = runner._review_required_bytes(admitted["target"], ["later_bad.md"])["later_bad.md"]
+    assert runner._review_stub_eligible_name("later_bad.md") and runner._review_stub_eligible_name("Привет.md")
+    assert not runner._review_stub_eligible_name("bad_\udcff_name.md")
+    # The diff carries the replacement-decoded name for such a file, so the estimate must not assume a stub.
+    monkeypatch.setattr(runner, "_review_stub_eligible_name", lambda _name: False)
+    full = runner._review_required_bytes(admitted["target"], ["later_bad.md"])["later_bad.md"]
+    assert full >= stubbed + len("Привет, мир! " * 2500) // 2, (full, stubbed)
