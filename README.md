@@ -179,7 +179,7 @@ The DevOpsConf 2026 case study applies this process to a production Kubernetes P
 | `/map-wayfind` | Too foggy to plan? Resolve design decisions on a durable map *before* `/map-plan`; cite HTTP(S) docs, repo sources or hashed ticket-local observations |
 | `/map-efficient` | **Implement** an approved plan or already-scoped task |
 | `/map-fast` | Small, low-risk changes where full planning is overhead |
-| `/map-check` | Quality gates, verification, and artifact checks |
+| `/map-check` | Quality gates, verification, and artifact checks; `--docs` reports docs-vs-code drift |
 | `/map-review` | Pre-commit semantic review against the plan, tests, and diff |
 | `/map-learn` | Capture project memory and reusable lessons |
 | `/map-understand` | Interactive teaching and quiz mode for code, diffs, and workflow results |

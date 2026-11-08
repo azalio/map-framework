@@ -300,7 +300,7 @@ If you prefer manual setup:
    *Note*: MAP may create `.claude/commands/README.md` for custom command
    guidance, but it does not ship `.claude/commands/map-*.md`. Every `/map-*`
    slash surface lives under `.claude/skills/<name>/SKILL.md`. The
-   `tests/test_template_sync.py::test_no_map_command_files_remain` test
+   `tests/test_mapify_cli.py::TestCommandCreation::test_create_command_files` test
    enforces this invariant.
 
 ## Verify Installation
