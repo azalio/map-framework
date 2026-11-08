@@ -9386,18 +9386,20 @@ def _review_finding_files(row: dict[str, Any]) -> list[str]:
 # Intent: the context budget is UTF-8 BYTES, so review resources keep non-ASCII text literal (a Cyrillic character
 # is 2 bytes, not a 6-byte \uXXXX escape). json already escapes quotes, backslashes and C0 controls; the
 # remaining characters some line splitters treat as breaks are escaped here too.
-_REVIEW_JSON_LINE_BREAKS = re.compile("[\x7f\x85\u2028\u2029]")
+_REVIEW_JSON_LINE_BREAKS = re.compile("[\x7f\x85\u2028\u2029\ud800-\udfff]")
 
 
 def _review_json_text(value: Any, **options: Any) -> str:
-    """JSON text with UTF-8 characters kept literal; only controls and line-break characters are escaped."""
+    """JSON text with UTF-8 characters kept literal; only controls, line-break characters and lone surrogates are escaped.
+
+    Intent: a lone surrogate (an undecodable file name) has no UTF-8 form, so just that character becomes a
+    ``\\udXXX`` escape (json.loads restores it); the rest of the object, including Cyrillic content, stays literal.
+    """
     text = json.dumps(value, ensure_ascii=False, **options)
-    try:
-        text.encode("utf-8")
-    except UnicodeEncodeError:
-        # Intent: a lone surrogate has no UTF-8 form; the escaped form is the only safe encoding of that value.
-        return json.dumps(value, ensure_ascii=True, **options)
     return _REVIEW_JSON_LINE_BREAKS.sub(lambda match: f"\\u{ord(match.group()):04x}", text)
+
+
+_REVIEW_LONE_SURROGATE = re.compile("[\ud800-\udfff]")
 
 
 def _review_json_size(value: Any, **options: Any) -> int:
@@ -14884,6 +14886,8 @@ def _review_context_view(resource_id: str, raw: bytes, resource_sha256: str, *, 
              "layout: where the text starts.",
              "=== JSON ===", *body.split("\n")]
     for index, (path, value_text) in enumerate(texts, 1):
+        # Intent: a TEXT block is printed verbatim and must encode as UTF-8, so lone surrogates are escaped here too.
+        value_text = _REVIEW_LONE_SURROGATE.sub(lambda match: f"\\u{ord(match.group()):04x}", value_text)
         final_newline = value_text.endswith("\n")
         parts = value_text.split("\n")
         if final_newline:
@@ -15445,13 +15449,18 @@ def _prepare_review_context(
         worst_meta = row["context_manifests"][prepared[worst_reviewer]["context_transport"]["context_id"]]
         worst_resources = json.loads(_review_context_read(directory, worst_meta))["resources"]
         # Intent: the non-source part of the worst reviewer's required context, so operators see why capacity is small.
-        overhead_breakdown = {"worst_role": worst_reviewer, "manifest": worst_meta["bytes"],
-                              **{name: item["bytes"] for name, item in worst_resources.items()
-                                 if item.get("required", True) and not name.startswith("source_")}}
+        # Intent: same schema as the admission errors; the diff and source resources are the per-path part, so
+        # fixed_overhead is the manifest, prompt, inventory and task artifacts of the worst reviewer.
+        exact_parts = {name: item["bytes"] for name, item in worst_resources.items() if item.get("required", True)}
+        changed_file_bytes = sum(size for name, size in exact_parts.items() if name == "diff" or name.startswith("source"))
+        exact_breakdown = {"worst_role": worst_reviewer, "role_prompt": exact_parts.get("prompt", 0),
+                           "inventory": exact_parts.get("inventory", 0), "task_artifacts": exact_parts.get("artifacts", 0),
+                           "manifest": worst_meta["bytes"], "sources_and_diff": changed_file_bytes}
+        exact_fixed = required_bytes[worst_reviewer] - changed_file_bytes
         return {"status": "error", "stop_reason": "review_context_budget_exceeded", "branch": branch,
-                "budget": budget, "required_bytes": required_bytes,
-                "fixed_overhead": sum(value for key, value in overhead_breakdown.items() if key != "worst_role"),
-                "overhead_breakdown": overhead_breakdown,
+                "budget": budget, "required_bytes": required_bytes, "total": required_bytes[worst_reviewer],
+                **_review_overhead_fields({"total": exact_fixed, "breakdown": exact_breakdown}, budget,
+                                          f"reviewer {worst_reviewer}", reserve_floor=False),
                 "message": "A reviewer's required context exceeds the per-reviewer budget; no prompt was returned.",
                 "hints": ["Split the change into smaller reviews.",
                           f"Raise review.context_budget_bytes in the trusted .map/config.yaml or set {REVIEW_CONTEXT_BUDGET_ENV}."]}
@@ -15670,15 +15679,31 @@ def _review_publish_context_file(
     resource_bytes: int, done: bool, *, resources: list[str] | None = None,
 ) -> dict[str, Any]:
     """Write the view with fresh proof fragments, or reuse the pending file, and record the pending proof."""
-    view = render(_review_part_bytes(resource_bytes))
-    view_sha256 = hashlib.sha256(view.encode("utf-8")).hexdigest()
-    path = _review_context_file_path(directory, session_id, view_sha256)
     pending = session.get("pending")
     if not done and pending and (pending.get("type") != "context_file" or pending["resource_id"] != resource_id):
         raise ValueError("A pending delivery must be acknowledged or retried before another resource")
     record = session.setdefault("files", {}).get(resource_id)
-    reuse = (isinstance(record, dict) and record.get("view_sha256") == view_sha256 and path.is_file()
-             and hashlib.sha256(path.read_bytes()).hexdigest() == record.get("sha256"))
+    # Intent: a pending file that is intact on disk is authoritative: a retry returns it even when the renderer
+    # changed since (an upgrade mid-delivery), because the reviewer may already hold that exact file and proof.
+    held_path = None
+    if (not done and isinstance(record, dict) and isinstance(pending, dict) and pending.get("resource_sha256") == resource_sha256
+            and record.get("view_sha256") and (resources is None or record.get("resources") == resources)):
+        try:
+            candidate = _review_context_file_path(directory, session_id, record["view_sha256"])
+            if candidate.is_file() and hashlib.sha256(candidate.read_bytes()).hexdigest() == record.get("sha256"):
+                held_path = candidate
+        except (OSError, ValueError):
+            held_path = None
+    view = ""
+    view_sha256 = ""
+    if held_path is not None:
+        path, reuse = held_path, True
+    else:
+        view = render(_review_part_bytes(resource_bytes))
+        view_sha256 = hashlib.sha256(view.encode("utf-8")).hexdigest()
+        path = _review_context_file_path(directory, session_id, view_sha256)
+        reuse = (isinstance(record, dict) and record.get("view_sha256") == view_sha256 and path.is_file()
+                 and hashlib.sha256(path.read_bytes()).hexdigest() == record.get("sha256"))
     if not reuse:
         text, proof, _ = _review_embed_proof(view, resource_bytes)
         data = text.encode("utf-8")
@@ -25275,6 +25300,31 @@ def _review_diff_header_paths(line: str) -> tuple[str, str] | None:
     return (rest[2:positions[0]], rest[positions[0] + 3:]) if positions else None
 
 
+def _review_base_missing(base: str, names: list[str]) -> set[str]:
+    """Paths that do not exist at the review base (an existing empty blob is NOT missing).
+
+    This is the signal the attribution uses for an ``added`` source (``cat-file -e`` fails), so the admission
+    estimate stubs the same files the delivery stubs.
+    """
+    if not base:
+        return set(names)
+    missing: set[str] = set()
+    batchable = [name for name in names if "\n" not in name]
+    if batchable:
+        result = subprocess.run(["git", "cat-file", "--batch-check"],
+                                input=b"".join(f"{base}:".encode() + os.fsencode(name) + b"\n" for name in batchable),
+                                capture_output=True, timeout=60, check=False)
+        lines = result.stdout.split(b"\n")
+        for index, name in enumerate(batchable):
+            if index >= len(lines) or lines[index].endswith(b" missing"):
+                missing.add(name)
+    for name in names:
+        if "\n" in name and subprocess.run(["git", "cat-file", "-e", f"{base}:{name}"], capture_output=True,
+                                           timeout=10, check=False).returncode:
+            missing.add(name)
+    return missing
+
+
 def _review_base_contents(base: str, names: list[str]) -> dict[str, bytes]:
     """Blob contents at the review base through one ``cat-file --batch`` process; absent paths are empty."""
     contents = {name: b"" for name in names}
@@ -25303,7 +25353,7 @@ def _review_base_contents(base: str, names: list[str]) -> dict[str, bytes]:
 
 
 def _review_text_json_size(raw: bytes) -> int:
-    """Serialized size of one side of a source resource: ASCII-escaped JSON text, else base64."""
+    """Serialized size of one side of a source resource: UTF-8 JSON text, else base64."""
     try:
         if b"\0" in raw:
             raise UnicodeError("binary")
@@ -25388,6 +25438,8 @@ def _review_required_bytes(
     renames = {new: old for new, old in all_pairs.items() if new in paths}
     moved_away = {old for new, old in all_pairs.items() if old in paths}
     base_contents = _review_base_contents(base, sorted({*paths, *renames.values()}))
+    # Intent: "added" is the delivery's own signal (path absent at the base), not "empty at the base".
+    added = _review_base_missing(base, [name for name in paths if name not in renames]) if base else set()
     if base:
         # Intent: same rename policy as the diff the prompts carry, so a moved file is counted once.
         diff = _review_git_bytes("-c", "core.quotepath=false", "diff", base, "--",
@@ -25409,8 +25461,9 @@ def _review_required_bytes(
             current = b""
         base_raw = base_contents[renames.get(name, name)]
         source_size = _review_source_json_size(base_raw, current, bool(base), full_max, context)
-        diff_size = diff_sizes.get(name, (len(current) + current.count(b"\n") + 400) if not base_raw else 0)
-        if (base and not base_raw and current and not Path(name).is_symlink() and _review_utf8(current)
+        diff_size = diff_sizes.get(name, (len(current) + current.count(b"\n") + 400) if name in added or not base_raw else 0)
+        if (base and name in added and name not in renames and current and not Path(name).is_symlink()
+                and _review_utf8(current)
                 and b"\0" not in current and _review_windowed_fields(
                     "", current.decode("utf-8"), _review_line_mapping("", current.decode("utf-8")),
                     full_max, context) is None):
@@ -25642,6 +25695,25 @@ def _review_plan_shards(sizes: dict[str, int], capacity: int) -> list[list[str]]
     return shards
 
 
+# Keys every budget error's ``overhead_breakdown`` carries (0 when a part does not apply to the scope).
+REVIEW_OVERHEAD_COMMON_KEYS = ("role_prompt", "inventory", "task_artifacts")
+
+
+def _review_overhead_fields(measured: dict[str, Any], budget: int, scope: str, *, reserve_floor: bool = True) -> dict[str, Any]:
+    """One schema for every ``review_context_budget_exceeded`` error.
+
+    ``fixed_overhead``: required bytes of one reviewer that are not changed-file sources (admission: measured
+    prompt, carried findings, inventory, task artifacts, view and margin; prompt-build: the same parts, exact).
+    ``overhead_breakdown``: its parts (``role_prompt``, ``inventory`` and ``task_artifacts`` always present).
+    ``scope``: what was measured ("unsharded", "minimum shard", "shard of <path>", "worst shard", "reviewer <role>").
+    ``capacity``: bytes left for sources next to ``fixed_overhead`` (the default reserve is the floor at admission).
+    """
+    total = int(measured["total"])
+    breakdown = {**{key: 0 for key in REVIEW_OVERHEAD_COMMON_KEYS}, **measured["breakdown"]}
+    return {"fixed_overhead": total, "overhead_breakdown": breakdown, "scope": scope,
+            "capacity": budget - (max(REVIEW_CONTEXT_RESERVE_BYTES, total) if reserve_floor else total)}
+
+
 def _review_plan_admission(
     target: dict[str, Any], sizes: dict[str, int], budget: int, review_config: dict[str, Any],
     measure: Callable[[list[dict[str, Any]], set[str] | None], dict[str, Any]], carried: list[dict[str, Any]],
@@ -25663,11 +25735,10 @@ def _review_plan_admission(
     capacity = budget - floor_reserve
     if capacity < REVIEW_SOURCE_OVERHEAD_BYTES * 2:
         # Intent: no changed file can fit next to the fixed context, so naming files as oversized would mislead.
-        return _review_context_budget_error(sizes, budget, reserve=reserve, reason="fixed_overhead_too_large",
-                                            fixed_overhead=overhead["total"],
-                                            overhead_breakdown=overhead["breakdown"]), []
+        return _review_context_budget_error(sizes, budget, reserve=floor_reserve, reason="fixed_overhead_too_large",
+                                            **_review_overhead_fields(floor, budget, "minimum shard")), []
     oversized = {name: size for name, size in sizes.items() if size > capacity}
-    overflow_overhead = floor
+    overflow_overhead, overflow_scope = floor, "minimum shard"
     final: list[list[str]] = []
     worst_overhead = floor
     pending = list(reversed(_review_plan_shards(sizes, capacity)))
@@ -25684,10 +25755,10 @@ def _review_plan_admission(
                 # Intent: this file's own carried findings leave no room for any source, so the file is not the cause.
                 return _review_context_budget_error(
                     sizes, budget, reserve=max(REVIEW_CONTEXT_RESERVE_BYTES, measured["total"]),
-                    reason="fixed_overhead_too_large", fixed_overhead=measured["total"],
-                    overhead_breakdown=measured["breakdown"]), []
+                    reason="fixed_overhead_too_large",
+                    **_review_overhead_fields(measured, budget, f"shard of {files[0]}")), []
             if files[0] not in oversized:
-                overflow_overhead = measured
+                overflow_overhead, overflow_scope = measured, f"shard of {files[0]}"
             oversized[files[0]] = sizes[files[0]]
         else:
             # Intent: split the overflowing shard by size, keeping directories together where they fit.
@@ -25699,16 +25770,18 @@ def _review_plan_admission(
             pending.extend(reversed(halves))
     if oversized:
         return _review_context_budget_error(
-            sizes, budget, reserve=floor_reserve, reason="file_too_large", oversized_paths=oversized,
+            sizes, budget, reserve=max(REVIEW_CONTEXT_RESERVE_BYTES, overflow_overhead["total"]),
+            reason="file_too_large", oversized_paths=oversized,
             oversized_causes=_review_oversized_causes(target, sorted(oversized)),
-            fixed_overhead=overflow_overhead["total"], overhead_breakdown=overflow_overhead["breakdown"]), []
+            **_review_overhead_fields(overflow_overhead, budget, overflow_scope)), []
     max_shards = _review_max_shards(review_config)
     if len(final) > max_shards:
         return _review_context_budget_error(
-            sizes, budget, reserve=worst_overhead["total"], reason="too_many_shards", shards_needed=len(final),
+            sizes, budget, reserve=max(REVIEW_CONTEXT_RESERVE_BYTES, worst_overhead["total"]),
+            reason="too_many_shards", shards_needed=len(final),
             max_shards=max_shards, reviewer_sessions=_review_reviewer_sessions(len(final), scheduled_reviewers, review_mode),
             max_shards_source="explicit" if _review_explicit_max_shards(review_config) else "ceiling",
-            fixed_overhead=worst_overhead["total"], overhead_breakdown=worst_overhead["breakdown"]), []
+            **_review_overhead_fields(worst_overhead, budget, "worst shard")), []
     return None, final
 
 
