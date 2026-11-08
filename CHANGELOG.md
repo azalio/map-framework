@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `/map-check --docs [paths...]` reports docs-vs-code drift (#671). A stdlib pre-pass (`.map/scripts/docs_drift.py`, shipped for Claude and Codex) checks `README.md` and `docs/**/*.md` for missing paths and links, unknown command-line flags, flag defaults that disagree with the source definition, and identifiers or config keys defined nowhere in source. Behavioral claims go to one fresh-context reader that cites `source:line` and lists the files it read. The report goes to `.map/drift/<YYYY-MM-DD>.md` plus `.json`, one section per doc, `No drift detected` when clean. Read-only: docs are never edited.
+
 ### Fixed
 
 - **`$map-plan` (Codex) spec template no longer drifts from `plan-reference.md` (#653).** The Codex skill wrote the spec from an inline heredoc with 8 sections, missing `## Contradiction` and the `mapify:requirements-index:v1` block that the next step calls MANDATORY, so the forward-coverage gate silently skipped. Both the heredoc body and `plan-reference.md` `## Spec Template` now render from one partial (`templates_src/_partials/plan-spec-template.md.jinja`), and `test_map_plan_spec_template_matches_reference` asserts they stay byte-identical.

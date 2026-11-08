@@ -106,18 +106,20 @@
       "skillClass": "task",
       "enforcement": "manual",
       "priority": "high",
-      "description": "Run quality gates (lint, types, tests) and verify MAP workflow completion.",
+      "description": "Run quality gates (lint, types, tests), verify MAP workflow completion, or report docs-vs-code drift (--docs).",
       "promptTriggers": {
         "keywords": [
           "map-check",
           "run checks",
           "quality gates",
           "verify workflow",
-          "validate completion"
+          "validate completion",
+          "docs drift"
         ],
         "intentPatterns": [
           "map-check",
-          "(run|execute).*(check|gate|lint|test)"
+          "(run|execute).*(check|gate|lint|test)",
+          "(docs?|readme|documentation).*(drift|stale|out of date|match.*(code|source))"
         ]
       }
     },

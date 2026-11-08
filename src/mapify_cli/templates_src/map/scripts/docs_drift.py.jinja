@@ -1,0 +1,455 @@
+#!/usr/bin/env python3
+"""Deterministic docs-vs-code drift pre-pass (``map-check --docs``).
+
+Reads checked-in Markdown docs and reports ONLY the claims that no longer match
+the source tree. It never edits a doc: fixes go through the normal workflows.
+
+Checkable claims (outside fenced code blocks):
+
+* ``missing_path``  -- a backticked repo path (``src/app.py``, ``docs/x.md``) that
+  does not exist. Resolved against the repo root, the doc's directory, and as a
+  path suffix anywhere in the repo (so ``hooks/gate.py`` matches
+  ``.claude/hooks/gate.py``). A bare basename (``SKILL.md``) matches any file
+  with that name.
+* ``missing_link``  -- a relative Markdown link target (``[x](../y.md)``) that
+  does not exist relative to the doc.
+* ``unknown_flag``  -- a ``--flag`` that appears nowhere in the source corpus.
+* ``flag_default_mismatch`` -- the doc says ``--flag`` defaults to X, the source
+  definition (argparse/click ``default=``, typer ``Option(<default>, "--flag")``)
+  says otherwise. Cites the ``source:line`` of the definition.
+* ``undefined_symbol`` -- a backticked identifier that looks like code
+  (``snake_case``, ``camelCase``, ``CONST_NAME``, ``dotted.key``) that is defined
+  or referenced nowhere in the source corpus (a removed config key / function).
+
+The *source corpus* is every text file in the repo except docs (``*.md``,
+``*.rst``, ``*.txt``) and ignored dirs (VCS, virtualenvs, caches, ``.map``).
+
+Deliberately skipped, to keep false positives low:
+
+* fenced code blocks (examples are often illustrative of a user's project or
+  of command output, not claims about this repo);
+* URLs, absolute or home paths, placeholders and globs (``<path>``, ``{x}``,
+  ``$VAR``, ``*.py``), hyphenated names, plain lowercase words, version numbers;
+* any line carrying ``<!-- drift-ignore -->`` (or preceded by one).
+
+Claims the pre-pass cannot decide (behavioral prose such as "retries 3 times")
+are emitted as ``semantic_candidates`` for a fresh-context reader.
+
+Usage:
+    python3 .map/scripts/docs_drift.py [--repo-root DIR] [--out-dir DIR]
+        [--date YYYY-MM-DD] [PATH ...]
+
+Default docs: ``README.md`` and ``docs/**/*.md``. A directory argument expands
+to its ``**/*.md``. Writes ``<out-dir>/<date>.json`` and ``<date>.md`` (default
+out-dir ``.map/drift``) and prints the JSON report on stdout. With no docs it
+prints ``{"status": "no_docs", ...}``, writes nothing, and exits 0.
+"""
+
+from __future__ import annotations
+
+[% include "_partials/python-version-guard.py.jinja" %]
+import argparse
+import json
+import os
+import re
+from dataclasses import asdict, dataclass, field
+from datetime import date as _date
+from pathlib import Path
+from typing import Any
+
+IGNORED_DIRS = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        ".map",
+        ".venv",
+        "venv",
+        "node_modules",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".tox",
+        "dist",
+        "build",
+        "worktrees",
+        "site-packages",
+    }
+)
+DOC_SUFFIXES = frozenset({".md", ".mdx", ".rst", ".txt"})
+PATH_SUFFIXES = frozenset(
+    {
+        ".py", ".md", ".json", ".yaml", ".yml", ".toml", ".sh", ".jinja", ".cfg",
+        ".ini", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".lock", ".txt",
+        ".html", ".css", ".sql", ".proto", ".rb", ".java", ".kt", ".c", ".h",
+        ".cpp", ".hpp", ".jsonl", ".env",
+    }
+)
+MAX_FILE_BYTES = 8_000_000
+MAX_SEMANTIC_PER_DOC = 25
+DEFAULT_WINDOW = 60
+IGNORE_MARKER = "<!-- drift-ignore -->"
+
+_FENCE_RE = re.compile(r"^\s*(```|~~~)")
+_SPAN_RE = re.compile(r"`([^`\n]+)`")
+_LINK_RE = re.compile(r"\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+_FLAG_RE = re.compile(r"(?<![\w-])(--[A-Za-z][A-Za-z0-9-]*[A-Za-z0-9])(?![\w-])")
+_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
+_PLACEHOLDER_CHARS = set("<>{}$*?[]|=,;'\"\\")
+# Doc wording for a flag default: "(default: 3)", "default `3`", "defaults to 3".
+# Only explicit forms count; prose like "defaults to four workers" is semantic.
+_DOC_DEFAULT_RES = (
+    re.compile(r"\bdefaults?(?:\s+(?:is|to|of))?\s*[:=]?\s*`([^`\s]+)`", re.IGNORECASE),
+    re.compile(r"\bdefaults?\s*[:=]\s*([A-Za-z0-9_.+-]+)", re.IGNORECASE),
+    re.compile(
+        r"\bdefaults?(?:\s+(?:is|to|of))?\s+(\d[\d.]*|true|false|none|on|off)\b", re.IGNORECASE
+    ),
+)
+_PATHLIKE_RE = re.compile(r"[A-Za-z0-9_.~/-]+")
+_SRC_VALUE = r"(\"[^\"\n]*\"|'[^'\n]*'|[A-Za-z0-9_.+-]+)"
+_SRC_DEFAULT_KW_RE = re.compile(r"\bdefault\s*=\s*" + _SRC_VALUE)
+_SRC_TYPER_RE = re.compile(r"Option\(\s*" + _SRC_VALUE + r"\s*,")
+_SEMANTIC_RE = re.compile(
+    r"\b(\d+|defaults?|retr(?:y|ies)|timeouts?|always|never|writes?|reads?|only)\b",
+    re.IGNORECASE,
+)
+
+
+@dataclass
+class Finding:
+    doc: str
+    line: int
+    claim: str
+    kind: str
+    reason: str
+    source: str | None = None
+
+
+@dataclass
+class DocReport:
+    doc: str
+    status: str = "clean"
+    checked_claims: int = 0
+    findings: list[Finding] = field(default_factory=list)
+    semantic_candidates: list[dict[str, Any]] = field(default_factory=list)
+
+
+class RepoIndex:
+    """Every repo path plus a token index over the non-doc source corpus."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.paths: set[str] = set()
+        self.by_basename: dict[str, list[str]] = {}
+        self.words: set[str] = set()
+        self.flags: dict[str, list[tuple[str, int]]] = {}
+        # Path-like literals in source (and every "/"-suffix of them): a doc path
+        # the code itself reads or writes is a runtime artifact, not drift.
+        self.literals: set[str] = set()
+        self._lines: dict[str, list[str]] = {}
+        self._walk()
+
+    def _walk(self) -> None:
+        for dirpath, dirnames, filenames in os.walk(self.root):
+            dirnames[:] = sorted(d for d in dirnames if d not in IGNORED_DIRS)
+            rel_dir = Path(dirpath).relative_to(self.root).as_posix()
+            if rel_dir != ".":
+                self._add_path(rel_dir)
+            for name in sorted(filenames):
+                rel = name if rel_dir == "." else f"{rel_dir}/{name}"
+                self._add_path(rel)
+                if Path(name).suffix.lower() in DOC_SUFFIXES:
+                    continue
+                self._index_source(rel)
+
+    def _add_path(self, rel: str) -> None:
+        self.paths.add(rel)
+        self.by_basename.setdefault(rel.rsplit("/", 1)[-1], []).append(rel)
+
+    def _index_source(self, rel: str) -> None:
+        path = self.root / rel
+        try:
+            if path.stat().st_size > MAX_FILE_BYTES:
+                return
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return
+        self.words.update(_WORD_RE.findall(text))
+        for literal in set(_PATHLIKE_RE.findall(text)):
+            if "." not in literal and "/" not in literal:
+                continue
+            literal = literal.rstrip(".")
+            parts = literal.split("/")
+            for i in range(len(parts)):
+                self.literals.add("/".join(parts[i:]).rstrip("/"))
+        lines = text.splitlines()
+        for lineno, line in enumerate(lines, start=1):
+            for flag in _FLAG_RE.findall(line):
+                self.flags.setdefault(flag, []).append((rel, lineno))
+                self._lines[rel] = lines
+
+    def path_exists(self, claim: str, doc_dir: str) -> bool:
+        claim = claim.strip("/")
+        if not claim:
+            return True
+        candidates = [claim]
+        if doc_dir:
+            candidates.append(os.path.normpath(f"{doc_dir}/{claim}").replace(os.sep, "/"))
+        if any(c in self.paths for c in candidates) or claim in self.literals:
+            return True
+        base = claim.rsplit("/", 1)[-1]
+        return any(p == claim or p.endswith("/" + claim) for p in self.by_basename.get(base, []))
+
+    def symbol_exists(self, claim: str) -> bool:
+        if "." not in claim:
+            return claim in self.words
+        if claim in self.literals:
+            return True
+        return all(part in self.words for part in claim.split("."))
+
+    def flag_defaults(self, flag: str) -> list[tuple[str, str]]:
+        """``(value, "file:line")`` for each default found next to a flag definition."""
+        found: list[tuple[str, str]] = []
+        for rel, lineno in self.flags.get(flag, []):
+            lines = self._lines[rel]
+            idx = lineno - 1
+            after = "\n".join(lines[idx : idx + 3])
+            before = "\n".join(lines[max(0, idx - 2) : idx + 1])
+            match = _SRC_DEFAULT_KW_RE.search(after) or _SRC_TYPER_RE.search(before)
+            # `...` (typer "required") and None ("unset, resolved later") say
+            # nothing checkable about the effective default.
+            if match and _norm_value(match.group(1)) not in {"...", "none", "null"}:
+                found.append((_norm_value(match.group(1)), f"{rel}:{lineno}"))
+        return found
+
+
+def _norm_value(value: str) -> str:
+    return value.strip().strip("\"'`").rstrip(".,;)").lower()
+
+
+def _is_placeholder(token: str) -> bool:
+    return "://" in token or "..." in token or any(ch in _PLACEHOLDER_CHARS for ch in token)
+
+
+def _strip_location(token: str) -> str:
+    token = token.split("#", 1)[0].split("::", 1)[0]
+    return re.sub(r":\d+(?:-\d+)?$", "", token)
+
+
+def _looks_like_path(token: str, index: RepoIndex) -> bool:
+    if token.startswith(("/", "~", "-")):
+        return False
+    if token.split("/", 1)[0] in IGNORED_DIRS:
+        return False  # VCS, caches, MAP runtime state: not checked-in source
+    if Path(token.rstrip("/")).suffix.lower() in PATH_SUFFIXES:
+        return True
+    if "/" in token:
+        first = token.split("/", 1)[0]
+        return first in index.paths
+    return False
+
+
+def _looks_like_symbol(token: str) -> bool:
+    token = token.removesuffix("()")
+    if not _IDENT_RE.match(token):
+        return False
+    if "." in token:
+        return True
+    if "_" in token.strip("_"):
+        return True
+    return bool(re.search(r"[a-z][A-Z]", token))
+
+
+def _iter_doc_lines(text: str) -> list[tuple[int, str]]:
+    """Lines outside fenced code blocks, minus drift-ignore'd lines."""
+    out: list[tuple[int, str]] = []
+    in_fence = False
+    fence = ""
+    prev_ignored = False
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        match = _FENCE_RE.match(line)
+        if match:
+            if not in_fence:
+                in_fence, fence = True, match.group(1)
+            elif match.group(1) == fence:
+                in_fence = False
+            continue
+        if in_fence:
+            continue
+        ignored = IGNORE_MARKER in line
+        if ignored and not line.replace(IGNORE_MARKER, "").strip():
+            prev_ignored = True
+            continue
+        if not ignored and not prev_ignored:
+            out.append((lineno, line))
+        prev_ignored = False
+    return out
+
+
+def check_doc(doc_rel: str, index: RepoIndex) -> DocReport:
+    report = DocReport(doc=doc_rel)
+    text = (index.root / doc_rel).read_text(encoding="utf-8", errors="replace")
+    doc_dir = doc_rel.rsplit("/", 1)[0] if "/" in doc_rel else ""
+
+    def add(line: int, claim: str, kind: str, reason: str, source: str | None = None) -> None:
+        report.findings.append(Finding(doc_rel, line, claim, kind, reason, source))
+
+    for lineno, line in _iter_doc_lines(text):
+        resolved_ref = False
+        for target in _LINK_RE.findall(line):
+            target = target.split("#", 1)[0]
+            if not target or _is_placeholder(target) or target.startswith(("/", "mailto:")):
+                continue
+            report.checked_claims += 1
+            rel = os.path.normpath(f"{doc_dir}/{target}" if doc_dir else target)
+            if rel.replace(os.sep, "/") not in index.paths:
+                add(lineno, target, "missing_link", f"link target `{target}` does not exist")
+            else:
+                resolved_ref = True
+        for span in _SPAN_RE.findall(line):
+            span = span.strip()
+            for flag in _FLAG_RE.findall(span):
+                report.checked_claims += 1
+                if flag not in index.flags:
+                    add(lineno, flag, "unknown_flag", f"flag `{flag}` appears nowhere in the source tree")
+                    continue
+                resolved_ref = True
+                # The default phrase must belong to THIS flag: stop at the next
+                # flag on the line and look at most DEFAULT_WINDOW chars ahead.
+                start = line.find(flag) + len(flag)
+                nxt = _FLAG_RE.search(line, start)
+                tail = line[start : min(nxt.start() if nxt else len(line), start + DEFAULT_WINDOW)]
+                doc_default = next((m for r in _DOC_DEFAULT_RES if (m := r.search(tail))), None)
+                if not doc_default or _is_placeholder(doc_default.group(1)):
+                    continue
+                claimed = _norm_value(doc_default.group(1))
+                defaults = index.flag_defaults(flag)
+                if defaults and all(value != claimed for value, _ in defaults):
+                    value, where = defaults[0]
+                    add(
+                        lineno,
+                        f"{flag} default {claimed}",
+                        "flag_default_mismatch",
+                        f"doc says `{flag}` defaults to `{claimed}`; source default is `{value}`",
+                        where,
+                    )
+            if " " in span or span.startswith("-") or _is_placeholder(span):
+                continue
+            token = _strip_location(span)
+            if not token:
+                continue
+            if _looks_like_path(token, index):
+                report.checked_claims += 1
+                if index.path_exists(token, doc_dir):
+                    resolved_ref = True
+                else:
+                    add(lineno, token, "missing_path", f"path `{token}` does not exist in the repo")
+            elif _looks_like_symbol(token):
+                symbol = token.removesuffix("()")
+                report.checked_claims += 1
+                if index.symbol_exists(symbol):
+                    resolved_ref = True
+                else:
+                    add(lineno, symbol, "undefined_symbol", f"`{symbol}` is defined nowhere in the source tree")
+        if (
+            resolved_ref
+            and _SEMANTIC_RE.search(_SPAN_RE.sub("", line))
+            and len(report.semantic_candidates) < MAX_SEMANTIC_PER_DOC
+        ):
+            report.semantic_candidates.append({"line": lineno, "text": line.strip()[:300]})
+    if report.findings:
+        report.status = "drift"
+    return report
+
+
+def discover_docs(root: Path, explicit: list[str]) -> list[str]:
+    found: list[str] = []
+    targets = explicit or ["README.md", "docs"]
+    for raw in targets:
+        path = (root / raw).resolve() if not Path(raw).is_absolute() else Path(raw)
+        if path.is_dir():
+            files = sorted(
+                p
+                for p in path.rglob("*.md")
+                if not IGNORED_DIRS.intersection(p.relative_to(path).parts)
+            )
+        elif path.is_file():
+            files = [path]
+        else:
+            continue
+        for file in files:
+            try:
+                rel = file.resolve().relative_to(root.resolve()).as_posix()
+            except ValueError:
+                continue
+            if rel not in found:
+                found.append(rel)
+    return found
+
+
+def render_markdown(result: dict[str, Any]) -> str:
+    lines = [
+        f"# Docs drift report — {result['date']}",
+        "",
+        "Mechanical pre-pass: `.map/scripts/docs_drift.py` (read-only; no doc was edited).",
+        f"Docs checked: {result['summary']['docs']}; divergences: {result['summary']['findings']}.",
+        "",
+    ]
+    for doc in result["docs"]:
+        lines.append(f"## {doc['doc']}")
+        lines.append("")
+        if not doc["findings"]:
+            lines.append("No drift detected")
+        for item in doc["findings"]:
+            src = f" (source: `{item['source']}`)" if item["source"] else ""
+            lines.append(f"- `{item['doc']}:{item['line']}` — {item['reason']} [{item['kind']}]{src}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def run(root: Path, explicit: list[str], out_dir: Path | None, day: str) -> dict[str, Any]:
+    docs = discover_docs(root, explicit)
+    if not docs:
+        return {
+            "status": "no_docs",
+            "date": day,
+            "reason": "no Markdown docs found (default: README.md, docs/**/*.md)",
+            "docs": [],
+            "summary": {"docs": 0, "findings": 0},
+        }
+    index = RepoIndex(root)
+    reports = [check_doc(doc, index) for doc in docs]
+    total = sum(len(r.findings) for r in reports)
+    result: dict[str, Any] = {
+        "status": "drift" if total else "clean",
+        "date": day,
+        "docs": [asdict(r) for r in reports],
+        "summary": {"docs": len(reports), "findings": total},
+    }
+    if out_dir is not None:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        json_path, md_path = out_dir / f"{day}.json", out_dir / f"{day}.md"
+        result["report_json"], result["report_md"] = str(json_path), str(md_path)
+        json_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        md_path.write_text(render_markdown(result), encoding="utf-8")
+    return result
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Report docs-vs-code drift (read-only).")
+    parser.add_argument("paths", nargs="*", help="docs or directories (default: README.md docs/)")
+    parser.add_argument("--repo-root", default=".", help="repository root (default: .)")
+    parser.add_argument("--out-dir", default=None, help="report dir (default: <repo-root>/.map/drift)")
+    parser.add_argument("--date", default=None, help="report date YYYY-MM-DD (default: today)")
+    args = parser.parse_args(argv)
+    root = Path(args.repo_root).resolve()
+    out_dir = Path(args.out_dir) if args.out_dir else root / ".map" / "drift"
+    day = args.date or _date.today().isoformat()
+    print(json.dumps(run(root, list(args.paths), out_dir, day), indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
