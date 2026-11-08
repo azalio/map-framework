@@ -14879,15 +14879,23 @@ def _review_context_view(resource_id: str, raw: bytes, resource_sha256: str, *, 
         return opening + "\n" + ",\n".join(pad + pair for pair in pairs) + "\n" + " " * depth + closing
 
     body = render(value, 0, "$")
-    lines = [REVIEW_CONTEXT_FILE_HEADER, f"resource_id: {resource_id}", f"resource_sha256: {resource_sha256}",
+
+    def escape(text: str) -> str:
+        # Intent: header fields and TEXT blocks are printed verbatim and must encode as UTF-8, so a lone
+        # surrogate (an undecodable file name) is shown as a \\udXXX escape; the frozen resource keeps the value.
+        return _REVIEW_LONE_SURROGATE.sub(lambda match: f"\\u{ord(match.group()):04x}", text)
+
+    escaped = any(_REVIEW_LONE_SURROGATE.search(text) for text in (resource_id, *(item for pair in texts for item in pair)))
+    lines = [REVIEW_CONTEXT_FILE_HEADER, f"resource_id: {escape(resource_id)}", f"resource_sha256: {resource_sha256}",
              f"resource_bytes: {len(raw)}",
              "layout: the JSON section shows the frozen resource; a string shown as \"<<TEXT k>>\"",
              "layout: is printed verbatim in block TEXT k, whose header gives its line count and the file line",
              "layout: where the text starts.",
+             *(["layout: a lone surrogate (undecodable file name) is shown as a \\udXXX escape in this file."] if escaped else []),
              "=== JSON ===", *body.split("\n")]
     for index, (path, value_text) in enumerate(texts, 1):
-        # Intent: a TEXT block is printed verbatim and must encode as UTF-8, so lone surrogates are escaped here too.
-        value_text = _REVIEW_LONE_SURROGATE.sub(lambda match: f"\\u{ord(match.group()):04x}", value_text)
+        path = escape(path)
+        value_text = escape(value_text)
         final_newline = value_text.endswith("\n")
         parts = value_text.split("\n")
         if final_newline:

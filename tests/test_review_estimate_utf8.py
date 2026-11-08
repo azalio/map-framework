@@ -380,3 +380,17 @@ def test_vc9_a_changed_renderer_still_publishes_a_fresh_file_once_nothing_is_pen
     if nxt:
         served = serve_file(state, nxt)
         assert served["status"] == "context_response"
+
+
+def test_vc10_a_surrogate_in_the_resource_id_or_a_long_path_still_encodes_in_the_view():
+    raw = runner._review_json_text({"a": 1, "long": "y" * 5000}, sort_keys=True).encode("utf-8")
+    view = runner._review_context_view("repo:bad\udcff.py", raw, "0" * 64)
+    view.encode("utf-8")
+    assert "resource_id: repo:bad\\udcff.py" in view
+    assert "a lone surrogate (undecodable file name) is shown as a \\udXXX escape" in view
+    # A long key moves to a TEXT block whose shown path is hashed: that must encode too.
+    key = "k\udc80" + "z" * 400
+    raw = runner._review_json_text({key: "v" * 1500 + "\n"}, sort_keys=True).encode("utf-8")
+    runner._review_context_view("source_000000", raw, "0" * 64).encode("utf-8")
+    plain = runner._review_context_view("repo:ok.py", b'{"a": 1}', "0" * 64)
+    assert "lone surrogate" not in plain
