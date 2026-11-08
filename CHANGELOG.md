@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.38.1] - 2026-11-08
+
 ### Fixed
 
 - `/map-review` no longer marks every shard INCOMPLETE ("shard scope is unread or skipped") when reviewers list absolute paths in `receipt.covered_files` (#668). Receipt paths are normalized at the verdict (repository root stripped, `./` collapsed) for shard scope, required scope, the security gate and the stored round coverage, so already-captured rounds can be re-verdicted with `write_review_verdict_ledger` without a new review. An absolute path outside the repository still covers nothing; the receipt schema hint now asks for repo-relative paths.
