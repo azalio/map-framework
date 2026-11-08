@@ -145,7 +145,7 @@ mapify-cli version x.x.x
 **Troubleshooting:**
 
 - If `which mapify` shows the path but `mapify` doesn't work, check file permissions: `ls -la ~/.local/bin/mapify`
-- If using a custom shell or environment, ensure `UV_TOOL_BIN_DIR` is not set to a different location
+- If using a custom shell or environment, ensure `UV_TOOL_BIN_DIR` is not set to a different location <!-- drift-ignore -->
 - For Docker/CI environments, consider setting `UV_TOOL_BIN_DIR=/usr/local/bin` for system-wide access
 
 </details>
@@ -297,7 +297,7 @@ If you prefer manual setup:
    │   └── mcp_config.json
    ```
 
-   *Note*: MAP may create `.claude/commands/README.md` for custom command
+   *Note*: MAP may create `.claude/commands/README.md` for custom command <!-- drift-ignore -->
    guidance, but it does not ship `.claude/commands/map-*.md`. Every `/map-*`
    slash surface lives under `.claude/skills/<name>/SKILL.md`. The
    `tests/test_mapify_cli.py::TestCommandCreation::test_create_command_files` test
@@ -517,7 +517,7 @@ source ~/.zshrc  # or ~/.bashrc for Bash
 
 **Solution 3: Check custom UV_TOOL_BIN_DIR**
 
-If you've set a custom `UV_TOOL_BIN_DIR`, check that location instead:
+If you've set a custom `UV_TOOL_BIN_DIR`, check that location instead: <!-- drift-ignore -->
 
 ```bash
 echo $UV_TOOL_BIN_DIR

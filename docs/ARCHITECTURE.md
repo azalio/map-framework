@@ -704,8 +704,8 @@ strict conjunction of four conditions: `concurrent_dispatch` is true AND
 `concurrency_allowed` (platform supports parallel Task dispatch) AND
 `concurrency_ready` (runner state is consistent) AND `worktree.isolation != off`.
 Any single condition false → gate returns sequential. A config contradiction
-(e.g. `concurrent_dispatch: true` with isolation off) is a hard abort
-(`ConfigError`-equivalent) — fail-closed, never silent degradation.
+(e.g. `concurrent_dispatch: true` with isolation off) raises
+`DispatchGateError` — fail-closed, never silent degradation.
 Before returning concurrent for an active multi-subtask wave, the gate calls
 `resolve_worktree_isolation` against the live environment. Auto fallback returns
 sequential with the resolver's reason/warning and `isolation_active: false`;
@@ -1015,7 +1015,7 @@ invoked; there is no shadow mode, calibration period, or opt-in flag.
 
 ## Cross-cutting Concepts
 
-- **Context Budgeting & Compression**: MAP exposes compression policies and thresholds and treats budget control as a first-class workflow concern. Generated Actor `<map_context>` blocks are capped by a deterministic estimated-token budget before prompt injection so long plans or raw diffs cannot silently crowd out current-subtask and dependency context, and that path appends before/after estimates and clipped section labels to `.map/<branch>/token_budget.json` so users can diagnose missing-context reports without transcript inspection. `/map-review` reviewer prompts are deliberately **exempt**: their truncation path was removed, so the complete permitted evidence and diff remain available through immutable manifests and bounded same-agent delivery. Legacy calls without an admitted bundle retain an explicit oversized-prompt error; begin a review run and create its bundle before dispatch.
+- **Context Budgeting & Compression**: MAP exposes compression policies and thresholds and treats budget control as a first-class workflow concern. Context-block truncation was removed: generated Actor `<map_context>` blocks are injected in full (no estimated-token cap, no `.map/<branch>/token_budget.json` entry), and operators manage context size through the `/compact` opt-in. `/map-review` reviewer prompts are not truncated either, so the complete permitted evidence and diff remain available through immutable manifests and bounded same-agent delivery. Legacy calls without an admitted bundle retain an explicit oversized-prompt error; begin a review run and create its bundle before dispatch.
 - **Effort & Parallelism Calibration**: Each task skill declares a `thinking_policy` and `parallel_tool_policy` so provider runtimes know when to stay direct, when to use adaptive reasoning, and when parallel fan-out is safe. Prompt-tone regression tests keep non-release skills on targeted guardrails instead of blanket prohibition blocks, which protects lightweight workflows from unnecessary subagent/tool expansion.
 - **Mutation Boundary Constraints**: Write-capable provider surfaces include explicit negative constraints at the point where agents can edit files. Actor, `/map-fast`, `/map-efficient`, `/map-task`, `/map-debug`, and Codex quick-implementation scaffolds tell agents not to edit unrelated files, change dependencies, or refactor neighboring code unless the current contract requires it; necessary scope expansion must be reported as a blocker/tradeoff.
 - **Mutation-Boundary Gate Behavior at step 2.4** (issue #162): `validate_step("2.4")` auto-invokes `validate_mutation_boundary` and responds to the three possible status codes: (1) `"violation"` in `MAP_STRICT_SCOPE=1` mode is a hard reject (`valid=false`); (2) `"warning"` (non-strict scope leak) is **advisory-only** — the gate passes (`valid=true`) on the first occurrence, records the subtask in `scope_feedback_subtasks` so the advisory fires at most once, and attaches `scope_warning: {unexpected: [...], subtask_id, hint?}` metadata to the success response for callers to log or surface; (3) a clean tree with no actual changes despite declared `affected_files` triggers the false-progress nudge only when the already-loaded in-memory `state.subtask_results` has NO recorded `commit_sha` for that subtask — a present commit SHA proves work was committed and the clean tree is expected, bypassing the check without a second call. Earlier iterations (pre-3.21.0) had Bug 1: `_resolve_subtask_diff_base` in `map_step_runner` re-read `step_state.json` from disk independently; Docker/container buffering could return stale data (no `fsync` in `save()`), causing intermittent false-progress rejects on committed subtasks. And Bug 2: the scope-warning guard returned `valid=false` on first occurrence, requiring a pointless double-call in operator-driven flows. Both are fixed: in-memory state is now the authoritative source for the recorded-commit check, and scope warnings are advisory metadata rather than blocking returns.
@@ -1047,7 +1047,7 @@ invoked; there is no shadow mode, calibration period, or opt-in flag.
 - **Live/runtime-state Gate**: The runtime analogue of the already-implemented gate, gated on the `depends_on_runtime_state` workflow-fit signal (default off; armed via `record_workflow_fit --depends-on-runtime-state 1`). When a plan's correctness rests on current production/runtime facts — applied migration head, an enum/column/row present in the live DB, current row counts/backfill volume, a live feature-flag value, runtime capacity — `/map-plan` runs **Step 0.6: Verify Live/Runtime State**. Each assumption is verified read-only through an approved source (replica/dashboard/metadata query; cite the derived fact, never persist prod rows/PII/secrets into `.map/<branch>/` artifacts) or recorded as an `Unverified Runtime Assumption` in spec Open Questions / Risks with the exact check to run, dependent subtasks marked `provisional`. The skill is a planning-time gate, not a runtime tool — it suggests checks and defers execution to the operator or an authorized sub-agent. Note Step 0.5's `file:line` proof shows code exists in the repo, not that the migration/flag is applied in prod.
 - **Host-level Serialization**: `_locking.py` provides a process-safe `flock` wrapper with JSON state sidecars under `~/.map/locks/`, giving future hooks and memory-flush paths a shared non-escaping lock protocol.
 - **Observability via Artifacts**: Primary observability surface is file-based (plans, summaries, review dossiers) persisted under `.map/<branch>/`.
-- **Token Budget Decisions**: `.map/<branch>/token_budget.json` records active prompt-path budget decisions from Actor context generation only; it does not log dormant REGISTRY/FOCUS experiments, and it no longer receives review-prompt entries (that builder stopped clipping). Each entry names the prompt path, configured budget, estimated tokens before/after enforcement, clipped sections, and source artifacts.
+- **Token Budget Decisions**: `.map/<branch>/token_budget.json` is written only by explicit `record_token_budget_decision` calls; no built-in prompt builder calls it now that Actor and review prompts are no longer clipped, and it does not log dormant REGISTRY/FOCUS experiments. Each entry names the prompt path, configured budget, estimated tokens before/after enforcement, clipped sections, and source artifacts.
 - **Constraint Typing**: `blueprint.json` separates non-negotiable `hard_constraints` from negotiable `soft_constraints`; hard constraints must be covered through `coverage_map` and bracketed validation criteria, while soft constraints need either coverage or explicit tradeoff rationale.
 - **Provider Differences**: Workflow intent is shared, but orchestration mechanics differ between Claude Code (`.claude/`) and Codex CLI (`.codex/`).
 - **Scale-Adaptive Intelligence** (`src/mapify_cli/scope_classifier.py`, issue #287, **COMPLETE** PRs #366/#368/#369): deterministic, no-LLM classification of an estimated change into one of four scale brackets that routes to the appropriate MAP workflow depth. `classify_scope(estimated_files, estimated_lines, *, config)` returns a frozen `ScopeClassification` (bracket, recommended_workflow, estimated_files, estimated_lines, auto_enabled). Brackets: TRIVIAL (≤3f/50l → `map-fast`), SMALL (≤10/200 → `map-plan-light`), MEDIUM (≤30/1000 → `map-efficient`), LARGE (otherwise → `map-efficient+map-tdd`). Thresholds and `scale.auto` read from `MapConfig` (7 `scale_*` fields) via dotted-key aliases in `.map/config.yaml`. `map-plan` skill (both Claude and Codex variants) integrates a **Scale Advisory** block that calls `python3 .map/scripts/classify_scope.py --files N --lines N` after workflow-fit gate; result is JSON with bracket/recommended_workflow/auto_enabled. The `classify_scope.py` script ships via `mapify init` to `.map/scripts/`, is stdlib-only (no mapify_cli import), reads `.map/config.yaml` directly, and validates `--files`/`--lines` ≥ 0. The `map-plan` skill also ships `--light` (2-5 minimal subtasks, no discovery/spec-review/architecture-review), `--deep` (extended discovery, architecture review via monitor agent in Step 4.5), `--force-full` (alias for --deep), and `--force-fast` (recommend map-fast and stop) modes; both Claude (Task syntax) and Codex (spawn_agent syntax) variants updated.
@@ -1548,9 +1548,7 @@ Targeted TDD flows additionally persist `test_contract_<subtask>.md` and `test_h
 
 Missing artifacts are recorded with `present: false` rather than omitted, so bundle generation succeeds at any workflow stage. `build_prior_stage_consumption_report()` and `validate_prior_stage_consumption <implementation|review>` provide the stricter gate when a workflow wants to prove the spec, task plan, blueprint, test contract, code diff, and review-time verification summary were consumed before closeout. An optional detached worktree at `.map/<branch>/detached-review/` is created by `prepare_detached_review()` when `/map-review --detached` is invoked.
 
-**Actor context block**: `build_context_block()` in `.map/scripts/map_step_runner.py` builds the `<map_context>` injected into Actor prompts from the task goal, current subtask, dependency results, plan overview, and repo delta. The generated block is bounded by `MAP_CONTEXT_BLOCK_BUDGET_TOKENS` when set, otherwise `4000` estimated tokens. Current-subtask identity and dependency summaries are ordered before broad plan overview text; if truncation is required, the XML remains closed and includes a `# Context Budget` note so the Actor and operator know that lower-priority overview context was clipped.
-
-`MAP_CONTEXT_BLOCK_BUDGET_TOKENS` overrides below 128 estimated tokens are ignored and fall back to the default budget because the context block needs room for the XML wrapper and truncation note.
+**Actor context block**: `build_context_block()` in `.map/scripts/map_step_runner.py` builds the `<map_context>` injected into Actor prompts from the task goal, current subtask, dependency results, plan overview, and repo delta. The block is not truncated: every field is emitted in full, and `MAP_CONTEXT_BLOCK_BUDGET_TOKENS` has no effect.
 
 **Run health artifact** (`run_health` stage in manifest): `write_run_health_report()` in `.map/scripts/map_step_runner.py` writes `.map/<branch>/run_health_report.json` as the machine-readable diagnosis snapshot for the current workflow. `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review` call it during closeout with explicit terminal-status mappings. It records `terminal_status`, current step/subtask, completed and pending step counts, artifact presence, retry counters, latest hook-injection status, explicit skipped hook reasons for malformed input or insignificant Bash commands when branch state can be updated safely, Predictor skip/call flags when present, whether final verification evidence exists, and an advisory `research` section with persisted research artifact counts, parsed status/confidence/location counts, low-confidence warnings, and research-token share from `token_accounting.json`. The report is a compact index over existing branch artifacts, not a second workflow source of truth. The runner intercepts help before writer dispatch: legacy positional/custom handlers share a usage registry and an exact-token guard; argparse and flag-based handlers retain their own help. Standalone `--help` / `-h` before the first `--` prints usage without creating branch directories or changing state, reports, or manifests; normal argv is not rewritten. `validate_run_health_report()` provides the deterministic CI/operator assertion over that snapshot: schema drift, complete-with-pending-steps, complete-without-verification, retry overflow, and unexplained hook degradation fail with a non-zero CLI exit.
 
@@ -2026,7 +2024,7 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 
 #### Key Innovation: Constant Reminders
 
-**Pattern borrowed from ralph-loop's `build_loop_context()`:** Inject small, frequent reminders rather than upfront instructions.
+**Pattern borrowed from ralph-loop's `build_loop_context()`:** Inject small, frequent reminders rather than upfront instructions. <!-- drift-ignore -->
 
 **Hook Output Example:**
 ```
@@ -3290,55 +3288,39 @@ All failures are non-blocking - hook returns `{"continue": true}` and logs error
 
 **Problem:** Debugging failed workflows requires manual correlation of agent outputs.
 
-**Solution:** Structured logging with workflow context in `.map/workflow_logs/`.
+**Solution:** Structured JSON Lines logging in `.map/logs/workflow_<timestamp>.log`. Logging is off by default; the `mapify` CLI enables it in debug mode (`--debug`, e.g. `mapify init --debug`, `mapify check --debug`).
 
-**Log Format:**
-
-**Note:** `subtask_id` is an **integer** (not string) matching the `id` field from TaskDecomposer output. TaskDecomposer generates subtask IDs as sequential integers: 1, 2, 3, etc.
+**Log Format:** one JSON object per line, keyed by `event` (`session_start`, `agent_invocation`, `error`, `timing`, custom events, `session_end`). An `agent_invocation` entry:
 
 ```json
 {
+  "event": "agent_invocation",
+  "agent_name": "actor",
+  "timestamp": "2025-10-23T14:30:25+00:00",
+  "prompt_preview": "...",
+  "response_preview": "...",
+  "duration_ms": 45000,
+  "status": "success",
+  "error_message": null,
   "task_id": "feat_auth_20251023_143022",
-  "goal": "Implement JWT authentication",
-  "start_time": "2025-10-23T14:30:22Z",
-  "subtasks": [
-    {
-      "subtask_id": 1,
-      "description": "Create User model",
-      "status": "completed",
-      "iterations": 1,
-      "agents": {
-        "actor": {
-          "start_time": "2025-10-23T14:30:25Z",
-          "end_time": "2025-10-23T14:31:10Z",
-          "duration_seconds": 45,
-          "output_summary": "Generated User model with password hashing"
-        },
-        "monitor": {
-          "validation_passed": true,
-          "issues": []
-        },
-        "evaluator": {
-          "overall_score": 8.5,
-          "approved": true
-        }
-      }
-    }
-  ]
+  "subtask_id": 1,
+  "metadata": {}
 }
 ```
 
 **Implementation:**
 
-- Class: `MapWorkflowLogger` (246 lines)
-- Location: `scripts/utils/map_workflow_logger.py`
+- Class: `MapWorkflowLogger`
+- Location: `src/mapify_cli/workflow_logger.py`
 - API:
   ```python
-  logger = MapWorkflowLogger(task_id, goal)
-  logger.start_subtask(subtask_id, description)
-  logger.log_agent_output(agent_name, output)
-  logger.complete_subtask(subtask_id, status="completed")
-  logger.finalize()
+  logger = MapWorkflowLogger(project_root, enabled=True)
+  logger.start_session(task_id)
+  logger.log_agent_invocation(agent_name, prompt, response, duration_ms=..., subtask_id=...)
+  logger.log_error(error_message, agent_name=..., subtask_id=...)
+  logger.log_timing(operation_name, duration_ms)
+  logger.log_event(event_type, message)
+  logger.end_session()
   ```
 
 **Benefits:**
@@ -3422,10 +3404,10 @@ All remaining open issues are enhancements (no bugs as of 2026-07-18). Prioritiz
 **COMPLETE (PR #373, 2026-07-18)**: `/map-architecture` skill shipped. Three-phase workflow (scope → report → select): accepts optional `<module-path-or-pain-point>` argument or falls back to `git log --since="90 days ago"` hotspot analysis; scores candidates on 6 design-friction signals (change frequency, shallow interface, low locality, seam leakage, hard-to-test, ADR conflict; 0–2 each); writes `.map/<branch>/architecture-report/report.md` (Markdown+Mermaid with before/after diagrams) plus `report.json` machine-readable companion; presents top-3 and waits for user to pick ONE before any code changes; hands off to `/map-plan` (score ≥ 6) or `/map-fast` (score < 6). Registered in skill-rules.json; 289+43 tests pass. Optional future work: Python tooling for automated report generation scripting.
 
 ### #353 — Eval-gated prompt profile canary and rollback — CLOSED (slice 1)
-**COMPLETE (PR #374, 2026-07-18)**: `mapify prompt-profile list` command shipped. Manifest format: `.map/prompt-profiles/<id>/manifest.json` (required: `id`, `title`, `version`; optional: `description`, `owner`, `targets`, `eval_requirements`, `rollback_notes`). Active pointer: `.map/prompt-profiles/active.json` (`{"active": "<id>"|null}`). `list` command shows table with ID/title/version/status/description and active marker; `--json` for machine-readable output; stale-pointer warning when `active.json` names a non-existent profile. 20 tests in `tests/test_prompt_profile_commands.py`. Future slices: `diff`, `activate`, `rollback`, `report` commands + integration with #291 preset composition as rendering substrate.
+**COMPLETE (PR #374, 2026-07-18)**: `mapify prompt-profile list` command shipped. Manifest format: `.map/prompt-profiles/<id>/manifest.json` (required: `id`, `title`, `version`; optional fields read by `list`: `description`, `targets`). Active pointer: `.map/prompt-profiles/active.json` (`{"active": "<id>"|null}`). `list` command shows table with ID/title/version/status/description and active marker; `--json` for machine-readable output; stale-pointer warning when `active.json` names a non-existent profile. 20 tests in `tests/test_prompt_profile_commands.py`. Future slices: `diff`, `activate`, `rollback`, `report` commands + integration with #291 preset composition as rendering substrate.
 
 ### #339 — GRACE semantic code-contract anchor eval — CLOSED (slice 1)
-**COMPLETE (PR #375, 2026-07-18)**: `src/mapify_cli/grace_eval/` package shipped. Pure data + deterministic logic layer; no external model calls. Contracts: `GraceFixture` (fixture.json schema), `VariantRunRecord` (per-run JSONL row), `VariantAggregate` (rolled-up stats with vs-baseline deltas), `SweepFinding` (stale/contradictory contract detection result), `GraceReport` (root report object with schema_version). Six variants: `baseline`, `inline`, `lex`, `min`, `inj`, `lie`; variant sets classify each as `CODE_LOCAL`, `PROMPT_INJECTED`, or `NO_ANCHOR`. `aggregate_runs()` computes success_rate, mean_retries, mean tokens, stale_detections, and trajectory_delta_note (improvement/regression/tie/no_baseline) vs a baseline aggregate. `sweep_source()` and `sweep_variant_sources()` perform heuristic stale-anchor detection using `# CONTRACT:` / `# ANCHOR:` comment patterns and 7 contradiction signal pairs with an 8-line lookahead. 97 tests in `tests/test_grace_eval_schema.py` + `tests/test_grace_eval_sweep.py`. Future slices: CLI entry point (`mapify grace-eval run/report`), real token-log replay, model-call dispatcher, HTML report viewer.
+**COMPLETE (PR #375, 2026-07-18)**: `src/mapify_cli/grace_eval/` package shipped. Pure data + deterministic logic layer; no external model calls. Contracts: `GraceFixture` (fixture.json schema), `VariantRunRecord` (per-run JSONL row), `VariantAggregate` (rolled-up stats with vs-baseline deltas), `SweepFinding` (stale/contradictory contract detection result), `GraceReport` (root report object with schema_version). Six variants: `baseline`, `inline`, `lex`, `min`, `inj`, `lie`; the `CODE_LOCAL_VARIANTS`, `PROMPT_INJECTED_VARIANTS`, and `NO_ANCHOR_VARIANTS` sets classify each variant. `aggregate_runs()` computes success_rate, mean_retries, mean tokens, stale_detections, and trajectory_delta_note (improvement/regression/tie/no_baseline) vs a baseline aggregate. `sweep_source()` and `sweep_variant_sources()` perform heuristic stale-anchor detection using `# CONTRACT:` / `# ANCHOR:` comment patterns and 7 contradiction signal pairs with an 8-line lookahead. 97 tests in `tests/test_grace_eval_schema.py` + `tests/test_grace_eval_sweep.py`. Future slices: CLI entry point (`mapify grace-eval run/report`), real token-log replay, model-call dispatcher, HTML report viewer.
 
 ---
 
