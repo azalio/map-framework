@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `/map-review` reviewers now start with a paraphrase (#670). Every reviewer output (Monitor, Predictor, Evaluator, the role reviewers and the adversarial hunters) carries a required `paraphrase` object: `change` says what the change proposes and `existing_system` says how the existing system works, 2-5 sentences and at most 1200 characters each. A capture without a valid paraphrase is rejected with a schema error, so the relay retries the live reviewer; the aggregator marks such a reviewer `parse_error`. The ledger JSON (`reviewer_paraphrases`) and the markdown report show each paraphrase next to that reviewer's findings. When a paraphrase misreads the change, the new `paraphrase_mismatch` objection channel keeps the reviewer's findings counted, marks them `paraphrase_recheck` and escalates them for a human re-check instead of dismissing them. `/map-plan` Step 2b asks the Devil's Advocate spec reviewer to paraphrase the spec first; a section it cannot paraphrase is a CRITICAL spec gap. Rounds admitted before the upgrade are invalidated by the policy hash as usual.
+
 ### Fixed
 
 - **`$map-plan` (Codex) spec template no longer drifts from `plan-reference.md` (#653).** The Codex skill wrote the spec from an inline heredoc with 8 sections, missing `## Contradiction` and the `mapify:requirements-index:v1` block that the next step calls MANDATORY, so the forward-coverage gate silently skipped. Both the heredoc body and `plan-reference.md` `## Spec Template` now render from one partial (`templates_src/_partials/plan-spec-template.md.jinja`), and `test_map_plan_spec_template_matches_reference` asserts they stay byte-identical.

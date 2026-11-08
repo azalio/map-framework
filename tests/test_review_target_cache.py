@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.review_paraphrase_helpers import with_paraphrase
 from tests.test_review_context_delivery import (
     acknowledge,
     bind,
@@ -100,7 +101,7 @@ def test_vc1_serve_ack_capture_in_one_state_never_recompute_the_target(repositor
         state = acknowledge(state, chunk)
         if state["status"] == "context_ready":
             break
-    result = runner.capture_review_output("monitor", json.dumps(final_envelope(state)), "delivery-round",
+    result = runner.capture_review_output("monitor", json.dumps(with_paraphrase(final_envelope(state))), "delivery-round",
                                           branch="feature")
     assert result["status"] == "success", result
     assert computations == {"target": 0, "policy": 0}

@@ -59,6 +59,8 @@ as context_receipt in the role's final JSON. Also include receipt with exactly f
 of strings: covered_files, skipped_files, denied_access, check_evidence. covered_files names
 actual paths inspected; check_evidence uses only runner-issued check IDs, never invented
 checks or result objects. Use [] for empty categories. Optional context need not be read for coverage.
+Open the final JSON with paraphrase={change, existing_system}: what the change proposes and how the
+existing system works, in your own words, 2-5 sentences and at most 1200 characters each.
 A context_request text reply is unnecessary: use review_context. Do not stop after requesting
 or receiving a chunk. After required context is ready, inspect it and return the role report.
 """
@@ -245,8 +247,8 @@ def _review_one(host: CodexReviewHost, branch: str, row: dict[str, Any], role: s
                 finalization_sent = True
                 continue  # Initial post-delivery request is not a malformed-final retry.
         else:
-            kind = role if role in runner.ROLE_REVIEWER_IDS else ("adversarial" if role in {"blind", "edge_case", "acceptance"} else role)
-            checked = runner.detect_truncated_agent_output(response, agent_kind="review-monitor" if kind == "monitor" else kind)
+            # Every reviewer kind, hunters included, has its own schema; the gate checks the paraphrase too.
+            checked = runner.detect_truncated_agent_output(response, agent_kind="review-monitor" if role == "monitor" else role)
             receipt_errors = runner._review_coverage_receipt_errors(envelope.get("receipt"))
             if receipt_errors:
                 message = "Correct the coverage receipt (all four arrays must contain strings): " + json.dumps(receipt_errors)

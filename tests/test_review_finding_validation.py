@@ -8,6 +8,8 @@ from typing import Any, cast
 
 import pytest
 
+from tests.review_paraphrase_helpers import with_paraphrase
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src/mapify_cli/templates/map/scripts"))
 import map_step_runner  # type: ignore[import-not-found]
 
@@ -50,7 +52,7 @@ def _round(runner, round_id, issues, resolutions=None):
     assert runner.create_review_bundle()["status"] == "success"
     payload = {"issues": issues, "resolved_findings": resolutions or [], "receipt": {
         "covered_files": admission["required_files"], "skipped_files": [], "denied_access": [], "check_evidence": []}}
-    runner.capture_review_output("monitor", json.dumps(payload), round_id)
+    runner.capture_review_output("monitor", json.dumps(with_paraphrase(payload)), round_id)
     return runner.write_review_verdict_ledger(current_run=True)
 
 
@@ -234,10 +236,10 @@ def test_adversarial_paraphrase_preserves_durable_id_and_reaction(evidence_revie
     for round_id, wording in (("first", "zero input crashes"), ("second", "division fails for zero")):
         assert runner.begin_review_run(review_mode="adversarial", arguments="--adversarial", round_id=round_id)["status"] == "success"
         issue = {**_issue(), "severity": "IMPORTANT", "file_path": "divide.py", "symbol": "divide", "failure_mode": wording}
-        clean = json.dumps({"all_clear": True, "findings": [], "checks_performed": ["division path"],
-                            "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [], "check_evidence": []}})
-        report = runner.aggregate_adversarial_findings(blind_json=json.dumps({
-            "all_clear": False, "findings": [issue], "checks_performed": ["division path"]}),
+        clean = json.dumps(with_paraphrase({"all_clear": True, "findings": [], "checks_performed": ["division path"],
+                            "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [], "check_evidence": []}}))
+        report = runner.aggregate_adversarial_findings(blind_json=json.dumps(with_paraphrase({
+            "all_clear": False, "findings": [issue], "checks_performed": ["division path"]})),
             edge_case_json=clean, acceptance_json=clean,
             role_json={role: clean for role in ("user_experience", "maintainer")})
         assert runner.capture_review_output("adversarial", json.dumps(report), round_id)["status"] == "success"
@@ -279,7 +281,7 @@ def test_adversarial_captures_archive_and_preserve_round_coverage(evidence_revie
     for reviewer in reviewers:
         payload = {"all_clear": True, "findings": [], "checks_performed": ["division"], "receipt": {
             "covered_files": admission["required_files"], "skipped_files": [], "denied_access": [], "check_evidence": []}}
-        envelopes[reviewer] = json.dumps(payload)
+        envelopes[reviewer] = json.dumps(with_paraphrase(payload))
         assert runner.capture_review_output(reviewer, envelopes[reviewer], "first")["status"] == "success"
     report = runner.aggregate_adversarial_findings(blind_json=envelopes["blind"],
         edge_case_json=envelopes["edge_case"], acceptance_json=envelopes["acceptance"],

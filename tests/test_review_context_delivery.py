@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from tests.review_paraphrase_helpers import with_paraphrase
 from tests.test_review_trusted_policy import SCRIPTS, git, runner
 
 
@@ -78,9 +79,9 @@ def deliver_all(state):
 
 def final_envelope(state):
     """Only a post-delivery finalization request reveals the token echoed by this response."""
-    return {"verdict": "approved", "issues": [],
-            "context_receipt": {"session_id": state["session_id"],
-                                "finalization_token": state["finalization_token"]}}
+    return with_paraphrase({"verdict": "approved", "issues": [],
+                            "context_receipt": {"session_id": state["session_id"],
+                                                "finalization_token": state["finalization_token"]}})
 
 
 def cli(*args, payload=None):
@@ -167,7 +168,7 @@ def test_early_final_stays_rejected_after_delivery_until_new_finalization_token(
     """A queued early response cannot become valid merely because ACKs arrived later."""
     prompts = prepare()
     state = bind(prompts["monitor"])
-    early = json.dumps({"verdict": "approved", "issues": []})
+    early = json.dumps(with_paraphrase({"verdict": "approved", "issues": []}))
     assert runner.capture_review_output("monitor", early, "delivery-round", branch="feature")["status"] == "error"
     chunk = serve(state)
     status = runner.review_context_status(state["session_id"], "delivery-round", branch="feature")
@@ -293,8 +294,8 @@ def test_existing_capture_cannot_bypass_delivery_after_transport_is_issued(repos
     """The completeness gate independently rejects an earlier capture without a delivery receipt."""
     assert runner.begin_review_run(round_id="delivery-round", provider="codex", branch="feature")["status"] == "success"
     assert runner.create_review_bundle(branch="feature")["status"] == "success"
-    envelope = {"verdict": "approved", "issues": [],
-                "receipt": {"covered_files": [".gitignore", "code.py"], "skipped_files": [], "denied_access": [], "check_evidence": []}}
+    envelope = with_paraphrase({"verdict": "approved", "issues": [],
+                "receipt": {"covered_files": [".gitignore", "code.py"], "skipped_files": [], "denied_access": [], "check_evidence": []}})
     assert runner.capture_review_output("monitor", json.dumps(envelope), "delivery-round", branch="feature")["status"] == "success"
     assert runner.build_review_prompts(branch="feature")["status"] == "success"
     directory = repository / ".map/feature"

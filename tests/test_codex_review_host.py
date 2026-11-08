@@ -2,11 +2,12 @@
 import importlib
 import json
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pytest
 
 from tests import test_review_changed_scope as scope_tests
+from tests.review_paraphrase_helpers import with_paraphrase
 from tests.test_review_trusted_policy import runner
 
 host = importlib.import_module("codex_review_host")
@@ -124,9 +125,10 @@ class SimulatedHost:
     interrupt_once = False
 
     def __init__(self, **kwargs):
-        self.on_tool = self.on_event = None
+        self.on_tool: Any = None
+        self.on_event: Any = None
 
-    def start(self, thread_id=""):
+    def start(self, thread_id: str = "") -> str:
         self.resumed.append(thread_id)
         return "thread"
 
@@ -144,10 +146,10 @@ class SimulatedHost:
             response = self.on_tool({"arguments": {}, "callId": str(count)})
             state = json.loads(response["contentItems"][0]["text"])
             if state["status"] == "context_ready":
-                return json.dumps({"valid": True, "summary": "Reviewed", "evidence": {}, "verdict": "approved",
+                return json.dumps(with_paraphrase({"valid": True, "summary": "Reviewed", "evidence": {}, "verdict": "approved",
                     "issues": [], "passed_checks": [], "failed_checks": [],
                     "receipt": {"covered_files": self.covered_files(), "skipped_files": [], "denied_access": [], "check_evidence": []},
-                    "context_receipt": {"session_id": state["session_id"], "finalization_token": state["finalization_token"]}})
+                    "context_receipt": {"session_id": state["session_id"], "finalization_token": state["finalization_token"]}}))
             delivery = self.on_event.__self__
             complete_result(delivery, response, str(count))
             if self.interrupt_once:
@@ -266,7 +268,7 @@ def test_driver_adversarial_roster_and_ordering_sessions(repo, monkeypatch, argu
             self.identity = identity
             return identity
 
-        def probe(self, context_id):
+        def probe(self, context_id="context"):
             return {**super().probe(context_id), "thread_id": self.identity}
 
         def turn(self, message):
@@ -274,10 +276,10 @@ def test_driver_adversarial_roster_and_ordering_sessions(repo, monkeypatch, argu
                 response = self.on_tool({"arguments": {}, "callId": str(count)})
                 state = json.loads(response["contentItems"][0]["text"])
                 if state["status"] == "context_ready":
-                    return json.dumps({"reviewer": state["reviewer"], "all_clear": True,
+                    return json.dumps(with_paraphrase({"reviewer": state["reviewer"], "all_clear": True,
                         "all_clear_rationale": "Read the changed source", "findings": [], "checks_performed": ["source"],
                         "receipt": {"covered_files": self.covered_files(), "skipped_files": [], "denied_access": [], "check_evidence": []},
-                        "context_receipt": {"session_id": state["session_id"], "finalization_token": state["finalization_token"]}})
+                        "context_receipt": {"session_id": state["session_id"], "finalization_token": state["finalization_token"]}}))
                 self.on_event({"method": "item/completed", "params": {"threadId": self.identity, "item": {
                     "type": "dynamicToolCall", "tool": "review_context", "id": str(count), "status": "completed", **response}}})
                 self.on_event({"method": "rawResponseItem/completed", "params": {"threadId": self.identity, "item": {

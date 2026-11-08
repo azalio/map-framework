@@ -8,6 +8,8 @@ from typing import Any, cast
 
 import pytest
 
+from tests.review_paraphrase_helpers import with_paraphrase
+
 SCRIPTS_PATH = Path(__file__).resolve().parents[1] / "src/mapify_cli/templates/map/scripts"
 sys.path.insert(0, str(SCRIPTS_PATH))
 
@@ -55,7 +57,7 @@ def test_create_review_bundle_preserves_terminal_receipt_on_new_snapshot(receipt
     admission = _admit()
     if terminal == "completed":
         envelope = {"verdict": "approved", "issues": [], "receipt": _receipt(admission)}
-        assert runner.capture_review_output("monitor", json.dumps(envelope), "receipt")["status"] == "success"
+        assert runner.capture_review_output("monitor", json.dumps(with_paraphrase(envelope)), "receipt")["status"] == "success"
         assert runner.write_review_verdict_ledger(current_run=True)["code_approval"]["approved"]
     else:
         assert runner.abandon_review_round("receipt", "new work")["status"] == "success"
@@ -87,7 +89,7 @@ def test_invalid_receipt_stays_pending_and_accepts_correction(receipt_workspace,
     """Leave malformed receipts replaceable until valid coverage completes review."""
     admission = _admit()
     envelope = {"verdict": "approved", "issues": [], "receipt": receipt}
-    assert runner.capture_review_output("monitor", json.dumps(envelope), "receipt")["status"] == "success"
+    assert runner.capture_review_output("monitor", json.dumps(with_paraphrase(envelope)), "receipt")["status"] == "success"
     result = runner.write_review_verdict_ledger(current_run=True)
     assert result["status"] == "success", result
     ledger = json.loads((receipt_workspace / "review-verdict-ledger.json").read_text())
@@ -95,14 +97,14 @@ def test_invalid_receipt_stays_pending_and_accepts_correction(receipt_workspace,
     assert ledger["code_approval"]["approved"] is False
     assert not {"completed_at", "submission_digest", "covered_files"}.intersection(ledger["convergence"]["rounds"][-1])
     envelope["receipt"] = _receipt(admission)
-    assert runner.capture_review_output("monitor", json.dumps(envelope), "receipt")["status"] == "success"
+    assert runner.capture_review_output("monitor", json.dumps(with_paraphrase(envelope)), "receipt")["status"] == "success"
     assert runner.write_review_verdict_ledger(current_run=True)["code_approval"]["approved"] is True
 
 
 def test_complete_review_round_retains_adversarial_raw_coverage(receipt_workspace):
     admission = _admit(adversarial=True)
-    envelope = json.dumps({"all_clear": True, "findings": [], "checks_performed": ["read changed source"],
-                           "receipt": _receipt(admission)})
+    envelope = json.dumps(with_paraphrase({"all_clear": True, "findings": [], "checks_performed": ["read changed source"],
+                           "receipt": _receipt(admission)}))
     aggregate = runner.aggregate_adversarial_findings(
         blind_json=envelope, edge_case_json=envelope, acceptance_json=envelope,
         role_json={"maintainer": envelope, "user_experience": envelope},

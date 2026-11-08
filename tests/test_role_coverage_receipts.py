@@ -7,10 +7,12 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 from tests import test_review_verdict_ledger as ledger_tests
+from tests.review_paraphrase_helpers import with_paraphrase
 
 SCRIPTS_PATH = ledger_tests.SCRIPTS_PATH
 runner = ledger_tests.map_step_runner
@@ -22,10 +24,10 @@ ROLES = tuple(runner.ROLE_REVIEWER_IDS)
 
 
 def envelope(role, *, covered=()):
-    return {"reviewer": role, "all_clear": True, "all_clear_rationale": "Checked supplied source",
-            "findings": [], "checks_performed": ["read source"],
-            "receipt": {"covered_files": list(covered), "skipped_files": [],
-                        "denied_access": [], "check_evidence": []}}
+    return with_paraphrase({"reviewer": role, "all_clear": True, "all_clear_rationale": "Checked supplied source",
+                            "findings": [], "checks_performed": ["read source"],
+                            "receipt": {"covered_files": list(covered), "skipped_files": [],
+                                        "denied_access": [], "check_evidence": []}})
 
 
 @pytest.mark.parametrize("role", ROLES)
@@ -40,14 +42,16 @@ def test_role_gate_rejects_bad_receipt_even_for_all_clear(role, defect):
         payload["receipt"] = []
     else:
         payload["receipt"][defect] = [42]
-    result = runner.detect_truncated_agent_output(json.dumps(payload), agent_kind=role)
+    result = cast(dict[str, Any], runner.detect_truncated_agent_output(json.dumps(payload), agent_kind=role))
+    reasons: list[str] = result["reasons"]
     assert result["truncated"] is True
-    assert any("receipt" in reason for reason in result["reasons"])
-    retry = runner.build_json_retry_prompt(role, result["reasons"])
+    assert any("receipt" in reason for reason in reasons)
+    retry = cast(dict[str, Any], runner.build_json_retry_prompt(role, reasons))
+    prompt: str = retry["prompt"]
     assert retry["status"] == "ok"
-    assert '"receipt"' in retry["prompt"]
+    assert '"receipt"' in prompt
     for key in KEYS:
-        assert f'"{key}"' in retry["prompt"]
+        assert f'"{key}"' in prompt
 
 
 @pytest.mark.parametrize("role", ROLES)
@@ -56,7 +60,7 @@ def test_role_gate_rejects_bad_receipt_even_for_all_clear(role, defect):
 def test_every_receipt_field_must_be_a_string_array(role, key, value):
     payload = envelope(role)
     payload["receipt"][key] = value
-    result = runner.detect_truncated_agent_output(json.dumps(payload), agent_kind=role)
+    result = cast(dict[str, Any], runner.detect_truncated_agent_output(json.dumps(payload), agent_kind=role))
     assert result["truncated"] is True
     assert f"receipt.{key} must be an array of strings" in result["reasons"]
 
@@ -78,12 +82,16 @@ def test_dispatch_and_retry_share_receipt_schema(review_git_workspace, builder):
     assert result["status"] == "success", result
     for role in ("user_experience", "maintainer"):
         prompt = result["prompts"][role]["prompt"]
-        schema = json.loads(re.search(r"<output_schema>\s*(.*?)\s*</output_schema>", prompt, re.DOTALL)[1])
+        match = re.search(r"<output_schema>\s*(.*?)\s*</output_schema>", prompt, re.DOTALL)
+        assert match, role
+        schema = json.loads(match[1])
         assert schema["receipt"] == runner.REVIEW_COVERAGE_RECEIPT_SCHEMA
         assert "even when all_clear=true" in prompt
         assert "current runner-issued check IDs" in prompt
-        retry = runner.build_json_retry_prompt(role)["prompt"]
-        retry_schema = json.loads(re.search(r"<output_schema>\s*(.*?)\s*</output_schema>", retry, re.DOTALL)[1])
+        retry: str = cast(dict[str, Any], runner.build_json_retry_prompt(role))["prompt"]
+        retry_match = re.search(r"<output_schema>\s*(.*?)\s*</output_schema>", retry, re.DOTALL)
+        assert retry_match, role
+        retry_schema = json.loads(retry_match[1])
         assert retry_schema == schema
 
 
@@ -128,7 +136,8 @@ def test_role_receipts_reach_ledger_without_fabricating_coverage(admitted_role_r
             "predictor": {"risk_assessment": "low", "predicted_state": {"breaking_changes": []}},
             "evaluator": {"overall_score": 10, "recommendation": "proceed"}}
     for role, output in core.items():
-        assert runner.capture_review_output(role, json.dumps({**output, "receipt": receipt}), "receipt")["status"] == "success"
+        assert runner.capture_review_output(role, json.dumps(with_paraphrase({**output, "receipt": receipt})),
+                                            "receipt")["status"] == "success"
     for role in ROLES:
         payload = envelope(role, covered=admission["required_files"])
         if role == "maintainer" and gap:
@@ -171,12 +180,12 @@ def test_aggregation_rejects_malformed_role_receipts_and_accepts_retry(role, def
         payload["receipt"] = None
     else:
         payload["receipt"][defect] = [False]
-    hunter = json.dumps({"all_clear": True, "findings": []})
+    hunter = json.dumps(with_paraphrase({"all_clear": True, "findings": []}))
     invalid = runner.aggregate_adversarial_findings(blind_json=hunter, role_json={role: json.dumps(payload)})
     assert invalid["reviewer_status"][role]["status"] == "parse_error"
     assert any(f"{role}: receipt" in error for error in invalid["parse_errors"])
     assert invalid["reviewer_status"]["blind"]["status"] == "ok"
-    retry = runner.build_json_retry_prompt(role)["prompt"]
+    retry: str = cast(dict[str, Any], runner.build_json_retry_prompt(role))["prompt"]
     assert '"receipt"' in retry
     corrected = runner.aggregate_adversarial_findings(role_json={role: json.dumps(envelope(role))})
     assert corrected["reviewer_status"][role]["status"] == "ok"
@@ -217,7 +226,8 @@ def test_adversarial_capture_preserves_evidence_on_bad_nested_receipt(review_git
 def test_adversarial_capture_retains_missing_response_evidence(review_git_workspace):
     workspace = review_git_workspace
     assert runner.begin_review_run(arguments="--adversarial", round_id="receipt")["status"] == "success"
-    report = runner.aggregate_adversarial_findings(blind_json=json.dumps({"all_clear": True, "findings": []}))
+    report = runner.aggregate_adversarial_findings(
+        blind_json=json.dumps(with_paraphrase({"all_clear": True, "findings": []})))
     assert report["reviewer_status"]["maintainer"]["status"] == "not_run"
     assert runner.capture_review_output("adversarial", json.dumps(report), "receipt")["status"] == "success"
     stored = json.loads((workspace / "review-agent-adversarial.json").read_text())
@@ -253,11 +263,11 @@ def test_parse_error_capture_retains_peer_findings_without_approval(review_git_w
     workspace = review_git_workspace
     assert runner.begin_review_run(arguments="--adversarial", round_id="receipt")["status"] == "success"
     roles = {name: json.dumps(envelope(name)) for name in ROLES}
-    roles[role] = json.dumps({"all_clear": True, "findings": []})
+    roles[role] = json.dumps(with_paraphrase({"all_clear": True, "findings": []}))
     finding = {"severity": "IMPORTANT", "category": "correctness", "file_path": "writer.py",
                "failure_mode": "Lost committed write", "evidence": "Writer discards the value"}
     report = runner.aggregate_adversarial_findings(
-        blind_json=json.dumps({"all_clear": False, "findings": [finding]}), role_json=roles)
+        blind_json=json.dumps(with_paraphrase({"all_clear": False, "findings": [finding]})), role_json=roles)
     assert report["reviewer_status"][role]["status"] == "parse_error"
     assert runner.capture_review_output("adversarial", json.dumps(report), "receipt")["status"] == "success"
     stored = json.loads((workspace / "review-agent-adversarial.json").read_text())

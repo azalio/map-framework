@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from tests.review_paraphrase_helpers import with_paraphrase
 from tests.test_review_trusted_policy import git, runner
 from tests.test_review_trusted_policy import policy_repo as _policy_repo
 
@@ -132,10 +133,10 @@ def test_security_capture_passes_independently_but_consent_stays_pending(sensiti
     profile.parent.mkdir(parents=True)
     profile.write_text("---\nname: review-reader\ntools: Read, Glob, Grep\n---\nRead only.\n")
     admitted = runner.begin_review_run(branch="feature", provider="claude")
-    payload = {"reviewer": "security", "all_clear": True, "findings": [],
+    payload = with_paraphrase({"reviewer": "security", "all_clear": True, "findings": [],
                "all_clear_rationale": "Read all admitted source paths and checked their security boundaries",
                "receipt": {"covered_files": admitted["required_files"], "skipped_files": [],
-                           "denied_access": [], "check_evidence": []}}
+                           "denied_access": [], "check_evidence": []}})
     capture = runner.capture_review_output("security", json.dumps(payload), admitted["round_id"], branch="feature")
     assert capture["status"] == "success", capture
     directory = Path(".map/feature")
@@ -206,7 +207,7 @@ def test_security_findings_consume_complete_rounds_but_missing_coverage_stays_pe
                     payload["findings"] = []
                 elif gap:
                     payload["receipt"][gap] = ["old/code.py"]
-            assert runner.capture_review_output(role, json.dumps(payload), str(number), branch="feature")["status"] == "success"
+            assert runner.capture_review_output(role, json.dumps(with_paraphrase(payload)), str(number), branch="feature")["status"] == "success"
         current_capture = (directory / "review-agent-security.json").read_bytes()
         if previous_capture is not None:
             assert current_capture != previous_capture
@@ -248,7 +249,7 @@ def test_security_capture_rejects_malformed_receipt_before_persistence(sensitive
     profile.parent.mkdir(parents=True)
     profile.write_text("---\nname: review-reader\ntools: Read, Glob, Grep\n---\nRead only.\n")
     admitted = runner.begin_review_run(branch="feature", provider="claude")
-    payload = {"reviewer": "security", "all_clear": True, "findings": [], "receipt": receipt}
+    payload = with_paraphrase({"reviewer": "security", "all_clear": True, "findings": [], "receipt": receipt})
     ledger_path = Path(".map/feature/review-verdict-ledger.json")
     before = ledger_path.read_bytes()
     capture = runner.capture_review_output("security", json.dumps(payload), admitted["round_id"], branch="feature")
@@ -692,7 +693,7 @@ def test_complete_review_waits_without_spending_rounds(sensitive_repo, rationale
     assert "security" in admitted["scheduled_reviewers"]
     security_output = {}
     for role in admitted["scheduled_reviewers"]:
-        output = {**outputs.get(role, {"all_clear": True, "findings": []}), "receipt": receipt}
+        output = with_paraphrase({**outputs.get(role, {"all_clear": True, "findings": []}), "receipt": receipt})
         if role == "security":
             if rationale != "missing":
                 output["all_clear_rationale"] = rationale

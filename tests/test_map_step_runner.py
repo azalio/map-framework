@@ -29,6 +29,8 @@ from datetime import UTC
 
 import map_step_runner  # type: ignore[import-not-found]
 
+from tests.review_paraphrase_helpers import with_paraphrase
+
 # Load schemas.py by file location (mirrors tests/test_artifact_schemas.py) so
 # validating auto-route.json against AUTO_ROUTE_SCHEMA does not require
 # importing the mapify_cli package and its extras.
@@ -6970,7 +6972,7 @@ class TestDetectTruncatedAgentOutput:
 
     def test_review_monitor_full_output_not_truncated(self):
         """FIX 4: review-monitor with the full review schema is not truncated."""
-        text = json.dumps({
+        text = json.dumps(with_paraphrase({
             "evidence": [],
             "valid": True,
             "summary": "all good",
@@ -6978,7 +6980,7 @@ class TestDetectTruncatedAgentOutput:
             "issues": [],
             "passed_checks": ["all checks pass"],
             "failed_checks": [],
-        })
+        }))
         report = map_step_runner.detect_truncated_agent_output(
             text, agent_kind="review-monitor"
         )
@@ -7086,7 +7088,7 @@ class TestDetectTruncatedAgentOutput:
 
     def test_predictor_full_output_not_truncated(self):
         """POSITIVE: full valid predictor JSON is not flagged as truncated."""
-        text = json.dumps({
+        text = json.dumps(with_paraphrase({
             "evidence": [{"file_path": "f.py", "line_range": "1", "quote": "x", "relevance": "y"}],
             "risk_assessment": "low",
             "predicted_state": {
@@ -7095,7 +7097,7 @@ class TestDetectTruncatedAgentOutput:
                 "required_updates": [],
             },
             "confidence": {"score": 0.9},
-        })
+        }))
         report = map_step_runner.detect_truncated_agent_output(
             text, agent_kind="predictor"
         )
@@ -7118,13 +7120,13 @@ class TestDetectTruncatedAgentOutput:
     def test_predictor_missing_conditional_landmine_not_truncated(self):
         """CONDITIONAL: predictor output missing landmine_evidence (conditional)
         must NOT be flagged as truncated."""
-        text = json.dumps({
+        text = json.dumps(with_paraphrase({
             "evidence": [],
             "risk_assessment": "medium",
             "predicted_state": {"affected_components": [], "breaking_changes": [], "required_updates": []},
             "confidence": {"score": 0.7},
             # landmine_evidence intentionally absent — it is conditional
-        })
+        }))
         report = map_step_runner.detect_truncated_agent_output(
             text, agent_kind="predictor"
         )
@@ -7132,7 +7134,7 @@ class TestDetectTruncatedAgentOutput:
 
     def test_evaluator_full_output_not_truncated(self):
         """POSITIVE: full valid evaluator JSON is not flagged as truncated."""
-        text = json.dumps({
+        text = json.dumps(with_paraphrase({
             "evidence": [],
             "scores": {
                 "functionality": 8, "code_quality": 7, "performance": 7,
@@ -7144,7 +7146,7 @@ class TestDetectTruncatedAgentOutput:
             "weaknesses": [],
             "next_steps": [],
             "monitor_severity_audit": [],
-        })
+        }))
         report = map_step_runner.detect_truncated_agent_output(
             text, agent_kind="evaluator"
         )
@@ -8377,6 +8379,7 @@ class TestRecordSubtaskResultCrossRepoSiblingPrefix:
         )
         assert spec is not None and spec.loader is not None
         orch = _ilu.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, "map_orchestrator", orch)  # dataclass resolves its module
         spec.loader.exec_module(orch)
         result = orch.record_subtask_result(
             "ST-001",
@@ -8426,6 +8429,7 @@ class TestRecordSubtaskResultCrossRepoSuppression:
         )
         assert spec is not None and spec.loader is not None
         orch = _ilu.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, "map_orchestrator", orch)  # dataclass resolves its module
         spec.loader.exec_module(orch)
         result = orch.record_subtask_result(
             "ST-001",
@@ -19374,7 +19378,7 @@ class TestRoleReviewers:
 
     def test_truncation_gate_accepts_a_valid_role_envelope(self):
         envelope = json.dumps(
-            {
+            with_paraphrase({
                 "reviewer": "maintainer",
                 "all_clear": True,
                 "all_clear_rationale": "no rot found",
@@ -19382,7 +19386,7 @@ class TestRoleReviewers:
                 "checks_performed": ["A1"],
                 "receipt": {"covered_files": [], "skipped_files": [],
                             "denied_access": [], "check_evidence": []},
-            }
+            })
         )
         report = map_step_runner.detect_truncated_agent_output(
             envelope, agent_kind="maintainer"
@@ -19398,7 +19402,7 @@ class TestRoleReviewers:
 
     def test_aggregation_drops_incomplete_findings_into_contract_incomplete(self):
         envelope = json.dumps(
-            {
+            with_paraphrase({
                 "reviewer": "user_experience",
                 "all_clear": False,
                 "findings": [
@@ -19407,7 +19411,7 @@ class TestRoleReviewers:
                 ],
                 "checks_performed": ["old path"],
                 "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [], "check_evidence": []},
-            }
+            })
         )
         result = map_step_runner.aggregate_adversarial_findings(
             role_json={"user_experience": envelope}

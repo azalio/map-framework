@@ -21,6 +21,7 @@ from typer.testing import CliRunner
 
 from mapify_cli import app
 from tests.load_tolerance import LOAD_DEADLINE
+from tests.review_paraphrase_helpers import with_paraphrase
 from tests.review_process_lifecycle import ReviewProcessLifecycle
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -219,8 +220,8 @@ def _legacy_capture_block() -> str:
     return _bash_blocks(reference.read_text(), "### Step A.2c")[0]
 
 
-MONITOR_CLEAN = {"verdict": "approved", "issues": []}
-MONITOR_FINDING = {
+MONITOR_CLEAN = with_paraphrase({"verdict": "approved", "issues": []})
+MONITOR_FINDING = with_paraphrase({
     "verdict": "needs_revision",
     "issues": [
         {
@@ -231,21 +232,21 @@ MONITOR_FINDING = {
             "reach_evidence": "Hits DB on every page load",
         }
     ],
-}
-PREDICTOR_LOW_RISK = {
+})
+PREDICTOR_LOW_RISK = with_paraphrase({
     "risk_assessment": "low",
     "evidence": [{"source": "test_coverage", "quote": "100% coverage"}],
     "predicted_state": {"breaking_changes": []},
-}
-EVALUATOR_HIGH = {
+})
+EVALUATOR_HIGH = with_paraphrase({
     "overall_score": 9,
     "recommendation": "proceed",
     "scores": {"correctness": 9, "clarity": 8},
-}
+})
 
 
 def _role_clear(role: str) -> dict:
-    return {
+    return with_paraphrase({
         "reviewer": role,
         "all_clear": True,
         "all_clear_rationale": "old path unchanged; no new mandatory flag",
@@ -257,7 +258,7 @@ def _role_clear(role: str) -> dict:
             "denied_access": [],
             "check_evidence": [],
         },
-    }
+    })
 
 
 # case id -> (role -> envelope, expected ledger verdict, expected gate verdict)
@@ -342,13 +343,16 @@ def test_envelope_ledger_gate_fresh_shell(project, case):
     if "evaluator" in envelopes:
         # Only an ingested Evaluator envelope populates evaluator_scores, so this
         # proves the rendered ledger loop passed --evaluator-file through.
-        assert _find_key(ledger_doc, "evaluator_scores") == envelopes["evaluator"]
+        # The ledger projects only the score fields; the paraphrase is not a score.
+        expected_scores = {k: v for k, v in envelopes["evaluator"].items() if k != "paraphrase"}
+        assert _find_key(ledger_doc, "evaluator_scores") == expected_scores
 
 
 def _adversarial_report(root: Path, findings: list[dict]) -> dict:
     branch_dir = root / ".map" / BRANCH_DIR_NAME
-    clean = {"all_clear": True, "findings": [], "checks_performed": ["changed paths"],
-             "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [], "check_evidence": []}}
+    clean = with_paraphrase({"all_clear": True, "findings": [], "checks_performed": ["changed paths"],
+                             "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [],
+                                         "check_evidence": []}})
     roles = ("blind", "edge_case", "acceptance", "user_experience", "maintainer")
     flags = []
     for role in roles:

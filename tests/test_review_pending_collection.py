@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from tests import test_review_verdict_ledger as ledger_tests
+from tests.review_paraphrase_helpers import with_paraphrase
 
 runner = ledger_tests.map_step_runner
 branch_workspace = ledger_tests.branch_workspace
@@ -55,7 +56,7 @@ def test_pending_third_round_resumes_across_restart(review_git_workspace, flags,
         if "--adversarial" in flags:
             report = ledger_tests._produced_adversarial_report(receipt=value)
             return ledger_tests._capture_aggregate(report, "3", flags)
-        payload = {**ledger_tests._monitor_with_critical(), "receipt": value}
+        payload = {**with_paraphrase(ledger_tests._monitor_with_critical()), "receipt": value}
         for ordering in (("default", "reverse") if "--compare-orderings" in flags else ("",)):
             assert runner.capture_review_output("monitor", json.dumps(payload), "3", ordering=ordering)["status"] == "success"
         return runner.write_review_verdict_ledger(current_run=True)
@@ -104,7 +105,7 @@ def test_required_check_can_finish_after_pending_ledger(review_git_workspace, fa
     marker = workspace / "check-ready"
     command = [sys.executable, "-c", f"from pathlib import Path; raise SystemExit(0 if Path({str(marker)!r}).exists() else 1)"]
     admission = ledger_tests._admit_receipt_review(runner, required_checks=["suite"], check_specs={"suite": command})
-    payload = {**ledger_tests._monitor_no_issues(), "receipt": {
+    payload = {**with_paraphrase(ledger_tests._monitor_no_issues()), "receipt": {
         "covered_files": admission["required_files"], "skipped_files": [],
         "denied_access": [], "check_evidence": ["suite"]}}
     assert runner.capture_review_output("monitor", json.dumps(payload), "receipt")["status"] == "success"
@@ -132,7 +133,7 @@ def test_inferred_mode_resume_preserves_all_other_bindings(review_git_workspace,
     admission = runner.begin_review_run(mode="lightweight", round_id="pending")
     assert admission["status"] == "success"
     assert runner.create_review_bundle()["status"] == "success"
-    assert runner.capture_review_output("monitor", json.dumps(ledger_tests._monitor_no_issues()), "pending")["status"] == "success"
+    assert runner.capture_review_output("monitor", json.dumps(with_paraphrase(ledger_tests._monitor_no_issues())), "pending")["status"] == "success"
     runner.write_review_verdict_ledger(current_run=True)
     assert runner.begin_review_run(mode="full")["status"] == "error"
     resumed = runner.begin_review_run(mode="full", resume_admitted_mode=True)
