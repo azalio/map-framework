@@ -450,9 +450,12 @@ spawn_agent(
 Read the spec at: .map/<branch>/spec_<branch>.md
 (Use exec_command to cat the file.)
 
-Paraphrase first (see plan-reference.md § Spec Paraphrase First): before any finding, restate
-"What this proposes" and "How the existing system works, per this document" in 2-5 sentences each.
-A section you cannot paraphrase is a CRITICAL spec gap: report it as a CRITICAL finding.
+Paraphrase first, before any finding. Start your output with a PARAPHRASE: block holding two parts
+in your own words, 2-5 sentences each:
+  What this proposes: ...
+  How the existing system works, per this document: ...
+A section you cannot paraphrase is a CRITICAL spec gap: name it in the PARAPHRASE: block and report
+it as a CRITICAL finding (CATEGORY: paraphrase).
 
 Check for:
 1. Race conditions / concurrency gaps — shared resources without defined conflict resolution?

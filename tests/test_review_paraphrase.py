@@ -118,7 +118,7 @@ def test_truncation_gate_and_retry_prompt_demand_paraphrase(role):
     assert any("exceeds 1200 characters" in reason for reason in overlong["reasons"])
     assert runner.detect_truncated_agent_output(json.dumps(with_paraphrase(payload)),
                                                 agent_kind=role)["truncated"] is False
-    retry = cast(dict[str, Any], runner.build_json_retry_prompt(role.removeprefix("review-"), reasons))
+    retry = cast(dict[str, Any], runner.build_json_retry_prompt(role, reasons))
     prompt: str = retry["prompt"]
     assert retry["status"] == "ok"
     assert '"paraphrase"' in prompt and '"existing_system"' in prompt
@@ -230,14 +230,15 @@ def test_paraphrase_mismatch_marks_findings_for_recheck_without_dismissal(branch
     recorded = runner.record_review_objection(
         finding["id"], "paraphrase_mismatch", "Paraphrase says the change adds a cache; it removes one")
     assert recorded["status"] == "success", recorded
-    assert recorded.get("effect", "rechecks") == "rechecks"
+    assert recorded["effect"] == "rechecks"
     second = runner.write_review_verdict_ledger(monitor_json=json.dumps(monitor))
     assert second["computed_verdict"] != "PROCEED"
     ledger = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())
     row = ledger["findings_registry"][0]
     assert row["status"] == "active" and row["severity"] == finding["severity"]
     assert row["paraphrase_recheck"] is True
-    assert row["transition_reason"] == "paraphrase_mismatch"
+    assert row["paraphrase_recheck_evidence"] == "Paraphrase says the change adds a cache; it removes one"
+    assert row["transition_reason"] is None  # the objection slot stays free for other channels
     assert ledger["escalation_required"] is True
     assert ledger["reviewer_paraphrases"]["monitor"]["recheck_ids"] == [row["id"]]
     report = (branch_workspace / "review-verdict-ledger.md").read_text()
@@ -279,4 +280,135 @@ def test_map_plan_step_2b_paraphrases_spec_first(provider):
     assert "paraphrase" in step.lower()
     assert "cannot paraphrase" in step and "CRITICAL" in step
     assert "## Spec Paraphrase First (Step 2b)" in reference
+    assert "plan-reference.md § Spec Paraphrase First" not in step  # the spawned reviewer never sees that file
+    assert "What this proposes" in step and "How the existing system works" in step
+    if provider == "codex":
+        assert "PARAPHRASE:" in step  # where the paraphrase goes in the plain-text output
     assert "What this proposes" in reference and "How the existing system works" in reference
+
+
+def test_map_efficient_monitor_retry_prompt_does_not_ask_for_paraphrase():
+    """The efficient Monitor gate never requires a paraphrase, so its retry prompt must not ask for one."""
+    efficient = cast(dict[str, Any], runner.build_json_retry_prompt("monitor", ["missing required key: valid"]))
+    assert efficient["status"] == "ok"
+    assert '"paraphrase"' not in efficient["prompt"]
+    assert "Fill paraphrase FIRST" not in efficient["prompt"]
+    assert "A capture without it is rejected" not in efficient["prompt"]
+    review = cast(dict[str, Any], runner.build_json_retry_prompt("review-monitor", ["missing required key: paraphrase"]))
+    assert review["status"] == "ok"
+    assert '"paraphrase"' in review["prompt"] and "Fill paraphrase FIRST" in review["prompt"]
+
+
+def _role_with_incomplete_minor(role: str) -> dict:
+    return with_paraphrase({**envelope(role), "all_clear": False, "findings": [
+        {"id": "F-M-01", "severity": "MINOR", "category": "maintainability",
+         "problem": "Name drifts from contract at writer.py:1", "current_code": "VALUE = 2"}]})
+
+
+def test_paraphrase_mismatch_never_touches_a_tombstoned_contract_incomplete_finding(branch_workspace):
+    roles = {"user_experience": json.dumps(envelope("user_experience")),
+             "maintainer": json.dumps(_role_with_incomplete_minor("maintainer"))}
+    first = runner.write_review_verdict_ledger(monitor_json=json.dumps(with_paraphrase({"verdict": "approved", "issues": []})),
+                                               role_json=roles)
+    assert first["status"] == "success", first
+    ledger = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())
+    tomb = next(row for row in ledger["findings_registry"] if row["transition_reason"] == "contract_incomplete")
+    assert tomb["status"] == "tombstoned"
+    assert ledger["reviewer_paraphrases"]["maintainer"]["finding_ids"] == []
+    verdict = first["computed_verdict"]
+    assert runner.record_review_objection(tomb["id"], "paraphrase_mismatch", "Misread the module")["status"] == "success"
+    second = runner.write_review_verdict_ledger(monitor_json=json.dumps(with_paraphrase({"verdict": "approved", "issues": []})),
+                                                role_json=roles)
+    ledger = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())
+    row = next(item for item in ledger["findings_registry"] if item["id"] == tomb["id"])
+    assert row["transition_reason"] == "contract_incomplete"
+    assert "paraphrase_recheck" not in row
+    assert ledger["escalation_required"] is False
+    assert second["computed_verdict"] == verdict
+    assert ledger["reviewer_paraphrases"]["maintainer"]["recheck_ids"] == []
+
+
+@pytest.mark.parametrize("order", ["downgrade_first", "paraphrase_first"])
+def test_paraphrase_recheck_coexists_with_another_objection(branch_workspace, order):
+    monitor = with_paraphrase({"verdict": "needs_revision", "issues": [
+        {"severity": "MEDIUM", "category": "correctness", "description": "Retry loses the value",
+         "was_present_before_pr": False, "reach_evidence": "grep:retry:3"}]})
+    runner.write_review_verdict_ledger(monitor_json=json.dumps(monitor))
+    finding_id = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())["findings_registry"][0]["id"]
+    objections = [(finding_id, "quote_absent", "grep for the retry path returns nothing in the diff"),
+                  (finding_id, "paraphrase_mismatch", "Paraphrase says the change adds a cache; it removes one")]
+    for args in (objections if order == "downgrade_first" else objections[::-1]):
+        assert runner.record_review_objection(*args)["status"] == "success"
+    stored = json.loads((branch_workspace / "review-objections.json").read_text())
+    assert sorted(item["channel"] for item in stored) == ["paraphrase_mismatch", "quote_absent"]
+    runner.write_review_verdict_ledger(monitor_json=json.dumps(monitor))
+    row = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())["findings_registry"][0]
+    assert row["status"] == "downgraded" and row["transition_reason"] == "quote_absent"
+    assert row["transition_evidence"] == "grep for the retry path returns nothing in the diff"
+    assert row["paraphrase_recheck"] is True
+    # A repeated paraphrase objection replaces only the paraphrase record, never the other objection.
+    assert runner.record_review_objection(finding_id, "paraphrase_mismatch", "Second look: misread scope")["status"] == "success"
+    stored = json.loads((branch_workspace / "review-objections.json").read_text())
+    assert sorted(item["channel"] for item in stored) == ["paraphrase_mismatch", "quote_absent"]
+    assert next(item for item in stored if item["channel"] == "paraphrase_mismatch")["evidence"] == "Second look: misread scope"
+    # And a later ordinary objection does not drop the paraphrase record.
+    assert runner.record_review_objection(finding_id, "no_new_fact", "come on")["status"] == "success"
+    stored = json.loads((branch_workspace / "review-objections.json").read_text())
+    assert sorted(item["channel"] for item in stored) == ["no_new_fact", "paraphrase_mismatch"]
+    runner.write_review_verdict_ledger(monitor_json=json.dumps(monitor))
+    row = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())["findings_registry"][0]
+    assert row["paraphrase_recheck"] is True
+    assert row["transition_reason"] == "pressure_without_new_fact"
+
+
+def test_paraphrase_mismatch_applies_in_the_current_run(branch_workspace):
+    issue = {"severity": "CRITICAL", "category": "correctness", "description": "Data loss on rollback",
+             "was_present_before_pr": False, "reach_evidence": "Confirmed by reproducer in tests/"}
+    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="1")
+    assert runner.capture_review_output("monitor", json.dumps(with_paraphrase({"issues": [issue]})), "1")["status"] == "success"
+    assert runner.write_review_verdict_ledger(current_run=True)["computed_verdict"] == "BLOCK"
+    assert runner.record_review_objection("RVF-001", "paraphrase_mismatch", "Misread rollback as commit")["status"] == "success"
+    assert runner.abandon_review_round("1", reason="Re-check findings of the misreading reviewer")["status"] == "success"
+    runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="2")
+    assert runner.capture_review_output("monitor", json.dumps(with_paraphrase({"issues": [issue]})), "2")["status"] == "success"
+    result = runner.write_review_verdict_ledger(current_run=True)
+    assert result["status"] == "success", result
+    ledger = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())
+    row = ledger["findings_registry"][0]
+    assert row["id"] == "RVF-001" and row["status"] == "active" and row["severity"] == "critical"
+    assert row["paraphrase_recheck"] is True
+    assert ledger["escalation_required"] is True
+    assert result["computed_verdict"] == "BLOCK"
+    assert ledger["reviewer_paraphrases"]["monitor"]["recheck_ids"] == ["RVF-001"]
+
+
+def test_compare_orderings_paraphrase_lists_only_its_own_ordering(review_git_workspace):
+    workspace = review_git_workspace
+    Path("writer.py").write_text("VALUE = 2\n")
+    import subprocess
+    subprocess.run(["git", "commit", "-am", "change"], check=True, capture_output=True)
+    admission = runner.begin_review_run(arguments="--compare-orderings", round_id="orders")
+    assert admission["status"] == "success", admission
+    covered = admission["required_files"]
+    findings = {"default": "Default ordering sees a lost write", "reverse": "Reverse ordering sees a stale read"}
+    for ordering in ("default", "reverse"):
+        for role in admission["scheduled_reviewers"]:
+            if role == "monitor":
+                payload = _core_payload("monitor", covered)
+                payload["paraphrase"] = {"change": f"{ordering} change", "existing_system": f"{ordering} system"}
+                payload["issues"] = [{"severity": "MEDIUM", "category": "correctness", "description": findings[ordering],
+                                      "file_path": "writer.py", "was_present_before_pr": False,
+                                      "reach_evidence": "grep:VALUE:1"}]
+            elif role in CORE:
+                payload = _core_payload(role, covered)
+            else:
+                payload = _role_payload(role, covered)
+            captured = runner.capture_review_output(role, json.dumps(payload), "orders", ordering=ordering)
+            assert captured["status"] == "success", captured
+    assert runner.write_review_verdict_ledger(current_run=True)["status"] == "success"
+    ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
+    ids = {row["claim"]: row["id"] for row in ledger["findings_registry"] if row["source_agent"] == "monitor"}
+    assert ledger["reviewer_paraphrases"]["monitor"]["paraphrase"]["change"] == "default change"
+    assert ledger["reviewer_paraphrases"]["reverse:monitor"]["paraphrase"]["change"] == "reverse change"
+    assert ledger["reviewer_paraphrases"]["monitor"]["finding_ids"] == [ids[findings["default"]]]
+    assert ledger["reviewer_paraphrases"]["reverse:monitor"]["finding_ids"] == [ids[findings["reverse"]]]

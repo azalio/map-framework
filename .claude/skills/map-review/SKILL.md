@@ -390,7 +390,7 @@ After Step A.2a identifies a final response, pipe it on stdin (a bare call retur
 using the role-specific kind shown below. On truncation or missing/invalid finalization `context_receipt`: log via
 `log_agent_failure --agent <role> --phase post-invoke --failure-label truncated --reasons '<reasons>'`
 and re-invoke that reviewer ONCE using the prompt from
-`build_json_retry_prompt --agent <role> --errors '<reasons>'`; if still
+`build_json_retry_prompt --agent <kind> --errors '<reasons>'` (same kind); if still
 malformed, stop with CLARIFICATION_NEEDED.
 Include the original generated prompt and context protocol with retry instructions; process intermediate requests through Step A.2a.
 

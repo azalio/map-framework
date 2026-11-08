@@ -557,9 +557,12 @@ python3 .map/scripts/validate_spec_citations.py --branch "$BRANCH"
 (Use exec_command to cat the file.)
 [% endif %]
 [% if PROVIDER == "claude" %]> **LIGHT mode:** Skip this step. The spec is written from well-understood requirements; a lightweight self-review of the open-questions list and acceptance criteria suffices before decomposition.
-[% else %]Paraphrase first (see plan-reference.md § Spec Paraphrase First): before any finding, restate
-"What this proposes" and "How the existing system works, per this document" in 2-5 sentences each.
-A section you cannot paraphrase is a CRITICAL spec gap: report it as a CRITICAL finding.
+[% else %]Paraphrase first, before any finding. Start your output with a PARAPHRASE: block holding two parts
+in your own words, 2-5 sentences each:
+  What this proposes: ...
+  How the existing system works, per this document: ...
+A section you cannot paraphrase is a CRITICAL spec gap: name it in the PARAPHRASE: block and report
+it as a CRITICAL finding (CATEGORY: paraphrase).
 
 Check for:
 1. Race conditions / concurrency gaps — shared resources without defined conflict resolution?
@@ -586,12 +589,12 @@ Task(
   <document source="plan-discovery"><document_content>{plan_discovery_content}</document_content></document>
 </documents>
 <task>
-Paraphrase first (plan-reference.md § Spec Paraphrase First): restate What this proposes and How the existing system works (2-5 sentences each); a section you cannot paraphrase is a CRITICAL spec gap. Then review the spec for ambiguity, missing invariants, impossible acceptance criteria, and risky assumptions.
+Paraphrase first, before any finding, in your own words: What this proposes, and How the existing system works, per this document (2-5 sentences each). A section you cannot paraphrase is a CRITICAL spec gap: report it as a CRITICAL issue naming the section. Then review the spec for ambiguity, missing invariants, impossible acceptance criteria, and risky assumptions.
 Evidence first: for every finding, quote the spec or plan discovery before judgment.
 HIGH-severity findings must cite the exact spec section.
 </task>
 <expected_output>
-Return JSON with the paraphrase first, then evidence before verdict fields, issues, and required spec revisions.
+Return JSON whose first key is paraphrase={"change": "<What this proposes>", "existing_system": "<How the existing system works>"}, then evidence before verdict fields, issues, and required spec revisions.
 </expected_output>
 [% else %]If no CRITICAL or HIGH-severity issues: output exactly "SPEC APPROVED" at the end.
 If CRITICAL or HIGH-severity issues exist: list them clearly — do not output "SPEC APPROVED".

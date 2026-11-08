@@ -1213,7 +1213,11 @@ Current delta captured:
   Codex runner. Sharded merges keep per-shard `paraphrases`. The ledger's
   `reviewer_paraphrases` pairs each paraphrase with that reviewer's finding IDs; a
   misread is the `paraphrase_mismatch` objection channel, which retains the finding,
-  sets `paraphrase_recheck` and escalates. No automated judge scores paraphrases.
+  sets `paraphrase_recheck` and escalates. It is stored apart from the single
+  ordinary objection per finding and skips tombstoned rows. Attribution recomputes
+  each envelope's finding keys, so compare_orderings lists findings per ordering.
+  The map-efficient Monitor retry prompt (`--agent monitor`) omits the paraphrase;
+  `review-monitor` keeps it. No automated judge scores paraphrases.
 
 - Evidence-backed finding validation (#522) extends Step A.3 and the same
   finding ledger, not a new validator service or review stage. Finding identity

@@ -2042,10 +2042,7 @@ REVIEW_VERDICT_LEDGER_SCHEMA: dict[str, Any] = {
                             "input_integrity", "not_applicable",
                             # A role finding that did not fill all five output
                             # contract parts: tombstoned, never counted.
-                            "contract_incomplete",
-                            # Its reviewer's paraphrase misread the change (#670):
-                            # retained, escalated and marked for re-check.
-                            "paraphrase_mismatch", None,
+                            "contract_incomplete", None,
                         ],
                     },
                     "transition_evidence": {"type": ["string", "null"]},
@@ -2090,6 +2087,10 @@ REVIEW_VERDICT_LEDGER_SCHEMA: dict[str, Any] = {
                             "True when the reporting reviewer's paraphrase misread the change; "
                             "the finding stays counted and must be re-checked."
                         ),
+                    },
+                    "paraphrase_recheck_evidence": {
+                        "type": "string",
+                        "description": "What the reviewer's paraphrase got wrong (paraphrase_mismatch evidence).",
                     },
                     "downgraded_from": {
                         "type": "string",
