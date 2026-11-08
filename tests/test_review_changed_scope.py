@@ -1450,3 +1450,42 @@ def test_bracket_classes_never_match_the_path_separator():
     regex = runner._review_gitattr_regex("a[!x]c.go")
     assert regex.fullmatch("abc.go") and not regex.fullmatch("a/c.go")
     assert not runner._review_gitattr_regex("a[/]c.go").fullmatch("a/c.go")
+
+
+@pytest.mark.parametrize("form", ["absolute", "resolved", "dot"])
+def test_shard_receipt_paths_are_normalized_to_repo_relative(sharded_monitor, form):
+    # #668: reviewers that list absolute or ./ paths still covered their shard.
+    del sharded_monitor
+    roots = {"absolute": os.getcwd() + "/", "resolved": str(Path.cwd().resolve()) + "/", "dot": "./"}
+    for shard in current_row()["shards"]:
+        capture_shard(current_row(), shard, covered=[roots[form] + name for name in shard["files"]])
+    result = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    assert result["completeness"]["status"] == "COMPLETE", result["completeness"]["reasons"]
+
+
+def test_receipt_path_outside_the_repository_does_not_cover_scope(sharded_monitor):
+    del sharded_monitor
+    for shard in current_row()["shards"]:
+        capture_shard(current_row(), shard, covered=["/elsewhere/" + name for name in shard["files"]])
+    result = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    assert result["completeness"]["status"] == "INCOMPLETE", result
+    assert any("shard scope is unread or skipped" in reason for reason in result["completeness"]["reasons"])
+
+
+@pytest.mark.parametrize("skip", [False, True])
+def test_unsharded_absolute_receipt_paths_cover_and_skip_required_scope(repo, skip):
+    absolute = str(repo / "first.py")
+    Path("first.py").write_text("value = 2\n")
+    admitted = runner.begin_review_run(branch="feature", scheduled_reviewers=["monitor"],
+                                      provider="claude", round_id="scope", base_ref="main")
+    assert admitted["status"] == "success", admitted
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    payload = {"verdict": "approved", "issues": [], "receipt": {
+        "covered_files": [absolute], "skipped_files": [absolute] if skip else [],
+        "denied_access": [], "check_evidence": []}}
+    assert runner.capture_review_output("monitor", json.dumps(payload), "scope", branch="feature")["status"] == "success"
+    result = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    assert result["completeness"]["status"] == ("INCOMPLETE" if skip else "COMPLETE"), result
+    if not skip:
+        stored = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
+        assert stored["covered_files"] == ["first.py"]
