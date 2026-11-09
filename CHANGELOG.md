@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The truncation gate rejects unknown agent kinds with `unsupported_agent_kind` instead of silently accepting schema-free reviewer output (#678). Use registered role names (for example `predictor`, not `review-predictor`) or explicit `generic` for JSON-object/custom-key validation.
 - Completed implementation edit reminders now preserve pending admitted review rounds instead of calling the entire workflow complete and suggesting archive/reopen (#679). Malformed or unreadable review ledgers yield neutral guidance without changing review state.
 - Sharded review completeness now classifies access denials in their original reporting shard scope (#682). Optional foreign-shard lookups no longer become false required-access BLOCK after merge; owning-shard denials still block and original denial evidence remains intact.
 - Codex `$map-review` returns a recoverable `context_request_rejected` result with the permissible `next_offset` when a reviewer skips bytes or requests a partially overlapping chunk (#677). The host no longer aborts on this refusal; saved rounds resume without ledger/ACK edits. Contiguous delivery, fully acknowledged rereads and fatal integrity/access checks are preserved.

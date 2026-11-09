@@ -193,6 +193,8 @@ For stacked PRs, use `/map-review --base-ref runtime` (Codex: `$map-review --bas
 
 `/map-review` requires coverage of changed paths against the selected base, including local edits. Unchanged repository files remain optional, snapshot-bound dependency context. Codex `$map-review` uses a runner-owned app-server connection to deliver evidence directly to independent readers; the parent no longer copies every chunk. Interrupted collection resumes its saved threads and offsets. Invalid delivery offsets return the permitted next offset to the reviewer without aborting collection or allowing byte skipping. Runtime host probes, intact delivery acknowledgments and post-delivery finalization tokens are required before a Codex review can complete; the legacy native reader remains unverified.
 
+Reviewer output validation requires registered role names; unknown agent kinds are rejected rather than checked without a schema.
+
 Implementation completion does not imply review completion: edit reminders preserve pending admitted review rounds rather than suggesting a new run.
 
 Sharded reviews judge denied access against the reporting shard's required scope; optional cross-shard denials remain visible without falsely blocking completeness.
