@@ -102,6 +102,8 @@ class Delivery:
         chunk = require_success(runner.serve_review_context(state["reviewer"], json.dumps(request), self.round_id,
                     chunk_bytes=chunk_bytes, session_id=state["session_id"], agent_id=state["agent_id"], branch=self.branch))
         text = json.dumps(chunk, ensure_ascii=True)
+        if chunk.get("status") == "context_request_rejected":
+            return {"success": False, "contentItems": [{"type": "inputText", "text": text}]}
         self.pending = {"call_id": params["callId"], "text": text, "chunk": chunk, "host_completed": False}
         runner._write_json_file(self.pending_file, self.pending)
         return {"success": True, "contentItems": [{"type": "inputText", "text": text}]}
