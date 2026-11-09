@@ -11638,7 +11638,8 @@ def _review_security_gate(row: dict[str, Any], directory: Path) -> dict[str, Any
                 or any(not isinstance(name, str) for name in receipt["skipped_files"])
                 or set(row.get("required_files", [])) & _review_receipt_paths(receipt["skipped_files"])
                 or not isinstance(receipt.get("denied_access"), list)
-                or _review_denied_split(row, receipt["denied_access"])[0]):
+                or _review_capture_denied_split(row, directory, ordering, "security", "security",
+                                                receipt["denied_access"])[0]):
             reasons.append(f"{ordering}: incomplete security coverage")
         verdict_error = _adversarial_reviewer_error(output)
         if verdict_error or (output.get("all_clear") is False and output.get("findings") == []):
@@ -11711,6 +11712,38 @@ def _review_denied_split(row: dict[str, Any], denied: list[str]) -> tuple[list[s
     return hits, rest
 
 
+def _review_capture_denied_split(
+    row: dict[str, Any], directory: Path, ordering: str, reviewer: str, name: str, denied: list[str],
+) -> tuple[list[str], list[str]]:
+    """Classify denials at their authenticated reporting scope, not the merged union."""
+    if not row.get("shards"):
+        return _review_denied_split(row, denied)
+    stored = row.get("shard_receipts", {}).get(f"{ordering}:{reviewer}", {})
+    required: list[str] = []
+    informational: list[str] = []
+    for shard in row["shards"]:
+        witness = stored.get(shard["id"])
+        if not isinstance(witness, dict):
+            return _review_denied_split(row, denied)
+        path = directory / witness["artifact"]
+        if not path.is_file():
+            return _review_denied_split(row, denied)
+        content = path.read_bytes()
+        if hashlib.sha256(content).hexdigest() != witness.get("sha256"):
+            return _review_denied_split(row, denied)
+        envelope = json.loads(content)
+        output = (envelope.get("reviewer_status", {}).get(name, {}).get("raw", {})
+                  if reviewer == "adversarial" else envelope)
+        receipt = output.get("receipt")
+        if _review_coverage_receipt_errors(receipt):
+            return _review_denied_split(row, denied)
+        hits, rest = _review_denied_split({**row, "required_files": shard["files"]}, receipt["denied_access"])
+        label = f"{shard['id']}: "
+        required.extend(label + item for item in hits)
+        informational.extend(label + item for item in rest)
+    return required, informational
+
+
 def _review_completeness(row: dict[str, Any], directory: Path) -> dict[str, Any]:
     """Check evidence collection independently of whether collected findings block approval."""
     reasons: list[str] = []
@@ -11758,7 +11791,8 @@ def _review_completeness(row: dict[str, Any], directory: Path) -> dict[str, Any]
                 if _review_coverage_receipt_errors(receipt):
                     reasons.append(f"{ordering}:{name}: missing or invalid reviewer coverage receipt")
                     continue
-                required_denied, optional_denied = _review_denied_split(row, receipt["denied_access"])
+                required_denied, optional_denied = _review_capture_denied_split(
+                    row, directory, ordering, reviewer, name, receipt["denied_access"])
                 informational.extend(f"{ordering}:{name}: {item}" for item in optional_denied)
                 if required_denied:
                     blocked = True
