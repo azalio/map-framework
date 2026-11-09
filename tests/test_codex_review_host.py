@@ -119,12 +119,56 @@ def test_delivery_acks_outer_intact_bytes_and_resizes_truncation(repo):
     assert delivery.refresh()["pending_chunk"] is None
 
 
+@pytest.mark.parametrize("prefix,bad_offset", [(65536, 210000), (22127, 0)])
+def test_delivery_invalid_offset_is_recoverable_after_restart(repo, monkeypatch, prefix, bad_offset):
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", "2000000")
+    Path("dependency.py").write_text("A" * 226676)
+    scope_tests.git("commit", "-qam", "large unchanged dependency")
+    scope_tests.git("branch", "-f", "main", "HEAD")
+    delivery = admitted_delivery()
+    state = delivery.state
+    resource = "repo:dependency.py"
+    request = {"type": "context_request", "context_id": state["context_id"],
+               "resource_id": resource, "offset": 0}
+    chunk = runner.serve_review_context("monitor", json.dumps(request), "host", chunk_bytes=prefix,
+        session_id=state["session_id"], agent_id="thread", branch="feature")
+    assert chunk.get("next_offset") == prefix, chunk
+    assert runner.ack_review_context(state["session_id"], "thread", json.dumps(chunk), "host",
+                                    branch="feature")["status"] != "error"
+    ledger = Path(".map/feature/review-verdict-ledger.json")
+    before = ledger.read_bytes()
+    for _ in range(2):
+        delivery = driver.Delivery("feature", "host", state)
+        response = delivery.respond({"arguments": {"resource_id": resource, "offset": bad_offset}, "callId": "bad"})
+        rejected = json.loads(response["contentItems"][0]["text"])
+        assert response["success"] is False
+        assert rejected["status"] == "context_request_rejected"
+        assert rejected["next_offset"] == prefix
+        assert ledger.read_bytes() == before
+        assert delivery.pending is None
+        complete_result(delivery, response, "bad")
+        assert delivery.transfers == 0
+    response = delivery.respond({"arguments": {"resource_id": resource, "offset": prefix}, "callId": "good"})
+    assert json.loads(response["contentItems"][0]["text"])["offset"] == prefix
+    complete_result(delivery, response, "good")
+    assert delivery.transfers == 1
+    # Fully acknowledged rereads remain legal, even though they do not advance the prefix.
+    reread = runner.serve_review_context("monitor", json.dumps(request), "host", chunk_bytes=prefix,
+        session_id=state["session_id"], agent_id="thread", branch="feature")
+    assert reread["status"] == "context_response"
+    assert reread["offset"] == 0
+    with pytest.raises(host.HostError, match="not permitted"):
+        delivery.respond({"arguments": {"resource_id": "not-admitted"}, "callId": "denied"})
+
+
 class SimulatedHost:
     """Model-free transport integration. Capability enforcement is tested separately."""
     resumed: ClassVar[list[str]] = []
     interrupt_once = False
 
     def __init__(self, **kwargs):
+        del kwargs
         self.on_tool: Any = None
         self.on_event: Any = None
 
@@ -142,6 +186,7 @@ class SimulatedHost:
                 "source_read": "host_witnessed", "canary_write": "host_denied_no_environment"}
 
     def turn(self, message):
+        del message
         for count in range(200):
             response = self.on_tool({"arguments": {}, "callId": str(count)})
             state = json.loads(response["contentItems"][0]["text"])
@@ -187,6 +232,28 @@ def test_driver_resume_same_thread_and_complete_receipts(repo, monkeypatch):
     proof = path.parent / session["host_capability"]["artifact"]
     proof.write_text("{}")
     assert not runner._review_capability_verified(after, path.parent)
+
+
+def test_driver_recovers_offset_error_and_completes_same_round(repo, monkeypatch):
+    del repo
+
+    class OffsetHost(SimulatedHost):
+        def turn(self, message):
+            delivery = self.on_event.__self__
+            state = delivery.refresh()
+            resource = state["remaining"][0]["resource_id"]
+            response = self.on_tool({"arguments": {"resource_id": resource, "offset": 1}, "callId": "bad"})
+            assert response["success"] is False
+            complete_result(delivery, response, "bad")
+            return super().turn(message)
+
+    interrupted_round(monkeypatch)
+    monkeypatch.setattr(driver, "CodexReviewHost", OffsetHost)
+    assert driver.run("feature")["status"] == "success"
+    assert SimulatedHost.resumed == ["", "thread"]
+    ledger = runner._read_review_ledger(Path(".map/feature"))
+    assert len(ledger["convergence"]["rounds"]) == 1
+    assert runner.write_review_verdict_ledger(current_run=True, branch="feature")["completeness"]["status"] == "COMPLETE"
 
 
 def test_completed_capture_reused_without_redispatch(repo, monkeypatch):
@@ -272,6 +339,7 @@ def test_driver_adversarial_roster_and_ordering_sessions(repo, monkeypatch, argu
             return {**super().probe(context_id), "thread_id": self.identity}
 
         def turn(self, message):
+            del message
             for count in range(200):
                 response = self.on_tool({"arguments": {}, "callId": str(count)})
                 state = json.loads(response["contentItems"][0]["text"])
@@ -324,10 +392,17 @@ def test_resume_rejects_host_replacing_thread(tmp_path):
     client.thread_id = "original"
     client.root = tmp_path
     client.overrides = {}
-    client._open_rollout = lambda path: None
-    client.call = lambda method, params: ({"thread": {"id": "replacement", "environments": [],
-        "status": {"type": "idle"}, "path": "unused"}, "sandbox": {"type": "readOnly", "networkAccess": False}}
-        if method == "thread/resume" else {"data": []})
+    def open_rollout(path):
+        del path
+
+    def call(method, params):
+        del params
+        return ({"thread": {"id": "replacement", "environments": [],
+            "status": {"type": "idle"}, "path": "unused"}, "sandbox": {"type": "readOnly", "networkAccess": False}}
+            if method == "thread/resume" else {"data": []})
+
+    client._open_rollout = open_rollout
+    client.call = call
     with pytest.raises(host.HostError, match="different thread"):
         client.start("original")
     assert client.thread_id == "original"

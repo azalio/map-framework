@@ -15908,7 +15908,12 @@ def serve_review_context(
     if session is not None:
         prefix = session["offsets"].get(resource_id, 0)
         if offset != prefix and end > prefix:
-            raise ValueError("Request the next unacknowledged byte; delivery cannot skip bytes")
+            return {"status": "context_request_rejected", "reason": "offset_mismatch",
+                    "message": "Request the next unacknowledged byte; delivery cannot skip bytes",
+                    "context_id": context_id, "resource_id": resource_id, "session_id": session_id,
+                    "requested_offset": offset, "next_offset": prefix,
+                    "instruction": "Retry review_context with this resource_id and next_offset as offset, "
+                                   "or call review_context({}) to continue required delivery."}
         pending = session.get("pending")
         key = _review_chunk_key(result)
         if end > prefix and pending and pending.get("type") == "context_file":
