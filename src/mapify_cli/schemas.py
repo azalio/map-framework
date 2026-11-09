@@ -2081,6 +2081,17 @@ REVIEW_VERDICT_LEDGER_SCHEMA: dict[str, Any] = {
                         }, "required": ["reaction", "evidence"],
                     }},
                     "was_present_before_pr": {"type": ["boolean", "null"]},
+                    "paraphrase_recheck": {
+                        "type": "boolean",
+                        "description": (
+                            "True when the reporting reviewer's paraphrase misread the change; "
+                            "the finding stays counted and must be re-checked."
+                        ),
+                    },
+                    "paraphrase_recheck_evidence": {
+                        "type": "string",
+                        "description": "What the reviewer's paraphrase got wrong (paraphrase_mismatch evidence).",
+                    },
                     "downgraded_from": {
                         "type": "string",
                         "enum": ["critical", "important", "minor", "needs_investigation"],
@@ -2171,6 +2182,29 @@ REVIEW_VERDICT_LEDGER_SCHEMA: dict[str, Any] = {
         "active_count": {"type": "integer", "minimum": 0},
         "downgraded_count": {"type": "integer", "minimum": 0},
         "tombstoned_count": {"type": "integer", "minimum": 0},
+        "reviewer_paraphrases": {
+            "type": "object",
+            "description": (
+                "Each reviewer's paraphrase of the change and the existing system (#670), keyed by "
+                "reviewer id (reverse ordering: 'reverse:<id>'), with the findings it reported. "
+                "The parent compares it with the PR or task intent."
+            ),
+            "additionalProperties": {
+                "type": "object",
+                "properties": {
+                    "paraphrase": {
+                        "type": ["object", "null"],
+                        "properties": {"change": {"type": "string"}, "existing_system": {"type": "string"}},
+                        "additionalProperties": True,
+                    },
+                    "shard_paraphrases": {"type": "object", "additionalProperties": {"type": "object"}},
+                    "finding_ids": {"type": "array", "items": {"type": "string"}},
+                    "recheck_ids": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["paraphrase", "finding_ids", "recheck_ids"],
+                "additionalProperties": True,
+            },
+        },
     },
     "required": [
         "schema_version",

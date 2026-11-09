@@ -8,6 +8,8 @@ from typing import Any, cast
 
 import pytest
 
+from tests.review_paraphrase_helpers import with_paraphrase
+
 SCRIPTS_PATH = Path(__file__).resolve().parents[1] / "src/mapify_cli/templates/map/scripts"
 sys.path.insert(0, str(SCRIPTS_PATH))
 
@@ -188,7 +190,7 @@ def test_review_receipt_requires_base_side_path(tmp_path, monkeypatch, rename):
     receipt = {"covered_files": [name for name in admission["required_files"] if name != "guard.py"],
                "skipped_files": [], "denied_access": [], "check_evidence": []}
     envelope = {"verdict": "approved", "issues": [], "receipt": receipt}
-    captured = runner.capture_review_output("monitor", json.dumps(envelope), "receipt", branch="feature")
+    captured = runner.capture_review_output("monitor", json.dumps(with_paraphrase(envelope)), "receipt", branch="feature")
     assert captured["status"] == "success"
     runner.write_review_verdict_ledger(current_run=True, branch="feature")
     ledger = json.loads(Path(".map/feature/review-verdict-ledger.json").read_text())

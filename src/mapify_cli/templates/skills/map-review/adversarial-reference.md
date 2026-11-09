@@ -72,10 +72,12 @@ original role key (`blind`, `edge_case`, `acceptance`, `user_experience` or
 never aggregate them or count them as malformed final responses. This also applies
 to retries and both independent `--compare-orderings` collections.
 
-Only after `status: not_context_request`, require valid JSON matching the adversarial finding schema. If any final reviewer output is truncated or invalid JSON:
+Only after `status: not_context_request`, require valid JSON matching the adversarial finding schema, opening with `paraphrase={change,existing_system}` (2-5 sentences, at most 1200 characters each). Check each one with `detect_truncated_agent_output --agent <role>` (hunters included: `--agent blind|edge_case|acceptance`). If any final reviewer output is truncated, invalid JSON or lacks a valid paraphrase:
 - Log the failure
-- Re-invoke that specific reviewer ONCE with the same prompt
-- If still invalid, record the reviewer as `parse_error` and continue with remaining reviewers
+- Re-invoke that specific reviewer ONCE with the same prompt plus `build_json_retry_prompt --agent <role> --errors '<reasons>'`
+- If still invalid, record the reviewer as `parse_error` and continue with remaining reviewers (the aggregator also marks a reviewer without a valid paraphrase as `parse_error`)
+
+Before presenting findings, compare each reviewer's paraphrase with the PR/task intent; a misread is a `paraphrase_mismatch` objection on that reviewer's findings (review-reference.md § Reviewer paraphrase check).
 
 ## Step B.adversarial.3: Aggregate findings
 

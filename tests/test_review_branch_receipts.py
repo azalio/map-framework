@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.review_paraphrase_helpers import with_paraphrase
+
 SCRIPTS_PATH = Path(__file__).resolve().parents[1] / "src/mapify_cli/templates/map/scripts"
 sys.path.insert(0, str(SCRIPTS_PATH))
 
@@ -45,11 +47,11 @@ def test_explicit_slash_branch_receipt_lifecycle(tmp_path, monkeypatch, bundle_p
     assert bundle["status"] == "success", bundle
     check = map_step_runner.run_test_gate(check_id="smoke", branch=branch)
     assert check["passed"] is True, check
-    capture = map_step_runner.capture_review_output("monitor", json.dumps({
+    capture = map_step_runner.capture_review_output("monitor", json.dumps(with_paraphrase({
         "verdict": "approved", "issues": [],
         "receipt": {"covered_files": admission["required_files"], "skipped_files": [],
                     "denied_access": [], "check_evidence": ["smoke"]},
-    }), "receipt", branch=branch)
+    })), "receipt", branch=branch)
     assert capture["status"] == "success", capture
     result = map_step_runner.write_review_verdict_ledger(current_run=True, branch=branch)
     assert result["code_approval"]["approved"] is True, result

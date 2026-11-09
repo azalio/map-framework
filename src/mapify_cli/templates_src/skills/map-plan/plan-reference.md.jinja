@@ -61,6 +61,19 @@ Use `ac_ids` to select proofs and `rerun: true` for a new attempt. Generate `wri
 
 Receipts bind full HEAD/index/dirty/untracked product snapshots plus contract/inventory/policy hashes. A new commit or relevant local change makes previous proofs stale: rerun after the final intended commit, not before it. Mutable `.map` output is excluded from product snapshots and bound separately. Verifiers consume `evaluate_acceptance`; they cannot turn manual checkboxes into proof. Frozen tests prevent accidental substitution, not vacuous assertions or hostile same-user rewriting. Execution is non-hermetic; external edit/change-restore races and process-group escape limitations still apply. Keep independent semantic review.
 
+## Spec Paraphrase First (Step 2b)
+
+The Devil's Advocate spec reviewer starts by restating the spec in its own words, before it writes any finding:
+
+1. **What this proposes** — 2-5 sentences on the change the spec asks for.
+2. **How the existing system works, per this document** — 2-5 sentences on the current behavior the spec describes or relies on.
+
+Keep each part short: about five sentences, never a copy of the spec. A list of undefined terms does not catch a spec whose terms are all defined but whose parts do not connect; a paraphrase does.
+
+- A section the reviewer cannot paraphrase from the spec alone is a **CRITICAL spec gap**: the spec is not self-contained, and decomposition would build on a guess. Report it as a CRITICAL finding that names the section and what is missing.
+- The parent compares the paraphrase with the user's request. A paraphrase that misreads the request is itself a finding, and it discounts the reviewer's other findings: re-check them against the spec before acting on them.
+- Fix every CRITICAL gap in the spec before Step 3. Do not answer it in the plan instead of the spec.
+
 ## Architecture Graph
 
 Use a compact graph when components, state, or ownership boundaries matter:

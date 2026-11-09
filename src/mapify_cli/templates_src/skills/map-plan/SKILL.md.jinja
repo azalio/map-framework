@@ -557,7 +557,14 @@ python3 .map/scripts/validate_spec_citations.py --branch "$BRANCH"
 (Use exec_command to cat the file.)
 [% endif %]
 [% if PROVIDER == "claude" %]> **LIGHT mode:** Skip this step. The spec is written from well-understood requirements; a lightweight self-review of the open-questions list and acceptance criteria suffices before decomposition.
-[% else %]Check for:
+[% else %]Paraphrase first, before any finding. Start your output with a PARAPHRASE: block holding two parts
+in your own words, 2-5 sentences each:
+  What this proposes: ...
+  How the existing system works, per this document: ...
+A section you cannot paraphrase is a CRITICAL spec gap: name it in the PARAPHRASE: block and report
+it as a CRITICAL finding (CATEGORY: paraphrase).
+
+Check for:
 1. Race conditions / concurrency gaps — shared resources without defined conflict resolution?
 2. Ownership ambiguity — could two components both assume the other handles something?
 3. Missing edge cases — invariant violations not covered by the Edge Cases section?
@@ -567,8 +574,8 @@ python3 .map/scripts/validate_spec_citations.py --branch "$BRANCH"
 [% endif %]
 [% if PROVIDER == "claude" %]Run Monitor as a spec reviewer before decomposition.
 [% else %]Output format (for each finding):
-  SEVERITY: HIGH | MEDIUM | LOW
-  CATEGORY: [concurrency|ownership|edge-case|contradiction|security|assumption]
+  SEVERITY: CRITICAL | HIGH | MEDIUM | LOW
+  CATEGORY: [paraphrase|concurrency|ownership|edge-case|contradiction|security|assumption]
   DESCRIPTION: [what the issue is]
   SUGGESTED FIX: [how to resolve]
 [% endif %]
@@ -582,23 +589,23 @@ Task(
   <document source="plan-discovery"><document_content>{plan_discovery_content}</document_content></document>
 </documents>
 <task>
-Review the spec for ambiguity, missing invariants, impossible acceptance criteria, and risky assumptions.
+Paraphrase first, before any finding, in your own words: What this proposes, and How the existing system works, per this document (2-5 sentences each). A section you cannot paraphrase is a CRITICAL spec gap: report it as a CRITICAL issue naming the section. Then review the spec for ambiguity, missing invariants, impossible acceptance criteria, and risky assumptions.
 Evidence first: for every finding, quote the spec or plan discovery before judgment.
 HIGH-severity findings must cite the exact spec section.
 </task>
 <expected_output>
-Return JSON with evidence before verdict fields, issues, and required spec revisions.
+Return JSON whose first key is paraphrase={"change": "<What this proposes>", "existing_system": "<How the existing system works>"}, then evidence before verdict fields, issues, and required spec revisions.
 </expected_output>
-[% else %]If no HIGH-severity issues: output exactly "SPEC APPROVED" at the end.
-If HIGH-severity issues exist: list them clearly — do not output "SPEC APPROVED".
+[% else %]If no CRITICAL or HIGH-severity issues: output exactly "SPEC APPROVED" at the end.
+If CRITICAL or HIGH-severity issues exist: list them clearly — do not output "SPEC APPROVED".
 [% endif %]"""
 )
 ```
 
-[% if PROVIDER == "claude" %]Fix blocking spec issues before decomposition.
+[% if PROVIDER == "claude" %]Fix blocking spec issues, including every section the reviewer cannot paraphrase, before decomposition.
 [% else %]**After Devil's Advocate review:**
-- `SPEC APPROVED` (no HIGH findings): proceed to Step 3.
-- HIGH findings found: present them to the user in plain text and wait for resolution. Update the spec before proceeding. Do NOT silently proceed past HIGH findings.
+- `SPEC APPROVED` (no CRITICAL/HIGH findings): proceed to Step 3.
+- CRITICAL/HIGH findings found (a section the reviewer cannot paraphrase is CRITICAL): present them to the user in plain text and wait for resolution. Update the spec before proceeding. Do NOT silently proceed past HIGH findings.
 - MEDIUM/LOW findings: add to spec's Open Questions section and proceed.
 [% endif %]
 [% if PROVIDER == "claude" %]### Step 3: Create Branch Directory

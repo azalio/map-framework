@@ -23,6 +23,8 @@ sys.path.insert(0, str(SCRIPTS_PATH))
 
 import map_step_runner  # type: ignore[import-not-found]
 
+from tests.review_paraphrase_helpers import with_paraphrase
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -39,7 +41,7 @@ def branch_workspace(tmp_path, monkeypatch):
 
 
 def _monitor_with_critical() -> dict:
-    return {
+    return with_paraphrase({
         "verdict": "rejected",
         "issues": [
             {
@@ -50,11 +52,11 @@ def _monitor_with_critical() -> dict:
                 "reach_evidence": "Confirmed by reproducer in tests/",
             }
         ],
-    }
+    })
 
 
 def _monitor_with_high_important() -> dict:
-    return {
+    return with_paraphrase({
         "verdict": "needs_revision",
         "issues": [
             {
@@ -65,11 +67,11 @@ def _monitor_with_high_important() -> dict:
                 "reach_evidence": "Any user-supplied input reaches raw SQL concatenation",
             }
         ],
-    }
+    })
 
 
 def _monitor_with_pre_existing() -> dict:
-    return {
+    return with_paraphrase({
         "verdict": "needs_revision",
         "issues": [
             {
@@ -80,35 +82,35 @@ def _monitor_with_pre_existing() -> dict:
                 "reach_evidence": "Old regression, not caused by this PR",
             }
         ],
-    }
+    })
 
 
 def _monitor_no_issues() -> dict:
-    return {"verdict": "approved", "issues": []}
+    return with_paraphrase({"verdict": "approved", "issues": []})
 
 
 def _evaluator_high_score() -> dict:
-    return {
+    return with_paraphrase({
         "overall_score": 9,
         "recommendation": "proceed",
         "scores": {"correctness": 9, "clarity": 8},
-    }
+    })
 
 
 def _evaluator_low_score() -> dict:
-    return {
+    return with_paraphrase({
         "overall_score": 3,
         "recommendation": "revise",
         "scores": {"correctness": 3, "clarity": 4},
-    }
+    })
 
 
 def _predictor_low_risk() -> dict:
-    return {
+    return with_paraphrase({
         "risk_assessment": "low",
         "evidence": [{"source": "test_coverage", "quote": "100% coverage"}],
         "predicted_state": {"breaking_changes": []},
-    }
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -117,9 +119,9 @@ def _predictor_low_risk() -> dict:
 
 
 def test_adversarial_votes_without_checked_validation_never_establish_quorum():
-    envelope = json.dumps({"all_clear": False, "findings": [{"severity": "MINOR",
+    envelope = json.dumps(with_paraphrase({"all_clear": False, "findings": [{"severity": "MINOR",
         "category": "correctness", "file_path": "writer.py", "failure_mode": "retry loses data",
-        "evidence": "trust reviewer", "validation": {"verdict": "confirmed"}}]})
+        "evidence": "trust reviewer", "validation": {"verdict": "confirmed"}}]}))
     report = map_step_runner.aggregate_adversarial_findings(blind_json=envelope, edge_case_json=envelope)
     assert report["findings"][0]["corroborated"] is False
     assert report["findings"][0]["validation"]["verdict"] == "insufficient_evidence"
@@ -134,7 +136,7 @@ def test_adversarial_preserves_two_causes_in_same_file_and_scenario():
                  "failure_mode": "retry loses data", "evidence": "writer.py:1"}
                 for cause in ("truncate before locking", "ignore failed flush")]
     report = map_step_runner.aggregate_adversarial_findings(
-        blind_json=json.dumps({"findings": findings, "all_clear": False}))
+        blind_json=json.dumps(with_paraphrase({"findings": findings, "all_clear": False})))
     assert len(report["findings"]) == 2
     assert {finding["cause"] for finding in report["findings"]} == {
         "truncate before locking", "ignore failed flush"}
@@ -1411,7 +1413,7 @@ def test_adversarial_mode_reports_incomplete_role_finding_without_gating(severit
     report = map_step_runner.aggregate_adversarial_findings(
         role_json={
             "maintainer": json.dumps(
-                {
+                with_paraphrase({
                     "reviewer": "maintainer",
                     "all_clear": False,
                     "checks_performed": ["B"],
@@ -1419,7 +1421,7 @@ def test_adversarial_mode_reports_incomplete_role_finding_without_gating(severit
                     "findings": [
                         _complete_role_finding(id="F-M-04", severity=severity, cost="")
                     ],
-                }
+                })
             )
         }
     )
@@ -1449,7 +1451,7 @@ def test_adversarial_ledger_findings_carry_incomplete_role_findings_to_the_ledge
     report = map_step_runner.aggregate_adversarial_findings(
         role_json={
             "maintainer": json.dumps(
-                {
+                with_paraphrase({
                     "reviewer": "maintainer",
                     "all_clear": False,
                     "checks_performed": ["B"],
@@ -1457,7 +1459,7 @@ def test_adversarial_ledger_findings_carry_incomplete_role_findings_to_the_ledge
                     "findings": [
                         _complete_role_finding(id="F-M-05", severity=severity, cost="")
                     ],
-                }
+                })
             )
         }
     )
@@ -1498,13 +1500,13 @@ def test_adversarial_complete_role_finding_is_not_double_counted():
     report = map_step_runner.aggregate_adversarial_findings(
         role_json={
             "maintainer": json.dumps(
-                {
+                with_paraphrase({
                     "reviewer": "maintainer",
                     "all_clear": False,
                     "checks_performed": ["B"],
                     "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [], "check_evidence": []},
                     "findings": [_complete_role_finding(id="F-M-06")],
-                }
+                })
             )
         }
     )
@@ -1704,13 +1706,13 @@ def test_unreadable_role_envelope_is_a_finding_not_a_clean_pass(branch_workspace
 
 
 def _all_clear_adversarial_report(blind_payload: str | None = "clean") -> dict:
-    clean = json.dumps({
+    clean = json.dumps(with_paraphrase({
         "all_clear": True,
         "all_clear_rationale": "Reviewed the diff and found no reachable defect",
         "findings": [],
         "checks_performed": ["changed paths", "boundary inputs"],
         "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [], "check_evidence": []},
-    })
+    }))
     return map_step_runner.aggregate_adversarial_findings(
         blind_json=clean if blind_payload == "clean" else blind_payload,
         edge_case_json=clean,
@@ -2425,8 +2427,8 @@ def _produced_adversarial_report(reporters=("blind",), *, evidence="writer.py:10
     envelopes = {}
     for reviewer in ("blind", "edge_case", "acceptance", "maintainer", "user_experience"):
         entries = [finding] if reviewer in reporters else []
-        envelope = {"all_clear": not entries, "findings": entries, "checks_performed": ["write rollback"],
-                    "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [], "check_evidence": []}}
+        envelope = with_paraphrase({"all_clear": not entries, "findings": entries, "checks_performed": ["write rollback"],
+                    "receipt": {"covered_files": [], "skipped_files": [], "denied_access": [], "check_evidence": []}})
         if resolutions and reviewer in resolutions:
             envelope["resolved_findings"] = resolutions[reviewer]
         if receipt is not None:
@@ -2516,7 +2518,7 @@ def test_monitor_schema_locations_keep_distinct_files_and_stable_moved_ids(branc
         issues = [{**issue, "file_path": path, "line_range": line} for path in ("a.py", "b.py")]
         if round_id == "2":
             issues.reverse()
-        runner.capture_review_output("monitor", json.dumps({"issues": issues}), round_id)
+        runner.capture_review_output("monitor", json.dumps(with_paraphrase({"issues": issues})), round_id)
         result = runner.write_review_verdict_ledger(current_run=True)
         assert result["computed_verdict"] == "BLOCK"
         ledger = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())
@@ -2538,12 +2540,12 @@ def test_current_objections_bind_after_durable_ids_and_include_omissions(branch_
     issue = _monitor_with_critical()["issues"][0]
     issues = [{**issue, "file_path": path} for path in ("a.py", "b.py")]
     runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="1")
-    runner.capture_review_output("monitor", json.dumps({"issues": issues}), "1")
+    runner.capture_review_output("monitor", json.dumps(with_paraphrase({"issues": issues})), "1")
     assert runner.write_review_verdict_ledger(current_run=True)["computed_verdict"] == "BLOCK"
     assert runner.record_review_objection("RVF-002", channel, "Checked b.py against the contract")["status"] == "success"
     assert runner.abandon_review_round("1", reason="Continue findings review in a new attempt")["status"] == "success"
     runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="2")
-    runner.capture_review_output("monitor", json.dumps({"issues": [issues[0]] if omitted else issues[::-1]}), "2")
+    runner.capture_review_output("monitor", json.dumps(with_paraphrase({"issues": [issues[0]] if omitted else issues[::-1]})), "2")
     result = runner.write_review_verdict_ledger(current_run=True)
     assert result["status"] == "success", result
     ledger = json.loads((branch_workspace / "review-verdict-ledger.json").read_text())
@@ -2617,9 +2619,9 @@ def test_legacy_free_text_resolution_cannot_close_a_finding(review_git_workspace
     assert runner.write_review_verdict_ledger(current_run=True)["computed_verdict"] == "BLOCK"
     assert runner.abandon_review_round("first", reason="Continue findings review in a new attempt")["status"] == "success"
     admission = _admit_receipt_review(runner, round_id="second")
-    clean = {"issues": [], "resolved_findings": [{"finding_id": "RVF-001", "evidence": "Regression passes"}],
+    clean = with_paraphrase({"issues": [], "resolved_findings": [{"finding_id": "RVF-001", "evidence": "Regression passes"}],
              "receipt": {"covered_files": admission["required_files"], "skipped_files": [],
-                         "denied_access": [], "check_evidence": []}}
+                         "denied_access": [], "check_evidence": []}})
     runner.capture_review_output("monitor", json.dumps(clean), "second")
     assert runner.write_review_verdict_ledger(current_run=True)["findings_verdict"] != "PROCEED"
     ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
@@ -2632,10 +2634,10 @@ def test_legacy_free_text_resolution_cannot_close_a_finding(review_git_workspace
 
 def _capture_monitor_resolution(runner, admission, round_id, *, finding_id="RVF-001",
                                 evidence="Regression now passes", quote="VALUE = 1", issues=None):
-    envelope = {"issues": issues or [], "resolved_findings": [
+    envelope = with_paraphrase({"issues": issues or [], "resolved_findings": [
         _bound_resolution(finding_id, evidence=evidence, quote=quote)],
         "receipt": {"covered_files": admission["required_files"], "skipped_files": [],
-                    "denied_access": [], "check_evidence": []}}
+                    "denied_access": [], "check_evidence": []}})
     result = runner.capture_review_output("monitor", json.dumps(envelope), round_id)
     assert result["status"] == "success", result
 
@@ -2647,7 +2649,8 @@ def _captured_adversarial_resolution(runner, admission, round_id, resolver, flag
     independent = "acceptance" if resolver != "acceptance" else "blind"
     independent_resolution = {**resolution, "reachability": {**resolution["reachability"],
         "reason": "independent caller audit confirms guarded retry entry"}}
-    envelope = {"all_clear": True, "findings": [], "resolved_findings": [independent_resolution], "receipt": receipt}
+    envelope = with_paraphrase({"all_clear": True, "findings": [], "resolved_findings": [independent_resolution],
+                                "receipt": receipt})
     for ordering in (("default", "reverse") if "--compare-orderings" in flags else ("",)):
         result = runner.capture_review_output(independent, json.dumps(envelope), round_id, ordering=ordering)
         assert result["status"] == "success", result
@@ -2673,8 +2676,8 @@ def test_captured_finding_validation_is_snapshot_bound(review_git_workspace, rea
              "reachability": {"status": reach, "reason": "entrypoint permits retry", "evidence_refs": [current]},
              "baseline_attribution": {"status": attribution, "reason": "base compared to current",
                                       "evidence_refs": [baseline, current]}}
-    envelope = {"issues": [issue], "receipt": {"covered_files": admission["required_files"],
-                "skipped_files": [], "denied_access": [], "check_evidence": []}}
+    envelope = with_paraphrase({"issues": [issue], "receipt": {"covered_files": admission["required_files"],
+                "skipped_files": [], "denied_access": [], "check_evidence": []}})
     runner.capture_review_output("monitor", json.dumps(envelope), "receipt")
     runner.write_review_verdict_ledger(current_run=True)
     ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
@@ -2693,7 +2696,7 @@ def test_captured_finding_validation_is_snapshot_bound(review_git_workspace, rea
                          "method": "inspect all replacement and retry paths", "uncertainty": "",
                          "scope_expansion": [], "occurrences": [{"file_path": "writer.py",
                              "disposition": "fixed", "evidence_refs": [current]}]}}
-        resolved = {"issues": [], "resolved_findings": [resolution], "receipt": envelope["receipt"]}
+        resolved = with_paraphrase({"issues": [], "resolved_findings": [resolution], "receipt": envelope["receipt"]})
         runner.capture_review_output("monitor", json.dumps(resolved), "remediation")
         runner.write_review_verdict_ledger(current_run=True)
         ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
@@ -2718,10 +2721,10 @@ def test_adversarial_quorum_uses_individual_bound_evidence(review_git_workspace,
         "baseline_attribution": {"status": "introduced", "reason": "base compared",
                                  "evidence_refs": [current, {**current, "revision": "baseline"}]}}
     receipt = {"covered_files": admission["required_files"], "skipped_files": [], "denied_access": [], "check_evidence": []}
-    first = json.dumps({"all_clear": False, "findings": [finding], "receipt": receipt})
+    first = json.dumps(with_paraphrase({"all_clear": False, "findings": [finding], "receipt": receipt}))
     other = {**finding, "reachability": {**finding["reachability"], "status": second_reach,
                                         "reason": "independent path audit confirms caller retry"}}
-    second = json.dumps({"all_clear": False, "findings": [other], "receipt": receipt})
+    second = json.dumps(with_paraphrase({"all_clear": False, "findings": [other], "receipt": receipt}))
     if individual_captures:
         runner.capture_review_output("blind", first, "quorum")
         runner.capture_review_output("acceptance", second, "quorum")
@@ -3241,7 +3244,7 @@ def test_resolved_objection_stays_superseded_on_omission_but_observation_reopens
     first = _monitor_with_critical()["issues"][0]
     other = {**first, "description": "Independent second defect"}
     runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="1")
-    runner.capture_review_output("monitor", json.dumps({"issues": [first, other]}), "1")
+    runner.capture_review_output("monitor", json.dumps(with_paraphrase({"issues": [first, other]})), "1")
     runner.write_review_verdict_ledger(current_run=True)
     runner.record_review_objection("RVF-001", "wrong_category", "Operator contests initial rollback defect")
     assert runner.abandon_review_round("1", reason="Continue findings review in a new attempt")["status"] == "success"

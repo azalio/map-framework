@@ -279,18 +279,18 @@ Task(
   <document source="plan-discovery"><document_content>{plan_discovery_content}</document_content></document>
 </documents>
 <task>
-Review the spec for ambiguity, missing invariants, impossible acceptance criteria, and risky assumptions.
+Paraphrase first, before any finding, in your own words: What this proposes, and How the existing system works, per this document (2-5 sentences each). A section you cannot paraphrase is a CRITICAL spec gap: report it as a CRITICAL issue naming the section. Then review the spec for ambiguity, missing invariants, impossible acceptance criteria, and risky assumptions.
 Evidence first: for every finding, quote the spec or plan discovery before judgment.
 HIGH-severity findings must cite the exact spec section.
 </task>
 <expected_output>
-Return JSON with evidence before verdict fields, issues, and required spec revisions.
+Return JSON whose first key is paraphrase={"change": "<What this proposes>", "existing_system": "<How the existing system works>"}, then evidence before verdict fields, issues, and required spec revisions.
 </expected_output>
 """
 )
 ```
 
-Fix blocking spec issues before decomposition.
+Fix blocking spec issues, including every section the reviewer cannot paraphrase, before decomposition.
 
 ### Step 3: Create Branch Directory
 

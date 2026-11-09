@@ -1205,6 +1205,20 @@ Current delta captured:
   remains evidence; only ledger completeness and current runner check receipts can
   establish approval.
 
+- Paraphrase-first reviewer output (#670) adds one `REVIEWER_PARAPHRASE_SCHEMA`
+  (`change`, `existing_system`, at most 1200 characters each) to every reviewer
+  skeleton in `AGENT_OUTPUT_SCHEMAS`; the adversarial hunters join that registry, and
+  `REVIEWER_PARAPHRASE_AGENTS` is derived from it. One validator,
+  `_review_paraphrase_errors`, serves the response gate, capture, aggregation and the
+  Codex runner. Sharded merges keep per-shard `paraphrases`. The ledger's
+  `reviewer_paraphrases` pairs each paraphrase with that reviewer's finding IDs; a
+  misread is the `paraphrase_mismatch` objection channel, which retains the finding,
+  sets `paraphrase_recheck` and escalates. It is stored apart from the single
+  ordinary objection per finding and skips tombstoned rows. Attribution recomputes
+  each envelope's finding keys, so compare_orderings lists findings per ordering.
+  The map-efficient Monitor retry prompt (`--agent monitor`) omits the paraphrase;
+  `review-monitor` keeps it. No automated judge scores paraphrases.
+
 - Evidence-backed finding validation (#522) extends Step A.3 and the same
   finding ledger, not a new validator service or review stage. Finding identity
   follows the underlying cause and failure scenario rather than file/category;

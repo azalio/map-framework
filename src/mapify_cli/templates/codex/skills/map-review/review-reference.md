@@ -569,6 +569,52 @@ dispatched and never came back is a dropped review. Supplying NEITHER is not
 flagged — `lightweight` mode legitimately runs Monitor alone under the same
 `review_mode="normal"` label.
 
+### Reviewer paraphrase check
+
+Every reviewer output opens with `paraphrase={"change": "...", "existing_system": "..."}`:
+what the change proposes and how the existing system works, in the reviewer's own
+words, 2-5 sentences and at most 1200 characters each. The schema lives once in
+`REVIEWER_PARAPHRASE_SCHEMA` and is embedded in every reviewer skeleton in
+`AGENT_OUTPUT_SCHEMAS` (Monitor, Predictor, Evaluator, the role reviewers including
+`security`, and the `blind` / `edge_case` / `acceptance` hunters).
+
+- `detect_truncated_agent_output --agent <kind>` reports a missing, empty or overlong
+  paraphrase, and `build_json_retry_prompt` asks for it, so the live reviewer gets the
+  usual single retry.
+- `capture_review_output` rejects an envelope without a valid paraphrase. In
+  adversarial mode every `reviewer_status` entry that carries `raw` output must have
+  one — hunters too. A hunter without a receipt claims no coverage, but it still made
+  claims, so it must say what it read. On the native relay,
+  `aggregate_adversarial_findings` turns a missing paraphrase into `parse_error`
+  (no `raw`), which the capture keeps and the ledger treats as an incomplete review.
+  The Codex driver (`codex_review_runner.py`) checks every reader's final JSON,
+  hunters included, asks the same reader once to fix it, and then stops with an
+  error; rerun the driver in the same admitted round.
+- Sharded rounds keep each shard's paraphrase under `paraphrases` in the merged
+  envelope; the base `paraphrase` stays valid.
+- The ledger writes `reviewer_paraphrases` (keyed by reviewer, `reverse:<id>` for the
+  second ordering) with the IDs of the counted findings that this reviewer's own
+  envelope produced — each ordering lists only its own; tombstoned rows are left
+  out — and the markdown report shows each paraphrase above the findings registry.
+
+Before triage, compare every paraphrase with the PR description or task intent. When
+one misreads the change, record a `paraphrase_mismatch` objection on each finding that
+reviewer reported, with evidence naming what it got wrong:
+
+```bash
+python3 .map/scripts/map_step_runner.py record_review_objection \
+  --finding-id RVF-003 --channel paraphrase_mismatch \
+  --evidence "Paraphrase says the change adds a cache; the diff removes one"
+```
+
+The finding is not dismissed: it stays counted, gets `paraphrase_recheck=true` (with
+the evidence in `paraphrase_recheck_evidence`) and escalates for a human re-check.
+The recheck is stored apart from the finding's single ordinary objection, so a
+downgrade and a paraphrase recheck on the same finding both apply, in either order. A misreading reviewer that returned `all_clear` has no
+finding to mark; its clean result proves nothing, so re-dispatch it with the correct
+intent and re-capture before writing the ledger. There is no automatic judge of
+paraphrase quality — the comparison stays with the parent or the human.
+
 ### Evidence validation in the admitted round
 
 Step A.3 consumes captured evidence, not votes or author reactions. Each source
@@ -645,6 +691,7 @@ python3 .map/scripts/map_step_runner.py record_review_objection \
 | `different_version` | yes | evidence REQUIRED; requests a downgrade, never constitutes validated closure |
 | `unverifiable_context` | no | finding STAYS, `escalation_required` set, PROCEED unavailable |
 | `no_new_fact` | n/a | finding STAYS, previous verdict repeated (`repeated_verbatim`) |
+| `paraphrase_mismatch` | n/a | evidence REQUIRED (what the paraphrase got wrong); finding STAYS at its severity, `paraphrase_recheck=true`, `escalation_required` set, PROCEED unavailable; own slot, so it coexists with one ordinary objection; no-op on a tombstoned row |
 
 The evidence attached to an objection is unverified free text. It may request
 re-evaluation and downgrade severity, but cannot refute any finding, including a

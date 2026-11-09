@@ -11,6 +11,7 @@ from typing import Any, cast
 import pytest
 
 from tests.review_context_helpers import review_evidence_text
+from tests.review_paraphrase_helpers import with_paraphrase
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "src/mapify_cli/templates/map/scripts"
@@ -434,7 +435,7 @@ def test_explicit_execution_check_and_gate_keep_row_provenance(stack):
     assert result["after"]["base"] == stack["runtime"]
     envelope = {"issues": [], "receipt": {"covered_files": admission["required_files"],
                 "skipped_files": [], "denied_access": [], "check_evidence": []}}
-    runner.capture_review_output("monitor", json.dumps(envelope), "stack", branch="product")
+    runner.capture_review_output("monitor", json.dumps(with_paraphrase(envelope)), "stack", branch="product")
     finalized = runner.write_review_verdict_ledger(current_run=True, branch="product")
     assert finalized["findings_verdict"] == "PROCEED", finalized
     gate = cli("write_stage_gate", "review", "ready", "review.md", "stack")

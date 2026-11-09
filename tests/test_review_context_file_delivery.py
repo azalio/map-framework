@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.review_paraphrase_helpers import with_paraphrase
 from tests.test_review_context_delivery import (
     bind,
     cli,
@@ -122,7 +123,7 @@ def test_correct_nonce_acknowledges_and_replay_is_idempotent(repository):
 def test_no_finalization_token_until_every_required_resource_is_acknowledged(repository):
     del repository
     state = bind(prepare()["monitor"])
-    early = json.dumps({"verdict": "approved", "issues": []})
+    early = json.dumps(with_paraphrase({"verdict": "approved", "issues": []}))
     while True:
         served = serve_file(state)
         pending = runner.review_context_status(state["session_id"], "delivery-round", branch="feature")

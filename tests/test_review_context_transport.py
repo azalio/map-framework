@@ -12,6 +12,7 @@ import pytest
 from typer.testing import CliRunner
 
 from mapify_cli import app
+from tests.review_paraphrase_helpers import with_paraphrase
 from tests.test_review_trusted_policy import runner
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -273,7 +274,7 @@ def test_invalid_request_fails_closed(repo, field, value):
 def test_intermediate_request_is_not_captured_or_counted_as_final_review(repo):
     """Context delivery leaves ledger/capture state intact; existing final validation still applies."""
     root, _, _ = repo
-    assert runner.capture_review_output("monitor", '{"verdict":"approved","issues":[]}',
+    assert runner.capture_review_output("monitor", json.dumps(with_paraphrase({"verdict": "approved", "issues": []})),
                                         "context-round", branch="feature")["status"] == "success"
     entry = runner.build_review_prompts(branch="feature")["prompts"]["monitor"]
     directory = root / ".map/feature"

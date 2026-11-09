@@ -7,6 +7,7 @@ from typing import Any, cast
 import pytest
 
 from tests import test_review_verdict_ledger as ledger_tests
+from tests.review_paraphrase_helpers import with_paraphrase
 
 runner = cast(Any, ledger_tests.map_step_runner)
 review_git_workspace = ledger_tests.review_git_workspace
@@ -33,7 +34,7 @@ def _carry_one_finding() -> dict:
     admission = ledger_tests._admit_receipt_review(runner, round_id="first")
     # Intent: an incomplete receipt keeps the round pending, so it can be abandoned after its verdict.
     envelope = {"issues": [_issue()], "receipt": {**_receipt(admission), "covered_files": []}}
-    assert runner.capture_review_output("monitor", json.dumps(envelope), "first")["status"] == "success"
+    assert runner.capture_review_output("monitor", json.dumps(with_paraphrase(envelope)), "first")["status"] == "success"
     assert runner.write_review_verdict_ledger(current_run=True)["status"] == "success"
     assert runner.abandon_review_round("first", reason="Continue findings review in a new attempt")["status"] == "success"
     return ledger_tests._admit_receipt_review(runner, round_id="second")
@@ -42,7 +43,7 @@ def _carry_one_finding() -> dict:
 def _resolve(admission: dict, **overrides) -> dict:
     resolution = {**ledger_tests._bound_resolution(), **overrides}
     envelope = {"issues": [], "resolved_findings": [resolution], "receipt": _receipt(admission)}
-    assert runner.capture_review_output("monitor", json.dumps(envelope), "second")["status"] == "success"
+    assert runner.capture_review_output("monitor", json.dumps(with_paraphrase(envelope)), "second")["status"] == "success"
     return runner.write_review_verdict_ledger(current_run=True)
 
 
@@ -121,7 +122,7 @@ def test_vc3_block_verdicts_still_cap_the_budget(review_git_workspace):
     for number in ("1", "2", "3"):
         admission = ledger_tests._admit_receipt_review(runner, round_id=number)
         envelope = {"issues": [_issue()], "receipt": _receipt(admission)}
-        assert runner.capture_review_output("monitor", json.dumps(envelope), number)["status"] == "success"
+        assert runner.capture_review_output("monitor", json.dumps(with_paraphrase(envelope)), number)["status"] == "success"
         assert runner.write_review_verdict_ledger(current_run=True)["status"] == "success"
     capped = runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="4")
     assert capped["stop_reason"] == "reconsider_approach"
@@ -129,7 +130,7 @@ def test_vc3_block_verdicts_still_cap_the_budget(review_git_workspace):
 
 def _resolve_many(admission: dict, resolutions: list[dict], round_id: str = "second") -> dict:
     envelope = {"issues": [], "resolved_findings": resolutions, "receipt": _receipt(admission)}
-    assert runner.capture_review_output("monitor", json.dumps(envelope), round_id)["status"] == "success"
+    assert runner.capture_review_output("monitor", json.dumps(with_paraphrase(envelope)), round_id)["status"] == "success"
     return runner.write_review_verdict_ledger(current_run=True)
 
 
@@ -151,7 +152,7 @@ def test_vc1_input_error_rounds_still_consume_the_attempt_cap(review_git_workspa
     del review_git_workspace
     for number in ("1", "2", "3"):
         assert ledger_tests._admit_receipt_review(runner, round_id=number)["status"] == "success"
-        assert runner.capture_review_output("monitor", json.dumps({"issues": "not-a-list"}), number)["status"] == "success"
+        assert runner.capture_review_output("monitor", json.dumps(with_paraphrase({"issues": "not-a-list"})), number)["status"] == "success"
         written = runner.write_review_verdict_ledger(current_run=True)
         assert written["input_errors"], written
         assert runner.abandon_review_round(number, reason="Continue findings review")["status"] == "success"
@@ -165,8 +166,8 @@ def _adversarial_finding(mode: str) -> dict:
 
 
 def _adversarial_envelope(findings: list[dict], resolutions: list[dict], receipt: dict) -> str:
-    return json.dumps({"all_clear": not findings, "findings": findings, "checks_performed": ["write rollback"],
-                       "receipt": receipt, **({"resolved_findings": resolutions} if resolutions else {})})
+    return json.dumps(with_paraphrase({"all_clear": not findings, "findings": findings, "checks_performed": ["write rollback"],
+                       "receipt": receipt, **({"resolved_findings": resolutions} if resolutions else {})}))
 
 
 def _adversarial_report(blind: str, acceptance: str, other: str) -> dict:

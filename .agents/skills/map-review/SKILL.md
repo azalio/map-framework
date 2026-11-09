@@ -378,7 +378,9 @@ remain publishable, but that route stays INCOMPLETE and cannot approve. A failed
 probe never becomes verified by configuration, version text or model assertion.
 
 Reading claims in `receipt={covered_files:[],skipped_files:[],denied_access:[],check_evidence:[]}`
-remain self_reported. The optional complexity lens stays advisory. On driver success,
+remain self_reported. Every final envelope opens with `paraphrase={change,existing_system}`
+(2-5 sentences, at most 1200 characters each); the driver asks the same reader once to fix a
+missing or invalid one before capture. The optional complexity lens stays advisory. On driver success,
 continue at Step A.3 using captured artifacts; do not dispatch a second reviewer set.
 
 ### Step A.3: Verification gate (MANDATORY before any presentation)
@@ -388,7 +390,7 @@ Preserve legacy findings visibly as `insufficient_evidence` until checked, never
 
 **MANDATORY:** Read and apply review-reference.md § Evidence validation in the admitted round for evidence, remediation, independent quorum and author-reaction rules.
 
-Apply the following compatibility checks without discarding unresolved claims:
+Apply the following compatibility checks without discarding unresolved claims; first compare every reviewer `paraphrase` with the PR/task intent per review-reference.md § Reviewer paraphrase check (a misread → `paraphrase_mismatch` objection on its findings, never a dismissal):
 
 1. **Evidence check.** Severity ≥ MEDIUM must carry `reach_evidence`
    (grep proving path is reached, failing test name, or linter line).

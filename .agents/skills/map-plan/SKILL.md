@@ -450,6 +450,13 @@ spawn_agent(
 Read the spec at: .map/<branch>/spec_<branch>.md
 (Use exec_command to cat the file.)
 
+Paraphrase first, before any finding. Start your output with a PARAPHRASE: block holding two parts
+in your own words, 2-5 sentences each:
+  What this proposes: ...
+  How the existing system works, per this document: ...
+A section you cannot paraphrase is a CRITICAL spec gap: name it in the PARAPHRASE: block and report
+it as a CRITICAL finding (CATEGORY: paraphrase).
+
 Check for:
 1. Race conditions / concurrency gaps — shared resources without defined conflict resolution?
 2. Ownership ambiguity — could two components both assume the other handles something?
@@ -459,20 +466,20 @@ Check for:
 6. Implicit assumptions — things assumed but not stated?
 
 Output format (for each finding):
-  SEVERITY: HIGH | MEDIUM | LOW
-  CATEGORY: [concurrency|ownership|edge-case|contradiction|security|assumption]
+  SEVERITY: CRITICAL | HIGH | MEDIUM | LOW
+  CATEGORY: [paraphrase|concurrency|ownership|edge-case|contradiction|security|assumption]
   DESCRIPTION: [what the issue is]
   SUGGESTED FIX: [how to resolve]
 
-If no HIGH-severity issues: output exactly "SPEC APPROVED" at the end.
-If HIGH-severity issues exist: list them clearly — do not output "SPEC APPROVED".
+If no CRITICAL or HIGH-severity issues: output exactly "SPEC APPROVED" at the end.
+If CRITICAL or HIGH-severity issues exist: list them clearly — do not output "SPEC APPROVED".
 """
 )
 ```
 
 **After Devil's Advocate review:**
-- `SPEC APPROVED` (no HIGH findings): proceed to Step 3.
-- HIGH findings found: present them to the user in plain text and wait for resolution. Update the spec before proceeding. Do NOT silently proceed past HIGH findings.
+- `SPEC APPROVED` (no CRITICAL/HIGH findings): proceed to Step 3.
+- CRITICAL/HIGH findings found (a section the reviewer cannot paraphrase is CRITICAL): present them to the user in plain text and wait for resolution. Update the spec before proceeding. Do NOT silently proceed past HIGH findings.
 - MEDIUM/LOW findings: add to spec's Open Questions section and proceed.
 
 ---

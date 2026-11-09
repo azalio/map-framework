@@ -8540,6 +8540,9 @@ _OBJECTION_CHANNELS: dict[str, str] = {
     "unverifiable_context": "escalates",
     # No new fact at all (insistence, authority, urgency) → verdict repeats.
     "no_new_fact": "repeats",
+    # The reviewer's paraphrase misread the change (#670) → the finding is kept
+    # and marked for re-check against the real intent; a human decides.
+    "paraphrase_mismatch": "rechecks",
 }
 _CHECKABLE_OBJECTION_CHANNELS = frozenset(
     ch for ch, effect in _OBJECTION_CHANNELS.items() if effect == "downgrades"
@@ -10033,7 +10036,10 @@ def _apply_review_objections(
     """Apply the same objection policy to legacy rows or the durable merged registry."""
     by_id = {f["id"]: f for f in findings_registry}
     verdict_repeats = False
-    for objection in (objections or []):
+    # Intent: a paraphrase recheck is its own record, applied after the ordinary
+    # objection so neither can overwrite the other, whatever order they arrived in.
+    ordered = sorted(objections or [], key=lambda item: item.get("channel") == "paraphrase_mismatch")
+    for objection in ordered:
         finding = by_id.get(str(objection.get("finding_id") or ""))
         channel = str(objection.get("channel") or "")
         claim_prefix = str(objection.get("claim_prefix") or "")
@@ -10093,6 +10099,24 @@ def _apply_review_objections(
             finding["transition_reason"] = "pressure_without_new_fact"
             finding["transition_evidence"] = str(objection.get("evidence") or "")
             verdict_repeats = True
+        elif channel == "paraphrase_mismatch":
+            # A misread change discounts the reviewer, not the claim: the row stays
+            # counted and a human re-checks it against the real intent. A row the
+            # table does not count (tombstoned) has nothing to re-check, so the
+            # record is a no-op there. It never touches transition_reason, which
+            # belongs to the finding's single ordinary objection.
+            if finding.get("status") not in _VERDICT_INPUT_STATUSES:
+                continue
+            evidence = str(objection.get("evidence") or "")
+            finding["paraphrase_recheck"] = True
+            finding["paraphrase_recheck_evidence"] = evidence
+            escalation_reasons.append(
+                f"{finding['id']} came from a reviewer whose paraphrase misread the change "
+                f"({evidence[:120]}); re-check it against the actual intent."
+            )
+            not_verified.append(
+                f"{finding['id']}: its reviewer's paraphrase did not match the change, so the finding needs a re-check."
+            )
 
     return verdict_repeats
 
@@ -10655,6 +10679,13 @@ def record_review_objection(
       no_new_fact
           Insistence, authority, urgency, "it's obvious" → the finding is retained
           and the previous verdict is repeated.
+      paraphrase_mismatch
+          The reporting reviewer's paraphrase misread the change → the finding is
+          RETAINED, marked `paraphrase_recheck` and escalated for re-check against
+          the actual intent. It never dismisses the finding. Evidence (what the
+          paraphrase got wrong) is REQUIRED. It has its own slot: it coexists with
+          one ordinary objection on the same finding and never sets
+          transition_reason. On a tombstoned row it is a no-op.
 
     The objection is bound to the claim it was raised against, so it cannot drift
     onto a different finding if the reviewer output changes.
@@ -10669,6 +10700,13 @@ def record_review_objection(
                 f"unknown objection channel {channel!r}; expected one of "
                 f"{sorted(_OBJECTION_CHANNELS)}"
             ),
+        }
+
+    if channel == "paraphrase_mismatch" and not evidence.strip():
+        return {
+            "status": "error",
+            "message": ("channel 'paraphrase_mismatch' requires evidence: state what the reviewer's "
+                        "paraphrase got wrong compared with the PR or task intent."),
         }
 
     if channel in _CHECKABLE_OBJECTION_CHANNELS and not evidence.strip():
@@ -10722,8 +10760,12 @@ def record_review_objection(
     objections_path = branch_dir / _REVIEW_OBJECTIONS_FILE
     existing = _load_review_objections(branch_dir)
     # One objection per finding: a second one replaces the first rather than
-    # stacking, so the registry cannot be worn down by repetition.
-    existing = [o for o in existing if o.get("finding_id") != finding_id]
+    # stacking, so the registry cannot be worn down by repetition. The paraphrase
+    # recheck has its own slot: it qualifies the reviewer, not the claim, so it
+    # neither replaces an ordinary objection nor is replaced by one.
+    paraphrase = channel == "paraphrase_mismatch"
+    existing = [o for o in existing if o.get("finding_id") != finding_id
+                or (o.get("channel") == "paraphrase_mismatch") != paraphrase]
     existing.append(record)
     _write_json_file(objections_path, existing)
 
@@ -11247,6 +11289,10 @@ def _review_merge_envelopes(items: list[tuple[str, dict[str, Any]]], owners: dic
                     values = [name for name in values if name not in foreign.get(sid, set())]
                 collected.extend(value for value in values if value not in collected)
         base["receipt"] = merged
+    # Intent: each shard reviewer restated only its own slice; keep every paraphrase, the base keeps a valid one.
+    paraphrases = {sid: out["paraphrase"] for sid, out in items if isinstance(out.get("paraphrase"), dict)}
+    if len(items) > 1 and paraphrases:
+        base["paraphrases"] = paraphrases
     proofs = {sid: out["context_receipt"] for sid, out in items if isinstance(out.get("context_receipt"), dict)}
     if proofs:
         base["context_receipts"] = proofs
@@ -11393,6 +11439,19 @@ def capture_review_output(
             receipt_errors = _review_coverage_receipt_errors(raw.get("receipt") if isinstance(raw, dict) else None)
             if receipt_errors:
                 raise ValueError(f"Invalid {role} coverage receipt: " + "; ".join(receipt_errors))
+        # Unlike the receipt, the paraphrase binds hunters too: every reviewer whose
+        # raw output reached the aggregate made claims, so it must say what it read.
+        # An entry without raw output (not_run / parse_error) claims nothing.
+        for name, entry in statuses.items():
+            raw = entry.get("raw") if isinstance(entry, dict) else None
+            if isinstance(raw, dict):
+                paraphrase_errors = _review_paraphrase_errors(raw.get("paraphrase"))
+                if paraphrase_errors:
+                    raise ValueError(f"Invalid {name} paraphrase: " + "; ".join(paraphrase_errors))
+    if reviewer in REVIEWER_PARAPHRASE_AGENTS:
+        paraphrase_errors = _review_paraphrase_errors(data.get("paraphrase"))
+        if paraphrase_errors:
+            raise ValueError("Invalid reviewer paraphrase: " + "; ".join(paraphrase_errors))
     root = _review_branch_dir(branch)
     key = f"{ordering or 'default'}:{reviewer}"
     shard_state: dict[str, Any] = {}
@@ -11817,6 +11876,92 @@ def _complete_review_round(
     return ledger
 
 
+def _review_envelope_finding_keys(
+    reviewer: str, envelope: dict[str, Any], ledger_findings: list[Any] | None = None,
+) -> set[str]:
+    """Identity keys of the registry rows that one reviewer envelope produces.
+
+    The merged registry does not record which collection (ordering) reported a
+    row, so the keys are recomputed from the envelope with the same pure
+    normalizer the ledger uses. Adversarial members are read from their
+    aggregate's ``ledger_findings`` and kept when the member reported the row.
+    """
+    if ledger_findings is not None:
+        rows = normalize_review_verdict(
+            adversarial_findings=[item for item in ledger_findings if isinstance(item, dict)],
+            branch="paraphrase-index")["findings_registry"]
+        rows = [row for row in rows if reviewer in _review_reporters(row)]
+    elif reviewer in ROLE_REVIEWER_IDS:
+        entries = envelope.get("findings")
+        rows = normalize_review_verdict(
+            role_findings=[{**item, "reviewer": item.get("reviewer") or reviewer} if isinstance(item, dict) else item
+                           for item in (entries if isinstance(entries, list) else [])],
+            role_inputs_supplied=True, branch="paraphrase-index")["findings_registry"]
+    elif reviewer in ("monitor", "predictor", "evaluator"):
+        rows = normalize_review_verdict(
+            monitor_result=envelope if reviewer == "monitor" else None,
+            predictor_result=envelope if reviewer == "predictor" else None,
+            evaluator_result=envelope if reviewer == "evaluator" else None,
+            branch="paraphrase-index")["findings_registry"]
+    else:
+        return set()
+    return {_review_finding_key(row) for row in rows if row.get("transition_reason") != "input_integrity"}
+
+
+def _review_paraphrase_index(
+    sources: dict[str, dict[str, Any]], registry: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Pair each reviewer's paraphrase with the IDs of the findings it reported.
+
+    Keys are reviewer ids; the reverse ordering of compare_orderings is
+    ``reverse:<id>``. A legacy envelope without a paraphrase keeps
+    ``paraphrase: null`` so the absence is visible, never filled in.
+    """
+    index: dict[str, dict[str, Any]] = {}
+    for label, entry in sources.items():
+        if label.removeprefix("reverse:") == "adversarial":
+            continue  # the aggregate itself is not a reviewer; its members are listed by name
+        # Only rows this envelope produced and the table still counts: a tombstone
+        # has nothing to re-check, and the other ordering's rows are not this one's.
+        keys = entry.get("finding_keys") or set()
+        owned = [str(row.get("id")) for row in registry
+                 if isinstance(row, dict) and row.get("status") in _VERDICT_INPUT_STATUSES
+                 and _review_finding_key(row) in keys]
+        index[label] = {"paraphrase": entry.get("paraphrase"),
+                        **({"shard_paraphrases": entry["paraphrases"]} if "paraphrases" in entry else {}),
+                        "finding_ids": owned,
+                        "recheck_ids": [str(row.get("id")) for row in registry if isinstance(row, dict)
+                                        and row.get("paraphrase_recheck") and str(row.get("id")) in owned]}
+    return index
+
+
+def _review_paraphrase_markdown(index: dict[str, dict[str, Any]]) -> list[str]:
+    """Render paraphrases next to the findings they qualify; the parent compares them with the intent."""
+    if not index:
+        return []
+    lines = ["## Reviewer Paraphrases", "",
+             ("Compare each paraphrase with the PR or task intent before triage. A misread is recorded with "
+              "`record_review_objection --channel paraphrase_mismatch` on that reviewer's findings; it marks "
+              "them for re-check and never dismisses them."), ""]
+    for label, entry in index.items():
+        lines.append(f"### {label}")
+        paraphrase = entry.get("paraphrase")
+        if isinstance(paraphrase, dict):
+            lines += [f"- Change: {paraphrase.get('change', '')}",
+                      f"- Existing system: {paraphrase.get('existing_system', '')}"]
+        else:
+            lines.append("- Paraphrase: (not supplied)")
+        for shard, value in (entry.get("shard_paraphrases") or {}).items():
+            if isinstance(value, dict):
+                lines += [f"- Shard {shard} change: {value.get('change', '')}",
+                          f"- Shard {shard} existing system: {value.get('existing_system', '')}"]
+        lines.append(f"- Findings: {', '.join(entry.get('finding_ids') or []) or 'none'}")
+        if entry.get("recheck_ids"):
+            lines.append(f"- Marked for re-check (paraphrase_mismatch): {', '.join(entry['recheck_ids'])}")
+        lines.append("")
+    return lines
+
+
 @_review_transaction
 def write_review_verdict_ledger(
     monitor_json: str = "",
@@ -11932,6 +12077,16 @@ def write_review_verdict_ledger(
                 return ""
         return raw
 
+    paraphrase_sources: dict[str, dict[str, Any]] = {}
+
+    def _note_paraphrase(label: str, envelope: dict[str, Any], ledger_findings: list[Any] | None = None) -> None:
+        """Keep what each reviewer said it read and which findings that same envelope produced."""
+        entry: dict[str, Any] = {key: envelope[key] for key in ("paraphrase", "paraphrases")
+                                 if isinstance(envelope.get(key), dict)}
+        key = label.replace(" ", ":")
+        entry["finding_keys"] = _review_envelope_finding_keys(key.removeprefix("reverse:"), envelope, ledger_findings)
+        paraphrase_sources[key] = entry
+
     def _safe_parse(raw: str, label: str) -> dict[str, Any]:
         if not raw or not raw.strip():
             return {}
@@ -11965,6 +12120,7 @@ def write_review_verdict_ledger(
                 input_errors.append(f"{label}: resolved_findings must be an object array")
             else:
                 resolutions.extend({**item, "source_agent": reviewer} for item in resolved)
+        _note_paraphrase(label, parsed)
         return parsed
 
     def _safe_parse_list(raw: str, label: str) -> list[dict[str, Any]]:
@@ -11987,7 +12143,7 @@ def write_review_verdict_ledger(
     evaluator_result = _safe_parse(_read_source(evaluator_json, evaluator_file, "evaluator"), "evaluator")
     adversarial_inputs_supplied = False
 
-    def _parse_adversarial(raw: str) -> list[dict[str, Any]]:
+    def _parse_adversarial(raw: str, prefix: str = "") -> list[dict[str, Any]]:
         nonlocal adversarial_inputs_supplied
         if not raw.strip():
             return []
@@ -12001,6 +12157,12 @@ def write_review_verdict_ledger(
             errors = _adversarial_aggregate_errors(parsed, expected_adversarial)
             input_errors.extend(errors)
             adversarial_inputs_supplied = not errors
+            statuses = parsed.get("reviewer_status")
+            ledger_rows = parsed.get("ledger_findings")
+            for name, status in (statuses.items() if isinstance(statuses, dict) else []):
+                if isinstance(status, dict) and isinstance(status.get("raw"), dict):
+                    _note_paraphrase(prefix + str(name), status["raw"],
+                                     ledger_rows if isinstance(ledger_rows, list) else [])
             if not errors:
                 for reviewer in expected_adversarial:
                     status = parsed["reviewer_status"][reviewer]
@@ -12023,7 +12185,7 @@ def write_review_verdict_ledger(
         if adversarial_file:
             adversarial_findings.extend(_parse_adversarial(_read_source(
                 "", str(collection_dirs[1] / "review-agent-adversarial.json"), "reverse adversarial",
-            )))
+            ), "reverse:"))
         else:
             for reviewer, target in (("monitor", monitor_result), ("predictor", predictor_result), ("evaluator", evaluator_result)):
                 if reviewer not in roster:
@@ -12157,6 +12319,8 @@ def write_review_verdict_ledger(
         else:
             ledger = _complete_review_round(ledger, prior, run, branch_dir)
 
+    ledger["reviewer_paraphrases"] = _review_paraphrase_index(paraphrase_sources, ledger.get("findings_registry") or [])
+
     # Write JSON
     _write_json_file(json_path, ledger)
 
@@ -12182,6 +12346,7 @@ def write_review_verdict_ledger(
         md_lines += ["> **ESCALATION — a human must decide:**", ""]
         md_lines += [f"> - {reason}" for reason in escalation_reasons_list]
         md_lines.append("")
+    md_lines += _review_paraphrase_markdown(ledger["reviewer_paraphrases"])
     md_lines += [
         "## Findings Registry",
         "",
@@ -12194,8 +12359,9 @@ def write_review_verdict_ledger(
         src = f.get("source_agent", "")
         claim = str(f.get("claim") or "")[:120]
         icon = {"active": "✗", "tombstoned": "⌫", "downgraded": "↓"}.get(str(status), "?")
+        recheck = " — re-check: reviewer misread the change" if f.get("paraphrase_recheck") else ""
         md_lines.append(
-            f"- {icon} [{f.get('id')}] **{sev}** ({src}): {claim}"
+            f"- {icon} [{f.get('id')}] **{sev}** ({src}): {claim}{recheck}"
         )
         if f.get("transition_reason"):
             md_lines.append(
@@ -13919,7 +14085,46 @@ def _review_coverage_receipt_errors(receipt: object) -> list[str]:
     ]
 
 
+# Paraphrase-first reviewer output (#670). Before any finding, every /map-review
+# reviewer restates in its own words what the change proposes and how the
+# existing system works. A receipt proves which files were read, not what the
+# reviewer understood; the paraphrase makes a misreading visible before triage.
+# The parent compares it with the PR/task intent and records a misread as a
+# `paraphrase_mismatch` objection, which keeps the reviewer's findings for
+# re-check instead of dismissing them. Every reviewer skeleton embeds this one
+# object, so the prompt, the retry prompt and the capture gate cannot drift.
+REVIEWER_PARAPHRASE_MAX_CHARS = 1200
+REVIEWER_PARAPHRASE_SCHEMA: dict[str, str] = {
+    "change": (f"<string — 2-5 sentences, at most {REVIEWER_PARAPHRASE_MAX_CHARS} characters: what this change "
+               "proposes, in your own words, written BEFORE any finding>"),
+    "existing_system": (f"<string — 2-5 sentences, at most {REVIEWER_PARAPHRASE_MAX_CHARS} characters: how the "
+                        "existing system works, per the code and documents you were given>"),
+}
+REVIEWER_PARAPHRASE_RULE: str = (
+    "Fill paraphrase FIRST, before any finding: change says what this change proposes and existing_system says "
+    "how the existing system works, per what you actually read — 2-5 sentences and at most "
+    f"{REVIEWER_PARAPHRASE_MAX_CHARS} characters each, in your own words. A capture without it is rejected. "
+    "If you cannot restate a part, say so in the paraphrase instead of guessing; a paraphrase that misreads "
+    "the change marks every finding of yours for re-check."
+)
+
+
+def _review_paraphrase_errors(paraphrase: object) -> list[str]:
+    """Validate the reviewer paraphrase shape and length; its accuracy is the parent's call."""
+    if not isinstance(paraphrase, dict):
+        return ["paraphrase must be an object with change and existing_system strings"]
+    errors: list[str] = []
+    for key in REVIEWER_PARAPHRASE_SCHEMA:
+        value = paraphrase.get(key)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"paraphrase.{key} must be a nonempty string")
+        elif len(value) > REVIEWER_PARAPHRASE_MAX_CHARS:
+            errors.append(f"paraphrase.{key} exceeds {REVIEWER_PARAPHRASE_MAX_CHARS} characters ({len(value)})")
+    return errors
+
+
 ROLE_FINDING_SCHEMA: dict[str, object] = {
+    "paraphrase": REVIEWER_PARAPHRASE_SCHEMA,
     # Derived from the roster: a new role needs no edit here either.
     "reviewer": "<one of: " + " | ".join(ROLE_REVIEWER_IDS) + ">",
     "all_clear": "<boolean — true if NO finding survived the output contract>",
@@ -13995,8 +14200,10 @@ AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
             "issues",
             "passed_checks",
             "failed_checks",
+            "paraphrase",
         ),
         "skeleton": {
+            "paraphrase": REVIEWER_PARAPHRASE_SCHEMA,
             "evidence": [
                 {
                     "file_path": "<string>",
@@ -14033,8 +14240,10 @@ AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
             "risk_assessment",
             "predicted_state",
             "confidence",
+            "paraphrase",
         ),
         "skeleton": {
+            "paraphrase": REVIEWER_PARAPHRASE_SCHEMA,
             "evidence": [
                 {
                     "file_path": "<string>",
@@ -14074,8 +14283,10 @@ AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
             "weaknesses",
             "next_steps",
             "monitor_severity_audit",
+            "paraphrase",
         ),
         "skeleton": {
+            "paraphrase": REVIEWER_PARAPHRASE_SCHEMA,
             "evidence": [
                 {
                     "file_path": "<string>",
@@ -14137,7 +14348,7 @@ AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
 # absence); `all_clear_rationale` is conditional on it.
 AGENT_OUTPUT_SCHEMAS.update({
     role_id: AgentOutputSchema(
-        required_keys=("reviewer", "all_clear", "findings", "checks_performed", "receipt"),
+        required_keys=("paraphrase", "reviewer", "all_clear", "findings", "checks_performed", "receipt"),
         skeleton=ROLE_FINDING_SCHEMA,
     )
     for role_id in ROLE_REVIEWER_IDS
@@ -14182,6 +14393,21 @@ REVIEW_PROMPT_SPECS: dict[str, dict[str, str]] = {
 }
 
 
+def _format_block_skeleton(agent: str) -> dict[str, object]:
+    """Pick the output skeleton for one prompt kind.
+
+    ``review-monitor`` is the /map-review Monitor and carries the paraphrase. The
+    bare ``monitor`` kind also serves the map-efficient Monitor, whose truncation
+    gate never requires a paraphrase, so its prompt must not ask for one.
+    """
+    if agent == "review-monitor":
+        return AGENT_OUTPUT_SCHEMAS["monitor"]["skeleton"]
+    skeleton = AGENT_OUTPUT_SCHEMAS[agent]["skeleton"]
+    if agent == "monitor":
+        return {key: value for key, value in skeleton.items() if key != "paraphrase"}
+    return skeleton
+
+
 def _render_format_block(agent: str) -> str:
     """Return an <output_schema>+<format_rules> block for the given agent role.
 
@@ -14189,7 +14415,7 @@ def _render_format_block(agent: str) -> str:
     is exactly one source of truth for the output shape. format_rules are
     verbatim — callers MUST NOT paraphrase them.
     """
-    skeleton = AGENT_OUTPUT_SCHEMAS[agent]["skeleton"]
+    skeleton = _format_block_skeleton(agent)
     schema_json = json.dumps(skeleton, indent=2)
     format_rules_body = (
         "Return exactly one JSON object matching the schema above. "
@@ -14197,6 +14423,7 @@ def _render_format_block(agent: str) -> str:
         "Every key is required EXCEPT fields whose placeholder marks them "
         "conditional (\"required when ...\"): include those only when their "
         "stated condition applies."
+        + (" " + REVIEWER_PARAPHRASE_RULE if "paraphrase" in skeleton else "")
     )
     return (
         f"<output_schema>\n{schema_json}\n</output_schema>\n"
@@ -14648,7 +14875,7 @@ def _render_review_prompt(
          "Include receipt with covered_files, skipped_files, denied_access and check_evidence arrays of strings. "
          "Use [] for empty categories. check_evidence contains only current runner-issued check IDs. "
          "Coverage/reading are self_reported; only runner receipts are tool_witnessed.\n</instructions>"),
-        f"<expected_output>\n{_render_format_block(spec['subagent_type'])}\n</expected_output>",
+        f"<expected_output>\n{_render_format_block('review-monitor' if spec['subagent_type'] == 'monitor' else spec['subagent_type'])}\n</expected_output>",
     ]
     return _layer_prompt_sections(documents_section, stable_sections, layering)
 
@@ -16339,6 +16566,7 @@ For each gap, cite:
 }
 
 ADVERSARIAL_FINDING_SCHEMA: dict[str, object] = {
+    "paraphrase": REVIEWER_PARAPHRASE_SCHEMA,
     "reviewer": "<'blind' | 'edge_case' | 'acceptance'>",
     "all_clear": "<boolean — true if NO issues found; must be explicit>",
     "all_clear_rationale": "<string — required when all_clear=true: what you checked and why it's clean>",
@@ -16359,6 +16587,21 @@ ADVERSARIAL_FINDING_SCHEMA: dict[str, object] = {
     "checks_performed": ["<string — list what was actually checked>"],
     "resolved_findings": "<array — required when closing carried findings: objects with finding_id, a nonempty evidence string describing the re-check, evidence_refs, reachability, baseline_attribution and sibling_search; bug_class and cause only if copied verbatim from the carried finding (otherwise omit); failure_scenario may be restated>",
 }
+
+# The hunters join the single schema registry so the truncation gate and the
+# JSON retry prompt serve them too. Their required keys mirror
+# _adversarial_reviewer_error plus the paraphrase; a hunter receipt stays
+# optional because a hunter without one claims no coverage.
+AGENT_OUTPUT_SCHEMAS.update({
+    hunter: AgentOutputSchema(required_keys=("paraphrase", "all_clear", "findings"),
+                              skeleton=ADVERSARIAL_FINDING_SCHEMA)
+    for hunter in ADVERSARIAL_REVIEWER_SPECS
+})
+
+# Every reviewer whose output schema carries the paraphrase — derived, never listed.
+REVIEWER_PARAPHRASE_AGENTS: frozenset[str] = frozenset(
+    agent for agent, schema in AGENT_OUTPUT_SCHEMAS.items() if "paraphrase" in schema["required_keys"]
+)
 
 
 def _isolated_reviewer_documents(
@@ -16486,7 +16729,8 @@ def _render_adversarial_reviewer_prompt(
         "No markdown, no code fences, no prose before/after. "
         "Every finding must include concrete evidence and a plausible failure_mode. "
         "Prefer no finding over a weak finding. "
-        'Set all_clear=true when no issues found, with a rationale explaining what you checked.'
+        'Set all_clear=true when no issues found, with a rationale explaining what you checked. '
+        + REVIEWER_PARAPHRASE_RULE
     )
 
     stable_sections = [
@@ -16545,7 +16789,8 @@ def _render_role_reviewer_prompt(
         "Use [] for an empty category; report skipped files and denied access honestly. "
         "covered_files names actual source paths inspected, not acceptance citations. "
         "check_evidence contains only current runner-issued check IDs, never claimed executions. "
-        "checks_performed does not replace receipt; reading/coverage claims remain self_reported."
+        "checks_performed does not replace receipt; reading/coverage claims remain self_reported. "
+        + REVIEWER_PARAPHRASE_RULE
     )
 
     stable_sections = [
@@ -16969,6 +17214,8 @@ def aggregate_adversarial_findings(
             envelope_error = _adversarial_reviewer_error(parsed)
             if not envelope_error and reviewer_id in ROLE_REVIEWER_IDS:
                 envelope_error = "; ".join(_review_coverage_receipt_errors(parsed.get("receipt"))) or None
+            if not envelope_error:
+                envelope_error = "; ".join(_review_paraphrase_errors(parsed.get("paraphrase"))) or None
             if envelope_error:
                 reviewer_data[reviewer_id] = {"status": "parse_error", "error": envelope_error}
                 findings_by_reviewer[reviewer_id] = []
@@ -20089,6 +20336,8 @@ def detect_truncated_agent_output(
         reasons.append(f"missing required key: {key}")
     if agent_kind in ROLE_REVIEWER_IDS:
         reasons.extend(_review_coverage_receipt_errors(parsed.get("receipt")))
+    if "paraphrase" in expected_keys and "paraphrase" in parsed:
+        reasons.extend(_review_paraphrase_errors(parsed["paraphrase"]))
 
     return {
         "truncated": bool(reasons),
@@ -20122,11 +20371,11 @@ def build_json_retry_prompt(
     """
     error_list: list[str] = list(errors) if errors else []
 
-    if agent not in AGENT_OUTPUT_SCHEMAS:
+    if agent not in AGENT_OUTPUT_SCHEMAS and agent != "review-monitor":
         return {
             "status": "error",
             "agent": agent,
-            "reasons": [f"unknown agent: {agent!r}; must be one of {sorted(AGENT_OUTPUT_SCHEMAS)}"] + error_list,
+            "reasons": [f"unknown agent: {agent!r}; must be one of {sorted([*AGENT_OUTPUT_SCHEMAS, 'review-monitor'])}"] + error_list,
             "prompt": "",
         }
 

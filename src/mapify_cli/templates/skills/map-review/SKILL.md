@@ -390,7 +390,7 @@ After Step A.2a identifies a final response, pipe it on stdin (a bare call retur
 using the role-specific kind shown below. On truncation or missing/invalid finalization `context_receipt`: log via
 `log_agent_failure --agent <role> --phase post-invoke --failure-label truncated --reasons '<reasons>'`
 and re-invoke that reviewer ONCE using the prompt from
-`build_json_retry_prompt --agent <role> --errors '<reasons>'`; if still
+`build_json_retry_prompt --agent <kind> --errors '<reasons>'` (same kind); if still
 malformed, stop with CLARIFICATION_NEEDED.
 Include the original generated prompt and context protocol with retry instructions; process intermediate requests through Step A.2a.
 
@@ -434,7 +434,7 @@ compare-orderings mode write the complete tagged aggregate to
 `review-agent-adversarial.json` instead, including `ledger_findings`,
 `reviewer_status` and `parse_errors`; an empty findings array alone cannot prove review.
 
-Every reviewer envelope includes
+Every reviewer envelope opens with `paraphrase={change,existing_system}` (at most 1200 characters each; capture rejects a missing or invalid one, so retry the live reviewer via Step A.2b) and includes
 `receipt={covered_files:[],skipped_files:[],denied_access:[],check_evidence:[check_id]}`.
 Coverage means actual source paths inspected (including supplied source content),
 not acceptance citations; reading claims remain `self_reported`. Check references
@@ -454,7 +454,7 @@ Preserve legacy findings visibly as `insufficient_evidence` until checked, never
 
 **MANDATORY:** Read and apply review-reference.md § Evidence validation in the admitted round for evidence, remediation, independent quorum and author-reaction rules.
 
-Apply the following compatibility checks without discarding unresolved claims:
+Apply the following compatibility checks without discarding unresolved claims; first compare every reviewer `paraphrase` with the PR/task intent per review-reference.md § Reviewer paraphrase check (a misread → `paraphrase_mismatch` objection on its findings, never a dismissal):
 
 1. **Evidence check.** Severity ≥ MEDIUM must carry `reach_evidence`
    (grep proving path is reached, failing test name, or linter line).

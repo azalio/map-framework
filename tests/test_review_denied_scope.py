@@ -6,6 +6,7 @@ from typing import Any, cast
 import pytest
 
 from tests import test_review_verdict_ledger as ledger_tests
+from tests.review_paraphrase_helpers import with_paraphrase
 
 runner = ledger_tests.map_step_runner
 branch_workspace = ledger_tests.branch_workspace
@@ -17,7 +18,7 @@ def run_with_denied(workspace, denied) -> tuple[dict[str, Any], list[str]]:
     admission = ledger_tests._admit_receipt_review(runner)
     assert admission["status"] == "success", admission
     value: list[str] = cast("list[str]", denied(admission) if callable(denied) else denied)
-    envelope = {**ledger_tests._monitor_no_issues(), "receipt": {
+    envelope = {**with_paraphrase(ledger_tests._monitor_no_issues()), "receipt": {
         "covered_files": admission["required_files"], "skipped_files": [],
         "denied_access": value, "check_evidence": []}}
     assert runner.capture_review_output("monitor", json.dumps(envelope), "receipt")["status"] == "success"
