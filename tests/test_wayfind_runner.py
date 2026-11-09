@@ -38,6 +38,13 @@ def _chdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 _ = _chdir
 
 
+def _require_state(slug: str) -> dict[str, Any]:
+    """Load a wayfind state that the test has already created; fail loudly if absent."""
+    state = wr._load_state(slug)
+    assert state is not None, f"wayfind state for {slug!r} was not written"
+    return state
+
+
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
     """The tmp cwd, for tests that assert on written files."""
@@ -161,7 +168,7 @@ class TestClaiming:
         result = wr.claim_ticket("checkout", tid, "sess-1")
         assert result["status"] == "success"
         assert result["hitl_pending"] is False
-        state = wr._load_state("checkout")
+        state = _require_state("checkout")
         assert state["tickets"][tid]["claimed_by"] == "sess-1"
         assert state["tickets"][tid]["claimed_at"]
         assert state["status"] == "active"
@@ -210,7 +217,7 @@ class TestClaiming:
         _create()
         tid = wr.add_ticket("checkout", "T", "research", "Q?")["ticket_id"]
         _resolve("checkout", tid, "sess-1")
-        ticket = wr._load_state("checkout")["tickets"][tid]
+        ticket = _require_state("checkout")["tickets"][tid]
         assert ticket["claimed_by"] is None
         assert ticket["claimed_at"] is None
 
@@ -271,7 +278,7 @@ class TestFogGraduation:
         result = wr.graduate_fog("checkout", "F-1", "Resolve auth", "grilling", "How does auth interact?")
         assert result["status"] == "success"
         tid = result["ticket_id"]
-        state = wr._load_state("checkout")
+        state = _require_state("checkout")
         assert state["tickets"][tid]["from_fog"] == "F-1"
         assert state["fog"][0]["status"] == "graduated"
         content = (repo / ".map" / "wayfind" / "checkout" / "map.md").read_text()
@@ -333,7 +340,7 @@ class TestOutOfScope:
         _create(fog_json='["speculative idea"]')
         result = wr.rule_out_of_scope("checkout", "Not this quarter", fog_id="F-1")
         assert result["status"] == "success"
-        state = wr._load_state("checkout")
+        state = _require_state("checkout")
         assert state["fog"][0]["status"] == "retired"
 
     def test_requires_exactly_one_target(self) -> None:
@@ -365,7 +372,7 @@ class TestHandoff:
         assert (repo / ".map" / "wayfind" / "checkout" / "handoff.md").exists()
         handoff = json.loads((repo / ".map" / "wayfind" / "checkout" / "handoff.json").read_text())
         assert handoff["decisions"][0]["gist"] == "Use Postgres"
-        assert wr._load_state("checkout")["status"] == "handed_off"
+        assert _require_state("checkout")["status"] == "handed_off"
         assert result["manifest"]["status"] == "success"
         manifest = json.loads((repo / ".map" / "test-branch" / "artifact_manifest.json").read_text())
         assert manifest["stages"]["wayfind_handoff"]["status"] == "ready"
@@ -637,7 +644,7 @@ class TestViews:
 class TestRevisionGuard:
     def test_stale_expected_revision_rejected(self) -> None:
         _create()
-        current = wr._load_state("checkout")["revision"]
+        current = _require_state("checkout")["revision"]
         good = wr.add_ticket("checkout", "T", "task", "Q?", expected_revision=current)
         assert good["status"] == "success"
         stale = wr.add_ticket("checkout", "T2", "task", "Q2?", expected_revision=current)
@@ -741,7 +748,7 @@ class TestAmendResolution:
         amended = wr.amend_out_of_scope("checkout", fog_id="F-1", reason="right reason")
         assert amended["status"] == "success"
         assert amended["reason"] == "right reason"
-        oos = wr._load_state("checkout")["out_of_scope"]
+        oos = _require_state("checkout")["out_of_scope"]
         assert oos[0]["reason"] == "right reason"
 
     def test_amend_out_of_scope_requires_exactly_one_ref(self) -> None:

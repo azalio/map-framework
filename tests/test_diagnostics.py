@@ -1,5 +1,6 @@
 """Tests for diagnostics run summaries."""
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -51,21 +52,17 @@ def test_cmd_summarize_writes_run_summary(branch_workspace):
         encoding="utf-8",
     )
 
-    args = type(
-        "Args",
-        (),
-        {
-            "branch": "",
-            "out": "",
-            "diagnostics": str(diagnostics_file),
-            "known_issues": str(known_issues_file),
-            "tool": "tests",
-            "command": "pytest",
-            "exit_code": 1,
-            "summary": "Pytest failed",
-            "notes": "Observed flaky timing in integration setup",
-        },
-    )()
+    args = argparse.Namespace(
+        branch="",
+        out="",
+        diagnostics=str(diagnostics_file),
+        known_issues=str(known_issues_file),
+        tool="tests",
+        command="pytest",
+        exit_code=1,
+        summary="Pytest failed",
+        notes="Observed flaky timing in integration setup",
+    )
 
     result = diagnostics.cmd_summarize(args)
     assert result == 0
@@ -98,21 +95,17 @@ def test_cmd_summarize_handles_invalid_json_gracefully(branch_workspace):
     known_issues_file = branch_workspace / "known-issues.json"
     known_issues_file.write_text("{invalid json\n", encoding="utf-8")
 
-    args = type(
-        "Args",
-        (),
-        {
-            "branch": "",
-            "out": "",
-            "diagnostics": str(diagnostics_file),
-            "known_issues": str(known_issues_file),
-            "tool": "lint",
-            "command": "ruff check .",
-            "exit_code": 0,
-            "summary": "Lint passed",
-            "notes": "",
-        },
-    )()
+    args = argparse.Namespace(
+        branch="",
+        out="",
+        diagnostics=str(diagnostics_file),
+        known_issues=str(known_issues_file),
+        tool="lint",
+        command="ruff check .",
+        exit_code=0,
+        summary="Lint passed",
+        notes="",
+    )
 
     result = diagnostics.cmd_summarize(args)
     assert result == 0
