@@ -7058,6 +7058,38 @@ class TestDetectTruncatedAgentOutput:
         assert proc.returncode == 0, proc.stderr
         return json.loads(proc.stdout)
 
+    @pytest.mark.parametrize("kind", ["review-predictor", "review-evaluator", "review-user_experience", "review-maintainer", "monitro"])
+    @pytest.mark.parametrize("keys", [None, []])
+    def test_unknown_agent_kind_is_rejected(self, kind, keys):
+        report = map_step_runner.detect_truncated_agent_output("{}", agent_kind=kind, expected_keys=keys)
+        assert report["truncated"] is True
+        assert report["status"] == "unsupported_agent_kind"
+        assert kind in report["reasons"][0]
+
+    @pytest.mark.parametrize("text", ["{}", ""])
+    def test_cli_unknown_agent_kind_is_rejected(self, text):
+        report = self._run_truncation_cli(text, agent="review-predictor")
+        assert report["truncated"] is True
+        assert report["status"] == "unsupported_agent_kind"
+
+    def test_explicit_generic_validation_preserves_custom_keys(self):
+        report = map_step_runner.detect_truncated_agent_output("{}", agent_kind="generic")
+        assert report["truncated"] is False
+        report = map_step_runner.detect_truncated_agent_output("{}", agent_kind="generic", expected_keys=["custom"])
+        assert report["truncated"] is True
+        report = map_step_runner.detect_truncated_agent_output('{"custom": true}', agent_kind="generic", expected_keys=["custom"])
+        assert report["truncated"] is False
+        assert self._run_truncation_cli("{}", agent="generic")["truncated"] is False
+
+    @pytest.mark.parametrize("text", ["[]", "null", "not JSON"])
+    def test_generic_still_requires_json_object(self, text):
+        assert map_step_runner.detect_truncated_agent_output(text, agent_kind="generic")["truncated"] is True
+
+    def test_default_kind_still_requires_monitor_schema(self):
+        assert map_step_runner.detect_truncated_agent_output("{}")["truncated"] is True
+        report = map_step_runner.detect_truncated_agent_output('{"valid": true, "summary": "ok", "issues": []}')
+        assert report["truncated"] is False
+
     def test_cli_no_input_is_not_truncated(self):
         """Regression: a bare CLI call (nothing piped) must NOT report a
         hard-stop truncation. It returns status=='no_input' / truncated False

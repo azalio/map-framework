@@ -20243,11 +20243,16 @@ def detect_truncated_agent_output(
                                       # parsing (empty when no markers present)
         }
 
-    ``expected_keys`` defaults per ``agent_kind``: monitor expects
-    ``valid``/``summary``/``issues``; actor expects ``files_changed``/
-    ``tests_run``. Other kinds pass an explicit list or get a permissive
-    "parses as object" check only.
+    ``expected_keys`` defaults per registered ``agent_kind``. ``monitor``
+    uses the minimal valid/summary/issues core; ``review-monitor`` uses the
+    full review schema. Explicit keys override a known kind's defaults.
+    Use ``generic`` for JSON-object-only or custom-key validation. Unknown
+    kinds are rejected even when explicit keys are supplied.
     """
+    if agent_kind not in AGENT_OUTPUT_SCHEMAS and agent_kind not in {"review-monitor", "generic"}:
+        return {"truncated": True, "status": "unsupported_agent_kind",
+                "reasons": [f"Unknown agent kind: {agent_kind}"], "parsed": None,
+                "agent_kind": agent_kind, "harness_markers_stripped": []}
     reasons: list[str] = []
     text = text or ""
     stripped = text.strip()
@@ -31823,7 +31828,8 @@ if __name__ == "__main__":
             if agent_idx + 1 < len(sys.argv):
                 agent_kind_arg = sys.argv[agent_idx + 1]
         text_in = sys.stdin.read()
-        if not text_in.strip():
+        report = detect_truncated_agent_output(text_in, agent_kind=agent_kind_arg)
+        if not text_in.strip() and report.get("status") != "unsupported_agent_kind":
             print(json.dumps({
                 "truncated": False,
                 "status": "no_input",
@@ -31836,14 +31842,11 @@ if __name__ == "__main__":
                 "agent_kind": agent_kind_arg,
             }, indent=2))
             sys.exit(0)
-        report = detect_truncated_agent_output(
-            text_in, agent_kind=agent_kind_arg
-        )
         # Don't serialize the parsed dict back (callers can re-parse the
         # original text if they want it); keep the report shape small.
         report_summary = {
             "truncated": report["truncated"],
-            "status": "ok",
+            "status": report.get("status", "ok"),
             "reasons": report["reasons"],
             "agent_kind": report["agent_kind"],
         }
