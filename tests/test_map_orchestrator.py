@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -6734,11 +6735,9 @@ class TestSetWavesImportFallback:
         empty_home.mkdir()
 
         with (
-            mock.patch.object(
-                map_orchestrator.importlib.util,
-                "spec_from_file_location",
-                return_value=None,
-            ) if hasattr(map_orchestrator, "importlib") else mock.patch("importlib.util.spec_from_file_location", return_value=None),
+            # map_orchestrator.importlib.util is the same module object as
+            # importlib.util, so patching it globally covers both lookups.
+            mock.patch("importlib.util.spec_from_file_location", return_value=None),
             mock.patch("pathlib.Path.home", return_value=empty_home),
             mock.patch.dict(sys.modules, {"mapify_cli.dependency_graph": None}),
         ):
@@ -6846,12 +6845,12 @@ def test_atomic_write_text_uses_binary_descriptor_and_explicit_lf_newlines(
     original_mkstemp = map_utils.tempfile.mkstemp
     original_fdopen = map_utils.os.fdopen
 
-    def recording_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+    def recording_mkstemp(*args: Any, **kwargs: Any) -> tuple[int, str]:
         mkstemp_kwargs.update(kwargs)
         return original_mkstemp(*args, **kwargs)
 
     def recording_fdopen(
-        descriptor: int, *args: object, **kwargs: object
+        descriptor: int, *args: Any, **kwargs: Any
     ) -> object:
         fdopen_kwargs.update(kwargs)
         return original_fdopen(descriptor, *args, **kwargs)

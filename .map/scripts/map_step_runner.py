@@ -903,7 +903,7 @@ def _default_stage_payload() -> dict[str, object]:
     }
 
 
-def default_artifact_manifest(branch: str) -> dict[str, object]:
+def default_artifact_manifest(branch: str) -> dict[str, Any]:
     """Return a fresh artifact manifest for a branch."""
     return {
         "schema_version": "1.0",
@@ -913,7 +913,7 @@ def default_artifact_manifest(branch: str) -> dict[str, object]:
     }
 
 
-def load_artifact_manifest(branch: str | None = None) -> dict[str, object]:
+def load_artifact_manifest(branch: str | None = None) -> dict[str, Any]:
     """Load artifact_manifest.json, filling missing stages with defaults."""
     branch_name = branch or get_branch_name()
     manifest_path = artifact_manifest_path(branch_name)
@@ -1028,7 +1028,7 @@ def record_token_budget_decision(
     artifact_references: list[Mapping[str, object]] | None = None,
     metadata: dict[str, object] | None = None,
     branch: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Append one active prompt-path budget decision to token_budget.json."""
     branch_name = branch or get_branch_name()
     artifact_path = token_budget_artifact_path(branch_name)
@@ -1615,7 +1615,7 @@ def _build_research_roi_summary(
     }
 
 
-def _rebuild_token_accounting(branch: str | None = None) -> dict[str, object]:
+def _rebuild_token_accounting(branch: str | None = None) -> dict[str, Any]:
     """Roll token_log.jsonl up into token_accounting.json.
 
     Groups by subtask, agent, and phase, plus an aggregate carrying
@@ -2217,7 +2217,7 @@ def _prior_stage_glob_entry(
 
 def _prior_stage_diff_entry(
     code_state: Mapping[str, object], *, required: bool = True
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Return the current diff snapshot as a prior-stage consumption entry."""
     files_changed = code_state.get("files_changed")
     file_count = len(files_changed) if isinstance(files_changed, list) else 0
@@ -2248,7 +2248,7 @@ def build_prior_stage_consumption_report(
     stage: str = "review",
     branch: str | None = None,
     code_state: Mapping[str, object] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Report whether closeout consumed the prior-stage artifacts it depends on."""
     normalized_stage = (stage or "review").strip().lower().replace("-", "_")
     if normalized_stage not in PRIOR_STAGE_CONSUMPTION_STAGES:
@@ -3132,7 +3132,7 @@ def write_implementer_readiness_review(
     acceptance_rationale: str = "",
     summary: str = "",
     branch: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Write implementer-readiness review artifact and update artifact manifest.
 
     Writes:
@@ -3575,7 +3575,7 @@ def write_prd_review(
     summary: str = "",
     prd_source: str = "",
     branch: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Write PRD/requirements-quality review artifact and update artifact manifest.
 
     Writes:
@@ -3988,7 +3988,7 @@ def record_prd_review_decision(
     decision: object,
     rationale: object = "",
     branch: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Record the user's planning choice after a non-ready PRD review."""
     branch_name = branch or get_branch_name()
     if not isinstance(decision, str):
@@ -4171,7 +4171,7 @@ _COVERAGE_FANIN_WARN = 3
 MAX_DEPENDENCY_DEPTH = 5
 
 
-def parse_requirements_index(spec_text: str) -> dict[str, object]:
+def parse_requirements_index(spec_text: str) -> dict[str, Any]:
     """Parse the versioned Requirements Index from a spec markdown string.
 
     Contract:
@@ -4297,7 +4297,7 @@ def parse_requirements_index(spec_text: str) -> dict[str, object]:
 
 def validate_blueprint_contract(
     blueprint_path: str = "", branch: str | None = None
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Validate that a blueprint is executable as contract-sized subtasks.
 
     This is stricter than BLUEPRINT_SCHEMA because it is a user/operator gate:
@@ -5168,7 +5168,7 @@ def normalize_blueprint(
     blueprint_path: str = "",
     branch: str | None = None,
     write: bool = True,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Deterministically repair the two self-consistency violations the
     task-decomposer routinely emits, so planning stays self-serve
     (``decompose -> normalize -> validate -> proceed``) without manual JSON
@@ -5631,7 +5631,7 @@ def _collect_acceptance_evidence_texts(
 def build_acceptance_coverage_report(
     branch: str | None = None,
     extra_artifacts: Mapping[str, str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Summarize which blueprint acceptance tags have downstream evidence."""
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
@@ -6406,7 +6406,7 @@ def _validate_run_health_report_shape(report: Mapping[str, object]) -> list[str]
 def validate_run_health_report(
     report_path: str = "",
     branch: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Validate run_health_report.json for CI/operator closeout checks."""
     branch_name = branch or get_branch_name()
     path = Path(report_path) if report_path else get_branch_dir(branch_name) / "run_health_report.json"
@@ -6901,7 +6901,7 @@ def record_flaky_test_triage(
 def validate_flaky_test_triage(
     triage_path: str = "",
     branch: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Validate flaky_test_triage.json before a Monitor defers a flaky check."""
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
@@ -7476,7 +7476,7 @@ def record_qualitative_convergence(
     invocation: str = "operator_loop",
     risk_ref: str = "",
     branch: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Append one qualitative review pass and compute the clean tail streak."""
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
@@ -7637,7 +7637,7 @@ def record_qualitative_convergence(
 def validate_qualitative_convergence(
     convergence_path: str = "",
     branch: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Validate qualitative_convergence.json and update artifact manifest."""
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
@@ -7744,7 +7744,7 @@ def build_retry_quarantine(
     retry_count: int,
     monitor_feedback: str,
     branch: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Write retry_quarantine.json for clean-room retry in non-orchestrated flows."""
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
@@ -7810,7 +7810,7 @@ def build_retry_quarantine(
 def validate_retry_quarantine(
     quarantine_path: str = "",
     branch: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Validate retry_quarantine.json before a clean Actor retry begins."""
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
@@ -17501,7 +17501,7 @@ def _cross_ai_provenance(runtime: str, host_provider: str | None) -> dict[str, o
 
 def detect_cross_ai_runtime(
     runtime: str, *, host_provider: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Probe whether an external AI CLI runtime is available on PATH.
 
     Non-blocking discovery via shutil.which — never raises, never dispatches.
@@ -17668,7 +17668,7 @@ def _normalize_cross_ai_findings(obj: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _parse_cross_ai_findings(text: str) -> dict[str, object] | None:
+def _parse_cross_ai_findings(text: str) -> dict[str, Any] | None:
     """Best-effort parse of the external review JSON from the model's text.
 
     Tries the whole text, then the first ``{...}`` block (models sometimes wrap
@@ -17700,7 +17700,7 @@ def dispatch_cross_ai_review(
     timeout_seconds: int = 180,
     enabled: bool = False,
     host_provider: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Dispatch a review prompt to an external AI CLI; return a typed result.
 
     DOUBLE-CONSENT egress gate: ``enabled`` (the org kill-switch from
@@ -17857,7 +17857,7 @@ def run_cross_ai_review(
     review_preferences: str = "",
     *,
     host_provider: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """End-to-end cross-AI review: read the config gate, build the prompt,
     dispatch to the external CLI. The map-review skill calls this single verb.
 
@@ -17912,7 +17912,7 @@ def record_context_usefulness_item(
     outcome_label: str,
     signals: dict[str, object] | None = None,
     branch: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Append one context-item usefulness record to the branch WAL.
 
     Called during or after a workflow run to record that a particular
@@ -17958,7 +17958,7 @@ def write_context_usefulness(
     workflow: str = "map-workflow",
     terminal_status: str = "",
     branch: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Finalize the context-usefulness WAL into a durable JSON artifact.
 
     Reads all records appended by ``record_context_usefulness_item`` during the
@@ -19936,7 +19936,7 @@ def validate_research_content(
     project_dir: Path | None = None,
     artifact_path: str | None = None,
     max_locations: int = _RESEARCH_MAX_LOCATIONS,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Validate the machine-checkable research-agent output contract."""
     errors: list[str] = []
     warnings: list[str] = []
@@ -20077,7 +20077,7 @@ def validate_research(
     subtask_id: str,
     *,
     kind: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Validate persisted research for a subtask before Actor consumes it."""
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
     artifacts: list[dict[str, object]] = []
@@ -20216,7 +20216,7 @@ def detect_truncated_agent_output(
     *,
     expected_keys: list[str] | None = None,
     agent_kind: str = "monitor",
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Diagnose a possibly-truncated agent response.
 
     Skill-level rule (added 2026-05-24): if Monitor or Actor returns prose
@@ -20351,7 +20351,7 @@ def detect_truncated_agent_output(
 def build_json_retry_prompt(
     agent: str,
     errors: list[str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Build a retry prompt for a review agent that returned malformed output.
 
     Uses _render_format_block(agent) as the single source of truth for the
@@ -20654,7 +20654,7 @@ def detect_research_consumption_drift(
     branch: str,
     subtask_id: str,
     command_log: str,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Advisory detector for broad re-exploration after high-confidence research.
 
     The detector is intentionally non-blocking. It only flags repo-wide search
@@ -21082,7 +21082,7 @@ def record_diagnostics_baseline(
     *,
     tools: list[str] | None = None,
     timeout_seconds: int = 180,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Snapshot pre-existing static-analysis diagnostics (pyright, ruff,
     mypy, golangci-lint) so subtasks can delta against each tool — the
     pytest-only test baseline missed 123 pyright + 130 ruff diagnostics
@@ -21285,7 +21285,7 @@ def _probe_test_harness(directory: Path) -> str:
     return ""
 
 
-def _detect_baseline_harness(project_dir: Path) -> dict[str, object]:
+def _detect_baseline_harness(project_dir: Path) -> dict[str, Any]:
     """Resolve the test harness + the directory to run it in.
 
     Probes the repo root first (the common single-package layout). When the
@@ -21340,7 +21340,7 @@ def record_test_baseline(
     *,
     module_dir: str = "",
     timeout_seconds: int = 600,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Record a pre-flight test baseline so subtasks can distinguish
     "this regression is mine" from "this was broken before I started".
 
@@ -21591,7 +21591,7 @@ def _diagnostic_signature(text: str) -> str:
 
 def acknowledge_diagnostic(
     branch: str, signature: str, reason: str = ""
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Mark a diagnostic as known/deferred so reporters can suppress it.
 
     Use case: pre-existing Pyright noise like ``_rescore_cached_findings
@@ -21651,7 +21651,7 @@ def acknowledge_diagnostic(
     }
 
 
-def list_acknowledged_diagnostics(branch: str) -> dict[str, object]:
+def list_acknowledged_diagnostics(branch: str) -> dict[str, Any]:
     """Return all acknowledged diagnostics on the branch (newest first)."""
     path = _acknowledged_diagnostics_path(branch)
     if not path.exists():
@@ -22571,7 +22571,7 @@ def _select_route(
     *,
     estimated_files: int | None = None,
     estimated_lines: int | None = None,
-) -> tuple[str, list[dict[str, object]]]:
+) -> tuple[str, list[dict[str, Any]]]:
     """Pure five-tier routing precedence engine for /map-auto (issue #414).
 
     Reads exactly five existing signals -- step_state.json, workflow-fit.json,
@@ -22832,7 +22832,7 @@ def route_task(
     task: str,
     branch: str | None = None,
     dry_run: bool = False,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Select a route for /map-auto and persist the decision (issue #414).
 
     Wraps _select_route with the write side of the routing contract: writes
@@ -22997,7 +22997,7 @@ def record_auto_phase(
     branch: str | None = None,
     evidence_refs: list[str] | None = None,
     reason: str = "",
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Append one entry to auto-route.json's phase ledger (issue #414, ST-007).
 
     record_auto_phase is the ONLY function that mutates `phases[]` --
@@ -25104,7 +25104,7 @@ def prepare_detached_review(
     branch: str | None = None,
     commit: str | None = None,
     target_dir: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Prepare a clean review context via git worktree add --detach.
 
     Returns a dict with:
@@ -27551,7 +27551,7 @@ def _worktree_artifact_path(branch: str | None = None) -> Path:
     return get_branch_dir(branch) / WORKTREE_ARTIFACT_NAME
 
 
-def _read_worktree_state(branch: str) -> dict[str, object]:
+def _read_worktree_state(branch: str) -> dict[str, Any]:
     data = _read_json_file(_worktree_artifact_path(branch))
     if not isinstance(data, dict):
         return {"schema_version": "1.0", "branch": branch, "worktrees": {}}
@@ -27946,7 +27946,7 @@ def _wt_dirty_paths(timeout: int = 15) -> tuple[list[str], str]:
     ], ""
 
 
-def _require_clean_merge_target(project_dir: Path) -> dict[str, object]:
+def _require_clean_merge_target(project_dir: Path) -> dict[str, Any]:
     """Check that the main checkout is clean enough for a worktree merge.
 
     Dormant when worktree.isolation is 'off' (per-repo opt-out / kill-switch — HC-1).
@@ -28068,7 +28068,7 @@ def resolve_worktree_isolation(project_dir: Path) -> dict[str, object]:
     }
 
 
-def cleanup_orphan_worktrees(branch: str) -> dict[str, object]:
+def cleanup_orphan_worktrees(branch: str) -> dict[str, Any]:
     """Remove worktrees present in storage/git-list but NOT in the active registry.
 
     HC-1 dormancy: when isolation is 'off', returns immediately without
@@ -28289,7 +28289,7 @@ def _wt_wave_admission_refusal(
 def begin_wave_group(
     group_ids: list[str],
     branch: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Record the base_sha anchor + per-subtask lifecycle skeleton for a parallel group.
 
     Stores state under ``wave_groups[group_id]`` in the branch-scoped worktree-state
@@ -28669,7 +28669,7 @@ def verify_group_clean(
 
 def reconcile_orphan_groups(
     branch: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Startup sweep: find groups left mid-flight and invoke cleanup.
 
     Composes the existing ``cleanup_orphan_worktrees`` to remove physical worktrees,
@@ -28741,7 +28741,7 @@ def create_subtask_worktree(
     branch: str | None = None,
     allow_dirty: bool = False,
     provider: str = "codex",
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Create an isolated git worktree for a subtask (#284).
 
     Returns ``status="disabled"`` (exit 0) when ``worktree.isolation`` is off, so
@@ -29403,7 +29403,7 @@ def merge_subtask_worktree(
     branch: str | None = None,
     verify_cmds: list[str] | None = None,
     skip_verify: bool = False,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Accept a subtask: commit worktree work, run pre-merge verification IN the
     worktree, then squash-merge ONE commit into the working branch (#284).
 
@@ -29671,7 +29671,7 @@ def merge_wave_worktrees(
     skip_verify: bool = False,
     post_wave_cmds: list[str] | None = None,
     skip_post_wave: bool = False,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Accept a whole parallel wave atomically (#284 Phase 2, wave/DAG).
 
     Every subtask in a wave ran in its own worktree cut off the SAME base (HEAD
@@ -30053,7 +30053,7 @@ def _wt_isolation_decision(project_dir: Path) -> dict[str, object]:
     }
 
 
-def worktree_isolation_status(branch: str | None = None) -> dict[str, object]:
+def worktree_isolation_status(branch: str | None = None) -> dict[str, Any]:
     """Report whether isolation is enabled + reconcile recorded vs live worktrees.
 
     Also reports the live isolation DECISION (isolated / sequential / abort) from
@@ -30103,7 +30103,7 @@ def worktree_isolation_status(branch: str | None = None) -> dict[str, object]:
 def concurrency_ready(
     subtask_ids: list[str],
     branch: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Read-only wave-worktree readiness check (coordinator-owned, council Q1).
 
     For each supplied subtask verifies:
@@ -30299,7 +30299,7 @@ def _chunk(items: list[str], size: int) -> list[list[str]]:
 def abort_wave_group(
     group_id: str,
     branch: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Idempotent, runner-owned group-abort verb (HC-4, ST-006).
 
     On ANY pre-merge actor failure / timeout / cancel / Monitor-reject, discard
@@ -30478,7 +30478,7 @@ def run_concurrent_wave(
     group_ids: list[str],
     branch: str | None = None,
     project_dir: Path | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Accept one admitted concurrent group atomically; reject over-cap groups.
 
     This function is the COORDINATOR side of concurrent dispatch.  It does NOT

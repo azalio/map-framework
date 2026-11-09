@@ -18302,7 +18302,7 @@ def test_write_prd_review_rejects_ready_verdict_that_only_rounds_up_to_eight(
     The uniform-7.9 case above cannot catch this: every dimension has to be equal
     for it, so it never lands inside the rounding band. Only a mixed set does.
     """
-    dimension_scores = dict(
+    dimension_scores: dict[str, float] = dict(
         zip(map_step_runner.PRD_REVIEW_DIMENSIONS, scores, strict=True)
     )
     assert map_step_runner.calculate_prd_readiness_score(dimension_scores) == 8.0
@@ -18319,7 +18319,7 @@ def test_write_prd_review_rejects_ready_verdict_that_only_rounds_up_to_eight(
 
 
 def test_calculate_prd_readiness_score_exact_is_unrounded():
-    dimension_scores = dict(
+    dimension_scores: dict[str, float] = dict(
         zip(
             map_step_runner.PRD_REVIEW_DIMENSIONS,
             [8.0] * 11 + [7.6, 7.85],
