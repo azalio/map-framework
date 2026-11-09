@@ -195,6 +195,8 @@ For stacked PRs, use `/map-review --base-ref runtime` (Codex: `$map-review --bas
 
 Implementation completion does not imply review completion: edit reminders preserve pending admitted review rounds rather than suggesting a new run.
 
+Sharded reviews judge denied access against the reporting shard's required scope; optional cross-shard denials remain visible without falsely blocking completeness.
+
 [Detailed usage and options →](docs/USAGE.md)
 
 ## Why Engineers Stick With It

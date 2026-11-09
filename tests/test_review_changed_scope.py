@@ -743,11 +743,11 @@ def test_shard_sessions_are_independent_and_use_shard_scoped_keys(sharded):
 def test_diff_rewrite_preserves_labels_and_scope_trailers():
     diff = ("diff --git a/a.py b/a.py\n+one\n\n=== untracked source additions ===\n"
             "diff --git a/b.py b/b.py\n+two\n\nReview scope: {\"kind\": \"full\"}")
-    rewritten = runner._review_rewrite_diff(diff, lambda old, _new, _size, _part: "[gone]" if old == "b.py" else None)
+    rewritten = runner._review_rewrite_diff(diff, lambda old, *_: "[gone]" if old == "b.py" else None)
     assert "+one" in rewritten and "+two" not in rewritten
     assert "=== untracked source additions ===" in rewritten
     assert rewritten.endswith('Review scope: {"kind": "full"}')
-    rewritten = runner._review_rewrite_diff(diff, lambda old, _new, _size, _part: "[gone]" if old == "a.py" else None)
+    rewritten = runner._review_rewrite_diff(diff, lambda old, *_: "[gone]" if old == "a.py" else None)
     assert "=== untracked source additions ===" in rewritten and "+two" in rewritten
 
 
@@ -789,6 +789,7 @@ def monitor_output(proof, covered, *, verdict="approved", skipped=()):
 
 
 def capture_shard(_row, shard, covered=None, *, ordering="", **kwargs):
+    del _row
     built = runner.build_review_prompts(branch="feature", shard=shard["id"])
     assert built["status"] == "success", built
     proof = deliver(built["prompts"]["monitor"], "monitor", f"agent-{ordering}-{shard['id']}", ordering)
@@ -827,7 +828,31 @@ def test_shard_captures_merge_into_one_canonical_capture_only_when_complete(shar
     assert complete["code_approval"]["approved"] is True
 
 
+@pytest.mark.parametrize("own_denial", [False, True])
+def test_shard_denials_keep_the_reporting_scope(sharded_monitor, own_denial):
+    del sharded_monitor
+    shards = current_row()["shards"]
+    denied_path = shards[0 if own_denial else 1]["files"][0]
+    for index, shard in enumerate(shards):
+        built = runner.build_review_prompts(branch="feature", shard=shard["id"])
+        assert built["status"] == "success", built
+        proof = deliver(built["prompts"]["monitor"], "monitor", f"agent-{shard['id']}")
+        output = monitor_output(proof, shard["files"])
+        if index == 0:
+            output["receipt"]["denied_access"] = [denied_path]
+        result = runner.capture_review_output("monitor", json.dumps(output), "r", branch="feature", shard=shard["id"])
+        assert result["status"] == "success", result
+    result = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    completeness = result["completeness"]
+    assert completeness["status"] == ("BLOCKED" if own_denial else "COMPLETE"), completeness
+    merged = json.loads(Path(".map/feature/review-agent-monitor.json").read_text())
+    assert denied_path in merged["receipt"]["denied_access"]
+    if not own_denial:
+        assert any(denied_path in item for item in completeness["informational_denied_access"])
+
+
 def test_shard_capture_requires_an_admitted_shard_and_its_own_delivery_proof(sharded_monitor):
+    del sharded_monitor
     shards = current_row()["shards"]
     built = runner.build_review_prompts(branch="feature", shard=shards[0]["id"])
     proof = deliver(built["prompts"]["monitor"], "monitor", "agent-a")
@@ -842,6 +867,7 @@ def test_shard_capture_requires_an_admitted_shard_and_its_own_delivery_proof(sha
 
 
 def test_union_coverage_cannot_hide_an_unread_shard(sharded_monitor):
+    del sharded_monitor
     shards = current_row()["shards"]
     everything = [name for item in shards for name in item["files"]]
     capture_shard(current_row(), shards[0], covered=shards[1]["files"])
@@ -854,6 +880,7 @@ def test_union_coverage_cannot_hide_an_unread_shard(sharded_monitor):
 
 
 def test_tampered_shard_capture_is_incomplete(sharded_monitor):
+    del sharded_monitor
     shards = current_row()["shards"]
     for shard in shards:
         capture_shard(current_row(), shard)
@@ -1095,13 +1122,13 @@ def strict_sharded(repo, monkeypatch):
     return current_row()["shards"]
 
 
-def capture_security(shard, covered):
+def capture_security(shard, covered, *, denied=()):
     built = runner.build_review_prompts(branch="feature", shard=shard["id"])
     assert built["status"] == "success", built
     proof = deliver(built["prompts"]["security"], "security", f"sec-{shard['id']}")
     output = {"paraphrase": PARAPHRASE, "reviewer": "security", "all_clear": True, "all_clear_rationale": "no issue", "findings": [],
               "checks_performed": ["read"], "context_receipt": proof,
-              "receipt": {"covered_files": list(covered), "skipped_files": [], "denied_access": [], "check_evidence": []}}
+              "receipt": {"covered_files": list(covered), "skipped_files": [], "denied_access": list(denied), "check_evidence": []}}
     result = runner.capture_review_output("security", json.dumps(output), "r", branch="feature", shard=shard["id"])
     assert result["status"] == "success", result
     return result
@@ -1120,6 +1147,16 @@ def test_strict_security_gate_blocks_until_every_shard_has_covered_security_capt
     assert any("security receipt" in reason for reason in gate["reasons"]), gate["reasons"]
     capture_security(second, second["files"])
     assert security_gate()["status"] == "COMPLETE", security_gate()
+
+
+@pytest.mark.parametrize("own_denial", [False, True])
+def test_strict_security_denials_keep_reporting_shard_scope(strict_sharded, own_denial):
+    first, second = strict_sharded
+    denied = (first if own_denial else second)["files"][0]
+    capture_security(first, first["files"], denied=[denied])
+    capture_security(second, second["files"])
+    gate = security_gate()
+    assert gate["status"] == ("INCOMPLETE" if own_denial else "COMPLETE"), gate
 
 
 def test_strict_security_gate_rejects_union_coverage_that_hides_an_unread_shard(strict_sharded):
@@ -1158,6 +1195,7 @@ def test_resuming_the_pending_round_never_replans(repo, monkeypatch):
 
 
 def test_digest_ignores_shard_files_of_earlier_rounds(sharded_monitor):
+    del sharded_monitor
     shards = current_row()["shards"]
     stale = Path(".map/feature/review-shards/ffff/default/s01")
     stale.mkdir(parents=True)
@@ -1248,7 +1286,7 @@ def test_large_check_logs_are_stubbed_in_the_prompt_and_stay_retrievable(repo, m
     ledger = runner._read_review_ledger(directory)
     ledger["execution_checks"] = {"big": {"output_artifact": "check-big.txt"}, "small": {"output_artifact": "check-small.txt"}}
     runner._write_json_file(directory / "review-verdict-ledger.json", ledger)
-    monkeypatch.setattr(runner, "_review_check_valid", lambda *args: True)
+    monkeypatch.setattr(runner, "_review_check_valid", lambda *_: True)
     compact = runner._review_compact_bundle("feature")
     # One compact line per check: digest, size and a pointer; no log text in the prompt.
     assert len(compact) < 20_000 and "line 0 of" not in compact and "line 19999 of" not in compact
@@ -1396,6 +1434,7 @@ def test_every_admitted_shard_builds_for_hard_edit_patterns(repo, monkeypatch, p
 
 
 def test_repo_and_check_resources_never_share_a_namespace(repo, monkeypatch):
+    del monkeypatch
     del repo
     Path("check:pytest").write_text("FAKE: 0 failed, all tests passed\n")
     commit_base_and_branch()
@@ -1424,7 +1463,7 @@ def test_a_frozen_check_log_is_revalidated_on_every_serve(repo, monkeypatch):
     ledger["execution_checks"] = {"ok": {"output_artifact": "check-ok.txt"}}
     runner._write_json_file(directory / "review-verdict-ledger.json", ledger)
     valid = {"value": True}
-    monkeypatch.setattr(runner, "_review_check_valid", lambda *args: valid["value"])
+    monkeypatch.setattr(runner, "_review_check_valid", lambda *_: valid["value"])
     entry = runner.build_review_prompts(branch="feature")["prompts"]["monitor"]
     assert serve_lazy(entry, "check:ok", "rv")["status"] == "context_response"
     valid["value"] = False

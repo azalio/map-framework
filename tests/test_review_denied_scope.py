@@ -1,5 +1,6 @@
 """Completeness blocks only on denied access that intersects the reviewer's required scope (#655)."""
 
+import hashlib
 import json
 from typing import Any, cast
 
@@ -57,6 +58,36 @@ def test_vc4_mixed_denials_block_and_name_only_the_required_one(review_git_works
         review_git_workspace, lambda admission: ["optional-rubric.md", admission["required_files"][0]])
     assert completeness["status"] == "BLOCKED"
     assert completeness["informational_denied_access"] == ["default:monitor: optional-rubric.md"]
+
+
+@pytest.mark.parametrize("adversarial", [False, True])
+@pytest.mark.parametrize("denied,blocks", [
+    ("b/main.py", False), ("repo:b/main.py", False), ("b/", False), ("b/**", False),
+    ("b/main.py (permission denied)", False), ("a/main.py", True), ("a/**", True),
+    ("source_000001", True), ("diff", True), ("check:suite", True),
+])
+def test_shard_capture_denial_classification_preserves_provenance(tmp_path, adversarial, denied, blocks):
+    reviewer = "adversarial" if adversarial else "monitor"
+    row = {"required_files": ["a/main.py", "b/main.py"], "binding": {"required_checks": ["suite"]},
+           "shards": [{"id": "s01", "files": ["a/main.py"]}, {"id": "s02", "files": ["b/main.py"]}],
+           "shard_receipts": {f"default:{reviewer}": {}}}
+    for index, shard in enumerate(row["shards"]):
+        output = {"receipt": {"covered_files": shard["files"], "skipped_files": [],
+                              "denied_access": [denied] if index == 0 else [], "check_evidence": []}}
+        envelope = {"reviewer_status": {"monitor": {"raw": output}}} if adversarial else output
+        content = json.dumps(envelope).encode()
+        path = tmp_path / f"{shard['id']}.json"
+        path.write_bytes(content)
+        row["shard_receipts"][f"default:{reviewer}"][shard["id"]] = {
+            "artifact": path.name, "sha256": hashlib.sha256(content).hexdigest()}
+    required, informational = runner._review_capture_denied_split(row, tmp_path, "default", reviewer, "monitor", [denied])
+    assert bool(required) is blocks
+    assert bool(informational) is not blocks
+    assert (required or informational) == [f"s01: {denied}"]
+    # Tampering may not turn a required denial into informational evidence.
+    (tmp_path / "s01.json").write_text("{}")
+    required, _ = runner._review_capture_denied_split(row, tmp_path, "default", reviewer, "monitor", [denied])
+    assert required == [denied]
 
 
 ROW = {"required_files": ["src/app/main.py", "src/app/auth.py", "go.sum"], "binding": {"required_checks": ["suite"]}}
