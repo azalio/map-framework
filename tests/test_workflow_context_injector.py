@@ -517,6 +517,7 @@ def test_unmerged_file_detection_handles_nul_paths_with_spaces(
         stdout = b"src/file one.py\0docs/conflicted page.md\0"
 
     def fake_run(*args, **kwargs):
+        del args, kwargs
         return Result()
 
     monkeypatch.setattr(hook_mod.subprocess, "run", fake_run)
@@ -1348,6 +1349,51 @@ class TestTerminalStateSuppress:
         assert "map_orchestrator.py archive" in out
         assert "/map-review" in out
 
+    @pytest.mark.parametrize("tool", ["Edit", "Write", "MultiEdit", "apply_patch"])
+    def test_pending_review_does_not_emit_workflow_completion(self, tmp_path: Path, tool: str) -> None:
+        state = self._seed_terminal_state(tmp_path)
+        ledger = state.parent / "review-verdict-ledger.json"
+        ledger.write_text(json.dumps({"convergence": {"outcome": "incomplete", "rounds": [
+            {"round_id": "round-6", "started_at": 1, "receipts": {}}
+        ]}}))
+        before = ledger.read_bytes()
+        code, out, _ = _run_hook(tmp_path, {"tool_name": tool, "tool_input": {"file_path": "x"}})
+        assert code == 0
+        assert "review" in out.lower() and "pending" in out.lower()
+        assert "workflow is COMPLETE" not in out
+        assert "archive" not in out and "reopen" not in out
+        assert ledger.read_bytes() == before
+
+    @pytest.mark.parametrize("rounds", [[], [{"completed_at": 1}], [{"aborted_at": 1}]])
+    def test_terminal_reviews_keep_completion_notice(self, tmp_path: Path, rounds: list) -> None:
+        state = self._seed_terminal_state(tmp_path)
+        (state.parent / "review-verdict-ledger.json").write_text(json.dumps({"convergence": {"rounds": rounds}}))
+        code, out, _ = _run_hook(tmp_path, {"tool_name": "Edit", "tool_input": {"file_path": "x"}})
+        assert code == 0
+        assert "map_orchestrator.py archive" in out
+
+    @pytest.mark.parametrize("raw", ["{", "null", "[]", '{"convergence": null}',
+                                    '{"convergence": {"rounds": [null]}}',
+                                    '{"convergence": {"rounds": {}}}', '{}'])
+    def test_invalid_review_ledger_emits_neutral_notice(self, tmp_path: Path, raw: str) -> None:
+        state = self._seed_terminal_state(tmp_path)
+        ledger = state.parent / "review-verdict-ledger.json"
+        ledger.write_text(raw)
+        code, out, _ = _run_hook(tmp_path, {"tool_name": "Edit", "tool_input": {"file_path": "x"}})
+        assert code == 0
+        assert "review status" in out.lower()
+        assert "workflow is COMPLETE" not in out
+        assert "archive" not in out and "reopen" not in out
+        assert ledger.read_text() == raw
+
+    def test_unreadable_review_ledger_emits_neutral_notice(self, tmp_path: Path) -> None:
+        state = self._seed_terminal_state(tmp_path)
+        (state.parent / "review-verdict-ledger.json").mkdir()
+        code, out, _ = _run_hook(tmp_path, {"tool_name": "Edit", "tool_input": {"file_path": "x"}})
+        assert code == 0
+        assert "review status" in out.lower()
+        assert "archive" not in out and "reopen" not in out
+
     def test_write_on_completed_branch_emits_completion_notice(
         self, tmp_path: Path
     ) -> None:
@@ -1442,7 +1488,7 @@ class TestTerminalStateSuppress:
     ) -> None:
         """Ensure the specific misleading text from issue #317 never appears."""
         self._seed_terminal_state(tmp_path, branch="default")
-        _code, out, _err = _run_hook(
+        _, out, _ = _run_hook(
             tmp_path,
             {"tool_name": "Edit", "tool_input": {"file_path": "x"}},
         )
@@ -1549,7 +1595,7 @@ def test_wave_mode_banner_uses_subtask_phases_not_stale_sequential_step(
         encoding="utf-8",
     )
 
-    code, out, _err = _run_hook(
+    code, out, _ = _run_hook(
         tmp_path, {"tool_name": "Edit", "tool_input": {"file_path": "x"}}
     )
 

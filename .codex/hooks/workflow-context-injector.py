@@ -236,6 +236,41 @@ def read_step_state(branch: str) -> tuple[dict | None, str | None]:
         return (None, "unreadable step_state.json")
 
 
+def terminal_notice(branch: str) -> str:
+    """Distinguish implementation completion from durable review admission."""
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    ledger_file = project_dir / ".map" / branch / "review-verdict-ledger.json"
+    unknown = (
+        "[MAP] Implementation is complete; review status is unavailable. Editing is allowed. "
+        "Inspect the existing review ledger before deciding next steps; do not replace "
+        "review state or edit the MAP runner/hooks to silence this notice."
+    )
+    try:
+        ledger = json.loads(ledger_file.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return _TERMINAL_NOTICE
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return unknown
+    if not isinstance(ledger, dict):
+        return unknown
+    convergence = ledger.get("convergence")
+    if not isinstance(convergence, dict) or not isinstance(convergence.get("rounds"), list):
+        return unknown
+    rounds = convergence["rounds"]
+    if any(not isinstance(row, dict) for row in rounds):
+        return unknown
+    # Match the runner's _review_round_terminal contract; outcomes/receipt
+    # counts and review-mode.json are not admission-completion authority.
+    if any("completed_at" not in row and "aborted_at" not in row for row in rounds):
+        return (
+            "[MAP] Implementation is complete, but an admitted review is still pending. "
+            "Editing for review fixes is allowed. Continue the existing `/map-review` round; "
+            "keep its admissions and captures. Do not replace review state or edit the "
+            "MAP runner/hooks to silence this notice."
+        )
+    return _TERMINAL_NOTICE
+
+
 def load_step_state(branch: str) -> dict | None:
     """Load step state from .map/<branch>/step_state.json."""
     state, _ = read_step_state(branch)
@@ -1103,7 +1138,7 @@ def main() -> None:
         and tool_name in ("Edit", "Write", "MultiEdit", "apply_patch")
         and _state_is_terminal(state)
     ):
-        reminder = _TERMINAL_NOTICE
+        reminder = terminal_notice(branch)
     if reminder:
         context_parts = [reminder]
         if conflict_context:
