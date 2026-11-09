@@ -193,6 +193,8 @@ For stacked PRs, use `/map-review --base-ref runtime` (Codex: `$map-review --bas
 
 `/map-review` requires coverage of changed paths against the selected base, including local edits. Unchanged repository files remain optional, snapshot-bound dependency context. Codex `$map-review` uses a runner-owned app-server connection to deliver evidence directly to independent readers; the parent no longer copies every chunk. Interrupted collection resumes its saved threads and offsets. Runtime host probes, intact delivery acknowledgments and post-delivery finalization tokens are required before a Codex review can complete; the legacy native reader remains unverified.
 
+Sharded reviews judge denied access against the reporting shard's required scope; optional cross-shard denials remain visible without falsely blocking completeness.
+
 [Detailed usage and options →](docs/USAGE.md)
 
 ## Why Engineers Stick With It

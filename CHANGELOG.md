@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Sharded review completeness now classifies access denials in their original reporting shard scope (#682). Optional foreign-shard lookups no longer become false required-access BLOCK after merge; owning-shard denials still block and original denial evidence remains intact.
 - **Docs-vs-code drift found by `/map-check --docs` (#671).** `README.md`, `docs/USAGE.md`, `docs/ARCHITECTURE.md` and `docs/INSTALL.md` no longer describe removed hooks (`improve-prompt.py`, `block-secrets.py`, `block-dangerous.sh`), Actor context clipping into `token_budget.json`, a `ConfigError` abort (it is `DispatchGateError`), end-of-turn verification recording, or a non-existent workflow-logger path and API; verified false positives carry `<!-- drift-ignore -->`, and the pre-pass now reports 0 findings on these four docs.
 - **`$map-plan` (Codex) spec template no longer drifts from `plan-reference.md` (#653).** The Codex skill wrote the spec from an inline heredoc with 8 sections, missing `## Contradiction` and the `mapify:requirements-index:v1` block that the next step calls MANDATORY, so the forward-coverage gate silently skipped. Both the heredoc body and `plan-reference.md` `## Spec Template` now render from one partial (`templates_src/_partials/plan-spec-template.md.jinja`), and `test_map_plan_spec_template_matches_reference` asserts they stay byte-identical.
 
