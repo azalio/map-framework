@@ -1,0 +1,20 @@
+{
+  "baseline": {
+    "worker.py": "def reconcile(task, state, source):\n    if state.get('done'):\n        return 'done'\n    source.apply(task['payload'])\n    state['done'] = True\n    return 'done'\n",
+    "publisher.py": "def publish(task, state, source):\n    source.record(task['id'], state)\n",
+    "completion.py": "def complete(tasks, states):\n    return all(states[t['id']].get('done', False) for t in tasks)\n",
+    "test_run.py": "from worker import reconcile\nfrom completion import complete\n\ndef test_done():\n    assert complete([{'id': 'x'}], {'x': {'done': True}})\n"
+  },
+  "candidate": {
+    "worker.py": "def reconcile(task, state, source):\n    live = source.read(task['id'])\n    if live['revision'] != task['revision']:\n        if state.get('started'):\n            return 'retry'\n        state['retired'] = True\n        return 'done'\n    if live.get('disabled'):\n        return 'retry'\n    if state.get('done'):\n        return 'done'\n    state['started'] = True\n    source.apply(task['payload'])\n    state['done'] = True\n    return 'done'\n",
+    "publisher.py": "def publish(task, state, source):\n    live = source.read(task['id'])\n    if state.get('retired') or live['revision'] != task['revision']:\n        return\n    source.record(task['id'], state)\n",
+    "completion.py": "def complete(tasks, states):\n    pending = [t for t in tasks if not (states[t['id']].get('retired') and not states[t['id']].get('started'))]\n    return all(states[t['id']].get('done', False) for t in pending)\n",
+    "test_run.py": "from worker import reconcile\nfrom completion import complete\n\ndef test_done():\n    assert complete([{'id': 'x'}], {'x': {'done': True}})\n\ndef test_retired():\n    assert complete([{'id': 'x'}], {'x': {'retired': True}})\n"
+  },
+  "control": {
+    "worker.py": "def reconcile(task, state, source):\n    if state.get('done'):\n        return 'done'\n    source.apply(task['payload'])\n    state['done'] = True\n    return 'done'\n",
+    "publisher.py": "def publish(task, state, source):\n    source.record(task['id'], state)\n",
+    "completion.py": "def complete(tasks, states):\n    return all(states[t['id']].get('done', False) for t in tasks)\n",
+    "test_run.py": "from worker import reconcile\nfrom completion import complete\n\ndef test_done():\n    assert complete([{'id': 'x'}], {'x': {'done': True}})\n\ndef test_pending():\n    assert not complete([{'id': 'x'}], {'x': {}})\n"
+  }
+}

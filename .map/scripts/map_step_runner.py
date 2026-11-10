@@ -10123,7 +10123,7 @@ def _apply_review_objections(
 
 def _review_finding_metadata(entry: dict[str, Any]) -> dict[str, Any]:
     return {field: entry[field] for field in ("bug_class", "cause", "failure_scenario", "evidence_refs",
-        "reachability", "baseline_attribution", "sibling_search") if field in entry}
+        "reachability", "baseline_attribution", "sibling_search", "design_change", "remedies") if field in entry}
 
 
 def normalize_review_verdict(
@@ -10490,7 +10490,7 @@ def normalize_review_verdict(
         # The contract parts ARE the evidence: the verbatim current code, the
         # applicable fix, the measurable delta and its cost.
         role_evidence: list[dict[str, Any]] = []
-        for part in ("evidence", *ROLE_FINDING_CONTRACT_KEYS):
+        for part in ("evidence", *ROLE_FINDING_CONTRACT_KEYS, "design_change"):
             part_value = str(entry.get(part) or "").strip()
             if part_value:
                 role_evidence.append({"source": part, "quote": part_value})
@@ -10500,6 +10500,8 @@ def normalize_review_verdict(
             "source_agent": "role",
             **_review_finding_metadata(entry),
             "originating_reviewer": reviewer,
+            "remedies": [{"reviewer": reviewer, "ordering": entry.get("ordering", "default"),
+                          **{field: entry[field] for field in ("proposed_code", "design_change") if field in entry}}],
             "category": _normalize_category(str(entry.get("category") or "")),
             "severity": role_sev,
             "claim": f"[{reviewer}] {role_claim}",
@@ -11075,10 +11077,21 @@ def _retain_review_findings(
         old = registry.get(key)
         if finding.get("source_agent") == "adversarial":
             finding["reported_by"] = sorted(set(_review_reporters(finding)) | set(_review_reporters(old) if old else []))
+        # Remedies are alternatives, not primary evidence: retain every attributed
+        # proposal before selecting the stronger (or first equally strong) row.
+        if old:
+            remedies = []
+            for remedy in [*old.get("remedies", []), *finding.get("remedies", [])]:
+                if remedy not in remedies:
+                    remedies.append(remedy)
+            if remedies:
+                finding["remedies"] = remedies
         # Intent: duplicate/order-dependent reviewer rows must never overwrite stronger evidence.
         if key in observed:
             severity_order = {"minor": 0, "needs_investigation": 1, "important": 2, "critical": 3}
-            if severity_order.get(finding["severity"], 1) < severity_order.get(observed[key]["severity"], 1):
+            if severity_order.get(finding["severity"], 1) <= severity_order.get(observed[key]["severity"], 1):
+                if "remedies" in finding:
+                    observed[key]["remedies"] = finding["remedies"]
                 if "reported_by" in finding:
                     observed[key]["reported_by"] = finding["reported_by"]
                 continue
@@ -11928,7 +11941,7 @@ def _review_envelope_finding_keys(
     elif reviewer in ROLE_REVIEWER_IDS:
         entries = envelope.get("findings")
         rows = normalize_review_verdict(
-            role_findings=[{**item, "reviewer": item.get("reviewer") or reviewer} if isinstance(item, dict) else item
+            role_findings=[{**item, "reviewer": reviewer} if isinstance(item, dict) else item
                            for item in (entries if isinstance(entries, list) else [])],
             role_inputs_supplied=True, branch="paraphrase-index")["findings_registry"]
     elif reviewer in ("monitor", "predictor", "evaluator"):
@@ -12206,6 +12219,11 @@ def write_review_verdict_ledger(
                     else:
                         resolutions.extend({**item, "source_agent": reviewer} for item in resolved)
             findings = parsed.get("ledger_findings")
+            if isinstance(findings, list):
+                for item in findings:
+                    if isinstance(item, dict) and isinstance(item.get("remedies"), list):
+                        item["remedies"] = [{**remedy, "ordering": "reverse" if prefix else "default"}
+                                            for remedy in item["remedies"] if isinstance(remedy, dict)]
             return [item for item in findings if isinstance(item, dict)] if isinstance(findings, list) else []
         if current_run:
             input_errors.append("adversarial: current review requires a tagged aggregate")
@@ -12261,7 +12279,7 @@ def write_review_verdict_ledger(
             continue
         for entry in role_entries:
             role_findings.append(
-                {**entry, "reviewer": entry.get("reviewer") or role_id}
+                {**entry, "reviewer": role_id, "ordering": "default"}
                 if isinstance(entry, dict)
                 else entry
             )
@@ -12278,7 +12296,7 @@ def write_review_verdict_ledger(
                 continue
             role_inputs_supplied = True
             role_findings.extend(
-                {**entry, "reviewer": entry.get("reviewer") or role_id} if isinstance(entry, dict) else entry
+                {**entry, "reviewer": role_id, "ordering": "reverse"} if isinstance(entry, dict) else entry
                 for entry in entries
             )
 
@@ -13949,10 +13967,10 @@ If requirements or a plan are attached, use them to check the expected behavior 
 When there is no diff (code reviewed as it stands), judge the whole named scope. When there is a diff, compare against the admitted code baseline identified in the instructions below to tell problems this change introduced from inherited ones, and charge the diff only for its own.
 
 Conduct, for both roles:
-- Do not modify the working tree. The result of the review is findings with ready patches.
+- Do not modify the working tree. The result is evidenced findings with concrete remediation: a patch or a bounded architectural design change.
 - Existing targeted tests of the SOURCE code may be run when they confirm or refute a finding; never run checks mechanically for the sake of a full set, and never build, lint or test a PROPOSED patch.
 - Set `verified_by` on every finding: `read` (confirmed by reading the code), `test_run` (confirmed by a test you ran) or `needs_environment` (needs a real environment; not verified).
-- No "direction", "if there is time", "could be considered": every finding ships with a ready solution or is withdrawn. Soft wording means an under-researched finding.
+- No "if there is time" or vague "extract a helper": name a concrete remedy. A proven architectural defect must not be withdrawn merely because its fix needs a design decision or a multi-file migration; use `design_change` instead of inventing a ready patch.
 - Do not praise or scold in the abstract: every `why_better` is a concrete delta and every `cost` is named.
 - If nothing survived the contract, say so explicitly in `all_clear_rationale` and state the boundaries of the check that was done."""
 
@@ -13962,8 +13980,9 @@ Conduct, for both roles:
 ROLE_FINDING_OUTPUT_CONTRACT: str = """OUTPUT CONTRACT — mandatory for EVERY finding from either role, no exceptions:
 1. `problem` — one line: the role, the priority and the exact location (file:line). When there are several sites, list every one of them. Name the concrete scenario or the maintenance cost.
 2. `current_code` — the fragment as it stands, copied verbatim, never paraphrased.
-3. `proposed_code` — a concrete patch: signatures, names, function bodies, the imports it needs and the change at EVERY affected call site. For a move, name the source file and the destination file of each declaration. Not "extract a helper" but the helper itself. Not "simplify the condition" but the final expression. Not "reword the comment" but the new text in full. No ellipses standing in for required changes.
+3. Remediation — EITHER `proposed_code`, a concrete patch: signatures, names, function bodies, the imports it needs and the change at EVERY affected call site. For a move, name the source file and the destination file of each declaration. Not "extract a helper" but the helper itself. Not "simplify the condition" but the final expression. Not "reword the comment" but the new text in full. No ellipses standing in for required changes.
    Check the patch by READING it: types, names, signatures and imports agree, and every call site is covered. Do NOT apply the patch, do NOT create a copy of the project or a worktree for it, do NOT compile, lint or test it — proving that the proposed fix runs is not part of the review.
+   OR, for an architectural defect, `design_change`: an object with `invariant` (the violated behavioral/ownership contract), `current_owners` (nonempty list of concrete symbols that currently decide it), `proposed_owner` (the proposed authority and what it owns), `affected_sites` (nonempty list of callers/consumers and how each changes), `migration` (in-flight state, compatibility and retry/restart handling; explicitly say why none is needed when applicable), and `validation` (a concrete scenario and expected result). Omit `proposed_code` in this case. Keep exact source evidence, baseline attribution, reachability, impact, `why_better` and `cost`; this is not an exception to proving the defect. Name an explicit proposed contract, even when a product decision is needed. A file move alone does not change ownership. Do not suppress or downgrade an evidenced architectural finding solely because a complete patch would be large.
 4. `why_better` — the delta against the current code in checkable terms: "N edit sites -> 1"; "-1 responsibility for this function"; "predicate is testable without a filesystem"; "3 transit parameters and 1 state field -> 0"; "the name implies enable AND disable, the implementation only disables -> the name states the single action"; "a shared mechanism in one file was named after one application -> the name states the mechanism and stays accurate for other applications". "Cleaner", "more readable", "better" without the concrete delta are rejected. For naming findings do NOT invent numeric metrics: state the exact discrepancy between the name and the contract that the fix removes.
 5. `cost` — the risk or downside of the fix (performance, an extra type, a migration, diff noise), or "none".
 
@@ -14011,6 +14030,9 @@ Your one question: can I extend this without re-reading every line, and am I inh
 
 Check not only the execution but the accuracy of names, the module boundaries, the file structure and its consistency with the project, where decisions are sourced, how settings travel through the layers, and the cost of adding the next case.""",
         "instructions": """WHAT TO CHECK — every finding formatted per the output contract:
+
+Ownership and lifecycle pass. Before local cleanup, trace each changed cross-module decision from input to terminal outcome. In `checks_performed`, name the source of truth, the symbols that decide transitions, and the consumers, BEFORE and AFTER the change; say what is unknown when source context is missing. Distinguish an immutable run snapshot from live authoritative state. Follow one input change during execution and one retry/restart through admission, work, status publication and completion. Do consumers merely obey one durable decision, or independently reconstruct validity from flags, annotations or resource versions? Check which module owns cancellation, supersession and terminal failure. A plan or passing tests can encode the same split authority and do not justify it.
+Report a demonstrated split authority as an architecture finding with its concrete conflicting decision or maintenance scenario and evidence from each affected module. Shared readers and ordinary multiple controllers are not a defect by themselves: look for duplicated policy or inconsistent authorities. Moving unchanged code into another file does not resolve a lifecycle ownership problem; propose the decision owner and the resulting consumer contracts, using `design_change` when a local patch cannot express that safely. Choose severity from the impact; absence of a ready patch is not a reason to call it MINOR. Do not invent a runtime failure when the evidence only establishes coupling.
 
 A. Comments and any text are a contract, not the author's scratchpad.
    A1. Branch-scoped litter. As a separate FIRST step, grep the changed files for plan/tracker markers: `ST-\\d`, `HC-\\d`, `AC-\\d`, `VC\\d`, `РП\\d`, `(ST-00x)`, "step N of the plan", `.map/` paths, workflow task names, and tracker issue keys of the `<PROJECT>-<N>` form (`ARC-\\d`, `ARCH-`, ...). References to temporary planning/tracker artifacts do not belong in code — they rot after the merge and leave dangling links. Their place is the PR description or the plan itself. Proposed solution = a comment that explains WHY through substance, with no ID.
@@ -14086,6 +14108,15 @@ ROLE_FINDING_CONTRACT_KEYS: tuple[str, ...] = (
     "why_better",
     "cost",
 )
+
+REVIEW_DESIGN_CHANGE_SCHEMA: dict[str, object] = {
+    "invariant": "<string — violated behavioral or ownership contract>",
+    "current_owners": ["<string — current decision-owning file:symbol>"],
+    "proposed_owner": "<string — proposed authority and its responsibility>",
+    "affected_sites": ["<string — affected file:symbol and its changed consumer contract>"],
+    "migration": "<string — compatibility, in-flight state and retry/restart handling>",
+    "validation": "<string — scenario and expected outcome that proves the ownership change>",
+}
 
 REVIEW_FINDING_EVIDENCE_SCHEMA: dict[str, object] = {
     "bug_class": "<string — defect class>",
@@ -14174,6 +14205,8 @@ ROLE_FINDING_SCHEMA: dict[str, object] = {
             "problem": "<string — ONE line: what is wrong, plus the exact file:line>",
             "current_code": "<string — the code as it stands today, copied verbatim; never a paraphrase>",
             "proposed_code": "<string — concrete applicable code: signatures, names, body. Not 'extract a helper' but the helper itself; not 'simplify the condition' but the final expression>",
+            # Alternative to proposed_code, not an additional requirement.
+            "design_change": REVIEW_DESIGN_CHANGE_SCHEMA,
             "why_better": "<string — delta against the current code in MEASURABLE terms: 'N edit sites -> 1', '-1 responsibility', 'predicate testable without a filesystem', '-1 branch'. Absolutes such as 'cleaner' with no metric are rejected>",
             "cost": "<string — what the fix costs (perf, extra type, migration, diff noise), or 'none' when it costs nothing>",
             "evidence": "<string — grep output, call path, or the list of sites this collapses>",
@@ -14196,11 +14229,32 @@ def role_finding_contract_gaps(finding: object) -> list[str]:
     """
     if not isinstance(finding, Mapping):
         return ["finding is not a JSON object"]
-    return [
+    gaps = [
         key
         for key in ROLE_FINDING_CONTRACT_KEYS
-        if not str(finding.get(key) or "").strip()
+        if (
+            (not isinstance(finding.get(key), str) or not finding[key].strip())
+            if key == "proposed_code"
+            else not str(finding.get(key) or "").strip()
+        )
     ]
+    if "proposed_code" not in gaps or "design_change" not in finding:
+        return gaps
+    gaps.remove("proposed_code")
+    design = finding["design_change"]
+    if not isinstance(design, Mapping):
+        return [*gaps, "design_change"]
+    for key, example in REVIEW_DESIGN_CHANGE_SCHEMA.items():
+        value = design.get(key)
+        if isinstance(example, list):
+            valid = isinstance(value, list) and bool(value) and all(
+                isinstance(item, str) and bool(item.strip()) for item in value
+            )
+        else:
+            valid = isinstance(value, str) and bool(value.strip())
+        if not valid:
+            gaps.append("design_change." + key)
+    return gaps
 
 
 # ---------------------------------------------------------------------------
@@ -16818,9 +16872,10 @@ def _render_role_reviewer_prompt(
         "Return exactly one JSON object matching the schema. "
         "No markdown, no code fences, no prose before/after. "
         f"Set reviewer to '{role_id}'. "
-        f"EVERY finding must fill all five contract parts ({contract_parts}); "
-        "a finding missing any of them is dropped before it reaches the verdict, "
-        "so research it further or withdraw it rather than softening it. "
+        f"EVERY finding must fill the five-part contract ({contract_parts}); "
+        "a complete design_change object can replace proposed_code for an architectural defect. "
+        "Do not withdraw a proven defect merely because a full patch needs a design decision. "
+        "Incomplete findings remain explicitly unverified; research missing evidence instead of inventing it. "
         "Prefer no finding over a weak finding. "
         "Set all_clear=true when nothing survived the contract, with a rationale "
         "explaining what you checked. "
@@ -17192,6 +17247,7 @@ def _normalize_role_findings(
             continue
         if gaps:
             incomplete.append({
+                **finding,
                 "reviewer": reviewer_id,
                 "id": finding.get("id"),
                 "problem": finding.get("problem"),
@@ -17205,7 +17261,7 @@ def _normalize_role_findings(
             continue
         normalized = dict(finding)
         normalized.setdefault("failure_mode", finding.get("problem", ""))
-        normalized.setdefault("recommendation", finding.get("proposed_code", ""))
+        normalized.setdefault("recommendation", finding.get("proposed_code") or json.dumps(finding.get("design_change", {})))
         complete.append(normalized)
 
     return complete, incomplete
@@ -17273,7 +17329,11 @@ def aggregate_adversarial_findings(
             if reviewer_id in ROLE_REVIEWER_SPECS:
                 findings, dropped = _normalize_role_findings(reviewer_id, findings)
                 contract_incomplete.extend(dropped)
-            findings_by_reviewer[reviewer_id] = findings
+            # Bind each finding to the envelope that actually supplied it. The
+            # merged primary must retain that owner for capture validation.
+            findings_by_reviewer[reviewer_id] = [
+                dict(finding, reviewer=reviewer_id) for finding in findings if isinstance(finding, dict)
+            ]
         except (json.JSONDecodeError, ValueError) as e:
             reviewer_data[reviewer_id] = {
                 "status": "parse_error",
@@ -17305,8 +17365,9 @@ def aggregate_adversarial_findings(
 
         merged: dict[str, object] = {
             **{field: primary[field] for field in ("bug_class", "cause", "failure_scenario", "evidence_refs",
-                "reachability", "baseline_attribution", "sibling_search", "author_reactions") if field in primary},
+                "reachability", "baseline_attribution", "sibling_search", "author_reactions", "design_change") if field in primary},
             "severity": merged_severity,
+            "reviewer": primary.get("reviewer"),
             "category": primary.get("category", "unknown"),
             "file_path": primary.get("file_path"),
             "line_range": primary.get("line_range"),
@@ -17326,6 +17387,16 @@ def aggregate_adversarial_findings(
             ),
             "raw_findings": cluster_findings,
         }
+        # Keep remedies authored by secondary reporters separate from the primary
+        # source evidence; a hunter-first cluster must not erase design work.
+        remedies = [
+            {"reviewer": finding["reviewer"], "design_change": finding["design_change"]}
+            for finding in cluster_findings
+            if isinstance(finding, dict) and "design_change" in finding
+            and not role_finding_contract_gaps(finding)
+        ]
+        if remedies:
+            merged["remedies"] = remedies
         merged_findings.append(merged)
 
     merged_findings.sort(key=lambda f: _severity_rank(str(f.get("severity", "MINOR"))))

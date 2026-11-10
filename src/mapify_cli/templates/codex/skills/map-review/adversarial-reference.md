@@ -17,9 +17,13 @@ Five reviewers run in parallel, each with only its permitted inputs:
 With `--quick`: skip Edge Case Hunter (Blind + Acceptance + both roles).
 
 The two role reviewers answer to the five-part output contract (`problem`,
-`current_code`, `proposed_code`, `why_better`, `cost`). A finding that cannot
-fill all five is dropped by `aggregate_adversarial_findings` into
-`contract_incomplete` — reported, never counted.
+`current_code`, remediation (`proposed_code` OR complete `design_change`),
+`why_better`, `cost`). Architectural remediation names the invariant, current
+and proposed owners, affected sites, migration and validation scenario; no ready
+patch is required. Do not downgrade ownership defects to file moves. A finding that cannot
+fill all five appears in `contract_incomplete` and stays in `ledger_findings`.
+It is not counted as a proved defect; IMPORTANT/CRITICAL incompleteness still
+requires escalation and prevents PROCEED.
 
 ## Steps B.adversarial.0–3: Collect through the Codex runner
 

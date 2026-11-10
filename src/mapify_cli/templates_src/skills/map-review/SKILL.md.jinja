@@ -113,11 +113,11 @@ Inspect the supplied base versions and attribution rather than running shell. On
 - `reviewer`, `all_clear` (+ `all_clear_rationale` when true), `checks_performed`.
 - `findings[]`: severity, category, file_path, line_range, symbol, evidence, and
   the **five-part output contract** — `problem` (one line + file:line),
-  `current_code` (verbatim), `proposed_code` (applicable as a patch),
+  `current_code` (verbatim), remediation (`proposed_code` or `design_change`),
   `why_better` (measurable delta, no bare "cleaner"), `cost` (downside, or
-  "none"). A finding missing any part is dropped as `contract_incomplete`:
-  tombstoned + escalated by the ledger (normal fan-out), or removed by the
-  aggregator (`--adversarial`). It never gates the change, never disappears.
+  "none"). Complete `design_change` needs no ready patch; see [the architectural contract](review-reference.md#the-output-contract).
+  Incomplete findings are recorded as `contract_incomplete` and named in `not_verified` in both modes;
+  above MINOR they also require escalation. They are not proved defects and must not disappear.
 
 Evaluator:
 - evidence: array of {file_path, line_range, quote, relevance}; populate this before scores.
@@ -553,7 +553,7 @@ Apply the following compatibility checks without discarding unresolved claims; f
    instance.
 4b. **Role contract check.** A `user_experience` / `maintainer` finding is
    published only with all five contract parts filled (`problem`,
-   `current_code`, `proposed_code`, `why_better`, `cost`). An incomplete
+   `current_code`, `proposed_code` OR complete `design_change`, `why_better`, `cost`). No ready patch is required for a complete design finding. An incomplete
    one is not softened into an advisory: the ledger tombstones it as
    `contract_incomplete` and names it in `not_verified`.
 5. **Reachability check** (defensive branches): `if !ContainsFinalizer
@@ -652,8 +652,8 @@ Focus only on plausible measurable impact, hot paths, accidental N+1 behavior, l
 
 Present surviving `user_experience` and `maintainer` findings as two groups using the same A/B/C option protocol.
 Print once above both: "Proposed patches were checked by reading; they were not built, linted or tested."
-Show each finding as delivered — `problem`, `current_code`, `proposed_code`, `why_better`, `cost`, `verified_by`. Never paraphrase `proposed_code`: it is an applicable patch.
-Print each `all_clear` rationale as the role's result. List dropped `contract_incomplete` findings under the group, visible without gating the change.
+Show each finding as delivered — `problem`, `current_code`, remediation (`proposed_code` or the complete `design_change`), `why_better`, `cost`, `verified_by`. Never paraphrase `proposed_code`: it is an applicable patch. Keep all ownership, migration and validation details of `design_change` visible; do not turn it into optional cleanup.
+Print each `all_clear` rationale as the role's result. List `contract_incomplete` findings under the group; IMPORTANT/CRITICAL incompleteness requires escalation, not a clean verdict.
 
 ## Final Verdict
 
