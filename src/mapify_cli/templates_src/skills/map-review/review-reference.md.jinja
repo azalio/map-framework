@@ -260,7 +260,7 @@ Every role finding carries five parts, or it is not reported:
 |---|---|
 | `problem` | one line: role, priority, exact `file:line` (every site when there are several), the concrete scenario or maintenance cost |
 | `current_code` | the lines as they are, copied verbatim |
-| `proposed_code` | applicable as a patch — signatures, bodies, imports, every call site, source→destination for moves; the helper itself, not "extract a helper" |
+| Remediation | `proposed_code`: applicable patch with signatures, bodies, imports and every call site; OR `design_change`: the violated `invariant`, `current_owners` (list), `proposed_owner`, `affected_sites` (list of symbols and changed contracts), `migration`, and `validation` scenario with expected outcome |
 | `why_better` | checkable delta ("3 edit sites -> 1", "-1 responsibility", "3 transit params -> 0"); for names, the exact discrepancy removed — no invented metrics; bare "cleaner" is rejected |
 | `cost` | the downside of the fix, or `none` |
 
@@ -269,17 +269,28 @@ them, never builds a worktree for them, never compiles, lints or tests them —
 and the presentation says so once, above both groups. Each finding also names
 its `verified_by` tier: `read`, `test_run`, or `needs_environment`.
 
+For lifecycle changes, the maintainer traces input authority and decision ownership
+before and after the change, including an input change mid-run and a retry/restart.
+Multiple controllers reading shared state is not itself a defect. Show where they
+independently decide the same policy or mix conflicting authorities, and the concrete
+behavioral consequence or maintenance cost. Moving unchanged code into another file
+does not resolve that ownership problem. A proven architectural finding can use
+`design_change` without a ready patch; it still needs source evidence, baseline
+attribution, justified severity, a specific proposed contract and its migration cost.
+
 A finding missing any part is NOT softened into an advisory, but where it lands
 depends on the path that ran:
 
 - Normal fan-out: the role envelope reaches the ledger, which tombstones the
   finding with `transition_reason: contract_incomplete` and names it in
   `not_verified`.
-- `--adversarial`: `aggregate_adversarial_findings` removes it before the
-  aggregated array is written, so it appears only under `contract_incomplete`
-  in the report — present it from there, because the ledger never sees it.
+- `--adversarial`: `aggregate_adversarial_findings` excludes it from the printed
+  findings but preserves it in `ledger_findings`; the ledger applies the same
+  tombstone and `not_verified` policy. Present it under `contract_incomplete`.
 
-Either way it cannot gate the change, and it cannot disappear either.
+Neither path counts an incomplete finding as a proved defect. IMPORTANT or CRITICAL
+incompleteness still requires escalation and prevents PROCEED; never hide it or
+present the review as clean.
 
 Standalone prompt build (the normal fan-out builds these automatically):
 
@@ -680,10 +691,10 @@ the row. When a CRITICAL is neutralised this way the ledger sets
 An incomplete role finding is the one row tombstoned at **any** severity — a
 reviewer that stopped halfway must not gate the change on its own unfinished
 work. That is why the escalation is attached: the row leaves the table, but a
-CRITICAL or IMPORTANT claim dropped for a missing `cost` or `proposed_code`
-still costs the run its PROCEED, and a human decides. This is the NORMAL
-fan-out path. Under `--adversarial` the finding never reaches the ledger at
-all: `aggregate_adversarial_findings` drops it first and lists it under
+CRITICAL or IMPORTANT claim dropped for a missing `cost` or complete remediation
+still costs the run its PROCEED, and a human decides. Both modes follow this
+policy: under `--adversarial`, `aggregate_adversarial_findings` excludes the row
+from printed findings but preserves it in `ledger_findings` and lists it under
 `contract_incomplete` in the report.
 
 ### Contesting a finding
