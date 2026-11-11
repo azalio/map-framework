@@ -290,3 +290,33 @@ def test_parent_can_refute_source_free_candidate_with_checked_evidence(evidence_
     _capture(runner, [{**_candidate(), "evidence_refs": []}])
     runner.write_review_verdict_ledger(current_run=True, candidate_audit_file=_audit_file(evidence_review))
     assert json.loads(evidence_review.read_text())["candidate_audit"]["status"] == "complete"
+
+
+@pytest.mark.parametrize("replacement", ["refuted", "omitted"])
+def test_retained_restoration_is_rechecked_after_recapture(evidence_review, replacement):
+    runner = cast(Any, map_step_runner)
+    candidates = [_candidate(), {**_candidate(), "candidate_id": "C-2", "cause": "Another hypothesis still pending"}]
+    _capture(runner, candidates, [_issue()])
+    ledger = json.loads(evidence_review.read_text())
+    identifier = ledger["discarded_candidates"][0]["id"]
+    finding_id = ledger["findings_registry"][0]["id"]
+    runner.write_review_verdict_ledger(current_run=True, candidate_audit_file=_audit_file(
+        evidence_review, verdict="restored", finding_id=finding_id))
+    runner.write_review_verdict_ledger(current_run=True)  # unchanged proof remains valid
+    ledger = json.loads(evidence_review.read_text())
+    entry = next(row for row in ledger["discarded_candidates"] if row["id"] == identifier)
+    assert entry["audit"]["verdict"] == "restored"
+    binding = entry["binding"]
+    revised = _issue()
+    revised["reachability"]["status"] = "unreachable"
+    payload = with_paraphrase({"issues": [revised] if replacement == "refuted" else [],
+        "discarded_candidates": [], "receipt": {"covered_files": ["divide.py"], "skipped_files": [],
+                                                 "denied_access": [], "check_evidence": []}})
+    assert runner.capture_review_output("monitor", json.dumps(payload), "audit")["status"] == "success"
+    runner.write_review_verdict_ledger(current_run=True)
+    ledger = json.loads(evidence_review.read_text())
+    assert next(row for row in ledger["findings_registry"] if row["id"] == finding_id)["validation"]["verdict"] != "confirmed"
+    entry = next(row for row in ledger["discarded_candidates"] if row["id"] == identifier)
+    assert entry["binding"] == binding
+    assert entry["audit"]["verdict"] == "pending"
+    assert identifier in ledger["candidate_audit"]["pending"]

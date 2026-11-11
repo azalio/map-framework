@@ -12071,6 +12071,12 @@ def _audit_discarded_candidates(
             audits = payload["audits"]
         except (OSError, ValueError) as exc:
             errors.append(f"Cannot read discarded-candidate audit: {exc}")
+    supplied = {audit["candidate_id"] for audit in audits
+                if isinstance(audit, dict) and isinstance(audit.get("candidate_id"), str)}
+    # An unchanged candidate does not imply its confirming finding is still valid.
+    # Recheck retained decisions too; an explicit replacement audit takes precedence.
+    audits = [row["audit"] for row in registry.values() if row["id"] not in supplied
+              and row.get("audit", {}).get("verdict") in {"refuted", "restored"}] + audits
     seen_audits = set()
     for audit in audits:
         identifier = audit.get("candidate_id") if isinstance(audit, dict) else None

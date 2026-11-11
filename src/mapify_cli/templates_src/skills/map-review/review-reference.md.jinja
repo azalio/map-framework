@@ -749,7 +749,9 @@ bindings in the parent audit. Recapture alone does not certify restoration.
 
 Pending or invalid audits prevent a clean verdict and keep the round unsealed;
 corrected evidence can finish the same round. Omission never removes candidates.
-Source/policy changes invalidate old audits. Every unresolved candidate's ID,
+Source/policy changes invalidate old audits. Retained restorations are also checked
+against the current findings on every ledger write; changed or missing confirmation
+returns the candidate to pending even when its own binding is unchanged. Every unresolved candidate's ID,
 possible consequence and missing evidence must appear in the final response.
 The runner checks provenance bindings and citations; the parent owns the semantic
 judgment. Do not describe this as an automatic proof or an independent model vote.
