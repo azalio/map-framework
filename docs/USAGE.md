@@ -354,6 +354,30 @@ Two additional structural checks run unconditionally: an **entry-point existence
 
 Implementation note: `/map-learn` is now maintained skill-first. The canonical slash surface lives in `.claude/skills/map-learn/SKILL.md`; MAP no longer ships a duplicate `.claude/commands/map-learn.md`, so there is only one place to update the learning workflow. The slash surface now advertises an optional `[workflow-summary]` argument, but zero-argument mode still auto-loads `.map/<branch>/learning-handoff.md` when present. <!-- drift-ignore -->
 
+## Discarded hypotheses and recovery checks
+
+`/map-review` retains substantive hypotheses rejected by reviewers in
+`review-verdict-ledger.json` under `discarded_candidates`. Step A.3 independently
+checks each refutation, including all-clear reviews. The parent reads the assigned
+candidate ID and snapshot/content binding, writes an audit file, and calls
+`write_review_verdict_ledger --current-run --candidate-audit-file <path>`.
+The generated `map-review/review-reference.md` documents the full JSON contract.
+
+Unchecked, stale or unresolved candidates prevent a clean verdict and leave the
+round open for corrected evidence. A restored candidate must link to a normal,
+validated finding; ordinary evidence and adversarial quorum rules still apply.
+Omitting a candidate in the next report does not delete it. Final responses include
+unresolved IDs, potential consequences and missing evidence. The parent judges
+semantics; the runner validates bindings and source citations.
+
+Changes to retries, ownership, ACKs or cursor/checkpoint state also use the bundled
+`map-review/recovery-progress.md`. Trace actual subsequent requests and distinguish
+preserved data from a healthy worker's ability to make progress after failure.
+
+The [paired offline evaluator](REVIEW_QUALITY.md) measures precision/recall before
+and after verification, including lost true defects. It exports neutral cases and
+scores independent adjudication; it never starts reviewers automatically.
+
 ## Offline historical review corpus
 
 Stage 3 of #523 is an offline corpus, not a second review orchestrator. From a

@@ -678,6 +678,63 @@ validations; aggregate agreement alone cannot confirm. Duplicate captured payloa
 do not establish independence; genuine separate reasoning may cite the same code.
 Disagreement remains insufficient and prevents approval. Normal mode has no quorum.
 
+### Discarded hypothesis audit
+
+Every substantive rejected hypothesis belongs in the reviewer's `discarded_candidates`
+array (use `[]` when none). Each object has `candidate_id` (stable within the reviewer),
+`bug_class`, `cause`, `failure_scenario`, `dismissal_reason`, `dismissal_invariant`,
+and `evidence_refs`. Keep concise conclusions and source evidence, not hidden reasoning
+or speculative brainstorming. A missing contract is uncertainty, not a refutation.
+This applies to normal, role and adversarial reviewers and survives shard merging.
+
+At Step A.3, write the ledger with `write_review_verdict_ledger --current-run` to
+collect candidates. Inspect `discarded_candidates` in `review-verdict-ledger.json`:
+the runner assigns an `RVC-*` ID and a snapshot/policy/content `binding`. The parent
+independently checks the claimed refutation against admitted source, callers and base.
+Do this even if no ordinary findings survived. A guard must prove the actual invariant;
+for example, sanitizing names does not bound how many distinct names can exist.
+
+Write an audit JSON file, then repeat the same ledger command with
+`--candidate-audit-file <path>`. This is the existing Step A.3, not another agent tier:
+
+```json
+{
+  "schema_version": 1,
+  "audits": [{
+    "candidate_id": "RVC-<ID from ledger>",
+    "binding": "<binding from ledger>",
+    "verdict": "refuted",
+    "reason": "Concrete source-backed reason the scenario cannot occur",
+    "invariant": "The precise property established by that evidence",
+    "evidence_refs": [
+      {"file_path": "example.py", "revision": "current", "quote": "exact current source"},
+      {"file_path": "example.py", "revision": "baseline", "quote": "exact base source"}
+    ]
+  }]
+}
+```
+
+Allowed outcomes are `refuted`, `restored`, and `unresolved`. Refutation needs a
+nonempty invariant and checked current/base citations. Use `unresolved` with the
+specific missing evidence or blocker when the available evidence cannot decide;
+perform available authorized checks before leaving a question open.
+If the dismissal is wrong, reassess the scenario without assuming it is a defect.
+For a proven defect, obtain a normal captured finding, then use `restored` with
+its `finding_id` and reason. Its bug class, cause and scenario must match the
+candidate, and it must pass normal evidence validation (including adversarial
+quorum). A different defect gets its own finding.
+
+Pending or invalid audits prevent a clean verdict and keep the round unsealed;
+corrected evidence can finish the same round. Omission never removes candidates.
+Source/policy changes invalidate old audits. Every unresolved candidate's ID,
+possible consequence and missing evidence must appear in the final response.
+The runner checks provenance bindings and citations; the parent owns the semantic
+judgment. Do not describe this as an automatic proof or an independent model vote.
+
+For targeted recovery checks, read [recovery-progress.md](recovery-progress.md).
+The offline paired quality corpus and before/after metrics are documented in
+`docs/REVIEW_QUALITY.md` in the framework repository; ordinary reviews do not run it.
+
 ### What the table counts
 
 `computed_verdict` (`PROCEED`/`REVISE`/`BLOCK`) is derived from every finding

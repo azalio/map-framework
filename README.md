@@ -68,6 +68,8 @@ adds offline preparation/reporting and a separately acknowledged, at-most-six-ca
 Claude CLI runner. Its v2 inputs are complete allowlisted `-U30` diffs; prompts
 estimated above 60,000 tokens are excluded, never truncated. Results require
 manual adjudication; historical v1 runs cannot be resumed.
+A [paired offline evaluator](docs/REVIEW_QUALITY.md) measures precision/recall before
+and after verification, including real defects lost when dismissing findings.
 
 Claude Code:
 

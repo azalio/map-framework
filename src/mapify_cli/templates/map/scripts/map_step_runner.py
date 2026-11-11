@@ -11239,6 +11239,21 @@ def _review_merge_envelopes(items: list[tuple[str, dict[str, Any]]], owners: dic
         lists = [value for value in present(key) if isinstance(value, list)]
         if lists:
             base[key] = union([item for value in lists for item in value])
+    if present("discarded_candidates"):
+        candidates = []
+        for shard_id, output in items:
+            discarded = output.get("discarded_candidates", [])
+            if not isinstance(discarded, list):
+                candidates.append(None)  # Preserve malformed input for the fail-closed audit gate.
+                continue
+            for candidate in discarded:
+                if (isinstance(candidate, dict) and isinstance(candidate.get("candidate_id"), str)
+                        and candidate["candidate_id"].strip()):
+                    candidate = {**candidate, "source_shard": shard_id,
+                                 "source_candidate_id": candidate["candidate_id"],
+                                 "candidate_id": f"{shard_id}:{candidate['candidate_id']}"}
+                candidates.append(candidate)
+        base["discarded_candidates"] = candidates
     for key in ("all_clear", "valid"):
         if present(key):
             base[key] = all(value is True for value in present(key))
@@ -11862,6 +11877,10 @@ def _complete_review_round(
     if not _review_binding_current(row):
         raise ValueError("Review target or policy changed during this round; refusing completion")
     completeness = _review_completeness(row, directory)
+    if ledger.get("candidate_audit", {}).get("status") == "incomplete":
+        completeness["reasons"].append("Discarded-candidate audit is incomplete")
+        if completeness["status"] == "COMPLETE":
+            completeness["status"] = "INCOMPLETE"
     if "completed_at" in row:
         if row["submission_digest"] != digest:
             raise ValueError("Completed round payload changed; start the next review/fix iteration")
@@ -12009,6 +12028,105 @@ def _review_paraphrase_markdown(index: dict[str, dict[str, Any]]) -> list[str]:
     return lines
 
 
+def _review_candidate_digest(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _audit_discarded_candidates(
+    ledger: dict[str, Any], prior: dict[str, Any], envelopes: dict[str, dict[str, Any]],
+    admitted: dict[str, Any] | None, audit_file: str = "",
+) -> None:
+    """Retain rejected hypotheses; the parent checks semantics, the runner checks binding/citations."""
+    registry = {row["id"]: dict(row) for row in prior.get("discarded_candidates", [])}
+    errors = []
+    for reviewer, envelope in envelopes.items():
+        candidates = envelope.get("discarded_candidates", [])
+        if not isinstance(candidates, list):
+            errors.append(f"{reviewer}: discarded_candidates must be an array")
+            continue
+        seen = set()
+        for candidate in candidates:
+            fields = ("candidate_id", "bug_class", "cause", "failure_scenario", "dismissal_reason", "dismissal_invariant")
+            if not isinstance(candidate, dict) or not all(
+                isinstance(candidate.get(key), str) and candidate[key].strip() for key in fields
+            ) or not isinstance(candidate.get("evidence_refs"), list):
+                errors.append(f"{reviewer}: discarded candidate lacks identity, scenario, refutation or references")
+                continue
+            local_id = candidate["candidate_id"]
+            if local_id in seen:
+                errors.append(f"{reviewer}: duplicate discarded candidate ID {local_id}")
+            seen.add(local_id)
+            # Content in the identity prevents a recycled local ID from erasing an older hypothesis.
+            identity = [reviewer, *(candidate[key] for key in fields[:4])]
+            identifier = "RVC-" + _review_candidate_digest(identity)[:20]
+            previous = registry.get(identifier, {})
+            registry[identifier] = {**previous, "id": identifier, "source_reviewer": reviewer,
+                                    "candidate": candidate}
+    binding_context = {key: admitted[key] for key in ("target", "policy_hash")} if admitted else None
+    for row in registry.values():
+        binding = _review_candidate_digest([row["candidate"], binding_context])
+        if row.get("binding") != binding:
+            row["audit"] = {"verdict": "pending"}
+        row["binding"] = binding
+    audits = []
+    if audit_file:
+        try:
+            payload = json.loads(Path(audit_file).read_text(encoding="utf-8"))
+            if (not isinstance(payload, dict) or payload.get("schema_version") != 1
+                    or not isinstance(payload.get("audits"), list)):
+                raise ValueError("expected schema_version=1 and audits array")
+            audits = payload["audits"]
+        except (OSError, ValueError) as exc:
+            errors.append(f"Cannot read discarded-candidate audit: {exc}")
+    seen_audits = set()
+    for audit in audits:
+        identifier = audit.get("candidate_id") if isinstance(audit, dict) else None
+        if not isinstance(identifier, str) or identifier not in registry:
+            errors.append("Candidate audit names an unknown candidate")
+            continue
+        row = registry[identifier]
+        if identifier in seen_audits:
+            row["audit"] = {"verdict": "pending"}
+            errors.append(f"{identifier}: duplicate audit")
+            continue
+        seen_audits.add(identifier)
+        valid = (admitted is not None and audit.get("binding") == row["binding"]
+                 and audit.get("verdict") in {"refuted", "restored", "unresolved"}
+                 and isinstance(audit.get("reason"), str) and bool(audit["reason"].strip()))
+        if valid and admitted is not None and audit["verdict"] == "refuted":
+            valid = (isinstance(audit.get("invariant"), str) and bool(audit["invariant"].strip())
+                     and _review_refs_checked(audit.get("evidence_refs"), admitted["target"], {"current", "baseline"}))
+        if valid and audit["verdict"] == "restored":
+            # Restoration must reach the ordinary evidence gate, including adversarial quorum.
+            valid = any(finding.get("id") == audit.get("finding_id")
+                        and finding.get("validation", {}).get("verdict") == "confirmed"
+                        and all(finding.get(key) == row["candidate"][key]
+                                for key in ("bug_class", "cause", "failure_scenario"))
+                        for finding in ledger["findings_registry"])
+        if valid:
+            row["audit"] = {**audit, "checked_by": "parent_step_a3",
+                            "evidence_kind": "checked_citations_parent_reasoning"}
+        else:
+            row["audit"] = {"verdict": "pending"}
+            errors.append(f"{identifier}: stale, incomplete or unsupported candidate audit")
+    pending = [row["id"] for row in registry.values() if row.get("audit", {}).get("verdict")
+               not in {"refuted", "restored"}]
+    ledger["discarded_candidates"] = list(registry.values())
+    ledger["candidate_audit"] = {"pending": pending, "errors": errors,
+                                 "status": "incomplete" if pending or errors else "complete"}
+    if pending or errors:
+        reason = "Discarded hypotheses require Step A.3 audit: " + ", ".join(pending + errors)
+        ledger["not_verified"].append(reason)
+        ledger["escalation_reasons"].append(reason)
+        ledger["escalation_required"] = True
+        if ledger["computed_verdict"] == "PROCEED":
+            ledger["computed_verdict"] = "REVISE"
+            ledger["verdict_basis"] = reason
+    previous = ledger["journal"].get("previous_verdict")
+    ledger["journal"].update(current_verdict=ledger["computed_verdict"], basis=ledger["verdict_basis"],
+                             matches_previous=previous == ledger["computed_verdict"] if previous else None)
+
+
 @_review_transaction
 def write_review_verdict_ledger(
     monitor_json: str = "",
@@ -12023,6 +12141,7 @@ def write_review_verdict_ledger(
     adversarial_file: str = "",
     role_files: Mapping[str, str] | None = None,
     current_run: bool = False,
+    candidate_audit_file: str = "",
     round_id: str = "",
     review_mode: str = "normal",
     previous_verdict: str = "",
@@ -12048,6 +12167,7 @@ def write_review_verdict_ledger(
         monitor_file:       Path to the Monitor envelope on disk. Takes precedence over
                             monitor_json — preferred for real reviewer output, which is
                             too large and too quote-heavy to survive a shell variable.
+        candidate_audit_file: Parent Step A.3 audit JSON, bound to candidate and snapshot.
         predictor_file:     Path to the Predictor envelope on disk.
         evaluator_file:     Path to the Evaluator envelope on disk.
         adversarial_file:   Path to the adversarial findings array on disk.
@@ -12125,12 +12245,14 @@ def write_review_verdict_ledger(
         return raw
 
     paraphrase_sources: dict[str, dict[str, Any]] = {}
+    candidate_sources: dict[str, dict[str, Any]] = {}
 
     def _note_paraphrase(label: str, envelope: dict[str, Any], ledger_findings: list[Any] | None = None) -> None:
         """Keep what each reviewer said it read and which findings that same envelope produced."""
         entry: dict[str, Any] = {key: envelope[key] for key in ("paraphrase", "paraphrases")
                                  if isinstance(envelope.get(key), dict)}
         key = label.replace(" ", ":")
+        candidate_sources[key] = envelope
         entry["finding_keys"] = _review_envelope_finding_keys(key.removeprefix("reverse:"), envelope, ledger_findings)
         paraphrase_sources[key] = entry
 
@@ -12352,6 +12474,7 @@ def write_review_verdict_ledger(
     prior = _read_review_ledger(branch_dir)
     if current_run:
         _retain_review_findings(ledger, prior, resolutions if not input_errors else [], _load_review_objections(branch_dir), admitted)
+        _audit_discarded_candidates(ledger, prior, candidate_sources, admitted, candidate_audit_file)
         completed_retry = any(row["round_id"] == run.get("round_id") and "completed_at" in row
                               for row in prior["convergence"]["rounds"])
         if admitted is None:
@@ -12370,6 +12493,9 @@ def write_review_verdict_ledger(
             ledger["human_consent"] = prior.get("human_consent", {"status": "not_recorded"})
         else:
             ledger = _complete_review_round(ledger, prior, run, branch_dir)
+
+    if not current_run:
+        _audit_discarded_candidates(ledger, prior, candidate_sources, None, candidate_audit_file)
 
     ledger["reviewer_paraphrases"] = _review_paraphrase_index(paraphrase_sources, ledger.get("findings_registry") or [])
 
@@ -12399,6 +12525,13 @@ def write_review_verdict_ledger(
         md_lines += [f"> - {reason}" for reason in escalation_reasons_list]
         md_lines.append("")
     md_lines += _review_paraphrase_markdown(ledger["reviewer_paraphrases"])
+    if ledger.get("discarded_candidates"):
+        md_lines += ["## Discarded hypotheses", ""]
+        for candidate in ledger["discarded_candidates"]:
+            md_lines.append(f"- [{candidate['id']}] {candidate['source_reviewer']}: "
+                            f"{candidate['candidate']['failure_scenario']} — "
+                            f"{candidate.get('audit', {}).get('verdict', 'pending')}")
+        md_lines.append("")
     md_lines += [
         "## Findings Registry",
         "",
@@ -14684,6 +14817,18 @@ uncertainty and scope_expansion. Unresolved occurrences, uncertainty or required
 scope expansion prevent closure. Author reactions ('fixed', 'wrong', 'intentional',
 'unimportant') never close findings or replace validation. Adversarial confirmation
 requires independent admitted captures with checked evidence, not copied agreement.
+Retain substantive hypotheses you rejected in discarded_candidates (empty array if none).
+Each entry has a stable candidate_id, bug_class, cause, failure_scenario, dismissal_reason,
+dismissal_invariant and evidence_refs. Record concise checkable conclusions, not private
+reasoning or an exhaustive brainstorm. A missing external contract is unresolved, not a
+refutation. These entries are audited by the parent at Step A.3 even after all_clear.
+For changes to retries, leases, ACKs, transactions, cursors or checkpoints, distinguish
+preserved data from eventual recovery. Trace failed attempts, healthy competition,
+expiry/takeover, and late results after reacquisition. Inspect the next actual input:
+a mock sequence 'failure then success' cannot establish recovery if success requires
+an input/state transition the implementation never performs. Compare the base contract;
+claim only a supported repeatable schedule, not an arbitrary unfair scheduler or an
+unmeasured production incident. See map-review/recovery-progress.md for applicable cases.
 </evidence_validation>"""
 
 
@@ -33102,7 +33247,7 @@ if __name__ == "__main__":
                 "monitor-json", "predictor-json", "evaluator-json", "adversarial-json",
                 "monitor-file", "predictor-file", "evaluator-file", "adversarial-file",
                 "review-mode", "previous-verdict", "branch", "current-run", "round-id",
-                "destination", "executor-class",
+                "destination", "executor-class", "candidate-audit-file",
             } | {f"{r.replace('_', '-')}-json" for r in ROLE_REVIEWER_IDS}
               | {f"{r.replace('_', '-')}-file" for r in ROLE_REVIEWER_IDS}),
             "Usage: write_review_verdict_ledger"
@@ -33111,7 +33256,7 @@ if __name__ == "__main__":
             " [--<role>-json '<JSON>'] (role from ROLE_REVIEWER_IDS, underscores->dashes)"
             " [--monitor-file <path>] [--predictor-file <path>]"
             " [--evaluator-file <path>] [--adversarial-file <path>]"
-            " [--<role>-file <path>]"
+            " [--<role>-file <path>] [--candidate-audit-file <path>]"
             " [--review-mode normal|adversarial|cross_ai|compare_orderings] [--current-run]"
             " [--previous-verdict PROCEED|REVISE|BLOCK]"
             " [--destination <str>] [--executor-class <str>]"
@@ -33125,6 +33270,7 @@ if __name__ == "__main__":
             role_json={
                 r: _cli_flag(f"{r.replace('_', '-')}-json", "") for r in ROLE_REVIEWER_IDS
             },
+            candidate_audit_file=_cli_flag("candidate-audit-file", ""),
             monitor_file=_cli_flag("monitor-file", ""),
             predictor_file=_cli_flag("predictor-file", ""),
             evaluator_file=_cli_flag("evaluator-file", ""),

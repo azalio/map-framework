@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "r001",
+      "pair_id": "lease",
+      "input": {
+        "base": "def renew(deadline, now, successful):\n    return now + 10 if successful else deadline\n",
+        "head": "def renew(deadline, now, successful):\n    return now + 20\n",
+        "contract": "A failed owner must eventually lose its lease. A healthy competitor attempts acquisition every tick when now >= deadline. Successful work may extend the lease."
+      },
+      "targets": [
+        {
+          "id": "primary",
+          "truth": "defect",
+          "priority": "P1",
+          "rationale": "An unsuccessful owner called each tick must not indefinitely exclude the healthy competitor."
+        }
+      ]
+    },
+    {
+      "id": "r002",
+      "pair_id": "lease",
+      "input": {
+        "base": "def renew(deadline, now, successful):\n    return now + 10 if successful else deadline\n",
+        "head": "def renew(deadline, now, successful):\n    return now + 20 if successful else deadline\n",
+        "contract": "A failed owner must eventually lose its lease. A healthy competitor attempts acquisition every tick when now >= deadline. Successful work may extend the lease."
+      },
+      "targets": [
+        {
+          "id": "primary",
+          "truth": "safe",
+          "priority": "P1",
+          "rationale": "An unsuccessful owner called each tick must not indefinitely exclude the healthy competitor."
+        }
+      ]
+    },
+    {
+      "id": "r003",
+      "pair_id": "cursor",
+      "input": {
+        "base": "def next_cursor(cursor, accepted):\n    return cursor + 1 if accepted else 0\n",
+        "head": "def next_cursor(cursor, accepted):\n    return cursor + 1 if accepted else cursor\n",
+        "contract": "The server returns an unusable delta for cursor=7 and a full snapshot for cursor=0. Transport errors are handled separately; accepted=False means semantic rejection. The client must recover against a healthy server."
+      },
+      "targets": [
+        {
+          "id": "primary",
+          "truth": "defect",
+          "priority": "P1",
+          "rationale": "After rejection at cursor=7 the next request needs a reset; scripted success independent of cursor would hide the defect."
+        }
+      ]
+    },
+    {
+      "id": "r004",
+      "pair_id": "cursor",
+      "input": {
+        "base": "def next_cursor(cursor, accepted):\n    return cursor + 1 if accepted else 0\n",
+        "head": "def next_cursor(cursor, accepted):\n    if not accepted:\n        return 0\n    return cursor + 1\n",
+        "contract": "The server returns an unusable delta for cursor=7 and a full snapshot for cursor=0. Transport errors are handled separately; accepted=False means semantic rejection. The client must recover against a healthy server."
+      },
+      "targets": [
+        {
+          "id": "primary",
+          "truth": "safe",
+          "priority": "P1",
+          "rationale": "After rejection at cursor=7 the next request needs a reset; scripted success independent of cursor would hide the defect."
+        }
+      ]
+    },
+    {
+      "id": "r005",
+      "pair_id": "metrics",
+      "input": {
+        "base": "def metric_name(label):\n    return \"requests_other\"\n",
+        "head": "def metric_name(label):\n    return \"requests_\" + \"\".join(c for c in label if c.isalnum())\n",
+        "contract": "Labels come from arbitrary request values. Metric names are retained for the process lifetime and must have a finite code-defined domain."
+      },
+      "targets": [
+        {
+          "id": "primary",
+          "truth": "defect",
+          "priority": "P1",
+          "rationale": "Character filtering cannot bound the number of distinct names; a finite allowlist does."
+        }
+      ]
+    },
+    {
+      "id": "r006",
+      "pair_id": "metrics",
+      "input": {
+        "base": "def metric_name(label):\n    return \"requests_other\"\n",
+        "head": "def metric_name(label):\n    return \"requests_\" + (label if label in {\"read\", \"write\"} else \"other\")\n",
+        "contract": "Labels come from arbitrary request values. Metric names are retained for the process lifetime and must have a finite code-defined domain."
+      },
+      "targets": [
+        {
+          "id": "primary",
+          "truth": "safe",
+          "priority": "P1",
+          "rationale": "Character filtering cannot bound the number of distinct names; a finite allowlist does."
+        }
+      ]
+    },
+    {
+      "id": "r007",
+      "input": {
+        "base": "def apply(value):\n    return 10 / value\n",
+        "head": "def apply(value):\n    return 10 / value\n\nLABEL = \"new\"\n",
+        "contract": "Caller input constraints are unavailable; only this function is supplied."
+      },
+      "targets": [
+        {
+          "id": "primary",
+          "truth": "unknown",
+          "priority": "P2",
+          "rationale": "No behavior change; distinguish baseline attribution from missing caller reachability."
+        }
+      ]
+    },
+    {
+      "id": "r008",
+      "input": {
+        "base": "def apply(value):\n    return 10 / value\n",
+        "head": "def apply(value):\n    return 10 / value\n\nLABEL = \"new\"\n",
+        "contract": "Zero may reach this public function."
+      },
+      "targets": [
+        {
+          "id": "primary",
+          "truth": "pre_existing",
+          "priority": "P2",
+          "rationale": "No behavior change; distinguish baseline attribution from missing caller reachability."
+        }
+      ]
+    }
+  ]
+}
