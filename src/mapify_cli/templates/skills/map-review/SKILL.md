@@ -452,7 +452,7 @@ Preserve file/location/failure-scenario evidence so distinct defects stay distin
 For EVERY substantive finding, extend this gate; do not dispatch another validation layer.
 Preserve legacy findings visibly as `insufficient_evidence` until checked, never as implicit confirmation.
 
-**MANDATORY:** Read and apply review-reference.md § Evidence validation in the admitted round for evidence, remediation, independent quorum and author-reaction rules.
+**MANDATORY:** Read and apply review-reference.md § Evidence validation in the admitted round for evidence, remediation, independent quorum and author-reaction rules, and § Discarded hypothesis audit even after all_clear. For retries, leases, ACKs, transactions or cursor/checkpoint changes, apply [recovery-progress.md](recovery-progress.md).
 
 Apply the following compatibility checks without discarding unresolved claims; first compare every reviewer `paraphrase` with the PR/task intent per review-reference.md § Reviewer paraphrase check (a misread → `paraphrase_mismatch` objection on its findings, never a dismissal):
 

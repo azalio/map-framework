@@ -344,7 +344,7 @@ def test_envelope_ledger_gate_fresh_shell(project, case):
         # Only an ingested Evaluator envelope populates evaluator_scores, so this
         # proves the rendered ledger loop passed --evaluator-file through.
         # The ledger projects only the score fields; the paraphrase is not a score.
-        expected_scores = {k: v for k, v in envelopes["evaluator"].items() if k != "paraphrase"}
+        expected_scores = {k: v for k, v in envelopes["evaluator"].items() if k not in {"paraphrase", "discarded_candidates"}}
         assert _find_key(ledger_doc, "evaluator_scores") == expected_scores
 
 

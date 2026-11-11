@@ -57,7 +57,7 @@ def test_coverage_requires_changed_paths_only(repo, skip):
                                       provider="claude", round_id="scope", base_ref="main")
     assert admitted["status"] == "success", admitted
     assert runner.create_review_bundle(branch="feature")["status"] == "success"
-    payload = {"paraphrase": PARAPHRASE, "verdict": "approved", "issues": [], "receipt": {
+    payload = {"discarded_candidates": [], "paraphrase": PARAPHRASE, "verdict": "approved", "issues": [], "receipt": {
         "covered_files": ["first.py"], "skipped_files": skip, "denied_access": [], "check_evidence": []}}
     assert runner.capture_review_output("monitor", json.dumps(payload), "scope", branch="feature")["status"] == "success"
     result = runner.write_review_verdict_ledger(current_run=True, branch="feature")
@@ -243,7 +243,7 @@ def test_task_input_changes_reject_capture_and_completion(repo, filename):
     assert runner.create_review_bundle(branch="feature")["status"] == "success"
     row = runner._read_review_ledger(directory)["convergence"]["rounds"][-1]
     assert runner._review_binding_current(row)
-    output = {"paraphrase": PARAPHRASE, "verdict": "approved", "issues": [], "receipt": {"covered_files": ["first.py"],
+    output = {"discarded_candidates": [], "paraphrase": PARAPHRASE, "verdict": "approved", "issues": [], "receipt": {"covered_files": ["first.py"],
               "skipped_files": [], "denied_access": [], "check_evidence": []}}
     assert runner.capture_review_output("monitor", json.dumps(output), "task-inputs", branch="feature")["status"] == "success"
     artifact.write_text('{"changed":true}')
@@ -257,7 +257,7 @@ def test_admitted_handoff_does_not_create_review_inputs(repo):
     Path("first.py").write_text("value = 2\n")
     runner.begin_review_run(branch="feature", provider="claude", scheduled_reviewers=["monitor"], round_id="handoff")
     assert runner.create_review_bundle(branch="feature")["status"] == "success"
-    output = {"paraphrase": PARAPHRASE, "verdict": "approved", "issues": [], "receipt": {"covered_files": ["first.py"],
+    output = {"discarded_candidates": [], "paraphrase": PARAPHRASE, "verdict": "approved", "issues": [], "receipt": {"covered_files": ["first.py"],
               "skipped_files": [], "denied_access": [], "check_evidence": []}}
     runner.capture_review_output("monitor", json.dumps(output), "handoff", branch="feature")
     result = runner.write_review_verdict_ledger(current_run=True, branch="feature")
@@ -313,7 +313,7 @@ def test_generated_name_patterns_are_skipped_with_recorded_reason(repo):
         assert name not in bundle["attribution"]["diff"]
     markdown = Path(".map/feature/review-bundle.md").read_text()
     assert "coverage_skips_count" in markdown
-    payload = {"paraphrase": PARAPHRASE, "verdict": "approved", "issues": [], "receipt": {
+    payload = {"discarded_candidates": [], "paraphrase": PARAPHRASE, "verdict": "approved", "issues": [], "receipt": {
         "covered_files": ["first.py"], "skipped_files": [], "denied_access": [], "check_evidence": []}}
     assert runner.capture_review_output("monitor", json.dumps(payload), "gen", branch="feature")["status"] == "success"
     result = runner.write_review_verdict_ledger(current_run=True, branch="feature")
@@ -782,7 +782,7 @@ def deliver(entry, reviewer, agent, ordering=""):
 
 
 def monitor_output(proof, covered, *, verdict="approved", skipped=()):
-    return {"paraphrase": PARAPHRASE, "verdict": verdict, "valid": verdict == "approved", "issues": [], "summary": "ok",
+    return {"discarded_candidates": [], "paraphrase": PARAPHRASE, "verdict": verdict, "valid": verdict == "approved", "issues": [], "summary": "ok",
             "context_receipt": proof,
             "receipt": {"covered_files": list(covered), "skipped_files": list(skipped),
                         "denied_access": [], "check_evidence": []}}
@@ -898,7 +898,7 @@ def test_unsharded_capture_rejects_a_shard_argument(repo):
     runner.begin_review_run(branch="feature", scheduled_reviewers=["monitor"], provider="claude",
                             round_id="plain", base_ref="main")
     assert runner.create_review_bundle(branch="feature")["status"] == "success"
-    payload = json.dumps({"paraphrase": PARAPHRASE, "verdict": "approved", "issues": [], "receipt": {
+    payload = json.dumps({"discarded_candidates": [], "paraphrase": PARAPHRASE, "verdict": "approved", "issues": [], "receipt": {
         "covered_files": ["first.py"], "skipped_files": [], "denied_access": [], "check_evidence": []}})
     result = runner.capture_review_output("monitor", payload, "plain", branch="feature", shard="s01")
     assert result["status"] == "error" and "not sharded" in str(result)
@@ -1024,7 +1024,7 @@ def test_adversarial_round_captures_and_merges_per_shard(repo, monkeypatch):
         raw = {}
         for name in reviewers:
             proof = deliver(built["prompts"][name], name, f"agent-{name}-{shard['id']}")
-            raw[name] = json.dumps({"paraphrase": PARAPHRASE, "all_clear": True, "all_clear_rationale": f"{name} {shard['id']} clean",
+            raw[name] = json.dumps({"discarded_candidates": [], "paraphrase": PARAPHRASE, "all_clear": True, "all_clear_rationale": f"{name} {shard['id']} clean",
                                     "findings": [], "checks_performed": ["read"], "context_receipt": proof,
                                     "receipt": {"covered_files": shard["files"], "skipped_files": [],
                                                 "denied_access": [], "check_evidence": []}})
@@ -1065,7 +1065,7 @@ def capture_predictor_round(shards, defects):
                                             branch="feature", shard=shard["id"])["status"] == "success"
         proof = deliver(built["prompts"]["predictor"], "predictor", f"p-{shard['id']}")
         defect = defects.get(index)
-        output = {"paraphrase": PARAPHRASE, "evidence": [], "risk_assessment": defect[0] if defect else "low",
+        output = {"discarded_candidates": [], "paraphrase": PARAPHRASE, "evidence": [], "risk_assessment": defect[0] if defect else "low",
                   "predicted_state": {"affected_components": [], "breaking_changes": [], "required_updates": []},
                   "confidence": {"score": 0.8}, "context_receipt": proof, "receipt": receipt}
         if defect:
@@ -1126,7 +1126,7 @@ def capture_security(shard, covered, *, denied=()):
     built = runner.build_review_prompts(branch="feature", shard=shard["id"])
     assert built["status"] == "success", built
     proof = deliver(built["prompts"]["security"], "security", f"sec-{shard['id']}")
-    output = {"paraphrase": PARAPHRASE, "reviewer": "security", "all_clear": True, "all_clear_rationale": "no issue", "findings": [],
+    output = {"discarded_candidates": [], "paraphrase": PARAPHRASE, "reviewer": "security", "all_clear": True, "all_clear_rationale": "no issue", "findings": [],
               "checks_performed": ["read"], "context_receipt": proof,
               "receipt": {"covered_files": list(covered), "skipped_files": [], "denied_access": list(denied), "check_evidence": []}}
     result = runner.capture_review_output("security", json.dumps(output), "r", branch="feature", shard=shard["id"])
@@ -1520,7 +1520,7 @@ def test_unsharded_absolute_receipt_paths_cover_and_skip_required_scope(repo, sk
                                       provider="claude", round_id="scope", base_ref="main")
     assert admitted["status"] == "success", admitted
     assert runner.create_review_bundle(branch="feature")["status"] == "success"
-    payload = {"paraphrase": PARAPHRASE, "verdict": "approved", "issues": [], "receipt": {
+    payload = {"discarded_candidates": [], "paraphrase": PARAPHRASE, "verdict": "approved", "issues": [], "receipt": {
         "covered_files": [absolute], "skipped_files": [absolute] if skip else [],
         "denied_access": [], "check_evidence": []}}
     assert runner.capture_review_output("monitor", json.dumps(payload), "scope", branch="feature")["status"] == "success"

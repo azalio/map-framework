@@ -166,7 +166,7 @@ class Delivery:
 
 
 def _review_one(host: CodexReviewHost, branch: str, row: dict[str, Any], role: str,
-                entry: dict[str, Any], ordering: str, shard: str = "") -> dict[str, Any]:
+                entry: dict[str, Any], ordering: str, shard: str = "", candidate_recheck: str = "") -> dict[str, Any]:
     context_id = entry["context_transport"]["context_id"]
     key = f"{ordering or 'default'}:{role}"
     old_id = row.get("context_active", {}).get(runner._review_session_key(ordering or "default", role, shard))
@@ -191,7 +191,7 @@ def _review_one(host: CodexReviewHost, branch: str, row: dict[str, Any], role: s
             single = {**row, "binding": {**row["binding"], "scheduled_reviewers": [role], "review_mode": "normal"},
                       "context_active": {runner._review_session_key("default", role, shard): old_id},
                       **({"shards": [{"id": shard}]} if shard else {})}
-            if runner._review_capability_verified(single, runner._review_branch_dir(branch)):
+            if not candidate_recheck and runner._review_capability_verified(single, runner._review_branch_dir(branch)):
                 return {"status": "success", "reviewer": role, "output": output,
                         "thread_id": old["agent_id"], "reused": True}
     # A lost/unresumable native thread is an explicit error, never silent replacement.
@@ -213,6 +213,13 @@ def _review_one(host: CodexReviewHost, branch: str, row: dict[str, Any], role: s
         message += "\nReview sections in this order: " + json.dumps(runner.get_review_section_order("reverse-sections" if ordering == "reverse" else "default"))
     if old:
         message += "\nResume this existing review; acknowledged chunks persist. Request the remaining context."
+    if candidate_recheck:
+        message += ("\nCANDIDATE RECHECK (hypotheses, not established findings):\n" + candidate_recheck
+                    + "\nRe-evaluate against your admitted source and contract. Return the complete current role envelope "
+                      "and receipts, preserving still-valid findings. For the same proven defect copy bug_class, cause "
+                      "and failure_scenario exactly and include the original source references in its normal finding. "
+                      "Do not invent support or copy another reviewer's conclusion; different defects stay separate. "
+                      "Keep unresolved/rejected hypotheses in discarded_candidates with their original local IDs.")
     malformed = 0
     finalization_sent = False
     no_progress = 0
@@ -268,7 +275,24 @@ def _review_one(host: CodexReviewHost, branch: str, row: dict[str, Any], role: s
             raise HostError("Malformed final reviewer output after one retry; resume saved context")
 
 
-def run(branch: str | None = None, *, timeout: float = 900, review_preferences: str | None = None) -> dict[str, Any]:
+def _candidate_recheck_messages(selected: list[dict[str, Any]], shards: list[dict[str, Any]]) -> dict[str, str]:
+    messages = {}
+    routed = set()
+    for shard in shards or [{"id": "", "files": []}]:
+        owned = set(shard["files"])
+        applicable = [item for item in selected if not shard["id"]
+                      or item.get("source_shard") == shard["id"]
+                      or not runner._review_affected_files(item)
+                      or runner._review_affected_files(item) & owned]
+        routed.update(item["id"] for item in applicable)
+        messages[shard["id"]] = json.dumps(applicable) if applicable else ""
+    if routed != {item["id"] for item in selected}:
+        raise HostError("Selected candidates are outside the admitted shards; request appropriate review scope")
+    return messages
+
+
+def run(branch: str | None = None, *, timeout: float = 900, review_preferences: str | None = None,
+        recheck_candidates: list[str] | None = None) -> dict[str, Any]:
     if not math.isfinite(timeout) or timeout <= 0:
         raise HostError("timeout must be a finite positive number")
     branch = runner._sanitize_branch(branch) if branch else runner.get_branch_name()
@@ -285,6 +309,20 @@ def run(branch: str | None = None, *, timeout: float = 900, review_preferences: 
         row = ledger["convergence"]["rounds"][-1]
         if runner._review_round_terminal(row):
             raise HostError("Review round is terminal; do not dispatch new readers")
+        selected = []
+        registry = {item["id"]: item for item in ledger.get("discarded_candidates", [])}
+        for identifier in dict.fromkeys(recheck_candidates or []):
+            if identifier not in registry:
+                raise HostError(f"Unknown discarded candidate {identifier}; collect the current ledger first")
+            candidate = registry[identifier]
+            expected = runner._review_candidate_digest([candidate["candidate"],
+                {key: row[key] for key in ("target", "policy_hash")}])
+            if candidate.get("binding") != expected:
+                raise HostError("Candidate binding is stale; collect the current ledger first")
+            selected.append({"id": identifier, "source_shard": candidate["candidate"].get("source_shard", ""), **{key: candidate["candidate"][key]
+                for key in ("candidate_id", "bug_class", "cause", "failure_scenario", "evidence_refs")}})
+        if len(json.dumps(selected).encode()) > 16384:
+            raise HostError("Candidate recheck exceeds 16 KiB; select a smaller batch without truncating evidence")
         normal = "monitor" in binding["scheduled_reviewers"]
         if not normal and review_preferences:
             raise HostError("--review-preferences is supported only for normal reviews")
@@ -305,7 +343,8 @@ def run(branch: str | None = None, *, timeout: float = 900, review_preferences: 
         built_by_shard = {shard: build(shard) for shard in shard_ids}
         orderings = ("default", "reverse") if binding["review_mode"] == "compare_orderings" else ("",)
         roles = list(binding["scheduled_reviewers"])
-        if normal and binding["mode"] != "lightweight" and "complexity_lens" in built_by_shard[shard_ids[0]]["prompts"]:
+        rechecks = _candidate_recheck_messages(selected, row.get("shards", []))
+        if not selected and normal and binding["mode"] != "lightweight" and "complexity_lens" in built_by_shard[shard_ids[0]]["prompts"]:
             roles.append("complexity_lens")
         results = []
         host = CodexReviewHost(timeout=timeout)
@@ -318,7 +357,7 @@ def run(branch: str | None = None, *, timeout: float = 900, review_preferences: 
                         row = runner._read_review_ledger(directory)["convergence"]["rounds"][-1]
                         print(json.dumps({"status": "reviewing", "reviewer": role, "ordering": ordering,
                                           **({"shard": shard} if shard else {})}), flush=True)
-                        result = _review_one(host, branch, row, role, built["prompts"][role], ordering, shard)
+                        result = _review_one(host, branch, row, role, built["prompts"][role], ordering, shard, rechecks[shard])
                         outputs[role] = result.get("output")
                         results.append({key: value for key, value in result.items() if key != "output"}
                                        | ({"shard": shard} if shard else {}))
@@ -338,9 +377,10 @@ if __name__ == "__main__":
     parser.add_argument("--branch")
     parser.add_argument("--timeout", type=float, default=900)
     parser.add_argument("--review-preferences")
+    parser.add_argument("--recheck-candidate", action="append", default=[], help="Re-evaluate a ledger RVC ID in the pending round; repeat for a bounded batch")
     args = parser.parse_args()
     try:
-        result = run(args.branch, timeout=args.timeout, review_preferences=args.review_preferences)
+        result = run(args.branch, timeout=args.timeout, review_preferences=args.review_preferences, recheck_candidates=args.recheck_candidate)
     except (HostError, OSError, ValueError) as exc:
         print(json.dumps({"status": "error", "message": str(exc), "recovery": "Resume the same admitted round and rerun this command. Capability and incomplete gates remain enforced."}))
         raise SystemExit(1) from exc

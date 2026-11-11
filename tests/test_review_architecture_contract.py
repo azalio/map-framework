@@ -185,7 +185,7 @@ def test_captured_design_finding_reaches_persisted_verdict(tmp_path, monkeypatch
         finding["proposed_code"] = "def reconcile(task, run): return run.apply(task)"
     # A payload cannot select a different author's capture for validation.
     finding["reviewer"] = "monitor"
-    payload = {"paraphrase": {
+    payload = {"discarded_candidates": [], "paraphrase": {
         "change": "The worker and publisher now consult live revisions; completion excludes retired tasks.",
         "existing_system": "Each run applies the captured task and finishes after all tasks report done."},
         "reviewer": "maintainer", "all_clear": False, "findings": [finding],
@@ -194,7 +194,7 @@ def test_captured_design_finding_reaches_persisted_verdict(tmp_path, monkeypatch
     envelopes = {}
     for reviewer in roster:
         envelope = payload if reviewer == "maintainer" else {
-            "paraphrase": payload["paraphrase"], "reviewer": reviewer, "all_clear": True,
+            "discarded_candidates": [], "paraphrase": payload["paraphrase"], "reviewer": reviewer, "all_clear": True,
             "all_clear_rationale": "No additional findings in this capture-path fixture",
             "findings": [], "issues": [], "risk_assessment": "low", "overall_score": 8,
             "checks_performed": [], "receipt": payload["receipt"],

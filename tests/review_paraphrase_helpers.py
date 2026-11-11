@@ -15,4 +15,4 @@ PARAPHRASE: dict[str, str] = {
 
 def with_paraphrase(payload: dict[str, Any]) -> dict[str, Any]:
     """Return ``payload`` with the shared paraphrase unless it already carries one."""
-    return {"paraphrase": dict(PARAPHRASE), **payload}
+    return {"paraphrase": dict(PARAPHRASE), "discarded_candidates": [], **payload}
