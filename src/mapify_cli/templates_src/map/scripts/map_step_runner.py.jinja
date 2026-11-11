@@ -10383,6 +10383,7 @@ def normalize_review_verdict(
             "evidence": [],
             "status": "tombstoned",
             "transition_reason": "contract_incomplete",
+            "contract_gaps": list(gaps),
             "transition_evidence": "missing output-contract parts: " + ", ".join(gaps),
             "was_present_before_pr": None,
         })
@@ -11451,10 +11452,16 @@ def capture_review_output(
                 paraphrase_errors = _review_paraphrase_errors(raw.get("paraphrase"))
                 if paraphrase_errors:
                     raise ValueError(f"Invalid {name} paraphrase: " + "; ".join(paraphrase_errors))
+                candidate_errors = _review_candidate_declaration_errors(raw)
+                if candidate_errors:
+                    raise ValueError(f"Invalid {name} candidate declaration: " + "; ".join(candidate_errors))
     if reviewer in REVIEWER_PARAPHRASE_AGENTS:
         paraphrase_errors = _review_paraphrase_errors(data.get("paraphrase"))
         if paraphrase_errors:
             raise ValueError("Invalid reviewer paraphrase: " + "; ".join(paraphrase_errors))
+        candidate_errors = _review_candidate_declaration_errors(data)
+        if candidate_errors:
+            raise ValueError("Invalid candidate declaration: " + "; ".join(candidate_errors))
     root = _review_branch_dir(branch)
     key = f"{ordering or 'default'}:{reviewer}"
     shard_state: dict[str, Any] = {}
@@ -12007,6 +12014,17 @@ def _review_candidate_digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def _review_candidate_witnesses_retained(candidate: dict[str, Any], finding: dict[str, Any]) -> bool:
+    # A source may support reachability or attribution rather than the defect site.
+    refs = list(finding.get("evidence_refs", []))
+    for key in ("reachability", "baseline_attribution"):
+        claim = finding.get(key)
+        if isinstance(claim, dict) and isinstance(claim.get("evidence_refs"), list):
+            refs.extend(claim["evidence_refs"])
+    original = candidate["evidence_refs"]
+    return bool(original) and all(ref in refs for ref in original)
+
+
 def _audit_discarded_candidates(
     ledger: dict[str, Any], prior: dict[str, Any], envelopes: dict[str, dict[str, Any]],
     admitted: dict[str, Any] | None, audit_file: str = "",
@@ -12015,7 +12033,7 @@ def _audit_discarded_candidates(
     registry = {row["id"]: dict(row) for row in prior.get("discarded_candidates", [])}
     errors = []
     for reviewer, envelope in envelopes.items():
-        candidates = envelope.get("discarded_candidates", [])
+        candidates = envelope.get("discarded_candidates", [] if admitted is None else None)
         if not isinstance(candidates, list):
             errors.append(f"{reviewer}: discarded_candidates must be an array")
             continue
@@ -12032,7 +12050,7 @@ def _audit_discarded_candidates(
                 errors.append(f"{reviewer}: duplicate discarded candidate ID {local_id}")
             seen.add(local_id)
             # Content in the identity prevents a recycled local ID from erasing an older hypothesis.
-            identity = [reviewer, *(candidate[key] for key in fields[:4])]
+            identity = [reviewer, *(candidate[key] for key in fields[:4]), candidate["evidence_refs"]]
             identifier = "RVC-" + _review_candidate_digest(identity)[:20]
             previous = registry.get(identifier, {})
             registry[identifier] = {**previous, "id": identifier, "source_reviewer": reviewer,
@@ -12073,10 +12091,10 @@ def _audit_discarded_candidates(
                      and _review_refs_checked(audit.get("evidence_refs"), admitted["target"], {"current", "baseline"}))
         if valid and audit["verdict"] == "restored":
             # Restoration must reach the ordinary evidence gate, including adversarial quorum.
-            candidate_files = _review_affected_files(row["candidate"])
-            valid = bool(candidate_files) and any(finding.get("id") == audit.get("finding_id")
+            valid = any(finding.get("id") == audit.get("finding_id")
                         and finding.get("validation", {}).get("verdict") == "confirmed"
-                        and candidate_files.issubset(_review_affected_files(finding))
+                        and not finding.get("contract_gaps")
+                        and _review_candidate_witnesses_retained(row["candidate"], finding)
                         and all(finding.get(key) == row["candidate"][key]
                                 for key in ("bug_class", "cause", "failure_scenario"))
                         for finding in ledger["findings_registry"])
@@ -12229,7 +12247,7 @@ def write_review_verdict_ledger(
         entry: dict[str, Any] = {key: envelope[key] for key in ("paraphrase", "paraphrases")
                                  if isinstance(envelope.get(key), dict)}
         key = label.replace(" ", ":")
-        candidate_sources[key] = envelope
+        candidate_sources[key] = dict(envelope)
         entry["finding_keys"] = _review_envelope_finding_keys(key.removeprefix("reverse:"), envelope, ledger_findings)
         paraphrase_sources[key] = entry
 
@@ -14282,6 +14300,13 @@ REVIEWER_PARAPHRASE_RULE: str = (
     "If you cannot restate a part, say so in the paraphrase instead of guessing; a paraphrase that misreads "
     "the change marks every finding of yours for re-check."
 )
+
+
+def _review_candidate_declaration_errors(envelope: dict[str, Any]) -> list[str]:
+    candidates = envelope.get("discarded_candidates")
+    if not isinstance(candidates, list):
+        return ["discarded_candidates is required and must be an array (use [] when none)"]
+    return []
 
 
 def _review_paraphrase_errors(paraphrase: object) -> list[str]:
@@ -16867,6 +16892,19 @@ REVIEWER_PARAPHRASE_AGENTS: frozenset[str] = frozenset(
 )
 
 
+# The same required declaration reaches normal/role/hunter prompts and bounded retries.
+for _review_agent in REVIEWER_PARAPHRASE_AGENTS:
+    _review_schema = AGENT_OUTPUT_SCHEMAS[_review_agent]
+    _review_schema["required_keys"] += ("discarded_candidates",)
+    _review_schema["skeleton"]["discarded_candidates"] = [{
+        "candidate_id": "<stable reviewer-local ID; use an empty array when none>",
+        "bug_class": "<bug class>", "cause": "<cause>", "failure_scenario": "<concrete scenario>",
+        "dismissal_reason": "<source-backed reason for rejection>",
+        "dismissal_invariant": "<precise claimed invariant>",
+        "evidence_refs": "<array of admitted current/baseline source references>",
+    }]
+
+
 def _isolated_reviewer_documents(
     context_access: str,
     git_diff: str,
@@ -17481,6 +17519,8 @@ def aggregate_adversarial_findings(
                 envelope_error = "; ".join(_review_coverage_receipt_errors(parsed.get("receipt"))) or None
             if not envelope_error:
                 envelope_error = "; ".join(_review_paraphrase_errors(parsed.get("paraphrase"))) or None
+            if not envelope_error:
+                envelope_error = "; ".join(_review_candidate_declaration_errors(parsed)) or None
             if envelope_error:
                 reviewer_data[reviewer_id] = {"status": "parse_error", "error": envelope_error}
                 findings_by_reviewer[reviewer_id] = []
@@ -20016,6 +20056,8 @@ def detect_truncated_agent_output(
         reasons.append(f"missing required key: {key}")
     if agent_kind in ROLE_REVIEWER_IDS:
         reasons.extend(_review_coverage_receipt_errors(parsed.get("receipt")))
+    if "discarded_candidates" in expected_keys:
+        reasons.extend(_review_candidate_declaration_errors(parsed))
     if "paraphrase" in expected_keys and "paraphrase" in parsed:
         reasons.extend(_review_paraphrase_errors(parsed["paraphrase"]))
 

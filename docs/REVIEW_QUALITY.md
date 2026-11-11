@@ -65,7 +65,10 @@ Results use this structure (include every corpus case exactly once in each run):
 }
 ```
 
-Paths are relative to the results file. Reports must exist, be nonempty, match
+Each pair must share its baseline and contract; input objects accept only base,
+head and contract. Paths are relative to the results file. Before and after must
+be separate report artifacts (including distinct underlying files), even when
+their text is identical. Reports must exist, be nonempty, match
 hashes and be marked complete. `candidates: []` means a completed review found
 no candidates; never encode a missing or interrupted stage this way. For an
 independently adjudicated false alarm outside the target list use a stable

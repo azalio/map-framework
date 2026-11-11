@@ -26,7 +26,7 @@ def load_corpus(path: Path) -> dict[str, Any]:
     if data["schema_version"] != 1 or not data["cases"]:
         raise ValueError("unsupported or empty quality corpus")
     seen = set()
-    pairs: dict[str, list[str]] = {}
+    pairs: dict[str, list[dict[str, Any]]] = {}
     for case in data["cases"]:
         _record(case, {"id": str, "input": dict, "targets": list})
         _path(case["id"])
@@ -34,6 +34,8 @@ def load_corpus(path: Path) -> dict[str, Any]:
             raise ValueError("duplicate or unsafe case id")
         seen.add(case["id"])
         _record(case["input"], {"base": str, "head": str, "contract": str})
+        if set(case["input"]) != {"base", "head", "contract"}:
+            raise ValueError("reviewer input must contain only base, head and contract")
         targets = set()
         for target in case["targets"]:
             _record(target, {"id": str, "truth": str, "priority": str, "rationale": str})
@@ -46,9 +48,12 @@ def load_corpus(path: Path) -> dict[str, Any]:
             _record(case, {"pair_id": str})
             if len(case["targets"]) != 1:
                 raise ValueError("paired cases require one primary target")
-            pairs.setdefault(case["pair_id"], []).append(case["targets"][0]["truth"])
-    if any(sorted(truths) != ["defect", "safe"] for truths in pairs.values()):
-        raise ValueError("each pair requires exactly one defective and one safe case")
+            pairs.setdefault(case["pair_id"], []).append(case)
+    for members in pairs.values():
+        if sorted(case["targets"][0]["truth"] for case in members) != ["defect", "safe"]:
+            raise ValueError("each pair requires exactly one defective and one safe case")
+        if any(members[0]["input"][key] != members[1]["input"][key] for key in ("base", "contract")):
+            raise ValueError("counterfactual pair must share its baseline and contract")
     return data
 
 
@@ -66,7 +71,7 @@ def prepare(corpus: dict[str, Any], output: Path) -> dict[str, Any]:
     return manifest
 
 
-def _evidence(value: Any, root: Path) -> None:
+def _evidence(value: Any, root: Path) -> Path:
     _record(value, {"path": str, "sha256": str, "complete": bool})
     relative = _path(value["path"])
     path = root / relative
@@ -75,6 +80,7 @@ def _evidence(value: Any, root: Path) -> None:
     raw = path.read_bytes()
     if not raw.strip() or hashlib.sha256(raw).hexdigest() != value["sha256"]:
         raise ValueError("missing, empty or changed report evidence")
+    return path.resolve()
 
 
 def _ratio(numerator: int, denominator: int) -> float | None:
@@ -108,8 +114,10 @@ def score(corpus: dict[str, Any], results: dict[str, Any], evidence_root: Path) 
             if case_id in observed_cases or case_id not in cases:
                 raise ValueError("duplicate or unknown case")
             observed_cases.add(case_id)
-            _evidence(result["before_report"], evidence_root)
-            _evidence(result["after_report"], evidence_root)
+            before_path = _evidence(result["before_report"], evidence_root)
+            after_path = _evidence(result["after_report"], evidence_root)
+            if before_path.samefile(after_path):
+                raise ValueError("before and after stages require separate raw artifacts")
             ids = set()
             for candidate in result["candidates"]:
                 _record(candidate, {"candidate_id": str, "target_id": str, "reviewer_claimed": bool,

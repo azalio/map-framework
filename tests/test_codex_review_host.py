@@ -94,10 +94,10 @@ def admitted_delivery():
 
 
 def complete_result(delivery, response, call_id="call", *, text=None):
-    delivery.observe({"method": "item/completed", "params": {"threadId": "thread", "item": {
+    delivery.observe({"method": "item/completed", "params": {"threadId": delivery.state["agent_id"], "item": {
         "type": "dynamicToolCall", "tool": "review_context", "id": call_id,
         "status": "completed", **response}}})
-    delivery.observe({"method": "rawResponseItem/completed", "params": {"threadId": "thread", "item": {
+    delivery.observe({"method": "rawResponseItem/completed", "params": {"threadId": delivery.state["agent_id"], "item": {
         "type": "custom_tool_call_output", "output": [{"type": "input_text", "text":
             response["contentItems"][0]["text"] if text is None else text}]}}})
 
@@ -527,3 +527,102 @@ def test_delivery_missing_path_recovers_after_restart_without_transfer(repo):
     complete_result(delivery, response, "corrected")
     assert delivery.transfers == 1
     assert delivery.refresh()["pending_chunk"] is None
+
+
+@pytest.mark.parametrize("adversarial", [False, True])
+def test_pending_candidate_recheck_recaptures_all_clear_readers(repo, monkeypatch, adversarial):
+    del repo
+    Path("first.py").write_text("value = 2\n")
+    current = {"file_path": "first.py", "revision": "current", "quote": "value = 2"}
+    baseline = {"file_path": "first.py", "revision": "baseline", "quote": "value = 1"}
+    issue = {"severity": "IMPORTANT", "category": "correctness", "bug_class": "wrong_value", "cause": "value changed",
+             "failure_scenario": "consumer reads value 2", "description": "Consumer expects value 1",
+             "reach_evidence": "public module value", "was_present_before_pr": False, "evidence_refs": [current],
+             "reachability": {"status": "reachable", "reason": "value is public", "evidence_refs": [current]},
+             "baseline_attribution": {"status": "introduced", "reason": "baseline uses 1", "evidence_refs": [current, baseline]},
+             "problem": "first.py:1 consumer receives 2", "current_code": "value = 2", "proposed_code": "value = 1",
+             "why_better": "Restores the expected value", "cost": "none", "file_path": "first.py"}
+    candidate = {**{key: issue[key] for key in ("bug_class", "cause", "failure_scenario", "evidence_refs")},
+                 "candidate_id": "C-1", "dismissal_reason": "Assumed no consumers", "dismissal_invariant": "No caller reads value"}
+
+    class RecheckHost(SimulatedHost):
+        resumed: ClassVar[list[str]] = []
+        messages: ClassVar[list[str]] = []
+
+        def start(self, thread_id=""):
+            self.resumed.append(thread_id)
+            self.thread_id = thread_id or f"thread-{len(self.resumed)}"
+            self.rechecking = False
+            return self.thread_id
+
+        def probe(self, context_id="context"):
+            return {**super().probe(context_id), "thread_id": self.thread_id}
+
+        def turn(self, message):
+            self.messages.append(message)
+            if "Reviewer role: " in message:
+                self.role = message.split("Reviewer role: ", 1)[1].split(".", 1)[0]
+            self.rechecking |= "CANDIDATE RECHECK" in message
+            payload = json.loads(super().turn(message))
+            payload["discarded_candidates"] = [candidate] if not self.rechecking and self.role in {"monitor", "blind"} else []
+            if self.role == "monitor":
+                payload["issues"] = [issue] if self.rechecking else []
+            else:
+                payload.update(all_clear=not self.rechecking, findings=[issue] if self.rechecking else [],
+                               checks_performed=["source and baseline"], reviewer=self.role)
+            return json.dumps(payload)
+
+    reviewers = ["blind", "edge_case", "acceptance", "user_experience", "maintainer"] if adversarial else ["monitor"]
+    runner.begin_review_run(branch="feature", provider="codex", round_id="candidate",
+        mode="full" if adversarial else "lightweight", review_mode="adversarial" if adversarial else "normal",
+        arguments="--adversarial" if adversarial else "", scheduled_reviewers=reviewers)
+    runner.create_review_bundle(branch="feature")
+    monkeypatch.setattr(driver, "CodexReviewHost", RecheckHost)
+    driver.run("feature")
+    runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    path = Path(".map/feature/review-verdict-ledger.json")
+    ledger = json.loads(path.read_text())
+    assert ledger["candidate_audit"]["status"] == "incomplete"
+    identifier = ledger["discarded_candidates"][0]["id"]
+    resumed = len(RecheckHost.resumed)
+    assert all(item.get("reused") for item in driver.run("feature")["reviewers"])
+    assert len(RecheckHost.resumed) == resumed
+    with pytest.raises(host.HostError, match="Unknown discarded candidate"):
+        driver.run("feature", recheck_candidates=["RVC-unknown"])
+    stale = json.loads(path.read_text())
+    stale["discarded_candidates"][0]["binding"] = "stale"
+    path.write_text(json.dumps(stale))
+    with pytest.raises(host.HostError, match="binding is stale"):
+        driver.run("feature", recheck_candidates=[identifier])
+    path.write_text(json.dumps(ledger))
+    result = driver.run("feature", recheck_candidates=[identifier])
+    assert all(not item.get("reused") for item in result["reviewers"])
+    assert len(RecheckHost.resumed) == 2 * len(reviewers)
+    assert all(RecheckHost.resumed[len(reviewers):])
+    runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    ledger = json.loads(path.read_text())
+    finding = next(row for row in ledger["findings_registry"] if row.get("bug_class") == issue["bug_class"])
+    assert finding["validation"]["verdict"] == "confirmed", finding
+    entry = ledger["discarded_candidates"][0]
+    audit = path.parent / "parent-audit.json"
+    audit.write_text(json.dumps({"schema_version": 1, "audits": [{"candidate_id": identifier, "binding": entry["binding"],
+        "verdict": "restored", "reason": "Independent recapture establishes the original defect", "finding_id": finding["id"]}]}))
+    runner.write_review_verdict_ledger(current_run=True, branch="feature", candidate_audit_file=str(audit))
+    ledger = json.loads(path.read_text())
+    assert ledger["candidate_audit"]["status"] == "complete"
+    assert len(ledger["convergence"]["rounds"]) == 1
+    assert not ledger["code_approval"]["approved"]  # the restored defect still gates the change
+    with pytest.raises(host.HostError, match="terminal"):
+        driver.run("feature", recheck_candidates=[identifier])
+
+
+def test_candidate_recheck_routes_dependency_witnesses_to_the_original_shard():
+    candidate = {"id": "RVC-1", "source_shard": "S1", "evidence_refs": [{"file_path": "dependency.py"}]}
+    shards = [{"id": "S1", "files": ["first.py"]}, {"id": "S2", "files": ["second.py"]}]
+    messages = driver._candidate_recheck_messages([candidate], shards)
+    assert json.loads(messages["S1"]) == [candidate]
+    assert messages["S2"] == ""
+    # One routed hypothesis must not hide a second one outside the admitted scope.
+    outside = {"id": "RVC-2", "evidence_refs": [{"file_path": "outside.py"}]}
+    with pytest.raises(host.HostError, match="outside the admitted shards"):
+        driver._candidate_recheck_messages([candidate, outside], shards)

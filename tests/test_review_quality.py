@@ -53,13 +53,14 @@ def _run(tmp_path):
     corpus = quality.load_corpus(CORPUS)
     text = "Raw reviewer report retained for independent adjudication.\n"
     (tmp_path / "report.txt").write_text(text)
+    (tmp_path / "after.txt").write_text(text)
     report = {"path": "report.txt", "sha256": hashlib.sha256(text.encode()).hexdigest(), "complete": True}
     results = {"schema_version": 1, "corpus_sha256": quality.digest(corpus), "runs": [{
         "run_id": "repeat-1", "model": "test-fixture", "prompt_sha256": "a" * 64, "cases": []}]}
     for case in corpus["cases"]:
         truth = case["targets"][0]["truth"]
         results["runs"][0]["cases"].append({
-            "case_id": case["id"], "before_report": report.copy(), "after_report": report.copy(), "candidates": [{
+            "case_id": case["id"], "before_report": report.copy(), "after_report": {**report, "path": "after.txt"}, "candidates": [{
                 "candidate_id": "candidate-1", "target_id": "primary", "reviewer_claimed": truth == "defect",
                 "verdict": quality.EXPECTED[truth], "adjudication": "Independent cause/scenario match to the primary target."}]})
     return corpus, results
@@ -157,3 +158,36 @@ def test_cli_score_reads_persisted_reports(tmp_path, monkeypatch, capsys):
     report = json.loads(capsys.readouterr().out)
     assert report["corpus_sha256"] == quality.digest(corpus)
     assert report["runs"][0]["after"]["recall"] == 1.0
+
+
+@pytest.mark.parametrize("field", ["base", "contract"])
+def test_counterfactual_pairs_require_shared_context(tmp_path, field):
+    corpus = quality.load_corpus(CORPUS)
+    corpus["cases"][1]["input"][field] = "unrelated context"
+    path = tmp_path / "corpus.json"
+    path.write_text(json.dumps(corpus))
+    with pytest.raises(ValueError, match="share its baseline and contract"):
+        quality.load_corpus(path)
+
+
+@pytest.mark.parametrize("field", ["targets", "pair_id", "rationale"])
+def test_adjudication_cannot_be_exported_inside_input(tmp_path, field):
+    corpus = quality.load_corpus(CORPUS)
+    corpus["cases"][0]["input"][field] = "hidden label"
+    path = tmp_path / "corpus.json"
+    path.write_text(json.dumps(corpus))
+    with pytest.raises(ValueError, match="only base, head and contract"):
+        quality.load_corpus(path)
+
+
+@pytest.mark.parametrize("alias", [False, True])
+def test_before_after_cannot_share_one_artifact(tmp_path, alias):
+    corpus, results = _run(tmp_path)
+    before = results["runs"][0]["cases"][0]["before_report"]
+    after = dict(before)
+    if alias:
+        (tmp_path / "alias.txt").hardlink_to(tmp_path / before["path"])
+        after["path"] = "alias.txt"
+    results["runs"][0]["cases"][0]["after_report"] = after
+    with pytest.raises(ValueError, match="separate raw artifacts"):
+        quality.score(corpus, results, tmp_path)

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Reviewers preserve substantive discarded hypotheses for parent verification at Step A.3. Snapshot-bound candidate audits keep incomplete reviews unsealed, require checked refutations, and link restored defects to the existing finding validation gate.
+- Codex can explicitly recheck discarded candidates in the pending round, resuming admitted readers without bypassing source evidence, role contracts or independent validation.
 - Both review providers include targeted recovery/progress guidance for retries, leases, transactions and cursor/checkpoint transitions.
 - An offline paired review evaluator reports precision/recall before and after verification and identifies true defects lost or recovered, with neutral context exports and hash-bound independently adjudicated reports.
 

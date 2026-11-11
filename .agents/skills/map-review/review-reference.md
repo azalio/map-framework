@@ -672,7 +672,7 @@ array (use `[]` when none). Each object has `candidate_id` (stable within the re
 `bug_class`, `cause`, `failure_scenario`, `dismissal_reason`, `dismissal_invariant`,
 and `evidence_refs`. Keep concise conclusions and source evidence, not hidden reasoning
 or speculative brainstorming. A missing contract is uncertainty, not a refutation.
-This applies to normal, role and adversarial reviewers and survives shard merging.
+This declaration is required at capture for normal, role and adversarial reviewers, including all-clear outputs; omission or a non-array is rejected. It survives shard merging.
 
 At Step A.3, write the ledger with `write_review_verdict_ledger --current-run` to
 collect candidates. Inspect `discarded_candidates` in `review-verdict-ledger.json`:
@@ -708,10 +708,31 @@ perform available authorized checks before leaving a question open.
 If the dismissal is wrong, reassess the scenario without assuming it is a defect.
 For a proven defect, obtain a normal captured finding, then use `restored` with
 its `finding_id` and reason. Its bug class, cause and scenario must match the
-candidate, its evidence must cover the candidate's original referenced files,
+candidate, its validated source, reachability or attribution evidence must retain the candidate's original source references,
 and it must pass normal evidence validation (including adversarial quorum).
-A candidate without source references remains unresolved. A different defect
-gets its own finding.
+Restoration requires original source references and no unresolved role-contract gaps.
+A source-free candidate can still be refuted with parent-supplied current/base evidence;
+otherwise leave it unresolved. A different defect gets its own finding.
+
+For Codex, a plain driver rerun reuses valid captures. To obtain revised outputs
+after an all-clear pass, use the pending round's explicit recheck path:
+
+```bash
+python3 .map/scripts/codex_review_runner.py --branch <branch> --recheck-candidate RVC-<id>
+```
+
+Repeat `--recheck-candidate` for a bounded batch (at most 16 KiB of hypothesis data).
+The driver rejects unknown/stale candidates and terminal rounds, resumes the admitted
+readers, preserves source-access/capability checks, and obtains new captures for the
+applicable scheduled reviewers. In adversarial mode these remain separate readers
+and the usual independent evidence quorum still applies. Hypotheses are supplied
+without other reviewers' conclusions. Never hand-edit captures to manufacture a
+restored finding. Retry interrupted rechecks with the same candidate IDs.
+For Claude, re-invoke the applicable existing scheduled reviewers against the same
+admitted snapshot and capture their complete revised envelopes with the usual
+round/ordering/shard identity; collect independent captures for adversarial quorum.
+After recapture, rewrite the ledger, then use its fresh finding IDs and candidate
+bindings in the parent audit. Recapture alone does not certify restoration.
 
 Pending or invalid audits prevent a clean verdict and keep the round unsealed;
 corrected evidence can finish the same round. Omission never removes candidates.

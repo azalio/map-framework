@@ -109,7 +109,7 @@ def test_omission_and_changed_snapshot_do_not_erase_candidate(evidence_review):
     assert not ledger["code_approval"]["approved"]
 
 
-@pytest.mark.parametrize("candidates", [{}, [None], [{"candidate_id": "C-1"}], [_candidate(), _candidate()]])
+@pytest.mark.parametrize("candidates", [[None], [{"candidate_id": "C-1"}], [_candidate(), _candidate()]])
 def test_malformed_candidates_do_not_disappear(evidence_review, candidates):
     runner = cast(Any, map_step_runner)
     _capture(runner, candidates)
@@ -192,3 +192,101 @@ def test_restoration_cannot_substitute_identical_claim_at_another_file(evidence_
     ledger = json.loads(evidence_review.read_text())
     assert ledger["candidate_audit"]["status"] == "incomplete"
     assert ledger["candidate_audit"]["errors"]
+
+
+@pytest.mark.parametrize("missing", [True, False])
+def test_capture_requires_explicit_candidate_declaration(evidence_review, missing):
+    runner = cast(Any, map_step_runner)
+    admission = runner.begin_review_run(scheduled_reviewers=["monitor"], round_id="declaration", provider="claude")
+    runner.create_review_bundle()
+    payload = with_paraphrase({"issues": [], "receipt": {"covered_files": admission["required_files"],
+        "skipped_files": [], "denied_access": [], "check_evidence": []}})
+    if missing:
+        payload.pop("discarded_candidates")
+    else:
+        payload["discarded_candidates"] = {}
+    result = runner.capture_review_output("monitor", json.dumps(payload), "declaration")
+    assert result["status"] == "error"
+    assert "discarded_candidates" in result["message"]
+
+
+def test_compare_orderings_preserves_both_predictor_candidate_lists(evidence_review):
+    runner = cast(Any, map_step_runner)
+    admission = runner.begin_review_run(scheduled_reviewers=list(runner.NORMAL_REVIEWERS),
+        review_mode="compare_orderings", arguments="--compare-orderings", round_id="order", provider="claude")
+    assert admission["status"] == "success", admission
+    runner.create_review_bundle()
+    receipt = {"covered_files": admission["required_files"], "skipped_files": [], "denied_access": [], "check_evidence": []}
+    for ordering, risk in (("default", "low"), ("reverse", "high")):
+        runner.capture_review_output("monitor", json.dumps(with_paraphrase({"issues": [], "receipt": receipt})), "order", ordering=ordering)
+        payload = with_paraphrase({"risk_assessment": risk, "receipt": receipt,
+            "discarded_candidates": [{**_candidate(), "failure_scenario": ordering}]})
+        runner.capture_review_output("predictor", json.dumps(payload), "order", ordering=ordering)
+        runner.capture_review_output("evaluator", json.dumps(with_paraphrase({"overall_score": 9, "receipt": receipt})), "order", ordering=ordering)
+        for role in runner.BASE_ROLE_REVIEWERS:
+            runner.capture_review_output(role, json.dumps(with_paraphrase({"all_clear": True, "findings": [],
+                "checks_performed": ["source"], "receipt": receipt})), "order", ordering=ordering)
+    runner.write_review_verdict_ledger(current_run=True)
+    candidates = json.loads(evidence_review.read_text())["discarded_candidates"]
+    assert {row["source_reviewer"]: row["candidate"]["failure_scenario"] for row in candidates} == {
+        "predictor": "default", "reverse:predictor": "reverse"}
+
+
+def test_restoration_retains_original_source_witnesses(evidence_review):
+    runner = cast(Any, map_step_runner)
+    candidate = {**_candidate(), "evidence_refs": [
+        {"file_path": "divide.py", "revision": "current", "quote": "def divide(value):"}]}
+    _capture(runner, [candidate], [_issue()])
+    ledger = json.loads(evidence_review.read_text())
+    audit = _audit_file(evidence_review, verdict="restored", finding_id=ledger["findings_registry"][0]["id"])
+    runner.write_review_verdict_ledger(current_run=True, candidate_audit_file=audit)
+    assert json.loads(evidence_review.read_text())["candidate_audit"]["status"] == "incomplete"
+
+
+def test_role_contract_gap_cannot_be_restored_as_a_proved_finding(evidence_review):
+    runner = cast(Any, map_step_runner)
+    admission = runner.begin_review_run(scheduled_reviewers=list(runner.NORMAL_REVIEWERS), round_id="gap", provider="claude")
+    assert admission["status"] == "success", admission
+    runner.create_review_bundle()
+    receipt = {"covered_files": admission["required_files"], "skipped_files": [], "denied_access": [], "check_evidence": []}
+    incomplete = {**_issue(), "severity": "MINOR", "problem": "divide.py:2 public zero division",
+        "current_code": "return 10 / value", "proposed_code": "return 0 if value == 0 else 10 / value",
+        "why_better": "Restores zero handling"}  # cost deliberately absent
+    envelopes = {"monitor": {"issues": [], "discarded_candidates": [_candidate()]},
+                 "predictor": {"risk_assessment": "low"}, "evaluator": {"overall_score": 9},
+                 "user_experience": {"all_clear": True, "findings": []},
+                 "maintainer": {"all_clear": False, "findings": [incomplete]}}
+    for reviewer, payload in envelopes.items():
+        result = runner.capture_review_output(reviewer, json.dumps(with_paraphrase({**payload, "receipt": receipt})), "gap")
+        assert result["status"] == "success", result
+    runner.write_review_verdict_ledger(current_run=True)
+    ledger = json.loads(evidence_review.read_text())
+    finding = next(row for row in ledger["findings_registry"] if row.get("bug_class") == "zero_division")
+    assert finding["contract_gaps"]
+    audit = _audit_file(evidence_review, verdict="restored", finding_id=finding["id"])
+    runner.write_review_verdict_ledger(current_run=True, candidate_audit_file=audit)
+    ledger = json.loads(evidence_review.read_text())
+    assert ledger["candidate_audit"]["status"] == "incomplete"
+    assert not ledger["code_approval"]["approved"]
+
+
+def test_restoration_accepts_original_witness_in_checked_reachability(evidence_review):
+    runner = cast(Any, map_step_runner)
+    Path("caller.py").write_text("result = divide(0)\n")
+    witness = {"file_path": "caller.py", "revision": "current", "quote": "divide(0)"}
+    issue = _issue()
+    issue["reachability"]["evidence_refs"].append(witness)
+    candidate = _candidate()
+    candidate["evidence_refs"].append(witness)
+    _capture(runner, [candidate], [issue])
+    ledger = json.loads(evidence_review.read_text())
+    audit = _audit_file(evidence_review, verdict="restored", finding_id=ledger["findings_registry"][0]["id"])
+    runner.write_review_verdict_ledger(current_run=True, candidate_audit_file=audit)
+    assert json.loads(evidence_review.read_text())["candidate_audit"]["status"] == "complete"
+
+
+def test_parent_can_refute_source_free_candidate_with_checked_evidence(evidence_review):
+    runner = cast(Any, map_step_runner)
+    _capture(runner, [{**_candidate(), "evidence_refs": []}])
+    runner.write_review_verdict_ledger(current_run=True, candidate_audit_file=_audit_file(evidence_review))
+    assert json.loads(evidence_review.read_text())["candidate_audit"]["status"] == "complete"

@@ -361,7 +361,12 @@ Implementation note: `/map-learn` is now maintained skill-first. The canonical s
 checks each refutation, including all-clear reviews. The parent reads the assigned
 candidate ID and snapshot/content binding, writes an audit file, and calls
 `write_review_verdict_ledger --current-run --candidate-audit-file <path>`.
+Every reviewer must declare `discarded_candidates`, using `[]` when none.
 The generated `map-review/review-reference.md` documents the full JSON contract.
+For a candidate that needs another reader pass in the pending Codex round, run
+`python3 .map/scripts/codex_review_runner.py --recheck-candidate RVC-<id>`.
+This resumes the existing readers and refreshes their complete reports; rewrite
+the ledger before submitting the parent audit. Ordinary reruns reuse captures.
 
 Unchecked, stale or unresolved candidates prevent a clean verdict and leave the
 round open for corrected evidence. A restored candidate must link to a normal,
