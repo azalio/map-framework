@@ -54,4 +54,3 @@ can still unnecessarily occupy a scarce resource and delay independent work.
 State the demonstrated consequence without claiming a permanent leak, outage or
 throughput regression without evidence. Record unresolved local questions and
 blockers in the final answer, and carry them into the next review snapshot.
-
