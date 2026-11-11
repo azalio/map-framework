@@ -504,3 +504,26 @@ def test_context_change_within_the_current_runner_generation_still_fails_closed(
     path.write_text(json.dumps(ledger))
     with pytest.raises(host.HostError, match="context changed"):
         driver.run("feature")
+
+
+def test_delivery_missing_path_recovers_after_restart_without_transfer(repo):
+    del repo
+    delivery = admitted_delivery()
+    state = delivery.state
+    ledger = Path(".map/feature/review-verdict-ledger.json")
+    before = ledger.read_bytes()
+    for _ in range(2):
+        delivery = driver.Delivery("feature", "host", state)
+        response = delivery.respond({"arguments": {"resource_id": "repo:dependency_guess.py"}, "callId": "miss"})
+        result = json.loads(response["contentItems"][0]["text"])
+        assert response["success"] is False
+        assert result["status"] == "context_request_rejected", result
+        assert delivery.pending is None
+        complete_result(delivery, response, "miss")
+        assert delivery.transfers == 0
+        assert ledger.read_bytes() == before
+    response = delivery.respond({"arguments": {"resource_id": "repo:dependency.py"}, "callId": "corrected"})
+    assert response["success"] is True
+    complete_result(delivery, response, "corrected")
+    assert delivery.transfers == 1
+    assert delivery.refresh()["pending_chunk"] is None

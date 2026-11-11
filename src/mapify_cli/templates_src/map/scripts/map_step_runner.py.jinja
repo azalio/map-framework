@@ -15556,9 +15556,31 @@ def _review_lazy_full_resource(
     return metadata, True
 
 
+def _review_repo_context_paths(row: dict[str, Any], manifest: dict[str, Any]) -> set[str]:
+    """Return only this reviewer's admitted optional repository paths."""
+    own = set(row.get("required_files", []))
+    if manifest.get("shard"):
+        own = set(next((item["files"] for item in row.get("shards", []) if item["id"] == manifest["shard"]), []))
+    return set(row.get("target", {}).get("context_files", [])) - own
+
+
+def _review_repo_path_candidates(paths: set[str], name: str) -> tuple[list[str], bool]:
+    """Literal filename/stem matches from admission only, bounded even for long escaped paths."""
+    basename, stem = Path(name).name, Path(name).stem
+    matches = sorted(path for path in paths
+                     if Path(path).name == basename or (stem and stem in Path(path).stem))
+    candidates: list[str] = []
+    for path in matches:
+        candidate = "repo:" + path
+        if len(candidates) == 8 or len(json.dumps([*candidates, candidate], ensure_ascii=True).encode("utf-8")) > 4096:
+            break
+        candidates.append(candidate)
+    return candidates, len(candidates) < len(matches)
+
+
 def _review_lazy_repo_resource(
     directory: Path, row: dict[str, Any], manifest: dict[str, Any], resource_id: str,
-) -> tuple[dict[str, Any], bool]:
+) -> tuple[dict[str, Any] | None, bool]:
     """Resolve ``repo:<path>`` for admitted unchanged context, freezing it on first use.
 
     Returns the immutable object metadata and whether the round row changed; the
@@ -15566,12 +15588,16 @@ def _review_lazy_repo_resource(
     """
     name = resource_id.removeprefix("repo:")
     target = row.get("target", {})
-    own = set(row.get("required_files", []))
-    if manifest.get("shard"):
-        own = set(next((item["files"] for item in row.get("shards", []) if item["id"] == manifest["shard"]), []))
-    if (manifest.get("context_access") == "diff_only" or not name
-            or name not in set(target.get("context_files", [])) or name in own):
+    if (manifest.get("context_access") == "diff_only" or "\0" in name
+            or any(part in {"", ".", ".."} for part in name.split("/"))):
         raise ValueError("Resource is not permitted for this reviewer")
+    eligible = _review_repo_context_paths(row, manifest)
+    if name not in eligible:
+        if (name in set(target.get("context_files", []))
+                or (name in row.get("required_files", []) and not manifest.get("shard"))
+                or any(name in item["files"] for item in row.get("shards", []) if item["id"] == manifest.get("shard"))):
+            raise ValueError("Resource is not permitted for this reviewer")
+        return None, False
     frozen = _review_lazy_entry(row, resource_id)
     if isinstance(frozen, dict):
         return frozen, False
@@ -15731,10 +15757,16 @@ def _prepare_review_context(
                + ("; an added file's hunks are replaced there by a stub naming the required source resource that "
                   "holds its full content. " if access != "diff_only" and stubs else ". "))
             + ("" if access == "diff_only" else
-               "Consume inventory for the complete admitted file list, base/head and snapshot. "
+               "Consume inventory for the complete admitted changed-path list, base/head and snapshot; "
+               "optional context paths are compacted to a count and digest, not a full file list. "
                "Consume source resources marked required (source_pack or source_NNNNNN) for changed-path base/current contents and line mappings. "
                "Unchanged repository files are optional dependency context: request resource_id repo:<path> "
-               "for a tracked path only when needed (the full tree is not listed; inventory carries its count and digest). "
+               "for an admitted path only when needed. If context_request_rejected has reason "
+               "path_not_in_admitted_inventory, retry a relevant candidates resource_id through this same runner "
+               "with offset 0, or continue required delivery; truncated means more literal matches were omitted. "
+               "Candidates come only from eligible admitted paths, are not fetched automatically, and do not "
+               "establish live file existence. This diagnostic is not denied access or an ACK; a valid embedded ACK "
+               "is still durable. Actual access denials or stale/corrupt snapshot errors remain hard stops. "
                "If present, consume the artifacts resource: the bounded specification plus an index of optional "
                "frozen task artifacts (plan, blueprint, verification, test contracts); request resource_id "
                "artifact:<name> from that index only when the review needs the full text. "
@@ -15896,6 +15928,18 @@ def serve_review_context(
     metadata = registered if resource_id == "manifest" else manifest["resources"].get(resource_id)
     if not isinstance(metadata, dict) and resource_id.startswith("repo:"):
         metadata, lazy_frozen = _review_lazy_repo_resource(directory, row, manifest, resource_id)
+        if metadata is None:
+            candidates, truncated = _review_repo_path_candidates(
+                _review_repo_context_paths(row, manifest), resource_id.removeprefix("repo:"))
+            _require_review_delivery_current(row, directory.name)
+            return {"status": "context_request_rejected", "reason": "path_not_in_admitted_inventory",
+                    "context_id": context_id, "resource_id": resource_id,
+                    **({"session_id": session_id} if session_id else {}),
+                    "candidates": candidates, "truncated": truncated,
+                    "message": "This path is not in the admitted context inventory; live repository existence is unknown.",
+                    "instruction": "Retry a relevant candidate resource_id through the same runner with offset 0, "
+                                   "or continue required delivery. Candidates are optional, not automatically fetched. "
+                                   "This diagnostic is not an access denial or an acknowledgment."}
     elif not isinstance(metadata, dict) and resource_id.startswith("check:") and manifest.get("context_access") != "diff_only":
         metadata, lazy_frozen = _review_lazy_check_resource(directory, row, resource_id)
     elif not isinstance(metadata, dict) and resource_id.startswith(("base:", "current:")):
@@ -16328,9 +16372,13 @@ def _review_apply_ack(
 ) -> dict[str, Any]:
     """Apply one acknowledgment inside an already-held ledger transaction (standalone or embedded in a request)."""
     session = _review_delivery_session(row, session_id, agent_id)
+    # Embedded chunk ACKs use context_ack too, but carry the frozen byte-range proof, not a file nonce.
     proof = _review_context_ack_proof(data)
     if proof is not None:
-        return _review_ack_context_file(directory, ledger, row, session, session_id, proof)
+        if "chunk_sha256" not in proof:
+            return _review_ack_context_file(directory, ledger, row, session, session_id, proof)
+        if "nonce" in proof:
+            raise ValueError("Acknowledgment cannot mix chunk bytes and file proof")
     if not isinstance(data, dict) or data.get("session_id") != session_id:
         raise ValueError("Acknowledgment does not match the issued session")
     key = _review_chunk_key(data)
