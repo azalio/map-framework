@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.39.1] - 2026-11-11
+
 ### Fixed
 
 - Review context distinguishes a guessed dependency path absent from the admitted inventory from a genuine access restriction (#688). Bounded, permitted snapshot-path suggestions let the same reviewer retry without expanding access; real restrictions and integrity checks remain fail-closed, and rejected requests do not create delivery proof. Embedded chunk ACKs use chunk verification rather than file-proof dispatch, preserving acknowledged progress when the next path needs correction.
