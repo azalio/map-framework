@@ -179,3 +179,16 @@ def test_audit_cli_accepts_file_and_finishes_same_round(evidence_review):
     ledger = json.loads(evidence_review.read_text())
     assert ledger["candidate_audit"]["status"] == "complete"
     assert "completed_at" in ledger["convergence"]["rounds"][-1]
+
+
+def test_restoration_cannot_substitute_identical_claim_at_another_file(evidence_review):
+    runner = cast(Any, map_step_runner)
+    candidate = {**_candidate(), "evidence_refs": [
+        {"file_path": "other.py", "revision": "current", "quote": "return 10 / value"}]}
+    _capture(runner, [candidate], [_issue()])
+    ledger = json.loads(evidence_review.read_text())
+    audit = _audit_file(evidence_review, verdict="restored", finding_id=ledger["findings_registry"][0]["id"])
+    runner.write_review_verdict_ledger(current_run=True, candidate_audit_file=audit)
+    ledger = json.loads(evidence_review.read_text())
+    assert ledger["candidate_audit"]["status"] == "incomplete"
+    assert ledger["candidate_audit"]["errors"]

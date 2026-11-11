@@ -721,8 +721,10 @@ perform available authorized checks before leaving a question open.
 If the dismissal is wrong, reassess the scenario without assuming it is a defect.
 For a proven defect, obtain a normal captured finding, then use `restored` with
 its `finding_id` and reason. Its bug class, cause and scenario must match the
-candidate, and it must pass normal evidence validation (including adversarial
-quorum). A different defect gets its own finding.
+candidate, its evidence must cover the candidate's original referenced files,
+and it must pass normal evidence validation (including adversarial quorum).
+A candidate without source references remains unresolved. A different defect
+gets its own finding.
 
 Pending or invalid audits prevent a clean verdict and keep the round unsealed;
 corrected evidence can finish the same round. Omission never removes candidates.

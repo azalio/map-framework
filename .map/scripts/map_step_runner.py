@@ -12098,8 +12098,10 @@ def _audit_discarded_candidates(
                      and _review_refs_checked(audit.get("evidence_refs"), admitted["target"], {"current", "baseline"}))
         if valid and audit["verdict"] == "restored":
             # Restoration must reach the ordinary evidence gate, including adversarial quorum.
-            valid = any(finding.get("id") == audit.get("finding_id")
+            candidate_files = _review_affected_files(row["candidate"])
+            valid = bool(candidate_files) and any(finding.get("id") == audit.get("finding_id")
                         and finding.get("validation", {}).get("verdict") == "confirmed"
+                        and candidate_files.issubset(_review_affected_files(finding))
                         and all(finding.get(key) == row["candidate"][key]
                                 for key in ("bug_class", "cause", "failure_scenario"))
                         for finding in ledger["findings_registry"])
