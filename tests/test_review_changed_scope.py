@@ -401,7 +401,7 @@ def test_lazy_repo_lookup_is_limited_to_unchanged_admitted_context_and_frozen_on
     manifest_request = lazy_request(entry, "manifest")
     manifest = json.loads(runner.serve_review_context("monitor", json.dumps(manifest_request), "lazy", branch="feature")["content"])
     assert not any(key.startswith("repo:") for key in manifest["resources"])
-    for denied in ("repo:first.py", "repo:not-tracked.py", "repo:", "repo:../outside"):
+    for denied in ("repo:first.py", "repo:", "repo:../outside"):
         result = runner.serve_review_context("monitor", json.dumps(lazy_request(entry, denied)), "lazy", branch="feature")
         assert result["status"] == "error", denied
     served = runner.serve_review_context("monitor", json.dumps(lazy_request(entry, "repo:dependency.py")), "lazy", branch="feature")
@@ -1529,3 +1529,170 @@ def test_unsharded_absolute_receipt_paths_cover_and_skip_required_scope(repo, sk
     if not skip:
         stored = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
         assert stored["covered_files"] == ["first.py"]
+
+
+def test_missing_repo_path_recovers_without_delivery_mutation(repo):
+    del repo
+    Path("helper_impl.go").write_text("package helper\n")
+    commit_base_and_branch()
+    write_changes()
+    runner.begin_review_run(branch="feature", provider="codex", round_id="recovery")
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    entry = runner.build_review_prompts(branch="feature")["prompts"]["monitor"]
+    state = runner.bind_review_context("monitor", entry["context_transport"]["context_id"], "reader", "recovery", branch="feature")
+    ledger = Path(".map/feature/review-verdict-ledger.json")
+    before = ledger.read_bytes()
+    rejected = runner.serve_review_context("monitor", json.dumps(lazy_request(entry, "repo:helper.go")),
+        "recovery", branch="feature", session_id=state["session_id"], agent_id="reader")
+    assert rejected["status"] == "context_request_rejected", rejected
+    assert rejected["reason"] == "path_not_in_admitted_inventory"
+    assert rejected["candidates"] == ["repo:helper_impl.go"]
+    assert rejected["truncated"] is False
+    assert ledger.read_bytes() == before
+    served = serve_lazy(entry, rejected["candidates"][0], "recovery")
+    assert served["status"] == "context_response", served
+    assert json.loads(served["content"])["current_content"] == "package helper\n"
+
+
+@pytest.mark.parametrize("delivery", ["chunk", "file"])
+def test_embedded_ack_survives_missing_path_and_replay(repo, delivery):
+    from tests.test_review_context_file_delivery import file_ack, read_nonce
+
+    del repo
+    write_changes()
+    runner.begin_review_run(branch="feature", provider="codex", round_id="ack-miss")
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    entry = runner.build_review_prompts(branch="feature")["prompts"]["monitor"]
+    state = runner.bind_review_context("monitor", entry["context_transport"]["context_id"], "reader", "ack-miss", branch="feature")
+    served = runner.serve_review_context("monitor", json.dumps(lazy_request(entry, "manifest")), "ack-miss",
+        branch="feature", session_id=state["session_id"], agent_id="reader", delivery=delivery)
+    assert served["status"] == "context_response", served
+    ack = (file_ack(state, served, read_nonce(served)) if delivery == "file"
+           else {**served, "type": "context_ack"})
+    request = {**lazy_request(entry, "repo:dependency_guess.py"), "ack": ack}
+    ledger = Path(".map/feature/review-verdict-ledger.json")
+    before = ledger.read_bytes()
+    durable = b""
+    for attempt in range(2):
+        rejected = runner.serve_review_context("monitor", json.dumps(request), "ack-miss",
+            branch="feature", session_id=state["session_id"], agent_id="reader")
+        assert rejected["status"] == "context_request_rejected", rejected
+        recovered = runner.review_context_status(state["session_id"], "ack-miss", branch="feature")
+        assert recovered["pending_chunk"] is None
+        session = current_row()["context_sessions"][state["session_id"]]
+        assert session["offsets"]["manifest"] == (served["next_offset"] if delivery == "chunk" else session["available"]["manifest"]["bytes"])
+        assert "repo:dependency_guess.py" not in session["offsets"]
+        assert ledger.read_bytes() != before
+        if attempt == 0:
+            durable = ledger.read_bytes()
+        else:
+            assert ledger.read_bytes() == durable
+
+
+@pytest.mark.parametrize("fault", ["reviewer", "agent", "round", "manifest", "bundle", "snapshot", "fence"])
+def test_missing_path_cannot_disclose_on_invalid_binding(repo, monkeypatch, fault):
+    del repo
+    write_changes()
+    runner.begin_review_run(branch="feature", provider="codex", round_id="guard")
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    entry = runner.build_review_prompts(branch="feature")["prompts"]["monitor"]
+    state = runner.bind_review_context("monitor", entry["context_transport"]["context_id"], "reader", "guard", branch="feature")
+    directory = Path(".map/feature")
+    ledger = directory / "review-verdict-ledger.json"
+    before = ledger.read_bytes()
+    if fault == "manifest":
+        (directory / "review-context-objects" / state["context_id"]).write_text("{}")
+    elif fault == "bundle":
+        (directory / current_row()["bundle_receipt"]["artifact"]).write_text("{}")
+    elif fault == "snapshot":
+        Path("dependency.py").write_text("changed\n")
+    elif fault == "fence":
+        def stale(*_args):
+            del _args
+            raise ValueError("freshness fence rejected")
+        monkeypatch.setattr(runner, "_require_review_delivery_current", stale)
+    result = runner.serve_review_context("unknown" if fault == "reviewer" else "monitor",
+        json.dumps(lazy_request(entry, "repo:dependency_guess.py")), "wrong" if fault == "round" else "guard",
+        branch="feature", session_id=state["session_id"], agent_id="wrong" if fault == "agent" else "reader")
+    assert result["status"] == "error", result
+    assert "candidates" not in result
+    assert ledger.read_bytes() == before
+
+
+@pytest.mark.parametrize("name", ["", "../outside", "/absolute", "a/../b", "./dependency.py", "a//b", "a/", "a\x00b"])
+def test_malformed_repo_paths_are_hard_denials(repo, name):
+    del repo
+    write_changes()
+    runner.begin_review_run(branch="feature", provider="codex", round_id="invalid")
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    entry = runner.build_review_prompts(branch="feature")["prompts"]["monitor"]
+    result = serve_lazy(entry, "repo:" + name, "invalid")
+    assert result["status"] == "error", result
+    assert "candidates" not in result
+
+
+def test_candidates_are_literal_deterministic_and_bounded():
+    paths = {f"dir{i}/helper_impl.go" for i in range(12)} | {"unrelated.go"}
+    candidates, truncated = runner._review_repo_path_candidates(paths, "helper.go")
+    assert candidates == ["repo:" + p for p in sorted(paths) if "helper" in p][:8]
+    assert truncated is True
+    assert runner._review_repo_path_candidates(paths, "h[el]*.go") == ([], False)
+    long_paths = {"é" * 800 + f"/helper_{i}.go" for i in range(2)}
+    candidates, truncated = runner._review_repo_path_candidates(long_paths, "helper.go")
+    assert len(json.dumps(candidates, ensure_ascii=True).encode()) <= 4096
+    assert truncated is True
+
+
+def test_shard_candidates_exclude_own_paths_and_cached_resources_stay_authorized(sharded, monkeypatch):
+    _, row = sharded
+    first, second = row["shards"][:2]
+    built = runner.build_adversarial_review_prompts(branch="feature", shard=first["id"])
+    entry = built["prompts"]["edge_case"]
+    other = second["files"][0]
+    assert serve_lazy(entry, "repo:" + other, "sharded", "edge_case")["status"] == "context_response"
+    other_built = runner.build_adversarial_review_prompts(branch="feature", shard=second["id"])
+    denied = serve_lazy(other_built["prompts"]["edge_case"], "repo:" + other, "sharded", "edge_case")
+    assert denied["status"] == "error"
+    def no_source(*_args):
+        del _args
+        raise AssertionError("recovery must not fetch candidate source")
+    monkeypatch.setattr(runner, "_review_repo_source_entry", no_source)
+    result = serve_lazy(entry, "repo:missing/module.py", "sharded", "edge_case")
+    assert result["status"] == "context_request_rejected", result
+    assert set(result["candidates"]) <= {"repo:" + p for p in row["target"]["context_files"] if p not in first["files"]}
+    blind = serve_lazy(built["prompts"]["blind"], "repo:missing/module.py", "sharded", "blind")
+    assert blind["status"] == "error" and "candidates" not in blind
+
+
+@pytest.mark.parametrize("fault", ["hash", "bytes", "mixed", "file_as_chunk", "stale"])
+def test_embedded_ack_rejects_forged_proofs_without_mutation(repo, fault):
+    from tests.test_review_context_file_delivery import file_ack, read_nonce
+
+    del repo
+    write_changes()
+    runner.begin_review_run(branch="feature", provider="codex", round_id="ack-guard")
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    entry = runner.build_review_prompts(branch="feature")["prompts"]["monitor"]
+    state = runner.bind_review_context("monitor", entry["context_transport"]["context_id"], "reader", "ack-guard", branch="feature")
+    served = runner.serve_review_context("monitor", json.dumps(lazy_request(entry, "manifest")), "ack-guard",
+        branch="feature", session_id=state["session_id"], agent_id="reader",
+        delivery="file" if fault == "file_as_chunk" else "chunk")
+    if fault == "file_as_chunk":
+        ack = {**file_ack(state, served, read_nonce(served)), "chunk_sha256": "0" * 64}
+    else:
+        ack = {**served, "type": "context_ack"}
+        if fault == "hash":
+            ack["chunk_sha256"] = "0" * 64
+        elif fault == "bytes":
+            ack["content"] = "forged"
+        elif fault == "mixed":
+            ack["nonce"] = "forged"
+        else:
+            Path("dependency.py").write_text("stale\n")
+    ledger = Path(".map/feature/review-verdict-ledger.json")
+    before = ledger.read_bytes()
+    result = runner.serve_review_context("monitor", json.dumps({**lazy_request(entry, "repo:missing.py"), "ack": ack}),
+        "ack-guard", branch="feature", session_id=state["session_id"], agent_id="reader")
+    assert result["status"] == "error", result
+    assert "candidates" not in result
+    assert ledger.read_bytes() == before

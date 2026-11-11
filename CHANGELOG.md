@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Review context distinguishes a guessed dependency path absent from the admitted inventory from a genuine access restriction (#688). Bounded, permitted snapshot-path suggestions let the same reviewer retry without expanding access; real restrictions and integrity checks remain fail-closed, and rejected requests do not create delivery proof. Embedded chunk ACKs use chunk verification rather than file-proof dispatch, preserving acknowledged progress when the next path needs correction.
 - Architectural review findings can provide a bounded `design_change` instead of a ready patch (#685). Maintainer prompts trace source-of-truth and lifecycle ownership before and after the change; complete design remedies retain evidence, attribution, severity and validation requirements. Incomplete IMPORTANT/CRITICAL claims remain visible and require escalation.
 - Adversarial aggregation retains the actual primary finding author's capture provenance (#686), rather than validating it as an anonymous adversarial report. Reviewer identity comes from the input envelope, not a finding-supplied identity; independent validation and quorum requirements are unchanged.
 

@@ -34,6 +34,12 @@ including staged/unstaged/untracked inputs, deletions and both rename sides. The
 `context_files` inventory remains snapshot-bound; unchanged files are fetched lazily as
 resource `repo:<path>` (frozen on first fetch) and are never listed in the manifest.
 Unread or explicitly skipped optional context does not make review incomplete.
+A guessed `repo:<path>` absent from the admitted inventory returns
+`context_request_rejected` with `reason: path_not_in_admitted_inventory` and bounded
+candidate resource IDs from that reviewer's permitted snapshot. This does not assert
+that the file is absent from the live repository. Retry an exact candidate through
+the same context runner; do not substitute shell, MCP or live filesystem discovery.
+No candidates means no matching admitted context, not permission to expand access.
 
 Generated files are excluded from `required_files` and recorded in `row.coverage_skips`
 (`snapshot.coverage_skips`, ledger `completeness.skipped_scope`) only when matched by a file
@@ -471,7 +477,14 @@ frozen prompts only know `context_chunk`, and for Codex:
    inline), the `diff` resource, inventory and source resources marked `required`. Unchanged
    repository files are optional: fetch `repo:<path>` only when needed. Blind stays diff-only
    (prompt and `diff` only).
-2. Store the exact returned JSON in a session-specific pending file under
+   If the runner returns `context_request_rejected`, forward the diagnostic to the
+   same agent and retry its corrected request. For `path_not_in_admitted_inventory`,
+   use an exact candidate ID; for `offset_mismatch`, use the returned `next_offset`.
+   A rejection delivers no resource: do not create a pending delivery or ACK it.
+   A valid embedded ACK for a previous delivery remains accepted; recover its durable
+   progress with `review_context_status`. Real access denials and stale snapshots still
+   leave collection incomplete.
+2. Store the exact returned delivery JSON in a session-specific pending file under
    `.map/<branch>/review-context-delivery/<session-id>/`, then pass that JSON
    verbatim to the **same agent**:
 
