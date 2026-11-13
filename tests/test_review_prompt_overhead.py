@@ -30,6 +30,7 @@ def realistic_policy(size=9000):
 
 
 def admit_with_checks(monkeypatch, provider="claude", arguments=""):
+    del monkeypatch
     trust_on_main({"REVIEW.md": realistic_policy()})
     write_changes(*(f"auth/module_{index}.py" for index in range(25)))
     specs = {check_id: ["make", check_id] for check_id in CHECK_IDS}
@@ -44,13 +45,15 @@ def admit_with_checks(monkeypatch, provider="claude", arguments=""):
     for check_id in CHECK_IDS:
         log = "".join(f"{check_id} output line {index} with a long diagnostic message\n" for index in range(450))
         (directory / f"check-{check_id}.txt").write_text(log)
-        checks[check_id] = {"state": "finished", "passed": True, "exit_code": 0, "duration_seconds": 12.5,
+        checks[check_id] = {"state": "finished", "status": "success", "passed": True, "exit_code": 0,
+                            "attempt_id": f"overhead-{check_id}", "round_id": row["round_id"],
+                            "timeout_seconds": row["binding"].get("check_timeouts", {}).get(check_id, 300),
+                            "lease_protocol": "process-group-v2", "duration_seconds": 12.5,
                             "command": ["make", check_id], "before": row["target"], "after": row["target"],
                             "policy_hash": row["policy_hash"], "output_artifact": f"check-{check_id}.txt",
                             "output_sha256": hashlib.sha256(log.encode()).hexdigest()}
     ledger["execution_checks"] = checks
     runner._write_json_file(directory / "review-verdict-ledger.json", ledger)
-    monkeypatch.setattr(runner, "_review_check_valid", lambda *_args: True)
     return admitted
 
 

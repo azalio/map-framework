@@ -3,6 +3,7 @@
 import importlib
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -1274,19 +1275,19 @@ def test_changed_generated_file_is_served_with_real_base_and_current(repo):
     assert payload["baseline_known"] is True
 
 
-def test_large_check_logs_are_stubbed_in_the_prompt_and_stay_retrievable(repo, monkeypatch):
+def test_large_check_logs_are_stubbed_in_the_prompt_and_stay_retrievable(repo):
     del repo
     write_changes()
-    runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="chk", base_ref="main")
+    specs = {"big": [sys.executable, "-c", "for index in range(20_000): print(f'line {index} of a very long test log')"],
+             "small": [sys.executable, "-c", "print('ok')"]}
+    admission = runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="chk",
+                                       base_ref="main", check_specs=specs, required_checks=list(specs))
+    assert admission["status"] == "success", admission
     assert runner.create_review_bundle(branch="feature")["status"] == "success"
-    directory = Path(".map/feature")
+    for check_id in specs:
+        result = runner.run_test_gate(branch="feature", check_id=check_id)
+        assert result["passed"] is True, result
     log = "".join(f"line {index} of a very long test log\n" for index in range(20_000))
-    (directory / "check-big.txt").write_text(log)
-    (directory / "check-small.txt").write_text("ok\n")
-    ledger = runner._read_review_ledger(directory)
-    ledger["execution_checks"] = {"big": {"output_artifact": "check-big.txt"}, "small": {"output_artifact": "check-small.txt"}}
-    runner._write_json_file(directory / "review-verdict-ledger.json", ledger)
-    monkeypatch.setattr(runner, "_review_check_valid", lambda *_: True)
     compact = runner._review_compact_bundle("feature")
     # One compact line per check: digest, size and a pointer; no log text in the prompt.
     assert len(compact) < 20_000 and "line 0 of" not in compact and "line 19999 of" not in compact
@@ -1452,21 +1453,21 @@ def test_repo_and_check_resources_never_share_a_namespace(repo, monkeypatch):
     assert "repo:check:pytest" in row["context_lazy"] and "check:pytest" not in row["context_lazy"]
 
 
-def test_a_frozen_check_log_is_revalidated_on_every_serve(repo, monkeypatch):
+def test_a_frozen_check_log_is_revalidated_on_every_serve(repo):
     del repo
     write_changes()
-    runner.begin_review_run(branch="feature", provider="claude", base_ref="main", round_id="rv", scheduled_reviewers=["monitor"])
+    admission = runner.begin_review_run(branch="feature", provider="claude", base_ref="main", round_id="rv",
+                                       scheduled_reviewers=["monitor"], required_checks=["ok"],
+                                       check_specs={"ok": [sys.executable, "-c", "print('all good')"]})
+    assert admission["status"] == "success", admission
     assert runner.create_review_bundle(branch="feature")["status"] == "success"
-    directory = Path(".map/feature")
-    (directory / "check-ok.txt").write_text("all good\n")
-    ledger = runner._read_review_ledger(directory)
-    ledger["execution_checks"] = {"ok": {"output_artifact": "check-ok.txt"}}
-    runner._write_json_file(directory / "review-verdict-ledger.json", ledger)
-    valid = {"value": True}
-    monkeypatch.setattr(runner, "_review_check_valid", lambda *_: valid["value"])
+    result = runner.run_test_gate(branch="feature", check_id="ok")
+    assert result["passed"] is True, result
     entry = runner.build_review_prompts(branch="feature")["prompts"]["monitor"]
     assert serve_lazy(entry, "check:ok", "rv")["status"] == "context_response"
-    valid["value"] = False
+    directory = Path(".map/feature")
+    check = runner._read_review_ledger(directory)["execution_checks"]["ok"]
+    (directory / check["output_artifact"]).write_text("tampered after freezing\n")
     assert serve_lazy(entry, "check:ok", "rv")["status"] == "error"
 
 

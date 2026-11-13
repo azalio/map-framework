@@ -4116,10 +4116,12 @@ class TestMapReviewSharedSourceCodexRender:
         calls = []
 
         def run(argv, **kwargs):
-            # Admission must fail closed; checks print a CHECK line and exit on returncode.
+            # Admission fails closed; checks continue only on valid runner observations.
             assert kwargs.get("check") is True or "run_test_gate" in argv
             calls.append(argv)
-            return SimpleNamespace(stdout='{"status":"success","completed":false}', returncode=0)
+            return SimpleNamespace(
+                stdout='{"status":"success","completed":false,"observation_valid":true}', returncode=0
+            )
 
         monkeypatch.setattr(subprocess, "run", run)
         monkeypatch.setattr(sys, "argv", ["-", json.dumps(specs), "lightweight", "focus text", "", "{}"])

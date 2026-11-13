@@ -2,6 +2,49 @@
 
 This file contains lower-frequency review details. Keep `SKILL.md` focused on the active review sequence.
 
+## Check Observation and Baseline-Aware Approval
+
+Step A.0b parses each runner receipt even when `run_test_gate` exits nonzero.
+Only literal `observation_valid: true` permits collection to continue: execute the
+remaining admitted checks, build the bundle and dispatch every admitted reviewer.
+A failed check is evidence to review, not a reason to skip review. Missing/malformed
+JSON, invalid or stale evidence, timeout, launch/signal errors, or uncertain process
+cleanup are hard stops; never infer validity from an exit code or raw log.
+
+Keep three facts separate: observation validity, the full command's result, and
+baseline attribution. `passed: false` / `full_gate_status: failed` always means
+**FAIL**, including when `baseline_attribution.status` is `baseline_only`.
+`unknown` and `new` do not prevent ordinary collection, but cannot exempt a failed
+check from approval. Only the runner's current final verdict can allow
+baseline-aware code approval. Trusted `review.require_clean_checks: true` rejects
+the exemption; findings, security, coverage and consent gates remain unchanged.
+
+Only runner-verified replay on the exact admitted full base SHA can establish
+`baseline_only`. The runner uses the same full argv and timeout in an owned source
+snapshot, without changing the checkout. **Initial support is narrower than the
+planned Ruff/mypy/Pyright aggregate comparison:** only an external native absolute
+Ruff executable with exactly `check --isolated --no-respect-gitignore --no-cache
+--output-format concise src/ tests/` is eligible. Diagnostic-bearing files must be
+byte-identical at base and head, all non-`.py` inputs must be identical, and trees
+with tracked `.map`, symlinks or gitlinks are unsupported. Do not change the
+project's admitted command to fit this contract.
+
+Ordinary `make lint`, mypy and Pyright failures still reach reviewers, but remain
+`unknown` and cannot enable baseline-aware approval: their environment closure
+is not proven. Parser recognition alone is not replay/comparability proof. Changed
+relevant inputs, unsupported source modes, opaque or partly parsed output and
+incomplete evidence also remain `unknown`. Identical tool crashes, filenames,
+counts or bytes are not baseline proof; neither is manual comparison or
+changed-files lint. Never replace the full command, change its flags/scope, edit
+receipts, or label inherited diagnostics PASS.
+
+Reviewers reuse immutable runner check resources, including failed head output
+and baseline evidence. Report the full gate status, attribution and runner's
+approval reason separately. Attempt/output hashes bind frozen resources; after a
+rerun, rebuild current evidence rather than reusing an old check log. This is a
+review-only approval rule: release clean-check requirements, ordinary gate exit
+semantics and map-efficient's explicit human-consent baseline rules are unchanged.
+
 ## Sensitive and Unknown Review Gates
 
 New gates default to shadow diagnostics: no new blockers, no reduced existing safeguards. Strict opt-in is `review: {security_gates: strict}` in `.map/config.yaml` on the pinned trusted default branch, never PR-head/local config. In strict mode admission overrides quick/lightweight or reduced explicit rosters for sensitive/unknown changes. Dispatch every admitted reviewer, including the independent `security` role, and capture its own envelope for each ordering. Normal approval and execution checks cannot replace security coverage.
