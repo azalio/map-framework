@@ -7,6 +7,7 @@ import json
 import os
 import re
 import subprocess
+import sysconfig
 from pathlib import Path
 from typing import Any
 
@@ -157,8 +158,8 @@ def test_witness_refuses_unproven_environment_and_scripts(helper, tmp_path):
 
 def test_native_isolated_ruff_can_replay_end_to_end(helper, repository, monkeypatch):
     repo, base = repository
-    # The venv Ruff binary is native and outside this fixture's mutable tree.
-    binary = Path(__file__).resolve().parents[1] / ".venv/bin/ruff"
+    # Use this interpreter's installed native Ruff, in a venv or CI Python prefix.
+    binary = Path(sysconfig.get_path("scripts")) / "ruff"
     command = [str(binary), "check", "--isolated", "--no-respect-gitignore", "--no-cache",
                "--output-format", "concise", "src/", "tests/"]
     monkeypatch.chdir(repo)

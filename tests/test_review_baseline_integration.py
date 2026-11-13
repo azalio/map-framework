@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import sysconfig
 from pathlib import Path
 from typing import Any, cast
 
@@ -36,7 +37,7 @@ def isolated_review(request):
     subprocess.run(["git", "branch", "-f", "main", "HEAD"], check=True)
     # Leave the diagnostic source byte-identical; change a different Python file.
     (root / "writer.py").write_text("VALUE = 2\n")
-    binary = Path(__file__).resolve().parents[1] / ".venv/bin/ruff"
+    binary = Path(sysconfig.get_path("scripts")) / "ruff"
     command = [str(binary), "check", "--isolated", "--no-respect-gitignore", "--no-cache",
                "--output-format", "concise", "src/", "tests/"]
     return workspace, command
