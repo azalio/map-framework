@@ -8712,6 +8712,7 @@ class ReviewRun(TypedDict):
     required_checks: list[str]
     check_specs: dict[str, list[str]]
     check_timeouts: NotRequired[dict[str, float]]
+    baseline_witnesses: NotRequired[dict[str, Any]]
     base_ref: NotRequired[str]
 
 
@@ -9842,6 +9843,9 @@ def begin_review_run(
         payload["base_ref"] = base_ref
     if check_timeouts:
         payload["check_timeouts"] = check_timeouts
+    if check_specs:
+        payload["baseline_witnesses"] = {
+            name: _review_baseline_witness(argv) for name, argv in check_specs.items()}
     if provider not in {"unknown", "claude", "codex"}:
         raise ValueError("Unknown review provider")
     if any(not isinstance(name, str) or not name for name in [*(policy_files or []), *(required_checks or [])]):
@@ -11811,8 +11815,8 @@ def _review_completeness(row: dict[str, Any], directory: Path) -> dict[str, Any]
                         or set(row.get("required_files", [])) & _review_receipt_paths(receipt["skipped_files"])):
                     reasons.append(f"{ordering}:{name}: required scope is unread or skipped")
                 for check_id in set(receipt["check_evidence"]) | set(binding.get("required_checks", [])):
-                    if not _review_check_valid(directory, check_id, row):
-                        reasons.append(f"{ordering}:{name}: check evidence {check_id!r} is missing, stale or unsuccessful")
+                    if not _review_check_observation_valid(directory, check_id, row):
+                        reasons.append(f"{ordering}:{name}: check evidence {check_id!r} is missing, stale or invalid")
     security = _review_security_gate(row, directory)
     if _review_gates_strict(row.get("target", {})):
         reasons.extend(security["collection_reasons"])
@@ -11826,13 +11830,36 @@ def _review_completeness(row: dict[str, Any], directory: Path) -> dict[str, Any]
     return result
 
 
-def _review_check_valid(directory: Path, check_id: str, row: dict[str, Any]) -> bool:
+def _review_check_observation_valid(directory: Path, check_id: str, row: dict[str, Any]) -> bool:
+    """An intact, normally completed observation is evidence even when the command failed."""
     check = _read_review_ledger(directory).get("execution_checks", {}).get(check_id, {})
     path = directory / check.get("output_artifact", "missing-check")
-    return bool(check.get("state") == "finished" and check.get("passed") is True
+    code = check.get("exit_code")
+    expected = row.get("binding", {}).get("check_specs", {}).get(check_id)
+    timeout = row.get("binding", {}).get("check_timeouts", {}).get(check_id, 300)
+    identity = {"attempt_id": check.get("attempt_id"), "output_sha256": check.get("output_sha256")}
+    frozen = row.get("context_lazy", {}).get(f"check:{check_id}")
+    baseline_frozen = row.get("context_lazy", {}).get(f"check:{check_id}:baseline")
+    issued = row.get("check_prompt_identities", {}).get(check_id)
+    if ((isinstance(frozen, dict) and frozen.get("check_identity") != identity)
+            or (isinstance(baseline_frozen, dict) and baseline_frozen.get("check_identity") != identity)
+            or (issued is not None and issued != identity)):
+        return False
+    return bool(check.get("state") == "finished" and check.get("status") == "success"
+                and type(code) is int and code >= 0 and check.get("passed") is (code == 0)
+                and check.get("attempt_id") and check.get("round_id") == row.get("round_id")
+                and check.get("lease_protocol") == "process-group-v2"
+                and expected is not None and check.get("command") == expected
+                and check.get("timeout_seconds") == timeout
                 and check.get("before") == row.get("target") == check.get("after")
                 and check.get("policy_hash") == row.get("policy_hash") and path.is_file()
                 and hashlib.sha256(path.read_bytes()).hexdigest() == check.get("output_sha256"))
+
+
+def _review_check_valid(directory: Path, check_id: str, row: dict[str, Any]) -> bool:
+    """Strict passing predicate: baseline attribution never turns a failed command green."""
+    check = _read_review_ledger(directory).get("execution_checks", {}).get(check_id, {})
+    return _review_check_observation_valid(directory, check_id, row) and check.get("passed") is True
 
 
 def _complete_review_round(
@@ -11868,6 +11895,11 @@ def _complete_review_round(
             raise ValueError("Completed round payload changed; start the next review/fix iteration")
         if completeness["status"] != prior.get("completeness", {}).get("status"):
             raise ValueError("Completed review evidence is no longer verifiable")
+        if prior.get("code_approval", {}).get("approved") and any(
+                not _review_check_approval(directory, name, row)
+                for name in set(row["binding"].get("required_checks", []))
+                | set(prior.get("execution_check_approval", {}).get("check_ids", []))):
+            raise ValueError("Completed review check approval is no longer verifiable")
         return prior
     coverage: list[set[str]] = []
     for path in files:
@@ -11901,11 +11933,28 @@ def _complete_review_round(
     security = _review_security_gate(row, directory)
     security_blocked = (_review_gates_strict(row["target"])
                         and security["status"] not in {"NOT_REQUIRED", "COMPLETE"})
+    check_ids = set(row["binding"].get("required_checks", []))
+    for path in files:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        outputs = [payload]
+        if payload.get("schema_version") == ADVERSARIAL_AGGREGATE_SCHEMA:
+            outputs = [item.get("raw", {}) for item in payload.get("reviewer_status", {}).values()]
+        for output in outputs:
+            receipt = output.get("receipt") if isinstance(output, dict) else None
+            evidence = receipt.get("check_evidence") if isinstance(receipt, dict) else None
+            if isinstance(evidence, list):
+                check_ids.update(name for name in evidence if isinstance(name, str))
+    check_reasons = [f"Execution check {name!r} failed without verified baseline-only attribution"
+                     for name in sorted(check_ids) if not _review_check_approval(directory, name, row)]
     approved = (ledger["findings_verdict"] == "PROCEED" and completeness["status"] == "COMPLETE"
-                and not security_blocked)
+                and not security_blocked and not check_reasons)
+    ledger["execution_check_approval"] = {"approved": not check_reasons, "reasons": check_reasons,
+                                         "check_ids": sorted(check_ids),
+                                         "basis": "passing_or_verified_baseline_only"}
     if not approved and ledger["computed_verdict"] == "PROCEED":
         ledger["computed_verdict"] = "BLOCK" if completeness["status"] == "BLOCKED" or security_blocked else "REVISE"
-        ledger["verdict_basis"] = "; ".join([*completeness["reasons"], *(security["reasons"] if security_blocked else [])])
+        ledger["verdict_basis"] = "; ".join([*completeness["reasons"], *check_reasons,
+                                            *(security["reasons"] if security_blocked else [])])
         ledger["journal"].update({"current_verdict": ledger["computed_verdict"], "basis": ledger["verdict_basis"]})
     if not approved and row["verdict"] == "PROCEED":
         row["verdict"] = "INCOMPLETE" if completeness["status"] != "COMPLETE" else ledger["computed_verdict"]
@@ -12746,7 +12795,11 @@ def _check_review_ledger_binding(branch_dir: Path, verdict: str) -> dict | str:
         rounds = convergence.get("rounds", [])
         if not rounds or not _review_binding_current(rounds[-1]):
             return {"status": "error", "message": "Review snapshot or policy is stale; re-review the current target"}
-        if not ledger.get("code_approval", {}).get("approved") or _review_completeness(rounds[-1], branch_dir)["status"] != "COMPLETE":
+        if (not ledger.get("code_approval", {}).get("approved")
+                or _review_completeness(rounds[-1], branch_dir)["status"] != "COMPLETE"
+                or any(not _review_check_approval(branch_dir, name, rounds[-1])
+                       for name in set(rounds[-1]["binding"].get("required_checks", []))
+                       | set(ledger.get("execution_check_approval", {}).get("check_ids", [])))):
             return {"status": "error", "message": "Review receipts are incomplete or blocked; no code approval"}
     if verdict == "ready" and convergence and convergence.get("outcome") != "passed":
         return {"status": "error", "message": "Incomplete/capped review rounds cannot approve the review gate"}
@@ -14910,12 +14963,16 @@ def _review_prompt_target_summary(target: dict[str, Any]) -> dict[str, Any]:
 
 
 def _review_check_prompt_entry(name: str, check: dict[str, Any], output_chars: int) -> dict[str, Any]:
-    """One compact line per valid (always passing) check; the full log is the lazy ``check:<id>`` resource."""
+    """Keep command outcome separate from the validity of its runner-witnessed log."""
     duration = check.get("duration_seconds")
-    return {"passed": True, "exit_code": check.get("exit_code"), "command": check.get("command"),
+    return {"passed": check.get("passed") is True,
+            "full_gate_status": "passed" if check.get("passed") is True else "failed",
+            "baseline_attribution": check.get("baseline_attribution", {"status": "unknown"}),
+            "exit_code": check.get("exit_code"), "command": check.get("command"),
             "duration_seconds": round(duration, 1) if isinstance(duration, (int, float)) else None,
             "output_sha256": check.get("output_sha256"), "output_chars": output_chars,
-            "output_resource": f"check:{name}"}
+            "output_resource": f"check:{name}",
+            **({"baseline_resource": f"check:{name}:baseline"} if check.get("baseline_receipt") else {})}
 
 
 def _review_compact_text(rendered_bundle: str, target: dict[str, Any], checks: dict[str, Any]) -> str:
@@ -14932,6 +14989,27 @@ def _review_compact_text(rendered_bundle: str, target: dict[str, Any], checks: d
               "Unchanged repository files are optional: request repo:<path>.\n")
 
 
+@_review_transaction
+def _review_freeze_check_summaries(identities: dict[str, Any], *, branch: str | None = None) -> dict[str, Any]:
+    directory = _review_branch_dir(branch)
+    ledger = _read_review_ledger(directory)
+    row = ledger["convergence"]["rounds"][-1]
+    if not identities:
+        return {"status": "success"}
+    if not _review_binding_current(row):
+        raise ValueError("Review target or policy changed before check summary delivery")
+    issued = row.setdefault("check_prompt_identities", {})
+    for name, identity in identities.items():
+        check = ledger.get("execution_checks", {}).get(name, {})
+        if (not _review_check_observation_valid(directory, name, row)
+                or identity != {"attempt_id": check.get("attempt_id"), "output_sha256": check.get("output_sha256")}
+                or (name in issued and issued[name] != identity)):
+            raise ValueError("Execution check changed during reviewer prompt delivery")
+        issued[name] = identity
+    _write_json_file(directory / "review-verdict-ledger.json", ledger)
+    return {"status": "success"}
+
+
 def _review_compact_bundle(branch: str) -> str:
     """Retain role/plan/check/policy evidence; source bytes arrive exactly once via resources."""
     path = _review_attribution_artifact(branch)
@@ -14944,10 +15022,15 @@ def _review_compact_bundle(branch: str) -> str:
     row = ledger["convergence"]["rounds"][-1]
     checks = {}
     for name, check in ledger.get("execution_checks", {}).items():
-        if not _review_check_valid(directory, name, row):
+        if not _review_check_observation_valid(directory, name, row):
             continue
         output = (directory / check["output_artifact"]).read_text()
         checks[name] = _review_check_prompt_entry(name, check, len(output))
+    frozen = _review_freeze_check_summaries({name: {
+        "attempt_id": ledger["execution_checks"][name]["attempt_id"],
+        "output_sha256": ledger["execution_checks"][name]["output_sha256"]} for name in checks}, branch=branch)
+    if frozen.get("status") != "success":
+        raise ValueError(frozen.get("message", "Cannot bind execution check summaries"))
     return _review_compact_text(_render_bundle_markdown(bundle), target, checks)
 
 
@@ -15670,15 +15753,37 @@ def _review_lazy_entry(row: dict[str, Any], resource_id: str) -> dict[str, Any] 
 def _review_lazy_check_resource(directory: Path, row: dict[str, Any], resource_id: str) -> tuple[dict[str, Any], bool]:
     """Serve a current runner-witnessed execution-check log as optional, frozen-on-first-use context."""
     check_id = resource_id.removeprefix("check:")
-    check = _read_review_ledger(directory).get("execution_checks", {}).get(check_id)
+    all_checks = _read_review_ledger(directory).get("execution_checks", {})
+    baseline_requested = check_id not in all_checks and check_id.endswith(":baseline")
+    if baseline_requested:
+        check_id = check_id.removesuffix(":baseline")
+    check = all_checks.get(check_id)
     # Intent: always re-validate the runner-witnessed check, even when its log was frozen earlier.
-    if not isinstance(check, dict) or not _review_check_valid(directory, check_id, row):
+    if not isinstance(check, dict) or not _review_check_observation_valid(directory, check_id, row):
         raise ValueError("Resource is not permitted for this reviewer")
     frozen = row.get("context_lazy", {}).get(resource_id)
+    identity = {"attempt_id": check["attempt_id"], "output_sha256": check["output_sha256"]}
     if isinstance(frozen, dict) and frozen.get("kind") == "check":
-        return frozen, False
-    text = (directory / check["output_artifact"]).read_text(encoding="utf-8")
-    metadata = {**_review_context_store(directory, text), "required": False, "kind": "check"}
+        if frozen.get("check_identity") != identity:
+            raise ValueError("Execution check was rerun after context delivery; start a new review round")
+        if not baseline_requested:
+            return frozen, False
+    if baseline_requested:
+        receipt = check.get("baseline_receipt", {})
+        proof_bytes = (directory / receipt.get("artifact", "missing-proof")).read_bytes()
+        if hashlib.sha256(proof_bytes).hexdigest() != receipt.get("sha256"):
+            raise ValueError("Baseline evidence is missing or changed")
+        proof = json.loads(proof_bytes)
+        baseline_output = (directory / proof["output_artifact"]).read_bytes()
+        if (proof.get("attempt_id") != check["attempt_id"]
+                or proof.get("head_output_sha256") != check["output_sha256"]
+                or hashlib.sha256(baseline_output).hexdigest() != proof.get("output_sha256")):
+            raise ValueError("Baseline evidence no longer matches the execution check")
+        text = json.dumps(proof, ensure_ascii=True) + "\n\nBaseline output:\n" + baseline_output.decode("utf-8")
+    else:
+        text = (directory / check["output_artifact"]).read_text(encoding="utf-8")
+    metadata = {**_review_context_store(directory, text), "required": False, "kind": "check",
+                "check_identity": identity}
     row.setdefault("context_lazy", {})[resource_id] = metadata
     return metadata, True
 
@@ -16698,12 +16803,15 @@ def build_review_prompts(
     if early:
         return early
     budget = _review_prompt_budget_tokens(budget_tokens)
-    review_bundle = (
-        review_bundle_text
-        if review_bundle_text is not None
-        else (_review_compact_bundle(branch_name) if _review_transport_active(branch_name)
-              else _read_review_bundle_markdown(branch_name))
-    )
+    try:
+        review_bundle = (
+            review_bundle_text
+            if review_bundle_text is not None
+            else (_review_compact_bundle(branch_name) if _review_transport_active(branch_name)
+                  else _read_review_bundle_markdown(branch_name))
+        )
+    except (OSError, ValueError) as exc:
+        return {"status": "error", "message": str(exc)}
     git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text, shard_row)
     git_diff, diff_resource = _review_diff_resource(branch_name, git_diff, shard_row)
     minimality = _load_minimality_level(Path.cwd())
@@ -19062,6 +19170,155 @@ def get_current_phase(branch: str | None = None) -> str | None:
 
 
 [% include '_partials/acceptance-runtime.py.jinja' %]
+[% include '_partials/review-baseline.py.jinja' %]
+
+
+def _review_baseline_verified(directory: Path, check_id: str, row: dict[str, Any]) -> bool:
+    """Recompute attribution from immutable, attempt-bound evidence, never a status label."""
+    check = _read_review_ledger(directory).get("execution_checks", {}).get(check_id, {})
+    receipt = check.get("baseline_receipt", {})
+    if not _review_check_observation_valid(directory, check_id, row) or check.get("passed") is not False:
+        return False
+    try:
+        artifact = directory / receipt["artifact"]
+        raw = artifact.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != receipt["sha256"]:
+            return False
+        proof = json.loads(raw)
+        witness = row["binding"].get("baseline_witnesses", {}).get(check_id)
+        if (proof.get("attempt_id") != check["attempt_id"] or proof.get("round_id") != row["round_id"]
+                or proof.get("base") != row["target"].get("base")
+                or proof.get("command") != check["command"]
+                or proof.get("head_output_sha256") != check["output_sha256"]
+                or proof.get("head_exit") != check["exit_code"]
+                or proof.get("cleanup") != "complete" or proof.get("witness") != witness
+                or not isinstance(witness, dict) or witness.get("status") != "supported"
+                or _review_baseline_witness(check["command"]) != witness):
+            return False
+        prepared = _review_baseline_prepare(Path.cwd(), proof["base"], check["command"])
+        if prepared.get("status") != "eligible" or prepared != proof.get("prepared"):
+            return False
+        baseline = directory / proof["output_artifact"]
+        base_output = baseline.read_bytes()
+        if hashlib.sha256(base_output).hexdigest() != proof["output_sha256"]:
+            return False
+        execution = proof["execution"]
+        code = execution.get("exit_code")
+        if execution.get("status") != "success" or type(code) is not int or code < 0:
+            return False
+        compared = _review_baseline_compare(
+            check["command"], (directory / check["output_artifact"]).read_bytes(), base_output,
+            check["exit_code"], code, prepared["head_files"], prepared["base_files"])
+        return compared.get("attribution") == "baseline_only"
+    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
+        return False
+
+
+def _review_check_approval(directory: Path, check_id: str, row: dict[str, Any]) -> bool:
+    if _review_check_valid(directory, check_id, row):
+        return True
+    config = _review_trusted_config(row.get("target", {}))
+    if config.get("require_clean_checks", False) is not False:
+        return False
+    return _review_baseline_verified(directory, check_id, row)
+
+
+@_review_transaction
+def _review_baseline_intent(check_id: str, attempt_id: str, round_id: str, intent: dict[str, Any],
+                            *, branch: str | None = None) -> dict[str, Any]:
+    directory = _review_branch_dir(branch)
+    ledger = _read_review_ledger(directory)
+    row = ledger["convergence"]["rounds"][-1]
+    check = ledger["execution_checks"][check_id]
+    if (row["round_id"] != round_id or _review_round_terminal(row)
+            or check.get("round_id") != round_id or check.get("attempt_id") != attempt_id
+            or check.get("state") != "running"):
+        raise ValueError("Baseline replay no longer owns the admitted attempt")
+    check["baseline_intent"] = intent
+    _write_json_file(directory / "review-verdict-ledger.json", ledger)
+    return {"status": "success"}
+
+
+def _review_run_baseline(directory: Path, row: dict[str, Any], check_id: str,
+                         started: dict[str, Any], execution: dict[str, Any], output: bytes,
+                         lease_fd: int) -> dict[str, Any]:
+    """Keep the check lease and durable running intent through replay and owned cleanup."""
+    import shutil
+
+    unknown: dict[str, Any] = {"baseline_attribution": {"status": "unknown"}}
+    witness = row["binding"].get("baseline_witnesses", {}).get(check_id)
+    if (execution.get("status") != "success" or type(execution.get("exit_code")) is not int
+            or execution["exit_code"] <= 0 or not isinstance(witness, dict)
+            or witness.get("status") != "supported"):
+        return unknown
+    command = started["command"]
+    if _review_baseline_witness(command) != witness or not _review_binding_current(row):
+        return unknown
+    base = row["target"].get("base", "")
+    prepared = _review_baseline_prepare(Path.cwd(), base, command)
+    if prepared.get("status") != "eligible":
+        return {"baseline_attribution": {"status": "unknown", "reason": prepared.get("reason", "Unverified replay inputs")}}
+    parent = directory / "review-checks" / started["attempt_id"]
+    destination = parent / "baseline-tree"
+    intent = {"state": "running", "base": base, "attempt_id": started["attempt_id"],
+              "workspace": str(destination.relative_to(directory))}
+    recorded = _review_baseline_intent(check_id, started["attempt_id"], row["round_id"], intent,
+                                       branch=directory.name)
+    if recorded.get("status") != "success":
+        return unknown
+    identity: tuple[int, int] | None = None
+    base_execution: dict[str, Any] = {}
+    base_output = b""
+    launched = False
+    try:
+        destination.mkdir(mode=0o700)
+        stat = destination.lstat()
+        identity = (stat.st_dev, stat.st_ino)
+        intent["workspace_identity"] = list(identity)
+        recorded = _review_baseline_intent(check_id, started["attempt_id"], row["round_id"], intent,
+                                           branch=directory.name)
+        if recorded.get("status") != "success":
+            raise ValueError("Baseline replay admission changed")
+        materialized = _review_baseline_materialize(Path.cwd(), base, destination, owned_identity=identity)
+        if materialized != prepared["base_files"]:
+            raise ValueError("Materialized baseline differs from prepared exact tree")
+        launched = True
+        base_execution, base_output = _execute_owned_check(
+            command, parent / "baseline-execution", lease_fd, started["timeout_seconds"], cwd=str(destination.resolve()))
+        if base_execution.get("status") not in {"success", "timeout"}:
+            return {**unknown, "status": "cleanup_blocked", "passed": False}
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        unknown["baseline_attribution"]["reason"] = str(exc)
+    finally:
+        if (not launched or base_execution.get("status") in {"success", "timeout"}) and destination.exists():
+            stat = destination.lstat()
+            if identity is None or destination.is_symlink() or (stat.st_dev, stat.st_ino) != identity:
+                raise ValueError("Baseline workspace ownership is uncertain; explicit recovery required")
+            shutil.rmtree(destination)
+    if base_execution and (base_execution.get("status") != "success"
+                           or type(base_execution.get("exit_code")) is not int or base_execution["exit_code"] < 0):
+        return {**unknown, "status": "baseline_error", "passed": False}
+    if (not base_execution or not _review_binding_current(row)
+            or _review_baseline_witness(command) != witness
+            or _review_baseline_prepare(Path.cwd(), base, command) != prepared):
+        return unknown
+    compared = _review_baseline_compare(command, output, base_output, execution["exit_code"],
+                                       base_execution["exit_code"], prepared["head_files"], prepared["base_files"])
+    output_path = parent / "baseline.output"
+    with output_path.open("xb") as handle:
+        handle.write(base_output)
+        handle.flush()
+        os.fsync(handle.fileno())
+    proof = {"attempt_id": started["attempt_id"], "round_id": row["round_id"], "base": base,
+             "command": command, "head_output_sha256": hashlib.sha256(output).hexdigest(),
+             "head_exit": execution["exit_code"], "prepared": prepared, "witness": witness,
+             "execution": base_execution, "output_artifact": str(output_path.relative_to(directory)),
+             "output_sha256": hashlib.sha256(base_output).hexdigest(), "cleanup": "complete"}
+    proof_path = parent / "baseline-proof.json"
+    _write_json_file(proof_path, proof)
+    return {"baseline_attribution": {**compared, "status": compared["attribution"]},
+            "baseline_receipt": {"artifact": str(proof_path.relative_to(directory)),
+                                 "sha256": hashlib.sha256(proof_path.read_bytes()).hexdigest()}}
 
 
 @_review_transaction
@@ -19093,6 +19350,20 @@ def _record_review_check(check_id: str, command: list[str], *, branch: str | Non
         history = ledger.setdefault("execution_check_history", [])
         for prior_id, check in checks.items():
             if check.get("state") == "running":
+                intent = check.get("baseline_intent", {})
+                if intent.get("state") == "running":
+                    import shutil
+
+                    expected_path = directory / "review-checks" / str(check.get("attempt_id", "")) / "baseline-tree"
+                    if intent.get("workspace") != str(expected_path.relative_to(directory)):
+                        raise ValueError("Interrupted baseline workspace binding is invalid")
+                    if expected_path.exists() or expected_path.is_symlink():
+                        stat = expected_path.lstat()
+                        if (expected_path.is_symlink() or expected_path.parent.resolve() != expected_path.parent.absolute()
+                                or [stat.st_dev, stat.st_ino] != intent.get("workspace_identity")):
+                            raise ValueError("Interrupted baseline workspace ownership is uncertain")
+                        shutil.rmtree(expected_path)
+                    intent["state"] = "interrupted_cleaned"
                 check.update(state="interrupted", passed=False, interrupted_at=time.time(),
                              interruption_reason="Execution lease released without durable completion")
                 history.append({**check, "check_id": prior_id})
@@ -19223,16 +19494,29 @@ def run_test_gate(*, command: list[str] | None = None, check_id: str = "", branc
                 if started["status"] == "error":
                     return {**started, "passed": False}
                 output = b""
+                head_witness = _review_baseline_witness(test_cmd or [])
                 execution: dict[str, Any] = {"status": "skipped", "passed": False, "exit_code": None}
                 if test_cmd:
                     execution, output = _execute_owned_check(
                         test_cmd, directory / "review-checks" / attempt_id,
                         lease.fileno(), started["timeout_seconds"],
                     )
-                return _record_review_check(check_id, test_cmd or [], branch=branch, result=execution,
-                                            output=output, attempt_id=attempt_id)
-        except OSError as exc:
-            return {"status": "error", "passed": False, "message": f"Execution lease failed: {exc}"}
+                ledger = _read_review_ledger(directory)
+                row = ledger["convergence"]["rounds"][-1]
+                admitted_witness = row["binding"].get("baseline_witnesses", {}).get(check_id)
+                if head_witness == admitted_witness == _review_baseline_witness(test_cmd or []):
+                    execution.update(_review_run_baseline(directory, row, check_id, started, execution, output, lease.fileno()))
+                else:
+                    execution["baseline_attribution"] = {"status": "unknown", "reason": "Head toolchain witness changed"}
+                result = _record_review_check(check_id, test_cmd or [], branch=branch, result=execution,
+                                              output=output, attempt_id=attempt_id)
+                result["observation_valid"] = (result.get("status") == "success"
+                                               and _review_check_observation_valid(directory, check_id, row))
+                result["full_gate_status"] = "passed" if result.get("passed") is True else "failed"
+                return result
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            return {"status": "error", "passed": False, "observation_valid": False,
+                    "message": f"Execution ownership or baseline verification failed: {exc}"}
     if not test_cmd:
         return {
             "status": "skipped",

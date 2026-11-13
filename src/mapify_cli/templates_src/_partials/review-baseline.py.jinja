@@ -1,0 +1,320 @@
+# Exact-base replay primitives. The runner owns admission, durable receipts, the
+# inherited execution lease, process quiescence and cleanup. These helpers never
+# resolve a moving ref, launch project tools, or grant approval on their own.
+# Environment equivalence is NOT implied by equal lockfiles: the runner must
+# separately witness the installed tool/dependency/config/environment closure.
+
+
+def _review_baseline_tree(repo: Path, base: str) -> dict[str, tuple[str, bytes]]:
+    """Read a complete commit tree without archive filters, checkout or hooks."""
+    import unicodedata
+
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", base):
+        raise ValueError("Baseline requires the admitted full commit SHA")
+    verified = subprocess.run(["git", "rev-parse", "--verify", base + "^{commit}"], cwd=repo,
+                              capture_output=True, check=True, timeout=30).stdout.decode().strip()
+    if verified != base:
+        raise ValueError("Baseline is not the exact admitted commit")
+    listing = subprocess.run(["git", "ls-tree", "-rz", "--full-tree", base], cwd=repo,
+                             capture_output=True, check=True, timeout=30).stdout
+    files: dict[str, tuple[str, bytes]] = {}
+    aliases: set[str] = set()
+    total = 0
+    for entry in listing.split(b"\0"):
+        if not entry:
+            continue
+        metadata, raw_name = entry.split(b"\t", 1)
+        mode, kind, oid = metadata.decode("ascii").split()
+        name = raw_name.decode("utf-8", errors="strict")
+        parts = name.split("/")
+        alias = unicodedata.normalize("NFC", name).casefold()
+        if (mode not in {"100644", "100755"} or kind != "blob"
+                or any(part.lower() in {"", ".", "..", ".git", ".map", ".venv"} for part in parts)
+                or any(part.lower().startswith(".env") or "credential" in part.lower()
+                       or part.lower().endswith((".pem", ".key")) for part in parts)
+                or "\\" in name or any(ord(char) < 32 or ord(char) == 127 for char in name)
+                or alias in aliases):
+            raise ValueError("Unsupported baseline path or mode")
+        aliases.add(alias)
+        size = int(subprocess.run(["git", "cat-file", "-s", oid], cwd=repo,
+                                  capture_output=True, check=True, timeout=30).stdout)
+        total += size
+        if size > 8_000_000 or total > 64_000_000 or len(files) >= 20_000:
+            raise ValueError("Baseline tree exceeds bounded replay size")
+        data = subprocess.run(["git", "cat-file", "blob", oid], cwd=repo,
+                              capture_output=True, check=True, timeout=30).stdout
+        files[name] = (mode, data)
+    # A case-insensitive filesystem must not merge a directory and file alias.
+    folded = {unicodedata.normalize("NFC", name).casefold() for name in files}
+    if any("/".join(name.split("/")[:index]) in folded
+           for name in folded for index in range(1, len(name.split("/")))):
+        raise ValueError("Baseline path aliases a directory")
+    return files
+
+
+def _review_baseline_materialize(repo: Path, base: str, destination: Path, *,
+                                  owned_identity: tuple[int, int] | None = None) -> dict[str, str]:
+    """Create exactly one new owned tree; caller retains it on any uncertainty.
+
+    Validate all entries before writing. All symlinks (even safe ones) and gitlinks
+    are unsupported. No ignored files, virtualenvs or environment files are copied.
+    Destination must be beneath the real repository .map, with no symlink parent.
+    Caller must hold the stable execution lease until process quiescence; this
+    helper deliberately does not remove directories or recover prior attempts.
+    """
+    repo = repo.resolve(strict=True)
+    destination = destination.absolute()
+    parent = destination.parent
+    if (not destination.is_relative_to(repo / ".map") or parent.resolve(strict=True) != parent
+            or destination.is_symlink()):
+        raise ValueError("Baseline destination must be a fresh owned .map directory")
+    if owned_identity is None:
+        if destination.exists():
+            raise ValueError("Baseline destination must be a fresh owned .map directory")
+    elif (not destination.is_dir() or (destination.stat().st_dev, destination.stat().st_ino) != owned_identity
+          or any(destination.iterdir())):
+        raise ValueError("Baseline destination ownership or empty-directory invariant changed")
+    files = _review_baseline_tree(repo, base)
+    if owned_identity is None:
+        destination.mkdir(mode=0o700)
+    hashes = {}
+    for name, (mode, data) in files.items():
+        path = destination / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("xb") as handle:
+            handle.write(data)
+        path.chmod(0o755 if mode == "100755" else 0o644)
+        hashes[name] = hashlib.sha256(data).hexdigest()
+    return hashes
+
+
+def _review_baseline_witness(command: list[str]) -> dict[str, Any]:
+    """Measure the only self-contained replay toolchain currently supported.
+
+    Isolated native Ruff has no Python imports/dependencies, configuration discovery,
+    caches or Git-ignore dependency. Hash environment values, never persist them.
+    Normal configured Ruff, make, mypy and Pyright remain unknown here even when
+    their diagnostic output is parseable. Hashes must match the admitted witness.
+    """
+    import platform
+
+    arguments = ["check", "--isolated", "--no-respect-gitignore", "--no-cache",
+                 "--output-format", "concise", "src/", "tests/"]
+    try:
+        if not command or command[1:] != arguments or not Path(command[0]).is_absolute():
+            raise ValueError("Replay requires absolute native isolated Ruff argv")
+        binary = Path(command[0])
+        if binary.name != "ruff" or binary.is_symlink() or not binary.is_file():
+            raise ValueError("Replay requires a regular native Ruff binary")
+        if binary.resolve().is_relative_to(Path.cwd().resolve()):
+            raise ValueError("Replay binary must be outside the mutable repository")
+        data = binary.read_bytes()
+        if data[:4] not in {b"\x7fELF", b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe"}:
+            raise ValueError("Replay executable is not a supported native binary")
+        if any(key.startswith(("RUFF_", "LD_", "DYLD_")) for key in os.environ):
+            raise ValueError("Tool override environment is unsupported")
+        version = subprocess.run([str(binary), "--version"], capture_output=True, check=True, timeout=10)
+        if not re.fullmatch(rb"ruff \d+\.\d+\.\d+\n", version.stdout) or version.stderr:
+            raise ValueError("Unrecognized Ruff version")
+        environment = hashlib.sha256(json.dumps(dict(os.environ), sort_keys=True).encode()).hexdigest()
+        return {"status": "supported", "schema": "isolated-native-ruff.v1", "command": command,
+                "binary_sha256": hashlib.sha256(data).hexdigest(), "version": version.stdout.decode().strip(),
+                "environment_sha256": environment, "platform": platform.platform()}
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        return {"status": "unknown", "reason": str(exc)}
+
+
+def _review_baseline_command(command: list[str]) -> str:
+    """Recognize only standalone default text formats or the exact lint target."""
+    if command == ["make", "lint"]:
+        return "make"
+    argv = list(command)
+    if argv[:4] == ["uv", "run", "--extra", "dev"]:
+        argv = argv[4:]
+    if not argv:
+        return ""
+    tool = Path(argv[0]).name
+    if tool == "ruff" and argv[1:] in (
+            ["check", "src/", "tests/"],
+            ["check", "--isolated", "--no-respect-gitignore", "--no-cache",
+             "--output-format", "concise", "src/", "tests/"]):
+        return "ruff"
+    if tool in {"mypy", "pyright"} and argv[1:] == ["src/"]:
+        return tool
+    return ""
+
+
+def _review_baseline_prepare(repo: Path, base: str, command: list[str]) -> dict[str, Any]:
+    """Fingerprint comparable repository inputs, not installed environment.
+
+    A positive result is only repository-input eligibility, NEVER proof that
+    tools/dependencies/env/config are reproducible. Runner must freeze and recheck
+    those separately before head launch, before replay, and before publication.
+    Changed Python files are allowed but cannot supply baseline-only diagnostics.
+    Other tracked inputs must match exactly. Untracked/ignored inputs outside
+    .git/.map/.venv are unknown: config discovery and import scope may consume them.
+    """
+    try:
+        if not _review_baseline_command(command):
+            raise ValueError("Unsupported full lint argv")
+        tree = _review_baseline_tree(repo, base)
+        root = repo.resolve(strict=True)
+        current: dict[str, str] = {}
+        for name, (mode, data) in tree.items():
+            path = root / name
+            if path.is_symlink() or path.resolve() != path or not path.is_file():
+                raise ValueError("Changed source inventory or symlink")
+            actual = path.read_bytes()
+            executable = bool(path.stat().st_mode & 0o111)
+            if executable != (mode == "100755"):
+                raise ValueError("Changed input mode")
+            if not name.endswith(".py") and actual != data:
+                raise ValueError("Changed configuration/dependency/non-Python input")
+            current[name] = hashlib.sha256(actual).hexdigest()
+        for directory, directories, names in os.walk(root, followlinks=False):
+            relative = Path(directory).relative_to(root)
+            if relative == Path("."):
+                directories[:] = [name for name in directories if name not in {".git", ".map", ".venv"}]
+            if any((Path(directory) / name).is_symlink() for name in directories):
+                raise ValueError("Untracked symlink input")
+            for name in names:
+                path = Path(directory) / name
+                key = path.relative_to(root).as_posix()
+                if key not in tree:
+                    raise ValueError("Untracked or ignored replay input")
+        return {"status": "eligible", "base": base, "command": command,
+                "base_files": {name: hashlib.sha256(data).hexdigest() for name, (_, data) in tree.items()},
+                "head_files": current, "environment": "unverified"}
+    except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as exc:
+        return {"status": "unknown", "reason": str(exc)}
+
+
+def _review_baseline_diagnostics(tool: str, output: str, exit_code: int) -> list[tuple[str, str, str, str, str]]:
+    """Strict complete text transcript parser; opaque equal failures remain unknown."""
+    if exit_code not in {0, 1} or len(output) > 1_000_000 or "\x1b" in output:
+        raise ValueError("Unsupported exit or incomplete/colored output")
+    lines = output.splitlines()
+    if tool == "pyright":
+        diagnostics_pyright: list[tuple[str, str, str, str, str]] = []
+        current = ""
+        for index, line in enumerate(lines):
+            if re.fullmatch(r"[A-Za-z0-9_./-]+\.py", line):
+                current = line
+                continue
+            diagnostic = re.fullmatch(r"  ([0-9]+):([0-9]+) - error: (.+) \((report[A-Za-z]+)\)", line)
+            if diagnostic and current:
+                row, column, message, code = diagnostic.groups()
+                if current.startswith("/") or ".." in current.split("/"):
+                    raise ValueError("Pyright diagnostic path is not repository-relative")
+                diagnostics_pyright.append((tool, current, row + ":" + column, code, message))
+                continue
+            summary_pyright = re.fullmatch(r"(\d+) errors?, 0 warnings?, 0 informations?", line)
+            if (summary_pyright and index == len(lines) - 1
+                    and int(summary_pyright[1]) == len(diagnostics_pyright)
+                    and (exit_code == 1) == bool(diagnostics_pyright)):
+                return diagnostics_pyright
+            raise ValueError("Unrecognized Pyright output")
+        raise ValueError("Missing Pyright summary")
+    diagnostics: list[tuple[str, str, str, str, str]] = []
+    summary = False
+    fixable_summary = False
+    for line in lines:
+        if not line.strip():
+            continue
+        match = None
+        if tool == "ruff":
+            match = re.fullmatch(r"([^:]+):(\d+):(\d+): ([A-Z]+\d+) (.+)", line)
+            if line == "All checks passed!" and exit_code == 0 and not diagnostics and not summary:
+                summary = True
+                continue
+            fixable = re.fullmatch(r"\[\*\] (\d+) fixable with `--fix`\.", line)
+            if fixable and summary and not fixable_summary and 0 < int(fixable[1]) <= len(diagnostics):
+                fixable_summary = True
+                continue
+            count = re.fullmatch(r"Found (\d+) errors?\.", line)
+            if count and int(count[1]) == len(diagnostics) and diagnostics and not summary:
+                summary = True
+                continue
+        elif tool == "mypy":
+            match = re.fullmatch(r"([^:]+):(\d+): error: (.+)  \[([^\]]+)\]", line)
+            count = re.fullmatch(r"Found (\d+) errors? in \d+ files? \(checked \d+ source files?\)", line)
+            if count and int(count[1]) == len(diagnostics) and diagnostics and not summary:
+                summary = True
+                continue
+            if re.fullmatch(r"Success: no issues found in \d+ source files?", line) and exit_code == 0 and not diagnostics:
+                summary = True
+                continue
+        # Pyright's multiline human format and source excerpts are intentionally
+        # unsupported until there is a complete parser, not a line-dropping regex.
+        if not match or summary:
+            raise ValueError("Unrecognized lint output")
+        if tool == "ruff":
+            name, row, column, code, message = match.groups()
+        else:
+            name, row, message, code = match.groups()
+            column = "0"
+        if name.startswith("/") or ".." in name.split("/") or "\\" in name or Path(name).as_posix() != name:
+            raise ValueError("Diagnostic path is not repository-relative")
+        diagnostics.append((tool, name, row + ":" + column, code, message))
+    if not summary or (exit_code == 1) != bool(diagnostics):
+        raise ValueError("Lint summary/exit mismatch")
+    return diagnostics
+
+
+def _review_baseline_parse(command: list[str], output: bytes, exit_code: int) -> list[tuple[str, str, str, str, str]]:
+    tool = _review_baseline_command(command)
+    text = output.decode("utf-8", errors="strict")
+    if tool != "make":
+        return _review_baseline_diagnostics(tool, text, exit_code)
+    # make stops at its FIRST failure. Require exact echoed recipes in order and
+    # one canonical failure trailer; never infer execution of following stages.
+    stages = [("ruff", "uv run --extra dev ruff check src/ tests/"),
+              ("mypy", "uv run --extra dev mypy src/"),
+              ("pyright", "uv run --extra dev pyright src/")]
+    lines = text.splitlines()
+    position = 0
+    results = []
+    for index, (stage, recipe) in enumerate(stages):
+        if position >= len(lines) or lines[position] != recipe:
+            raise ValueError("Missing or reordered make stage")
+        position += 1
+        start = position
+        next_recipe = stages[index + 1][1] if index + 1 < len(stages) else None
+        while position < len(lines) and lines[position] != next_recipe and not lines[position].startswith("make:"):
+            position += 1
+        failed = position < len(lines) and lines[position].startswith("make:")
+        results.extend(_review_baseline_diagnostics(stage, "\n".join(lines[start:position]), int(failed)))
+        if failed:
+            if (exit_code != 2 or position != len(lines) - 1
+                    or not re.fullmatch(r"make: \*\*\* \[(?:Makefile:\d+: )?lint\] Error 1", lines[position])):
+                raise ValueError("Unexplained make failure")
+            return results
+    if exit_code != 0 or position != len(lines):
+        raise ValueError("Unexplained make completion")
+    return results
+
+
+def _review_baseline_compare(command: list[str], head_output: bytes, base_output: bytes,
+                             head_exit: int, base_exit: int, head_files: dict[str, str],
+                             base_files: dict[str, str]) -> dict[str, Any]:
+    """Compare complete multisets with exact-byte source/location mapping only.
+
+    This is diagnostic attribution, not replay authentication or approval. Caller
+    must authenticate outputs/attempts and comparable environment independently.
+    """
+    from collections import Counter
+
+    try:
+        head = _review_baseline_parse(command, head_output, head_exit)
+        baseline = _review_baseline_parse(command, base_output, base_exit)
+        if not head:
+            raise ValueError("No failed head diagnostics")
+        for diagnostic in head + baseline:
+            name = diagnostic[1]
+            if not re.fullmatch(r"[0-9a-f]{64}", head_files.get(name, "")) or head_files.get(name) != base_files.get(name):
+                raise ValueError("Diagnostic location has no exact-byte mapping")
+        added = Counter(head) - Counter(baseline)
+        return {"attribution": "new" if added else "baseline_only", "head_count": len(head),
+                "base_count": len(baseline), "new_count": sum(added.values())}
+    except (ValueError, UnicodeError) as exc:
+        return {"attribution": "unknown", "reason": str(exc)}

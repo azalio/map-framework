@@ -8737,6 +8737,7 @@ class ReviewRun(TypedDict):
     required_checks: list[str]
     check_specs: dict[str, list[str]]
     check_timeouts: NotRequired[dict[str, float]]
+    baseline_witnesses: NotRequired[dict[str, Any]]
     base_ref: NotRequired[str]
 
 
@@ -9867,6 +9868,9 @@ def begin_review_run(
         payload["base_ref"] = base_ref
     if check_timeouts:
         payload["check_timeouts"] = check_timeouts
+    if check_specs:
+        payload["baseline_witnesses"] = {
+            name: _review_baseline_witness(argv) for name, argv in check_specs.items()}
     if provider not in {"unknown", "claude", "codex"}:
         raise ValueError("Unknown review provider")
     if any(not isinstance(name, str) or not name for name in [*(policy_files or []), *(required_checks or [])]):
@@ -11836,8 +11840,8 @@ def _review_completeness(row: dict[str, Any], directory: Path) -> dict[str, Any]
                         or set(row.get("required_files", [])) & _review_receipt_paths(receipt["skipped_files"])):
                     reasons.append(f"{ordering}:{name}: required scope is unread or skipped")
                 for check_id in set(receipt["check_evidence"]) | set(binding.get("required_checks", [])):
-                    if not _review_check_valid(directory, check_id, row):
-                        reasons.append(f"{ordering}:{name}: check evidence {check_id!r} is missing, stale or unsuccessful")
+                    if not _review_check_observation_valid(directory, check_id, row):
+                        reasons.append(f"{ordering}:{name}: check evidence {check_id!r} is missing, stale or invalid")
     security = _review_security_gate(row, directory)
     if _review_gates_strict(row.get("target", {})):
         reasons.extend(security["collection_reasons"])
@@ -11851,13 +11855,36 @@ def _review_completeness(row: dict[str, Any], directory: Path) -> dict[str, Any]
     return result
 
 
-def _review_check_valid(directory: Path, check_id: str, row: dict[str, Any]) -> bool:
+def _review_check_observation_valid(directory: Path, check_id: str, row: dict[str, Any]) -> bool:
+    """An intact, normally completed observation is evidence even when the command failed."""
     check = _read_review_ledger(directory).get("execution_checks", {}).get(check_id, {})
     path = directory / check.get("output_artifact", "missing-check")
-    return bool(check.get("state") == "finished" and check.get("passed") is True
+    code = check.get("exit_code")
+    expected = row.get("binding", {}).get("check_specs", {}).get(check_id)
+    timeout = row.get("binding", {}).get("check_timeouts", {}).get(check_id, 300)
+    identity = {"attempt_id": check.get("attempt_id"), "output_sha256": check.get("output_sha256")}
+    frozen = row.get("context_lazy", {}).get(f"check:{check_id}")
+    baseline_frozen = row.get("context_lazy", {}).get(f"check:{check_id}:baseline")
+    issued = row.get("check_prompt_identities", {}).get(check_id)
+    if ((isinstance(frozen, dict) and frozen.get("check_identity") != identity)
+            or (isinstance(baseline_frozen, dict) and baseline_frozen.get("check_identity") != identity)
+            or (issued is not None and issued != identity)):
+        return False
+    return bool(check.get("state") == "finished" and check.get("status") == "success"
+                and type(code) is int and code >= 0 and check.get("passed") is (code == 0)
+                and check.get("attempt_id") and check.get("round_id") == row.get("round_id")
+                and check.get("lease_protocol") == "process-group-v2"
+                and expected is not None and check.get("command") == expected
+                and check.get("timeout_seconds") == timeout
                 and check.get("before") == row.get("target") == check.get("after")
                 and check.get("policy_hash") == row.get("policy_hash") and path.is_file()
                 and hashlib.sha256(path.read_bytes()).hexdigest() == check.get("output_sha256"))
+
+
+def _review_check_valid(directory: Path, check_id: str, row: dict[str, Any]) -> bool:
+    """Strict passing predicate: baseline attribution never turns a failed command green."""
+    check = _read_review_ledger(directory).get("execution_checks", {}).get(check_id, {})
+    return _review_check_observation_valid(directory, check_id, row) and check.get("passed") is True
 
 
 def _complete_review_round(
@@ -11893,6 +11920,11 @@ def _complete_review_round(
             raise ValueError("Completed round payload changed; start the next review/fix iteration")
         if completeness["status"] != prior.get("completeness", {}).get("status"):
             raise ValueError("Completed review evidence is no longer verifiable")
+        if prior.get("code_approval", {}).get("approved") and any(
+                not _review_check_approval(directory, name, row)
+                for name in set(row["binding"].get("required_checks", []))
+                | set(prior.get("execution_check_approval", {}).get("check_ids", []))):
+            raise ValueError("Completed review check approval is no longer verifiable")
         return prior
     coverage: list[set[str]] = []
     for path in files:
@@ -11926,11 +11958,28 @@ def _complete_review_round(
     security = _review_security_gate(row, directory)
     security_blocked = (_review_gates_strict(row["target"])
                         and security["status"] not in {"NOT_REQUIRED", "COMPLETE"})
+    check_ids = set(row["binding"].get("required_checks", []))
+    for path in files:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        outputs = [payload]
+        if payload.get("schema_version") == ADVERSARIAL_AGGREGATE_SCHEMA:
+            outputs = [item.get("raw", {}) for item in payload.get("reviewer_status", {}).values()]
+        for output in outputs:
+            receipt = output.get("receipt") if isinstance(output, dict) else None
+            evidence = receipt.get("check_evidence") if isinstance(receipt, dict) else None
+            if isinstance(evidence, list):
+                check_ids.update(name for name in evidence if isinstance(name, str))
+    check_reasons = [f"Execution check {name!r} failed without verified baseline-only attribution"
+                     for name in sorted(check_ids) if not _review_check_approval(directory, name, row)]
     approved = (ledger["findings_verdict"] == "PROCEED" and completeness["status"] == "COMPLETE"
-                and not security_blocked)
+                and not security_blocked and not check_reasons)
+    ledger["execution_check_approval"] = {"approved": not check_reasons, "reasons": check_reasons,
+                                         "check_ids": sorted(check_ids),
+                                         "basis": "passing_or_verified_baseline_only"}
     if not approved and ledger["computed_verdict"] == "PROCEED":
         ledger["computed_verdict"] = "BLOCK" if completeness["status"] == "BLOCKED" or security_blocked else "REVISE"
-        ledger["verdict_basis"] = "; ".join([*completeness["reasons"], *(security["reasons"] if security_blocked else [])])
+        ledger["verdict_basis"] = "; ".join([*completeness["reasons"], *check_reasons,
+                                            *(security["reasons"] if security_blocked else [])])
         ledger["journal"].update({"current_verdict": ledger["computed_verdict"], "basis": ledger["verdict_basis"]})
     if not approved and row["verdict"] == "PROCEED":
         row["verdict"] = "INCOMPLETE" if completeness["status"] != "COMPLETE" else ledger["computed_verdict"]
@@ -12771,7 +12820,11 @@ def _check_review_ledger_binding(branch_dir: Path, verdict: str) -> dict | str:
         rounds = convergence.get("rounds", [])
         if not rounds or not _review_binding_current(rounds[-1]):
             return {"status": "error", "message": "Review snapshot or policy is stale; re-review the current target"}
-        if not ledger.get("code_approval", {}).get("approved") or _review_completeness(rounds[-1], branch_dir)["status"] != "COMPLETE":
+        if (not ledger.get("code_approval", {}).get("approved")
+                or _review_completeness(rounds[-1], branch_dir)["status"] != "COMPLETE"
+                or any(not _review_check_approval(branch_dir, name, rounds[-1])
+                       for name in set(rounds[-1]["binding"].get("required_checks", []))
+                       | set(ledger.get("execution_check_approval", {}).get("check_ids", [])))):
             return {"status": "error", "message": "Review receipts are incomplete or blocked; no code approval"}
     if verdict == "ready" and convergence and convergence.get("outcome") != "passed":
         return {"status": "error", "message": "Incomplete/capped review rounds cannot approve the review gate"}
@@ -14935,12 +14988,16 @@ def _review_prompt_target_summary(target: dict[str, Any]) -> dict[str, Any]:
 
 
 def _review_check_prompt_entry(name: str, check: dict[str, Any], output_chars: int) -> dict[str, Any]:
-    """One compact line per valid (always passing) check; the full log is the lazy ``check:<id>`` resource."""
+    """Keep command outcome separate from the validity of its runner-witnessed log."""
     duration = check.get("duration_seconds")
-    return {"passed": True, "exit_code": check.get("exit_code"), "command": check.get("command"),
+    return {"passed": check.get("passed") is True,
+            "full_gate_status": "passed" if check.get("passed") is True else "failed",
+            "baseline_attribution": check.get("baseline_attribution", {"status": "unknown"}),
+            "exit_code": check.get("exit_code"), "command": check.get("command"),
             "duration_seconds": round(duration, 1) if isinstance(duration, (int, float)) else None,
             "output_sha256": check.get("output_sha256"), "output_chars": output_chars,
-            "output_resource": f"check:{name}"}
+            "output_resource": f"check:{name}",
+            **({"baseline_resource": f"check:{name}:baseline"} if check.get("baseline_receipt") else {})}
 
 
 def _review_compact_text(rendered_bundle: str, target: dict[str, Any], checks: dict[str, Any]) -> str:
@@ -14957,6 +15014,27 @@ def _review_compact_text(rendered_bundle: str, target: dict[str, Any], checks: d
               "Unchanged repository files are optional: request repo:<path>.\n")
 
 
+@_review_transaction
+def _review_freeze_check_summaries(identities: dict[str, Any], *, branch: str | None = None) -> dict[str, Any]:
+    directory = _review_branch_dir(branch)
+    ledger = _read_review_ledger(directory)
+    row = ledger["convergence"]["rounds"][-1]
+    if not identities:
+        return {"status": "success"}
+    if not _review_binding_current(row):
+        raise ValueError("Review target or policy changed before check summary delivery")
+    issued = row.setdefault("check_prompt_identities", {})
+    for name, identity in identities.items():
+        check = ledger.get("execution_checks", {}).get(name, {})
+        if (not _review_check_observation_valid(directory, name, row)
+                or identity != {"attempt_id": check.get("attempt_id"), "output_sha256": check.get("output_sha256")}
+                or (name in issued and issued[name] != identity)):
+            raise ValueError("Execution check changed during reviewer prompt delivery")
+        issued[name] = identity
+    _write_json_file(directory / "review-verdict-ledger.json", ledger)
+    return {"status": "success"}
+
+
 def _review_compact_bundle(branch: str) -> str:
     """Retain role/plan/check/policy evidence; source bytes arrive exactly once via resources."""
     path = _review_attribution_artifact(branch)
@@ -14969,10 +15047,15 @@ def _review_compact_bundle(branch: str) -> str:
     row = ledger["convergence"]["rounds"][-1]
     checks = {}
     for name, check in ledger.get("execution_checks", {}).items():
-        if not _review_check_valid(directory, name, row):
+        if not _review_check_observation_valid(directory, name, row):
             continue
         output = (directory / check["output_artifact"]).read_text()
         checks[name] = _review_check_prompt_entry(name, check, len(output))
+    frozen = _review_freeze_check_summaries({name: {
+        "attempt_id": ledger["execution_checks"][name]["attempt_id"],
+        "output_sha256": ledger["execution_checks"][name]["output_sha256"]} for name in checks}, branch=branch)
+    if frozen.get("status") != "success":
+        raise ValueError(frozen.get("message", "Cannot bind execution check summaries"))
     return _review_compact_text(_render_bundle_markdown(bundle), target, checks)
 
 
@@ -15695,15 +15778,37 @@ def _review_lazy_entry(row: dict[str, Any], resource_id: str) -> dict[str, Any] 
 def _review_lazy_check_resource(directory: Path, row: dict[str, Any], resource_id: str) -> tuple[dict[str, Any], bool]:
     """Serve a current runner-witnessed execution-check log as optional, frozen-on-first-use context."""
     check_id = resource_id.removeprefix("check:")
-    check = _read_review_ledger(directory).get("execution_checks", {}).get(check_id)
+    all_checks = _read_review_ledger(directory).get("execution_checks", {})
+    baseline_requested = check_id not in all_checks and check_id.endswith(":baseline")
+    if baseline_requested:
+        check_id = check_id.removesuffix(":baseline")
+    check = all_checks.get(check_id)
     # Intent: always re-validate the runner-witnessed check, even when its log was frozen earlier.
-    if not isinstance(check, dict) or not _review_check_valid(directory, check_id, row):
+    if not isinstance(check, dict) or not _review_check_observation_valid(directory, check_id, row):
         raise ValueError("Resource is not permitted for this reviewer")
     frozen = row.get("context_lazy", {}).get(resource_id)
+    identity = {"attempt_id": check["attempt_id"], "output_sha256": check["output_sha256"]}
     if isinstance(frozen, dict) and frozen.get("kind") == "check":
-        return frozen, False
-    text = (directory / check["output_artifact"]).read_text(encoding="utf-8")
-    metadata = {**_review_context_store(directory, text), "required": False, "kind": "check"}
+        if frozen.get("check_identity") != identity:
+            raise ValueError("Execution check was rerun after context delivery; start a new review round")
+        if not baseline_requested:
+            return frozen, False
+    if baseline_requested:
+        receipt = check.get("baseline_receipt", {})
+        proof_bytes = (directory / receipt.get("artifact", "missing-proof")).read_bytes()
+        if hashlib.sha256(proof_bytes).hexdigest() != receipt.get("sha256"):
+            raise ValueError("Baseline evidence is missing or changed")
+        proof = json.loads(proof_bytes)
+        baseline_output = (directory / proof["output_artifact"]).read_bytes()
+        if (proof.get("attempt_id") != check["attempt_id"]
+                or proof.get("head_output_sha256") != check["output_sha256"]
+                or hashlib.sha256(baseline_output).hexdigest() != proof.get("output_sha256")):
+            raise ValueError("Baseline evidence no longer matches the execution check")
+        text = json.dumps(proof, ensure_ascii=True) + "\n\nBaseline output:\n" + baseline_output.decode("utf-8")
+    else:
+        text = (directory / check["output_artifact"]).read_text(encoding="utf-8")
+    metadata = {**_review_context_store(directory, text), "required": False, "kind": "check",
+                "check_identity": identity}
     row.setdefault("context_lazy", {})[resource_id] = metadata
     return metadata, True
 
@@ -16723,12 +16828,15 @@ def build_review_prompts(
     if early:
         return early
     budget = _review_prompt_budget_tokens(budget_tokens)
-    review_bundle = (
-        review_bundle_text
-        if review_bundle_text is not None
-        else (_review_compact_bundle(branch_name) if _review_transport_active(branch_name)
-              else _read_review_bundle_markdown(branch_name))
-    )
+    try:
+        review_bundle = (
+            review_bundle_text
+            if review_bundle_text is not None
+            else (_review_compact_bundle(branch_name) if _review_transport_active(branch_name)
+                  else _read_review_bundle_markdown(branch_name))
+        )
+    except (OSError, ValueError) as exc:
+        return {"status": "error", "message": str(exc)}
     git_diff, review_scope = _scoped_review_diff(branch_name, git_diff_text, shard_row)
     git_diff, diff_resource = _review_diff_resource(branch_name, git_diff, shard_row)
     minimality = _load_minimality_level(Path.cwd())
@@ -19692,6 +19800,475 @@ def run_acceptance_proofs(ac_ids: list[str] | None = None, *, rerun: bool = Fals
     except (OSError, ValueError, TypeError, KeyError) as exc:
         return {"status": "error", "allowed": False, "message": str(exc)}
 
+# Exact-base replay primitives. The runner owns admission, durable receipts, the
+# inherited execution lease, process quiescence and cleanup. These helpers never
+# resolve a moving ref, launch project tools, or grant approval on their own.
+# Environment equivalence is NOT implied by equal lockfiles: the runner must
+# separately witness the installed tool/dependency/config/environment closure.
+
+
+def _review_baseline_tree(repo: Path, base: str) -> dict[str, tuple[str, bytes]]:
+    """Read a complete commit tree without archive filters, checkout or hooks."""
+    import unicodedata
+
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", base):
+        raise ValueError("Baseline requires the admitted full commit SHA")
+    verified = subprocess.run(["git", "rev-parse", "--verify", base + "^{commit}"], cwd=repo,
+                              capture_output=True, check=True, timeout=30).stdout.decode().strip()
+    if verified != base:
+        raise ValueError("Baseline is not the exact admitted commit")
+    listing = subprocess.run(["git", "ls-tree", "-rz", "--full-tree", base], cwd=repo,
+                             capture_output=True, check=True, timeout=30).stdout
+    files: dict[str, tuple[str, bytes]] = {}
+    aliases: set[str] = set()
+    total = 0
+    for entry in listing.split(b"\0"):
+        if not entry:
+            continue
+        metadata, raw_name = entry.split(b"\t", 1)
+        mode, kind, oid = metadata.decode("ascii").split()
+        name = raw_name.decode("utf-8", errors="strict")
+        parts = name.split("/")
+        alias = unicodedata.normalize("NFC", name).casefold()
+        if (mode not in {"100644", "100755"} or kind != "blob"
+                or any(part.lower() in {"", ".", "..", ".git", ".map", ".venv"} for part in parts)
+                or any(part.lower().startswith(".env") or "credential" in part.lower()
+                       or part.lower().endswith((".pem", ".key")) for part in parts)
+                or "\\" in name or any(ord(char) < 32 or ord(char) == 127 for char in name)
+                or alias in aliases):
+            raise ValueError("Unsupported baseline path or mode")
+        aliases.add(alias)
+        size = int(subprocess.run(["git", "cat-file", "-s", oid], cwd=repo,
+                                  capture_output=True, check=True, timeout=30).stdout)
+        total += size
+        if size > 8_000_000 or total > 64_000_000 or len(files) >= 20_000:
+            raise ValueError("Baseline tree exceeds bounded replay size")
+        data = subprocess.run(["git", "cat-file", "blob", oid], cwd=repo,
+                              capture_output=True, check=True, timeout=30).stdout
+        files[name] = (mode, data)
+    # A case-insensitive filesystem must not merge a directory and file alias.
+    folded = {unicodedata.normalize("NFC", name).casefold() for name in files}
+    if any("/".join(name.split("/")[:index]) in folded
+           for name in folded for index in range(1, len(name.split("/")))):
+        raise ValueError("Baseline path aliases a directory")
+    return files
+
+
+def _review_baseline_materialize(repo: Path, base: str, destination: Path, *,
+                                  owned_identity: tuple[int, int] | None = None) -> dict[str, str]:
+    """Create exactly one new owned tree; caller retains it on any uncertainty.
+
+    Validate all entries before writing. All symlinks (even safe ones) and gitlinks
+    are unsupported. No ignored files, virtualenvs or environment files are copied.
+    Destination must be beneath the real repository .map, with no symlink parent.
+    Caller must hold the stable execution lease until process quiescence; this
+    helper deliberately does not remove directories or recover prior attempts.
+    """
+    repo = repo.resolve(strict=True)
+    destination = destination.absolute()
+    parent = destination.parent
+    if (not destination.is_relative_to(repo / ".map") or parent.resolve(strict=True) != parent
+            or destination.is_symlink()):
+        raise ValueError("Baseline destination must be a fresh owned .map directory")
+    if owned_identity is None:
+        if destination.exists():
+            raise ValueError("Baseline destination must be a fresh owned .map directory")
+    elif (not destination.is_dir() or (destination.stat().st_dev, destination.stat().st_ino) != owned_identity
+          or any(destination.iterdir())):
+        raise ValueError("Baseline destination ownership or empty-directory invariant changed")
+    files = _review_baseline_tree(repo, base)
+    if owned_identity is None:
+        destination.mkdir(mode=0o700)
+    hashes = {}
+    for name, (mode, data) in files.items():
+        path = destination / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("xb") as handle:
+            handle.write(data)
+        path.chmod(0o755 if mode == "100755" else 0o644)
+        hashes[name] = hashlib.sha256(data).hexdigest()
+    return hashes
+
+
+def _review_baseline_witness(command: list[str]) -> dict[str, Any]:
+    """Measure the only self-contained replay toolchain currently supported.
+
+    Isolated native Ruff has no Python imports/dependencies, configuration discovery,
+    caches or Git-ignore dependency. Hash environment values, never persist them.
+    Normal configured Ruff, make, mypy and Pyright remain unknown here even when
+    their diagnostic output is parseable. Hashes must match the admitted witness.
+    """
+    import platform
+
+    arguments = ["check", "--isolated", "--no-respect-gitignore", "--no-cache",
+                 "--output-format", "concise", "src/", "tests/"]
+    try:
+        if not command or command[1:] != arguments or not Path(command[0]).is_absolute():
+            raise ValueError("Replay requires absolute native isolated Ruff argv")
+        binary = Path(command[0])
+        if binary.name != "ruff" or binary.is_symlink() or not binary.is_file():
+            raise ValueError("Replay requires a regular native Ruff binary")
+        if binary.resolve().is_relative_to(Path.cwd().resolve()):
+            raise ValueError("Replay binary must be outside the mutable repository")
+        data = binary.read_bytes()
+        if data[:4] not in {b"\x7fELF", b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe"}:
+            raise ValueError("Replay executable is not a supported native binary")
+        if any(key.startswith(("RUFF_", "LD_", "DYLD_")) for key in os.environ):
+            raise ValueError("Tool override environment is unsupported")
+        version = subprocess.run([str(binary), "--version"], capture_output=True, check=True, timeout=10)
+        if not re.fullmatch(rb"ruff \d+\.\d+\.\d+\n", version.stdout) or version.stderr:
+            raise ValueError("Unrecognized Ruff version")
+        environment = hashlib.sha256(json.dumps(dict(os.environ), sort_keys=True).encode()).hexdigest()
+        return {"status": "supported", "schema": "isolated-native-ruff.v1", "command": command,
+                "binary_sha256": hashlib.sha256(data).hexdigest(), "version": version.stdout.decode().strip(),
+                "environment_sha256": environment, "platform": platform.platform()}
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        return {"status": "unknown", "reason": str(exc)}
+
+
+def _review_baseline_command(command: list[str]) -> str:
+    """Recognize only standalone default text formats or the exact lint target."""
+    if command == ["make", "lint"]:
+        return "make"
+    argv = list(command)
+    if argv[:4] == ["uv", "run", "--extra", "dev"]:
+        argv = argv[4:]
+    if not argv:
+        return ""
+    tool = Path(argv[0]).name
+    if tool == "ruff" and argv[1:] in (
+            ["check", "src/", "tests/"],
+            ["check", "--isolated", "--no-respect-gitignore", "--no-cache",
+             "--output-format", "concise", "src/", "tests/"]):
+        return "ruff"
+    if tool in {"mypy", "pyright"} and argv[1:] == ["src/"]:
+        return tool
+    return ""
+
+
+def _review_baseline_prepare(repo: Path, base: str, command: list[str]) -> dict[str, Any]:
+    """Fingerprint comparable repository inputs, not installed environment.
+
+    A positive result is only repository-input eligibility, NEVER proof that
+    tools/dependencies/env/config are reproducible. Runner must freeze and recheck
+    those separately before head launch, before replay, and before publication.
+    Changed Python files are allowed but cannot supply baseline-only diagnostics.
+    Other tracked inputs must match exactly. Untracked/ignored inputs outside
+    .git/.map/.venv are unknown: config discovery and import scope may consume them.
+    """
+    try:
+        if not _review_baseline_command(command):
+            raise ValueError("Unsupported full lint argv")
+        tree = _review_baseline_tree(repo, base)
+        root = repo.resolve(strict=True)
+        current: dict[str, str] = {}
+        for name, (mode, data) in tree.items():
+            path = root / name
+            if path.is_symlink() or path.resolve() != path or not path.is_file():
+                raise ValueError("Changed source inventory or symlink")
+            actual = path.read_bytes()
+            executable = bool(path.stat().st_mode & 0o111)
+            if executable != (mode == "100755"):
+                raise ValueError("Changed input mode")
+            if not name.endswith(".py") and actual != data:
+                raise ValueError("Changed configuration/dependency/non-Python input")
+            current[name] = hashlib.sha256(actual).hexdigest()
+        for directory, directories, names in os.walk(root, followlinks=False):
+            relative = Path(directory).relative_to(root)
+            if relative == Path("."):
+                directories[:] = [name for name in directories if name not in {".git", ".map", ".venv"}]
+            if any((Path(directory) / name).is_symlink() for name in directories):
+                raise ValueError("Untracked symlink input")
+            for name in names:
+                path = Path(directory) / name
+                key = path.relative_to(root).as_posix()
+                if key not in tree:
+                    raise ValueError("Untracked or ignored replay input")
+        return {"status": "eligible", "base": base, "command": command,
+                "base_files": {name: hashlib.sha256(data).hexdigest() for name, (_, data) in tree.items()},
+                "head_files": current, "environment": "unverified"}
+    except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as exc:
+        return {"status": "unknown", "reason": str(exc)}
+
+
+def _review_baseline_diagnostics(tool: str, output: str, exit_code: int) -> list[tuple[str, str, str, str, str]]:
+    """Strict complete text transcript parser; opaque equal failures remain unknown."""
+    if exit_code not in {0, 1} or len(output) > 1_000_000 or "\x1b" in output:
+        raise ValueError("Unsupported exit or incomplete/colored output")
+    lines = output.splitlines()
+    if tool == "pyright":
+        diagnostics_pyright: list[tuple[str, str, str, str, str]] = []
+        current = ""
+        for index, line in enumerate(lines):
+            if re.fullmatch(r"[A-Za-z0-9_./-]+\.py", line):
+                current = line
+                continue
+            diagnostic = re.fullmatch(r"  ([0-9]+):([0-9]+) - error: (.+) \((report[A-Za-z]+)\)", line)
+            if diagnostic and current:
+                row, column, message, code = diagnostic.groups()
+                if current.startswith("/") or ".." in current.split("/"):
+                    raise ValueError("Pyright diagnostic path is not repository-relative")
+                diagnostics_pyright.append((tool, current, row + ":" + column, code, message))
+                continue
+            summary_pyright = re.fullmatch(r"(\d+) errors?, 0 warnings?, 0 informations?", line)
+            if (summary_pyright and index == len(lines) - 1
+                    and int(summary_pyright[1]) == len(diagnostics_pyright)
+                    and (exit_code == 1) == bool(diagnostics_pyright)):
+                return diagnostics_pyright
+            raise ValueError("Unrecognized Pyright output")
+        raise ValueError("Missing Pyright summary")
+    diagnostics: list[tuple[str, str, str, str, str]] = []
+    summary = False
+    fixable_summary = False
+    for line in lines:
+        if not line.strip():
+            continue
+        match = None
+        if tool == "ruff":
+            match = re.fullmatch(r"([^:]+):(\d+):(\d+): ([A-Z]+\d+) (.+)", line)
+            if line == "All checks passed!" and exit_code == 0 and not diagnostics and not summary:
+                summary = True
+                continue
+            fixable = re.fullmatch(r"\[\*\] (\d+) fixable with `--fix`\.", line)
+            if fixable and summary and not fixable_summary and 0 < int(fixable[1]) <= len(diagnostics):
+                fixable_summary = True
+                continue
+            count = re.fullmatch(r"Found (\d+) errors?\.", line)
+            if count and int(count[1]) == len(diagnostics) and diagnostics and not summary:
+                summary = True
+                continue
+        elif tool == "mypy":
+            match = re.fullmatch(r"([^:]+):(\d+): error: (.+)  \[([^\]]+)\]", line)
+            count = re.fullmatch(r"Found (\d+) errors? in \d+ files? \(checked \d+ source files?\)", line)
+            if count and int(count[1]) == len(diagnostics) and diagnostics and not summary:
+                summary = True
+                continue
+            if re.fullmatch(r"Success: no issues found in \d+ source files?", line) and exit_code == 0 and not diagnostics:
+                summary = True
+                continue
+        # Pyright's multiline human format and source excerpts are intentionally
+        # unsupported until there is a complete parser, not a line-dropping regex.
+        if not match or summary:
+            raise ValueError("Unrecognized lint output")
+        if tool == "ruff":
+            name, row, column, code, message = match.groups()
+        else:
+            name, row, message, code = match.groups()
+            column = "0"
+        if name.startswith("/") or ".." in name.split("/") or "\\" in name or Path(name).as_posix() != name:
+            raise ValueError("Diagnostic path is not repository-relative")
+        diagnostics.append((tool, name, row + ":" + column, code, message))
+    if not summary or (exit_code == 1) != bool(diagnostics):
+        raise ValueError("Lint summary/exit mismatch")
+    return diagnostics
+
+
+def _review_baseline_parse(command: list[str], output: bytes, exit_code: int) -> list[tuple[str, str, str, str, str]]:
+    tool = _review_baseline_command(command)
+    text = output.decode("utf-8", errors="strict")
+    if tool != "make":
+        return _review_baseline_diagnostics(tool, text, exit_code)
+    # make stops at its FIRST failure. Require exact echoed recipes in order and
+    # one canonical failure trailer; never infer execution of following stages.
+    stages = [("ruff", "uv run --extra dev ruff check src/ tests/"),
+              ("mypy", "uv run --extra dev mypy src/"),
+              ("pyright", "uv run --extra dev pyright src/")]
+    lines = text.splitlines()
+    position = 0
+    results = []
+    for index, (stage, recipe) in enumerate(stages):
+        if position >= len(lines) or lines[position] != recipe:
+            raise ValueError("Missing or reordered make stage")
+        position += 1
+        start = position
+        next_recipe = stages[index + 1][1] if index + 1 < len(stages) else None
+        while position < len(lines) and lines[position] != next_recipe and not lines[position].startswith("make:"):
+            position += 1
+        failed = position < len(lines) and lines[position].startswith("make:")
+        results.extend(_review_baseline_diagnostics(stage, "\n".join(lines[start:position]), int(failed)))
+        if failed:
+            if (exit_code != 2 or position != len(lines) - 1
+                    or not re.fullmatch(r"make: \*\*\* \[(?:Makefile:\d+: )?lint\] Error 1", lines[position])):
+                raise ValueError("Unexplained make failure")
+            return results
+    if exit_code != 0 or position != len(lines):
+        raise ValueError("Unexplained make completion")
+    return results
+
+
+def _review_baseline_compare(command: list[str], head_output: bytes, base_output: bytes,
+                             head_exit: int, base_exit: int, head_files: dict[str, str],
+                             base_files: dict[str, str]) -> dict[str, Any]:
+    """Compare complete multisets with exact-byte source/location mapping only.
+
+    This is diagnostic attribution, not replay authentication or approval. Caller
+    must authenticate outputs/attempts and comparable environment independently.
+    """
+    from collections import Counter
+
+    try:
+        head = _review_baseline_parse(command, head_output, head_exit)
+        baseline = _review_baseline_parse(command, base_output, base_exit)
+        if not head:
+            raise ValueError("No failed head diagnostics")
+        for diagnostic in head + baseline:
+            name = diagnostic[1]
+            if not re.fullmatch(r"[0-9a-f]{64}", head_files.get(name, "")) or head_files.get(name) != base_files.get(name):
+                raise ValueError("Diagnostic location has no exact-byte mapping")
+        added = Counter(head) - Counter(baseline)
+        return {"attribution": "new" if added else "baseline_only", "head_count": len(head),
+                "base_count": len(baseline), "new_count": sum(added.values())}
+    except (ValueError, UnicodeError) as exc:
+        return {"attribution": "unknown", "reason": str(exc)}
+
+
+
+def _review_baseline_verified(directory: Path, check_id: str, row: dict[str, Any]) -> bool:
+    """Recompute attribution from immutable, attempt-bound evidence, never a status label."""
+    check = _read_review_ledger(directory).get("execution_checks", {}).get(check_id, {})
+    receipt = check.get("baseline_receipt", {})
+    if not _review_check_observation_valid(directory, check_id, row) or check.get("passed") is not False:
+        return False
+    try:
+        artifact = directory / receipt["artifact"]
+        raw = artifact.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != receipt["sha256"]:
+            return False
+        proof = json.loads(raw)
+        witness = row["binding"].get("baseline_witnesses", {}).get(check_id)
+        if (proof.get("attempt_id") != check["attempt_id"] or proof.get("round_id") != row["round_id"]
+                or proof.get("base") != row["target"].get("base")
+                or proof.get("command") != check["command"]
+                or proof.get("head_output_sha256") != check["output_sha256"]
+                or proof.get("head_exit") != check["exit_code"]
+                or proof.get("cleanup") != "complete" or proof.get("witness") != witness
+                or not isinstance(witness, dict) or witness.get("status") != "supported"
+                or _review_baseline_witness(check["command"]) != witness):
+            return False
+        prepared = _review_baseline_prepare(Path.cwd(), proof["base"], check["command"])
+        if prepared.get("status") != "eligible" or prepared != proof.get("prepared"):
+            return False
+        baseline = directory / proof["output_artifact"]
+        base_output = baseline.read_bytes()
+        if hashlib.sha256(base_output).hexdigest() != proof["output_sha256"]:
+            return False
+        execution = proof["execution"]
+        code = execution.get("exit_code")
+        if execution.get("status") != "success" or type(code) is not int or code < 0:
+            return False
+        compared = _review_baseline_compare(
+            check["command"], (directory / check["output_artifact"]).read_bytes(), base_output,
+            check["exit_code"], code, prepared["head_files"], prepared["base_files"])
+        return compared.get("attribution") == "baseline_only"
+    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
+        return False
+
+
+def _review_check_approval(directory: Path, check_id: str, row: dict[str, Any]) -> bool:
+    if _review_check_valid(directory, check_id, row):
+        return True
+    config = _review_trusted_config(row.get("target", {}))
+    if config.get("require_clean_checks", False) is not False:
+        return False
+    return _review_baseline_verified(directory, check_id, row)
+
+
+@_review_transaction
+def _review_baseline_intent(check_id: str, attempt_id: str, round_id: str, intent: dict[str, Any],
+                            *, branch: str | None = None) -> dict[str, Any]:
+    directory = _review_branch_dir(branch)
+    ledger = _read_review_ledger(directory)
+    row = ledger["convergence"]["rounds"][-1]
+    check = ledger["execution_checks"][check_id]
+    if (row["round_id"] != round_id or _review_round_terminal(row)
+            or check.get("round_id") != round_id or check.get("attempt_id") != attempt_id
+            or check.get("state") != "running"):
+        raise ValueError("Baseline replay no longer owns the admitted attempt")
+    check["baseline_intent"] = intent
+    _write_json_file(directory / "review-verdict-ledger.json", ledger)
+    return {"status": "success"}
+
+
+def _review_run_baseline(directory: Path, row: dict[str, Any], check_id: str,
+                         started: dict[str, Any], execution: dict[str, Any], output: bytes,
+                         lease_fd: int) -> dict[str, Any]:
+    """Keep the check lease and durable running intent through replay and owned cleanup."""
+    import shutil
+
+    unknown: dict[str, Any] = {"baseline_attribution": {"status": "unknown"}}
+    witness = row["binding"].get("baseline_witnesses", {}).get(check_id)
+    if (execution.get("status") != "success" or type(execution.get("exit_code")) is not int
+            or execution["exit_code"] <= 0 or not isinstance(witness, dict)
+            or witness.get("status") != "supported"):
+        return unknown
+    command = started["command"]
+    if _review_baseline_witness(command) != witness or not _review_binding_current(row):
+        return unknown
+    base = row["target"].get("base", "")
+    prepared = _review_baseline_prepare(Path.cwd(), base, command)
+    if prepared.get("status") != "eligible":
+        return {"baseline_attribution": {"status": "unknown", "reason": prepared.get("reason", "Unverified replay inputs")}}
+    parent = directory / "review-checks" / started["attempt_id"]
+    destination = parent / "baseline-tree"
+    intent = {"state": "running", "base": base, "attempt_id": started["attempt_id"],
+              "workspace": str(destination.relative_to(directory))}
+    recorded = _review_baseline_intent(check_id, started["attempt_id"], row["round_id"], intent,
+                                       branch=directory.name)
+    if recorded.get("status") != "success":
+        return unknown
+    identity: tuple[int, int] | None = None
+    base_execution: dict[str, Any] = {}
+    base_output = b""
+    launched = False
+    try:
+        destination.mkdir(mode=0o700)
+        stat = destination.lstat()
+        identity = (stat.st_dev, stat.st_ino)
+        intent["workspace_identity"] = list(identity)
+        recorded = _review_baseline_intent(check_id, started["attempt_id"], row["round_id"], intent,
+                                           branch=directory.name)
+        if recorded.get("status") != "success":
+            raise ValueError("Baseline replay admission changed")
+        materialized = _review_baseline_materialize(Path.cwd(), base, destination, owned_identity=identity)
+        if materialized != prepared["base_files"]:
+            raise ValueError("Materialized baseline differs from prepared exact tree")
+        launched = True
+        base_execution, base_output = _execute_owned_check(
+            command, parent / "baseline-execution", lease_fd, started["timeout_seconds"], cwd=str(destination.resolve()))
+        if base_execution.get("status") not in {"success", "timeout"}:
+            return {**unknown, "status": "cleanup_blocked", "passed": False}
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        unknown["baseline_attribution"]["reason"] = str(exc)
+    finally:
+        if (not launched or base_execution.get("status") in {"success", "timeout"}) and destination.exists():
+            stat = destination.lstat()
+            if identity is None or destination.is_symlink() or (stat.st_dev, stat.st_ino) != identity:
+                raise ValueError("Baseline workspace ownership is uncertain; explicit recovery required")
+            shutil.rmtree(destination)
+    if base_execution and (base_execution.get("status") != "success"
+                           or type(base_execution.get("exit_code")) is not int or base_execution["exit_code"] < 0):
+        return {**unknown, "status": "baseline_error", "passed": False}
+    if (not base_execution or not _review_binding_current(row)
+            or _review_baseline_witness(command) != witness
+            or _review_baseline_prepare(Path.cwd(), base, command) != prepared):
+        return unknown
+    compared = _review_baseline_compare(command, output, base_output, execution["exit_code"],
+                                       base_execution["exit_code"], prepared["head_files"], prepared["base_files"])
+    output_path = parent / "baseline.output"
+    with output_path.open("xb") as handle:
+        handle.write(base_output)
+        handle.flush()
+        os.fsync(handle.fileno())
+    proof = {"attempt_id": started["attempt_id"], "round_id": row["round_id"], "base": base,
+             "command": command, "head_output_sha256": hashlib.sha256(output).hexdigest(),
+             "head_exit": execution["exit_code"], "prepared": prepared, "witness": witness,
+             "execution": base_execution, "output_artifact": str(output_path.relative_to(directory)),
+             "output_sha256": hashlib.sha256(base_output).hexdigest(), "cleanup": "complete"}
+    proof_path = parent / "baseline-proof.json"
+    _write_json_file(proof_path, proof)
+    return {"baseline_attribution": {**compared, "status": compared["attribution"]},
+            "baseline_receipt": {"artifact": str(proof_path.relative_to(directory)),
+                                 "sha256": hashlib.sha256(proof_path.read_bytes()).hexdigest()}}
 
 
 @_review_transaction
@@ -19723,6 +20300,20 @@ def _record_review_check(check_id: str, command: list[str], *, branch: str | Non
         history = ledger.setdefault("execution_check_history", [])
         for prior_id, check in checks.items():
             if check.get("state") == "running":
+                intent = check.get("baseline_intent", {})
+                if intent.get("state") == "running":
+                    import shutil
+
+                    expected_path = directory / "review-checks" / str(check.get("attempt_id", "")) / "baseline-tree"
+                    if intent.get("workspace") != str(expected_path.relative_to(directory)):
+                        raise ValueError("Interrupted baseline workspace binding is invalid")
+                    if expected_path.exists() or expected_path.is_symlink():
+                        stat = expected_path.lstat()
+                        if (expected_path.is_symlink() or expected_path.parent.resolve() != expected_path.parent.absolute()
+                                or [stat.st_dev, stat.st_ino] != intent.get("workspace_identity")):
+                            raise ValueError("Interrupted baseline workspace ownership is uncertain")
+                        shutil.rmtree(expected_path)
+                    intent["state"] = "interrupted_cleaned"
                 check.update(state="interrupted", passed=False, interrupted_at=time.time(),
                              interruption_reason="Execution lease released without durable completion")
                 history.append({**check, "check_id": prior_id})
@@ -19853,16 +20444,29 @@ def run_test_gate(*, command: list[str] | None = None, check_id: str = "", branc
                 if started["status"] == "error":
                     return {**started, "passed": False}
                 output = b""
+                head_witness = _review_baseline_witness(test_cmd or [])
                 execution: dict[str, Any] = {"status": "skipped", "passed": False, "exit_code": None}
                 if test_cmd:
                     execution, output = _execute_owned_check(
                         test_cmd, directory / "review-checks" / attempt_id,
                         lease.fileno(), started["timeout_seconds"],
                     )
-                return _record_review_check(check_id, test_cmd or [], branch=branch, result=execution,
-                                            output=output, attempt_id=attempt_id)
-        except OSError as exc:
-            return {"status": "error", "passed": False, "message": f"Execution lease failed: {exc}"}
+                ledger = _read_review_ledger(directory)
+                row = ledger["convergence"]["rounds"][-1]
+                admitted_witness = row["binding"].get("baseline_witnesses", {}).get(check_id)
+                if head_witness == admitted_witness == _review_baseline_witness(test_cmd or []):
+                    execution.update(_review_run_baseline(directory, row, check_id, started, execution, output, lease.fileno()))
+                else:
+                    execution["baseline_attribution"] = {"status": "unknown", "reason": "Head toolchain witness changed"}
+                result = _record_review_check(check_id, test_cmd or [], branch=branch, result=execution,
+                                              output=output, attempt_id=attempt_id)
+                result["observation_valid"] = (result.get("status") == "success"
+                                               and _review_check_observation_valid(directory, check_id, row))
+                result["full_gate_status"] = "passed" if result.get("passed") is True else "failed"
+                return result
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            return {"status": "error", "passed": False, "observation_valid": False,
+                    "message": f"Execution ownership or baseline verification failed: {exc}"}
     if not test_cmd:
         return {
             "status": "skipped",

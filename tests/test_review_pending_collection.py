@@ -108,16 +108,22 @@ def test_required_check_can_finish_after_pending_ledger(review_git_workspace, fa
     payload = {**with_paraphrase(ledger_tests._monitor_no_issues()), "receipt": {
         "covered_files": admission["required_files"], "skipped_files": [],
         "denied_access": [], "check_evidence": ["suite"]}}
-    assert runner.capture_review_output("monitor", json.dumps(payload), "receipt")["status"] == "success"
+    # An authenticated failed observation plus completed reviewer receipts now
+    # completes collection (but denies approval). Keep the reviewer pending while
+    # exercising retry; a missing check may still follow an already-read receipt.
+    if not failed_first:
+        assert runner.capture_review_output("monitor", json.dumps(payload), "receipt")["status"] == "success"
     if failed_first:
         _, check = ledger_tests._review_cli("run_test_gate", "--check-id", "suite")
         assert check["passed"] is False
     result = runner.write_review_verdict_ledger(current_run=True)
     assert result["code_approval"]["approved"] is False
-    assert result["convergence"]["attempted_rounds"] == 0
+    assert result["convergence"].get("attempted_rounds", 0) == 0
     marker.touch()
     proc, check = ledger_tests._review_cli("run_test_gate", "--check-id", "suite")
     assert proc.returncode == 0 and check["passed"], check
+    if failed_first:
+        assert runner.capture_review_output("monitor", json.dumps(payload), "receipt")["status"] == "success"
     proc, completed = ledger_tests._review_cli("write_review_verdict_ledger", "--current-run")
     assert proc.returncode == 0 and completed["code_approval"]["approved"], completed
     assert completed["convergence"]["completed_rounds"] == 1

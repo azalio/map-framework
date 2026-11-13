@@ -1255,7 +1255,38 @@ Current delta captured:
   self-reported provenance; runner snapshots and command results are witnessed
   evidence, not proof of reviewer comprehension.
   The runner alone owns execution checks and durable evidence references;
-  reviewers reuse current results. A stable execution lock spans claim through
+  reviewers reuse current results. Review check observations distinguish
+  `observation_valid` (authenticated/current finished execution), `passed` and
+  `full_gate_status` (the full command outcome), and `baseline_attribution.status`
+  (`unknown`, `new`, `baseline_only`). The A.0b wrapper continues all remaining
+  checks and reviewer collection for valid failed observations even on nonzero
+  CLI exit; malformed, stale or infrastructure-invalid observations hard-stop.
+  A failed full gate stays FAIL. Review-only approval can accept runner-verified
+  `baseline_only` unless trusted `review.require_clean_checks: true` forbids it; findings,
+  scope, capability, security and consent requirements remain independent.
+  Ordinary implementation/release passing predicates are unchanged.
+
+  Baseline attribution is runner-owned replay of the exact admitted base SHA,
+  full argv and timeout in an owned source snapshot, without checkout/reset/stash
+  or worktree registration. The initial mechanically supported surface is
+  narrower than the planned Ruff/mypy/Pyright aggregate comparison: an external
+  native absolute Ruff executable with exactly `check --isolated
+  --no-respect-gitignore --no-cache --output-format concise src/ tests/`.
+  Diagnostic-bearing files must be byte-identical at base and head; all non-`.py`
+  inputs must be identical. Tracked `.map`, symlinks and gitlinks are unsupported.
+  The project's admitted full command must not be changed to fit this contract.
+  Normal `make lint`, mypy and Pyright failures continue collection but stay
+  unknown/no approval because environment closure cannot be proven. Recognizing
+  their parser format is not comparability proof. Eligible diagnostics are
+  compared as multisets; unexplained stages, partial/opaque output, tool failures,
+  changed relevant inputs or unsupported trees remain unknown. Identical raw
+  output or changed-file scope cannot independently establish an exemption.
+  Durable baseline intent and evidence bind the head attempt, base, command,
+  provenance and output hashes. The execution lease spans replay and owned-path
+  cleanup; interrupted comparisons are not reusable. Publication rechecks
+  freshness atomically. Frozen reviewer check resources bind attempt/output
+  hashes so reruns cannot silently reuse earlier logs. Full failed head and
+  baseline outputs remain immutable resources; prompts carry bounded summaries. A stable execution lock spans claim through
   completion and is inherited by an independent supervisor and process-group
   anchor. The supervisor owns the admitted deadline even after runner SIGKILL;
   ordinary nested children remain contained when they close inherited FDs or

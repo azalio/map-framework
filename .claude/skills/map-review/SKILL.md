@@ -200,10 +200,8 @@ fi
 
 ### Step A.0: Lint / test precheck (MANDATORY first step)
 
-Prepare the project's existing automation BEFORE any reviewer agent. Admit the
-snapshot in Step A.0b first, then invoke the runner-owned check below; no separate
-precheck executor or reviewer-run checks. Findings already caught by automation
-must not become duplicate walkthrough items.
+Prepare the project's existing automation BEFORE any reviewer agent. Admit the snapshot in Step A.0b first, then invoke the runner-owned check below; no separate
+precheck executor or reviewer-run checks. Findings already caught by automation must not become duplicate walkthrough items.
 
 **Treat precheck output as primary signal.** Reviewer findings that
 duplicate a precheck error must NOT be raised as separate walkthrough
@@ -237,7 +235,6 @@ python3 - "$CHECK_SPECS_JSON" "$WORKFLOW_MODE" "$ARGUMENTS" "$SIBLING_HINT" "$CH
 import json
 import subprocess
 import sys
-
 specs_json, mode, arguments, sibling_hint, timeouts_json = sys.argv[1:]
 specs = json.loads(specs_json)
 runner = [sys.executable, ".map/scripts/map_step_runner.py"]
@@ -266,8 +263,12 @@ if json.loads(admission.stdout).get("completed"):
     raise SystemExit("Review already completed; do not dispatch reviewers")
 for check_id in specs:
     gate = subprocess.run(runner + ["run_test_gate", "--check-id", check_id], capture_output=True, text=True)
-    print("CHECK", check_id, *(f"{k}={json.loads(gate.stdout or '{}').get(k)}" for k in ("passed", "exit_code", "output_artifact")))
-    if gate.returncode: raise SystemExit(f"Check {check_id} failed; read $BRANCH_DIR/<artifact> before any fix")
+    try: receipt = json.loads(gate.stdout)
+    except (ValueError, TypeError): raise SystemExit(f"Check {check_id}: malformed runner observation; STOP")
+    if not isinstance(receipt, dict) or receipt.get("observation_valid") is not True:
+        raise SystemExit(f"Check {check_id}: invalid/stale/infrastructure observation; STOP")
+    print("CHECK", check_id, *(f"{k}={receipt.get(k)}" for k in ("passed", "full_gate_status", "baseline_attribution", "exit_code", "output_artifact")))
+    # Valid nonzero observations continue collection, never turn FAIL into PASS.
 PY
 [ "$?" -eq 0 ] || exit 1
 ```
@@ -276,8 +277,7 @@ Start before any capture or fan-out. Stdout is a compact summary (full rows stay
 `reconsider_approach` means STOP and request reconsideration, never approval or a
 fourth automatic round. A round is a review/fix iteration, not a reviewer/tool
 retry or an ordering collection. Pending admission restores its identity and inferred mode; all other inputs must still match.
-Completed rounds are immutable. Use `--round-id <stored-id>` for an explicit retry.
-Do not dispatch reviewers when admission reports `completed: true`. For a stale pending round or one whose reviewers could not run,
+Completed rounds are immutable. Use `--round-id <stored-id>` for an explicit retry. Do not dispatch reviewers when admission reports `completed: true`. For a stale pending round or one whose reviewers could not run,
 explicitly run `abandon_review_round <round-id> --reason "<why>"` through the runner before new admission;
 abandonment preserves audit/findings and consumes an unsuccessful attempt, never resets the cap (out-of-harness review: see reference).
 After the initial full review, verified baseline/static impact enables incremental
@@ -287,9 +287,8 @@ Report unread paths as skipped; never substitute prioritization or AC citation c
 Keep the admitted round ID with the dispatched work and use it for finalization.
 
 The wrapper executes each documented check once after pending admission, before
-bundle creation and reviewer fan-out. It uses the same literal IDs for admission and execution.
-Optional `--check-timeouts-json '{"suite":1200}'` binds positive finite seconds to an
-admitted check; omitted IDs default to 300 seconds. Timeouts are frozen, not execution overrides.
+bundle creation and reviewer fan-out. Valid failed observations continue all checks and reviewers; `passed:false` remains FAIL. Only the runner may permit baseline-aware approval; never substitute changed-files lint or manual attribution. See [check observation contract](review-reference.md#check-observation-and-baseline-aware-approval).
+Optional `--check-timeouts-json '{"suite":1200}'` binds positive finite seconds to an admitted check; omitted IDs default to 300 seconds. Timeouts are frozen, not execution overrides.
 The runner executes exact admitted `--check-specs-json` argv; `--command-json` substitutions are rejected.
 Require every check with `--required-check <id>` and its command specification; use this runner, never a second executor.
 Skipped, interrupted or stale checks cannot pass. If a check changes reviewed inputs, explicitly abandon and re-admit;
