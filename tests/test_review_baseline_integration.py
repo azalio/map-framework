@@ -3,12 +3,12 @@
 import json
 import os
 import subprocess
-import sysconfig
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
+from tests.test_review_baseline_replay import native_ruff_command
 from tests.test_review_verdict_ledger import (
     _admit_receipt_review,
     _monitor_no_issues,
@@ -18,11 +18,11 @@ from tests.test_review_verdict_ledger import (
     review_git_workspace,
 )
 
-IMPORTED_FIXTURES = (branch_workspace, review_git_workspace)
+IMPORTED_FIXTURES = (branch_workspace, review_git_workspace, native_ruff_command)
 
 
 @pytest.fixture
-def isolated_review(request):
+def isolated_review(request, native_ruff_command):
     workspace = request.getfixturevalue("review_git_workspace")
     root = Path.cwd()
     (root / "src").mkdir()
@@ -37,10 +37,7 @@ def isolated_review(request):
     subprocess.run(["git", "branch", "-f", "main", "HEAD"], check=True)
     # Leave the diagnostic source byte-identical; change a different Python file.
     (root / "writer.py").write_text("VALUE = 2\n")
-    binary = Path(sysconfig.get_path("scripts")) / "ruff"
-    command = [str(binary), "check", "--isolated", "--no-respect-gitignore", "--no-cache",
-               "--output-format", "concise", "src/", "tests/"]
-    return workspace, command
+    return workspace, native_ruff_command
 
 
 @pytest.mark.parametrize("mutation", ["none", "head_output", "base_output", "source", "clean_policy", "ownership_error",

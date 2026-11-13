@@ -26,6 +26,18 @@ def helper() -> dict[str, Any]:
 
 
 @pytest.fixture
+def native_ruff_command(monkeypatch):
+    # setup-python supplies LD_LIBRARY_PATH on CI. Positive replay tests need
+    # the supported environment, not a relaxation of the production override guard.
+    for key in tuple(os.environ):
+        if key.startswith(("RUFF_", "LD_", "DYLD_")):
+            monkeypatch.delenv(key)
+    binary = Path(sysconfig.get_path("scripts")) / "ruff"
+    return [str(binary), "check", "--isolated", "--no-respect-gitignore", "--no-cache",
+            "--output-format", "concise", "src/", "tests/"]
+
+
+@pytest.fixture
 def repository(tmp_path: Path) -> tuple[Path, str]:
     repo = tmp_path / "repository"
     repo.mkdir()
@@ -156,12 +168,18 @@ def test_witness_refuses_unproven_environment_and_scripts(helper, tmp_path):
     assert witness(command)["status"] == "unknown"
 
 
-def test_native_isolated_ruff_can_replay_end_to_end(helper, repository, monkeypatch):
+@pytest.mark.parametrize("override", ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "RUFF_CACHE_DIR"])
+def test_witness_refuses_tool_override_environment(helper, native_ruff_command, monkeypatch, tmp_path, override):
+    monkeypatch.chdir(tmp_path)
+    witness = helper["_review_baseline_witness"]
+    assert witness(native_ruff_command)["status"] == "supported"
+    monkeypatch.setenv(override, "/untrusted/tool/override")
+    assert witness(native_ruff_command) == {"status": "unknown", "reason": "Tool override environment is unsupported"}
+
+
+def test_native_isolated_ruff_can_replay_end_to_end(helper, repository, monkeypatch, native_ruff_command):
     repo, base = repository
-    # Use this interpreter's installed native Ruff, in a venv or CI Python prefix.
-    binary = Path(sysconfig.get_path("scripts")) / "ruff"
-    command = [str(binary), "check", "--isolated", "--no-respect-gitignore", "--no-cache",
-               "--output-format", "concise", "src/", "tests/"]
+    command = native_ruff_command
     monkeypatch.chdir(repo)
     (repo / "tests").mkdir()
     witness = helper["_review_baseline_witness"](command)
