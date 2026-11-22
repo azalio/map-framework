@@ -7151,5 +7151,62 @@ def test_finalize_plan_uses_atomic_write(
     )
 
 
+def _state_cli(project: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(ORCHESTRATOR_PATH / "map_orchestrator.py"), *args,
+         "--branch", "active"],
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(project)},
+        text=True, capture_output=True, timeout=15, check=False,
+    )
+
+
+def test_automatic_state_recovery_preserves_progress_and_evidence(tmp_path):
+    directory = tmp_path / ".map" / "active"
+    directory.mkdir(parents=True)
+    path = directory / "step_state.json"
+    state = map_orchestrator.StepState(
+        current_step_id="2.25", current_step_phase="TEST_WRITER",
+        subtask_results={"ST-001": {"summary": "принято"}},
+    ).to_dict()
+    state["future_field"] = {"nested": [1, False]}
+    prefix = json.dumps(state, ensure_ascii=False, indent=2).encode()
+    original = prefix + b'4Z"\n  }\n}'
+    path.write_bytes(original)
+
+    peek = _state_cli(tmp_path, "peek_current_step")
+    assert peek.returncode != 0 and "step_state.json" in peek.stderr
+    assert path.read_bytes() == original
+    assert list(directory.iterdir()) == [path]
+
+    change = _state_cli(tmp_path, "set_execution_mode", "step_by_step")
+    assert change.returncode == 0, change.stderr
+    assert json.loads(change.stdout)["status"] == "success"
+    assert json.loads(path.read_bytes()) == {**state, "execution_mode": "step_by_step"}
+    backup, = directory.glob("step_state.*.corrupt")
+    assert backup.read_bytes() == original
+    audit, = directory.glob("step_state.*.recovery.json")
+    receipt = json.loads(audit.read_bytes())
+    assert receipt["backup"] == backup.name
+    assert receipt["removed_bytes"] == len(original) - len(prefix)
+    assert receipt["command"] == "set_execution_mode"
+    assert _state_cli(tmp_path, "set_execution_mode", "step_by_step").returncode == 0
+    assert list(directory.glob("*.recovery.json")) == [audit]
+
+
+@pytest.mark.parametrize("raw", [
+    b'{"current_step_phase":', b'[]', b'{}{}', b'{}junk', b'{}4Z"\n}',
+    b'{"current_step_id":"2.3","current_step_phase":"ACTOR"} {"other":1}',
+    b'{"current_step_id":"2.3","current_step_phase":"ACTOR","x":1,"x":2}}',
+])
+def test_ambiguous_state_preserved_by_mutation(tmp_path, raw):
+    directory = tmp_path / ".map" / "active"
+    directory.mkdir(parents=True)
+    path = directory / "step_state.json"
+    path.write_bytes(raw)
+    result = _state_cli(tmp_path, "set_execution_mode", "step_by_step")
+    assert result.returncode != 0 and "step_state.json" in result.stderr
+    assert path.read_bytes() == raw
+    assert list(directory.iterdir()) == [path]
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

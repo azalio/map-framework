@@ -285,12 +285,7 @@ def step_state_path(branch: str) -> Path:
 
 # Per-turn dedup: identical normalized reminder text emitted within
 # DEDUP_WINDOW_SECONDS of the previous emission is squelched. We do
-# NOT key on step_state.json mtime — record_hook_injection_status
-# rewrites step_state on every hook call as part of accounting, so
-# mtime always changes and would defeat dedup on its own side effect.
-# Instead we rely on the fact that any meaningful workflow change
-# (validate_step → new phase / subtask) produces different reminder
-# text, which naturally lifts the squelch.
+# deduplicate reminder content so unrelated state updates cannot re-emit it.
 DEDUP_CACHE_NAME = ".hook-reminder-cache.json"
 DEDUP_WINDOW_SECONDS = 5.0
 
@@ -318,10 +313,7 @@ def _should_squelch_duplicate(branch: str, reminder: str) -> bool:
     Dedup axis is purely the NORMALIZED reminder text within a short wall
     clock window: when the workflow state changes (validate_step advances
     phases / subtasks), the reminder text changes automatically (different
-    step_id / phase / progress) and the dedup naturally lifts. We do NOT
-    look at step_state.json mtime — record_hook_injection_status writes
-    the state file on every call as part of normal accounting, which
-    would otherwise bust dedup on its own side effect.
+    step_id / phase / progress) and the dedup naturally lifts.
 
     Any failure (no cache, different reminder, ancient timestamp, IO
     error) returns False so the reminder is emitted normally.
@@ -379,33 +371,45 @@ def record_hook_injection_status(
     additional_context_chars: int = 0,
 ) -> None:
     """Best-effort status write; hook failures must never block tool execution."""
-    path = step_state_path(branch)
+    state_file = step_state_path(branch)
+    path = state_file.with_name("hook-injection.json")
     try:
-        counts = state.get("hook_injection_counts")
-        if not isinstance(counts, dict):
-            counts = {}
-        counts[status] = int(counts.get(status, 0) or 0) + 1
-        state["hook_injection_counts"] = counts
-        state["hook_injection"] = {
-            "status": status,
-            "reason": reason,
-            "tool_name": tool_name,
-            "additional_context_chars": additional_context_chars,
-            "updated_at": datetime.now(UTC).isoformat().replace(
-                "+00:00", "Z"
-            ),
-        }
-        tmp_file = path.with_suffix(".tmp")
-        tmp_file.write_text(
-            json.dumps(state, indent=2, ensure_ascii=True), encoding="utf-8"
-        )
-        tmp_file.replace(path)
+        # Installed Claude and Codex hooks both live at <root>/.provider/hooks/.
+        scripts = str(Path(__file__).resolve().parents[2] / ".map" / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        from map_utils import atomic_write_text, branch_transaction  # type: ignore[import-not-found]
+
+        with branch_transaction(path.parent):
+            current, _ = read_step_state(branch)
+            if current is None or current.get("started_at") != state.get("started_at"):
+                return
+            try:
+                telemetry = json.loads(path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                telemetry = {}
+            if not telemetry or telemetry.get("started_at") != current.get("started_at"):
+                # Carry legacy inline counters into the first event of this run.
+                telemetry = {
+                    "started_at": current.get("started_at"),
+                    "hook_injection_counts": current.get("hook_injection_counts") or {},
+                }
+            counts = telemetry["hook_injection_counts"]
+            counts[status] = int(counts.get(status, 0) or 0) + 1
+            telemetry["hook_injection"] = {
+                "status": status,
+                "reason": reason,
+                "tool_name": tool_name,
+                "additional_context_chars": additional_context_chars,
+                "updated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            }
+            atomic_write_text(path, json.dumps(telemetry, indent=2))
     except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate
         pass
 
 
 def record_skip_if_state_available(branch: str, reason: str, tool_name: str) -> None:
-    """Persist a skipped hook outcome only when existing state is safe to update."""
+    """Record a skipped hook outcome for an existing workflow."""
     state, _ = read_step_state(branch)
     if state is not None:
         record_hook_injection_status(branch, state, "skipped", reason, tool_name)

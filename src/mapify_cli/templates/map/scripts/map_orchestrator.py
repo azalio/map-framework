@@ -114,6 +114,7 @@ if tuple(sys.version_info) < (3, 11):
     sys.exit(1)
 
 import argparse
+import hashlib
 import inspect
 import json
 import os
@@ -776,6 +777,68 @@ def build_resume_briefing(branch: str) -> dict:
     }
 
 
+def _unique_state_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate state key: {key}")
+        result[key] = value
+    return result
+
+
+def _read_state_object(path: Path, *, repair_command: str | None = None) -> dict | None:
+    """Read state; a mutation holding the branch lock can remove a stale writer's tail."""
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return None
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"Invalid UTF-8 in {path}: {exc}") from exc
+    try:
+        state = json.loads(content)
+    except json.JSONDecodeError as exc:
+        if repair_command is None or exc.msg != "Extra data":
+            raise ValueError(f"Invalid workflow state in {path}: {exc}") from exc
+
+        # Only accept a complete, unambiguous state and the end of a stale
+        # timestamp/closing containers. Never select between adjacent documents.
+        decoder = json.JSONDecoder(object_pairs_hook=_unique_state_keys)
+        try:
+            state, end = decoder.raw_decode(content, len(content) - len(content.lstrip(" \t\r\n")))
+        except ValueError as ambiguous:
+            raise ValueError(f"Ambiguous workflow state in {path}: {ambiguous}") from ambiguous
+        suffix = content[end:]
+        if (
+            not isinstance(state, dict)
+            or not all(isinstance(state.get(key), str) and state[key]
+                       for key in ("current_step_id", "current_step_phase"))
+            or not re.fullmatch(r'\s*(?:[0-9.TZ:+\-]*"\s*)?(?:[}\]]\s*)+', suffix, re.ASCII)
+        ):
+            raise ValueError(f"Unrecognized trailing data in {path}; original preserved") from exc
+
+        prefix = content[:end]
+        digest = hashlib.sha256(raw).hexdigest()
+        backup = path.with_name(f"step_state.{digest}.corrupt")
+        receipt = path.with_name(f"step_state.{digest}.recovery.json")
+        # UTF-8 decoding above is strict; preserving the text without newline
+        # translation reproduces every original byte, including CRLF.
+        atomic_write_text(backup, content)
+        details = {
+            "backup": backup.name, "original_sha256": digest,
+            "recovered_sha256": hashlib.sha256(prefix.encode("utf-8")).hexdigest(),
+            "removed_bytes": len(suffix.encode("utf-8")),
+            "command": repair_command, "recorded_at": _utc_timestamp(),
+        }
+        atomic_write_text(receipt, json.dumps(details, indent=2))
+        atomic_write_text(path, prefix)
+        print(f"Recovered {path}; original bytes and recovery details: {backup}, {receipt}", file=sys.stderr)
+    if not isinstance(state, dict):
+        raise ValueError(f"Expected a JSON object in {path}")
+    return state
+
+
 @dataclass
 class StepState:
     """Workflow step state tracking."""
@@ -842,6 +905,8 @@ class StepState:
     # of squinting at synthetic "no-op" summaries.
     subtask_completion_reasons: dict[str, dict] = field(default_factory=dict)
 
+    _extra_fields: dict = field(default_factory=dict, init=False, repr=False)
+
     def record_subtask_result(
         self,
         subtask_id: str,
@@ -872,6 +937,7 @@ class StepState:
     def to_dict(self) -> dict:
         """Serialize to dictionary."""
         return {
+            **self._extra_fields,
             "workflow": self.workflow,
             "started_at": self.started_at,
             "current_subtask_id": self.current_subtask_id,
@@ -917,7 +983,7 @@ class StepState:
     @classmethod
     def from_dict(cls, data: dict) -> "StepState":
         """Deserialize from dictionary."""
-        return cls(
+        state = cls(
             workflow=data.get("workflow", "map-efficient"),
             started_at=data.get("started_at", datetime.now(UTC).isoformat()),
             current_subtask_id=data.get("current_subtask_id"),
@@ -962,16 +1028,15 @@ class StepState:
             ),
         )
 
+        known = state.to_dict()
+        state._extra_fields = {key: value for key, value in data.items() if key not in known}
+        return state
+
     @classmethod
     def load(cls, state_file: Path) -> "StepState":
         """Load state from file."""
-        if not state_file.exists():
-            return cls()
-        try:
-            data = json.loads(state_file.read_text(encoding="utf-8"))
-            return cls.from_dict(data)
-        except (json.JSONDecodeError, KeyError, OSError):
-            return cls()
+        data = _read_state_object(state_file)
+        return cls() if data is None else cls.from_dict(data)
 
     def save(self, state_file: Path) -> None:
         """Save state to file."""
@@ -5400,6 +5465,54 @@ def _emit_context_budget_warning(branch: str, transcript_path: str | None) -> No
     print(message, file=sys.stderr)
 
 
+READ_ONLY_COMMANDS = {
+    "check_circuit_breaker",
+    "get_interruption_status",
+    "get_plan_progress",
+    "peek_current_step",
+    "repair_status",
+    "select_execution_strategy",
+}
+
+MUTATING_COMMANDS = {
+    "abandon",
+    "advance_wave",
+    "archive",
+    "backfill_subtask_ids",
+    "begin_acceptance_authoring",
+    "begin_repair",
+    "defer_flaky_subtask",
+    "finalize_plan",
+    "finish_repair",
+    "get_next_step",
+    "get_wave_step",
+    "initialize",
+    "mark_contract_ready",
+    "mark_subtask_complete",
+    "mark_workflow_complete",
+    "monitor_failed",
+    "record_subtask_result",
+    "reopen_for_fixes",
+    "request_acceptance_revision",
+    "request_repair",
+    "resequence_pending",
+    "restore_deferred_yagni",
+    "resume_from_plan",
+    "resume_from_test_contract",
+    "resume_single_subtask",
+    "set_execution_mode",
+    "set_plan_approved",
+    "set_subtasks",
+    "set_tdd_mode",
+    "set_waves",
+    "skip_step",
+    "validate_step",
+    "validate_wave_step",
+    "verify_repair",
+    "wave_monitor_failed",
+}
+
+
 def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -5407,49 +5520,7 @@ def main():
     )
     parser.add_argument(
         "command",
-        choices=[
-            "request_repair",
-            "begin_repair",
-            "verify_repair",
-            "finish_repair",
-            "repair_status",
-            "get_interruption_status",
-            "get_next_step",
-            "peek_current_step",
-            "validate_step",
-            "initialize",
-            "set_plan_approved",
-            "restore_deferred_yagni",
-            "set_execution_mode",
-            "set_tdd_mode",
-            "skip_step",
-            "set_subtasks",
-            "resequence_pending",
-            "mark_contract_ready",
-            "begin_acceptance_authoring",
-            "request_acceptance_revision",
-            "resume_from_plan",
-            "resume_from_test_contract",
-            "check_circuit_breaker",
-            "set_waves",
-            "get_wave_step",
-            "validate_wave_step",
-            "advance_wave",
-            "select_execution_strategy",
-            "resume_single_subtask",
-            "get_plan_progress",
-            "monitor_failed",
-            "wave_monitor_failed",
-            "defer_flaky_subtask",
-            "reopen_for_fixes",
-            "mark_workflow_complete",
-            "mark_subtask_complete",
-            "record_subtask_result",
-            "backfill_subtask_ids",
-            "finalize_plan",
-            "archive",
-            "abandon",
-        ],
+        choices=sorted(READ_ONLY_COMMANDS | MUTATING_COMMANDS),
         help="Command to execute",
     )
     parser.add_argument(
@@ -5664,6 +5735,10 @@ def main():
         if Path(".map").is_dir():
             acquire_branch_transaction(Path(".map") / branch)
             transaction_acquired = True
+
+        state_path = Path(".map") / branch / "step_state.json"
+        if transaction_acquired and args.command in MUTATING_COMMANDS:
+            _read_state_object(state_path, repair_command=args.command)
 
         if args.command in {
             "request_repair", "begin_repair", "verify_repair", "finish_repair",

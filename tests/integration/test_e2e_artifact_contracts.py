@@ -686,14 +686,14 @@ class TestDegradation:
         assert "no subtasks" in result["message"].lower()
 
     def test_load_state_from_corrupt_file(self, workspace, branch):
-        """Loading corrupt step_state.json should return fresh state, not crash."""
+        """A corrupt state must remain intact for diagnosis."""
         del branch
         state_file = workspace / "step_state.json"
         state_file.write_text("not json at all", encoding="utf-8")
 
-        state = map_orchestrator.StepState.load(state_file)
-        assert state.workflow == "map-efficient"
-        assert state.current_step_id == "1.0"
+        with pytest.raises(ValueError, match="step_state.json"):
+            map_orchestrator.StepState.load(state_file)
+        assert state_file.read_bytes() == b"not json at all"
 
     def test_resume_briefing_missing_artifacts(self, workspace, branch):
         """get_resume_briefing should handle missing artifacts gracefully."""

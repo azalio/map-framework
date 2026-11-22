@@ -198,6 +198,24 @@ def test_write_verification_summary_creates_report(branch_workspace):
     assert result["prior_stage_consumption"]["stage"] == "implementation"
 
 
+@pytest.mark.parametrize("same_run", [False, True])
+def test_health_report_uses_only_current_runs_hook_events(branch_workspace, same_run):
+    state = {"started_at": "current", "hook_injection_counts": {"injected": 3}}
+    (branch_workspace / "step_state.json").write_text(json.dumps(state))
+    telemetry = {
+        "started_at": "current" if same_run else "previous",
+        "hook_injection_counts": {"injected": 4},
+        "hook_injection": {"status": "injected"},
+    }
+    (branch_workspace / "hook-injection.json").write_text(json.dumps(telemetry))
+    result = map_step_runner.write_run_health_report("map-efficient", "blocked")
+    assert result["status"] == "success"
+    report = json.loads((branch_workspace / "run_health_report.json").read_bytes())
+    signals = report["resiliency_signals"]
+    assert signals["hook_injection_counts"] == {"injected": 4 if same_run else 3}
+    assert signals["hook_injection"]["status"] == ("injected" if same_run else "unknown")
+
+
 def test_write_run_health_report_creates_report_and_manifest(branch_workspace):
     (branch_workspace / "step_state.json").write_text(
         json.dumps(
