@@ -26,6 +26,20 @@ Once a plan reaches `ready` (task_plan + blueprint both present, the Step 7 boun
 
 When a MAP run enters a merge/rebase conflict, the PreToolUse workflow-context hook adds a conflict-resolution discipline block to `additionalContext`. It fires before `git merge` / `git rebase` and whenever git reports unmerged paths via `git diff --name-only --diff-filter=U`. The protocol is deliberately manual and intent-preserving: list conflicted files, resolve one file or small batch at a time, preserve both sides' intended behavior, check for conflict markers, run the project's test gate after each batch, stage only resolved files, and continue the merge/rebase only after no unmerged files remain. Final verification is: branch current with `origin/main`, no conflict markers, and tests green. The hook never mutates the worktree and never auto-runs tests.
 
+## Recovering workflow progress
+
+If `peek_current_step` reports invalid JSON in `.map/<branch>/step_state.json`,
+leave the file in place. The next state-changing orchestrator command checks it
+under the branch lock. It can recover a complete state object followed by leftover
+closing brackets or the end of a timestamp and closing brackets. It saves the
+original bytes in `step_state.<sha256>.corrupt` and records the command, hashes
+and byte count in `step_state.<sha256>.recovery.json` before resuming the
+requested operation. Read-only commands leave the file intact. A truncated
+object, two adjacent objects or an unrecognized suffix requires operator review.
+The reader checks known fields against the workflow model before changing state.
+For example, `plan_approved` accepts the JSON Booleans `true` and `false`.
+A quoted string, a number or a duplicate key produces an error with the file path.
+
 ## Reorder pending subtasks
 
 Use `resequence_pending` instead of `set_subtasks` or `resume_from_plan` when

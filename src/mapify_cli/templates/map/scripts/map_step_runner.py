@@ -6193,7 +6193,10 @@ def write_run_health_report(
     subtask_retry_counts = _as_dict(state.get("subtask_retry_counts"))
     guard_rework_counts = _as_dict(state.get("guard_rework_counts"))
     retry_isolation_status = _as_dict(state.get("retry_isolation_status"))
-    hook_injection = _as_dict(state.get("hook_injection"))
+    telemetry = _read_json_file(branch_dir / "hook-injection.json")
+    if not telemetry or telemetry.get("started_at") != state.get("started_at"):
+        telemetry = state
+    hook_injection = _as_dict(telemetry.get("hook_injection"))
     artifact_inventory = _run_health_artifact_inventory(branch_dir, branch_name)
     research_summary = _research_health_summary(branch_dir, branch_name)
 
@@ -6214,7 +6217,7 @@ def write_run_health_report(
         "resiliency_signals": {
             "hook_injection": hook_injection
             or {"status": "unknown", "reason": "not recorded"},
-            "hook_injection_counts": _as_dict(state.get("hook_injection_counts")),
+            "hook_injection_counts": _as_dict(telemetry.get("hook_injection_counts")),
             "retry_count": retry_count,
             "max_retries": _as_int(state.get("max_retries")),
             "subtask_retry_counts": subtask_retry_counts,

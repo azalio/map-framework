@@ -2,6 +2,8 @@ import importlib.util
 import json
 import os
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -83,9 +85,9 @@ def _seed_step_state(project_dir: Path, branch: str = "default") -> Path:
     return state_file
 
 
-def _import_hook():
+def _import_hook(provider=".claude"):
     """Import the hook module dynamically for direct function testing."""
-    hook_path = Path(".claude/hooks/workflow-context-injector.py").resolve()
+    hook_path = Path(provider, "hooks/workflow-context-injector.py").resolve()
     spec = importlib.util.spec_from_file_location(
         "workflow_context_injector", hook_path
     )
@@ -141,7 +143,7 @@ def test_injects_for_edit_when_step_state_exists(
     assert "ST-001" in additional
     assert "REQUIRED" in additional
 
-    state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
+    state = json.loads((state_dir / "hook-injection.json").read_text(encoding="utf-8"))
     assert state["hook_injection"]["status"] == "injected"
     assert state["hook_injection"]["tool_name"] == "Edit"
     assert state["hook_injection"]["additional_context_chars"] == len(additional)
@@ -235,7 +237,7 @@ def test_records_skipped_for_insignificant_bash_when_state_exists(
     assert code == 0
     assert err == _BRANCH_WARNING
     assert out == "{}"
-    state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
+    state = json.loads((state_dir / "hook-injection.json").read_text(encoding="utf-8"))
     assert state["hook_injection"]["status"] == "skipped"
     assert state["hook_injection"]["reason"] == "bash command not significant"
     assert state["hook_injection"]["tool_name"] == "Bash"
@@ -263,7 +265,7 @@ def test_records_malformed_hook_input_when_state_exists(
     assert code == 0
     assert err == _BRANCH_WARNING
     assert out == "{}"
-    state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
+    state = json.loads((state_dir / "hook-injection.json").read_text(encoding="utf-8"))
     assert state["hook_injection"]["status"] == "skipped"
     assert state["hook_injection"]["reason"] == "invalid hook input JSON"
     assert state["hook_injection"]["tool_name"] == "unknown"
@@ -294,7 +296,7 @@ def test_non_string_bash_command_remains_non_blocking(
     assert code == 0
     assert err == _BRANCH_WARNING
     assert out == "{}"
-    state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
+    state = json.loads((state_dir / "hook-injection.json").read_text(encoding="utf-8"))
     assert state["hook_injection"]["status"] == "skipped"
     assert state["hook_injection"]["reason"] == "bash command is not a string"
     assert state["hook_injection_counts"]["skipped"] == 1
@@ -324,7 +326,7 @@ def test_records_unsupported_tool_when_state_exists(
     assert code == 0
     assert err == _BRANCH_WARNING
     assert out == "{}"
-    state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
+    state = json.loads((state_dir / "hook-injection.json").read_text(encoding="utf-8"))
     assert state["hook_injection"]["status"] == "skipped"
     assert state["hook_injection"]["reason"] == "tool not configured for workflow injection"
     assert state["hook_injection"]["tool_name"] == "Read"
@@ -359,7 +361,7 @@ def test_schema_invalid_step_state_fields_remain_non_blocking(
     assert code == 0
     assert err == _BRANCH_WARNING
     assert out == "{}"
-    state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
+    state = json.loads((state_dir / "hook-injection.json").read_text(encoding="utf-8"))
     assert state["hook_injection"]["status"] == "skipped"
     assert state["hook_injection"]["reason"] == "no reminder formatted"
     assert state["hook_injection_counts"]["skipped"] == 1
@@ -433,7 +435,7 @@ def test_injects_for_pytest_bash_when_step_state_exists(
     assert "TESTS_GATE" in additional
     assert "ST-002" in additional
 
-    state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
+    state = json.loads((state_dir / "hook-injection.json").read_text(encoding="utf-8"))
     assert state["hook_injection"]["status"] == "injected"
     assert state["hook_injection_counts"]["injected"] == 1
 
@@ -552,7 +554,7 @@ def test_records_skipped_when_state_has_no_reminder(
     assert code == 0
     assert err == _BRANCH_WARNING
     assert out == "{}"
-    state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
+    state = json.loads((state_dir / "hook-injection.json").read_text(encoding="utf-8"))
     assert state["hook_injection"]["status"] == "skipped"
     assert state["hook_injection"]["reason"] == "no reminder formatted"
     assert state["hook_injection_counts"]["skipped"] == 1
@@ -1606,3 +1608,65 @@ def test_wave_mode_banner_uses_subtask_phases_not_stale_sequential_step(
     assert "ST-024:2.3" in context
     assert "RESEARCH" not in context
     assert "Persist RESEARCH artifact" not in context
+
+def test_concurrent_provider_accounting_preserves_transition(tmp_path, monkeypatch):
+    state_path = _seed_step_state(tmp_path)
+    state = json.loads(state_path.read_bytes())
+    state["started_at"] = "2026-11-01T00:00:00Z"
+    state["pending_steps"] = ["2.3", "2.4"]
+    state["hook_injection_counts"] = {"skipped": 3}
+    state_path.write_text(json.dumps(state))
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    hooks = [_import_hook(provider) for provider in (".claude", ".codex")]
+    ready = threading.Barrier(3)
+    advanced = threading.Event()
+
+    def record(hook):
+        snapshot = hook.load_step_state("default")
+        ready.wait(timeout=10)
+        assert advanced.wait(timeout=10)
+        hook.record_hook_injection_status("default", snapshot, "injected", "test", "Edit")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(record, hook) for hook in hooks]
+        ready.wait(timeout=10)
+        try:
+            orchestrator = Path(".map/scripts/map_orchestrator.py").resolve()
+            changed = subprocess.run(
+                ["python3", str(orchestrator), "validate_step", "2.3", "--branch", "default"],
+                capture_output=True, text=True, timeout=10, check=True,
+            )
+            assert json.loads(changed.stdout)["valid"], changed.stdout
+            published = state_path.read_bytes()
+            assert json.loads(published)["current_step_phase"] == "MONITOR"
+        finally:
+            advanced.set()
+        for future in futures:
+            future.result(timeout=10)
+
+    assert state_path.read_bytes() == published
+    counts = json.loads((state_path.parent / "hook-injection.json").read_bytes())
+    assert counts["hook_injection_counts"] == {"skipped": 3, "injected": 2}
+
+
+@pytest.mark.parametrize("broken", [
+    b'{"star', b'\xff', b'[]', b'{"started_at":"active"}',
+    b'{"started_at":"active","hook_injection_counts":{"injected":"wrong","other":4}}',
+])
+def test_hook_repairs_invalid_telemetry_only(tmp_path, monkeypatch, broken):
+    state_path = _seed_step_state(tmp_path)
+    state = json.loads(state_path.read_bytes())
+    state.update(started_at="active", hook_injection_counts={"injected": 3})
+    original = json.dumps(state).encode()
+    state_path.write_bytes(original)
+    sidecar = state_path.with_name("hook-injection.json")
+    sidecar.write_bytes(broken)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    hook = _import_hook()
+    for _ in range(2):
+        hook.record_hook_injection_status("default", state, "injected", "test", "Edit")
+    assert state_path.read_bytes() == original
+    expected = {"injected": 5, "other": 4} if b'"other"' in broken else {"injected": 5}
+    assert json.loads(sidecar.read_bytes())["hook_injection_counts"] == expected
+    backup, = sidecar.parent.glob("hook-injection.*.corrupt")
+    assert backup.read_bytes() == broken

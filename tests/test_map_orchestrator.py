@@ -6836,12 +6836,12 @@ def test_step_state_save_uses_invocation_unique_temp_files(
     assert list(tmp_path.glob(".step_state.json.*.tmp")) == []
 
 
-def test_atomic_write_text_uses_binary_descriptor_and_explicit_lf_newlines(
+def test_atomic_write_text_preserves_line_endings_with_binary_descriptor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """Atomic text writes avoid stacked newline translation on Windows."""
     mkstemp_kwargs: dict[str, object] = {}
-    fdopen_kwargs: dict[str, object] = {}
+    fdopen_modes: list[str] = []
     original_mkstemp = map_utils.tempfile.mkstemp
     original_fdopen = map_utils.os.fdopen
 
@@ -6850,20 +6850,20 @@ def test_atomic_write_text_uses_binary_descriptor_and_explicit_lf_newlines(
         return original_mkstemp(*args, **kwargs)
 
     def recording_fdopen(
-        descriptor: int, *args: Any, **kwargs: Any
+        descriptor: int, mode: str, **kwargs: Any
     ) -> object:
-        fdopen_kwargs.update(kwargs)
-        return original_fdopen(descriptor, *args, **kwargs)
+        fdopen_modes.append(mode)
+        return original_fdopen(descriptor, mode, **kwargs)
 
     monkeypatch.setattr(map_utils.tempfile, "mkstemp", recording_mkstemp)
     monkeypatch.setattr(map_utils.os, "fdopen", recording_fdopen)
 
     target = tmp_path / "state.txt"
-    map_utils.atomic_write_text(target, "first\nsecond\n")
+    map_utils.atomic_write_text(target, "first\r\nsecond\n")
 
     assert "text" not in mkstemp_kwargs
-    assert fdopen_kwargs["newline"] == "\n"
-    assert target.read_bytes() == b"first\nsecond\n"
+    assert fdopen_modes == ["wb"]
+    assert target.read_bytes() == b"first\r\nsecond\n"
 
 
 def test_step_state_save_replace_failure_preserves_target_and_cleans_temp(
@@ -7149,6 +7149,108 @@ def test_finalize_plan_uses_atomic_write(
     assert list(plan_dir.glob(".artifact_manifest.json.*.tmp")) == [], (
         "no temp residue should remain after successful write"
     )
+
+
+def _state_cli(project: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(ORCHESTRATOR_PATH / "map_orchestrator.py"), *args,
+         "--branch", "active"],
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(project)},
+        text=True, capture_output=True, timeout=15, check=False,
+    )
+
+
+def test_automatic_state_recovery_preserves_progress_and_evidence(tmp_path):
+    directory = tmp_path / ".map" / "active"
+    directory.mkdir(parents=True)
+    path = directory / "step_state.json"
+    state = map_orchestrator.StepState(
+        current_step_id="2.25", current_step_phase="TEST_WRITER",
+        subtask_results={"ST-001": {"summary": "принято"}},
+    ).to_dict()
+    state["future_field"] = {"nested": [1, False]}
+    prefix = json.dumps(state, ensure_ascii=False, indent=2).encode()
+    original = prefix + b'4Z"\n  }\n}'
+    path.write_bytes(original)
+
+    peek = _state_cli(tmp_path, "peek_current_step")
+    assert peek.returncode != 0 and "step_state.json" in peek.stderr
+    assert path.read_bytes() == original
+    assert list(directory.iterdir()) == [path]
+
+    change = _state_cli(tmp_path, "set_execution_mode", "step_by_step")
+    assert change.returncode == 0, change.stderr
+    assert json.loads(change.stdout)["status"] == "success"
+    assert json.loads(path.read_bytes()) == {**state, "execution_mode": "step_by_step"}
+    backup, = directory.glob("step_state.*.corrupt")
+    assert backup.read_bytes() == original
+    audit, = directory.glob("step_state.*.recovery.json")
+    receipt = json.loads(audit.read_bytes())
+    assert receipt["backup"] == backup.name
+    assert receipt["removed_bytes"] == len(original) - len(prefix)
+    assert receipt["command"] == "set_execution_mode"
+    assert _state_cli(tmp_path, "set_execution_mode", "step_by_step").returncode == 0
+    assert list(directory.glob("*.recovery.json")) == [audit]
+
+
+@pytest.mark.parametrize("raw", [
+    b'{"current_step_phase":', b'[]', b'{}{}', b'{}junk', b'{}4Z"\n}',
+    b'{"current_step_id":"2.3","current_step_phase":"ACTOR"} {"other":1}',
+    b'{"current_step_id":"2.3","current_step_phase":"ACTOR","x":1,"x":2}}',
+    b'{"current_step_id":"2.4","current_step_id":"1.0","current_step_phase":"DECOMPOSE"}',
+    b'{"current_step_id":"2.4","current_step_phase":"MONITOR","pending_steps":"2.4"}}',
+    b'{"current_step_id":"2.4","current_step_phase":"MONITOR","pending_steps":[2]}}',
+])
+def test_ambiguous_state_preserved_by_mutation(tmp_path, raw):
+    directory = tmp_path / ".map" / "active"
+    directory.mkdir(parents=True)
+    path = directory / "step_state.json"
+    path.write_bytes(raw)
+    result = _state_cli(tmp_path, "set_execution_mode", "step_by_step")
+    assert result.returncode != 0 and "step_state.json" in result.stderr
+    assert path.read_bytes() == raw
+    assert list(directory.iterdir()) == [path]
+
+
+@pytest.mark.parametrize(("field", "bad_value"), [
+    ("plan_approved", "false"), ("plan_approved", 0), ("plan_approved", None),
+    ("tdd_mode", "false"), ("subtask_index", True), ("current_step_id", 2.4),
+    ("pending_steps", "2.4"), ("execution_waves", ["ST-001"]),
+    ("subtask_retry_counts", {"ST-001": "1"}),
+])
+@pytest.mark.parametrize("suffix", [b"", b'4Z"\n  }\n}'])
+def test_invalid_state_field_refused_before_writing(tmp_path, field, bad_value, suffix):
+    directory = tmp_path / ".map" / "active"
+    directory.mkdir(parents=True)
+    path = directory / "step_state.json"
+    state = {"current_step_id": "1.55", "current_step_phase": "REVIEW_PLAN", field: bad_value}
+    original = json.dumps(state).encode() + suffix
+    path.write_bytes(original)
+    result = _state_cli(tmp_path, "set_execution_mode", "step_by_step")
+    assert result.returncode != 0 and field in result.stderr
+    assert path.read_bytes() == original
+    assert list(directory.iterdir()) == [path]
+    with pytest.raises(ValueError, match=field):
+        map_orchestrator.StepState.from_dict(state)
+
+
+@pytest.mark.parametrize("approved", [True, False])
+def test_state_boolean_controls_plan_approval(tmp_path, approved):
+    directory = tmp_path / ".map" / "active"
+    directory.mkdir(parents=True)
+    path = directory / "step_state.json"
+    state = map_orchestrator.StepState(
+        plan_approved=approved, current_step_id="1.55", current_step_phase="REVIEW_PLAN",
+        pending_steps=["1.55", "1.56"],
+    )
+    state.save(path)
+    before = path.read_bytes()
+    result = _state_cli(tmp_path, "validate_step", "1.55")
+    assert json.loads(result.stdout)["valid"] is approved
+    if approved:
+        assert json.loads(path.read_bytes())["current_step_id"] == "1.56"
+    else:
+        assert path.read_bytes() == before
 
 
 if __name__ == "__main__":

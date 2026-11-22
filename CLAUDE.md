@@ -45,6 +45,16 @@ Validation:
   - `docs/ARCHITECTURE.md` (system design / agents)
 - For releases, follow `RELEASING.md` and update `CHANGELOG.md`.
 
+### Review state changes before opening a PR
+
+Trace persisted data from every writer through parsing and recovery to the next operation that consumes it. For each assumption that could lose progress or select the wrong next step, write a test that breaks it. Check these cases when they apply:
+
+- Feed the normal reader and the recovery reader the same ambiguous input, such as duplicate JSON keys. Verify that both reject it and preserve the original bytes.
+- Give recovery a complete JSON object with a wrong field type, such as a string where the next step expects a list. Verify refusal before any write. For valid recovery, run the next real operation and assert its result.
+- Damage an auxiliary file, deliver two more events, and verify that accounting resumes. Check that recoverable counters survive and that the primary workflow state stays intact.
+
+Run these cases against the old code to confirm they expose the defect, then against the fix before requesting review.
+
 ## Safety expectations
 
 - Don't add or expose secrets. Avoid reading/writing `.env*` and credential/key files.
