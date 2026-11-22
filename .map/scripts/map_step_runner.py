@@ -8776,6 +8776,10 @@ def _review_branch_dir(branch: str | None = None) -> Path:
     return get_branch_dir(_sanitize_branch(branch) if branch else get_branch_name())
 
 
+class _ReviewResourceDenied(ValueError):
+    """The requested resource is outside this reviewer's admitted scope."""
+
+
 def _review_transaction(function: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
     """Serialize ledger read/modify/write across processes using a stable lock inode."""
     @wraps(function)
@@ -8795,7 +8799,10 @@ def _review_transaction(function: Callable[..., dict[str, Any]]) -> Callable[...
                 finally:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         except (OSError, ValueError, TypeError, KeyError) as exc:
-            return {"status": "error", "message": f"Review transaction failed: {exc}"}
+            result = {"status": "error", "message": f"Review transaction failed: {exc}"}
+            if isinstance(exc, _ReviewResourceDenied):
+                result["reason"] = "not_permitted"
+            return result
     return locked
 
 
@@ -15408,7 +15415,7 @@ def _review_lazy_artifact_resource(
 ) -> tuple[dict[str, Any], bool]:
     """Serve ``artifact:<name>``: one frozen task artifact from the hash-verified admitted bundle, frozen on first use."""
     if manifest.get("context_access") != "diff_plus_spec_plus_artifacts" or "artifacts" not in manifest.get("resources", {}):
-        raise ValueError("Resource is not permitted for this reviewer")
+        raise _ReviewResourceDenied("Resource is not permitted for this reviewer")
     frozen = _review_lazy_entry(row, resource_id)
     if isinstance(frozen, dict):
         return frozen, False
@@ -15419,7 +15426,7 @@ def _review_lazy_artifact_resource(
     context = json.loads(Path(artifact).read_text(encoding="utf-8")).get("context_artifacts", {})
     match = next((entry for entries in context.values() for entry in entries if Path(entry["path"]).name == name), None)
     if not name or match is None:
-        raise ValueError("Resource is not permitted for this reviewer")
+        raise _ReviewResourceDenied("Resource is not permitted for this reviewer")
     metadata = {**_review_context_store(directory, match["content"]), "path": name, "required": False, "kind": "artifact"}
     row.setdefault("context_lazy", {})[resource_id] = metadata
     return metadata, True
@@ -15440,7 +15447,7 @@ def _review_lazy_finding_resource(
     source = next((item for item in registry if isinstance(item, dict) and item.get("id") == finding_id), None)
     if (not finding_id or source is None or source.get("status") not in {"active", "downgraded"}
             or (manifest.get("context_access") == "diff_only" and source.get("originating_reviewer") != reviewer)):
-        raise ValueError("Resource is not permitted for this reviewer")
+        raise _ReviewResourceDenied("Resource is not permitted for this reviewer")
     frozen = _review_lazy_entry(row, resource_id)
     if isinstance(frozen, dict):
         return frozen, False
@@ -15804,7 +15811,7 @@ def _review_lazy_check_resource(directory: Path, row: dict[str, Any], resource_i
     check = all_checks.get(check_id)
     # Intent: always re-validate the runner-witnessed check, even when its log was frozen earlier.
     if not isinstance(check, dict) or not _review_check_observation_valid(directory, check_id, row):
-        raise ValueError("Resource is not permitted for this reviewer")
+        raise _ReviewResourceDenied("Resource is not permitted for this reviewer")
     frozen = row.get("context_lazy", {}).get(resource_id)
     identity = {"attempt_id": check["attempt_id"], "output_sha256": check["output_sha256"]}
     if isinstance(frozen, dict) and frozen.get("kind") == "check":
@@ -15837,7 +15844,7 @@ def _review_lazy_risk_resource(
 ) -> tuple[dict[str, Any], bool]:
     """Serve ``risk:shadow``: the complete shadow-risk record the compact prompt only summarises."""
     if resource_id != "risk:shadow" or manifest.get("context_access") == "diff_only":
-        raise ValueError("Resource is not permitted for this reviewer")
+        raise _ReviewResourceDenied("Resource is not permitted for this reviewer")
     frozen = _review_lazy_entry(row, resource_id)
     if isinstance(frozen, dict):
         return frozen, False
@@ -15862,7 +15869,7 @@ def _review_lazy_full_resource(
     side, _, name = resource_id.partition(":")
     windowed = {item.get("path") for item in manifest.get("resources", {}).values() if item.get("windowed")}
     if side not in {"base", "current"} or manifest.get("context_access") == "diff_only" or name not in windowed:
-        raise ValueError("Resource is not permitted for this reviewer")
+        raise _ReviewResourceDenied("Resource is not permitted for this reviewer")
     frozen = _review_lazy_entry(row, resource_id)
     if isinstance(frozen, dict):
         return frozen, False
@@ -15872,7 +15879,7 @@ def _review_lazy_full_resource(
     files = json.loads(Path(artifact).read_text(encoding="utf-8"))["attribution"].get("files", [])
     source = next((item for item in files if item["path"] == name), None)
     if source is None:
-        raise ValueError("Resource is not permitted for this reviewer")
+        raise _ReviewResourceDenied("Resource is not permitted for this reviewer")
     payload = {"path": name, "side": side, "encoding": source["encoding"], "status": source["status"],
                "content": source[f"{side}_content"], "line_mapping": source["line_mapping"],
                "line_mapping_scope": "full",
@@ -15917,13 +15924,13 @@ def _review_lazy_repo_resource(
     target = row.get("target", {})
     if (manifest.get("context_access") == "diff_only" or "\0" in name
             or any(part in {"", ".", ".."} for part in name.split("/"))):
-        raise ValueError("Resource is not permitted for this reviewer")
+        raise _ReviewResourceDenied("Resource is not permitted for this reviewer")
     eligible = _review_repo_context_paths(row, manifest)
     if name not in eligible:
         if (name in set(target.get("context_files", []))
                 or (name in row.get("required_files", []) and not manifest.get("shard"))
                 or any(name in item["files"] for item in row.get("shards", []) if item["id"] == manifest.get("shard"))):
-            raise ValueError("Resource is not permitted for this reviewer")
+            raise _ReviewResourceDenied("Resource is not permitted for this reviewer")
         return None, False
     frozen = _review_lazy_entry(row, resource_id)
     if isinstance(frozen, dict):
@@ -16177,11 +16184,37 @@ def _prepare_review_context(
     return {"status": "success"}
 
 
+def _review_lookup_text(raw: bytes, resource_id: str, bounds: tuple[int, int] | None) -> bytes | dict[str, Any]:
+    """Select an admitted source side and its inclusive, LF-numbered lines."""
+    if resource_id.startswith(("base:", "current:")) or (bounds and resource_id.startswith("repo:")):
+        source = json.loads(raw)
+        if source["encoding"] != "utf-8":
+            return {"status": "context_request_rejected", "reason": "binary", "message": "This file is binary."}
+        side = "base" if resource_id.startswith("base:") else "current"
+        if side == "base" and source.get("baseline_known") is False:
+            return {"status": "context_request_rejected", "reason": "no_baseline", "message": "No baseline is available."}
+        raw = (source["content"] if "content" in source else source[f"{side}_content"]).encode("utf-8")
+    if bounds is None:
+        return raw
+    if resource_id != "diff" and not resource_id.startswith(("current:", "base:", "repo:")):
+        return {"status": "context_request_rejected", "reason": "not_source",
+                "message": "Select diff, current:<path>, base:<path> or repo:<path> for a line range."}
+    parts = raw.split(b"\n")
+    total = len(parts) - int(not parts[-1])
+    first, last = bounds
+    if not 1 <= first <= last <= total:
+        return {"status": "context_request_rejected", "reason": "line_range", "total_lines": total,
+                "message": f"Requested lines {first}–{last}. This resource has {total} lines."}
+    selected = b"\n".join(parts[first - 1:last])
+    return selected + b"\n" if last < len(parts) else selected
+
+
 @_review_transaction
 def serve_review_context(
     reviewer: str, payload: str, round_id: str, *, branch: str | None = None,
     chunk_bytes: int = REVIEW_CONTEXT_CHUNK_BYTES,
     session_id: str = "", agent_id: str = "", delivery: str = "chunk",
+    codex_read: bool = False, line_range: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
     """Handle an intermediate request before final-output validation; serve no live file paths.
 
@@ -16229,6 +16262,8 @@ def serve_review_context(
         session = _review_delivery_session(row, session_id, agent_id)
         if session["context_id"] != context_id or session["reviewer"] != reviewer:
             raise ValueError("Context request does not belong to this delivery session")
+    if codex_read and (session is None or delivery != "chunk" or row["binding"].get("provider") != "codex"):
+        raise ValueError("Codex reads require a bound chunk delivery session")
     embedded = request.get("ack")
     acked_state: dict[str, Any] | None = None
     if embedded is not None:
@@ -16246,6 +16281,8 @@ def serve_review_context(
             or manifest["bundle_sha256"] != row["bundle_receipt"]["sha256"]):
         raise ValueError("Context manifest does not match the admitted review")
     if resource_id == REVIEW_CONTEXT_BATCH_RESOURCE:
+        if codex_read:
+            return {"status": "context_request_rejected", "message": "Call {} to read the required context."}
         if delivery != "file" or session is None:
             raise ValueError("Batch context delivery requires file delivery through a bound session")
         if acked_state is not None and acked_state["status"] == "context_ready":
@@ -16253,6 +16290,12 @@ def serve_review_context(
         return _review_serve_context_batch(directory, ledger, row, session, session_id, context_id)
     lazy_frozen = False
     metadata = registered if resource_id == "manifest" else manifest["resources"].get(resource_id)
+    if codex_read and resource_id.startswith(("base:", "current:")):
+        # Non-windowed source records already contain both complete sides.
+        path = resource_id.partition(":")[2]
+        metadata = next((entry for name, entry in manifest["resources"].items()
+                         if name.startswith("source_") and entry.get("path") == path
+                         and not entry.get("windowed")), None)
     if not isinstance(metadata, dict) and resource_id.startswith("repo:"):
         metadata, lazy_frozen = _review_lazy_repo_resource(directory, row, manifest, resource_id)
         if metadata is None:
@@ -16278,12 +16321,18 @@ def serve_review_context(
     elif not isinstance(metadata, dict) and resource_id.startswith("finding:"):
         metadata, lazy_frozen = _review_lazy_finding_resource(directory, row, manifest, reviewer, resource_id)
     if not isinstance(metadata, dict):
-        raise ValueError("Resource is not permitted for this reviewer")
+        raise _ReviewResourceDenied("Resource is not permitted for this reviewer")
     raw = manifest_bytes if resource_id == "manifest" else _review_context_read(directory, metadata)
     if delivery == "file" and session is not None:
         # Intent: a lazily frozen resource lands in ``row`` and is persisted by this ledger write.
         return _review_serve_context_file(directory, ledger, row, session, session_id, context_id,
                                           resource_id, metadata, raw)
+    if codex_read:
+        selected = _review_lookup_text(raw, resource_id, line_range)
+        if isinstance(selected, dict):
+            _require_review_delivery_current(row, directory.name)
+            return selected
+        raw = selected
     if offset > len(raw):
         raise ValueError("Context offset exceeds resource size")
     try:
@@ -16299,12 +16348,18 @@ def serve_review_context(
             end -= 1
             if end <= offset:
                 raise ValueError("Context resource is not valid UTF-8") from None
+    _require_review_delivery_current(row, directory.name)
+    if codex_read:
+        # A lookup is independent of the required delivery and earns no coverage credit.
+        if lazy_frozen:
+            _write_json_file(directory / "review-verdict-ledger.json", ledger)
+        return {"status": "context_response", "resource_id": resource_id, "content": content,
+                "next_offset": end, "eof": end == len(raw)}
     result = {"status": "context_response", "type": "context_chunk", "context_id": context_id,
               "resource_id": resource_id, "offset": offset, "next_offset": end,
               "total_bytes": len(raw), "sha256": metadata["sha256"],
               "chunk_sha256": hashlib.sha256(raw[offset:end]).hexdigest(),
               "eof": end == len(raw), "content": content}
-    _require_review_delivery_current(row, directory.name)
     if session is not None:
         prefix = session["offsets"].get(resource_id, 0)
         if offset != prefix and end > prefix:

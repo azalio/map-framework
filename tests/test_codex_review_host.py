@@ -112,8 +112,8 @@ def test_delivery_acks_outer_intact_bytes_and_resizes_truncation(repo):
     assert delivery.refresh()["pending_chunk"]["offset"] == 0
     smaller = delivery.respond({"arguments": {}, "callId": "retry"})
     retried = json.loads(smaller["contentItems"][0]["text"])
-    assert retried["offset"] == original["offset"]
-    assert retried["next_offset"] < original["next_offset"]
+    assert original["content"].startswith(retried["content"])
+    assert len(retried["content"]) < len(original["content"])
     complete_result(delivery, smaller, "retry")
     assert delivery.transfers == 1
     assert delivery.refresh()["pending_chunk"] is None
@@ -144,13 +144,13 @@ def test_delivery_invalid_offset_is_recoverable_after_restart(repo, monkeypatch,
         rejected = json.loads(response["contentItems"][0]["text"])
         assert response["success"] is False
         assert rejected["status"] == "context_request_rejected"
-        assert rejected["next_offset"] == prefix
+        assert "Omit byte offsets" in rejected["message"]
         assert ledger.read_bytes() == before
         assert delivery.pending is None
         complete_result(delivery, response, "bad")
         assert delivery.transfers == 0
-    response = delivery.respond({"arguments": {"resource_id": resource, "offset": prefix}, "callId": "good"})
-    assert json.loads(response["contentItems"][0]["text"])["offset"] == prefix
+    response = delivery.respond({"arguments": {"resource_id": resource}, "callId": "good"})
+    assert json.loads(response["contentItems"][0]["text"])["content"]
     complete_result(delivery, response, "good")
     assert delivery.transfers == 1
     # Fully acknowledged rereads remain legal, even though they do not advance the prefix.
@@ -158,8 +158,7 @@ def test_delivery_invalid_offset_is_recoverable_after_restart(repo, monkeypatch,
         session_id=state["session_id"], agent_id="thread", branch="feature")
     assert reread["status"] == "context_response"
     assert reread["offset"] == 0
-    with pytest.raises(host.HostError, match="not permitted"):
-        delivery.respond({"arguments": {"resource_id": "not-admitted"}, "callId": "denied"})
+    assert not delivery.respond({"arguments": {"resource_id": "not-admitted"}, "callId": "denied"})["success"]
 
 
 class SimulatedHost:
@@ -234,6 +233,76 @@ def test_driver_resume_same_thread_and_complete_receipts(repo, monkeypatch):
     assert not runner._review_capability_verified(after, path.parent)
 
 
+def test_line_lookup_preserves_source_line_endings():
+    raw = "one\r\ntwo\u2028still two\nlast".encode()
+    assert runner._review_lookup_text(raw, "diff", (2, 2)) == "two\u2028still two\n".encode()
+    assert runner._review_lookup_text(raw, "diff", (1, 3)) == raw
+    assert runner._review_lookup_text(b"", "diff", (1, 1))["total_lines"] == 0
+
+
+def test_line_lookup_preserves_required_progress_across_restart(repo):
+    del repo
+    delivery = admitted_delivery()
+    state = delivery.refresh()
+    arguments = {"resource_id": "current:first.py", "start_line": 1, "end_line": 1}
+    result = delivery.respond({"arguments": arguments, "callId": "source"})
+    assert json.loads(result["contentItems"][0]["text"])["content"] == "value = 2\n"
+    resumed = driver.Delivery("feature", "host", state)
+    replay = resumed.respond({"arguments": {}, "callId": "retry"})
+    assert json.loads(replay["contentItems"][0]["text"])["content"] == "value = 2\n"
+    complete_result(resumed, replay, "retry")
+    assert resumed.refresh() == state
+    required = resumed.respond({"arguments": {}, "callId": "required"})
+    assert json.loads(required["contentItems"][0]["text"])["resource_id"] == state["remaining"][0]["resource_id"]
+
+
+def test_driver_rereads_multilingual_source_and_diff_by_line(repo, monkeypatch):
+    del repo
+    lines = [f"# строка {number} 🦊\n" for number in range(1, 3001)]
+    Path("first.py").write_text("".join(lines))
+    assert runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="host")["status"] == "success"
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+
+    class LineReader(SimulatedHost):
+        def turn(self, message):
+            report = super().turn(message)
+            delivery = self.on_event.__self__
+            ready = delivery.refresh()
+
+            def read(arguments):
+                response = delivery.respond({"arguments": arguments, "callId": "read"})
+                complete_result(delivery, response, "read")
+                return json.loads(response["contentItems"][0]["text"])
+            directory = Path(".map/feature")
+            row = runner._read_review_ledger(directory)["convergence"]["rounds"][-1]
+            metadata = row["context_sessions"][ready["session_id"]]["available"]["diff"]
+            raw = runner._review_context_read(directory, metadata)
+            inside_letter = raw.index("строка".encode()) + 1
+            old = read({"resource_id": "diff", "offset": inside_letter})
+            assert old["status"] == "context_request_rejected"
+            current = {"resource_id": "current:first.py", "start_line": 40, "end_line": 65}
+            assert read(current)["content"] == "".join(lines[39:65])
+            assert read({"resource_id": "base:first.py", "start_line": 1, "end_line": 1})["content"] == "value = 1\n"
+            entire = read({"resource_id": "diff"})
+            diff = entire["content"]
+            assert not entire["eof"] and "offset" not in entire
+            while not entire["eof"]:
+                delivery = driver.Delivery("feature", "host", ready)
+                entire = read({})
+                diff += entire["content"]
+            assert diff == raw.decode("utf-8")
+            position = diff.splitlines(keepends=True).index("+" + lines[60]) + 1
+            assert read({"resource_id": "diff", "start_line": position, "end_line": position})["content"] == "+" + lines[60]
+            assert read({**current, "start_line": 4000, "end_line": 4001})["total_lines"] == len(lines)
+            assert read({"resource_id": "current:absent.py", "start_line": 1, "end_line": 2})["status"] == "context_request_rejected"
+            assert delivery.refresh() == ready
+            return report
+
+    monkeypatch.setattr(driver, "CodexReviewHost", LineReader)
+    assert driver.run("feature")["status"] == "success"
+    assert "offset" not in host.CONTEXT_TOOL["inputSchema"]["properties"]
+
+
 def test_driver_recovers_offset_error_and_completes_same_round(repo, monkeypatch):
     del repo
 
@@ -280,7 +349,7 @@ def test_explicit_optional_resource_starts_at_own_offset(repo):
     assert not any(value.get("path") == "dependency.py" for value in session["available"].values())
     optional = "repo:dependency.py"
     response = delivery.respond({"arguments": {"resource_id": optional}, "callId": "optional"})
-    assert json.loads(response["contentItems"][0]["text"])["offset"] == 0
+    assert json.loads(json.loads(response["contentItems"][0]["text"])["content"])["path"] == "dependency.py"
 
 
 def test_resume_transcript_ignores_old_turn_and_partial_append(tmp_path):

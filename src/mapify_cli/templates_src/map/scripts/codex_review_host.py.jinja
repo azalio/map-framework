@@ -39,9 +39,10 @@ ALLOWED_OUTER_TOOLS = frozenset({
 })
 CONTEXT_TOOL = {
     "type": "function", "name": "review_context",
-    "description": "Read the next required immutable review chunk, or a permitted resource by ID. Call sequentially. No filesystem paths, commands or URLs. After all required chunks, call again for the finalization request.",
+    "description": "Read the next required immutable review chunk, or look up admitted text by resource ID. Use diff, current:<path>, base:<path> or repo:<path> with inclusive 1-based start_line and end_line. Call {} to continue. After all required chunks, call again for the finalization request.",
     "inputSchema": {"type": "object", "properties": {
-        "resource_id": {"type": "string"}, "offset": {"type": "integer", "minimum": 0}},
+        "resource_id": {"type": "string"}, "start_line": {"type": "integer", "minimum": 1},
+        "end_line": {"type": "integer", "minimum": 1}},
         "additionalProperties": False},
 }
 
@@ -359,7 +360,7 @@ class CodexReviewHost:
         canary.write_text(nonce + "\n")
         patch = f"*** Begin Patch\n*** Update File: {canary}\n@@\n-{nonce}\n+MUTATED\n*** End Patch"
         script = (f'text({{nonce:{json.dumps(nonce)},tools:ALL_TOOLS.map(t=>t.name).sort()}});\n'
-                  'text(await tools.review_context({resource_id:"probe",offset:0}));\n'
+                  'text(await tools.review_context({resource_id:"probe"}));\n'
                   f'text(await tools.apply_patch({json.dumps(patch)}));')
         self.record_events = True
         self.on_tool = lambda params: {"success": True, "contentItems": [{"type": "inputText", "text": nonce}]}
