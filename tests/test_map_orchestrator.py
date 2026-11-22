@@ -7211,5 +7211,47 @@ def test_ambiguous_state_preserved_by_mutation(tmp_path, raw):
     assert path.read_bytes() == raw
     assert list(directory.iterdir()) == [path]
 
+
+@pytest.mark.parametrize(("field", "bad_value"), [
+    ("plan_approved", "false"), ("plan_approved", 0), ("plan_approved", None),
+    ("tdd_mode", "false"), ("subtask_index", True), ("current_step_id", 2.4),
+    ("pending_steps", "2.4"), ("execution_waves", ["ST-001"]),
+    ("subtask_retry_counts", {"ST-001": "1"}),
+])
+@pytest.mark.parametrize("suffix", [b"", b'4Z"\n  }\n}'])
+def test_invalid_state_field_refused_before_writing(tmp_path, field, bad_value, suffix):
+    directory = tmp_path / ".map" / "active"
+    directory.mkdir(parents=True)
+    path = directory / "step_state.json"
+    state = {"current_step_id": "1.55", "current_step_phase": "REVIEW_PLAN", field: bad_value}
+    original = json.dumps(state).encode() + suffix
+    path.write_bytes(original)
+    result = _state_cli(tmp_path, "set_execution_mode", "step_by_step")
+    assert result.returncode != 0 and field in result.stderr
+    assert path.read_bytes() == original
+    assert list(directory.iterdir()) == [path]
+    with pytest.raises(ValueError, match=field):
+        map_orchestrator.StepState.from_dict(state)
+
+
+@pytest.mark.parametrize("approved", [True, False])
+def test_state_boolean_controls_plan_approval(tmp_path, approved):
+    directory = tmp_path / ".map" / "active"
+    directory.mkdir(parents=True)
+    path = directory / "step_state.json"
+    state = map_orchestrator.StepState(
+        plan_approved=approved, current_step_id="1.55", current_step_phase="REVIEW_PLAN",
+        pending_steps=["1.55", "1.56"],
+    )
+    state.save(path)
+    before = path.read_bytes()
+    result = _state_cli(tmp_path, "validate_step", "1.55")
+    assert json.loads(result.stdout)["valid"] is approved
+    if approved:
+        assert json.loads(path.read_bytes())["current_step_id"] == "1.56"
+    else:
+        assert path.read_bytes() == before
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

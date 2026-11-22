@@ -127,7 +127,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, ParamSpec
+from types import UnionType
+from typing import TYPE_CHECKING, ParamSpec, get_args, get_origin, get_type_hints
 
 if TYPE_CHECKING:
     from map_interruption import (  # pyright: ignore[reportMissingImports]
@@ -786,68 +787,74 @@ def _unique_state_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
-def _has_recoverable_cursor(state: object) -> bool:
-    if not isinstance(state, dict):
-        return False
-    for key in ("current_step_id", "current_step_phase"):
-        if not isinstance(state.get(key), str) or not state[key]:
-            return False
-    for key in ("pending_steps", "completed_steps", "skipped_steps", "subtask_sequence"):
-        sequence = state.get(key, [])
-        if not isinstance(sequence, list) or not all(isinstance(item, str) for item in sequence):
-            return False
-    return True
+def _matches_state_type(value: object, annotation: object) -> bool:
+    """Check the JSON scalar, collection and optional types used by StepState."""
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    if origin is UnionType:
+        return any(_matches_state_type(value, member) for member in args)
+    if origin is list:
+        return isinstance(value, list) and all(_matches_state_type(item, args[0]) for item in value)
+    if origin is dict:
+        return isinstance(value, dict) and all(
+            isinstance(key, str) and _matches_state_type(item, args[1])
+            for key, item in value.items()
+        )
+    # JSON booleans and numbers are distinct, even though bool subclasses int.
+    return type(value) is annotation
+
+
+def _validate_state_fields(data: dict, source: Path | str) -> None:
+    for key, value in data.items():
+        expected = _STATE_FIELD_TYPES.get(key)
+        if expected is not None and not _matches_state_type(value, expected):
+            raise ValueError(f"Invalid field {key!r} in {source}: expected {expected}")
 
 
 def _read_state_object(path: Path, *, repair_command: str | None = None) -> dict | None:
-    """Read state; a mutation holding the branch lock can remove a stale writer's tail."""
+    """Only a mutating CLI command holding the branch lock may repair a stale tail."""
     try:
         raw = path.read_bytes()
     except FileNotFoundError:
         return None
     try:
         content = raw.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise ValueError(f"Invalid UTF-8 in {path}: {exc}") from exc
-    decoder = json.JSONDecoder(object_pairs_hook=_unique_state_keys)
-    try:
-        state = decoder.decode(content)
-    except json.JSONDecodeError as exc:
-        if repair_command is None or exc.msg != "Extra data":
-            raise ValueError(f"Invalid workflow state in {path}: {exc}") from exc
-
-        # Only accept a complete, unambiguous state and the end of a stale
-        # timestamp/closing containers. Never select between adjacent documents.
         start = len(content) - len(content.lstrip(" \t\r\n"))
-        try:
-            state, end = decoder.raw_decode(content, start)
-        except ValueError as ambiguous:
-            raise ValueError(f"Ambiguous workflow state in {path}: {ambiguous}") from ambiguous
-        suffix = content[end:]
-        if (
-            not _has_recoverable_cursor(state)
-            or not re.fullmatch(r'\s*(?:[0-9.TZ:+\-]*"\s*)?(?:[}\]]\s*)+', suffix, re.ASCII)
-        ):
-            raise ValueError(f"Unrecognized trailing data in {path}; original preserved") from exc
-
-        prefix = content[:end]
-        digest = hashlib.sha256(raw).hexdigest()
-        backup = path.with_name(f"step_state.{digest}.corrupt")
-        receipt = path.with_name(f"step_state.{digest}.recovery.json")
-        atomic_write_bytes(backup, raw)
-        details = {
-            "backup": backup.name, "original_sha256": digest,
-            "recovered_sha256": hashlib.sha256(prefix.encode("utf-8")).hexdigest(),
-            "removed_bytes": len(suffix.encode("utf-8")),
-            "command": repair_command, "recorded_at": _utc_timestamp(),
-        }
-        atomic_write_text(receipt, json.dumps(details, indent=2))
-        atomic_write_text(path, prefix)
-        print(f"Recovered {path}; original bytes and recovery details: {backup}, {receipt}", file=sys.stderr)
+        decoder = json.JSONDecoder(object_pairs_hook=_unique_state_keys)
+        state, end = decoder.raw_decode(content, start)
     except ValueError as exc:
-        raise ValueError(f"Ambiguous workflow state in {path}: {exc}") from exc
+        raise ValueError(f"Invalid workflow state in {path}: {exc}") from exc
+
     if not isinstance(state, dict):
         raise ValueError(f"Expected a JSON object in {path}")
+    _validate_state_fields(state, path)
+    suffix = content[end:]
+    if not suffix.strip(" \t\r\n"):
+        return state
+
+    # Only a cursor-bearing state followed by the end of a stale timestamp
+    # or dangling closing containers is eligible for automatic recovery.
+    if (
+        repair_command is None
+        or not all(state.get(key) for key in ("current_step_id", "current_step_phase"))
+        or not re.fullmatch(r'\s*(?:[0-9.TZ:+\-]*"\s*)?(?:[}\]]\s*)+', suffix, re.ASCII)
+    ):
+        raise ValueError(f"Unexpected trailing data in {path}; original preserved")
+
+    prefix = content[:end]
+    digest = hashlib.sha256(raw).hexdigest()
+    backup = path.with_name(f"step_state.{digest}.corrupt")
+    receipt = path.with_name(f"step_state.{digest}.recovery.json")
+    atomic_write_bytes(backup, raw)
+    details = {
+        "backup": backup.name, "original_sha256": digest,
+        "recovered_sha256": hashlib.sha256(prefix.encode("utf-8")).hexdigest(),
+        "removed_bytes": len(suffix.encode("utf-8")),
+        "command": repair_command, "recorded_at": _utc_timestamp(),
+    }
+    atomic_write_text(receipt, json.dumps(details, indent=2))
+    atomic_write_text(path, prefix)
+    print(f"Recovered {path}; original bytes and recovery details: {backup}, {receipt}", file=sys.stderr)
     return state
 
 
@@ -994,7 +1001,12 @@ class StepState:
 
     @classmethod
     def from_dict(cls, data: dict) -> "StepState":
-        """Deserialize from dictionary."""
+        """Load supplied fields according to the same contract as on-disk state."""
+        _validate_state_fields(data, "workflow state")
+        return cls._from_validated_dict(data)
+
+    @classmethod
+    def _from_validated_dict(cls, data: dict) -> "StepState":
         state = cls(
             workflow=data.get("workflow", "map-efficient"),
             started_at=data.get("started_at", datetime.now(UTC).isoformat()),
@@ -1048,7 +1060,7 @@ class StepState:
     def load(cls, state_file: Path) -> "StepState":
         """Load state from file."""
         data = _read_state_object(state_file)
-        return cls() if data is None else cls.from_dict(data)
+        return cls() if data is None else cls._from_validated_dict(data)
 
     def save(self, state_file: Path) -> None:
         """Save state to file."""
@@ -1056,6 +1068,16 @@ class StepState:
             state_file,
             json.dumps(self.to_dict(), indent=2, ensure_ascii=True),
         )
+
+
+# The interruption engine validates its own marker fields. At this boundary
+# its forward-declared TypedDict is a JSON object. Unknown persisted fields
+# are kept for newer producers and have no local type contract.
+_STATE_FIELD_TYPES = {
+    key: annotation
+    for key, annotation in get_type_hints(StepState, localns={"ActiveInterruption": dict}).items()
+    if not key.startswith("_")
+}
 
 
 def _get_step_order(tdd_mode: bool = False) -> list[str]:

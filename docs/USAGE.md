@@ -36,6 +36,9 @@ original bytes in `step_state.<sha256>.corrupt` and records the command, hashes
 and byte count in `step_state.<sha256>.recovery.json` before resuming the
 requested operation. Read-only commands leave the file intact. A truncated
 object, two adjacent objects or an unrecognized suffix requires operator review.
+The reader checks known fields against the workflow model before changing state.
+For example, `plan_approved` accepts the JSON Booleans `true` and `false`.
+A quoted string, a number or a duplicate key produces an error with the file path.
 
 ## Reorder pending subtasks
 
