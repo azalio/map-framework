@@ -9019,7 +9019,9 @@ def _review_shadow_risk(
             "uncertain": unknown, "reasons": reasons, "relaxation_authorized": False}
 
 
-def _review_policy_names(binding: dict[str, Any] | None = None) -> list[str]:
+def _review_policy_names(
+    binding: dict[str, Any] | None = None, *, include_verification_summary: bool = True,
+) -> list[str]:
     """Every working-tree file the policy hash reads (also the cache watch list)."""
     binding = binding or {}
     names = {"CLAUDE.md", "AGENTS.md", ".map/config.yaml", ".map/config.yml", ".map/config.json"}
@@ -9028,16 +9030,19 @@ def _review_policy_names(binding: dict[str, Any] | None = None) -> list[str]:
                     ".codex/agents/review-reader.toml", ".codex/config.toml",
                     ".map/scripts/**/*.py", ".map/scripts/**/*.sh",
                     ".map/*/spec_*.md", ".map/*/blueprint.json", ".map/*/test_contract_*.md",
-                    ".map/*/task_plan_*.md", ".map/*/verification-summary.md", ".map/*/test_handoff_*.json"):
+                    ".map/*/task_plan_*.md", ".map/*/test_handoff_*.json"):
         names.update(str(path) for path in Path(".").glob(pattern) if path.is_file())
+    if include_verification_summary:
+        names.update(str(path) for path in Path(".").glob(".map/*/verification-summary.md") if path.is_file())
     return sorted(names)
 
 
 def _review_policy(
     binding: dict[str, Any] | None = None, *, trusted_policy: dict[str, Any] | None = None,
+    include_verification_summary: bool = True,
 ) -> str:
     binding = binding or {}
-    names = _review_policy_names(binding)
+    names = _review_policy_names(binding, include_verification_summary=include_verification_summary)
     policy = {"schema": "review_receipt.v1", "criteria": _VERDICT_TABLE_ID,
               "binding": binding, "files": [_review_file_entry(name) for name in names],
               "trusted_policy": _review_trusted_policy() if trusted_policy is None else trusted_policy}
@@ -9139,7 +9144,9 @@ def _review_stat_token(path: str, now_ns: int) -> list[Any]:
     return token
 
 
-def _review_target_signature(binding: dict[str, Any]) -> str | None:
+def _review_target_signature(
+    binding: dict[str, Any], *, include_verification_summary: bool = True,
+) -> str | None:
     """Cheap digest of every signal the target reads: refs, HEAD, index, git config and stat of watched files.
 
     Any change to one of these changes the digest, so a cached target is only reused for an identical
@@ -9178,7 +9185,8 @@ def _review_target_signature(binding: dict[str, Any]) -> str | None:
         outside.extend(Path(value) for value in (
             _review_git_optional(["config", "--path", key]) for key in ("core.attributesFile", "core.excludesFile"))
             if value)
-        watched = sorted({*names, *_review_policy_names({}), *git_files, *(str(path) for path in outside)})
+        policy_names = _review_policy_names(include_verification_summary=include_verification_summary)
+        watched = sorted({*names, *policy_names, *git_files, *(str(path) for path in outside)})
         digest = hashlib.sha256(json.dumps([REVIEW_TARGET_CACHE_SCHEMA, os.getcwd(), head, anchor]).encode())
         for name in watched:
             digest.update(json.dumps([name, _review_stat_token(name, now_ns)]).encode())
@@ -9187,16 +9195,21 @@ def _review_target_signature(binding: dict[str, Any]) -> str | None:
         return None
 
 
-def _review_target_cache_path(binding: dict[str, Any]) -> Path:
+def _review_target_cache_path(
+    binding: dict[str, Any], *, include_verification_summary: bool = True,
+) -> Path:
     try:
         code = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     except OSError:
         code = ""
-    key = hashlib.sha256(json.dumps([REVIEW_TARGET_CACHE_SCHEMA, os.getcwd(), binding.get("base_ref"), code]).encode())
+    identity = [REVIEW_TARGET_CACHE_SCHEMA, os.getcwd(), binding.get("base_ref"), code, include_verification_summary]
+    key = hashlib.sha256(json.dumps(identity).encode())
     return Path(".map/.review-target-cache") / f"{key.hexdigest()}.json"
 
 
-def _review_target(binding: dict[str, Any] | None = None) -> dict[str, Any]:
+def _review_target(
+    binding: dict[str, Any] | None = None, *, include_verification_summary: bool = True,
+) -> dict[str, Any]:
     """Return the review target, reusing a cached one only for an identical cheap-signal observation.
 
     Staleness detection is unchanged: the signature covers HEAD, the default/explicit base refs, the index and
@@ -9204,10 +9217,10 @@ def _review_target(binding: dict[str, Any] | None = None) -> dict[str, Any]:
     computation reads. Any difference recomputes. Unverifiable targets and failures are never cached.
     """
     binding = {} if binding is None else binding
-    signature = _review_target_signature(binding)
+    signature = _review_target_signature(binding, include_verification_summary=include_verification_summary)
     if signature is None:
-        return _review_target_compute(binding)
-    path = _review_target_cache_path(binding)
+        return _review_target_compute(binding, include_verification_summary=include_verification_summary)
+    path = _review_target_cache_path(binding, include_verification_summary=include_verification_summary)
     try:
         cached = json.loads(path.read_text(encoding="utf-8"))
         if (isinstance(cached, dict) and cached.get("schema") == REVIEW_TARGET_CACHE_SCHEMA
@@ -9218,8 +9231,8 @@ def _review_target(binding: dict[str, Any] | None = None) -> dict[str, Any]:
     target: dict[str, Any] = {}
     # Intent: git may refresh the index while computing; retry once so such a self-inflicted change is not cached stale.
     for _ in range(2):
-        target = _review_target_compute(binding)
-        after = _review_target_signature(binding)
+        target = _review_target_compute(binding, include_verification_summary=include_verification_summary)
+        after = _review_target_signature(binding, include_verification_summary=include_verification_summary)
         if after is not None and after == signature:
             if "head" in target:
                 try:
@@ -9235,7 +9248,9 @@ def _review_target(binding: dict[str, Any] | None = None) -> dict[str, Any]:
     return target
 
 
-def _review_target_compute(binding: dict[str, Any] | None = None) -> dict[str, Any]:
+def _review_target_compute(
+    binding: dict[str, Any] | None = None, *, include_verification_summary: bool = True,
+) -> dict[str, Any]:
     """Bind bytes, modes, index, local inputs and merge state without decoding Git paths."""
     # Reuse only observations from this calculation; every caller starts fresh.
     inputs: _ReviewTargetInputs = {"base": None, "names": [], "changed": set()}
@@ -9263,7 +9278,8 @@ def _review_target_compute(binding: dict[str, Any] | None = None) -> dict[str, A
                 "reusable": bool(base) and not dirty and not conflicts,
                 "local_digest": hashlib.sha256(fingerprint).hexdigest(),
                 "diff_digest": hashlib.sha256(diff).hexdigest(),
-                "policy_hash": _review_policy(trusted_policy=trusted_policy),
+                "policy_hash": _review_policy(trusted_policy=trusted_policy,
+                                              include_verification_summary=include_verification_summary),
                 "required_files": _review_changed_paths(base or "HEAD", names),
                 "context_files": names, "conflicts": conflicts}
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:

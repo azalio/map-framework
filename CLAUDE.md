@@ -51,6 +51,7 @@ Trace persisted data from every writer through parsing and recovery to the next 
 
 - Feed the normal reader and the recovery reader the same ambiguous input, such as duplicate JSON keys. Verify that both reject it and preserve the original bytes.
 - Give recovery a complete JSON object with a wrong field type, such as a string where the next step expects a list. Verify refusal before any write. For valid recovery, run the next real operation and assert its result.
+- When a check publishes a report, run the check, write and rewrite the report, then read the result in a fresh process. Verify that the same proof is reused, that changing a real input invalidates it, and that workflows which read the report still detect edits to it.
 - Damage an auxiliary file, deliver two more events, and verify that accounting resumes. Check that recoverable counters survive and that the primary workflow state stays intact.
 
 Run these cases against the old code to confirm they expose the defect, then against the fix before requesting review.

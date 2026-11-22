@@ -107,7 +107,7 @@ python3 .map/scripts/map_step_runner.py evaluate_acceptance --json '{}'
 python3 .map/scripts/map_step_runner.py write_acceptance_report --json '{}'
 ```
 
-`run_acceptance_proofs` accepts `ac_ids` to select criteria and `rerun: true` to admit a new attempt. Generate `write_verification_summary` before `mark_workflow_complete`. Automatic implementation exhaustion enters `FINAL_VERIFICATION`; do not skip the proof attempt. A later commit or relevant local change makes prior full-snapshot evidence stale, including after historical completion: rerun proofs on the final intended snapshot.
+`run_acceptance_proofs` accepts `ac_ids` to select criteria and `rerun: true` to admit a new attempt. Run `write_verification_summary` before `mark_workflow_complete`. You can regenerate the summary and reuse the same successful proof. If the contract lists the summary as a proof file, editing its contents invalidates the proof. If a receipt from an earlier runner shows `snapshot_changed` after upgrading, run `run_acceptance_proofs` once on the current inputs. Automatic implementation exhaustion enters `FINAL_VERIFICATION`; do not skip the proof attempt. A later commit or relevant local change makes prior full-snapshot evidence stale, including after historical completion: rerun proofs on the final intended snapshot.
 
 | Status | Meaning | Completion policy |
 |---|---|---|

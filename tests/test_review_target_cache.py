@@ -114,6 +114,7 @@ def test_vc2_cached_target_equals_a_fresh_computation(repository):
 
 
 MUTATIONS = {
+    "verification_summary": lambda: runner.write_verification_summary("READY FOR REVIEW", branch="feature"),
     "required_file": lambda: Path("code.py").write_text("value = 3\n"),
     "new_commit": lambda: subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "next"], check=True),
     "index_only": lambda: subprocess.run(["git", "update-index", "--chmod=+x", "code.py"], check=True),
