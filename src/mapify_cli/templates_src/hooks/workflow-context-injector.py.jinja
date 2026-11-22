@@ -235,8 +235,7 @@ def step_state_path(branch: str) -> Path:
 
 
 # Per-turn dedup: identical normalized reminder text emitted within
-# DEDUP_WINDOW_SECONDS of the previous emission is squelched. We do
-# deduplicate reminder content so unrelated state updates cannot re-emit it.
+# DEDUP_WINDOW_SECONDS of the previous emission is squelched.
 DEDUP_CACHE_NAME = ".hook-reminder-cache.json"
 DEDUP_WINDOW_SECONDS = 5.0
 
@@ -313,6 +312,41 @@ def _write_dedup_cache(branch: str, reminder: str) -> None:
         pass
 
 
+def _valid_hook_counts(value: object) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    return {k: v for k, v in value.items() if type(v) is int and v >= 0}
+
+
+def _load_hook_counts(path: Path, current: dict) -> dict[str, int]:
+    """Load run-scoped counters under the branch lock, retaining damaged input."""
+    counts = _valid_hook_counts(current.get("hook_injection_counts"))
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return counts
+    try:
+        telemetry = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        telemetry = None
+    if isinstance(telemetry, dict) and "started_at" in telemetry:
+        stored = telemetry.get("hook_injection_counts")
+        valid = _valid_hook_counts(stored)
+        same_run = telemetry["started_at"] == current.get("started_at")
+        if isinstance(stored, dict) and len(valid) == len(stored):
+            return valid if same_run else counts
+        if same_run:
+            counts.update(valid)
+
+    # Copy before publishing. If either write fails, the next event can
+    # retry from the same input, including any surviving counter entries.
+    digest = hashlib.sha256(raw).hexdigest()
+    from map_utils import atomic_write_bytes  # type: ignore[import-not-found]
+
+    atomic_write_bytes(path.with_name(f"hook-injection.{digest}.corrupt"), raw)
+    return counts
+
+
 def record_hook_injection_status(
     branch: str,
     state: dict,
@@ -335,24 +369,18 @@ def record_hook_injection_status(
             current, _ = read_step_state(branch)
             if current is None or current.get("started_at") != state.get("started_at"):
                 return
-            try:
-                telemetry = json.loads(path.read_text(encoding="utf-8"))
-            except FileNotFoundError:
-                telemetry = {}
-            if not telemetry or telemetry.get("started_at") != current.get("started_at"):
-                # Carry legacy inline counters into the first event of this run.
-                telemetry = {
-                    "started_at": current.get("started_at"),
-                    "hook_injection_counts": current.get("hook_injection_counts") or {},
-                }
-            counts = telemetry["hook_injection_counts"]
-            counts[status] = int(counts.get(status, 0) or 0) + 1
-            telemetry["hook_injection"] = {
-                "status": status,
-                "reason": reason,
-                "tool_name": tool_name,
-                "additional_context_chars": additional_context_chars,
-                "updated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            counts = _load_hook_counts(path, current)
+            counts[status] = counts.get(status, 0) + 1
+            telemetry = {
+                "started_at": current.get("started_at"),
+                "hook_injection_counts": counts,
+                "hook_injection": {
+                    "status": status,
+                    "reason": reason,
+                    "tool_name": tool_name,
+                    "additional_context_chars": additional_context_chars,
+                    "updated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                },
             }
             atomic_write_text(path, json.dumps(telemetry, indent=2))
     except Exception:  # noqa: BLE001, S110 -- deliberate fallback/resilience boundary, must not propagate

@@ -1647,3 +1647,26 @@ def test_concurrent_provider_accounting_preserves_transition(tmp_path, monkeypat
     assert state_path.read_bytes() == published
     counts = json.loads((state_path.parent / "hook-injection.json").read_bytes())
     assert counts["hook_injection_counts"] == {"skipped": 3, "injected": 2}
+
+
+@pytest.mark.parametrize("broken", [
+    b'{"star', b'\xff', b'[]', b'{"started_at":"active"}',
+    b'{"started_at":"active","hook_injection_counts":{"injected":"wrong","other":4}}',
+])
+def test_hook_repairs_invalid_telemetry_only(tmp_path, monkeypatch, broken):
+    state_path = _seed_step_state(tmp_path)
+    state = json.loads(state_path.read_bytes())
+    state.update(started_at="active", hook_injection_counts={"injected": 3})
+    original = json.dumps(state).encode()
+    state_path.write_bytes(original)
+    sidecar = state_path.with_name("hook-injection.json")
+    sidecar.write_bytes(broken)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    hook = _import_hook()
+    for _ in range(2):
+        hook.record_hook_injection_status("default", state, "injected", "test", "Edit")
+    assert state_path.read_bytes() == original
+    expected = {"injected": 5, "other": 4} if b'"other"' in broken else {"injected": 5}
+    assert json.loads(sidecar.read_bytes())["hook_injection_counts"] == expected
+    backup, = sidecar.parent.glob("hook-injection.*.corrupt")
+    assert backup.read_bytes() == broken

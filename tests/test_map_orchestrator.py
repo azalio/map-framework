@@ -6836,12 +6836,12 @@ def test_step_state_save_uses_invocation_unique_temp_files(
     assert list(tmp_path.glob(".step_state.json.*.tmp")) == []
 
 
-def test_atomic_write_text_uses_binary_descriptor_and_explicit_lf_newlines(
+def test_atomic_write_text_preserves_line_endings_with_binary_descriptor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """Atomic text writes avoid stacked newline translation on Windows."""
     mkstemp_kwargs: dict[str, object] = {}
-    fdopen_kwargs: dict[str, object] = {}
+    fdopen_modes: list[str] = []
     original_mkstemp = map_utils.tempfile.mkstemp
     original_fdopen = map_utils.os.fdopen
 
@@ -6850,20 +6850,20 @@ def test_atomic_write_text_uses_binary_descriptor_and_explicit_lf_newlines(
         return original_mkstemp(*args, **kwargs)
 
     def recording_fdopen(
-        descriptor: int, *args: Any, **kwargs: Any
+        descriptor: int, mode: str, **kwargs: Any
     ) -> object:
-        fdopen_kwargs.update(kwargs)
-        return original_fdopen(descriptor, *args, **kwargs)
+        fdopen_modes.append(mode)
+        return original_fdopen(descriptor, mode, **kwargs)
 
     monkeypatch.setattr(map_utils.tempfile, "mkstemp", recording_mkstemp)
     monkeypatch.setattr(map_utils.os, "fdopen", recording_fdopen)
 
     target = tmp_path / "state.txt"
-    map_utils.atomic_write_text(target, "first\nsecond\n")
+    map_utils.atomic_write_text(target, "first\r\nsecond\n")
 
     assert "text" not in mkstemp_kwargs
-    assert fdopen_kwargs["newline"] == "\n"
-    assert target.read_bytes() == b"first\nsecond\n"
+    assert fdopen_modes == ["wb"]
+    assert target.read_bytes() == b"first\r\nsecond\n"
 
 
 def test_step_state_save_replace_failure_preserves_target_and_cleans_temp(
@@ -7197,6 +7197,9 @@ def test_automatic_state_recovery_preserves_progress_and_evidence(tmp_path):
     b'{"current_step_phase":', b'[]', b'{}{}', b'{}junk', b'{}4Z"\n}',
     b'{"current_step_id":"2.3","current_step_phase":"ACTOR"} {"other":1}',
     b'{"current_step_id":"2.3","current_step_phase":"ACTOR","x":1,"x":2}}',
+    b'{"current_step_id":"2.4","current_step_id":"1.0","current_step_phase":"DECOMPOSE"}',
+    b'{"current_step_id":"2.4","current_step_phase":"MONITOR","pending_steps":"2.4"}}',
+    b'{"current_step_id":"2.4","current_step_phase":"MONITOR","pending_steps":[2]}}',
 ])
 def test_ambiguous_state_preserved_by_mutation(tmp_path, raw):
     directory = tmp_path / ".map" / "active"
