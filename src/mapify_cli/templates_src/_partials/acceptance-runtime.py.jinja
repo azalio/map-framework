@@ -435,7 +435,7 @@ def evaluate_acceptance(branch: str | None = None, *, strict: bool | None = None
                     fcntl.flock(lease.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
                     errors.append("An execution check is still running")
-        target = _review_target() if store["contracts"] else {}
+        target = _review_target(include_verification_summary=False) if store["contracts"] else {}
         if store["contracts"] and target.get("unverified_reason"):
             errors.append(target["unverified_reason"])
         if store.get("inventory") and store["inventory"] != inventory:
@@ -537,7 +537,7 @@ def _record_acceptance_attempt(ac_id: str, attempt_id: str, *, branch: str | Non
         for previous in store["attempts"]:
             if previous["state"] == "running":
                 previous.update(state="interrupted", passed=False)
-        target = _review_target()
+        target = _review_target(include_verification_summary=False)
         if target.get("unverified_reason"):
             raise ValueError(target["unverified_reason"])
         receipt = {"attempt_id": attempt_id, "ac_id": ac_id, "revision": contract["revision"],
@@ -556,7 +556,7 @@ def _record_acceptance_attempt(ac_id: str, attempt_id: str, *, branch: str | Non
             handle.write(output)
             handle.flush()
             os.fsync(handle.fileno())
-        after = _review_target()
+        after = _review_target(include_verification_summary=False)
         receipt.update({**execution, "state": "running" if execution.get("status") == "cleanup_blocked" else "finished",
                         "after": after, "duration_seconds": time.time() - receipt["started_at"],
                         "output_artifact": str(artifact.relative_to(directory)),

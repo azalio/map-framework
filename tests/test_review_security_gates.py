@@ -27,7 +27,7 @@ def test_admission_reads_source_inventory_once_and_rechecks_live_changes(policy_
 
     monkeypatch.setattr(runner, "_review_git_bytes", record)
     # Intent: this pins the full target computation; the cheap-signal cache lists the inventory on its own.
-    monkeypatch.setattr(runner, "_review_target_signature", lambda _binding: None)
+    monkeypatch.setattr(runner, "_review_target_signature", lambda _binding, **_options: None)
     admitted = runner.begin_review_run(branch="feature")
     assert admitted["status"] == "success", admitted
     inventories = [args for args in calls if args[:3] == ("ls-files", "-z", "--cached")]

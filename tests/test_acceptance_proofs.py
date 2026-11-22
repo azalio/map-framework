@@ -65,6 +65,41 @@ def test_frozen_proof_runs_without_review_and_survives_restart(acceptance_worksp
     assert cli("run_acceptance_proofs")["requirements"][0]["receipt"]["attempt_id"] == row["receipt"]["attempt_id"]
 
 
+def test_reporting_preserves_proof_until_a_real_input_changes(acceptance_workspace):
+    assert freeze()["status"] == "success"
+    receipt = cli("run_acceptance_proofs")["requirements"][0]["receipt"]
+    assert cli("evaluate_acceptance")["requirements"][0]["status"] == "proven"
+    assert cli("write_acceptance_report")["status"] == "success"
+
+    summary = acceptance_workspace / "verification-summary.md"
+    for verdict in ("READY FOR REVIEW", "REVIEW COMPLETE"):
+        assert cli("write_verification_summary", verdict=verdict)["status"] == "success"
+        text = summary.read_text()
+        assert verdict in text and receipt["attempt_id"] in text
+        report = cli("evaluate_acceptance")
+        assert report["allowed"] and report["requirements"][0]["status"] == "proven", report
+        assert cli("run_acceptance_proofs")["requirements"][0]["receipt"] == receipt
+
+    # This ignored branch artifact contributes only through the policy hash.
+    (acceptance_workspace / "blueprint.json").write_text('{"subtasks": []}')
+    changed = cli("evaluate_acceptance")
+    assert not changed["allowed"] and changed["requirements"][0]["reason"] == "snapshot_changed"
+    refreshed = cli("run_acceptance_proofs")["requirements"][0]
+    assert refreshed["status"] == "proven" and refreshed["receipt"]["attempt_id"] != receipt["attempt_id"]
+    Path("product.txt").write_text("changed")
+    assert cli("evaluate_acceptance")["requirements"][0]["status"] == "stale"
+
+
+def test_report_explicitly_frozen_as_proof_still_matters(acceptance_workspace):
+    summary = acceptance_workspace / "verification-summary.md"
+    summary.write_text("explicit proof input")
+    assert freeze(proof_files=["proof.py", ".map/main/verification-summary.md"])["status"] == "success"
+    assert cli("run_acceptance_proofs")["requirements"][0]["status"] == "proven"
+    summary.write_text("changed proof input")
+    report = cli("evaluate_acceptance")
+    assert not report["allowed"] and report["requirements"][0]["reason"] == "contract_integrity"
+
+
 def test_failed_rerun_cannot_fall_back_to_success(acceptance_workspace):
     del acceptance_workspace
     Path("proof.py").write_text("from pathlib import Path\nassert not Path('.map/fail').exists()\n")
