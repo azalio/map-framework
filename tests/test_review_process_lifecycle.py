@@ -137,8 +137,9 @@ def test_runtime_cleanup_precedes_fixture_teardown(tmp_path, outcome):
         f"child=subprocess.Popen([sys.executable,'-c',{child!r}], close_fds=True, "
         "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
         f"while not Path({str(tmp_path / 'child.pid')!r}).exists(): time.sleep(.01)\n"
-        f"Path({str(marker)!r}).write_text(json.dumps(dict(anchor=os.getppid(), "
-        "wrapper=os.getpid(), child=child.pid)))\n"
+        f"staged = Path({str(marker.with_suffix('.tmp'))!r})\n"
+        "staged.write_text(json.dumps(dict(anchor=os.getppid(), wrapper=os.getpid(), child=child.pid)))\n"
+        f"staged.replace({str(marker)!r})\n"
         f"while not Path({str(release)!r}).exists(): time.sleep(.01)\n"
         f"sys.exit({7 if outcome == 'failure' else 0})\n"
     )
@@ -150,7 +151,9 @@ def test_runtime_cleanup_precedes_fixture_teardown(tmp_path, outcome):
         f"{str(attempt)!r},str(lease.fileno()),{str(check_timeout)!r},sys.executable,'-c',{wrapper!r}],"
         "pass_fds=(lease.fileno(),),start_new_session=True,"
         "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
-        f" Path({str(ready)!r}).write_text(str(owner.pid))\n"
+        f" staged = Path({str(ready.with_suffix('.tmp'))!r})\n"
+        " staged.write_text(str(owner.pid))\n"
+        f" staged.replace({str(ready)!r})\n"
         f" while not Path({str(marker)!r}).exists(): time.sleep(.01)\n"
         + (" time.sleep(30)\n" if outcome == "parent-sigkill" else
            "" if outcome == "parent-exit" else f" owner.wait(timeout={check_timeout + LOAD_DEADLINE})\n")
@@ -161,6 +164,7 @@ def test_runtime_cleanup_precedes_fixture_teardown(tmp_path, outcome):
         with subprocess.Popen([sys.executable, "-c", parent_code]) as parent:
             try:
                 lifecycle.wait_for_file(marker, timeout=LOAD_DEADLINE)
+                lifecycle.wait_for_file(ready, timeout=LOAD_DEADLINE)
                 identities = json.loads(marker.read_text())
                 identities.update(supervisor=int(ready.read_text()), parent=parent.pid)
                 before = _runtime_snapshot(set(identities.values()))
