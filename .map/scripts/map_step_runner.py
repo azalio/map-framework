@@ -15810,8 +15810,10 @@ def _review_lazy_check_resource(directory: Path, row: dict[str, Any], resource_i
         check_id = check_id.removesuffix(":baseline")
     check = all_checks.get(check_id)
     # Intent: always re-validate the runner-witnessed check, even when its log was frozen earlier.
-    if not isinstance(check, dict) or not _review_check_observation_valid(directory, check_id, row):
+    if check_id not in all_checks:
         raise _ReviewResourceDenied("Resource is not permitted for this reviewer")
+    if not isinstance(check, dict) or not _review_check_observation_valid(directory, check_id, row):
+        raise ValueError("Execution check observation is invalid or its output changed")
     frozen = row.get("context_lazy", {}).get(resource_id)
     identity = {"attempt_id": check["attempt_id"], "output_sha256": check["output_sha256"]}
     if isinstance(frozen, dict) and frozen.get("kind") == "check":
@@ -15832,7 +15834,10 @@ def _review_lazy_check_resource(directory: Path, row: dict[str, Any], resource_i
             raise ValueError("Baseline evidence no longer matches the execution check")
         text = json.dumps(proof, ensure_ascii=True) + "\n\nBaseline output:\n" + baseline_output.decode("utf-8")
     else:
-        text = (directory / check["output_artifact"]).read_text(encoding="utf-8")
+        output = (directory / check["output_artifact"]).read_bytes()
+        if hashlib.sha256(output).hexdigest() != check["output_sha256"]:
+            raise ValueError("Execution check output changed before publication")
+        text = output.decode("utf-8")
     metadata = {**_review_context_store(directory, text), "required": False, "kind": "check",
                 "check_identity": identity}
     row.setdefault("context_lazy", {})[resource_id] = metadata
@@ -15879,7 +15884,7 @@ def _review_lazy_full_resource(
     files = json.loads(Path(artifact).read_text(encoding="utf-8"))["attribution"].get("files", [])
     source = next((item for item in files if item["path"] == name), None)
     if source is None:
-        raise _ReviewResourceDenied("Resource is not permitted for this reviewer")
+        raise ValueError("Admitted source is missing from the review bundle")
     payload = {"path": name, "side": side, "encoding": source["encoding"], "status": source["status"],
                "content": source[f"{side}_content"], "line_mapping": source["line_mapping"],
                "line_mapping_scope": "full",
@@ -16184,13 +16189,22 @@ def _prepare_review_context(
     return {"status": "success"}
 
 
-def _review_lookup_text(raw: bytes, resource_id: str, bounds: tuple[int, int] | None) -> bytes | dict[str, Any]:
+def _review_lookup_text(
+    raw: bytes, resource_id: str, bounds: tuple[int, int] | None, resources: dict[str, Any],
+) -> bytes | dict[str, Any]:
     """Select an admitted source side and its inclusive, LF-numbered lines."""
     if resource_id.startswith(("base:", "current:")) or (bounds and resource_id.startswith("repo:")):
         source = json.loads(raw)
         if source["encoding"] != "utf-8":
             return {"status": "context_request_rejected", "reason": "binary", "message": "This file is binary."}
         side = "base" if resource_id.startswith("base:") else "current"
+        if side == "base" and source.get("status") == "renamed_to":
+            destination = source["renamed_to"]
+            admitted = any(name.startswith("source_") and entry.get("path") == destination
+                           for name, entry in resources.items())
+            return {"status": "context_request_rejected", "reason": "renamed",
+                    "candidates": ["base:" + destination] if admitted else [],
+                    "message": "The baseline for this rename is stored under the destination path."}
         if side == "base" and source.get("baseline_known") is False:
             return {"status": "context_request_rejected", "reason": "no_baseline", "message": "No baseline is available."}
         raw = (source["content"] if "content" in source else source[f"{side}_content"]).encode("utf-8")
@@ -16328,7 +16342,7 @@ def serve_review_context(
         return _review_serve_context_file(directory, ledger, row, session, session_id, context_id,
                                           resource_id, metadata, raw)
     if codex_read:
-        selected = _review_lookup_text(raw, resource_id, line_range)
+        selected = _review_lookup_text(raw, resource_id, line_range, manifest["resources"])
         if isinstance(selected, dict):
             _require_review_delivery_current(row, directory.name)
             return selected

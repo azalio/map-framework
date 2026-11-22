@@ -92,7 +92,10 @@ class Delivery:
             return self.reject("Call {} to finish the pending delivery, then retry the lookup.")
         read = {"arguments": arguments, "offset": 0} if arguments else self.read_cursor
         if self.resize_pending and self.read_cursor is not None:
-            read = self.read_cursor
+            if arguments and arguments != self.read_cursor["arguments"]:
+                self.resize_pending = False
+            else:
+                read = self.read_cursor
         if state["status"] == "context_ready" and not read:
             self.finalization_token = state["finalization_token"]
             text = json.dumps({**state, "instruction": "All required context is delivered. Finalize now with context_receipt."})

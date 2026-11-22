@@ -1,6 +1,7 @@
 """Host observations, rather than model assertions, fence Codex review capabilities."""
 import importlib
 import json
+import sys
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -235,25 +236,90 @@ def test_driver_resume_same_thread_and_complete_receipts(repo, monkeypatch):
 
 def test_line_lookup_preserves_source_line_endings():
     raw = "one\r\ntwo\u2028still two\nlast".encode()
-    assert runner._review_lookup_text(raw, "diff", (2, 2)) == "two\u2028still two\n".encode()
-    assert runner._review_lookup_text(raw, "diff", (1, 3)) == raw
-    assert runner._review_lookup_text(b"", "diff", (1, 1))["total_lines"] == 0
+    assert runner._review_lookup_text(raw, "diff", (2, 2), {}) == "two\u2028still two\n".encode()
+    assert runner._review_lookup_text(raw, "diff", (1, 3), {}) == raw
+    assert runner._review_lookup_text(b"", "diff", (1, 1), {})["total_lines"] == 0
 
 
-def test_line_lookup_preserves_required_progress_across_restart(repo):
+def test_line_lookup_preserves_required_progress_across_restart(repo, monkeypatch):
     del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", "2000000")
+    text = ("Ж🦊" * 6000 + "\n") * 4
+    Path("second.py").write_text("skip me\n" + text)
     delivery = admitted_delivery()
     state = delivery.refresh()
-    arguments = {"resource_id": "current:first.py", "start_line": 1, "end_line": 1}
-    result = delivery.respond({"arguments": arguments, "callId": "source"})
-    assert json.loads(result["contentItems"][0]["text"])["content"] == "value = 2\n"
+    arguments = {"resource_id": "current:second.py", "start_line": 2, "end_line": 5}
+    first = delivery.respond({"arguments": arguments, "callId": "first"})
+    page = json.loads(first["contentItems"][0]["text"])
+    assert not page["eof"]
+    received = page["content"]
+    complete_result(delivery, first, "first")
+    interrupted = delivery.respond({"arguments": {}, "callId": "interrupted"})
     resumed = driver.Delivery("feature", "host", state)
     replay = resumed.respond({"arguments": {}, "callId": "retry"})
-    assert json.loads(replay["contentItems"][0]["text"])["content"] == "value = 2\n"
+    page = json.loads(replay["contentItems"][0]["text"])
+    assert page["content"] == json.loads(interrupted["contentItems"][0]["text"])["content"]
+    received += page["content"]
     complete_result(resumed, replay, "retry")
-    assert resumed.refresh() == state
+    while not page["eof"]:
+        reply = resumed.respond({"arguments": {}, "callId": "next"})
+        page = json.loads(reply["contentItems"][0]["text"])
+        received += page["content"]
+        complete_result(resumed, reply, "next")
+    assert received == text and resumed.refresh() == state
     required = resumed.respond({"arguments": {}, "callId": "required"})
     assert json.loads(required["contentItems"][0]["text"])["resource_id"] == state["remaining"][0]["resource_id"]
+
+
+def test_truncated_lookup_respects_a_different_explicit_range(repo):
+    del repo
+    Path("second.py").write_text("first\nsecond\n")
+    delivery = admitted_delivery()
+    args = {"resource_id": "current:second.py", "start_line": 1, "end_line": 1}
+    first = delivery.respond({"arguments": args, "callId": "first"})
+    complete_result(delivery, first, "first", text="truncated")
+    second = delivery.respond({"arguments": {**args, "start_line": 2, "end_line": 2}, "callId": "second"})
+    assert json.loads(second["contentItems"][0]["text"])["content"] == "second\n"
+    complete_result(delivery, second, "second")
+
+
+def test_lookup_reports_where_baseline_of_a_renamed_file_is_stored(repo):
+    del repo
+    scope_tests.git("mv", "moved.py", "renamed.py")
+    delivery = admitted_delivery()
+
+    def read(resource):
+        reply = delivery.respond({"arguments": {"resource_id": resource}, "callId": resource})
+        complete_result(delivery, reply, resource)
+        return json.loads(reply["contentItems"][0]["text"])
+
+    before = read("base:moved.py")
+    assert before["status"] == "context_request_rejected"
+    assert before["candidates"] == ["base:renamed.py"]
+    assert read(before["candidates"][0])["content"] == "value = 1\n"
+    assert read("current:moved.py")["content"] == ""
+
+
+def test_invalid_check_observation_stops_an_optional_lookup(repo):
+    del repo
+    Path("first.py").write_text("value = 2\n")
+    result = runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="host",
+                                    required_checks=["unit"], check_specs={"unit": [sys.executable, "-V"]})
+    assert result["status"] == "success"
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    assert runner.run_test_gate(branch="feature", check_id="unit")["passed"]
+    entry = runner.build_review_prompts(branch="feature")["prompts"]["monitor"]
+    state = runner.bind_review_context("monitor", entry["context_transport"]["context_id"], "thread", "host", branch="feature")
+    delivery = driver.Delivery("feature", "host", state)
+    args = {"resource_id": "check:unit"}
+    good = delivery.respond({"arguments": args, "callId": "first"})
+    assert good["success"]
+    complete_result(delivery, good, "first")
+    directory = Path(".map/feature")
+    check = runner._read_review_ledger(directory)["execution_checks"]["unit"]
+    (directory / check["output_artifact"]).unlink()
+    with pytest.raises(host.HostError, match="observation"):
+        delivery.respond({"arguments": args, "callId": "second"})
 
 
 def test_driver_rereads_multilingual_source_and_diff_by_line(repo, monkeypatch):
