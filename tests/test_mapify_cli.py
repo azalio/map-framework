@@ -2434,8 +2434,7 @@ class TestRefreshExistingInit:
         ("claude", "local"), ("claude", "project"), ("claude", "user"),
         ("codex", "project"), ("codex", "user"),
     ])
-    def test_refresh_preserves_script_used_by_custom_hook(self, tmp_path, monkeypatch, provider, scope):
-        from mapify_cli.delivery.managed_file_copier import copy_managed_file
+    def test_refresh_preserves_project_owned_custom_hook(self, tmp_path, monkeypatch, provider, scope):
 
         monkeypatch.chdir(tmp_path)
         user_dir = tmp_path / "profile"
@@ -2445,9 +2444,7 @@ class TestRefreshExistingInit:
         assert runner.invoke(app, [*args, "--mcp", "none"]).exit_code == 0
         directory = tmp_path / f".{provider}"
         legacy = directory / "hooks" / "safety-guardrails.py"
-        source = tmp_path / "sample.py"
-        source.write_text("print('custom registration')\n")
-        assert copy_managed_file(source, legacy, "3.39.1").success
+        legacy.write_text("print('custom registration')\n")
         settings = (user_dir if scope == "user" else directory) / (
             "hooks.json" if provider == "codex" else "settings.local.json" if scope == "local" else "settings.json"
         )
@@ -2492,28 +2489,23 @@ class TestRefreshExistingInit:
         assert settings.stat().st_mode & 0o777 == 0o600
         assert legacy.exists() is project_owned
 
-    @pytest.mark.parametrize(("command", "kept"), [
-        (None, True),
-        ('cd "$CLAUDE_PROJECT_DIR/.claude/hooks" && python3 safety-guardrails.py', True),
-        ('python3 "$HOME/.claude/hooks/safety-guardrails.py"', False),
-        ('python3 "tools/safety-guardrails.py"', False),
-    ])
-    def test_custom_hook_target_during_refresh(self, tmp_path, monkeypatch, command, kept):
+    @pytest.mark.parametrize("provider", ["claude", "codex"])
+    def test_custom_hook_command_cannot_keep_stock_filter_installed(self, tmp_path, provider):
         from mapify_cli.delivery.managed_file_copier import copy_managed_file
         from mapify_cli.delivery.retired_hooks import remove_retired_safety_hook
 
-        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "user"))
-        directory = tmp_path / ".claude"
+        directory = tmp_path / f".{provider}"
         script = directory / "hooks" / "safety-guardrails.py"
         source = tmp_path / "stock.py"
         source.write_text("pass\n")
         assert copy_managed_file(source, script, "3.39.1").success
-        contents = "{" if command is None else json.dumps({
-            "hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": command}]}]}
-        })
-        (directory / "settings.local.json").write_text(contents)
+        config = directory / ("hooks.json" if provider == "codex" else "settings.local.json")
+        command = f'cd "{script.parent}" && python3 {script.name}'
+        settings = {"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": command}]}]}}
+        config.write_text(json.dumps(settings))
         remove_retired_safety_hook(directory)
-        assert script.is_file() is kept
+        assert not script.exists()
+        assert json.loads(config.read_text()) == settings
 
     @pytest.mark.parametrize(("provider", "settings_name"), [("claude", "settings.json"), ("codex", "hooks.json")])
     def test_refresh_keeps_unreadable_hook_settings_and_script(self, tmp_path, monkeypatch, provider, settings_name):

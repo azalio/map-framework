@@ -2747,7 +2747,7 @@ Guidelines in `.claude/CLAUDE.md` that guide agent behavior:
 
 ### Layer 2: Permissions (settings.json)
 
-On upgrade, MAP removes the Safety Guardrails hook for both providers. Its filename and shell command filters stop running. Existing `dangerous_file_patterns`, `safe_path_prefixes`, `strict_sensitive_names`, and `dangerous_commands` settings in `.map/config.yaml` have no effect.
+On upgrade, MAP removes the Safety Guardrails hook for both providers. Its filename and shell command filters stop running. If a project-authored command invokes the former MAP executable, remove that call or update it to use your own script. Existing `dangerous_file_patterns`, `safe_path_prefixes`, `strict_sensitive_names`, and `dangerous_commands` settings in `.map/config.yaml` have no effect.
 
 Claude Code evaluates its native permission rules from the [project settings](../src/mapify_cli/templates/settings.json). You can add your own rules in `.claude/settings.local.json`.
 
