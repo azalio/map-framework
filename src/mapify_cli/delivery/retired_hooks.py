@@ -39,6 +39,23 @@ def _command(hook: Any) -> str:
     return value if isinstance(value, str) else ""
 
 
+def read_settings_for_refresh(path: Path) -> dict:
+    """Read settings before a writer can discard a legacy hook registration."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("expected a settings object")
+        return data
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        if (path.parent / "hooks" / RETIRED_SAFETY_HOOK).is_file():
+            raise ValueError(
+                f"Cannot refresh unreadable hook settings at {path}"
+            ) from exc
+        return {}
+
+
 def remove_legacy_local_registration(claude_dir: Path) -> None:
     """MAP 3.1 and 3.2 installed the command in the per-project local settings."""
     path = claude_dir / "settings.local.json"
@@ -48,12 +65,7 @@ def remove_legacy_local_registration(claude_dir: Path) -> None:
         or project_owns_retired_script(claude_dir)
     ):
         return
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return
-    if not isinstance(data, dict):
-        return
+    data = read_settings_for_refresh(path)
     changed = False
     for event, group, hooks in list(_groups(data)):
         if event != "PreToolUse":
@@ -80,16 +92,7 @@ def copy_claude_settings(src: Path, dest: Path, version: str) -> CopyResult:
     directory = dest.parent
     if not dest.is_file() or dest.is_symlink():
         return copy_managed_file(src, dest, version)
-    try:
-        current = json.loads(dest.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        if (directory / "hooks" / RETIRED_SAFETY_HOOK).exists():
-            raise ValueError(
-                f"Cannot refresh unreadable hook settings at {dest}"
-            ) from exc
-        return copy_managed_file(src, dest, version)
-    if not isinstance(current, dict):
-        return copy_managed_file(src, dest, version)
+    current = read_settings_for_refresh(dest)
     retained: dict[str, list[dict]] = {}
     project_owned = project_owns_retired_script(directory)
     for event, group, hooks in _groups(current):

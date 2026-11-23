@@ -39,6 +39,7 @@ from mapify_cli.delivery.managed_file_copier import (
 )
 from mapify_cli.delivery.retired_hooks import (
     copy_claude_settings,
+    read_settings_for_refresh,
     remove_legacy_local_registration,
     remove_retired_safety_hook,
 )
@@ -1711,10 +1712,12 @@ def create_config_files(
             result = copier(template_file, dest_file, version)
             if drift_report is not None:
                 drift_report.results.append(result)
+            if config_file == "settings.json":
+                if not result.success:
+                    raise OSError(f"Could not install {dest_file}: {result.reason}")
+                remove_legacy_local_registration(claude_dir)
+                remove_retired_safety_hook(claude_dir)
             count += 1
-
-    remove_legacy_local_registration(claude_dir)
-    remove_retired_safety_hook(claude_dir)
     return count
 
 
@@ -1802,7 +1805,7 @@ def ensure_map_statusline(
     # keeps the shell-invoked command correct when the project path has spaces.
     command = f'"{hook_path}"'
 
-    settings = _read_json_object(local_settings) or {}
+    settings = read_settings_for_refresh(local_settings)
     settings["statusLine"] = {"type": "command", "command": command}
 
     # Revalidate the user-local settings privacy boundary immediately before

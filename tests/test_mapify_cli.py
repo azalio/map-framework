@@ -2507,20 +2507,59 @@ class TestRefreshExistingInit:
         assert not script.exists()
         assert json.loads(config.read_text()) == settings
 
-    @pytest.mark.parametrize(("provider", "settings_name"), [("claude", "settings.json"), ("codex", "hooks.json")])
+    @pytest.mark.parametrize(("provider", "settings_name"), [("claude", "settings.json"), ("claude", "settings.local.json"), ("codex", "hooks.json")])
     def test_refresh_keeps_unreadable_hook_settings_and_script(self, tmp_path, monkeypatch, provider, settings_name):
+        from mapify_cli.delivery.managed_file_copier import copy_managed_file
+
         monkeypatch.chdir(tmp_path)
         args = ["init", ".", "--provider", provider, "--no-git", "--force"]
         assert runner.invoke(app, [*args, "--mcp", "none"]).exit_code == 0
         directory = tmp_path / f".{provider}"
         legacy = directory / "hooks" / "safety-guardrails.py"
-        legacy.write_text("pass\n")
+        source = tmp_path / "stock.py"
+        source.write_text("pass\n")
+        assert copy_managed_file(source, legacy, "3.39.1").success
         settings = directory / settings_name
         settings.write_text("{")
         refresh = runner.invoke(app, [*args, "--refresh-existing"])
         assert refresh.exit_code != 0
         assert settings.read_text() == "{"
         assert legacy.is_file()
+
+    def test_retired_hook_cleanup_waits_for_settings_write(self, tmp_path, monkeypatch):
+        from mapify_cli.delivery import managed_file_copier
+
+        monkeypatch.chdir(tmp_path)
+        args = ["init", ".", "--provider", "claude", "--no-git", "--force"]
+        assert runner.invoke(app, [*args, "--mcp", "none"]).exit_code == 0
+        directory = tmp_path / ".claude"
+        legacy = directory / "hooks" / "safety-guardrails.py"
+        source = tmp_path / "stock.py"
+        source.write_text("pass\n")
+        assert managed_file_copier.copy_managed_file(source, legacy, "3.39.1").success
+        settings = directory / "settings.json"
+        before = json.loads(settings.read_text())
+        hook = {"type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/safety-guardrails.py"}
+        before["hooks"]["PreToolUse"].append({"matcher": "Read", "hooks": [hook]})
+        settings.write_text(json.dumps(before))
+        write = managed_file_copier._atomic_write
+
+        def fail_settings(path, contents):
+            if path == settings:
+                raise OSError("simulated settings write failure")
+            write(path, contents)
+
+        with monkeypatch.context() as context:
+            context.setattr(managed_file_copier, "_atomic_write", fail_settings)
+            result = runner.invoke(app, [*args, "--refresh-existing"])
+            assert result.exit_code != 0
+        assert json.loads(settings.read_text()) == before
+        assert legacy.is_file()
+
+        retry = runner.invoke(app, [*args, "--refresh-existing"])
+        assert retry.exit_code == 0, retry.output
+        assert legacy.name not in settings.read_text()
+        assert not legacy.exists()
 
     def test_unreadable_retired_hook_is_preserved(self, tmp_path, monkeypatch):
         from mapify_cli.delivery.retired_hooks import remove_retired_safety_hook

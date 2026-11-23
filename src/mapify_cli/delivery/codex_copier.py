@@ -405,8 +405,8 @@ def create_codex_files(project_path: Path) -> dict[str, int]:
             hooks_json_src, codex_dir / "hooks.json", codex_templates / "hooks"
         )
         counts["hooks"] += 1
+        remove_retired_safety_hook(codex_dir)
 
-    remove_retired_safety_hook(codex_dir)
     hooks_dir_src = codex_templates / "hooks"
     if hooks_dir_src.exists():
         hooks_dst = codex_dir / "hooks"
