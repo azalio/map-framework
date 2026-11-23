@@ -471,7 +471,7 @@ class CodexReviewHost:
                       "or substitute another tool. After the tool returns, reply PROBE_DONE.\n\n" + script)
             state = self.call("thread/read", {"threadId": self.thread_id, "includeTurns": False})
             if state.get("thread", {}).get("environments") != []:
-                raise HostError("Codex probe did not preserve empty environments")
+                raise UnverifiedReader("Codex probe did not preserve empty environments")
             proof = verify_probe(self.events, script, nonce, canary)
             proof.update({"thread_id": self.thread_id, "context_id": context_id, "binary_sha256": self.binary_hash,
                           "isolated_catalog": self.isolated, "host": self.hello.get("userAgent"), "environments": [], "mcp_servers": [],

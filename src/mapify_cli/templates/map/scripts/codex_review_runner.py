@@ -481,6 +481,8 @@ def run(branch: str | None = None, *, timeout: float = 900, review_preferences: 
                         continue
                     result = {"status": "unavailable", **job, "reason": str(exc)}
                     print(json.dumps(result), flush=True)
+                if role == "complexity_lens":
+                    require_success(runner._record_codex_lens_result(row["round_id"], result, ordering, shard, branch=branch))
                 results.append({key: value for key, value in result.items() if key != "output"}
                                | ({"shard": shard} if shard else {}))
                 if not normal:

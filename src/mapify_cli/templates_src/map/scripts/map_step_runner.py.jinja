@@ -11343,16 +11343,31 @@ def _review_merge_shard_outputs(reviewer: str, items: list[tuple[str, dict[str, 
     for sid, envelope in items:
         for name, entry in envelope.get("reviewer_status", {}).items():
             statuses.setdefault(name, []).append((sid, entry))
-    raw_inputs: dict[str, str | None] = {}
+    raw_inputs: dict[str, str] = {}
+    failed: dict[str, dict[str, str]] = {}
+    scheduled = row.get("binding", {}).get("scheduled_reviewers", [])
     for name, entries in statuses.items():
-        if all(isinstance(entry, dict) and entry.get("status") == "ok" and isinstance(entry.get("raw"), dict)
-               for _, entry in entries) and len(entries) == len(items):
-            raw_inputs[name] = json.dumps(_review_merge_envelopes([(sid, entry["raw"]) for sid, entry in entries], owners))
-        else:
-            raw_inputs[name] = None
+        reported = dict(entries)
+        successful = []
+        errors = {}
+        for sid, _ in items:
+            entry = reported.get(sid)
+            if isinstance(entry, dict) and entry.get("status") == "ok" and isinstance(entry.get("raw"), dict):
+                successful.append((sid, entry["raw"]))
+            else:
+                errors[sid] = str(entry.get("error") or "No output provided") if isinstance(entry, dict) else "No output provided"
+        if successful:
+            raw_inputs[name] = json.dumps(_review_merge_envelopes(successful, owners))
+        if errors and (successful or name in scheduled):
+            failed[name] = errors
     aggregate = aggregate_adversarial_findings(
         raw_inputs.get("blind"), raw_inputs.get("edge_case"), raw_inputs.get("acceptance"),
         {role: raw_inputs.get(role) for role in ROLE_REVIEWER_IDS})
+    for name, errors in failed.items():
+        aggregate["reviewer_status"][name] = {"status": "not_run", "shard_errors": errors,
+                                              "error": "; ".join(f"{sid}: {message}" for sid, message in errors.items())}
+        aggregate["summary"]["all_clear_by_reviewer"][name] = None
+        aggregate["summary"]["per_reviewer_counts"].setdefault(name, 0)
     aggregate["shards"] = [sid for sid, _ in items]
     return aggregate
 
@@ -11619,6 +11634,17 @@ def _bind_codex_review_preferences(preferences: str | None, round_id: str, *, br
         row["codex_review_preferences"] = saved
         _write_json_file(directory / "review-verdict-ledger.json", ledger)
     return {"status": "success", "review_preferences": saved}
+
+
+@_review_transaction
+def _record_codex_lens_result(round_id: str, result: dict[str, Any], ordering: str, shard: str, *, branch: str) -> dict[str, Any]:
+    """Save the optional lens outcome independently of required reviewer receipts."""
+    directory, ledger, row = _review_delivery_load(branch, round_id)
+    key = _review_session_key(ordering or "default", "complexity_lens", shard)
+    row.setdefault("advisory_results", {})[key] = {k: result[k] for k in ("status", "reason", "artifact") if k in result}
+    _require_review_delivery_current(row, branch)
+    _write_json_file(directory / "review-verdict-ledger.json", ledger)
+    return {"status": "success"}
 
 
 @_review_transaction

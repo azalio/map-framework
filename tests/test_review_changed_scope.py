@@ -1007,7 +1007,8 @@ def test_codex_normal_review_reserves_room_for_inlined_role_rubrics(repo, monkey
     assert codex["total"] >= runner.REVIEW_ROLE_RUBRIC_RESERVE_BYTES
 
 
-def test_adversarial_round_captures_and_merges_per_shard(repo, monkeypatch):
+@pytest.mark.parametrize("partial", [False, True], ids=["complete", "missing-reader"])
+def test_adversarial_round_captures_and_merges_per_shard(repo, monkeypatch, partial):
     del repo
     monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", shard_budget())
     write_changes()
@@ -1024,19 +1025,37 @@ def test_adversarial_round_captures_and_merges_per_shard(repo, monkeypatch):
         assert built["status"] == "success", built
         raw = {}
         for name in reviewers:
+            if partial and name == "blind" and shard == row["shards"][-1]:
+                continue
             proof = deliver(built["prompts"][name], name, f"agent-{name}-{shard['id']}")
             raw[name] = json.dumps({"discarded_candidates": [], "paraphrase": PARAPHRASE, "all_clear": True, "all_clear_rationale": f"{name} {shard['id']} clean",
                                     "findings": [], "checks_performed": ["read"], "context_receipt": proof,
                                     "receipt": {"covered_files": shard["files"], "skipped_files": [],
                                                 "denied_access": [], "check_evidence": []}})
+        if partial and shard == row["shards"][0]:
+            report = json.loads(raw["blind"])
+            report.update(all_clear=False, findings=[{"severity": "IMPORTANT", "category": "correctness",
+                "file_path": shard["files"][0], "failure_mode": "Successful shard observed a dropped value",
+                "evidence": "changed source", "recommendation": "preserve the value"}])
+            raw["blind"] = json.dumps(report)
         aggregate = runner.aggregate_adversarial_findings(
             raw.get("blind"), raw.get("edge_case"), raw.get("acceptance"),
             {role: raw.get(role) for role in runner.ROLE_REVIEWER_IDS})
+        if partial and "blind" not in raw:
+            aggregate["reviewer_status"]["blind"]["error"] = "reader unavailable"
         captured = runner.capture_review_output("adversarial", json.dumps(aggregate), "r", branch="feature",
                                                 shard=shard["id"])
         assert captured["status"] == "success", captured
     merged = json.loads(Path(".map/feature/review-agent-adversarial.json").read_text())
     assert merged["schema_version"] == runner.ADVERSARIAL_AGGREGATE_SCHEMA
+    if partial:
+        result = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+        ledger = runner._read_review_ledger(Path(".map/feature"))
+        assert result["completeness"]["status"] == "INCOMPLETE" and not result["code_approval"]["approved"]
+        assert any("dropped value" in item["claim"] for item in ledger["findings_registry"])
+        failed = merged["reviewer_status"]["blind"]
+        assert failed["status"] != "ok" and failed["shard_errors"] == {row["shards"][-1]["id"]: "reader unavailable"}
+        return
     assert set(merged["reviewer_status"]["blind"]["raw"]["context_receipts"]) == set(admitted["shard_ids"])
     result = runner.write_review_verdict_ledger(current_run=True, branch="feature")
     assert result["completeness"]["status"] == "COMPLETE", result["completeness"]

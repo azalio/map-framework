@@ -78,6 +78,18 @@ def test_probe_requires_exact_program_and_host_outputs(tmp_path, failure):
         assert proof["boundary"] == "codex_no_environments"
 
 
+@pytest.mark.parametrize("thread", [{}, {"environments": ["workspace"]}])
+def test_probe_rejects_post_turn_environment_before_source(tmp_path, thread):
+    client = Mock(spec=host.CodexReviewHost)
+    client.root = tmp_path
+    client.thread_id = "reader"
+    client.call.return_value = {"thread": thread}
+    with pytest.raises(host.UnverifiedReader, match="empty environments"):
+        host.CodexReviewHost.probe(client, "context")
+    assert client.on_tool is None
+    client.call.assert_called_once_with("thread/read", {"threadId": "reader", "includeTurns": False})
+
+
 def test_approval_and_unknown_requests_never_grant_access():
     for method in ("item/fileChange/requestApproval", "item/commandExecution/requestApproval"):
         assert host.deny_request(method) == {"result": {"decision": "decline"}}
@@ -867,6 +879,9 @@ def test_unverified_advisory_lens_does_not_block_required_reviewers(repo, monkey
     result = driver.run("feature")
     assert any(item["reviewer"] == "complexity_lens" and item["status"] == expected for item in result["reviewers"])
     assert result["status"] == "success"
+    runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    row = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
+    assert row["advisory_results"]["default:complexity_lens"] == {"status": expected, "reason": "advisory reader unavailable"}
 
 
 def test_pending_round_from_an_older_runner_is_resumed_on_a_fresh_thread_without_abandon(repo, monkeypatch):
