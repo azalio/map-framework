@@ -357,13 +357,11 @@ python3 .map/scripts/codex_review_runner.py --review-preferences "[paste Review 
 ```
 
 Keep this command running and poll its process with the host's normal process tools;
-progress names the current role. A tool timeout is not a completed review. If the
-process was interrupted, rerun the command under the same admitted round and omit
+progress names the current role. A tool timeout is not a completed review. The driver reconnects after app-server interruptions. If the
+driver process itself was stopped, rerun the command under the same admitted round and omit
 `--review-preferences`: the exact preferences are saved on first collection, alongside
 native thread IDs, pending chunks and acknowledged offsets. Explicitly different
-preferences are rejected; omission reuses the saved text. A lost
-thread or stale snapshot is an explicit error; never invent ACKs or replace its
-session silently. Do not call begin_review_run for another round to hide a failure.
+preferences are rejected; omission reuses the saved text. When Codex reports a lost thread, the driver records the replacement and the new reader rereads its portion. A changed snapshot invalidates the admitted review. Do not call begin_review_run for another round to hide a failure.
 
 The driver builds compact role prompts, serves immutable resources through one
 read-only dynamic tool, checks intact Code Mode output before ACK, resizes truncated
@@ -454,7 +452,7 @@ When `--adversarial` is set (with `--cross-ai`: present cross-AI first, then thi
 ```text
 1. Collect: python3 .map/scripts/codex_review_runner.py
             Builds prompts, validates reports and captures the aggregate for the admitted roster.
-            On interruption rerun the same command in the same admitted round.
+            The driver reconnects automatically. If you stopped it, rerun the command in the same round.
 2. Present: Read the captured aggregate; show findings, convergence and all-clear statements.
 3. Continue: Final Verdict → Handoff Artifacts. The ledger computes the verdict.
 ```

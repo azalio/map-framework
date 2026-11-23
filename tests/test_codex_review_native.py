@@ -56,23 +56,46 @@ assert check['passed'], check
 assert runner.create_review_bundle(branch='feature')['status'] == 'success'
 preferences = 'Requested standalone change: set VALUE to 2 in all module_NN.py files. No other behavior is intended.'
 if recovery:
-    original = driver.Delivery.observe
+    original_observe = driver.Delivery.observe
+    before = None
+    notices = []
+    class TestHost(driver.CodexReviewHost):
+        def __init__(self, **kwargs):
+            global active_host
+            self.queued_notice = None
+            super().__init__(**kwargs)
+            active_host = self
+
+        def receive(self, deadline):
+            if self.queued_notice:
+                result, self.queued_notice = self.queued_notice, None
+                notices.append(result)
+                return result
+            event = super().receive(deadline)
+            params = event.get("params", {})
+            item = params.get("item", {})
+            if (self.on_event and event.get("method") == "item/completed"
+                    and item.get("type") == "agentMessage" and item.get("phase") == "final_answer"):
+                self.queued_notice = {"method":"item/completed", "params": {
+                    "threadId":params["threadId"], "turnId":params["turnId"],
+                    "item":{"id":"late-notice", "type":"agentMessage", "text":"Still working",
+                            "phase":"final_answer", "delivery":"async"}}}
+            return event
+
     def interrupt_after_ack(self, event):
-        original(self, event)
-        if self.transfers:
-            raise driver.HostError('intentional interruption after durable ACK')
+        global before
+        original_observe(self, event)
+        if self.transfers and before is None:
+            before = runner._read_review_ledger(Path('.map/feature'))['convergence']['rounds'][-1]
+            active_host.process.kill()
+            active_host.process.wait(timeout=5)
+
+    driver.CodexReviewHost = TestHost
     driver.Delivery.observe = interrupt_after_ack
-    try:
-        driver.run('feature', timeout=300, review_preferences=preferences)
-        raise AssertionError('Interruption did not occur')
-    except driver.HostError as exc:
-        assert 'intentional interruption' in str(exc), str(exc)
-    finally:
-        driver.Delivery.observe = original
-    before = runner._read_review_ledger(Path('.map/feature'))['convergence']['rounds'][-1]
-result = driver.run('feature', timeout=300, review_preferences=None if recovery else preferences)
+result = driver.run('feature', timeout=300, review_preferences=preferences)
 assert result['status'] == 'success', result
 if recovery:
+    assert before and notices, 'expected a disconnect after ACK and a late async notice'
     after = runner._read_review_ledger(Path('.map/feature'))['convergence']['rounds'][-1]
     assert before['context_active'] == after['context_active']
     for identity, old in before['context_sessions'].items():

@@ -35,7 +35,7 @@ ALLOWED_NESTED_TOOLS = frozenset({
 })
 ALLOWED_OUTER_TOOLS = frozenset({
     "functions.exec", "functions.wait", "functions.request_user_input",
-    "functions.request_user_input_async", "clock.sleep",
+    "functions.request_user_input_async", "functions.send_message_to_user_async", "clock.sleep",
 })
 CONTEXT_TOOL = {
     "type": "function", "name": "review_context",
@@ -51,14 +51,40 @@ class HostError(RuntimeError):
     """A host contract failed; retain incomplete review rather than relaxing it."""
 
 
+class ReaderUnavailable(HostError):
+    """This reader cannot be used to review the frozen source."""
+
+
+class TransportInterrupted(ReaderUnavailable):
+    """The app-server connection can be reopened on the same durable thread."""
+
+
+class MissingThread(ReaderUnavailable):
+    """The server explicitly reported that the requested thread no longer exists."""
+
+
+def check_outer_tools(item: dict[str, Any]) -> set[str]:
+    try:
+        names = {namespace["name"] + "." + tool["name"]
+                 for namespace in item["tools"] for tool in namespace["tools"]}
+    except (TypeError, KeyError) as exc:
+        raise ReaderUnavailable("Malformed outer Codex tool declaration") from exc
+    unexpected = names - ALLOWED_OUTER_TOOLS
+    if unexpected:
+        raise ReaderUnavailable("Unexpected outer Codex tools: " + ", ".join(sorted(unexpected)))
+    if not names:
+        raise ReaderUnavailable("Empty outer Codex tool declaration")
+    return names
+
+
 def require_empty_environments(response: dict[str, Any], *, idle_resume: bool = False) -> str:
     """Validate host-returned state, not the request or a model assertion."""
     thread = response.get("thread", {})
     if thread.get("environments") != [] and not (idle_resume and thread.get("status", {}).get("type") == "idle"):
-        raise HostError("Codex did not attest an empty environment selection")
+        raise ReaderUnavailable("Codex did not attest an empty environment selection")
     sandbox = response.get("sandbox", {})
     if sandbox.get("type") != "readOnly" or sandbox.get("networkAccess") is not False:
-        raise HostError("Codex did not retain the read-only, network-disabled sandbox")
+        raise ReaderUnavailable("Codex did not retain the read-only, network-disabled sandbox")
     identity = thread.get("id")
     if not isinstance(identity, str) or not identity:
         raise HostError("Missing Codex thread identity")
@@ -91,7 +117,7 @@ def verify_probe(events: list[dict[str, Any]], script: str, nonce: str, canary: 
     inventory: list[str] | None = None
     denied = False
     read = False
-    outer_seen = False
+    outer_tools: set[str] = set()
     for event in events:
         params = event.get("params", {})
         item = params.get("item", {})
@@ -101,11 +127,7 @@ def verify_probe(events: list[dict[str, Any]], script: str, nonce: str, canary: 
         if event.get("method") != "rawResponseItem/completed":
             continue
         if item.get("type") == "additional_tools":
-            names = {f"{namespace.get('name')}.{tool.get('name')}"
-                     for namespace in item.get("tools", []) for tool in namespace.get("tools", [])}
-            if not names or not names.issubset(ALLOWED_OUTER_TOOLS):
-                raise HostError("Unexpected outer tool surface in Codex probe")
-            outer_seen = True
+            outer_tools.update(check_outer_tools(item))
         if item.get("type") == "custom_tool_call" and item.get("name") == "exec" and item.get("input", "").strip() == script.strip():
             calls.add(item["call_id"])
         if item.get("type") != "custom_tool_call_output" or item.get("call_id") not in calls:
@@ -121,13 +143,13 @@ def verify_probe(events: list[dict[str, Any]], script: str, nonce: str, canary: 
                 continue
             if isinstance(value, dict) and value.get("nonce") == nonce:
                 inventory = value.get("tools")
-    if (not outer_seen or not denied or not read or not isinstance(inventory, list)
+    if (not outer_tools or not denied or not read or not isinstance(inventory, list)
             or any(not isinstance(name, str) for name in inventory)
             or not {"apply_patch", "review_context"}.issubset(inventory)
             or not set(inventory).issubset(ALLOWED_NESTED_TOOLS)
             or canary.read_text() != nonce + "\n"):
-        raise HostError("Codex capability probe is inconclusive or failed; keep unverified/INCOMPLETE")
-    return {"boundary": "codex_no_environments", "tools": sorted(inventory),
+        raise ReaderUnavailable("Codex capability probe is inconclusive or failed; keep unverified/INCOMPLETE")
+    return {"boundary": "codex_no_environments", "tools": sorted(inventory), "outer_tools": sorted(outer_tools),
             "source_read": "host_witnessed", "canary_write": "host_denied_no_environment",
             "probe_sha256": hashlib.sha256(json.dumps(events, sort_keys=True).encode()).hexdigest()}
 
@@ -135,19 +157,38 @@ def verify_probe(events: list[dict[str, Any]], script: str, nonce: str, canary: 
 class CodexReviewHost:
     """One persistent app-server connection; safe dynamic tools and denied approvals."""
 
-    def __init__(self, *, timeout: float = 300, executable: str = "codex") -> None:
+    def __init__(self, *, timeout: float = 300, executable: str = "codex", isolated: bool = False) -> None:
         binary = shutil.which(executable)
         if not binary:
-            raise HostError("Codex executable is unavailable")
+            raise ReaderUnavailable("Codex executable is unavailable")
         self.binary = Path(binary).resolve()
         self.binary_hash = hashlib.sha256(self.binary.read_bytes()).hexdigest()
         self.timeout = timeout
         self.temporary = tempfile.TemporaryDirectory(prefix="map-codex-reader-")
         self.root = Path(self.temporary.name)
-        self.stderr = (self.root / "stderr.log").open("wb")
         flags = [*(f"features.{name}=false" for name in DISABLED_FEATURES),
                  "agents.enabled=false", 'web_search="disabled"', "plugins._default.enabled=false",
                  "project_doc_max_bytes=0", *(f"hooks.{name}=[]" for name in HOOK_EVENTS)]
+        self.isolated = isolated
+        if isolated:
+            # Use the same configured model and provider in a separate process.
+            # A private startup catalog removes model-advertised optional tools.
+            # Only a fresh live probe can authorize delivery to the new reader.
+            try:
+                catalog = subprocess.run([str(self.binary), "debug", "models"], cwd=self.root,
+                                         capture_output=True, check=True, timeout=timeout)
+                models = json.loads(catalog.stdout)
+                if not models["models"]:
+                    raise ValueError("empty model catalog")
+                for model in models["models"]:
+                    model["experimental_supported_tools"] = []
+                catalog_path = self.root / "review-models.json"
+                catalog_path.write_text(json.dumps(models))
+                flags.append("model_catalog_json=" + json.dumps(str(catalog_path)))
+            except (OSError, KeyError, TypeError, ValueError, subprocess.SubprocessError) as exc:
+                self.temporary.cleanup()
+                raise ReaderUnavailable("Codex could not start an isolated reader catalog") from exc
+        self.stderr = (self.root / "stderr.log").open("wb")
         argv = [str(self.binary), "app-server", "--stdio"]
         for flag in flags:
             argv.extend(["-c", flag])
@@ -194,7 +235,10 @@ class CodexReviewHost:
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait(timeout=5)
-        self.stdin.close()
+        try:
+            self.stdin.close()
+        except BrokenPipeError:
+            pass  # The disconnected child already closed its end.
         self.stdout.close()
         self.stderr.close()
         self.selector.close()
@@ -209,10 +253,10 @@ class CodexReviewHost:
         while b"\n" not in self.buffer:
             left = deadline - time.monotonic()
             if left <= 0 or not self.selector.select(left):
-                raise HostError("Codex response timed out; resume the stored review session")
+                raise TransportInterrupted("Codex response timed out; resume the stored review session")
             data = os.read(self.stdout.fileno(), 65536)
             if not data:
-                raise HostError("Codex app-server closed; resume the stored review session")
+                raise TransportInterrupted("Codex app-server closed; resume the stored review session")
             self.buffer += data
             if len(self.buffer) > 16 * 1024 * 1024:
                 raise HostError("Codex event exceeds the review host limit")
@@ -223,6 +267,11 @@ class CodexReviewHost:
         return event
 
     def handle(self, event: dict[str, Any]) -> None:
+        params = event.get("params", {})
+        item = params.get("item", {})
+        if (event.get("method") == "rawResponseItem/completed" and params.get("threadId") == self.thread_id
+                and item.get("type") == "additional_tools"):
+            check_outer_tools(item)
         if self.record_events and event.get("method") in {"rawResponseItem/completed", "item/completed"}:
             self.events.append(event)
         if "id" in event and "method" in event:
@@ -245,6 +294,13 @@ class CodexReviewHost:
             event = self.receive(deadline)
             if event.get("id") == identity and "method" not in event:
                 if "error" in event:
+                    error = event["error"]
+                    if method == "thread/resume" and isinstance(error, dict):
+                        thread = params["threadId"]
+                        if error.get("message") in {f"no rollout found for thread id {thread}",
+                                                     f"no rollout found for conversation id {thread}",
+                                                     f"thread not found: {thread}"}:
+                            raise MissingThread(f"Codex no longer has thread {thread}")
                     raise HostError(f"Codex {method} failed: {event['error']}")
                 return event["result"]
             self.handle(event)
@@ -267,7 +323,7 @@ class CodexReviewHost:
         if (not isinstance(status.get("data"), list) or status.get("nextCursor")
                 or any(row.get("runtimeStatus") != "disabled" or row.get("tools")
                        or row.get("resources") or row.get("resourceTemplates") for row in status["data"])):
-            raise HostError("Codex reader retains external MCP servers")
+            raise ReaderUnavailable("Codex reader retains external MCP servers")
         self.rollout = None
         self.outer_history = []
         if thread_id:
@@ -280,9 +336,12 @@ class CodexReviewHost:
         if not isinstance(value, str):
             raise HostError("Resumed Codex thread has no durable host transcript")
         path = Path(value)
-        if (not path.is_absolute() or path.is_symlink() or not path.is_file()
-                or not path.name.endswith(self.thread_id + ".jsonl")):
+        if not path.is_absolute() or path.is_symlink() or not path.name.endswith(self.thread_id + ".jsonl"):
             raise HostError("Invalid resumed Codex transcript identity")
+        if not path.exists():
+            raise MissingThread(f"Codex transcript is missing for thread {self.thread_id}")
+        if not path.is_file():
+            raise HostError("Invalid resumed Codex transcript file")
         self.rollout = path
         with path.open("rb") as stream:
             for line in stream:
@@ -337,9 +396,13 @@ class CodexReviewHost:
             if params.get("threadId") != self.thread_id:
                 continue
             item = params.get("item", {})
-            if event.get("method") == "item/completed" and item.get("type") == "agentMessage":
+            if (event.get("method") == "item/completed" and item.get("type") == "agentMessage"
+                    and params.get("turnId") == self.active_turn and item.get("delivery") is None
+                    and item.get("phase") in (None, "final_answer")):
                 final = item.get("text", "")
-            if event.get("method") == "turn/completed":
+            if event.get("method") == "turn/completed" and params.get("turn", {}).get("id") == self.active_turn:
+                if params["turn"].get("status") == "failed":
+                    raise TransportInterrupted("Codex review turn failed")
                 if params.get("turn", {}).get("status") != "completed":
                     raise HostError("Codex review turn did not complete")
                 if self.rollout is not None:
@@ -374,7 +437,7 @@ class CodexReviewHost:
                 raise HostError("Codex probe did not preserve empty environments")
             proof = verify_probe(self.events, script, nonce, canary)
             proof.update({"thread_id": self.thread_id, "context_id": context_id, "binary_sha256": self.binary_hash,
-                          "host": self.hello.get("userAgent"), "environments": [], "mcp_servers": [],
+                          "isolated_catalog": self.isolated, "host": self.hello.get("userAgent"), "environments": [], "mcp_servers": [],
                           "probe_events": self.events})
             return proof
         finally:

@@ -11664,7 +11664,8 @@ def _record_codex_host_capability(session_id: str, proof: dict[str, Any], round_
     artifact.parent.mkdir(parents=True, exist_ok=True)
     _write_json_file(artifact, proof)
     session["host_capability"] = {"artifact": str(artifact.relative_to(directory)),
-                                  "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}
+                                  "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                                  "isolated_catalog": proof.get("isolated_catalog") is True}
     row["capability"] = {"provider": "codex", "profile": "review-reader", "status": "verified",
                          "boundary": "codex_no_environments",
                          "reason": "Environment-free app-server; per-reader host probes and immutable context transport",

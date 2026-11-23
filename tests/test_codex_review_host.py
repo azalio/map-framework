@@ -4,6 +4,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Any, ClassVar
+from unittest.mock import Mock
 
 import pytest
 
@@ -204,6 +205,65 @@ class SimulatedHost:
 
     def close(self):
         pass
+
+
+
+@pytest.mark.parametrize("final_phase", ["final_answer", None])
+def test_turn_keeps_only_current_final_answer(final_phase):
+    client = Mock(spec=host.CodexReviewHost)
+    client.thread_id = "reader"
+    client.timeout = 2
+    client.record_events = False
+    client.rollout = None
+    client.call.return_value = {"turn": {"id": "current"}}
+
+    def message(text, *, turn="current", phase=final_phase, delivery=None):
+        return {"method": "item/completed", "params": {"threadId": "reader", "turnId": turn,
+                "item": {"type": "agentMessage", "text": text, "phase": phase, "delivery": delivery}}}
+
+    def completed(turn):
+        return {"method": "turn/completed", "params": {"threadId": "reader", "turn": {"id": turn, "status": "completed"}}}
+
+    client.receive.side_effect = [completed("previous"), message("report"), message("old", turn="previous"),
+                                  message("working", phase="commentary"), message("notice", delivery="async"),
+                                  completed("current")]
+    assert host.CodexReviewHost.turn(client, "review") == "report"
+    client.receive.side_effect = [message("notice", delivery="async"), completed("current")]
+    assert host.CodexReviewHost.turn(client, "review") == ""
+
+
+def test_announced_notification_preserves_runtime_proof(tmp_path):
+    canary = tmp_path / "canary"
+    canary.write_text("nonce\n")
+    events = probe_events("fixed probe", "nonce")
+    events[0]["params"]["item"]["tools"][0]["tools"].append({"name": "send_message_to_user_async"})
+    proof = host.verify_probe(events, "fixed probe", "nonce", canary)
+    assert "functions.send_message_to_user_async" in proof["outer_tools"]
+
+
+def test_transient_disconnect_resumes_without_second_driver_invocation(repo, monkeypatch):
+    del repo
+    Path("first.py").write_text("value = 2\n")
+    result = runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="host")
+    assert result["status"] == "success"
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+
+    class Flaky(SimulatedHost):
+        resumed: ClassVar[list[str]] = []
+        disconnected = False
+
+        def turn(self, message):
+            if not type(self).disconnected:
+                data = self.on_tool({"arguments": {}, "callId": "first"})
+                complete_result(self.on_event.__self__, data, "first")
+                type(self).disconnected = True
+                raise BrokenPipeError("disconnected after ACK")
+            return super().turn(message)
+
+    monkeypatch.setattr(driver, "CodexReviewHost", Flaky)
+    assert driver.run("feature")["status"] == "success"
+    assert Flaky.resumed == ["", "thread"]
+    assert runner.write_review_verdict_ledger(current_run=True, branch="feature")["completeness"]["status"] == "COMPLETE"
 
 
 def test_driver_resume_same_thread_and_complete_receipts(repo, monkeypatch):
@@ -601,6 +661,100 @@ def interrupted_round(monkeypatch):
     path = Path(".map/feature/review-verdict-ledger.json")
     ledger = json.loads(path.read_text())
     return path, ledger, ledger["convergence"]["rounds"][-1]
+
+
+def test_lost_thread_restarts_only_its_own_read_progress(repo, monkeypatch):
+    del repo
+    path, _, before = interrupted_round(monkeypatch)
+    old = next(iter(before["context_sessions"].values()))
+    assert old["offsets"]
+
+    class Lost(SimulatedHost):
+        attempts: ClassVar[list[str]] = []
+
+        def start(self, thread_id=""):
+            self.attempts.append(thread_id)
+            if thread_id:
+                raise host.MissingThread("no rollout")
+            return "replacement"
+
+        def probe(self, context_id):
+            return {**super().probe(context_id), "thread_id": "replacement"}
+
+        def turn(self, message):
+            initial = self.on_tool.__self__.refresh()
+            assert initial["remaining"] and initial["agent_id"] == "replacement"
+            row = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
+            saved = row["context_sessions"][initial["session_id"]]
+            assert set(saved["offsets"]) <= {"prompt"}
+            return super().turn(message)
+
+    monkeypatch.setattr(driver, "CodexReviewHost", Lost)
+    result = driver.run("feature")
+    assert result["status"] == "success" and Lost.attempts == ["thread", ""]
+    after = json.loads(path.read_text())["convergence"]["rounds"][-1]
+    assert after["round_id"] == before["round_id"]
+    assert len(after["context_sessions"]) == 2
+    assert runner.write_review_verdict_ledger(current_run=True, branch="feature")["completeness"]["status"] == "COMPLETE"
+
+
+def test_new_tool_routes_only_to_independently_probed_reader(repo, monkeypatch):
+    del repo
+    Path("first.py").write_text("changed\\n")
+    assert runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="host")["status"] == "success"
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    probes = []
+    reads = []
+
+    class Isolated(SimulatedHost):
+        def __init__(self, *, isolated, **kwargs):
+            super().__init__(**kwargs)
+            self.isolated = isolated
+
+        def probe(self, context_id):
+            probes.append(self.isolated)
+            assert self.on_tool is None
+            if not self.isolated:
+                host.check_outer_tools({"tools": [{"name": "future", "tools": [{"name": "builtin"}]}]})
+            return {**super().probe(context_id), "isolated_catalog": self.isolated}
+
+        def turn(self, message):
+            reads.append(self.isolated)
+            return super().turn(message)
+
+    monkeypatch.setattr(driver, "CodexReviewHost", Isolated)
+    result = driver.run("feature")
+    assert result["status"] == "success"
+    assert probes == [False, True] and reads == [True]
+    row = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
+    session = next(iter(row["context_sessions"].values()))
+    assert session["host_capability"]["isolated_catalog"]
+
+
+def test_unavailable_shard_runs_again_after_other_shards(repo, monkeypatch):
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(
+        runner.REVIEW_CONTEXT_RESERVE_BYTES + runner.REVIEW_ROLE_RUBRIC_RESERVE_BYTES + 60_000))
+    scope_tests.write_changes()
+    scope_tests.write_many(6)
+    admission = runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="host")
+    shards = admission["shard_ids"]
+    assert len(shards) >= 2
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    monkeypatch.setattr(driver, "CodexReviewHost", SimulatedHost)
+    original = driver._collect_role
+    attempts = []
+
+    def collect(branch, round_id, role, entry, ordering, shard, candidate_recheck, timeout):
+        attempts.append(shard)
+        if len(attempts) == 1:
+            raise host.ReaderUnavailable("worker unavailable")
+        return original(branch, round_id, role, entry, ordering, shard, candidate_recheck, timeout)
+
+    monkeypatch.setattr(driver, "_collect_role", collect)
+    assert driver.run("feature")["status"] == "success"
+    assert attempts == [*shards, shards[0]]
+    assert runner.write_review_verdict_ledger(current_run=True, branch="feature")["completeness"]["status"] == "COMPLETE"
 
 
 def test_pending_round_from_an_older_runner_is_resumed_on_a_fresh_thread_without_abandon(repo, monkeypatch):
