@@ -5,7 +5,7 @@ MAP Workflow Enforcement Gate (PreToolUse Hook)
 Claude Code uses the edit phase gate and a separate Bash registration for Git permissions.
 
 Blocks Edit/Write/MultiEdit outside of Actor-related phases.
-Uses step_state.json (orchestrator canonical state) as single source of truth.
+Phase checks read the orchestrator’s step_state.json. Verifier write permissions apply in every phase.
 
 ENFORCEMENT:
   - Edit allowed during phases: ACTOR, APPLY, TEST_WRITER

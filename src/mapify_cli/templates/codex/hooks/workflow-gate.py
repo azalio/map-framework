@@ -2,16 +2,16 @@
 """
 MAP Workflow Enforcement Gate (PreToolUse Hook)
 
-Provider-agnostic: works with both Claude Code and Codex CLI.
+Codex invokes this hook for Bash and apply_patch.
 
 Blocks Edit/Write/MultiEdit outside of Actor-related phases.
-Uses step_state.json (orchestrator canonical state) as single source of truth.
+Phase checks read the orchestrator’s step_state.json. Verifier write permissions apply in every phase.
 
 ENFORCEMENT:
   - Edit allowed during phases: ACTOR, APPLY, TEST_WRITER
   - Edit blocked during all other phases (DECOMPOSE, MONITOR, PREDICTOR, etc.)
   - Fail-open: missing or unreadable step_state.json → allow
-  - Always allows: .map/ artifacts, non-editing tools
+  - Verifier writes stay within the project artifact tree. Git checks also honor the local autonomy posture.
   - Every blocking phase (RESEARCH, INIT_STATE, DECOMPOSE, ...) blocks only
     the CURRENT subtask's declared affected_files; files orthogonal to that
     subtask are allowed in ANY phase so out-of-band hotfixes don't have to
@@ -27,7 +27,7 @@ Bash commands whose write target is explicit (``>``/``>>`` redirection,
 ``tee``, ``sed -i``, ``cp``/``mv``/``install``, ``dd of=``, ``sort``/``yq``
 ``-o``, ``git --output``) and Codex ``apply_patch`` headers are normalized to
 target paths and pass through the same phase gate. A Bash command with no
-extractable target is NOT gated (same known limitation as the Claude twin,
+extractable target skips file phase checks (same limitation as the Claude twin,
 #164): the orchestrator itself runs ``VAR=$(python3 .map/scripts/...)``,
 ``pytest`` and similar commands in every phase, so opaque commands cannot be
 denied without deadlocking the workflow. An explicit target that still needs

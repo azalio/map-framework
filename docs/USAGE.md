@@ -2939,8 +2939,6 @@ JSON `permissionDecision: deny`. Both stop Claude and feed the reason back:
 | `.env` file staged for commit (exit 2) | Type errors |
 | Python syntax errors in changed files (exit 2) | Formatting issues |
 | Go build errors with changed `.go` files (exit 2) | Test failures |
-| Dangerous commands (rm -rf /, force push main) | |
-| Access to credential files | |
 
 **Why this matters:**
 - Exit 2 (or JSON deny) stops Claude and feeds the reason back for correction
