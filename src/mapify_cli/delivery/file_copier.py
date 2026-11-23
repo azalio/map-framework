@@ -35,9 +35,12 @@ from mapify_cli.delivery.agent_generator import (
 )
 from mapify_cli.delivery.managed_file_copier import (
     DriftReport,
-    compute_hash,
     copy_managed_file,
-    extract_metadata,
+)
+from mapify_cli.delivery.retired_hooks import (
+    copy_claude_settings,
+    remove_legacy_local_registration,
+    remove_retired_safety_hook,
 )
 from mapify_cli.schemas import (
     SKILL_REQUIREMENTS_KEYS,
@@ -1638,58 +1641,6 @@ the same name.
 """)
 
 
-RETIRED_SAFETY_HOOK = "safety-guardrails.py"
-_RETIRED_HOOK_ARGUMENT = re.compile(rf"(?<![\w.-]){re.escape(RETIRED_SAFETY_HOOK)}(?![\w./-])")
-
-
-def retired_safety_hook_is_registered(provider_dir: Path) -> bool:
-    """Recognize project-owned registrations that still depend on the old script."""
-    settings_names = ("hooks.json",) if provider_dir.name == ".codex" else ("settings.json", "settings.local.json")
-    for name in settings_names:
-        settings = _read_json_object(provider_dir / name) or {}
-        groups = settings.get("hooks")
-        if not isinstance(groups, dict):
-            continue
-        for entries in groups.values():
-            if not isinstance(entries, list):
-                continue
-            for entry in entries:
-                hooks = entry.get("hooks") if isinstance(entry, dict) else None
-                if not isinstance(hooks, list):
-                    continue
-                for hook in hooks:
-                    command = hook.get("command") if isinstance(hook, dict) else None
-                    if isinstance(command, str) and _RETIRED_HOOK_ARGUMENT.search(command):
-                        return True
-    return False
-
-
-def remove_retired_safety_hook(provider_dir: Path) -> None:
-    """Remove a stock copy on refresh. A locally edited script belongs to the project."""
-    hook_dir = provider_dir / "hooks"
-    script = hook_dir / RETIRED_SAFETY_HOOK
-    if provider_dir.is_symlink() or hook_dir.is_symlink() or script.is_symlink() or not script.is_file():
-        return
-    try:
-        content = script.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return
-    metadata, body = extract_metadata(content, ".py")
-    if isinstance(metadata, dict) and metadata.get("generated_by") == "mapify-cli":
-        # Watched installations wrapped the source after its shebang in a fence.
-        if body.endswith("# map:end\n"):
-            body = body.removesuffix("# map:end\n").replace("\n# map:start\n", "\n", 1)
-        stock = compute_hash(body) == metadata.get("template_hash")
-    else:
-        # Raw copies shipped in the provider trees before retirement.
-        stock = compute_hash(content) in {
-            "983718c8a32130add2b2aaa13e70d074b96bb9c137f2b166ac19502eade2144c",
-            "e909232e0b199a653340bcde021527678c427ab52aac4517ee550fb898584c8d",
-        }
-    if stock and not retired_safety_hook_is_registered(provider_dir):
-        script.unlink()
-
-
 def create_hook_files(
     project_path: Path,
     drift_report: DriftReport | None = None,
@@ -1756,11 +1707,13 @@ def create_config_files(
         template_file = templates_dir / config_file
         if template_file.exists():
             dest_file = claude_dir / config_file
-            result = copy_managed_file(template_file, dest_file, version)
+            copier = copy_claude_settings if config_file == "settings.json" else copy_managed_file
+            result = copier(template_file, dest_file, version)
             if drift_report is not None:
                 drift_report.results.append(result)
             count += 1
 
+    remove_legacy_local_registration(claude_dir)
     remove_retired_safety_hook(claude_dir)
     return count
 

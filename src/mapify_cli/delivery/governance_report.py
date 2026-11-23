@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from mapify_cli.delivery.file_copier import (
+from mapify_cli.delivery.retired_hooks import (
     RETIRED_SAFETY_HOOK,
     retired_safety_hook_is_registered,
 )

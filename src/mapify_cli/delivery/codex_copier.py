@@ -17,7 +17,6 @@ from typing import Any
 from mapify_cli.delivery.file_copier import (
     _IGNORED_TEMPLATE_NAMES,
     _IGNORED_TEMPLATE_SUFFIXES,
-    RETIRED_SAFETY_HOOK,
     _copy_map_path,
     _extract_requires_block,
     _get_version,
@@ -26,12 +25,15 @@ from mapify_cli.delivery.file_copier import (
     _skill_missing_dependency,
     _warn_requires_skills,
     get_templates_dir,
-    remove_retired_safety_hook,
 )
 from mapify_cli.delivery.managed_file_copier import (
     _assert_safe_dest,
     _atomic_write,
     copy_managed_file,
+)
+from mapify_cli.delivery.retired_hooks import (
+    RETIRED_SAFETY_HOOK,
+    remove_retired_safety_hook,
 )
 
 

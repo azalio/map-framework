@@ -2430,11 +2430,17 @@ class TestRefreshExistingInit:
                         decision = json.loads(result.stdout or "{}").get("hookSpecificOutput", {})
                         assert decision.get("permissionDecision") != "deny"
 
-    @pytest.mark.parametrize("provider", ["claude", "codex"])
-    def test_refresh_preserves_script_used_by_custom_hook(self, tmp_path, monkeypatch, provider):
+    @pytest.mark.parametrize(("provider", "scope"), [
+        ("claude", "local"), ("claude", "project"), ("claude", "user"),
+        ("codex", "project"), ("codex", "user"),
+    ])
+    def test_refresh_preserves_script_used_by_custom_hook(self, tmp_path, monkeypatch, provider, scope):
         from mapify_cli.delivery.managed_file_copier import copy_managed_file
 
         monkeypatch.chdir(tmp_path)
+        user_dir = tmp_path / "profile"
+        user_dir.mkdir()
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR" if provider == "claude" else "CODEX_HOME", str(user_dir))
         args = ["init", ".", "--provider", provider, "--no-git", "--force"]
         assert runner.invoke(app, [*args, "--mcp", "none"]).exit_code == 0
         directory = tmp_path / f".{provider}"
@@ -2442,20 +2448,63 @@ class TestRefreshExistingInit:
         source = tmp_path / "sample.py"
         source.write_text("print('custom registration')\n")
         assert copy_managed_file(source, legacy, "3.39.1").success
-        settings = directory / ("settings.local.json" if provider == "claude" else "hooks.json")
-        config = json.loads(settings.read_text())
+        settings = (user_dir if scope == "user" else directory) / (
+            "hooks.json" if provider == "codex" else "settings.local.json" if scope == "local" else "settings.json"
+        )
+        config = json.loads(settings.read_text()) if settings.exists() else {}
         command = f"python3 {legacy}"
         config.setdefault("hooks", {}).setdefault("PreToolUse", []).append(
             {"matcher": "Edit", "hooks": [{"type": "command", "command": command}]}
         )
         settings.write_text(json.dumps(config))
-        refresh = runner.invoke(app, [*args, "--refresh-existing"])
-        assert refresh.exit_code == 0, refresh.output
-        assert command in settings.read_text()
+        for _ in range(2):
+            refresh = runner.invoke(app, [*args, "--refresh-existing"])
+            assert refresh.exit_code == 0, refresh.output
+            assert settings.read_text().count(command) == 1
         assert subprocess.check_output([sys.executable, str(legacy)], text=True).strip() == "custom registration"
 
+    def test_legacy_local_hook_from_3_2_is_removed(self, tmp_path, monkeypatch):
+        from mapify_cli.delivery.managed_file_copier import copy_managed_file
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "user"))
+        args = ["init", ".", "--provider", "claude", "--no-git", "--force"]
+        assert runner.invoke(app, [*args, "--mcp", "none"]).exit_code == 0
+        directory = tmp_path / ".claude"
+        legacy = directory / "hooks" / "safety-guardrails.py"
+        source = tmp_path / "stock.py"
+        source.write_text("pass\n")
+        assert copy_managed_file(source, legacy, "3.39.1").success
+        settings = directory / "settings.local.json"
+        config = json.loads(settings.read_text())
+        # Command and matcher from v3.2.0 templates/settings.hooks.json.
+        shipped = {"type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/safety-guardrails.py", "timeout": 5}
+        custom = {"type": "command", "command": "python3 tools/safety-guardrails.py"}
+        config["hooks"] = {"PreToolUse": [{"matcher": "Edit|Write|Read|Bash", "hooks": [shipped, custom]}]}
+        settings.write_text(json.dumps(config))
+        settings.chmod(0o600)
+        refresh = runner.invoke(app, [*args, "--refresh-existing"])
+        assert refresh.exit_code == 0, refresh.output
+        assert json.loads(settings.read_text())["hooks"]["PreToolUse"][0]["hooks"] == [custom]
+        assert settings.stat().st_mode & 0o777 == 0o600
+        assert not legacy.exists()
+
+    def test_unknown_registration_keeps_its_target(self, tmp_path, monkeypatch):
+        from mapify_cli.delivery.managed_file_copier import copy_managed_file
+        from mapify_cli.delivery.retired_hooks import remove_retired_safety_hook
+
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "user"))
+        directory = tmp_path / ".claude"
+        script = directory / "hooks" / "safety-guardrails.py"
+        source = tmp_path / "stock.py"
+        source.write_text("pass\n")
+        assert copy_managed_file(source, script, "3.39.1").success
+        (directory / "settings.local.json").write_text("{")
+        remove_retired_safety_hook(directory)
+        assert script.is_file()
+
     def test_unreadable_retired_hook_is_preserved(self, tmp_path, monkeypatch):
-        from mapify_cli.delivery.file_copier import remove_retired_safety_hook
+        from mapify_cli.delivery.retired_hooks import remove_retired_safety_hook
 
         directory = tmp_path / ".claude"
         script = directory / "hooks" / "safety-guardrails.py"
