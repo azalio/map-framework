@@ -2741,7 +2741,7 @@ MAP Framework implements defense-in-depth security via three complementary layer
 
 Guidelines in `.claude/CLAUDE.md` that guide agent behavior:
 - NEVER write code as orchestrator
-- NEVER commit .env files
+- Keep credentials out of version control.
 
 **Enforcement:** Soft (relies on agent compliance)
 
@@ -2779,9 +2779,8 @@ Full linting lives in `/map-check`; the editing session applies formatting.
 
 **Checks performed (changed files only):**
 1. **Secret scanning:** detects hardcoded secrets in added staged lines. During a merge, a secret line already present in either `HEAD` or `MERGE_HEAD` is ignored; staged renames also retain the source file's history. Newly staged secrets still block even if removed from the worktree without restaging.
-2. **.env guard:** blocks staging of `.env` files
-3. **Python syntax:** fast `ast.parse` check on changed `.py` files
-4. **Go build:** runs `go build ./...` when a Go module is present and any changed `.go` file exists
+2. **Python syntax:** fast `ast.parse` check on changed `.py` files
+3. **Go build:** runs `go build ./...` when a Go module is present and any changed `.go` file exists
 
 **Go build configuration** (`.map/config.yaml`, flat dotted keys):
 
@@ -2796,7 +2795,7 @@ A non-empty value is passed literally as one `-tags` argument, with or without
 GOOS; shell variables, wildcards, and command substitutions are not expanded.
 Build failures still block the turn; tags do not suppress errors.
 
-**Blocking:** secrets, `.env` staged, Python syntax errors, and Go build errors
+**Blocking:** secrets, Python syntax errors, and Go build errors
 are critical and block with exit 2. The Stop hook never runs source-writing
 formatters, including when another session owns dirty files in the same worktree.
 
@@ -2922,7 +2921,6 @@ JSON `permissionDecision: deny`. Both stop Claude and feed the reason back:
 | Blocking (exit 2 / JSON deny) | Non-Blocking (exit 0-1) |
 |------------------------------|-------------------------|
 | Hardcoded secrets in staged files (exit 2) | Linting failures |
-| `.env` file staged for commit (exit 2) | Type errors |
 | Python syntax errors in changed files (exit 2) | Formatting issues |
 | Go build errors with changed `.go` files (exit 2) | Test failures |
 
