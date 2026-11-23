@@ -837,7 +837,15 @@ def test_failure_in_one_shard_allows_other_shards_to_finish(repo, monkeypatch, p
     shards = admission["shard_ids"]
     assert len(shards) >= 2
     assert runner.create_review_bundle(branch="feature")["status"] == "success"
-    monkeypatch.setattr(driver, "CodexReviewHost", SimulatedHost)
+    class FindingHost(SimulatedHost):
+        def turn(self, message):
+            report = json.loads(super().turn(message))
+            if permanent:
+                report["issues"] = [{"severity": "IMPORTANT", "category": "correctness",
+                    "file_path": self.covered_files()[0], "description": "A successful monitor shard found a dropped value"}]
+            return json.dumps(report)
+
+    monkeypatch.setattr(driver, "CodexReviewHost", FindingHost)
     original = driver._collect_role
     attempts = []
 
@@ -853,6 +861,9 @@ def test_failure_in_one_shard_allows_other_shards_to_finish(repo, monkeypatch, p
     result = driver.run("feature")
     verdict = runner.write_review_verdict_ledger(current_run=True, branch="feature")
     if permanent:
+        ledger = runner._read_review_ledger(Path(".map/feature"))
+        assert any("dropped value" in item["claim"] for item in ledger["findings_registry"])
+        assert not Path(".map/feature/review-agent-monitor.json").exists()
         assert attempts == shards
         assert result["status"] == "incomplete"
         assert result["reviewers"][0]["reason"] == "badRequest: fix input"

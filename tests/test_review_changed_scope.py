@@ -1020,24 +1020,39 @@ def test_adversarial_round_captures_and_merges_per_shard(repo, monkeypatch, part
     row = current_row()
     reviewers = row["binding"]["scheduled_reviewers"]
     assert "blind" in reviewers and "monitor" not in reviewers
+    broken = next(shard for shard in row["shards"] if "first.py" not in shard["files"])
     for shard in row["shards"]:
         built = runner.build_adversarial_review_prompts(branch="feature", reviewers=reviewers, shard=shard["id"])
         assert built["status"] == "success", built
         raw = {}
         for name in reviewers:
-            if partial and name == "blind" and shard == row["shards"][-1]:
+            if partial and name == "blind" and shard == broken:
                 continue
             proof = deliver(built["prompts"][name], name, f"agent-{name}-{shard['id']}")
             raw[name] = json.dumps({"discarded_candidates": [], "paraphrase": PARAPHRASE, "all_clear": True, "all_clear_rationale": f"{name} {shard['id']} clean",
                                     "findings": [], "checks_performed": ["read"], "context_receipt": proof,
                                     "receipt": {"covered_files": shard["files"], "skipped_files": [],
                                                 "denied_access": [], "check_evidence": []}})
-        if partial and shard == row["shards"][0]:
-            report = json.loads(raw["blind"])
-            report.update(all_clear=False, findings=[{"severity": "IMPORTANT", "category": "correctness",
-                "file_path": shard["files"][0], "failure_mode": "Successful shard observed a dropped value",
-                "evidence": "changed source", "recommendation": "preserve the value"}])
-            raw["blind"] = json.dumps(report)
+        if partial and "first.py" in shard["files"]:
+            current = {"file_path": "first.py", "revision": "current", "quote": "value = 2"}
+            baseline = {**current, "revision": "baseline", "quote": "value = 1"}
+            for name in ("blind", "acceptance"):
+                report = json.loads(raw[name])
+                finding = {"severity": "IMPORTANT", "category": "correctness", "file_path": "first.py",
+                    "failure_mode": "Successful shard observed a dropped value", "evidence": "value = 2",
+                    "bug_class": "wrong_value", "cause": "assignment changed", "failure_scenario": "caller reads 2",
+                    "evidence_refs": [current], "reachability": {"status": "reachable", "reason": f"{name} checked caller", "evidence_refs": [current]},
+                    "baseline_attribution": {"status": "introduced", "reason": "changed in patch", "evidence_refs": [current, baseline]}}
+                report.update(all_clear=False, findings=[finding])
+                if name == "blind":
+                    report["discarded_candidates"] = [{"candidate_id": "C1", "bug_class": "possible omission",
+                        "cause": "parallel files", "failure_scenario": "next update misses a file", "evidence_refs": [current],
+                        "dismissal_reason": "already present", "dismissal_invariant": "the assignment existed in the baseline"}]
+                raw[name] = json.dumps(report)
+        if partial:
+            for name in ("blind", "acceptance"):
+                if name in raw:
+                    assert runner.capture_review_output(name, raw[name], "r", branch="feature", shard=shard["id"])["status"] == "success"
         aggregate = runner.aggregate_adversarial_findings(
             raw.get("blind"), raw.get("edge_case"), raw.get("acceptance"),
             {role: raw.get(role) for role in runner.ROLE_REVIEWER_IDS})
@@ -1052,9 +1067,13 @@ def test_adversarial_round_captures_and_merges_per_shard(repo, monkeypatch, part
         result = runner.write_review_verdict_ledger(current_run=True, branch="feature")
         ledger = runner._read_review_ledger(Path(".map/feature"))
         assert result["completeness"]["status"] == "INCOMPLETE" and not result["code_approval"]["approved"]
-        assert any("dropped value" in item["claim"] for item in ledger["findings_registry"])
+        finding = next(item for item in ledger["findings_registry"] if "dropped value" in item["claim"])
+        assert finding["validation"]["verdict"] == "confirmed"
+        assert {v["reviewer"] for v in finding["validation"]["validations"]} == {"blind", "acceptance"}
+        assert any(c["candidate"]["source_candidate_id"] == "C1" for c in ledger["discarded_candidates"])
+
         failed = merged["reviewer_status"]["blind"]
-        assert failed["status"] != "ok" and failed["shard_errors"] == {row["shards"][-1]["id"]: "reader unavailable"}
+        assert failed["status"] != "ok" and failed["shard_errors"] == {broken["id"]: "reader unavailable"}
         return
     assert set(merged["reviewer_status"]["blind"]["raw"]["context_receipts"]) == set(admitted["shard_ids"])
     result = runner.write_review_verdict_ledger(current_run=True, branch="feature")

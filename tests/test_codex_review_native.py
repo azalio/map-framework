@@ -164,8 +164,9 @@ assert verdict['completeness']['status'] == 'COMPLETE', verdict
 assert verdict['code_approval']['approved'] is True, verdict
 if not recovery:
     row = runner._read_review_ledger(directory)["convergence"]["rounds"][-1]
-    assert row["advisory_results"]["default:complexity_lens"] == {
-        "status":"unverified", "reason":"test advisory reader unavailable"}
+    lens = row["advisory_results"]["default:complexity_lens"]
+    assert lens["status"] == "unverified" and lens["reason"] == "test advisory reader unavailable"
+    assert Path(lens["last_successful_artifact"]).read_text().strip()
 print(json.dumps({'completeness':verdict['completeness'], 'reviewers':result['reviewers']}))
 '''
     result = subprocess.run([sys.executable, "-c", harness, json.dumps(recovery)],
