@@ -49,10 +49,11 @@ GUIDANCE = """
 The runner supplies context through the review_context dynamic tool. Call it sequentially.
 Use one Code Mode call per chunk: text(await tools.review_context({})); set max_output_tokens to 65536.
 Print the complete result, never summarize it or collect multiple chunks in one output.
-Call review_context({}) repeatedly to receive the next required chunk. Consume each response;
-its resource_id, offset, next_offset and hashes bind the exact immutable bytes. Use explicit
-resource_id and offset only for a permitted optional resource or a reread. Never access paths,
-shell, MCP, network, other reviewers or another environment. The runner acknowledges only
+Call review_context({}) for the next part. For a lookup, pass resource_id alone or include
+start_line and end_line (inclusive, counting from 1). For example, read lines 40–65 with
+{"resource_id":"current:parser.py","start_line":40,"end_line":65}. Use diff for numbered diff
+lines, base:<path> for the previous version, and repo:<path> for an admitted dependency.
+Call {} to finish a long lookup and then continue the required review. Use the review tool for all source reads. No shell, MCP, network, other reviewers or other environments. The runner acknowledges only
 host-completed tool results. Continue in this same thread until context_ready; that tool result
 is a NEW post-delivery finalization request with session_id and finalization_token. Include them
 as context_receipt in the role's final JSON. Also include receipt with exactly four arrays
@@ -89,6 +90,8 @@ class Delivery:
         self.directory.mkdir(parents=True, exist_ok=True)
         self.pending_file = self.directory / "codex-pending.json"
         self.pending: dict[str, Any] | None = None
+        saved = json.loads(self.pending_file.read_text()) if self.pending_file.exists() else {}
+        self.read_cursor: dict[str, Any] | None = saved.get("read")
         self.transfers = 0
         self.resize_pending = False
         self.finalization_token = ""
@@ -99,36 +102,65 @@ class Delivery:
 
     def respond(self, params: dict[str, Any]) -> dict[str, Any]:
         arguments = params.get("arguments")
-        if (not isinstance(arguments, dict) or set(arguments) - {"resource_id", "offset"}
-                or ("offset" in arguments and (type(arguments["offset"]) is not int or arguments["offset"] < 0))
-                or ("resource_id" in arguments and not isinstance(arguments["resource_id"], str))):
-            raise HostError("Invalid review context request")
         state = self.refresh()
-        if state["status"] == "context_ready" and not arguments.get("resource_id"):
+        if not isinstance(arguments, dict) or set(arguments) - {"resource_id", "start_line", "end_line"}:
+            return self.reject("Use {} to continue, or resource_id to reread. Omit byte offsets.")
+        if arguments and (not isinstance(arguments.get("resource_id"), str) or not arguments["resource_id"]):
+            return self.reject("Name an admitted resource, or use {} to continue.")
+        if (("start_line" in arguments or "end_line" in arguments)
+                and any(type(arguments.get(name)) is not int for name in ("start_line", "end_line"))):
+            return self.reject("Provide both start_line and end_line as inclusive line numbers.")
+        if arguments and state.get("pending_chunk"):
+            return self.reject("Call {} to finish the pending delivery, then retry the lookup.")
+        read = {"arguments": arguments, "offset": 0} if arguments else self.read_cursor
+        if self.resize_pending and self.read_cursor is not None:
+            if arguments and arguments != self.read_cursor["arguments"]:
+                self.resize_pending = False
+            else:
+                read = self.read_cursor
+        if state["status"] == "context_ready" and not read:
             self.finalization_token = state["finalization_token"]
             text = json.dumps({**state, "instruction": "All required context is delivered. Finalize now with context_receipt."})
             return {"success": True, "contentItems": [{"type": "inputText", "text": text}]}
         pending = state.get("pending_chunk")
         missing = pending or (state["remaining"][0] if state["remaining"] else {})
-        resource = arguments.get("resource_id") or missing.get("resource_id")
-        offset = arguments.get("offset", 0 if arguments.get("resource_id") else missing.get("offset", 0))
-        if pending:
-            resource, offset = pending["resource_id"], pending["offset"]
+        resource = read["arguments"]["resource_id"] if read else missing["resource_id"]
+        offset = read["offset"] if read else missing["offset"]
         request = {"type": "context_request", "context_id": state["context_id"], "resource_id": resource, "offset": offset}
-        chunk_bytes = pending["next_offset"] - pending["offset"] if pending else 65536
+        chunk_bytes = read.get("limit", 65536) if read else 65536
+        if pending:
+            chunk_bytes = pending["next_offset"] - pending["offset"]
         if self.resize_pending:
             if chunk_bytes <= 512:
                 raise HostError("Context was not returned intact even at 512 bytes")
             chunk_bytes = max(512, chunk_bytes // 2)
             self.resize_pending = False
-        chunk = require_success(runner.serve_review_context(state["reviewer"], json.dumps(request), self.round_id,
-                    chunk_bytes=chunk_bytes, session_id=state["session_id"], agent_id=state["agent_id"], branch=self.branch))
-        text = json.dumps(chunk, ensure_ascii=True)
+        bounds = None
+        if read and "start_line" in read["arguments"]:
+            bounds = (read["arguments"]["start_line"], read["arguments"]["end_line"])
+        chunk = runner.serve_review_context(state["reviewer"], json.dumps(request), self.round_id,
+                    chunk_bytes=chunk_bytes, session_id=state["session_id"], agent_id=state["agent_id"], branch=self.branch,
+                    codex_read=bool(read), line_range=bounds)
+        if read and chunk.get("reason") == "not_permitted":
+            return self.reject("This resource is outside the admitted context for this reviewer.")
+        require_success(chunk)
         if chunk.get("status") == "context_request_rejected":
-            return {"success": False, "contentItems": [{"type": "inputText", "text": text}]}
+            reply = {k: chunk[k] for k in ("status", "reason", "message", "total_lines", "candidates", "truncated") if k in chunk}
+            return {"success": False, "contentItems": [{"type": "inputText", "text": json.dumps(reply)}]}
+        visible = {name: chunk[name] for name in ("status", "resource_id", "content", "eof")}
+        visible["delivery_id"] = params["callId"]  # Distinguish consecutive pages with identical text.
+        text = json.dumps(visible, ensure_ascii=True)
         self.pending = {"call_id": params["callId"], "text": text, "chunk": chunk, "host_completed": False}
+        if read:
+            self.read_cursor = {**read, "limit": chunk_bytes}
+            self.pending["read"] = self.read_cursor
         runner._write_json_file(self.pending_file, self.pending)
         return {"success": True, "contentItems": [{"type": "inputText", "text": text}]}
+
+    @staticmethod
+    def reject(message: str) -> dict[str, Any]:
+        text = json.dumps({"status": "context_request_rejected", "message": message})
+        return {"success": False, "contentItems": [{"type": "inputText", "text": text}]}
 
     def observe(self, event: dict[str, Any]) -> None:
         params = event.get("params", {})
@@ -152,17 +184,24 @@ class Delivery:
         intact = False
         for text in blocks:
             try:
-                intact |= json.loads(text) == self.pending["chunk"]
+                intact |= json.loads(text) == json.loads(self.pending["text"])
             except (ValueError, TypeError):
                 pass
         if not intact:
             self.resize_pending = True
             return
-        self.state = require_success(runner.ack_review_context(self.state["session_id"], self.state["agent_id"],
-                         self.pending["text"], self.round_id, branch=self.branch))
+        chunk = self.pending["chunk"]
+        if self.read_cursor is not None:
+            self.read_cursor = None if chunk["eof"] else {**self.read_cursor, "offset": chunk["next_offset"]}
+        else:
+            self.state = require_success(runner.ack_review_context(self.state["session_id"], self.state["agent_id"],
+                                         json.dumps(chunk), self.round_id, branch=self.branch))
+        if self.read_cursor is None:
+            self.pending_file.unlink(missing_ok=True)
+        else:
+            runner._write_json_file(self.pending_file, {"read": self.read_cursor})
         self.transfers += 1
         self.pending = None
-        self.pending_file.unlink(missing_ok=True)
 
 
 def _review_one(host: CodexReviewHost, branch: str, row: dict[str, Any], role: str,
