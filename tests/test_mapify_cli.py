@@ -2463,7 +2463,8 @@ class TestRefreshExistingInit:
             assert settings.read_text().count(command) == 1
         assert subprocess.check_output([sys.executable, str(legacy)], text=True).strip() == "custom registration"
 
-    def test_legacy_local_hook_from_3_2_is_removed(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("project_owned", [False, True])
+    def test_legacy_local_hook_from_3_2_refresh(self, tmp_path, monkeypatch, project_owned):
         from mapify_cli.delivery.managed_file_copier import copy_managed_file
 
         monkeypatch.chdir(tmp_path)
@@ -2475,6 +2476,8 @@ class TestRefreshExistingInit:
         source = tmp_path / "stock.py"
         source.write_text("pass\n")
         assert copy_managed_file(source, legacy, "3.39.1").success
+        if project_owned:
+            legacy.write_text("print(42)\n")
         settings = directory / "settings.local.json"
         config = json.loads(settings.read_text())
         # Command and matcher from v3.2.0 templates/settings.hooks.json.
@@ -2485,11 +2488,17 @@ class TestRefreshExistingInit:
         settings.chmod(0o600)
         refresh = runner.invoke(app, [*args, "--refresh-existing"])
         assert refresh.exit_code == 0, refresh.output
-        assert json.loads(settings.read_text())["hooks"]["PreToolUse"][0]["hooks"] == [custom]
+        assert json.loads(settings.read_text())["hooks"]["PreToolUse"][0]["hooks"] == ([shipped, custom] if project_owned else [custom])
         assert settings.stat().st_mode & 0o777 == 0o600
-        assert not legacy.exists()
+        assert legacy.exists() is project_owned
 
-    def test_unknown_registration_keeps_its_target(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize(("command", "kept"), [
+        (None, True),
+        ('cd "$CLAUDE_PROJECT_DIR/.claude/hooks" && python3 safety-guardrails.py', True),
+        ('python3 "$HOME/.claude/hooks/safety-guardrails.py"', False),
+        ('python3 "tools/safety-guardrails.py"', False),
+    ])
+    def test_custom_hook_target_during_refresh(self, tmp_path, monkeypatch, command, kept):
         from mapify_cli.delivery.managed_file_copier import copy_managed_file
         from mapify_cli.delivery.retired_hooks import remove_retired_safety_hook
 
@@ -2499,9 +2508,27 @@ class TestRefreshExistingInit:
         source = tmp_path / "stock.py"
         source.write_text("pass\n")
         assert copy_managed_file(source, script, "3.39.1").success
-        (directory / "settings.local.json").write_text("{")
+        contents = "{" if command is None else json.dumps({
+            "hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": command}]}]}
+        })
+        (directory / "settings.local.json").write_text(contents)
         remove_retired_safety_hook(directory)
-        assert script.is_file()
+        assert script.is_file() is kept
+
+    @pytest.mark.parametrize(("provider", "settings_name"), [("claude", "settings.json"), ("codex", "hooks.json")])
+    def test_refresh_keeps_unreadable_hook_settings_and_script(self, tmp_path, monkeypatch, provider, settings_name):
+        monkeypatch.chdir(tmp_path)
+        args = ["init", ".", "--provider", provider, "--no-git", "--force"]
+        assert runner.invoke(app, [*args, "--mcp", "none"]).exit_code == 0
+        directory = tmp_path / f".{provider}"
+        legacy = directory / "hooks" / "safety-guardrails.py"
+        legacy.write_text("pass\n")
+        settings = directory / settings_name
+        settings.write_text("{")
+        refresh = runner.invoke(app, [*args, "--refresh-existing"])
+        assert refresh.exit_code != 0
+        assert settings.read_text() == "{"
+        assert legacy.is_file()
 
     def test_unreadable_retired_hook_is_preserved(self, tmp_path, monkeypatch):
         from mapify_cli.delivery.retired_hooks import remove_retired_safety_hook

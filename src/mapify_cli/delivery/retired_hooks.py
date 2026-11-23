@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 from collections.abc import Iterator
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -40,17 +41,56 @@ def _command(hook: Any) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _references_script(command: str, provider_dir: Path) -> bool:
-    relative_path = f"{provider_dir.name}/hooks/{RETIRED_SAFETY_HOOK}"
-    return bool(
-        re.search(rf"(?<![\w.-]){re.escape(relative_path)}(?![\w./-])", command)
-    )
+def _references_script(command: str, provider_dir: Path) -> bool | None:
+    """Recognize direct script arguments. An ambiguous reference retains the file."""
+    filename = rf"(?<![\w.-]){re.escape(RETIRED_SAFETY_HOOK)}(?![\w./-])"
+    if not re.search(filename, command):
+        return False
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return None
+    project = provider_dir.absolute().parent
+    target = provider_dir.absolute() / "hooks" / RETIRED_SAFETY_HOOK
+    uncertain = False
+    for word in words:
+        if not re.search(filename, word):
+            continue
+        # Expand only standard root variables. Never evaluate hook commands.
+        for name, root in (
+            ("CLAUDE_PROJECT_DIR", project),
+            ("PWD", project),
+            ("HOME", Path.home()),
+        ):
+            for prefix in ("$" + name + "/", "$" + "{" + name + "}/"):
+                if word.startswith(prefix):
+                    word = str(root / word[len(prefix) :])
+        if word.startswith("~/"):
+            word = str(Path.home() / word[2:])
+        argument = Path(word)
+        if (
+            argument.name != RETIRED_SAFETY_HOOK
+            or "$" in word
+            or word == RETIRED_SAFETY_HOOK
+        ):
+            uncertain = True
+        elif Path(os.path.normpath(project / argument)) == target:
+            return True
+        elif not argument.is_absolute() and (
+            "cd" in words or any(c.isspace() for c in word)
+        ):
+            uncertain = True
+    return None if uncertain else False
 
 
 def remove_legacy_local_registration(claude_dir: Path) -> None:
     """MAP 3.1 and 3.2 installed the command in the per-project local settings."""
     path = claude_dir / "settings.local.json"
-    if claude_dir.is_symlink() or path.is_symlink():
+    if (
+        claude_dir.is_symlink()
+        or path.is_symlink()
+        or project_owns_retired_script(claude_dir)
+    ):
         return
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -90,16 +130,19 @@ def copy_claude_settings(src: Path, dest: Path, version: str) -> CopyResult:
         return copy_managed_file(src, dest, version)
     try:
         current = json.loads(dest.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        current = {}
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Cannot refresh unreadable hook settings at {dest}") from exc
+    if not isinstance(current, dict):
+        raise ValueError(f"Expected an object in {dest}")
     template = json.loads(src.read_text(encoding="utf-8"))
     changed = False
-    for event, group, hooks in _groups(current if isinstance(current, dict) else {}):
+    project_owned = project_owns_retired_script(directory)
+    for event, group, hooks in _groups(current):
         custom = [
             hook
             for hook in hooks
-            if _command(hook) not in _CLAUDE_LAUNCHERS
-            and _references_script(_command(hook), directory)
+            if (project_owned or _command(hook) not in _CLAUDE_LAUNCHERS)
+            and _references_script(_command(hook), directory) is not False
         ]
         if custom:
             template["hooks"].setdefault(event, []).append({**group, "hooks": custom})
@@ -135,30 +178,28 @@ def retired_safety_hook_is_registered(provider_dir: Path) -> bool | None:
         if not isinstance(data, dict):
             known = False
             continue
-        if any(
-            _references_script(_command(hook), provider_dir)
-            for _, _, hooks in _groups(data)
-            for hook in hooks
-        ):
-            return True
+        for _, _, hooks in _groups(data):
+            for hook in hooks:
+                reference = _references_script(_command(hook), provider_dir)
+                if reference:
+                    return True
+                if reference is None:
+                    known = False
     return False if known else None
 
 
-def remove_retired_safety_hook(provider_dir: Path) -> None:
-    """Remove a stock copy on refresh. A locally edited script belongs to the project."""
+def project_owns_retired_script(provider_dir: Path) -> bool:
+    """Protect a project script when it differs from the installed MAP copy."""
     hook_dir = provider_dir / "hooks"
     script = hook_dir / RETIRED_SAFETY_HOOK
-    if (
-        provider_dir.is_symlink()
-        or hook_dir.is_symlink()
-        or script.is_symlink()
-        or not script.is_file()
-    ):
-        return
+    if provider_dir.is_symlink() or hook_dir.is_symlink() or script.is_symlink():
+        return True
     try:
         content = script.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return False
     except (OSError, UnicodeDecodeError):
-        return
+        return True
     metadata, body = extract_metadata(content, ".py")
     if isinstance(metadata, dict) and metadata.get("generated_by") == "mapify-cli":
         # Watched installations wrapped the source after its shebang in a fence.
@@ -182,5 +223,14 @@ def remove_retired_safety_hook(provider_dir: Path) -> None:
                 "e909232e0b199a653340bcde021527678c427ab52aac4517ee550fb898584c8d",
             }
         )
-    if stock and retired_safety_hook_is_registered(provider_dir) is False:
-        script.unlink()
+    return not stock
+
+
+def remove_retired_safety_hook(provider_dir: Path) -> None:
+    script = provider_dir / "hooks" / RETIRED_SAFETY_HOOK
+    if (
+        script.is_file()
+        and not project_owns_retired_script(provider_dir)
+        and retired_safety_hook_is_registered(provider_dir) is False
+    ):
+        script.unlink(missing_ok=True)

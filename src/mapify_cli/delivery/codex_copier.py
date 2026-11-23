@@ -33,6 +33,7 @@ from mapify_cli.delivery.managed_file_copier import (
 )
 from mapify_cli.delivery.retired_hooks import (
     RETIRED_SAFETY_HOOK,
+    project_owns_retired_script,
     remove_retired_safety_hook,
 )
 
@@ -131,12 +132,16 @@ def _is_map_managed_codex_hook(hook: Any, managed_names: frozenset[str]) -> bool
     command = hook.get("command")
     if not isinstance(command, str):
         return False
-    # The retired hook is absent from managed_names. Match its shipped launcher
-    # exactly so a user hook with a similar name remains registered.
+    # Only the exact retired MAP launcher belongs to the installer.
     root = "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-    if command == f'CLAUDE_PROJECT_DIR="{root}" python3 "{root}/.codex/hooks/{RETIRED_SAFETY_HOOK}"':
-        return True
-    return any(f".codex/hooks/{name}" in command for name in managed_names)
+    retired_command = f'CLAUDE_PROJECT_DIR="{root}" python3 "{root}/.codex/hooks/{RETIRED_SAFETY_HOOK}"'
+    if command == retired_command:
+        return RETIRED_SAFETY_HOOK in managed_names
+    return any(
+        f".codex/hooks/{name}" in command
+        for name in managed_names
+        if name != RETIRED_SAFETY_HOOK
+    )
 
 
 def _merge_codex_hook_entries(
@@ -254,9 +259,12 @@ def _install_codex_hooks_json(src: Path, dst: Path, hooks_dir_src: Path) -> None
         _assert_safe_dest(dst)
         existing_data = _load_json_object(dst)
 
-    merged = _merge_codex_hooks_json(
-        existing_data, template_data, _managed_codex_hook_names(hooks_dir_src)
-    )
+    managed_names = _managed_codex_hook_names(hooks_dir_src)
+    if dst.exists() and existing_data is None and (dst.parent / "hooks" / RETIRED_SAFETY_HOOK).exists():
+        raise ValueError(f"Cannot refresh unreadable hook settings at {dst}")
+    if not project_owns_retired_script(dst.parent):
+        managed_names |= {RETIRED_SAFETY_HOOK}
+    merged = _merge_codex_hooks_json(existing_data, template_data, managed_names)
     _atomic_write(dst, json.dumps(merged, indent=2, ensure_ascii=False) + "\n")
 
 
