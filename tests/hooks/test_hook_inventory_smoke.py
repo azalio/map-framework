@@ -96,15 +96,6 @@ def _assert_noop(run: HookRun, _project: Path) -> None:
     assert run.stdout == "{}" or run.stdout == ""
 
 
-def _assert_deny(run: HookRun, _project: Path) -> None:
-    del _project
-    assert run.returncode == 0
-    payload = _json(run.stdout)
-    output = payload.get("hookSpecificOutput", {})
-    assert isinstance(output, dict)
-    assert output.get("permissionDecision") == "deny"
-
-
 def _assert_contains(*needles: str) -> Callable[[HookRun, Path], None]:
     def _inner(run: HookRun, _project: Path) -> None:
         del _project
@@ -278,10 +269,6 @@ def hook_project(tmp_path: Path) -> Path:
 
 
 HOOK_CASES: dict[str, list[HookCase]] = {
-    "safety-guardrails.py": [
-        HookCase("deny-env", {"tool_name": "Edit", "tool_input": {"file_path": ".env"}}, _assert_deny),
-        HookCase("allow-src", {"tool_name": "Edit", "tool_input": {"file_path": "src/app.py"}}, _assert_noop),
-    ],
     "workflow-gate.py": [
         HookCase("allow-in-scope", {"tool_name": "Edit", "tool_input": {"file_path": "src/app.py"}}, _assert_noop),
         HookCase("deny-out-of-scope", {"tool_name": "Edit", "tool_input": {"file_path": "docs/readme.md"}}, _assert_contains("scope_glob")),

@@ -114,10 +114,12 @@ jobs:
 
     - name: Run tests
       env:
+        # On macOS, let idle workers take pending subprocess-heavy tests from their peers.
+        XDIST_MODE: ${{ runner.os == 'macOS' && 'worksteal' || 'load' }}
         # Coverage is uploaded only from ubuntu/3.11; skip tracing elsewhere.
         COV_ARGS: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11') && '--cov=mapify_cli --cov-report=xml' || '' }}
       run: |
-        python -m pytest -n auto -v -m "not slow" --timeout=300 --timeout-method=thread --durations=20 $COV_ARGS
+        python -m pytest -n auto --dist "$XDIST_MODE" -v -m "not slow" --timeout=300 --timeout-method=thread --durations=20 $COV_ARGS
 
     - name: Upload coverage to Codecov
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'

@@ -340,15 +340,7 @@ class TestAgentCapabilityHardening:
 
     @pytest.mark.parametrize("tool", ["Edit", "Write"])
     def test_final_verifier_keeps_map_write_capabilities(self, tool):
-        """final-verifier's own contract requires an in-place append to
-        `.map/<branch>/progress_<branch>.md` and a `[ ]` -> `[x]` update in the
-        task-plan Acceptance Criteria table. Denying Edit would force those through
-        whole-file Write and drop surrounding content. The boundary is enforced by
-        SCOPE instead — safety-guardrails.py confines every verifier write to
-        `.map/` (#424) — not by removing the capability."""
+        """FinalVerifier needs both editing tools to update its review artifacts."""
         fm = self._load_frontmatter("final-verifier")
         disallowed = fm.get("disallowedTools", [])
-        assert tool not in disallowed, (
-            f"final-verifier needs {tool} for its .map/ artifacts; the `.map/` scope "
-            "check in safety-guardrails.py is the boundary, not a blanket denial"
-        )
+        assert tool not in disallowed, f"final-verifier needs {tool} for its .map/ artifacts"

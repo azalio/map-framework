@@ -5,7 +5,7 @@ Tests the lightweight version that:
 - Only runs if there are uncommitted changes
 - Checks only changed files
 - Never rewrites changed source files
-- Only reports critical issues (secrets, .env files, syntax errors)
+- Only reports critical issues (secrets and syntax errors)
 """
 
 import json
@@ -26,6 +26,7 @@ def run_hook(
     cwd: str | None = None,
     env: dict | None = None,
     input_text: str = "",
+    hook_path: Path = HOOK_PATH,
 ) -> tuple[int, str, str]:
     """Execute the hook in given directory.
 
@@ -37,7 +38,7 @@ def run_hook(
     if env:
         run_env.update(env)
     result = subprocess.run(
-        ["bash", str(HOOK_PATH)],
+        ["bash", str(hook_path)],
         capture_output=True,
         text=True,
         cwd=cwd,
@@ -402,43 +403,25 @@ class TestStagedOwnership:
 
 
 # =============================================================================
-# Env File Detection Tests
+# Staged configuration files
 # =============================================================================
 
 
-class TestEnvFileDetection:
-    """Test that .env files in staging are detected."""
-
-    def test_detect_env_staged(self):
-        """VC4: Warns if .env file is in git staging area."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            subprocess.run(
-                ["git", "init"], cwd=tmpdir, capture_output=True, check=False
-            )
-            subprocess.run(
-                ["git", "config", "user.email", "test@test.com"],
-                cwd=tmpdir,
-                capture_output=True,
-                check=False,
-            )
-            subprocess.run(
-                ["git", "config", "user.name", "Test"],
-                cwd=tmpdir,
-                capture_output=True,
-                check=False,
-            )
-
-            env_file = Path(tmpdir) / ".env"
-            env_file.write_text("DATABASE_URL=postgres://localhost\n")
-
-            subprocess.run(
-                ["git", "add", ".env"], cwd=tmpdir, capture_output=True, check=False
-            )
-
-            exit_code, _, stderr = run_hook(cwd=tmpdir)
-
-            assert exit_code == 2, f"Should exit 2 for .env staged. stderr: {stderr}"
-            assert ".env" in stderr
+@pytest.mark.parametrize("provider", [".claude", ".codex"])
+@pytest.mark.parametrize(("filename", "contents", "expected"), [
+    (".env", "MODE=local\n", 0),
+    (".env.example", "MODE=local\n", 0),
+    (".env.example", "TOKEN = 'synthetic_test_value'\n", 2),
+])
+def test_staged_config_checked_by_contents(tmp_path, provider, filename, contents, expected):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / filename).write_text(contents)
+    subprocess.run(["git", "add", "-f", "--", filename], cwd=tmp_path, check=True)
+    hook = HOOK_PATH.parents[2] / provider / "hooks" / "end-of-turn.sh"
+    code, _, stderr = run_hook(cwd=str(tmp_path), env={"CLAUDE_PROJECT_DIR": str(tmp_path)}, hook_path=hook)
+    assert code == expected, stderr
+    if expected:
+        assert "Possible hardcoded secret" in stderr
 
 
 # =============================================================================

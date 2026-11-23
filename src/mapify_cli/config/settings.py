@@ -10,15 +10,8 @@ from mapify_cli.cli_ui import console
 # Autonomy posture (opt-in via `mapify init --autonomy`)
 # ---------------------------------------------------------------------------
 #
-# "YOLO-minus-git": auto-approve most tools locally while keeping the human in
-# control of commit/push. This is a *personal* risk preference, so it is written
-# ONLY to the per-user, gitignored .claude/settings.local.json — never to the
-# committed, team-shared .claude/settings.json baseline.
-#
-# The permission-level git deny below is documentation / defense-in-depth: under
-# a broad ``Bash(*)`` allow it is bypassable (``bash -c 'git commit'`` matches as
-# ``bash``). The actual hard block is the ``safety-guardrails.py`` PreToolUse
-# hook, which is gated on the ``mapify.autonomy`` sentinel this module writes.
+# The per-user posture pairs broad tool approvals with native Claude permission
+# rules for git commit and push in the gitignored .claude/settings.local.json.
 _AUTONOMY_ALLOW = [
     "Bash(*)",
     "Read(*)",
@@ -247,8 +240,8 @@ def create_or_merge_project_settings_local(
     if autonomy is True:
         console.print(
             "[yellow]Autonomy mode:[/yellow] auto-allowing most tools in "
-            ".claude/settings.local.json (per-user, gitignored). git commit/push "
-            "stay blocked — you run them. The local deny overrides the team baseline."
+            ".claude/settings.local.json (per-user, gitignored), with native deny "
+            "rules for git commit/push."
         )
     elif autonomy is False:
         console.print(
@@ -269,8 +262,7 @@ def _apply_autonomy(settings: dict[str, Any], permissions: dict[str, Any]) -> No
         if entry not in deny:
             deny.append(entry)
 
-    # Sentinel beside the permissions it governs so posture and permissions
-    # cannot drift apart; read by the safety-guardrails.py PreToolUse hook.
+    # Keep the selected posture with its per-user permissions.
     mapify_meta = settings.setdefault("mapify", {})
     if isinstance(mapify_meta, dict):
         mapify_meta["autonomy"] = True

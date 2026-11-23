@@ -55,26 +55,6 @@ class MapConfig:
     guard_rework_max: int = 2
     confidence_threshold: float = 0.7
 
-    # Safety guardrails (overridable)
-    safe_path_prefixes: list[str] = field(
-        default_factory=lambda: [
-            "src/",
-            "lib/",
-            "test/",
-            "tests/",
-            "docs/",
-            "pkg/",
-            "cmd/",
-            "internal/",
-            ".claude/agents/",
-            ".claude/commands/",
-            ".claude/hooks/",
-            ".claude/references/",
-            ".claude/skills/",
-            "scripts/",
-        ]
-    )
-
     # Context pruner settings
     pruner_max_lines: int = 100
     pruner_max_age_hours: int = 24
@@ -636,13 +616,6 @@ profile: full
 # stuck_recovery_at: 3
 # guard_rework_max: 2
 # confidence_threshold: 0.7
-
-# Safety: additional safe path prefixes for edits
-# safe_path_prefixes:
-#   - src/
-#   - lib/
-#   - test/
-#   - tests/
 
 # Context pruner
 # pruner_max_lines: 100

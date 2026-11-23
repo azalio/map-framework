@@ -44,10 +44,6 @@ CATEGORY_DESCRIPTIONS: dict[str, str] = {
 #: Default descriptions for known hooks (enforcement = "enforced")
 _HOOK_META: dict[str, tuple[str, str]] = {
     # name -> (category, description)
-    "safety-guardrails.py": (
-        "policy",
-        "Denies dangerous commands and sensitive-file access at the shell level",
-    ),
     "workflow-gate.py": (
         "harness",
         "Returns permissionDecision=deny for out-of-phase or out-of-scope edits",
@@ -570,15 +566,6 @@ def _derive_gaps(assets: list[GovernanceAsset]) -> list[str]:
         gaps.append(
             "workflow-gate.py not found: no harness-level hook is enforcing "
             "phase-scoped edit permissions"
-        )
-
-    # If no safety-guardrails hook is present, flag it
-    if "safety-guardrails.py" not in enforced_names and any(
-        a.kind == "skill" for a in assets
-    ):
-        gaps.append(
-            "safety-guardrails.py not found: no harness-level hook is blocking "
-            "dangerous shell commands"
         )
 
     return gaps

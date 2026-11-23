@@ -10,6 +10,7 @@ import importlib.util
 import inspect
 import json
 import os
+import re
 import secrets
 import shutil
 import stat
@@ -35,6 +36,12 @@ from mapify_cli.delivery.agent_generator import (
 from mapify_cli.delivery.managed_file_copier import (
     DriftReport,
     copy_managed_file,
+)
+from mapify_cli.delivery.retired_hooks import (
+    copy_claude_settings,
+    read_settings_for_refresh,
+    remove_legacy_local_registration,
+    remove_retired_safety_hook,
 )
 from mapify_cli.schemas import (
     SKILL_REQUIREMENTS_KEYS,
@@ -1549,7 +1556,6 @@ def apply_reflector_memory_field(project_path: Path, level: str) -> int:
     Returns:
         1 if the file was modified, 0 if already up-to-date or not found.
     """
-    import re
 
     reflector_path = project_path / ".claude" / "agents" / "reflector.md"
     if not reflector_path.exists():
@@ -1702,11 +1708,16 @@ def create_config_files(
         template_file = templates_dir / config_file
         if template_file.exists():
             dest_file = claude_dir / config_file
-            result = copy_managed_file(template_file, dest_file, version)
+            copier = copy_claude_settings if config_file == "settings.json" else copy_managed_file
+            result = copier(template_file, dest_file, version)
             if drift_report is not None:
                 drift_report.results.append(result)
+            if config_file == "settings.json":
+                if not result.success:
+                    raise OSError(f"Could not install {dest_file}: {result.reason}")
+                remove_legacy_local_registration(claude_dir)
+                remove_retired_safety_hook(claude_dir)
             count += 1
-
     return count
 
 
@@ -1794,7 +1805,7 @@ def ensure_map_statusline(
     # keeps the shell-invoked command correct when the project path has spaces.
     command = f'"{hook_path}"'
 
-    settings = _read_json_object(local_settings) or {}
+    settings = read_settings_for_refresh(local_settings)
     settings["statusLine"] = {"type": "command", "command": command}
 
     # Revalidate the user-local settings privacy boundary immediately before

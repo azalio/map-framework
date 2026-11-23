@@ -15,8 +15,7 @@ This means:
 - **Never use `sys.exit(1)` to block.** It silently fails *open* — the
   tool you meant to block runs anyway.
 - To block: emit a JSON `permissionDecision: "deny"` via stdout AND/OR
-  use `sys.exit(2)`. The current MAP hooks (`safety-guardrails.py`,
-  `workflow-gate.py`) use the JSON approach exclusively — follow that
+  use `sys.exit(2)`. MAP’s `workflow-gate.py` uses the JSON approach exclusively — follow that
   pattern.
 - For informational hooks (the majority — `workflow-context-injector.py`,
   `detect-clarification-triggers.py`, etc.): **always exit 0** and emit
@@ -38,7 +37,7 @@ with exit 1 — it reports a broken interpreter and steps aside:
 - Informational hooks **fail open**: stderr + `sys.exit(1)`, a
   non-blocking error, so the reason reaches the user and the session
   continues.
-- FORBID_GUARD hooks (`safety-guardrails.py`, `workflow-gate.py`) **fail
+- The two provider copies of `workflow-gate.py` **fail
   closed**: their `.jinja` source sets `guard_mode = "deny"` before the
   include, so the guard emits the same `permissionDecision: "deny"` JSON
   the hook's own `deny()` uses and exits 0. A gate that cannot run must
@@ -86,10 +85,7 @@ deny  >  defer  >  ask  >  allow
 ```
 
 Practical implication: a single `deny` from any hook in the chain wins,
-even if other hooks in the chain return `allow`. This is why MAP layers
-`safety-guardrails.py` (always-on file/command blocklist) before
-`workflow-gate.py` (workflow-state gate) — neither can override the
-other's deny.
+even if other hooks in the chain return `allow`. A project hook and the MAP workflow gate can each deny a call.
 
 ## Inputs
 
@@ -105,8 +101,7 @@ documented per event in the official Claude Code docs.
 
 ## Hook inventory
 
-The 18 hooks listed below (17 `.py` + `end-of-turn.sh`), including two
-Codex-specific hooks, are classified against the
+The table includes hooks for both providers. Each hook follows the
 `MAP_INVOKED_BY` recursion-guard contract. **REQUIRE_GUARD** hooks early-exit
 when MAP spawns a nested subprocess; **FORBID_GUARD** hooks must always fire
 and may not carry the guard. Full contract and per-hook rationale:
@@ -116,7 +111,6 @@ classification is enforced by `scripts/lint-hooks.py` (in `make lint` /
 
 | Hook | Event | Blocking? | Class | Purpose |
 |------|-------|-----------|-------|---------|
-| `safety-guardrails.py` | `PreToolUse` (Edit/Write/Read/MultiEdit/Bash) | Yes (JSON deny) | FORBID_GUARD | Block sensitive files, dangerous commands |
 | `workflow-gate.py` | `PreToolUse` (Edit/Write/MultiEdit) | Yes (JSON deny) | FORBID_GUARD | Enforce Actor+Monitor workflow before edits |
 | `post-compact-context.py` | `SessionStart` (compact) | No | FORBID_GUARD | Inject restore-point context (re-prime after compaction) |
 | `context-meter.py` | `UserPromptSubmit` | No | REQUIRE_GUARD | Nudge `/compact <focus>` when the token threshold is crossed |

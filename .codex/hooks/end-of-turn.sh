@@ -298,11 +298,6 @@ if [[ -n "$STAGED_FILES" ]]; then
             fi
         done <<< "$staged_diff"
     done <<< "$STAGED_FILES"
-
-    # Check for .env files staged
-    if echo "$STAGED_FILES" | grep -q "^\.env"; then
-        add_critical ".env file is staged for commit!"
-    fi
 fi
 
 # Python: Check for syntax errors only (fast, critical).

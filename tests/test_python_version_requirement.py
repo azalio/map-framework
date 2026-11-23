@@ -47,7 +47,7 @@ DENY_SELECTOR = 'guard_mode = "deny"'
 # unsafe tool calls must fail CLOSED when it cannot run, or the guardrail silently
 # turns into "allow". Every other shipped executable fails open. Keyed by basename
 # because each of these is rendered into two or more trees.
-FAIL_CLOSED_BASENAMES = frozenset({"safety-guardrails.py", "workflow-gate.py"})
+FAIL_CLOSED_BASENAMES = frozenset({"workflow-gate.py"})
 
 # Every tree that ships or serves executable Python: the jinja sources, the dev
 # working set, and both installer payloads. `.map` is scanned only at its

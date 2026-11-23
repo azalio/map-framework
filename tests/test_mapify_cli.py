@@ -2365,6 +2365,214 @@ class TestRefreshExistingInit:
         )
         assert settings["mapify"]["autonomy"] is True
 
+    @pytest.mark.parametrize("provider", ["claude", "codex"])
+    def test_retired_hook_disappears_on_refresh(self, tmp_path, monkeypatch, provider):
+        from mapify_cli.delivery.managed_file_copier import copy_managed_file
+
+        monkeypatch.chdir(tmp_path)
+        args = ["init", ".", "--provider", provider, "--force", "--no-git"]
+        first = runner.invoke(app, [*args, "--mcp", "none"])
+        assert first.exit_code == 0, first.output
+        directory = tmp_path / f".{provider}"
+        retired = directory / "hooks" / "safety-guardrails.py"
+        registration = directory / ("hooks.json" if provider == "codex" else "settings.json")
+        assert not retired.exists()
+        assert retired.name not in registration.read_text()
+
+        # The retired policy has no substitute registration in either provider.
+        assert "git-permissions" not in registration.read_text()
+        # Preserve an unrelated user hook even when its name resembles the retired script.
+        template = tmp_path / "old-hook.py"
+        template.write_text("#!/usr/bin/env python3\nprint('{}')\n")
+        assert copy_managed_file(template, retired, "3.39.1").success
+        (tmp_path / ".map" / "config.yaml").write_text("strict_sensitive_names: true\n")
+        settings = json.loads(registration.read_text())
+        entries = settings["hooks"]["PreToolUse"]
+        root = "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+        if provider == "codex":
+            command = f'CLAUDE_PROJECT_DIR="{root}" python3 "{root}/.codex/hooks/{retired.name}"'
+            user_settings = registration
+        else:
+            command = f'"$CLAUDE_PROJECT_DIR"/.claude/hooks/{retired.name}'
+            user_settings = directory / "settings.local.json"
+        entries.insert(0, {"matcher": "Read|Edit", "hooks": [{"type": "command", "command": command}]})
+        registration.write_text(json.dumps(settings))
+        user = json.loads(user_settings.read_text())
+        user_hook = {"type": "command", "command": "check-project-safety-guardrails.py.backup"}
+        user.setdefault("hooks", {}).setdefault("PreToolUse", []).append({"matcher": "Edit", "hooks": [user_hook]})
+        user_settings.write_text(json.dumps(user))
+
+        for _ in range(2):
+            refresh = runner.invoke(app, [*args, "--refresh-existing"])
+            assert refresh.exit_code == 0, refresh.output
+            assert not retired.exists()
+            groups = json.loads(registration.read_text())["hooks"]["PreToolUse"]
+            assert all(hook.get("command") != command for group in groups for hook in group["hooks"])
+            assert "check-project-safety-guardrails.py.backup" in user_settings.read_text()
+        if provider == "claude":
+            # Read events follow the installed matchers, including absolute paths.
+            settings = json.loads(registration.read_text())
+            for entry in settings["hooks"]["PreToolUse"]:
+                if entry.get("matcher", "*") == "*" or re.fullmatch(entry["matcher"], "Read"):
+                    for hook in entry["hooks"]:
+                        result = subprocess.run(
+                            hook["command"],
+                            shell=True,
+                            text=True,
+                            capture_output=True,
+                            input=json.dumps({
+                                "tool_name": "Read",
+                                "tool_input": {"file_path": str(tmp_path / "internal/hooks/credentials.go")},
+                            }),
+                            env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
+                            check=True,
+                        )
+                        decision = json.loads(result.stdout or "{}").get("hookSpecificOutput", {})
+                        assert decision.get("permissionDecision") != "deny"
+
+    @pytest.mark.parametrize(("provider", "scope"), [
+        ("claude", "local"), ("claude", "project"), ("claude", "user"),
+        ("codex", "project"), ("codex", "user"),
+    ])
+    def test_refresh_preserves_project_owned_custom_hook(self, tmp_path, monkeypatch, provider, scope):
+
+        monkeypatch.chdir(tmp_path)
+        user_dir = tmp_path / "profile"
+        user_dir.mkdir()
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR" if provider == "claude" else "CODEX_HOME", str(user_dir))
+        args = ["init", ".", "--provider", provider, "--no-git", "--force"]
+        assert runner.invoke(app, [*args, "--mcp", "none"]).exit_code == 0
+        directory = tmp_path / f".{provider}"
+        legacy = directory / "hooks" / "safety-guardrails.py"
+        legacy.write_text("print('custom registration')\n")
+        settings = (user_dir if scope == "user" else directory) / (
+            "hooks.json" if provider == "codex" else "settings.local.json" if scope == "local" else "settings.json"
+        )
+        config = json.loads(settings.read_text()) if settings.exists() else {}
+        command = f"python3 {legacy}"
+        config.setdefault("hooks", {}).setdefault("PreToolUse", []).append(
+            {"matcher": "Edit", "hooks": [{"type": "command", "command": command}]}
+        )
+        settings.write_text(json.dumps(config))
+        for _ in range(2):
+            refresh = runner.invoke(app, [*args, "--refresh-existing"])
+            assert refresh.exit_code == 0, refresh.output
+            assert settings.read_text().count(command) == 1
+        assert subprocess.check_output([sys.executable, str(legacy)], text=True).strip() == "custom registration"
+
+    @pytest.mark.parametrize("project_owned", [False, True])
+    def test_legacy_local_hook_from_3_2_refresh(self, tmp_path, monkeypatch, project_owned):
+        from mapify_cli.delivery.managed_file_copier import copy_managed_file
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "user"))
+        args = ["init", ".", "--provider", "claude", "--no-git", "--force"]
+        assert runner.invoke(app, [*args, "--mcp", "none"]).exit_code == 0
+        directory = tmp_path / ".claude"
+        legacy = directory / "hooks" / "safety-guardrails.py"
+        source = tmp_path / "stock.py"
+        source.write_text("pass\n")
+        assert copy_managed_file(source, legacy, "3.39.1").success
+        if project_owned:
+            legacy.write_text("print(42)\n")
+        settings = directory / "settings.local.json"
+        config = json.loads(settings.read_text())
+        # Command and matcher from v3.2.0 templates/settings.hooks.json.
+        shipped = {"type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/safety-guardrails.py", "timeout": 5}
+        custom = {"type": "command", "command": "python3 tools/safety-guardrails.py"}
+        config["hooks"] = {"PreToolUse": [{"matcher": "Edit|Write|Read|Bash", "hooks": [shipped, custom]}]}
+        settings.write_text(json.dumps(config))
+        settings.chmod(0o600)
+        refresh = runner.invoke(app, [*args, "--refresh-existing"])
+        assert refresh.exit_code == 0, refresh.output
+        assert json.loads(settings.read_text())["hooks"]["PreToolUse"][0]["hooks"] == ([shipped, custom] if project_owned else [custom])
+        assert settings.stat().st_mode & 0o777 == 0o600
+        assert legacy.exists() is project_owned
+
+    @pytest.mark.parametrize("provider", ["claude", "codex"])
+    def test_custom_hook_command_cannot_keep_stock_filter_installed(self, tmp_path, provider):
+        from mapify_cli.delivery.managed_file_copier import copy_managed_file
+        from mapify_cli.delivery.retired_hooks import remove_retired_safety_hook
+
+        directory = tmp_path / f".{provider}"
+        script = directory / "hooks" / "safety-guardrails.py"
+        source = tmp_path / "stock.py"
+        source.write_text("pass\n")
+        assert copy_managed_file(source, script, "3.39.1").success
+        config = directory / ("hooks.json" if provider == "codex" else "settings.local.json")
+        command = f'cd "{script.parent}" && python3 {script.name}'
+        settings = {"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": command}]}]}}
+        config.write_text(json.dumps(settings))
+        remove_retired_safety_hook(directory)
+        assert not script.exists()
+        assert json.loads(config.read_text()) == settings
+
+    @pytest.mark.parametrize(("provider", "settings_name"), [("claude", "settings.json"), ("claude", "settings.local.json"), ("codex", "hooks.json")])
+    def test_refresh_keeps_unreadable_hook_settings_and_script(self, tmp_path, monkeypatch, provider, settings_name):
+        from mapify_cli.delivery.managed_file_copier import copy_managed_file
+
+        monkeypatch.chdir(tmp_path)
+        args = ["init", ".", "--provider", provider, "--no-git", "--force"]
+        assert runner.invoke(app, [*args, "--mcp", "none"]).exit_code == 0
+        directory = tmp_path / f".{provider}"
+        legacy = directory / "hooks" / "safety-guardrails.py"
+        source = tmp_path / "stock.py"
+        source.write_text("pass\n")
+        assert copy_managed_file(source, legacy, "3.39.1").success
+        settings = directory / settings_name
+        settings.write_text("{")
+        refresh = runner.invoke(app, [*args, "--refresh-existing"])
+        assert refresh.exit_code != 0
+        assert settings.read_text() == "{"
+        assert legacy.is_file()
+
+    def test_retired_hook_cleanup_waits_for_settings_write(self, tmp_path, monkeypatch):
+        from mapify_cli.delivery import managed_file_copier
+
+        monkeypatch.chdir(tmp_path)
+        args = ["init", ".", "--provider", "claude", "--no-git", "--force"]
+        assert runner.invoke(app, [*args, "--mcp", "none"]).exit_code == 0
+        directory = tmp_path / ".claude"
+        legacy = directory / "hooks" / "safety-guardrails.py"
+        source = tmp_path / "stock.py"
+        source.write_text("pass\n")
+        assert managed_file_copier.copy_managed_file(source, legacy, "3.39.1").success
+        settings = directory / "settings.json"
+        before = json.loads(settings.read_text())
+        hook = {"type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/safety-guardrails.py"}
+        before["hooks"]["PreToolUse"].append({"matcher": "Read", "hooks": [hook]})
+        settings.write_text(json.dumps(before))
+        write = managed_file_copier._atomic_write
+
+        def fail_settings(path, contents):
+            if path == settings:
+                raise OSError("simulated settings write failure")
+            write(path, contents)
+
+        with monkeypatch.context() as context:
+            context.setattr(managed_file_copier, "_atomic_write", fail_settings)
+            result = runner.invoke(app, [*args, "--refresh-existing"])
+            assert result.exit_code != 0
+        assert json.loads(settings.read_text()) == before
+        assert legacy.is_file()
+
+        retry = runner.invoke(app, [*args, "--refresh-existing"])
+        assert retry.exit_code == 0, retry.output
+        assert legacy.name not in settings.read_text()
+        assert not legacy.exists()
+
+    def test_unreadable_retired_hook_is_preserved(self, tmp_path, monkeypatch):
+        from mapify_cli.delivery.retired_hooks import remove_retired_safety_hook
+
+        directory = tmp_path / ".claude"
+        script = directory / "hooks" / "safety-guardrails.py"
+        script.parent.mkdir(parents=True)
+        script.write_text("project copy")
+        with monkeypatch.context() as context:
+            context.setattr(Path, "read_text", mock.Mock(side_effect=PermissionError))
+            remove_retired_safety_hook(directory)
+        assert script.read_text() == "project copy"
+
     def test_refresh_existing_skips_global_permissions(self, tmp_path: Path) -> None:
         os.chdir(tmp_path)
         with mock.patch("mapify_cli.configure_global_permissions") as configure:
@@ -5662,7 +5870,6 @@ class TestCodexProvider:
             "pre-compact-save-transcript.py",
             "ralph-context-pruner.py",
             "ralph-iteration-logger.py",
-            "safety-guardrails.py",
             "scrub-internal-ids.py",
             "workflow-context-injector.py",
             "workflow-gate.py",
@@ -6040,32 +6247,18 @@ class TestCodexProvider:
         )
         assert hook_output.get("hookEventName") == "PreToolUse"
 
-    def test_ac20b_codex_safety_hook_blocks_apply_patch_secret(self, codex_project):
-        """Codex apply_patch paths pass through the shared sensitive-file gate."""
-        safety_script = codex_project / ".codex" / "hooks" / "safety-guardrails.py"
-        payload = json.dumps(
-            {
-                "hook_event_name": "PreToolUse",
-                "tool_name": "apply_patch",
-                "tool_input": {
-                    "command": "*** Begin Patch\n*** Update File: .env\n*** End Patch\n"
-                },
-            }
+    def test_codex_gate_allows_patch_to_credentials_source(self, codex_project):
+        gate = codex_project / ".codex" / "hooks" / "workflow-gate.py"
+        payload = {
+            "tool_name": "apply_patch",
+            "tool_input": {"command": "*** Begin Patch\n*** Add File: internal/hooks/credentials.go\n+package hooks\n*** End Patch\n"},
+        }
+        result = subprocess.run(
+            [sys.executable, str(gate)], input=json.dumps(payload), cwd=codex_project,
+            capture_output=True, text=True, check=True,
+            env={**os.environ, "CLAUDE_PROJECT_DIR": str(codex_project)},
         )
-
-        proc = subprocess.run(
-            [sys.executable, str(safety_script)],
-            input=payload,
-            capture_output=True,
-            text=True,
-            cwd=codex_project,
-            check=False,
-        )
-
-        assert proc.returncode == 0
-        output = json.loads(proc.stdout)["hookSpecificOutput"]
-        assert output["hookEventName"] == "PreToolUse"
-        assert output["permissionDecision"] == "deny"
+        assert json.loads(result.stdout) == {}
 
     def test_ac20c_codex_compaction_context_uses_session_start(self, codex_project):
         """Post-compaction context uses SessionStart's supported context channel."""

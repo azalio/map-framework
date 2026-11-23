@@ -14,7 +14,6 @@
     "SessionEnd": [{"hooks": [<% hook("map-memory-endmark.py", 3) %>]}],
     "PreToolUse": [
       {"matcher": "Bash|apply_patch", "hooks": [
-        <% hook("safety-guardrails.py", 5, "Checking MAP safety policy") %>,
         <% hook("workflow-context-injector.py", 3, ctx_limit=5000) %>,
         <% hook("workflow-gate.py", 5, "Checking MAP workflow phase") %>
       ]}

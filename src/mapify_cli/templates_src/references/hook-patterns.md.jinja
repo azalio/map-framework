@@ -70,7 +70,6 @@ MAP-spawned subagent.
 
 | Hook | Event | Blocking? | Rationale for always-fire |
 |------|-------|-----------|---------------------------|
-| `safety-guardrails.py` | `PreToolUse` (Edit/Write/Read/MultiEdit/Bash) | Yes (JSON deny) | A nested Actor doing real edits MUST still be blocked from sensitive files / dangerous commands |
 | `workflow-gate.py` | `PreToolUse` (Edit/Write/MultiEdit) | Yes (JSON deny) | The Actor+Monitor phase gate must enforce on nested edits exactly as on top-level edits |
 | `workflow-gate.py` (Codex) | `PreToolUse` | Yes (JSON deny) | Codex twin of the above (`.codex/hooks/` + `src/mapify_cli/templates/codex/hooks/`); same rule |
 | `post-compact-context.py` | `SessionStart` (compact) | No | A nested Actor whose context was just compacted needs the MAP re-prime *more*, not less; SessionStart cannot be self-triggered by a hook, so it is not a recursion source |
@@ -193,12 +192,11 @@ if sys.version_info < (3, 11):  # noqa: UP036
     sys.exit(1)
 ```
 
-**Fail closed** — the FORBID_GUARD PreToolUse gates (`safety-guardrails.py`,
-`workflow-gate.py`, and its Codex twin). A gate whose only job is to refuse unsafe
+**Fail closed** — the FORBID_GUARD PreToolUse gates (`workflow-gate.py` for each provider). A gate whose only job is to refuse unsafe
 tool calls must not degrade into "allow" when it cannot run, so it emits the
 structured deny decision instead. Select it by setting `guard_mode = "deny"` in a
 Jinja `set` tag immediately before the `include` tag in that file's `.jinja` source
-(the three gates above are the only files that do). It renders the same message
+(the two provider copies above are the only files that do). It renders the same message
 plus:
 
 ```python

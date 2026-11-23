@@ -90,7 +90,7 @@ class TestCreateApprovalHold:
             kind="dangerous_action",
             reason="Risky shell command",
             request_summary="Run cleanup script",
-            source="safety-guardrails.py",
+            source="workflow-gate.py",
             safe_continuation="Review the script before approving",
             branch="test-branch",
         )
@@ -101,7 +101,7 @@ class TestCreateApprovalHold:
         assert "dangerous_action" in content
         assert "Risky shell command" in content
         assert "Review the script before approving" in content
-        assert "safety-guardrails.py" in content
+        assert "workflow-gate.py" in content
 
     def test_sequential_ids_increment(self, branch_dir: Path) -> None:
         del branch_dir  # fixture used for chdir side effect only
