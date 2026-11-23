@@ -167,6 +167,7 @@ class SimulatedHost:
     """Model-free transport integration. Capability enforcement is tested separately."""
     resumed: ClassVar[list[str]] = []
     interrupt_once = False
+    interrupt_resource = ""
 
     def __init__(self, **kwargs):
         del kwargs
@@ -198,7 +199,7 @@ class SimulatedHost:
                     "context_receipt": {"session_id": state["session_id"], "finalization_token": state["finalization_token"]}}))
             delivery = self.on_event.__self__
             complete_result(delivery, response, str(count))
-            if self.interrupt_once:
+            if self.interrupt_once and (not self.interrupt_resource or state["resource_id"] == self.interrupt_resource):
                 type(self).interrupt_once = False
                 raise host.HostError("simulated interrupted host")
         raise AssertionError("unbounded transport")
@@ -232,6 +233,33 @@ def test_turn_keeps_only_current_final_answer(final_phase):
     assert host.CodexReviewHost.turn(client, "review") == ""
 
 
+@pytest.mark.parametrize(("info", "transient"), [
+    ("badRequest", False), ("unauthorized", False), ("serverOverloaded", True),
+    ({"httpConnectionFailed": {"httpStatusCode": 403}}, False),
+    ({"responseStreamDisconnected": {"httpStatusCode": None}}, True),
+])
+def test_failed_turn_keeps_provider_reason_and_classifies_retry(info, transient):
+    client = Mock(spec=host.CodexReviewHost)
+    client.thread_id = "reader"
+    client.timeout = 2
+    client.record_events = False
+    client.rollout = None
+    client.call.return_value = {"turn": {"id": "current"}}
+    client.receive.return_value = {"method": "turn/completed", "params": {
+        "threadId": "reader", "turn": {"id": "current", "status": "failed",
+                                      "error": {"codexErrorInfo": info, "message": "test provider detail"}}}}
+    with pytest.raises(host.HostError, match="test provider detail") as caught:
+        host.CodexReviewHost.turn(client, "review")
+    assert isinstance(caught.value, host.TransportInterrupted) == transient
+
+
+def test_missing_executable_gives_setup_error(monkeypatch):
+    monkeypatch.setattr(host.shutil, "which", lambda name: None)
+    with pytest.raises(host.HostError, match="executable") as caught:
+        host.CodexReviewHost()
+    assert not isinstance(caught.value, host.ReaderUnavailable)
+
+
 def test_announced_notification_preserves_runtime_proof(tmp_path):
     canary = tmp_path / "canary"
     canary.write_text("nonce\n")
@@ -241,7 +269,8 @@ def test_announced_notification_preserves_runtime_proof(tmp_path):
     assert "functions.send_message_to_user_async" in proof["outer_tools"]
 
 
-def test_transient_disconnect_resumes_without_second_driver_invocation(repo, monkeypatch):
+@pytest.mark.parametrize("failure", [BrokenPipeError, host.ReaderUnavailable], ids=["disconnect", "output"])
+def test_transient_disconnect_resumes_without_second_driver_invocation(repo, monkeypatch, failure):
     del repo
     Path("first.py").write_text("value = 2\n")
     result = runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="host")
@@ -257,7 +286,7 @@ def test_transient_disconnect_resumes_without_second_driver_invocation(repo, mon
                 data = self.on_tool({"arguments": {}, "callId": "first"})
                 complete_result(self.on_event.__self__, data, "first")
                 type(self).disconnected = True
-                raise BrokenPipeError("disconnected after ACK")
+                raise failure("retry after ACK")
             return super().turn(message)
 
     monkeypatch.setattr(driver, "CodexReviewHost", Flaky)
@@ -665,9 +694,10 @@ def interrupted_round(monkeypatch):
 
 def test_lost_thread_restarts_only_its_own_read_progress(repo, monkeypatch):
     del repo
+    monkeypatch.setattr(SimulatedHost, "interrupt_resource", "diff")
     path, _, before = interrupted_round(monkeypatch)
     old = next(iter(before["context_sessions"].values()))
-    assert old["offsets"]
+    assert old["offsets"]["diff"] > 0
 
     class Lost(SimulatedHost):
         attempts: ClassVar[list[str]] = []
@@ -686,6 +716,7 @@ def test_lost_thread_restarts_only_its_own_read_progress(repo, monkeypatch):
             assert initial["remaining"] and initial["agent_id"] == "replacement"
             row = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
             saved = row["context_sessions"][initial["session_id"]]
+            assert saved["offsets"].get("diff", 0) == 0
             assert set(saved["offsets"]) <= {"prompt"}
             return super().turn(message)
 
@@ -731,7 +762,8 @@ def test_new_tool_routes_only_to_independently_probed_reader(repo, monkeypatch):
     assert session["host_capability"]["isolated_catalog"]
 
 
-def test_unavailable_shard_runs_again_after_other_shards(repo, monkeypatch):
+@pytest.mark.parametrize("permanent", [False, True], ids=["unavailable", "refused"])
+def test_failure_in_one_shard_allows_other_shards_to_finish(repo, monkeypatch, permanent):
     del repo
     monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(
         runner.REVIEW_CONTEXT_RESERVE_BYTES + runner.REVIEW_ROLE_RUBRIC_RESERVE_BYTES + 60_000))
@@ -748,13 +780,23 @@ def test_unavailable_shard_runs_again_after_other_shards(repo, monkeypatch):
     def collect(branch, round_id, role, entry, ordering, shard, candidate_recheck, timeout):
         attempts.append(shard)
         if len(attempts) == 1:
+            if permanent:
+                raise host.RejectedTurn("badRequest: fix input")
             raise host.ReaderUnavailable("worker unavailable")
         return original(branch, round_id, role, entry, ordering, shard, candidate_recheck, timeout)
 
     monkeypatch.setattr(driver, "_collect_role", collect)
-    assert driver.run("feature")["status"] == "success"
-    assert attempts == [*shards, shards[0]]
-    assert runner.write_review_verdict_ledger(current_run=True, branch="feature")["completeness"]["status"] == "COMPLETE"
+    result = driver.run("feature")
+    verdict = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    if permanent:
+        assert attempts == shards
+        assert result["status"] == "incomplete"
+        assert result["reviewers"][0]["reason"] == "badRequest: fix input"
+        assert all(r["status"] == "success" for r in result["reviewers"][1:])
+        assert verdict["completeness"]["status"] == "INCOMPLETE" and not verdict["code_approval"]["approved"]
+    else:
+        assert attempts == [*shards, shards[0]]
+        assert result["status"] == "success" and verdict["completeness"]["status"] == "COMPLETE"
 
 
 def test_pending_round_from_an_older_runner_is_resumed_on_a_fresh_thread_without_abandon(repo, monkeypatch):

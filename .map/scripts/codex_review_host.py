@@ -55,6 +55,14 @@ class ReaderUnavailable(HostError):
     """This reader cannot be used to review the frozen source."""
 
 
+class UnverifiedReader(ReaderUnavailable):
+    """A different, independently verified reader is needed before sharing source."""
+
+
+class RejectedTurn(HostError):
+    """The provider rejected this request. Replaying it would repeat the refusal."""
+
+
 class TransportInterrupted(ReaderUnavailable):
     """The app-server connection can be reopened on the same durable thread."""
 
@@ -68,12 +76,12 @@ def check_outer_tools(item: dict[str, Any]) -> set[str]:
         names = {namespace["name"] + "." + tool["name"]
                  for namespace in item["tools"] for tool in namespace["tools"]}
     except (TypeError, KeyError) as exc:
-        raise ReaderUnavailable("Malformed outer Codex tool declaration") from exc
+        raise UnverifiedReader("Malformed outer Codex tool declaration") from exc
     unexpected = names - ALLOWED_OUTER_TOOLS
     if unexpected:
-        raise ReaderUnavailable("Unexpected outer Codex tools: " + ", ".join(sorted(unexpected)))
+        raise UnverifiedReader("Unexpected outer Codex tools: " + ", ".join(sorted(unexpected)))
     if not names:
-        raise ReaderUnavailable("Empty outer Codex tool declaration")
+        raise UnverifiedReader("Empty outer Codex tool declaration")
     return names
 
 
@@ -81,10 +89,10 @@ def require_empty_environments(response: dict[str, Any], *, idle_resume: bool = 
     """Validate host-returned state, not the request or a model assertion."""
     thread = response.get("thread", {})
     if thread.get("environments") != [] and not (idle_resume and thread.get("status", {}).get("type") == "idle"):
-        raise ReaderUnavailable("Codex did not attest an empty environment selection")
+        raise UnverifiedReader("Codex did not attest an empty environment selection")
     sandbox = response.get("sandbox", {})
     if sandbox.get("type") != "readOnly" or sandbox.get("networkAccess") is not False:
-        raise ReaderUnavailable("Codex did not retain the read-only, network-disabled sandbox")
+        raise UnverifiedReader("Codex did not retain the read-only, network-disabled sandbox")
     identity = thread.get("id")
     if not isinstance(identity, str) or not identity:
         raise HostError("Missing Codex thread identity")
@@ -100,6 +108,21 @@ def deny_request(method: str) -> dict[str, Any]:
     if method == "item/permissions/requestApproval":
         return {"result": {"permissions": {}, "scope": "turn"}}
     return {"error": {"code": -32601, "message": "MAP review host denies this request"}}
+
+
+def failed_turn(error: dict[str, Any]) -> HostError:
+    info = error.get("codexErrorInfo")
+    kind = next(iter(info), None) if isinstance(info, dict) else info
+    details = info.get(kind) if isinstance(info, dict) else None
+    status = details.get("httpStatusCode") if isinstance(details, dict) else None
+    reason = f"Codex review turn failed ({info}): {error.get('message', 'no provider detail')}"
+    if kind in ("serverOverloaded", "rateLimitExceeded", "internalServerError"):
+        return TransportInterrupted(reason)
+    transient_http = status is None or status in (408, 429) or (type(status) is int and 500 <= status < 600)
+    if transient_http and kind in ("httpConnectionFailed", "responseStreamConnectionFailed",
+                                   "responseStreamDisconnected", "responseTooManyFailedAttempts"):
+        return TransportInterrupted(reason)
+    return RejectedTurn(reason)
 
 
 def _text_output(item: dict[str, Any]) -> str:
@@ -148,7 +171,7 @@ def verify_probe(events: list[dict[str, Any]], script: str, nonce: str, canary: 
             or not {"apply_patch", "review_context"}.issubset(inventory)
             or not set(inventory).issubset(ALLOWED_NESTED_TOOLS)
             or canary.read_text() != nonce + "\n"):
-        raise ReaderUnavailable("Codex capability probe is inconclusive or failed; keep unverified/INCOMPLETE")
+        raise UnverifiedReader("Codex capability probe is inconclusive or failed; keep unverified/INCOMPLETE")
     return {"boundary": "codex_no_environments", "tools": sorted(inventory), "outer_tools": sorted(outer_tools),
             "source_read": "host_witnessed", "canary_write": "host_denied_no_environment",
             "probe_sha256": hashlib.sha256(json.dumps(events, sort_keys=True).encode()).hexdigest()}
@@ -160,7 +183,7 @@ class CodexReviewHost:
     def __init__(self, *, timeout: float = 300, executable: str = "codex", isolated: bool = False) -> None:
         binary = shutil.which(executable)
         if not binary:
-            raise ReaderUnavailable("Codex executable is unavailable")
+            raise HostError("Codex executable is unavailable on PATH")
         self.binary = Path(binary).resolve()
         self.binary_hash = hashlib.sha256(self.binary.read_bytes()).hexdigest()
         self.timeout = timeout
@@ -323,7 +346,7 @@ class CodexReviewHost:
         if (not isinstance(status.get("data"), list) or status.get("nextCursor")
                 or any(row.get("runtimeStatus") != "disabled" or row.get("tools")
                        or row.get("resources") or row.get("resourceTemplates") for row in status["data"])):
-            raise ReaderUnavailable("Codex reader retains external MCP servers")
+            raise UnverifiedReader("Codex reader retains external MCP servers")
         self.rollout = None
         self.outer_history = []
         if thread_id:
@@ -402,7 +425,7 @@ class CodexReviewHost:
                 final = item.get("text", "")
             if event.get("method") == "turn/completed" and params.get("turn", {}).get("id") == self.active_turn:
                 if params["turn"].get("status") == "failed":
-                    raise TransportInterrupted("Codex review turn failed")
+                    raise failed_turn(params["turn"].get("error") or {})
                 if params.get("turn", {}).get("status") != "completed":
                     raise HostError("Codex review turn did not complete")
                 if self.rollout is not None:

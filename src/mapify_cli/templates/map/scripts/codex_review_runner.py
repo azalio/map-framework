@@ -43,7 +43,9 @@ from codex_review_host import (
     HostError,
     MissingThread,
     ReaderUnavailable,
+    RejectedTurn,
     TransportInterrupted,
+    UnverifiedReader,
 )
 
 ROLE_RUBRICS = {
@@ -366,7 +368,7 @@ def _collect_role(branch: str, round_id: str, role: str, entry: dict[str, Any], 
             reconnects += 1
             action = "reconnecting"
             reason = str(exc)
-        except ReaderUnavailable as exc:
+        except UnverifiedReader as exc:
             if isolated:
                 raise
             isolated, fresh = True, True
@@ -467,6 +469,11 @@ def run(branch: str | None = None, *, timeout: float = 900, review_preferences: 
                 try:
                     result = _collect_role(branch, row["round_id"], role, built_by_shard[shard]["prompts"][role],
                                            ordering, shard, rechecks[shard], timeout)
+                except RejectedTurn as exc:
+                    refusal = {"status": "rejected", **job, "reason": str(exc)}
+                    print(json.dumps(refusal), flush=True)
+                    results.append(refusal)
+                    continue
                 except ReaderUnavailable as exc:
                     print(json.dumps({"status": "retry_pending", **job, "reason": str(exc)}), flush=True)
                     deferred.append((ordering, shard, role))
@@ -490,7 +497,8 @@ def run(branch: str | None = None, *, timeout: float = 900, review_preferences: 
                 time.sleep(delay)
                 delay = min(300, delay * 2)
             pending = deferred
-        return {"status": "success", "reviewers": results}
+        status = "incomplete" if any(item["status"] == "rejected" for item in results) else "success"
+        return {"status": status, "reviewers": results}
 
 
 if __name__ == "__main__":
@@ -506,3 +514,5 @@ if __name__ == "__main__":
         print(json.dumps({"status": "error", "message": str(exc), "recovery": "Resume the same admitted round and rerun this command. Capability and incomplete gates remain enforced."}))
         raise SystemExit(1) from exc
     print(json.dumps(result, ensure_ascii=True))
+    if result["status"] == "incomplete":
+        raise SystemExit(1)
