@@ -655,8 +655,8 @@ words, 2-5 sentences and at most 1200 characters each. The schema lives once in
   `aggregate_adversarial_findings` turns a missing paraphrase into `parse_error`
   (no `raw`), which the capture keeps and the ledger treats as an incomplete review.
   The Codex driver (`codex_review_runner.py`) checks every reader's final JSON,
-  hunters included, asks the same reader once to fix it, and then stops with an
-  error; rerun the driver in the same admitted round.
+  hunters included, asks the same reader to correct malformed output, and retries
+  the affected portion while retaining completed reports.
 - Sharded rounds keep each shard's paraphrase under `paraphrases` in the merged
   envelope; the base `paraphrase` stays valid.
 - The ledger writes `reviewer_paraphrases` (keyed by reviewer, `reverse:<id>` for the

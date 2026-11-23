@@ -40,7 +40,7 @@ The driver reads the admitted roster, creates independent environment-free threa
 probes each host boundary, serves only each role's permitted immutable context,
 validates individual reports and captures the tagged adversarial aggregate. Blind
 remains diff-only. Compare-orderings uses separate thread/session/receipt sets.
-Poll the running command; on interruption rerun it under the same admitted round.
+Poll the running command while it reconnects. If you stopped the driver, rerun it under the same admitted round.
 Do not spawn native readers, copy chunks through the parent, or promote an unverified
 probe. See SKILL.md Step A.2 for the capability and recovery contract. Read the
 captured `review-agent-adversarial.json` (or both review-collections in compare mode)

@@ -10902,6 +10902,30 @@ def _review_sibling_search_checked(search: Any, target: dict[str, Any], finding:
                and _review_refs_checked(item.get("evidence_refs"), target, {"current"}) for item in occurrences)
 
 
+def _review_individual_outputs(
+    directory: Path, row: dict[str, Any], ordering: str, role: str,
+) -> Iterable[tuple[str, str, dict[str, Any]]]:
+    """Read hash-bound individual reports, falling back to admitted shards when the role is incomplete."""
+    key = f"{ordering}:{role}"
+    receipts = row.get("receipts", {})
+    if key in receipts:
+        witnesses = [("", receipts[key])]
+    else:
+        shards = row.get("shard_receipts", {}).get(key, {})
+        witnesses = [(shard["id"], shards[shard["id"]]) for shard in row.get("shards", []) if shard["id"] in shards]
+    for sid, witness in witnesses:
+        try:
+            content = (directory / witness["artifact"]).read_bytes()
+            digest = hashlib.sha256(content).hexdigest()
+            if digest != witness["sha256"]:
+                continue
+            output = json.loads(content)
+            if isinstance(output, dict) and (not sid or not _review_delivery_problem(row, role, output, ordering, sid)):
+                yield sid, digest, output
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
+
+
 def _validate_review_findings(ledger: dict[str, Any], admitted: dict[str, Any]) -> None:
     """Check citations, not semantic truth; reviewer reasoning remains auditable evidence."""
     target = admitted["target"]
@@ -10917,16 +10941,15 @@ def _validate_review_findings(ledger: dict[str, Any], admitted: dict[str, Any]) 
                 and "--adversarial" in admitted["binding"].get("arguments", "").split()):
             outcomes = []
             capture_hashes = set()
+            directory = _review_branch_dir(ledger["branch"])
             for reviewer in admitted["binding"]["scheduled_reviewers"]:
-                receipt = admitted.get("receipts", {}).get(f"default:{reviewer}", {})
-                artifact = _review_branch_dir(ledger["branch"]) / receipt.get("artifact", "missing")
-                if (not artifact.is_file() or hashlib.sha256(artifact.read_bytes()).hexdigest() != receipt.get("sha256")
-                        or receipt.get("sha256") in capture_hashes):
-                    continue
-                capture_hashes.add(receipt["sha256"])
-                try:
-                    payload = json.loads(artifact.read_text(encoding="utf-8"))
+                for _, digest, payload in _review_individual_outputs(directory, admitted, "default", reviewer):
+                    if digest in capture_hashes:
+                        continue
+                    capture_hashes.add(digest)
                     candidates = payload.get("resolved_findings" if finding.get("resolution_requested") else "findings", [])
+                    if not isinstance(candidates, list):
+                        continue
                     for candidate in candidates:
                         if not isinstance(candidate, dict):
                             continue
@@ -10949,10 +10972,8 @@ def _validate_review_findings(ledger: dict[str, Any], admitted: dict[str, Any]) 
                         _validate_review_findings(temporary, admitted)
                         outcomes.append({"reviewer": reviewer, **row["validation"]})
                         break
-                except (OSError, ValueError, TypeError):
-                    continue
-            votes = {entry["reviewer"]: entry["verdict"] for entry in outcomes}
-            decisions = set(votes.values())
+            votes = {entry["reviewer"] for entry in outcomes}
+            decisions = {entry["verdict"] for entry in outcomes}
             verdict = (next(iter(decisions)) if len(votes) >= 2 and len(decisions) == 1
                        and "insufficient_evidence" not in decisions else "insufficient_evidence")
             finding["validation"] = {"verdict": verdict, "snapshot": snapshot, "policy_hash": admitted["policy_hash"], "validations": outcomes,
@@ -10989,19 +11010,17 @@ def _validate_review_findings(ledger: dict[str, Any], admitted: dict[str, Any]) 
             reasons.append("Baseline attribution lacks checked current and baseline evidence")
         owner = str(finding.get("originating_reviewer") or finding["source_agent"])
         receipts = {}
-        for key, receipt in admitted.get("receipts", {}).items():
-            if not key.endswith(":" + owner):
-                continue
-            try:
-                artifact = _review_branch_dir(ledger.get("branch")) / receipt["artifact"]
-                content = artifact.read_bytes()
-                if hashlib.sha256(content).hexdigest() != receipt["sha256"]:
+        directory = _review_branch_dir(ledger.get("branch"))
+        for ordering in ("default", "reverse"):
+            for sid, digest, payload in _review_individual_outputs(directory, admitted, ordering, owner):
+                if owner == "predictor" and not finding.get("resolution_requested"):
+                    extra = payload.get("additional_defects", [])
+                    candidates = [payload, *extra] if isinstance(extra, list) else []
+                else:
+                    field = "resolved_findings" if finding.get("resolution_requested") else ("issues" if owner == "monitor" else "findings")
+                    candidates = payload.get(field, [])
+                if not isinstance(candidates, list):
                     continue
-                payload = json.loads(content)
-                candidates = ([payload, *(item for item in payload.get("additional_defects", []) if isinstance(item, dict))]
-                              if owner == "predictor" and not finding.get("resolution_requested") else
-                              payload.get("resolved_findings" if finding.get("resolution_requested") else
-                                          ("issues" if owner == "monitor" else "findings"), []))
                 if any(isinstance(candidate, dict) and (
                     (candidate.get("finding_id") == finding["id"] and all(
                         (field not in candidate or candidate[field] == finding.get(field)) if field in {"bug_class", "cause"}
@@ -11011,9 +11030,7 @@ def _validate_review_findings(ledger: dict[str, Any], admitted: dict[str, Any]) 
                     )) if finding.get("resolution_requested") else
                     all(candidate.get(field) == finding.get(field) for field in ("bug_class", "cause", "failure_scenario"))
                 ) for candidate in candidates):
-                    receipts[key] = receipt["sha256"]
-            except (OSError, ValueError, KeyError, TypeError):
-                continue
+                    receipts[_review_session_key(ordering, owner, sid)] = digest
         if not receipts:
             reasons.append("No admitted validator capture provenance")
         if finding.get("resolution_requested"):
@@ -11368,16 +11385,31 @@ def _review_merge_shard_outputs(reviewer: str, items: list[tuple[str, dict[str, 
     for sid, envelope in items:
         for name, entry in envelope.get("reviewer_status", {}).items():
             statuses.setdefault(name, []).append((sid, entry))
-    raw_inputs: dict[str, str | None] = {}
+    raw_inputs: dict[str, str] = {}
+    failed: dict[str, dict[str, str]] = {}
+    scheduled = row.get("binding", {}).get("scheduled_reviewers", [])
     for name, entries in statuses.items():
-        if all(isinstance(entry, dict) and entry.get("status") == "ok" and isinstance(entry.get("raw"), dict)
-               for _, entry in entries) and len(entries) == len(items):
-            raw_inputs[name] = json.dumps(_review_merge_envelopes([(sid, entry["raw"]) for sid, entry in entries], owners))
-        else:
-            raw_inputs[name] = None
+        reported = dict(entries)
+        successful = []
+        errors = {}
+        for sid, _ in items:
+            entry = reported.get(sid)
+            if isinstance(entry, dict) and entry.get("status") == "ok" and isinstance(entry.get("raw"), dict):
+                successful.append((sid, entry["raw"]))
+            else:
+                errors[sid] = str(entry.get("error") or "No output provided") if isinstance(entry, dict) else "No output provided"
+        if successful:
+            raw_inputs[name] = json.dumps(_review_merge_envelopes(successful, owners))
+        if errors and (successful or name in scheduled):
+            failed[name] = errors
     aggregate = aggregate_adversarial_findings(
         raw_inputs.get("blind"), raw_inputs.get("edge_case"), raw_inputs.get("acceptance"),
         {role: raw_inputs.get(role) for role in ROLE_REVIEWER_IDS})
+    for name, errors in failed.items():
+        aggregate["reviewer_status"].setdefault(name, {}).update({"status": "not_run", "all_clear": None, "shard_errors": errors,
+                                              "error": "; ".join(f"{sid}: {message}" for sid, message in errors.items())})
+        aggregate["summary"]["all_clear_by_reviewer"][name] = None
+        aggregate["summary"]["per_reviewer_counts"].setdefault(name, 0)
     aggregate["shards"] = [sid for sid, _ in items]
     return aggregate
 
@@ -11647,6 +11679,23 @@ def _bind_codex_review_preferences(preferences: str | None, round_id: str, *, br
 
 
 @_review_transaction
+def _record_codex_lens_result(round_id: str, result: dict[str, Any], ordering: str, shard: str, *, branch: str) -> dict[str, Any]:
+    """Save the optional lens outcome independently of required reviewer receipts."""
+    directory, ledger, row = _review_delivery_load(branch, round_id)
+    key = _review_session_key(ordering or "default", "complexity_lens", shard)
+    outcomes = row.setdefault("advisory_results", {})
+    prior = outcomes.get(key, {})
+    record = {k: result[k] for k in ("status", "reason", "artifact") if k in result}
+    last_artifact = prior.get("artifact") or prior.get("last_successful_artifact")
+    if last_artifact and "artifact" not in record:
+        record["last_successful_artifact"] = last_artifact
+    outcomes[key] = record
+    _require_review_delivery_current(row, branch)
+    _write_json_file(directory / "review-verdict-ledger.json", ledger)
+    return {"status": "success"}
+
+
+@_review_transaction
 def _record_codex_host_capability(session_id: str, proof: dict[str, Any], round_id: str, *, branch: str) -> dict[str, Any]:
     """Called only after the driver verifies the live host probe; no CLI verification override."""
     directory, ledger, row = _review_delivery_load(branch, round_id)
@@ -11664,7 +11713,8 @@ def _record_codex_host_capability(session_id: str, proof: dict[str, Any], round_
     artifact.parent.mkdir(parents=True, exist_ok=True)
     _write_json_file(artifact, proof)
     session["host_capability"] = {"artifact": str(artifact.relative_to(directory)),
-                                  "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}
+                                  "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                                  "isolated_catalog": proof.get("isolated_catalog") is True}
     row["capability"] = {"provider": "codex", "profile": "review-reader", "status": "verified",
                          "boundary": "codex_no_environments",
                          "reason": "Environment-free app-server; per-reader host probes and immutable context transport",
@@ -11845,6 +11895,11 @@ def _review_completeness(row: dict[str, Any], directory: Path) -> dict[str, Any]
                 continue
             reasons.extend(_review_shard_problems(row, directory, ordering, reviewer))
             envelope = json.loads(path.read_text(encoding="utf-8"))
+            if not normal:
+                for name in binding["scheduled_reviewers"]:
+                    status = envelope.get("reviewer_status", {}).get(name, {})
+                    if status.get("status") != "ok":
+                        reasons.append(f"{ordering}:{name}: {status.get('error') or 'missing reviewer output'}")
             outputs = {reviewer: envelope} if normal else {
                 name: envelope.get("reviewer_status", {}).get(name, {}).get("raw", {})
                 for name in binding["scheduled_reviewers"]}
@@ -12335,6 +12390,16 @@ def write_review_verdict_ledger(
     def _read_source(raw: str, path: str, label: str) -> str:
         """Return the payload for one reviewer, preferring an on-disk file."""
         if path:
+            if admitted is not None and admitted.get("shards") and label.removeprefix("reverse ") in roster:
+                name = label.removeprefix("reverse ")
+                ordering = "reverse" if label.startswith("reverse ") else "default"
+                if f"{ordering}:{name}" not in admitted.get("receipts", {}):
+                    input_errors.append(f"{label}: missing complete reviewer capture")
+                    reports = [(sid, data) for sid, _, data in _review_individual_outputs(branch_dir, admitted, ordering, name)]
+                    if not reports:
+                        return ""
+                    owners = {shard["id"]: set(shard["files"]) for shard in admitted["shards"]}
+                    return json.dumps(_review_merge_envelopes(reports, owners))
             try:
                 content = Path(path).read_text(encoding="utf-8")
                 if not content.strip():

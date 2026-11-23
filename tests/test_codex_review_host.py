@@ -1,9 +1,11 @@
 """Host observations, rather than model assertions, fence Codex review capabilities."""
+import errno
 import importlib
 import json
 import sys
 from pathlib import Path
 from typing import Any, ClassVar
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -74,6 +76,18 @@ def test_probe_requires_exact_program_and_host_outputs(tmp_path, failure):
     else:
         proof = host.verify_probe(events, script, "nonce", canary)
         assert proof["boundary"] == "codex_no_environments"
+
+
+@pytest.mark.parametrize("thread", [{}, {"environments": ["workspace"]}])
+def test_probe_rejects_post_turn_environment_before_source(tmp_path, thread):
+    client = Mock(spec=host.CodexReviewHost)
+    client.root = tmp_path
+    client.thread_id = "reader"
+    client.call.return_value = {"thread": thread}
+    with pytest.raises(host.UnverifiedReader, match="empty environments"):
+        host.CodexReviewHost.probe(client, "context")
+    assert client.on_tool is None
+    client.call.assert_called_once_with("thread/read", {"threadId": "reader", "includeTurns": False})
 
 
 def test_approval_and_unknown_requests_never_grant_access():
@@ -166,6 +180,7 @@ class SimulatedHost:
     """Model-free transport integration. Capability enforcement is tested separately."""
     resumed: ClassVar[list[str]] = []
     interrupt_once = False
+    interrupt_resource = ""
 
     def __init__(self, **kwargs):
         del kwargs
@@ -197,13 +212,117 @@ class SimulatedHost:
                     "context_receipt": {"session_id": state["session_id"], "finalization_token": state["finalization_token"]}}))
             delivery = self.on_event.__self__
             complete_result(delivery, response, str(count))
-            if self.interrupt_once:
+            if self.interrupt_once and (not self.interrupt_resource or state["resource_id"] == self.interrupt_resource):
                 type(self).interrupt_once = False
                 raise host.HostError("simulated interrupted host")
         raise AssertionError("unbounded transport")
 
     def close(self):
         pass
+
+
+
+@pytest.mark.parametrize("final_phase", ["final_answer", None])
+def test_turn_keeps_only_current_final_answer(final_phase):
+    client = Mock(spec=host.CodexReviewHost)
+    client.thread_id = "reader"
+    client.timeout = 2
+    client.record_events = False
+    client.rollout = None
+    client.call.return_value = {"turn": {"id": "current"}}
+
+    def message(text, *, turn="current", phase=final_phase, delivery=None):
+        return {"method": "item/completed", "params": {"threadId": "reader", "turnId": turn,
+                "item": {"type": "agentMessage", "text": text, "phase": phase, "delivery": delivery}}}
+
+    def completed(turn):
+        return {"method": "turn/completed", "params": {"threadId": "reader", "turn": {"id": turn, "status": "completed"}}}
+
+    client.receive.side_effect = [completed("previous"), message("report"), message("old", turn="previous"),
+                                  message("working", phase="commentary"), message("notice", delivery="async"),
+                                  completed("current")]
+    assert host.CodexReviewHost.turn(client, "review") == "report"
+    client.receive.side_effect = [message("notice", delivery="async"), completed("current")]
+    assert host.CodexReviewHost.turn(client, "review") == ""
+
+
+@pytest.mark.parametrize(("info", "transient"), [
+    ("badRequest", False), ("unauthorized", False), ("serverOverloaded", True),
+    ({"httpConnectionFailed": {"httpStatusCode": 403}}, False),
+    ({"responseStreamDisconnected": {"httpStatusCode": None}}, True),
+])
+def test_failed_turn_keeps_provider_reason_and_classifies_retry(info, transient):
+    client = Mock(spec=host.CodexReviewHost)
+    client.thread_id = "reader"
+    client.timeout = 2
+    client.record_events = False
+    client.rollout = None
+    client.call.return_value = {"turn": {"id": "current"}}
+    client.receive.return_value = {"method": "turn/completed", "params": {
+        "threadId": "reader", "turn": {"id": "current", "status": "failed",
+                                      "error": {"codexErrorInfo": info, "message": "test provider detail"}}}}
+    with pytest.raises(host.HostError, match="test provider detail") as caught:
+        host.CodexReviewHost.turn(client, "review")
+    assert isinstance(caught.value, host.TransportInterrupted) == transient
+
+
+def test_missing_executable_gives_setup_error(monkeypatch):
+    monkeypatch.setattr(host.shutil, "which", lambda name: None)
+    with pytest.raises(host.HostError, match="executable") as caught:
+        host.CodexReviewHost()
+    assert not isinstance(caught.value, host.ReaderUnavailable)
+
+
+@pytest.mark.parametrize(("failure", "expected"), [
+    (host.subprocess.TimeoutExpired("debug models", 1), host.TransportInterrupted),
+    (BlockingIOError(errno.EAGAIN, "process pressure"), host.TransportInterrupted),
+    (host.subprocess.CalledProcessError(1, "debug models"), host.UnverifiedReader),
+])
+def test_isolated_catalog_startup_failure(monkeypatch, failure, expected):
+    monkeypatch.setattr(host.subprocess, "run", Mock(side_effect=failure))
+    with pytest.raises(expected):
+        host.CodexReviewHost(executable=sys.executable, isolated=True)
+
+
+def test_app_server_spawn_resource_pressure_is_retryable(monkeypatch):
+    monkeypatch.setattr(host.subprocess, "Popen", Mock(side_effect=BlockingIOError(errno.EAGAIN, "process pressure")))
+    with pytest.raises(host.TransportInterrupted):
+        host.CodexReviewHost(executable=sys.executable)
+
+
+def test_announced_notification_preserves_runtime_proof(tmp_path):
+    canary = tmp_path / "canary"
+    canary.write_text("nonce\n")
+    events = probe_events("fixed probe", "nonce")
+    events[0]["params"]["item"]["tools"][0]["tools"].append({"name": "send_message_to_user_async"})
+    proof = host.verify_probe(events, "fixed probe", "nonce", canary)
+    assert "functions.send_message_to_user_async" in proof["outer_tools"]
+
+
+@pytest.mark.parametrize("failure", [BrokenPipeError, host.ReaderUnavailable], ids=["disconnect", "output"])
+def test_transient_disconnect_resumes_without_second_driver_invocation(repo, monkeypatch, failure):
+    del repo
+    Path("first.py").write_text("value = 2\n")
+    result = runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="host")
+    assert result["status"] == "success"
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+
+    class Flaky(SimulatedHost):
+        resumed: ClassVar[list[str]] = []
+        disconnected = False
+
+        def turn(self, message):
+            if not type(self).disconnected:
+                data = self.on_tool({"arguments": {}, "callId": "first"})
+                complete_result(self.on_event.__self__, data, "first")
+                type(self).disconnected = True
+                raise failure("retry after ACK")
+            return super().turn(message)
+
+    monkeypatch.setattr(driver, "CodexReviewHost", Flaky)
+    assert driver.run("feature")["status"] == "success"
+    assert Flaky.resumed == ["", "thread"]
+    assert runner.write_review_verdict_ledger(current_run=True, branch="feature")["completeness"]["status"] == "COMPLETE"
 
 
 def test_driver_resume_same_thread_and_complete_receipts(repo, monkeypatch):
@@ -455,8 +574,11 @@ def test_timeout_is_bounded(timeout):
         driver.run(timeout=timeout)
 
 
-@pytest.mark.parametrize("arguments", ["--adversarial --quick", "--adversarial --quick --compare-orderings"])
-def test_driver_adversarial_roster_and_ordering_sessions(repo, monkeypatch, arguments):
+@pytest.mark.parametrize(("arguments", "unavailable"), [
+    ("--adversarial --quick", ""), ("--adversarial --quick --compare-orderings", ""),
+    ("--adversarial --quick", "maintainer"),
+])
+def test_driver_adversarial_roster_and_ordering_sessions(repo, monkeypatch, arguments, unavailable):
     del repo
     Path("first.py").write_text("value = 2\n")
     admitted = runner.begin_review_run(branch="feature", provider="codex", arguments=arguments, round_id="host")
@@ -479,8 +601,13 @@ def test_driver_adversarial_roster_and_ordering_sessions(repo, monkeypatch, argu
                 response = self.on_tool({"arguments": {}, "callId": str(count)})
                 state = json.loads(response["contentItems"][0]["text"])
                 if state["status"] == "context_ready":
-                    return json.dumps(with_paraphrase({"reviewer": state["reviewer"], "all_clear": True,
-                        "all_clear_rationale": "Read the changed source", "findings": [], "checks_performed": ["source"],
+                    if state["reviewer"] == unavailable:
+                        raise host.UnverifiedReader("reader failed isolation")
+                    findings = [{"severity": "IMPORTANT", "category": "correctness", "file_path": "first.py",
+                                "failure_mode": "Consumer reads the wrong value", "evidence": "value = 2",
+                                "recommendation": "Restore the expected value"}] if unavailable and state["reviewer"] == "blind" else []
+                    return json.dumps(with_paraphrase({"reviewer": state["reviewer"], "all_clear": not findings,
+                        "all_clear_rationale": "Read the changed source", "findings": findings, "checks_performed": ["source"],
                         "receipt": {"covered_files": self.covered_files(), "skipped_files": [], "denied_access": [], "check_evidence": []},
                         "context_receipt": {"session_id": state["session_id"], "finalization_token": state["finalization_token"]}}))
                 self.on_event({"method": "item/completed", "params": {"threadId": self.identity, "item": {
@@ -492,6 +619,15 @@ def test_driver_adversarial_roster_and_ordering_sessions(repo, monkeypatch, argu
     AdversarialHost.resumed = []
     monkeypatch.setattr(driver, "CodexReviewHost", AdversarialHost)
     result = driver.run("feature")
+    if unavailable:
+        assert result["status"] == "incomplete"
+        assert runner.write_review_verdict_ledger(current_run=True, branch="feature")["status"] == "success"
+        ledger = runner._read_review_ledger(Path(".map/feature"))
+        aggregate = json.loads(Path(".map/feature/review-agent-adversarial.json").read_text())
+        assert aggregate["reviewer_status"][unavailable] == {"status": "not_run", "error": "reader failed isolation"}
+        assert any("Consumer reads the wrong value" in item["claim"] for item in ledger["findings_registry"])
+        assert ledger["completeness"]["status"] == "INCOMPLETE" and not ledger["code_approval"]["approved"]
+        return
     assert result["status"] == "success", result
     assert {entry["reviewer"] for entry in result["reviewers"]} == {"blind", "acceptance", "user_experience", "maintainer"}
     assert len(AdversarialHost.resumed) == (8 if "--compare-orderings" in arguments else 4)
@@ -601,6 +737,162 @@ def interrupted_round(monkeypatch):
     path = Path(".map/feature/review-verdict-ledger.json")
     ledger = json.loads(path.read_text())
     return path, ledger, ledger["convergence"]["rounds"][-1]
+
+
+def test_lost_thread_restarts_only_its_own_read_progress(repo, monkeypatch):
+    del repo
+    monkeypatch.setattr(SimulatedHost, "interrupt_resource", "diff")
+    path, _, before = interrupted_round(monkeypatch)
+    old = next(iter(before["context_sessions"].values()))
+    assert old["offsets"]["diff"] > 0
+
+    class Lost(SimulatedHost):
+        attempts: ClassVar[list[str]] = []
+
+        def start(self, thread_id=""):
+            self.attempts.append(thread_id)
+            if thread_id:
+                raise host.MissingThread("no rollout")
+            return "replacement"
+
+        def probe(self, context_id):
+            return {**super().probe(context_id), "thread_id": "replacement"}
+
+        def turn(self, message):
+            initial = self.on_tool.__self__.refresh()
+            assert initial["remaining"] and initial["agent_id"] == "replacement"
+            row = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
+            saved = row["context_sessions"][initial["session_id"]]
+            assert saved["offsets"].get("diff", 0) == 0
+            assert set(saved["offsets"]) <= {"prompt"}
+            return super().turn(message)
+
+    monkeypatch.setattr(driver, "CodexReviewHost", Lost)
+    result = driver.run("feature")
+    assert result["status"] == "success" and Lost.attempts == ["thread", ""]
+    after = json.loads(path.read_text())["convergence"]["rounds"][-1]
+    assert after["round_id"] == before["round_id"]
+    assert len(after["context_sessions"]) == 2
+    assert runner.write_review_verdict_ledger(current_run=True, branch="feature")["completeness"]["status"] == "COMPLETE"
+
+
+@pytest.mark.parametrize(("private_verified", "busy_once"), [(True, False), (False, False), (True, True)],
+                         ids=["verified", "unverified", "temporary-process-pressure"])
+def test_new_tool_routes_only_to_independently_probed_reader(repo, monkeypatch, private_verified, busy_once):
+    del repo
+    Path("first.py").write_text("changed\\n")
+    assert runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="host")["status"] == "success"
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    probes = []
+    reads = []
+
+    class Isolated(SimulatedHost):
+        def __init__(self, *, isolated, **kwargs):
+            nonlocal busy_once
+            if isolated and busy_once:
+                busy_once = False
+                with patch.object(host.subprocess, "run", side_effect=BlockingIOError(errno.EAGAIN, "busy")):
+                    host.CodexReviewHost(executable=sys.executable, isolated=True)
+            super().__init__(**kwargs)
+            self.isolated = isolated
+
+        def probe(self, context_id):
+            probes.append(self.isolated)
+            assert self.on_tool is None
+            if not self.isolated or not private_verified:
+                host.check_outer_tools({"tools": [{"name": "future", "tools": [{"name": "builtin"}]}]})
+            return {**super().probe(context_id), "isolated_catalog": self.isolated}
+
+        def turn(self, message):
+            reads.append(self.isolated)
+            return super().turn(message)
+
+    monkeypatch.setattr(driver, "CodexReviewHost", Isolated)
+    clock = Mock(wraps=driver.time)
+    clock.sleep.side_effect = AssertionError("Unverified catalogs must not loop")
+    monkeypatch.setattr(driver, "time", clock)
+    result = driver.run("feature")
+    assert probes == [False, True]
+    if not private_verified:
+        assert not reads and result["status"] == "incomplete"
+        assert result["reviewers"][0]["status"] == "unverified"
+        assert "future.builtin" in result["reviewers"][0]["reason"]
+        verdict = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+        assert verdict["completeness"]["status"] == "INCOMPLETE" and not verdict["code_approval"]["approved"]
+        return
+    assert result["status"] == "success" and reads == [True]
+    row = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
+    session = next(iter(row["context_sessions"].values()))
+    assert session["host_capability"]["isolated_catalog"]
+
+
+@pytest.mark.parametrize("permanent", [False, True], ids=["unavailable", "refused"])
+def test_failure_in_one_shard_allows_other_shards_to_finish(repo, monkeypatch, permanent):
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(
+        runner.REVIEW_CONTEXT_RESERVE_BYTES + runner.REVIEW_ROLE_RUBRIC_RESERVE_BYTES + 60_000))
+    scope_tests.write_changes()
+    scope_tests.write_many(6)
+    admission = runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="host")
+    shards = admission["shard_ids"]
+    assert len(shards) >= 2
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    class FindingHost(SimulatedHost):
+        def turn(self, message):
+            report = json.loads(super().turn(message))
+            if permanent:
+                report["issues"] = [{"severity": "IMPORTANT", "category": "correctness",
+                    "file_path": self.covered_files()[0], "description": "A successful monitor shard found a dropped value"}]
+            return json.dumps(report)
+
+    monkeypatch.setattr(driver, "CodexReviewHost", FindingHost)
+    original = driver._collect_role
+    attempts = []
+
+    def collect(branch, round_id, role, entry, ordering, shard, candidate_recheck, timeout):
+        attempts.append(shard)
+        if len(attempts) == 1:
+            if permanent:
+                raise host.RejectedTurn("badRequest: fix input")
+            raise host.ReaderUnavailable("worker unavailable")
+        return original(branch, round_id, role, entry, ordering, shard, candidate_recheck, timeout)
+
+    monkeypatch.setattr(driver, "_collect_role", collect)
+    result = driver.run("feature")
+    verdict = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    if permanent:
+        ledger = runner._read_review_ledger(Path(".map/feature"))
+        assert any("dropped value" in item["claim"] for item in ledger["findings_registry"])
+        assert not Path(".map/feature/review-agent-monitor.json").exists()
+        assert attempts == shards
+        assert result["status"] == "incomplete"
+        assert result["reviewers"][0]["reason"] == "badRequest: fix input"
+        assert all(r["status"] == "success" for r in result["reviewers"][1:])
+        assert verdict["completeness"]["status"] == "INCOMPLETE" and not verdict["code_approval"]["approved"]
+    else:
+        assert attempts == [*shards, shards[0]]
+        assert result["status"] == "success" and verdict["completeness"]["status"] == "COMPLETE"
+
+
+@pytest.mark.parametrize(("failure", "expected"), [(host.UnverifiedReader, "unverified"), (host.ReaderUnavailable, "unavailable")])
+def test_unverified_advisory_lens_does_not_block_required_reviewers(repo, monkeypatch, failure, expected):
+    del repo
+    Path("first.py").write_text("changed\n")
+    assert runner.begin_review_run(branch="feature", provider="codex", mode="full", round_id="host")["status"] == "success"
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+
+    def collect(branch, round_id, role, *args):
+        if role == "complexity_lens":
+            raise failure("advisory reader unavailable")
+        return {"status": "success", "reviewer": role}
+
+    monkeypatch.setattr(driver, "_collect_role", collect)
+    result = driver.run("feature")
+    assert any(item["reviewer"] == "complexity_lens" and item["status"] == expected for item in result["reviewers"])
+    assert result["status"] == "success"
+    runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    row = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
+    assert row["advisory_results"]["default:complexity_lens"] == {"status": expected, "reason": "advisory reader unavailable"}
 
 
 def test_pending_round_from_an_older_runner_is_resumed_on_a_fresh_thread_without_abandon(repo, monkeypatch):
