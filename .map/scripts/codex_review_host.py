@@ -6,6 +6,7 @@ client. The sole dynamic tool is serviced by the runner from immutable resources
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -177,6 +178,10 @@ def verify_probe(events: list[dict[str, Any]], script: str, nonce: str, canary: 
             "probe_sha256": hashlib.sha256(json.dumps(events, sort_keys=True).encode()).hexdigest()}
 
 
+def _temporary_process_error(exc: Exception) -> bool:
+    return isinstance(exc, OSError) and exc.errno in {errno.EAGAIN, errno.EINTR, errno.ENOMEM, errno.EMFILE, errno.ENFILE}
+
+
 class CodexReviewHost:
     """One persistent app-server connection; safe dynamic tools and denied approvals."""
 
@@ -208,18 +213,24 @@ class CodexReviewHost:
                 catalog_path = self.root / "review-models.json"
                 catalog_path.write_text(json.dumps(models))
                 flags.append("model_catalog_json=" + json.dumps(str(catalog_path)))
-            except subprocess.TimeoutExpired as exc:
-                self.temporary.cleanup()
-                raise TransportInterrupted("Codex model catalog request timed out") from exc
             except (OSError, KeyError, TypeError, ValueError, subprocess.SubprocessError) as exc:
                 self.temporary.cleanup()
+                if isinstance(exc, subprocess.TimeoutExpired) or _temporary_process_error(exc):
+                    raise TransportInterrupted("Codex model catalog is temporarily unavailable") from exc
                 raise UnverifiedReader("Codex could not start an isolated reader catalog") from exc
         self.stderr = (self.root / "stderr.log").open("wb")
         argv = [str(self.binary), "app-server", "--stdio"]
         for flag in flags:
             argv.extend(["-c", flag])
-        self.process = subprocess.Popen(argv, cwd=self.root, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                        stderr=self.stderr)
+        try:
+            self.process = subprocess.Popen(argv, cwd=self.root, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                            stderr=self.stderr)
+        except OSError as exc:
+            self.stderr.close()
+            self.temporary.cleanup()
+            if _temporary_process_error(exc):
+                raise TransportInterrupted("Codex app-server is temporarily unavailable") from exc
+            raise HostError(f"Codex app-server could not start: {exc}") from exc
         assert self.process.stdin is not None and self.process.stdout is not None
         self.stdin = self.process.stdin
         self.stdout = self.process.stdout

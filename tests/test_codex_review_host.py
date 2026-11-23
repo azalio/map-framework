@@ -1,10 +1,11 @@
 """Host observations, rather than model assertions, fence Codex review capabilities."""
+import errno
 import importlib
 import json
 import sys
 from pathlib import Path
 from typing import Any, ClassVar
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -262,12 +263,19 @@ def test_missing_executable_gives_setup_error(monkeypatch):
 
 @pytest.mark.parametrize(("failure", "expected"), [
     (host.subprocess.TimeoutExpired("debug models", 1), host.TransportInterrupted),
+    (BlockingIOError(errno.EAGAIN, "process pressure"), host.TransportInterrupted),
     (host.subprocess.CalledProcessError(1, "debug models"), host.UnverifiedReader),
 ])
 def test_isolated_catalog_startup_failure(monkeypatch, failure, expected):
     monkeypatch.setattr(host.subprocess, "run", Mock(side_effect=failure))
     with pytest.raises(expected):
         host.CodexReviewHost(executable=sys.executable, isolated=True)
+
+
+def test_app_server_spawn_resource_pressure_is_retryable(monkeypatch):
+    monkeypatch.setattr(host.subprocess, "Popen", Mock(side_effect=BlockingIOError(errno.EAGAIN, "process pressure")))
+    with pytest.raises(host.TransportInterrupted):
+        host.CodexReviewHost(executable=sys.executable)
 
 
 def test_announced_notification_preserves_runtime_proof(tmp_path):
@@ -554,8 +562,11 @@ def test_timeout_is_bounded(timeout):
         driver.run(timeout=timeout)
 
 
-@pytest.mark.parametrize("arguments", ["--adversarial --quick", "--adversarial --quick --compare-orderings"])
-def test_driver_adversarial_roster_and_ordering_sessions(repo, monkeypatch, arguments):
+@pytest.mark.parametrize(("arguments", "unavailable"), [
+    ("--adversarial --quick", ""), ("--adversarial --quick --compare-orderings", ""),
+    ("--adversarial --quick", "maintainer"),
+])
+def test_driver_adversarial_roster_and_ordering_sessions(repo, monkeypatch, arguments, unavailable):
     del repo
     Path("first.py").write_text("value = 2\n")
     admitted = runner.begin_review_run(branch="feature", provider="codex", arguments=arguments, round_id="host")
@@ -578,8 +589,13 @@ def test_driver_adversarial_roster_and_ordering_sessions(repo, monkeypatch, argu
                 response = self.on_tool({"arguments": {}, "callId": str(count)})
                 state = json.loads(response["contentItems"][0]["text"])
                 if state["status"] == "context_ready":
-                    return json.dumps(with_paraphrase({"reviewer": state["reviewer"], "all_clear": True,
-                        "all_clear_rationale": "Read the changed source", "findings": [], "checks_performed": ["source"],
+                    if state["reviewer"] == unavailable:
+                        raise host.UnverifiedReader("reader failed isolation")
+                    findings = [{"severity": "IMPORTANT", "category": "correctness", "file_path": "first.py",
+                                "failure_mode": "Consumer reads the wrong value", "evidence": "value = 2",
+                                "recommendation": "Restore the expected value"}] if unavailable and state["reviewer"] == "blind" else []
+                    return json.dumps(with_paraphrase({"reviewer": state["reviewer"], "all_clear": not findings,
+                        "all_clear_rationale": "Read the changed source", "findings": findings, "checks_performed": ["source"],
                         "receipt": {"covered_files": self.covered_files(), "skipped_files": [], "denied_access": [], "check_evidence": []},
                         "context_receipt": {"session_id": state["session_id"], "finalization_token": state["finalization_token"]}}))
                 self.on_event({"method": "item/completed", "params": {"threadId": self.identity, "item": {
@@ -591,6 +607,15 @@ def test_driver_adversarial_roster_and_ordering_sessions(repo, monkeypatch, argu
     AdversarialHost.resumed = []
     monkeypatch.setattr(driver, "CodexReviewHost", AdversarialHost)
     result = driver.run("feature")
+    if unavailable:
+        assert result["status"] == "incomplete"
+        assert runner.write_review_verdict_ledger(current_run=True, branch="feature")["status"] == "success"
+        ledger = runner._read_review_ledger(Path(".map/feature"))
+        aggregate = json.loads(Path(".map/feature/review-agent-adversarial.json").read_text())
+        assert aggregate["reviewer_status"][unavailable] == {"status": "not_run", "error": "reader failed isolation"}
+        assert any("Consumer reads the wrong value" in item["claim"] for item in ledger["findings_registry"])
+        assert ledger["completeness"]["status"] == "INCOMPLETE" and not ledger["code_approval"]["approved"]
+        return
     assert result["status"] == "success", result
     assert {entry["reviewer"] for entry in result["reviewers"]} == {"blind", "acceptance", "user_experience", "maintainer"}
     assert len(AdversarialHost.resumed) == (8 if "--compare-orderings" in arguments else 4)
@@ -739,8 +764,9 @@ def test_lost_thread_restarts_only_its_own_read_progress(repo, monkeypatch):
     assert runner.write_review_verdict_ledger(current_run=True, branch="feature")["completeness"]["status"] == "COMPLETE"
 
 
-@pytest.mark.parametrize("private_verified", [True, False], ids=["verified", "unverified"])
-def test_new_tool_routes_only_to_independently_probed_reader(repo, monkeypatch, private_verified):
+@pytest.mark.parametrize(("private_verified", "busy_once"), [(True, False), (False, False), (True, True)],
+                         ids=["verified", "unverified", "temporary-process-pressure"])
+def test_new_tool_routes_only_to_independently_probed_reader(repo, monkeypatch, private_verified, busy_once):
     del repo
     Path("first.py").write_text("changed\\n")
     assert runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="host")["status"] == "success"
@@ -750,6 +776,11 @@ def test_new_tool_routes_only_to_independently_probed_reader(repo, monkeypatch, 
 
     class Isolated(SimulatedHost):
         def __init__(self, *, isolated, **kwargs):
+            nonlocal busy_once
+            if isolated and busy_once:
+                busy_once = False
+                with patch.object(host.subprocess, "run", side_effect=BlockingIOError(errno.EAGAIN, "busy")):
+                    host.CodexReviewHost(executable=sys.executable, isolated=True)
             super().__init__(**kwargs)
             self.isolated = isolated
 
@@ -818,6 +849,24 @@ def test_failure_in_one_shard_allows_other_shards_to_finish(repo, monkeypatch, p
     else:
         assert attempts == [*shards, shards[0]]
         assert result["status"] == "success" and verdict["completeness"]["status"] == "COMPLETE"
+
+
+@pytest.mark.parametrize(("failure", "expected"), [(host.UnverifiedReader, "unverified"), (host.ReaderUnavailable, "unavailable")])
+def test_unverified_advisory_lens_does_not_block_required_reviewers(repo, monkeypatch, failure, expected):
+    del repo
+    Path("first.py").write_text("changed\n")
+    assert runner.begin_review_run(branch="feature", provider="codex", mode="full", round_id="host")["status"] == "success"
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+
+    def collect(branch, round_id, role, *args):
+        if role == "complexity_lens":
+            raise failure("advisory reader unavailable")
+        return {"status": "success", "reviewer": role}
+
+    monkeypatch.setattr(driver, "_collect_role", collect)
+    result = driver.run("feature")
+    assert any(item["reviewer"] == "complexity_lens" and item["status"] == expected for item in result["reviewers"])
+    assert result["status"] == "success"
 
 
 def test_pending_round_from_an_older_runner_is_resumed_on_a_fresh_thread_without_abandon(repo, monkeypatch):

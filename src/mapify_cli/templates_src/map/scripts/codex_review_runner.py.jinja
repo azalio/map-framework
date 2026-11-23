@@ -430,6 +430,7 @@ def run(branch: str | None = None, *, timeout: float = 900, review_preferences: 
         # Intent: prompts and contexts are per shard, built once and reused by every ordering.
         built_by_shard = {shard: build(shard) for shard in shard_ids}
         orderings = ("default", "reverse") if binding["review_mode"] == "compare_orderings" else ("",)
+        required = set(binding["scheduled_reviewers"])
         roles = list(binding["scheduled_reviewers"])
         rechecks = _candidate_recheck_messages(selected, row.get("shards", []))
         if not selected and normal and binding["mode"] != "lightweight" and "complexity_lens" in built_by_shard[shard_ids[0]]["prompts"]:
@@ -437,7 +438,7 @@ def run(branch: str | None = None, *, timeout: float = 900, review_preferences: 
         pending = [(ordering, shard, role) for ordering in orderings for shard in shard_ids
                    for role in (list(reversed(roles)) if ordering == "reverse" else roles)]
         results = []
-        groups: dict[tuple[str, str], dict[str, str]] = {}
+        groups: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
         delay = 1
         while pending:
             deferred = []
@@ -448,23 +449,30 @@ def run(branch: str | None = None, *, timeout: float = 900, review_preferences: 
                     result = _collect_role(branch, row["round_id"], role, built_by_shard[shard]["prompts"][role],
                                            ordering, shard, rechecks[shard], timeout)
                 except (RejectedTurn, UnverifiedReader) as exc:
-                    failure = {"status": "unverified" if isinstance(exc, UnverifiedReader) else "rejected",
-                               **job, "reason": str(exc)}
-                    print(json.dumps(failure), flush=True)
-                    results.append(failure)
-                    continue
+                    result = {"status": "unverified" if isinstance(exc, UnverifiedReader) else "rejected",
+                              **job, "reason": str(exc)}
+                    print(json.dumps(result), flush=True)
                 except ReaderUnavailable as exc:
-                    print(json.dumps({"status": "retry_pending", **job, "reason": str(exc)}), flush=True)
-                    deferred.append((ordering, shard, role))
-                    continue
+                    if role in required:
+                        print(json.dumps({"status": "retry_pending", **job, "reason": str(exc)}), flush=True)
+                        deferred.append((ordering, shard, role))
+                        continue
+                    result = {"status": "unavailable", **job, "reason": str(exc)}
+                    print(json.dumps(result), flush=True)
                 results.append({key: value for key, value in result.items() if key != "output"}
                                | ({"shard": shard} if shard else {}))
                 if not normal:
-                    outputs = groups.setdefault((ordering, shard), {})
-                    outputs[role] = result["output"]
-                    if len(outputs) == len(roles):
+                    group = groups.setdefault((ordering, shard), {})
+                    group[role] = result
+                    if len(group) == len(roles):
+                        outputs = {name: entry.get("output") for name, entry in group.items()}
                         aggregate = runner.aggregate_adversarial_findings(outputs.get("blind"), outputs.get("edge_case"),
                             outputs.get("acceptance"), {name: outputs.get(name) for name in runner.ROLE_REVIEWER_IDS})
+                        for name, entry in group.items():
+                            if entry["status"] != "success":
+                                aggregate["reviewer_status"][name] = {"status": "not_run", "error": entry["reason"]}
+                                aggregate["summary"]["per_reviewer_counts"][name] = 0
+                                aggregate["summary"]["all_clear_by_reviewer"][name] = None
                         require_success(runner.capture_review_output("adversarial", json.dumps(aggregate), row["round_id"],
                                                                     ordering=ordering, branch=branch, shard=shard))
                         del groups[ordering, shard]
@@ -476,8 +484,8 @@ def run(branch: str | None = None, *, timeout: float = 900, review_preferences: 
                 time.sleep(delay)
                 delay = min(300, delay * 2)
             pending = deferred
-        status = "incomplete" if any(item["status"] in {"unverified", "rejected"} for item in results) else "success"
-        return {"status": status, "reviewers": results}
+        incomplete = any(item["reviewer"] in required and item["status"] != "success" for item in results)
+        return {"status": "incomplete" if incomplete else "success", "reviewers": results}
 
 
 if __name__ == "__main__":
