@@ -208,9 +208,12 @@ class CodexReviewHost:
                 catalog_path = self.root / "review-models.json"
                 catalog_path.write_text(json.dumps(models))
                 flags.append("model_catalog_json=" + json.dumps(str(catalog_path)))
+            except subprocess.TimeoutExpired as exc:
+                self.temporary.cleanup()
+                raise TransportInterrupted("Codex model catalog request timed out") from exc
             except (OSError, KeyError, TypeError, ValueError, subprocess.SubprocessError) as exc:
                 self.temporary.cleanup()
-                raise ReaderUnavailable("Codex could not start an isolated reader catalog") from exc
+                raise UnverifiedReader("Codex could not start an isolated reader catalog") from exc
         self.stderr = (self.root / "stderr.log").open("wb")
         argv = [str(self.binary), "app-server", "--stdio"]
         for flag in flags:

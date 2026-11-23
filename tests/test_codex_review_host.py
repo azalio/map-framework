@@ -260,6 +260,16 @@ def test_missing_executable_gives_setup_error(monkeypatch):
     assert not isinstance(caught.value, host.ReaderUnavailable)
 
 
+@pytest.mark.parametrize(("failure", "expected"), [
+    (host.subprocess.TimeoutExpired("debug models", 1), host.TransportInterrupted),
+    (host.subprocess.CalledProcessError(1, "debug models"), host.UnverifiedReader),
+])
+def test_isolated_catalog_startup_failure(monkeypatch, failure, expected):
+    monkeypatch.setattr(host.subprocess, "run", Mock(side_effect=failure))
+    with pytest.raises(expected):
+        host.CodexReviewHost(executable=sys.executable, isolated=True)
+
+
 def test_announced_notification_preserves_runtime_proof(tmp_path):
     canary = tmp_path / "canary"
     canary.write_text("nonce\n")
@@ -729,7 +739,8 @@ def test_lost_thread_restarts_only_its_own_read_progress(repo, monkeypatch):
     assert runner.write_review_verdict_ledger(current_run=True, branch="feature")["completeness"]["status"] == "COMPLETE"
 
 
-def test_new_tool_routes_only_to_independently_probed_reader(repo, monkeypatch):
+@pytest.mark.parametrize("private_verified", [True, False], ids=["verified", "unverified"])
+def test_new_tool_routes_only_to_independently_probed_reader(repo, monkeypatch, private_verified):
     del repo
     Path("first.py").write_text("changed\\n")
     assert runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="host")["status"] == "success"
@@ -745,7 +756,7 @@ def test_new_tool_routes_only_to_independently_probed_reader(repo, monkeypatch):
         def probe(self, context_id):
             probes.append(self.isolated)
             assert self.on_tool is None
-            if not self.isolated:
+            if not self.isolated or not private_verified:
                 host.check_outer_tools({"tools": [{"name": "future", "tools": [{"name": "builtin"}]}]})
             return {**super().probe(context_id), "isolated_catalog": self.isolated}
 
@@ -754,9 +765,19 @@ def test_new_tool_routes_only_to_independently_probed_reader(repo, monkeypatch):
             return super().turn(message)
 
     monkeypatch.setattr(driver, "CodexReviewHost", Isolated)
+    clock = Mock(wraps=driver.time)
+    clock.sleep.side_effect = AssertionError("Unverified catalogs must not loop")
+    monkeypatch.setattr(driver, "time", clock)
     result = driver.run("feature")
-    assert result["status"] == "success"
-    assert probes == [False, True] and reads == [True]
+    assert probes == [False, True]
+    if not private_verified:
+        assert not reads and result["status"] == "incomplete"
+        assert result["reviewers"][0]["status"] == "unverified"
+        assert "future.builtin" in result["reviewers"][0]["reason"]
+        verdict = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+        assert verdict["completeness"]["status"] == "INCOMPLETE" and not verdict["code_approval"]["approved"]
+        return
+    assert result["status"] == "success" and reads == [True]
     row = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
     session = next(iter(row["context_sessions"].values()))
     assert session["host_capability"]["isolated_catalog"]

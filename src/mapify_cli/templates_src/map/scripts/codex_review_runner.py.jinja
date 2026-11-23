@@ -447,10 +447,11 @@ def run(branch: str | None = None, *, timeout: float = 900, review_preferences: 
                 try:
                     result = _collect_role(branch, row["round_id"], role, built_by_shard[shard]["prompts"][role],
                                            ordering, shard, rechecks[shard], timeout)
-                except RejectedTurn as exc:
-                    refusal = {"status": "rejected", **job, "reason": str(exc)}
-                    print(json.dumps(refusal), flush=True)
-                    results.append(refusal)
+                except (RejectedTurn, UnverifiedReader) as exc:
+                    failure = {"status": "unverified" if isinstance(exc, UnverifiedReader) else "rejected",
+                               **job, "reason": str(exc)}
+                    print(json.dumps(failure), flush=True)
+                    results.append(failure)
                     continue
                 except ReaderUnavailable as exc:
                     print(json.dumps({"status": "retry_pending", **job, "reason": str(exc)}), flush=True)
@@ -475,7 +476,7 @@ def run(branch: str | None = None, *, timeout: float = 900, review_preferences: 
                 time.sleep(delay)
                 delay = min(300, delay * 2)
             pending = deferred
-        status = "incomplete" if any(item["status"] == "rejected" for item in results) else "success"
+        status = "incomplete" if any(item["status"] in {"unverified", "rejected"} for item in results) else "success"
         return {"status": status, "reviewers": results}
 
 
