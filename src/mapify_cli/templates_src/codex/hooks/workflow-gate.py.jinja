@@ -2,16 +2,16 @@
 """
 MAP Workflow Enforcement Gate (PreToolUse Hook)
 
-Codex invokes this hook for Bash and apply_patch.
+Provider-agnostic: works with both Claude Code and Codex CLI.
 
 Blocks Edit/Write/MultiEdit outside of Actor-related phases.
-Phase checks read the orchestrator’s step_state.json. Verifier write permissions apply in every phase.
+Uses step_state.json (orchestrator canonical state) as single source of truth.
 
 ENFORCEMENT:
   - Edit allowed during phases: ACTOR, APPLY, TEST_WRITER
   - Edit blocked during all other phases (DECOMPOSE, MONITOR, PREDICTOR, etc.)
   - Fail-open: missing or unreadable step_state.json → allow
-  - Verifier writes stay within the project artifact tree. Git checks also honor the local autonomy posture.
+  - Always allows: .map/ artifacts, non-editing tools
   - Every blocking phase (RESEARCH, INIT_STATE, DECOMPOSE, ...) blocks only
     the CURRENT subtask's declared affected_files; files orthogonal to that
     subtask are allowed in ANY phase so out-of-band hotfixes don't have to
@@ -27,7 +27,7 @@ Bash commands whose write target is explicit (``>``/``>>`` redirection,
 ``tee``, ``sed -i``, ``cp``/``mv``/``install``, ``dd of=``, ``sort``/``yq``
 ``-o``, ``git --output``) and Codex ``apply_patch`` headers are normalized to
 target paths and pass through the same phase gate. A Bash command with no
-extractable target skips file phase checks (same limitation as the Claude twin,
+extractable target is NOT gated (same known limitation as the Claude twin,
 #164): the orchestrator itself runs ``VAR=$(python3 .map/scripts/...)``,
 ``pytest`` and similar commands in every phase, so opaque commands cannot be
 denied without deadlocking the workflow. An explicit target that still needs
@@ -134,12 +134,13 @@ STEP_ID_TO_PHASE = {
 def extract_target_file_paths(tool_call: dict) -> list[str]:
     """Extract file paths from tool call payload."""
     tool_input = tool_call.get("tool_input") or {}
-    paths = extract_apply_patch_paths(tool_input) if tool_call.get("tool_name") == "apply_patch" else []
     if not isinstance(tool_input, dict):
-        return paths
+        return []
 
-    direct = tool_input.get("file_path") or tool_input.get("path")
-    if isinstance(direct, str) and direct:
+    paths: list[str] = []
+
+    direct = tool_input.get("file_path")
+    if isinstance(direct, str) and direct.strip():
         paths.append(direct)
 
     edits = tool_input.get("edits")
@@ -147,10 +148,13 @@ def extract_target_file_paths(tool_call: dict) -> list[str]:
         for edit in edits:
             if isinstance(edit, dict):
                 fp = edit.get("file_path")
-                if isinstance(fp, str) and fp:
+                if isinstance(fp, str) and fp.strip():
                     paths.append(fp)
 
     command = tool_input.get("command")
+    if tool_call.get("tool_name") == "apply_patch":
+        paths.extend(extract_apply_patch_paths(tool_input))
+
     if tool_call.get("tool_name") == "Bash" and isinstance(command, str):
         paths.extend(_bash_write_targets(command))
 
@@ -841,9 +845,6 @@ def _create_safety_guardrail_hold(branch: str, rel_path: str) -> None:
     )
 
 
-[% include "_partials/workflow-write-permissions.py.jinja" %]
-
-
 def deny(reason: str) -> None:
     """Print deny response and exit."""
     print(
@@ -876,7 +877,6 @@ def main() -> None:
             allow()
 
         target_paths = extract_target_file_paths(tool_call)
-        enforce_workflow_write_permissions(tool_call, target_paths)
         branch = get_branch_name()
         interrupted = _has_active_interruption(branch)
         if interrupted:

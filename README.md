@@ -331,11 +331,11 @@ This writes `sofa.enabled: true` to `.map/config.yaml` and adds `.sofa/` to your
 **Autonomy posture** (`--autonomy`, claude provider) — **off by default**, opt-in "YOLO-minus-git":
 
 ```bash
-mapify init . --autonomy        # auto-approve most tools; keep git commit/push for the human
+mapify init . --autonomy        # auto-approve most tools; add Claude deny rules for direct git commit/push
 mapify init . --no-autonomy     # remove the autonomy posture
 ```
 
-`--autonomy` writes a broad auto-approve allowlist plus a `git commit`/`push` deny into the **per-user, gitignored** `.claude/settings.local.json` (the committed team `.claude/settings.json` stays the secure baseline). The git block is enforced by the `workflow-gate.py` PreToolUse hook. Omit the flag to leave existing local settings untouched on re-init. See the [autonomy usage guide](docs/USAGE.md#autonomy-posture-yolo-minus-git).
+`--autonomy` writes a broad auto-approve allowlist plus a `git commit`/`push` deny into the **per-user, gitignored** `.claude/settings.local.json` (the committed team `.claude/settings.json` stays the secure baseline). Claude Code evaluates those permissions. Omit the flag to leave existing local settings untouched on re-init. See the [autonomy usage guide](docs/USAGE.md#autonomy-posture-yolo-minus-git).
 
 </details>
 

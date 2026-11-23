@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- MAP no longer ships the Safety Guardrails hook for Claude or Codex. Upgrading removes its filename and shell command filters, including patterns from `.map/config.yaml`. The workflow gate enforces verifier write permissions and the Git restrictions selected by `--autonomy`. (#705)
+- MAP no longer ships the Safety Guardrails hook for Claude or Codex. Upgrading removes its filename and shell command filters, including patterns from `.map/config.yaml`. The hook’s verifier-specific write checks and additional Git checks for `--autonomy` are also removed. Claude still evaluates the native Git deny rules in its local settings. (#705)
 
 ### Added
 

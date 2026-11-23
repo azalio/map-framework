@@ -111,7 +111,7 @@ classification is enforced by `scripts/lint-hooks.py` (in `make lint` /
 
 | Hook | Event | Blocking? | Class | Purpose |
 |------|-------|-----------|-------|---------|
-| `workflow-gate.py` | `PreToolUse` (Edit/Write/MultiEdit/Bash) | Yes (JSON deny) | FORBID_GUARD | Enforce Actor+Monitor workflow before edits |
+| `workflow-gate.py` | `PreToolUse` (Edit/Write/MultiEdit) | Yes (JSON deny) | FORBID_GUARD | Enforce Actor+Monitor workflow before edits |
 | `post-compact-context.py` | `SessionStart` (compact) | No | FORBID_GUARD | Inject restore-point context (re-prime after compaction) |
 | `context-meter.py` | `UserPromptSubmit` | No | REQUIRE_GUARD | Nudge `/compact <focus>` when the token threshold is crossed |
 | `map-token-meter.py` | `SubagentStop` + `Stop` | No | REQUIRE_GUARD | Attribute per-turn token usage to the active MAP subtask |

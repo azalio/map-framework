@@ -976,9 +976,7 @@ public internet source — never as instructions.
 ## Autonomy posture (YOLO-minus-git)
 
 `mapify init --autonomy` is an **opt-in, off-by-default** convenience posture for
-the **claude provider**: auto-approve most tools so the agent runs without
-per-action prompts, while keeping the human in control of `git commit` / `git
-push`.
+the **Claude provider**. It adds broad tool approvals and native deny rules for direct `git commit` and `git push` commands.
 
 ### Enabling / disabling
 
@@ -1002,7 +1000,7 @@ team-shared `.claude/settings.json`, which stays the secure curated baseline:
               "MultiEdit(*)", "Glob(*)", "Grep(*)", "LS(*)"],
     "deny":  ["Bash(git commit:*)", "Bash(git push:*)"]
   },
-  "mapify": { "autonomy": true }   // sentinel read by the safety hook
+  "mapify": { "autonomy": true }   // records the selected posture
 }
 ```
 
@@ -1012,21 +1010,7 @@ personal posture cannot leak to the team. `--no-autonomy` removes the broad
 allow, the git deny, and the sentinel, preserving the narrow per-project dev
 allowlist.
 
-### Why a hook, not just the permission deny
-
-Claude Code evaluates `deny` before `allow`, but under a broad `Bash(*)` allow
-the permission-level git deny is **bypassable**: `bash -c 'git commit'` matches
-as `bash`, not `git commit`. So the deny is documentation / defense-in-depth,
-and the actual hard block is the `workflow-gate.py` **PreToolUse hook**,
-which sees the raw command string and blocks `git commit` / `git push`
-(including shell-wrapped `bash -c '…'` and chained `… && git commit` forms).
-
-The hook block is **gated on the `mapify.autonomy` sentinel**, so it only fires
-when autonomy is active — the standard commit workflow is never broken for
-non-autonomy users (whose committed `settings.json` still allows `git commit`).
-The sentinel lives beside the permissions it governs so the two cannot drift
-apart. The hook catches realistic (sloppy / model-generated) bypasses, not a
-determined adversary — pair it with branch protection for an absolute guarantee.
+Claude Code evaluates these permission rules. MAP does not inspect shell commands issued under this posture.
 
 The Codex provider does not install Claude's `settings.local.json`, so
 `--autonomy` / `--no-autonomy` is ignored there (with a note).
@@ -2763,6 +2747,8 @@ Guidelines in `.claude/CLAUDE.md` that guide agent behavior:
 
 ### Layer 2: Permissions (settings.json)
 
+On upgrade, MAP removes the Safety Guardrails hook for both providers. Its filename and shell command filters stop running. Existing `dangerous_file_patterns`, `safe_path_prefixes`, `strict_sensitive_names`, and `dangerous_commands` settings in `.map/config.yaml` have no effect.
+
 Claude Code evaluates its native permission rules from the [project settings](../src/mapify_cli/templates/settings.json). You can add your own rules in `.claude/settings.local.json`.
 
 Path-scoped deny rules must use `Edit(<glob>)` — Claude Code resolves file
@@ -2778,7 +2764,7 @@ PreToolUse and Stop hooks that run before/after tool execution:
 
 | Hook | Type | Purpose |
 |------|------|---------|
-| `workflow-gate.py` | PreToolUse | Enforces workflow phases and verifier write permissions |
+| `workflow-gate.py` | PreToolUse | Enforces edit permissions for the active workflow phase |
 | `end-of-turn.sh` | Stop | Gates changed files only (syntax/secrets/.env); honors `stop_hook_active` |
 
 **Enforcement:** Hard (deterministic exit codes)
@@ -3144,7 +3130,7 @@ To disable one, remove its entry from `UserPromptSubmit` in `.claude/settings.js
 
 | Hook | Event | Purpose |
 |------|-------|---------|
-| `workflow-gate.py` | PreToolUse | Enforces workflow phases and verifier write permissions |
+| `workflow-gate.py` | PreToolUse | Enforces edit permissions for the active workflow phase |
 | `workflow-context-injector.py` | PreToolUse | Injects a short MAP workflow reminder before edits and significant Bash commands |
 | `end-of-turn.sh` | Stop | Quality gates on changed files (syntax, secrets, .env) |
 | `scrub-internal-ids.py` | Stop | Removes leaked MAP-internal IDs from run-changed code comments |

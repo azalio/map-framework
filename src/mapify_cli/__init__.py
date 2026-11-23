@@ -1199,7 +1199,7 @@ def init(
         help=(
             "Opt-in 'YOLO-minus-git' posture (claude provider only): auto-approve "
             "most tools in the per-user, gitignored .claude/settings.local.json "
-            "while a PreToolUse hook keeps git commit/push blocked (you run them). "
+            "and add Claude permission rules denying direct git commit/push. "
             "--no-autonomy removes it. Omit to leave existing local settings "
             "untouched. The committed team settings.json stays the secure baseline. "
             "See docs/USAGE.md."

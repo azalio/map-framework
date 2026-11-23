@@ -559,7 +559,7 @@ and its manifest entry are refreshed on each write, so whole-file bytes can chan
 - **Install manifest**: `.map/mapify.lock.json` is the aggregate audit lock written by `mapify init` via `src/mapify_cli/install_manifest.py`; `mapify check-installed` reads its canonical provider collection and managed-file union to detect missing/drifted/orphaned files. Security invariants: no absolute paths, no secrets, machine-local `settings.local.json` excluded from the committed manifest.
 - **Automatic update state**: `.map/update-state.json`, `.map/update.lock`, `.map/installer.lock`, and `.map/provider-refresh.lock` are gitignored local runtime files owned by `src/mapify_cli/update_state.py`; none is the install manifest. `MAP_UPDATE_PARENT_LEASE` is an ephemeral direct-child credential, not persisted configuration.
 - **Approval holds and completion state**: `src/mapify_cli/templates/map/scripts/map_step_runner.py` owns approval-hold JSON/report artifacts, while `src/mapify_cli/templates/map/scripts/map_orchestrator.py` owns completed-state archive and branch-reuse cleanup.
-- **Governance regression evidence**: `tests/test_governance_attack_fixtures.py` is the deny/allow fixture suite for governance surfaces such as workflow state, mutation boundaries, false-progress gates, wave lifecycle, safety guardrails, workflow-gate, and run-health schema.
+- **Governance regression evidence**: `tests/test_governance_attack_fixtures.py` is the deny/allow fixture suite for governance surfaces such as workflow state, mutation boundaries, false-progress gates, wave lifecycle, the workflow gate, and the run-health schema.
 - **Documentation**: `README.md`, `docs/USAGE.md`, `docs/INSTALL.md`, and this document define expected behavior and invariants.
 
 ## Worktree Isolation (per-subtask checkouts)
@@ -2446,7 +2446,7 @@ If you forked the skill-backed `/map-efficient` workflow, you must manually inte
 
 **Responsibility:** Adversarial verifier applying the "Four-Eyes Principle" — verifies the ENTIRE task goal is achieved, not just individual subtasks. Catches premature completion and hallucinated success.
 
-**Capability Constraints (frontmatter + hook):** `disallowedTools: [Agent]`. FinalVerifier audits, it does not fix — and it must not spawn sub-agents. `Write` stays permitted because it owns `.map/<branch>/final_verification.json` and the progress markdown; the `workflow-gate.py` PreToolUse hook confines those writes to `.map/` and blocks git-mutating Bash (`commit`, `push`, `reset`, `checkout`, `restore`, `add`, …) for every verifier-class `agent_type` (`final-verifier`, `monitor`, `evaluator`, `predictor`, `documentation-reviewer`). Read-only git (`status`, `diff`, `log`, `show`, `rev-parse`, `ls-files`) and all reads stay unrestricted — a verifier gathers evidence, then reports it in the verdict.
+**Agent permissions.** `disallowedTools: [Agent]` prevents FinalVerifier from starting subagents. It uses Edit and Write to record its verdict in `.map/<branch>/final_verification.json` and the progress file. Its role instructions assign source changes and Git writes to the orchestrator.
 
 **Input:**
 ```json

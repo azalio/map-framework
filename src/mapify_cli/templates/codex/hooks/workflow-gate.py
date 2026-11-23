@@ -2,16 +2,16 @@
 """
 MAP Workflow Enforcement Gate (PreToolUse Hook)
 
-Codex invokes this hook for Bash and apply_patch.
+Provider-agnostic: works with both Claude Code and Codex CLI.
 
 Blocks Edit/Write/MultiEdit outside of Actor-related phases.
-Phase checks read the orchestrator’s step_state.json. Verifier write permissions apply in every phase.
+Uses step_state.json (orchestrator canonical state) as single source of truth.
 
 ENFORCEMENT:
   - Edit allowed during phases: ACTOR, APPLY, TEST_WRITER
   - Edit blocked during all other phases (DECOMPOSE, MONITOR, PREDICTOR, etc.)
   - Fail-open: missing or unreadable step_state.json → allow
-  - Verifier writes stay within the project artifact tree. Git checks also honor the local autonomy posture.
+  - Always allows: .map/ artifacts, non-editing tools
   - Every blocking phase (RESEARCH, INIT_STATE, DECOMPOSE, ...) blocks only
     the CURRENT subtask's declared affected_files; files orthogonal to that
     subtask are allowed in ANY phase so out-of-band hotfixes don't have to
@@ -27,7 +27,7 @@ Bash commands whose write target is explicit (``>``/``>>`` redirection,
 ``tee``, ``sed -i``, ``cp``/``mv``/``install``, ``dd of=``, ``sort``/``yq``
 ``-o``, ``git --output``) and Codex ``apply_patch`` headers are normalized to
 target paths and pass through the same phase gate. A Bash command with no
-extractable target skips file phase checks (same limitation as the Claude twin,
+extractable target is NOT gated (same known limitation as the Claude twin,
 #164): the orchestrator itself runs ``VAR=$(python3 .map/scripts/...)``,
 ``pytest`` and similar commands in every phase, so opaque commands cannot be
 denied without deadlocking the workflow. An explicit target that still needs
@@ -204,12 +204,13 @@ STEP_ID_TO_PHASE = {
 def extract_target_file_paths(tool_call: dict) -> list[str]:
     """Extract file paths from tool call payload."""
     tool_input = tool_call.get("tool_input") or {}
-    paths = extract_apply_patch_paths(tool_input) if tool_call.get("tool_name") == "apply_patch" else []
     if not isinstance(tool_input, dict):
-        return paths
+        return []
 
-    direct = tool_input.get("file_path") or tool_input.get("path")
-    if isinstance(direct, str) and direct:
+    paths: list[str] = []
+
+    direct = tool_input.get("file_path")
+    if isinstance(direct, str) and direct.strip():
         paths.append(direct)
 
     edits = tool_input.get("edits")
@@ -217,10 +218,13 @@ def extract_target_file_paths(tool_call: dict) -> list[str]:
         for edit in edits:
             if isinstance(edit, dict):
                 fp = edit.get("file_path")
-                if isinstance(fp, str) and fp:
+                if isinstance(fp, str) and fp.strip():
                     paths.append(fp)
 
     command = tool_input.get("command")
+    if tool_call.get("tool_name") == "apply_patch":
+        paths.extend(extract_apply_patch_paths(tool_input))
+
     if tool_call.get("tool_name") == "Bash" and isinstance(command, str):
         paths.extend(_bash_write_targets(command))
 
@@ -911,218 +915,6 @@ def _create_safety_guardrail_hold(branch: str, rel_path: str) -> None:
     )
 
 
-def _autonomy_enabled() -> bool:
-    """Return True when the per-user autonomy posture is active.
-
-    Detected via the ``mapify.autonomy`` sentinel that ``mapify init --autonomy``
-    writes into the gitignored ``.claude/settings.local.json``. The sentinel lives
-    beside the permissions it governs so posture and permissions cannot drift
-    apart. Read fresh on each invocation (the hook is a short-lived subprocess).
-    """
-    path = PROJECT_DIR / ".claude" / "settings.local.json"
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:  # noqa: BLE001 -- deliberate fallback/resilience boundary, must not propagate
-        return False
-    return (
-        isinstance(data, dict)
-        and isinstance(data.get("mapify"), dict)
-        and data["mapify"].get("autonomy") is True
-    )
-
-
-def check_autonomy_git_block(command: str) -> tuple[bool, str]:
-    """Hard-block ``git commit`` / ``git push`` when autonomy mode is active.
-
-    Under a broad ``Bash(*)`` allow the permission-level deny for git commit/push
-    is bypassable (``bash -c 'git commit'`` matches as ``bash``, not as
-    ``git commit``). This PreToolUse hook sees the raw command string, so a single
-    regex over the whole command catches the wrapped/chained forms too — it is the
-    only gate that survives ``bash -c``. Catches realistic (sloppy /
-    model-generated) bypasses, not a determined adversary; pair with branch
-    protection for an absolute guarantee.
-    """
-    if not command or "git" not in command.lower() or not _autonomy_enabled():
-        return True, ""
-
-    # ``git`` must start a shell token (handles ``bash -c 'git commit'``);
-    # optional git options / ``-C <path>`` may sit between git and the subcommand;
-    # the subcommand must itself be a full token (avoids matching ``committing``).
-    git_block = re.compile(
-        r"(?:^|[\s;&|`'\"()])"
-        r"git\s+"
-        r"(?:-\S+\s+|-C\s+\S+\s+|-c\s+\S+\s+)*"
-        r"(?:commit|push)"
-        r"(?:$|[\s;&|`'\"()])",
-        re.IGNORECASE,
-    )
-    if git_block.search(command):
-        return (
-            False,
-            ("Autonomy mode blocks git commit/push — run it yourself "
-            "(human owns commit/push)."),
-        )
-    return True, ""
-
-
-# =============================================================================
-# Verifier-class capability boundary (#424)
-# =============================================================================
-
-# Agents dispatched with a read-and-report contract. They legitimately write
-# their own review artifacts under `.map/<branch>/`, but must never mutate
-# source or the branch — a final-verifier run once hand-edited generated trees
-# and committed them mid-audit, then reported "working tree clean" for its own
-# post-commit state, masking the breakage from the orchestrating session.
-VERIFIER_AGENT_TYPES = frozenset(
-    {
-        "final-verifier",
-        "monitor",
-        "evaluator",
-        "predictor",
-        "documentation-reviewer",
-    }
-)
-
-# Write scope a verifier keeps: the project-root `.map/` artifact tree, and only
-# that one. Resolved against CLAUDE_PROJECT_DIR at call time — see
-# check_verifier_path.
-VERIFIER_WRITABLE_DIRNAME = ".map"
-
-# git subcommands that mutate the index, the worktree, refs, history, or config.
-# `pull`/`fetch`/`submodule` are included because they move the very refs the
-# verifier is auditing; `config`/`update-ref`/`symbolic-ref`/`filter-branch`/`notes`
-# because they rewrite repository state out from under the audit. A verifier needs
-# none of them — the list is deliberately fail-closed.
-_GIT_MUTATING_SUBCOMMANDS = (
-    "add",
-    "am",
-    "apply",
-    "branch",
-    "checkout",
-    "cherry-pick",
-    "clean",
-    "commit",
-    "config",
-    "fetch",
-    "filter-branch",
-    "gc",
-    "merge",
-    "mv",
-    "notes",
-    "prune",
-    "pull",
-    "push",
-    "rebase",
-    "reset",
-    "restore",
-    "revert",
-    "rm",
-    "sparse-checkout",
-    "stash",
-    "submodule",
-    "switch",
-    "symbolic-ref",
-    "tag",
-    "update-ref",
-    "worktree",
-)
-
-
-def _normalize_agent_type(raw: object) -> str:
-    """Strip plugin scoping (`plugin:pkg:monitor` -> `monitor`) and lowercase."""
-    if not isinstance(raw, str):
-        return ""
-    return raw.strip().split(":")[-1].lower()
-
-
-def is_verifier_agent(agent_type: object) -> bool:
-    """True when the tool call originates from a read-and-report agent."""
-    return _normalize_agent_type(agent_type) in VERIFIER_AGENT_TYPES
-
-
-def check_verifier_command(command: str) -> tuple[bool, str]:
-    """Block git mutations from a verifier-class agent. Returns (is_safe, reason).
-
-    Same token-anchored matching as the autonomy block so `bash -c 'git commit'`
-    and `git -C <path> commit` are caught too. Read-only git (status, diff, log,
-    show, rev-parse, ls-files) stays allowed — it is how a verifier gathers
-    evidence.
-    """
-    if not command:
-        return True, ""
-
-    pattern = re.compile(
-        r"(?:^|[\s;&|`'\"()])"
-        r"git\s+"
-        r"(?:-\S+\s+|-C\s+\S+\s+|-c\s+\S+\s+)*"
-        r"(?:" + "|".join(_GIT_MUTATING_SUBCOMMANDS) + r")"
-        r"(?:$|[\s;&|`'\"()])",
-        re.IGNORECASE,
-    )
-    match = pattern.search(command)
-    if match:
-        return (
-            False,
-            (
-                f"Blocked: verifier-class agents must not mutate the branch "
-                f"(matched `{match.group(0).strip()}`). Report the finding in your "
-                "verdict instead — the orchestrating session owns all git writes."
-            ),
-        )
-    return True, ""
-
-
-def check_verifier_path(path: str) -> tuple[bool, str]:
-    """Confine verifier writes to the PROJECT-ROOT `.map/`. Returns (is_safe, reason).
-
-    Containment is decided on the resolved path, never on path text. A textual
-    check is bypassable three ways, all of which land outside the artifact tree:
-    `.map/../src/cli.py` (starts with the prefix), `src/.map/payload.py` (contains
-    `/.map/`), and `/elsewhere/.map/x` (an unrelated project's directory).
-
-    This is the outer boundary only. Runner-owned state INSIDE `.map/`
-    (`.map/scripts/**`, `step_state.json`, `approval_holds.json`, …) is separately
-    protected from direct hand-editing by the workflow-gate state-tamper detector,
-    which applies to every caller, not just verifiers.
-    """
-    if not path:
-        return True, ""
-    map_root = os.path.realpath(PROJECT_DIR / VERIFIER_WRITABLE_DIRNAME)
-    candidate = PROJECT_DIR / path
-    resolved = os.path.realpath(candidate)
-    if resolved == map_root or resolved.startswith(map_root + os.sep):
-        return True, ""
-    return (
-        False,
-        (
-            f"Blocked: verifier-class agents may only write under the project's "
-            f"`{VERIFIER_WRITABLE_DIRNAME}/` artifact tree; refused write to {path}. "
-            "Report the required change in your verdict instead of applying it."
-        ),
-    )
-
-
-def enforce_workflow_write_permissions(tool_call: dict, paths: list[str]) -> None:
-    verifier = is_verifier_agent(tool_call.get("agent_type"))
-    if tool_call.get("tool_name") == "Bash":
-        command = (tool_call.get("tool_input") or {}).get("command", "")
-        if verifier:
-            allowed, reason = check_verifier_command(command)
-            if not allowed:
-                deny(reason)
-        allowed, reason = check_autonomy_git_block(command)
-        if not allowed:
-            deny(reason)
-    if verifier:
-        for path in paths:
-            allowed, reason = check_verifier_path(path)
-            if not allowed:
-                deny(reason)
-
-
-
 def deny(reason: str) -> None:
     """Print deny response and exit."""
     print(
@@ -1155,7 +947,6 @@ def main() -> None:
             allow()
 
         target_paths = extract_target_file_paths(tool_call)
-        enforce_workflow_write_permissions(tool_call, target_paths)
         branch = get_branch_name()
         interrupted = _has_active_interruption(branch)
         if interrupted:

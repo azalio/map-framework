@@ -2379,7 +2379,9 @@ class TestRefreshExistingInit:
         assert not retired.exists()
         assert retired.name not in registration.read_text()
 
-        # Recreate a previous installation, including an unrelated user hook.
+        # The retired policy has no substitute registration in either provider.
+        assert "git-permissions" not in registration.read_text()
+        # Preserve an unrelated user hook even when its name resembles the retired script.
         template = tmp_path / "old-hook.py"
         template.write_text("#!/usr/bin/env python3\nprint('{}')\n")
         assert copy_managed_file(template, retired, "3.39.1").success
@@ -2396,7 +2398,7 @@ class TestRefreshExistingInit:
         entries.insert(0, {"matcher": "Read|Edit", "hooks": [{"type": "command", "command": command}]})
         registration.write_text(json.dumps(settings))
         user = json.loads(user_settings.read_text())
-        user_hook = {"type": "command", "command": "check-project-style"}
+        user_hook = {"type": "command", "command": "check-project-safety-guardrails.py.backup"}
         user.setdefault("hooks", {}).setdefault("PreToolUse", []).append({"matcher": "Edit", "hooks": [user_hook]})
         user_settings.write_text(json.dumps(user))
 
@@ -2404,8 +2406,9 @@ class TestRefreshExistingInit:
             refresh = runner.invoke(app, [*args, "--refresh-existing"])
             assert refresh.exit_code == 0, refresh.output
             assert not retired.exists()
-            assert retired.name not in registration.read_text()
-            assert "check-project-style" in user_settings.read_text()
+            groups = json.loads(registration.read_text())["hooks"]["PreToolUse"]
+            assert all(hook.get("command") != command for group in groups for hook in group["hooks"])
+            assert "check-project-safety-guardrails.py.backup" in user_settings.read_text()
         if provider == "claude":
             # Read events follow the installed matchers, including absolute paths.
             settings = json.loads(registration.read_text())
@@ -2426,6 +2429,42 @@ class TestRefreshExistingInit:
                         )
                         decision = json.loads(result.stdout or "{}").get("hookSpecificOutput", {})
                         assert decision.get("permissionDecision") != "deny"
+
+    @pytest.mark.parametrize("provider", ["claude", "codex"])
+    def test_refresh_preserves_script_used_by_custom_hook(self, tmp_path, monkeypatch, provider):
+        from mapify_cli.delivery.managed_file_copier import copy_managed_file
+
+        monkeypatch.chdir(tmp_path)
+        args = ["init", ".", "--provider", provider, "--no-git", "--force"]
+        assert runner.invoke(app, [*args, "--mcp", "none"]).exit_code == 0
+        directory = tmp_path / f".{provider}"
+        legacy = directory / "hooks" / "safety-guardrails.py"
+        source = tmp_path / "sample.py"
+        source.write_text("print('custom registration')\n")
+        assert copy_managed_file(source, legacy, "3.39.1").success
+        settings = directory / ("settings.local.json" if provider == "claude" else "hooks.json")
+        config = json.loads(settings.read_text())
+        command = f"python3 {legacy}"
+        config.setdefault("hooks", {}).setdefault("PreToolUse", []).append(
+            {"matcher": "Edit", "hooks": [{"type": "command", "command": command}]}
+        )
+        settings.write_text(json.dumps(config))
+        refresh = runner.invoke(app, [*args, "--refresh-existing"])
+        assert refresh.exit_code == 0, refresh.output
+        assert command in settings.read_text()
+        assert subprocess.check_output([sys.executable, str(legacy)], text=True).strip() == "custom registration"
+
+    def test_unreadable_retired_hook_is_preserved(self, tmp_path, monkeypatch):
+        from mapify_cli.delivery.file_copier import remove_retired_safety_hook
+
+        directory = tmp_path / ".claude"
+        script = directory / "hooks" / "safety-guardrails.py"
+        script.parent.mkdir(parents=True)
+        script.write_text("project copy")
+        with monkeypatch.context() as context:
+            context.setattr(Path, "read_text", mock.Mock(side_effect=PermissionError))
+            remove_retired_safety_hook(directory)
+        assert script.read_text() == "project copy"
 
     def test_refresh_existing_skips_global_permissions(self, tmp_path: Path) -> None:
         os.chdir(tmp_path)

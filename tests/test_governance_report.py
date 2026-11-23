@@ -236,6 +236,12 @@ class TestBuildGovernanceReport:
         report = build_governance_report(tmp_path)
         assert any("workflow-gate.py not found" in g for g in report.gaps)
 
+    def test_unregistered_retired_script_has_no_enforcement(self, map_project: Path) -> None:
+        hooks = map_project / ".claude" / "hooks"
+        _make_hook(hooks, "safety-guardrails.py")
+        report = build_governance_report(map_project)
+        assert all(asset.name != "safety-guardrails.py" for asset in report.assets)
+
     def test_unknown_hook_classified_as_harness(self, tmp_path: Path) -> None:
         claude = tmp_path / ".claude"
         hooks = claude / "hooks"

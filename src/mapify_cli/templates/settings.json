@@ -83,17 +83,6 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash",
-        "description": "Check Git permissions for verifier roles and the local autonomy posture",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/workflow-gate.py --git-permissions",
-            "timeout": 5
-          }
-        ]
-      },
-      {
         "matcher": "Edit|Write|MultiEdit",
         "description": "Workflow Gate - enforce Actor+Monitor before edits (MAP)",
         "hooks": [

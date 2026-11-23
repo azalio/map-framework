@@ -10,6 +10,7 @@ import importlib.util
 import inspect
 import json
 import os
+import re
 import secrets
 import shutil
 import stat
@@ -1551,7 +1552,6 @@ def apply_reflector_memory_field(project_path: Path, level: str) -> int:
     Returns:
         1 if the file was modified, 0 if already up-to-date or not found.
     """
-    import re
 
     reflector_path = project_path / ".claude" / "agents" / "reflector.md"
     if not reflector_path.exists():
@@ -1639,6 +1639,29 @@ the same name.
 
 
 RETIRED_SAFETY_HOOK = "safety-guardrails.py"
+_RETIRED_HOOK_ARGUMENT = re.compile(rf"(?<![\w.-]){re.escape(RETIRED_SAFETY_HOOK)}(?![\w./-])")
+
+
+def retired_safety_hook_is_registered(provider_dir: Path) -> bool:
+    """Recognize project-owned registrations that still depend on the old script."""
+    settings_names = ("hooks.json",) if provider_dir.name == ".codex" else ("settings.json", "settings.local.json")
+    for name in settings_names:
+        settings = _read_json_object(provider_dir / name) or {}
+        groups = settings.get("hooks")
+        if not isinstance(groups, dict):
+            continue
+        for entries in groups.values():
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                hooks = entry.get("hooks") if isinstance(entry, dict) else None
+                if not isinstance(hooks, list):
+                    continue
+                for hook in hooks:
+                    command = hook.get("command") if isinstance(hook, dict) else None
+                    if isinstance(command, str) and _RETIRED_HOOK_ARGUMENT.search(command):
+                        return True
+    return False
 
 
 def remove_retired_safety_hook(provider_dir: Path) -> None:
@@ -1649,7 +1672,7 @@ def remove_retired_safety_hook(provider_dir: Path) -> None:
         return
     try:
         content = script.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
+    except (OSError, UnicodeDecodeError):
         return
     metadata, body = extract_metadata(content, ".py")
     if isinstance(metadata, dict) and metadata.get("generated_by") == "mapify-cli":
@@ -1663,7 +1686,7 @@ def remove_retired_safety_hook(provider_dir: Path) -> None:
             "983718c8a32130add2b2aaa13e70d074b96bb9c137f2b166ac19502eade2144c",
             "e909232e0b199a653340bcde021527678c427ab52aac4517ee550fb898584c8d",
         }
-    if stock:
+    if stock and not retired_safety_hook_is_registered(provider_dir):
         script.unlink()
 
 
@@ -1676,7 +1699,6 @@ def create_hook_files(
     Returns:
         Number of hook files installed
     """
-    remove_retired_safety_hook(project_path / ".claude")
     hooks_dir = project_path / ".claude" / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1739,6 +1761,7 @@ def create_config_files(
                 drift_report.results.append(result)
             count += 1
 
+    remove_retired_safety_hook(claude_dir)
     return count
 
 

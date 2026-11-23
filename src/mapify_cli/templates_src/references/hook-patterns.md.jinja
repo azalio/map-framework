@@ -70,7 +70,7 @@ MAP-spawned subagent.
 
 | Hook | Event | Blocking? | Rationale for always-fire |
 |------|-------|-----------|---------------------------|
-| `workflow-gate.py` | `PreToolUse` (Edit/Write/MultiEdit/Bash) | Yes (JSON deny) | The Actor+Monitor phase gate must enforce on nested edits exactly as on top-level edits |
+| `workflow-gate.py` | `PreToolUse` (Edit/Write/MultiEdit) | Yes (JSON deny) | The Actor+Monitor phase gate must enforce on nested edits exactly as on top-level edits |
 | `workflow-gate.py` (Codex) | `PreToolUse` | Yes (JSON deny) | Codex twin of the above (`.codex/hooks/` + `src/mapify_cli/templates/codex/hooks/`); same rule |
 | `post-compact-context.py` | `SessionStart` (compact) | No | A nested Actor whose context was just compacted needs the MAP re-prime *more*, not less; SessionStart cannot be self-triggered by a hook, so it is not a recursion source |
 

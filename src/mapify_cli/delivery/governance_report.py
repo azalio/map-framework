@@ -15,6 +15,11 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from mapify_cli.delivery.file_copier import (
+    RETIRED_SAFETY_HOOK,
+    retired_safety_hook_is_registered,
+)
+
 # ---------------------------------------------------------------------------
 # Governance categories
 # ---------------------------------------------------------------------------
@@ -408,6 +413,8 @@ def _scan_hooks(claude_dir: Path) -> list[GovernanceAsset]:
         if hook_path.name == "README.md":
             continue
         if hook_path.suffix not in (".py", ".sh"):
+            continue
+        if hook_path.name == RETIRED_SAFETY_HOOK and not retired_safety_hook_is_registered(claude_dir):
             continue
         meta = _HOOK_META.get(hook_path.name)
         if meta:
