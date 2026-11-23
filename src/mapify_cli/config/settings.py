@@ -17,7 +17,7 @@ from mapify_cli.cli_ui import console
 #
 # The permission-level git deny below is documentation / defense-in-depth: under
 # a broad ``Bash(*)`` allow it is bypassable (``bash -c 'git commit'`` matches as
-# ``bash``). The actual hard block is the ``safety-guardrails.py`` PreToolUse
+# ``bash``). The actual hard block is the ``workflow-gate.py`` PreToolUse
 # hook, which is gated on the ``mapify.autonomy`` sentinel this module writes.
 _AUTONOMY_ALLOW = [
     "Bash(*)",
@@ -270,7 +270,7 @@ def _apply_autonomy(settings: dict[str, Any], permissions: dict[str, Any]) -> No
             deny.append(entry)
 
     # Sentinel beside the permissions it governs so posture and permissions
-    # cannot drift apart; read by the safety-guardrails.py PreToolUse hook.
+    # cannot drift apart; read by the workflow-gate.py PreToolUse hook.
     mapify_meta = settings.setdefault("mapify", {})
     if isinstance(mapify_meta, dict):
         mapify_meta["autonomy"] = True

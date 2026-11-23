@@ -34,7 +34,9 @@ from mapify_cli.delivery.agent_generator import (
 )
 from mapify_cli.delivery.managed_file_copier import (
     DriftReport,
+    compute_hash,
     copy_managed_file,
+    extract_metadata,
 )
 from mapify_cli.schemas import (
     SKILL_REQUIREMENTS_KEYS,
@@ -1636,6 +1638,35 @@ the same name.
 """)
 
 
+RETIRED_SAFETY_HOOK = "safety-guardrails.py"
+
+
+def remove_retired_safety_hook(provider_dir: Path) -> None:
+    """Remove a stock copy on refresh. A locally edited script belongs to the project."""
+    hook_dir = provider_dir / "hooks"
+    script = hook_dir / RETIRED_SAFETY_HOOK
+    if provider_dir.is_symlink() or hook_dir.is_symlink() or script.is_symlink() or not script.is_file():
+        return
+    try:
+        content = script.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return
+    metadata, body = extract_metadata(content, ".py")
+    if isinstance(metadata, dict) and metadata.get("generated_by") == "mapify-cli":
+        # Watched installations wrapped the source after its shebang in a fence.
+        if body.endswith("# map:end\n"):
+            body = body.removesuffix("# map:end\n").replace("\n# map:start\n", "\n", 1)
+        stock = compute_hash(body) == metadata.get("template_hash")
+    else:
+        # Raw copies shipped in the provider trees before retirement.
+        stock = compute_hash(content) in {
+            "983718c8a32130add2b2aaa13e70d074b96bb9c137f2b166ac19502eade2144c",
+            "e909232e0b199a653340bcde021527678c427ab52aac4517ee550fb898584c8d",
+        }
+    if stock:
+        script.unlink()
+
+
 def create_hook_files(
     project_path: Path,
     drift_report: DriftReport | None = None,
@@ -1645,6 +1676,7 @@ def create_hook_files(
     Returns:
         Number of hook files installed
     """
+    remove_retired_safety_hook(project_path / ".claude")
     hooks_dir = project_path / ".claude" / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
 

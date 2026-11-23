@@ -80,7 +80,6 @@ def map_project(tmp_path: Path) -> Path:
     for d in (hooks, skills, refs, learned):
         d.mkdir(parents=True)
 
-    _make_hook(hooks, "safety-guardrails.py")
     _make_hook(hooks, "workflow-gate.py")
     _make_hook(hooks, "map-memory-capture.py")
 
@@ -110,7 +109,6 @@ class TestBuildGovernanceReport:
     def test_scans_hooks(self, map_project: Path) -> None:
         report = build_governance_report(map_project)
         hook_names = {a.name for a in report.assets if a.kind == "hook"}
-        assert "safety-guardrails.py" in hook_names
         assert "workflow-gate.py" in hook_names
 
     def test_hooks_are_enforced(self, map_project: Path) -> None:
@@ -157,11 +155,6 @@ class TestBuildGovernanceReport:
     def test_reads_skill_rules_version(self, map_project: Path) -> None:
         report = build_governance_report(map_project)
         assert report.skill_rules_version == "1.0"
-
-    def test_safety_guardrails_classified_as_policy(self, map_project: Path) -> None:
-        report = build_governance_report(map_project)
-        sg = next(a for a in report.assets if a.name == "safety-guardrails.py")
-        assert sg.category == "policy"
 
     def test_workflow_gate_classified_as_harness(self, map_project: Path) -> None:
         report = build_governance_report(map_project)
@@ -229,7 +222,6 @@ class TestBuildGovernanceReport:
         self, map_project: Path
     ) -> None:
         report = build_governance_report(map_project)
-        # With workflow-gate + safety-guardrails present, the hook-missing gaps should be absent
         hook_gaps = [g for g in report.gaps if "not found" in g]
         assert not hook_gaps
 
@@ -239,23 +231,10 @@ class TestBuildGovernanceReport:
         skills = claude / "skills"
         hooks.mkdir(parents=True)
         skills.mkdir(parents=True)
-        _make_hook(hooks, "safety-guardrails.py")
         _make_skill_rules(skills)
         _make_skill_dir(skills, "map-plan")
         report = build_governance_report(tmp_path)
         assert any("workflow-gate.py not found" in g for g in report.gaps)
-
-    def test_generates_gap_when_safety_guardrails_missing(self, tmp_path: Path) -> None:
-        claude = tmp_path / ".claude"
-        hooks = claude / "hooks"
-        skills = claude / "skills"
-        hooks.mkdir(parents=True)
-        skills.mkdir(parents=True)
-        _make_hook(hooks, "workflow-gate.py")
-        _make_skill_rules(skills)
-        _make_skill_dir(skills, "map-plan")
-        report = build_governance_report(tmp_path)
-        assert any("safety-guardrails.py not found" in g for g in report.gaps)
 
     def test_unknown_hook_classified_as_harness(self, tmp_path: Path) -> None:
         claude = tmp_path / ".claude"
@@ -319,12 +298,12 @@ class TestGovernanceReport:
             project_path=Path("/fake/project"),
             assets=[
                 GovernanceAsset(
-                    "safety-guardrails.py",
+                    "project-policy.py",
                     "hook",
                     "policy",
                     "enforced",
                     "Denies dangerous commands",
-                    ".claude/hooks/safety-guardrails.py",
+                    ".claude/hooks/project-policy.py",
                 ),
                 GovernanceAsset(
                     "workflow-gate.py",

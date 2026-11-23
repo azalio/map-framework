@@ -3,17 +3,6 @@
   "description": "MAP Framework project-level settings with security guardrails",
   "permissions": {
     "deny": [
-      "Edit(**/.env*)",
-      "Edit(**/*credentials*.yaml)",
-      "Edit(**/*credentials*.yml)",
-      "Edit(**/*credentials*.json)",
-      "Edit(**/*credentials*.toml)",
-      "Edit(**/*credentials*.env)",
-      "Edit(**/*secret*.yaml)",
-      "Edit(**/*secret*.yml)",
-      "Edit(**/*secret*.json)",
-      "Edit(**/*secret*.toml)",
-      "Edit(**/*secret*.env)",
       "Bash(rm -rf)",
       "Bash(git push --force origin main)",
       "Bash(git push --force origin master)",
@@ -94,14 +83,13 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|Read|MultiEdit|Bash",
-        "description": "Safety Guardrails - block sensitive files and dangerous commands",
+        "matcher": "Bash",
+        "description": "Check Git permissions for verifier roles and the local autonomy posture",
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/safety-guardrails.py",
-            "timeout": 5,
-            "description": "Blocks .env, credentials, private keys, and dangerous bash commands"
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/workflow-gate.py --git-permissions",
+            "timeout": 5
           }
         ]
       },

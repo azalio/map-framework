@@ -172,7 +172,7 @@ Three checks cover this:
 
 - `mapify init` resolves the interpreter an independent shell would get (skipping its own virtualenv/uvx `bin`) and **stops before writing anything** when it is older than 3.11, naming the version, the path, and the fix. Bypass with `--skip-python-check` or `MAPIFY_SKIP_PYTHON_CHECK=1` — the install completes, the hooks stay non-functional.
 - `mapify check` and `mapify doctor` report the same interpreter line (`python3 on PATH (>= 3.11)`) at any time.
-- Each shipped executable carries its own version guard: on an old interpreter it writes `MAP requires Python 3.11 or newer, but <path> is Python 3.9` to stderr, instead of raising `ImportError: cannot import name 'UTC' from 'datetime'`. Context and observability hooks then exit 1 — a non-blocking hook error, so the reason surfaces and the session continues. The blocking PreToolUse gates (`safety-guardrails.py`, `workflow-gate.py`, and its Codex twin) instead **deny** the tool call with that reason: a guard that cannot run must not silently become "allow". Editing and Bash therefore stay blocked until `python3 --version` reports 3.11+, so fix the interpreter from another terminal.
+- Each shipped executable carries its own version guard: on an old interpreter it writes `MAP requires Python 3.11 or newer, but <path> is Python 3.9` to stderr, instead of raising `ImportError: cannot import name 'UTC' from 'datetime'`. Context and observability hooks then exit 1 — a non-blocking hook error, so the reason surfaces and the session continues. The blocking PreToolUse gates (`workflow-gate.py` for Claude and Codex) instead **deny** the tool call with that reason: a guard that cannot run must not silently become "allow". Editing and Bash therefore stay blocked until `python3 --version` reports 3.11+, so fix the interpreter from another terminal.
 
 ```bash
 python3 --version          # 3.11+ required
@@ -1017,7 +1017,7 @@ allowlist.
 Claude Code evaluates `deny` before `allow`, but under a broad `Bash(*)` allow
 the permission-level git deny is **bypassable**: `bash -c 'git commit'` matches
 as `bash`, not `git commit`. So the deny is documentation / defense-in-depth,
-and the actual hard block is the `safety-guardrails.py` **PreToolUse hook**,
+and the actual hard block is the `workflow-gate.py` **PreToolUse hook**,
 which sees the raw command string and blocks `git commit` / `git push`
 (including shell-wrapped `bash -c '…'` and chained `… && git commit` forms).
 
@@ -1029,22 +1029,7 @@ apart. The hook catches realistic (sloppy / model-generated) bypasses, not a
 determined adversary — pair it with branch protection for an absolute guarantee.
 
 The Codex provider does not install Claude's `settings.local.json`, so
-`--autonomy` / `--no-autonomy` is ignored there (with a note). It does install
-the same `safety-guardrails.py` policy hook for `Bash` and `apply_patch`; the
-autonomy-only commit/push restriction remains inactive without the Claude
-sentinel.
-
-By default `safety-guardrails.py` trusts its safe directories (`src/`, `tests/`,
-`docs/`, ... or your `safe_path_prefixes`) as-is: a file there is allowed even
-if its name looks like a credential. Opt in to the stricter order — the
-sensitive-basename blocklist (`.env*`, `*credentials*`, `*secrets*`, private
-keys, ...) checked **before** the safe directories, so
-`src/config/secrets.yaml` or `tests/fixtures/credentials.json` is denied for
-Read/Edit/Write and Codex `apply_patch` — with one line in `.map/config.yaml`:
-
-```yaml
-strict_sensitive_names: true
-```
+`--autonomy` / `--no-autonomy` is ignored there (with a note).
 
 ## Codex CLI Provider
 
@@ -2778,26 +2763,7 @@ Guidelines in `.claude/CLAUDE.md` that guide agent behavior:
 
 ### Layer 2: Permissions (settings.json)
 
-Access control rules in `.claude/settings.json`:
-
-```json
-{
-  "permissions": {
-    "deny": [
-      "Edit(**/.env*)",
-      "Edit(**/*credentials*.yaml)",
-      "Edit(**/*secret*.yaml)",
-      "Bash(rm:-rf)",
-      "Bash(git:push:--force:origin:main)"
-    ],
-    "allow": [
-      "Bash(mapify:*)",
-      "Bash(pytest:*)",
-      "Bash(make:lint)"
-    ]
-  }
-}
-```
+Claude Code evaluates its native permission rules from the [project settings](../src/mapify_cli/templates/settings.json). You can add your own rules in `.claude/settings.local.json`.
 
 Path-scoped deny rules must use `Edit(<glob>)` — Claude Code resolves file
 permissions through `Edit` rules only, and they already cover every
@@ -2812,57 +2778,12 @@ PreToolUse and Stop hooks that run before/after tool execution:
 
 | Hook | Type | Purpose |
 |------|------|---------|
-| `safety-guardrails.py` | PreToolUse | Denies access to .env, credentials, private keys, and dangerous commands (rm -rf, force push to main, git reset --hard) |
+| `workflow-gate.py` | PreToolUse | Enforces workflow phases and verifier write permissions |
 | `end-of-turn.sh` | Stop | Gates changed files only (syntax/secrets/.env); honors `stop_hook_active` |
 
 **Enforcement:** Hard (deterministic exit codes)
 
-### How the Layers Work Together
-
-```
-User: "Edit .env file"
-
-Layer 1 (CLAUDE.md): Agent should know not to edit .env
-    ↓ (but agent might miss this)
-Layer 2 (settings.json): permissions.deny blocks Edit(./.env*)
-    ↓ (but might be bypassed via path traversal)
-Layer 3 (safety-guardrails.py): Hook intercepts, returns permissionDecision: deny
-    → BLOCKED with clear error message
-```
-
 ### Security Hooks in Detail
-
-#### safety-guardrails.py (PreToolUse)
-
-One merged hook (matcher `Edit|Write|Read|MultiEdit|Bash`) that answers with
-`permissionDecision: deny` instead of an exit code. Its default patterns can be
-overridden in `.map/config.yaml` (`dangerous_file_patterns`, `dangerous_commands`,
-`safe_path_prefixes`, `strict_sensitive_names`).
-
-**Sensitive files (denied):**
-- `.env`, `.env.local`, `.env.production`
-- `credentials*`, `secrets.json` / `secrets.yaml` / `secrets.toml`
-- Private keys (`id_rsa`, `id_ed25519`, `*.pem`, `*.key`, names matching `private[_-]?key`)
-- Password and token files (`password.*` / `passwords.*` / `token.*` / `tokens.*` with a json, yaml, toml or txt extension)
-
-**Example:**
-```bash
-# Attempting to read .env
-Read('.env')
-→ permissionDecision: deny (sensitive file)
-```
-
-**Dangerous commands (denied):**
-- `rm -rf /` (except subpaths of temp roots such as `/tmp/<dir>`), `rm -rf *`, `rm -rf ..`
-- `git push --force origin main`
-- `git push --force origin master`
-- `git reset --hard`
-- Fork bomb, `chmod -R 777 /`, writes to `/dev/sd*`
-
-**Allowed:**
-- `rm -rf ./node_modules` (scoped deletion)
-- `git push --force origin feature-branch` (non-main branch)
-- `git reset --soft` (non-hard reset)
 
 #### end-of-turn.sh (Stop)
 
@@ -3225,8 +3146,7 @@ To disable one, remove its entry from `UserPromptSubmit` in `.claude/settings.js
 
 | Hook | Event | Purpose |
 |------|-------|---------|
-| `safety-guardrails.py` | PreToolUse | Denies access to sensitive files and dangerous shell commands |
-| `workflow-gate.py` | PreToolUse | Blocks edits outside Actor-related phases of an active MAP workflow |
+| `workflow-gate.py` | PreToolUse | Enforces workflow phases and verifier write permissions |
 | `workflow-context-injector.py` | PreToolUse | Injects a short MAP workflow reminder before edits and significant Bash commands |
 | `end-of-turn.sh` | Stop | Quality gates on changed files (syntax, secrets, .env) |
 | `scrub-internal-ids.py` | Stop | Removes leaked MAP-internal IDs from run-changed code comments |

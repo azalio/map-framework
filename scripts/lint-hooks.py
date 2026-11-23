@@ -79,7 +79,6 @@ REQUIRE_GUARD = {
     "map-stop.py",
 }
 FORBID_GUARD = {
-    "safety-guardrails.py",
     "workflow-gate.py",
     "post-compact-context.py",
 }
@@ -440,7 +439,7 @@ def _self_test() -> int:
             "REQUIRE_GUARD misplaced guard",
         ),
         (
-            "safety-guardrails.py",  # FORBID_GUARD but contains a guard
+            "workflow-gate.py",  # FORBID_GUARD but contains a guard
             'import os, sys\n\ndef main() -> None:\n'
             '    if os.environ.get("MAP_INVOKED_BY"):\n        sys.exit(0)\n',
             "FORBID_GUARD contains guard",

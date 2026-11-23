@@ -278,11 +278,8 @@ def hook_project(tmp_path: Path) -> Path:
 
 
 HOOK_CASES: dict[str, list[HookCase]] = {
-    "safety-guardrails.py": [
-        HookCase("deny-env", {"tool_name": "Edit", "tool_input": {"file_path": ".env"}}, _assert_deny),
-        HookCase("allow-src", {"tool_name": "Edit", "tool_input": {"file_path": "src/app.py"}}, _assert_noop),
-    ],
     "workflow-gate.py": [
+        HookCase("deny-verifier-edit", {"agent_type": "monitor", "tool_name": "Edit", "tool_input": {"file_path": "src/app.py"}}, _assert_deny),
         HookCase("allow-in-scope", {"tool_name": "Edit", "tool_input": {"file_path": "src/app.py"}}, _assert_noop),
         HookCase("deny-out-of-scope", {"tool_name": "Edit", "tool_input": {"file_path": "docs/readme.md"}}, _assert_contains("scope_glob")),
     ],

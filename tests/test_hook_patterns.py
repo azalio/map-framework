@@ -125,19 +125,16 @@ def test_forbid_hook_has_zero_flag_references(hook_path: Path) -> None:
     )
 
 
-# safety-guardrails.py copies across all trees that contain it.
-_SAFETY_HOOKS = [p for p in ALL_HOOKS if p.name == "safety-guardrails.py"]
-_SAFETY_IDS = [str(p.relative_to(REPO_ROOT)) for p in _SAFETY_HOOKS]
+# workflow-gate.py copies across all trees that contain it.
+_WORKFLOW_HOOKS = [p for p in ALL_HOOKS if p.name == "workflow-gate.py"]
+_WORKFLOW_IDS = [str(p.relative_to(REPO_ROOT)) for p in _WORKFLOW_HOOKS]
 
 
-@pytest.mark.parametrize("hook_path", _SAFETY_HOOKS, ids=_SAFETY_IDS)
+@pytest.mark.parametrize("hook_path", _WORKFLOW_HOOKS, ids=_WORKFLOW_IDS)
 @pytest.mark.parametrize("flag_set", [False, True], ids=["flag_unset", "flag_set"])
 def test_deny_still_fires_with_flag(hook_path: Path, flag_set: bool) -> None:
     """INV-A1 (behavioral): the deny gate fires whether or not MAP_INVOKED_BY is set."""
-    # Build the dangerous command from fragments so the parent session's own
-    # safety hook does not block this test file / process.
-    dangerous = "rm" + " -" + "rf" + " /"
-    payload = {"tool_name": "Bash", "tool_input": {"command": dangerous}}
+    payload = {"agent_type": "monitor", "tool_name": "Edit", "tool_input": {"file_path": "src/app.py"}}
 
     env = dict(os.environ)
     if flag_set:
@@ -156,7 +153,7 @@ def test_deny_still_fires_with_flag(hook_path: Path, flag_set: bool) -> None:
     )
     blob = (result.stdout or "") + (result.stderr or "")
     assert '"permissionDecision": "deny"' in blob, (
-        f"{hook_path.relative_to(REPO_ROOT)} did not deny a dangerous command "
+        f"{hook_path.relative_to(REPO_ROOT)} did not deny a verifier write "
         f"with MAP_INVOKED_BY {'set' if flag_set else 'unset'}: {blob!r}"
     )
 

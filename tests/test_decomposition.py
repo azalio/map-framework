@@ -529,7 +529,6 @@ class TestProjectConfig:
         assert cfg.profile == "full"
         assert cfg.actor_monitor_max_retries == 5
         assert cfg.confidence_threshold == 0.7
-        assert "src/" in cfg.safe_path_prefixes
         assert cfg.language == ""
         # Phase 3 (#183): global default flipped off -> lite.
         assert cfg.minimality == "lite"
@@ -946,74 +945,6 @@ class TestProjectConfig:
         # The dotted-key alias in load_map_config must translate sofa.enabled
         # -> sofa_enabled so the field is not a silent dead toggle.
         assert cfg.sofa_enabled is True
-
-
-class TestSafetyGuardrailsHookConfig:
-    """Test that safety-guardrails.py reads config overrides."""
-
-    def test_hook_has_config_loading(self):
-        """Verify the hook template loads config overrides."""
-        hook_path = (
-            Path(__file__).parent.parent
-            / "src"
-            / "mapify_cli"
-            / "templates"
-            / "hooks"
-            / "safety-guardrails.py"
-        )
-        content = hook_path.read_text()
-        assert "_load_config_overrides" in content
-        assert "safe_path_prefixes" in content
-        assert "dangerous_file_patterns" in content
-        assert "dangerous_commands" in content
-
-    def test_hook_respects_config_overrides(self, tmp_path):
-        """Runtime test: config overrides affect guardrail behavior."""
-        import importlib.util
-        import os
-
-        # Create a .map/config.yaml with custom safe_path_prefixes
-        map_dir = tmp_path / ".map"
-        map_dir.mkdir()
-        config_path = map_dir / "config.yaml"
-        config_path.write_text(
-            "safe_path_prefixes:\n  - custom_safe/\n  - also_safe/\n"
-        )
-
-        # Copy hook source to a temp module and load it
-        hook_src = (
-            Path(__file__).parent.parent
-            / "src"
-            / "mapify_cli"
-            / "templates"
-            / "hooks"
-            / "safety-guardrails.py"
-        )
-        hook_copy = tmp_path / "guardrails_test.py"
-        hook_copy.write_text(hook_src.read_text())
-
-        old_env = os.environ.get("CLAUDE_PROJECT_DIR")
-        os.environ["CLAUDE_PROJECT_DIR"] = str(tmp_path)
-        try:
-            spec = importlib.util.spec_from_file_location("guardrails_test", hook_copy)
-            assert spec is not None
-            mod = importlib.util.module_from_spec(spec)
-            assert spec.loader is not None
-            spec.loader.exec_module(mod)  # pyright: ignore[reportAttributeAccessIssue]
-            # custom_safe/ should be safe
-            assert mod.is_safe_path("custom_safe/file.py")
-            assert mod.is_safe_path("also_safe/data.json")
-            # src/ should NOT be safe (default overridden)
-            assert not mod.is_safe_path("src/main.py")
-            # An EXPLICIT operator allowlist wins over the sensitive-basename
-            # blocklist; anything outside it is still denied by basename.
-            assert mod.check_file_safety("custom_safe/credentials.json") == (True, "")
-            assert not mod.check_file_safety("src/credentials.json")[0]
-        finally:
-            if old_env is None:
-                os.environ.pop("CLAUDE_PROJECT_DIR", None)
-            else:
-                os.environ["CLAUDE_PROJECT_DIR"] = old_env
 
 
 class TestMapConfigTypeCoercion:

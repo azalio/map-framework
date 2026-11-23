@@ -1183,7 +1183,7 @@ def init(
             "Install even when the `python3` on PATH is older than 3.11. Shipped "
             "hooks and .map/scripts/ runners use that interpreter via their "
             "shebang: context hooks stay broken, and the blocking PreToolUse "
-            "gates (safety-guardrails.py, workflow-gate.py) deny every matched "
+            "gate (workflow-gate.py) denies every matched "
             "tool call until it is upgraded. Equivalent to "
             "MAPIFY_SKIP_PYTHON_CHECK=1."
         ),
@@ -1270,8 +1270,7 @@ def init(
         auto_update = None
         autonomy = None
 
-    # Autonomy posture is delivered via .claude/settings.local.json + the Claude
-    # safety-guardrails hook, neither of which the codex provider installs.
+    # Only Claude installs the per-user autonomy settings.
     if provider == "codex" and autonomy is not None:
         console.print(
             "[yellow]Note:[/yellow] --autonomy/--no-autonomy applies to the claude "

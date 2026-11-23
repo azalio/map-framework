@@ -2365,6 +2365,68 @@ class TestRefreshExistingInit:
         )
         assert settings["mapify"]["autonomy"] is True
 
+    @pytest.mark.parametrize("provider", ["claude", "codex"])
+    def test_retired_hook_disappears_on_refresh(self, tmp_path, monkeypatch, provider):
+        from mapify_cli.delivery.managed_file_copier import copy_managed_file
+
+        monkeypatch.chdir(tmp_path)
+        args = ["init", ".", "--provider", provider, "--force", "--no-git"]
+        first = runner.invoke(app, [*args, "--mcp", "none"])
+        assert first.exit_code == 0, first.output
+        directory = tmp_path / f".{provider}"
+        retired = directory / "hooks" / "safety-guardrails.py"
+        registration = directory / ("hooks.json" if provider == "codex" else "settings.json")
+        assert not retired.exists()
+        assert retired.name not in registration.read_text()
+
+        # Recreate a previous installation, including an unrelated user hook.
+        template = tmp_path / "old-hook.py"
+        template.write_text("#!/usr/bin/env python3\nprint('{}')\n")
+        assert copy_managed_file(template, retired, "3.39.1").success
+        (tmp_path / ".map" / "config.yaml").write_text("strict_sensitive_names: true\n")
+        settings = json.loads(registration.read_text())
+        entries = settings["hooks"]["PreToolUse"]
+        root = "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+        if provider == "codex":
+            command = f'CLAUDE_PROJECT_DIR="{root}" python3 "{root}/.codex/hooks/{retired.name}"'
+            user_settings = registration
+        else:
+            command = f'"$CLAUDE_PROJECT_DIR"/.claude/hooks/{retired.name}'
+            user_settings = directory / "settings.local.json"
+        entries.insert(0, {"matcher": "Read|Edit", "hooks": [{"type": "command", "command": command}]})
+        registration.write_text(json.dumps(settings))
+        user = json.loads(user_settings.read_text())
+        user_hook = {"type": "command", "command": "check-project-style"}
+        user.setdefault("hooks", {}).setdefault("PreToolUse", []).append({"matcher": "Edit", "hooks": [user_hook]})
+        user_settings.write_text(json.dumps(user))
+
+        for _ in range(2):
+            refresh = runner.invoke(app, [*args, "--refresh-existing"])
+            assert refresh.exit_code == 0, refresh.output
+            assert not retired.exists()
+            assert retired.name not in registration.read_text()
+            assert "check-project-style" in user_settings.read_text()
+        if provider == "claude":
+            # Read events follow the installed matchers, including absolute paths.
+            settings = json.loads(registration.read_text())
+            for entry in settings["hooks"]["PreToolUse"]:
+                if entry.get("matcher", "*") == "*" or re.fullmatch(entry["matcher"], "Read"):
+                    for hook in entry["hooks"]:
+                        result = subprocess.run(
+                            hook["command"],
+                            shell=True,
+                            text=True,
+                            capture_output=True,
+                            input=json.dumps({
+                                "tool_name": "Read",
+                                "tool_input": {"file_path": str(tmp_path / "internal/hooks/credentials.go")},
+                            }),
+                            env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
+                            check=True,
+                        )
+                        decision = json.loads(result.stdout or "{}").get("hookSpecificOutput", {})
+                        assert decision.get("permissionDecision") != "deny"
+
     def test_refresh_existing_skips_global_permissions(self, tmp_path: Path) -> None:
         os.chdir(tmp_path)
         with mock.patch("mapify_cli.configure_global_permissions") as configure:
@@ -5662,7 +5724,6 @@ class TestCodexProvider:
             "pre-compact-save-transcript.py",
             "ralph-context-pruner.py",
             "ralph-iteration-logger.py",
-            "safety-guardrails.py",
             "scrub-internal-ids.py",
             "workflow-context-injector.py",
             "workflow-gate.py",
@@ -6040,32 +6101,18 @@ class TestCodexProvider:
         )
         assert hook_output.get("hookEventName") == "PreToolUse"
 
-    def test_ac20b_codex_safety_hook_blocks_apply_patch_secret(self, codex_project):
-        """Codex apply_patch paths pass through the shared sensitive-file gate."""
-        safety_script = codex_project / ".codex" / "hooks" / "safety-guardrails.py"
-        payload = json.dumps(
-            {
-                "hook_event_name": "PreToolUse",
-                "tool_name": "apply_patch",
-                "tool_input": {
-                    "command": "*** Begin Patch\n*** Update File: .env\n*** End Patch\n"
-                },
-            }
+    def test_codex_gate_allows_patch_to_credentials_source(self, codex_project):
+        gate = codex_project / ".codex" / "hooks" / "workflow-gate.py"
+        payload = {
+            "tool_name": "apply_patch",
+            "tool_input": {"command": "*** Begin Patch\n*** Add File: internal/hooks/credentials.go\n+package hooks\n*** End Patch\n"},
+        }
+        result = subprocess.run(
+            [sys.executable, str(gate)], input=json.dumps(payload), cwd=codex_project,
+            capture_output=True, text=True, check=True,
+            env={**os.environ, "CLAUDE_PROJECT_DIR": str(codex_project)},
         )
-
-        proc = subprocess.run(
-            [sys.executable, str(safety_script)],
-            input=payload,
-            capture_output=True,
-            text=True,
-            cwd=codex_project,
-            check=False,
-        )
-
-        assert proc.returncode == 0
-        output = json.loads(proc.stdout)["hookSpecificOutput"]
-        assert output["hookEventName"] == "PreToolUse"
-        assert output["permissionDecision"] == "deny"
+        assert json.loads(result.stdout) == {}
 
     def test_ac20c_codex_compaction_context_uses_session_start(self, codex_project):
         """Post-compaction context uses SessionStart's supported context channel."""

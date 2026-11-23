@@ -134,13 +134,12 @@ STEP_ID_TO_PHASE = {
 def extract_target_file_paths(tool_call: dict) -> list[str]:
     """Extract file paths from tool call payload."""
     tool_input = tool_call.get("tool_input") or {}
+    paths = extract_apply_patch_paths(tool_input) if tool_call.get("tool_name") == "apply_patch" else []
     if not isinstance(tool_input, dict):
-        return []
+        return paths
 
-    paths: list[str] = []
-
-    direct = tool_input.get("file_path")
-    if isinstance(direct, str) and direct.strip():
+    direct = tool_input.get("file_path") or tool_input.get("path")
+    if isinstance(direct, str) and direct:
         paths.append(direct)
 
     edits = tool_input.get("edits")
@@ -148,13 +147,10 @@ def extract_target_file_paths(tool_call: dict) -> list[str]:
         for edit in edits:
             if isinstance(edit, dict):
                 fp = edit.get("file_path")
-                if isinstance(fp, str) and fp.strip():
+                if isinstance(fp, str) and fp:
                     paths.append(fp)
 
     command = tool_input.get("command")
-    if tool_call.get("tool_name") == "apply_patch":
-        paths.extend(extract_apply_patch_paths(tool_input))
-
     if tool_call.get("tool_name") == "Bash" and isinstance(command, str):
         paths.extend(_bash_write_targets(command))
 
@@ -845,6 +841,9 @@ def _create_safety_guardrail_hold(branch: str, rel_path: str) -> None:
     )
 
 
+[% include "_partials/workflow-write-permissions.py.jinja" %]
+
+
 def deny(reason: str) -> None:
     """Print deny response and exit."""
     print(
@@ -877,6 +876,7 @@ def main() -> None:
             allow()
 
         target_paths = extract_target_file_paths(tool_call)
+        enforce_workflow_write_permissions(tool_call, target_paths)
         branch = get_branch_name()
         interrupted = _has_active_interruption(branch)
         if interrupted:

@@ -83,7 +83,8 @@ def test_sibling_search_does_not_close_without_bounded_checked_disposition(evide
 
 
 @pytest.mark.parametrize("builder", ["build_review_prompts", "build_role_review_prompts", "build_adversarial_review_prompts"])
-def test_reviewer_dispatch_includes_evidence_contract_before_capture(builder):
+def test_reviewer_dispatch_includes_evidence_contract_before_capture(builder, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     runner = cast(Any, map_step_runner)
     result = getattr(runner, builder)(git_diff_text="diff")
     prompts = result["prompts"]

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- MAP no longer ships the Safety Guardrails hook for Claude or Codex. Upgrading removes its filename and shell command filters, including patterns from `.map/config.yaml`. The workflow gate enforces verifier write permissions and the Git restrictions selected by `--autonomy`. (#705)
+
 ### Added
 
 - Reviewers preserve substantive discarded hypotheses for parent verification at Step A.3. Snapshot-bound candidate audits keep incomplete reviews unsealed, require checked refutations, and link restored defects to the existing finding validation gate.

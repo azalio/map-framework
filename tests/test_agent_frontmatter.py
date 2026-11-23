@@ -344,11 +344,11 @@ class TestAgentCapabilityHardening:
         `.map/<branch>/progress_<branch>.md` and a `[ ]` -> `[x]` update in the
         task-plan Acceptance Criteria table. Denying Edit would force those through
         whole-file Write and drop surrounding content. The boundary is enforced by
-        SCOPE instead — safety-guardrails.py confines every verifier write to
+        SCOPE instead — workflow-gate.py confines every verifier write to
         `.map/` (#424) — not by removing the capability."""
         fm = self._load_frontmatter("final-verifier")
         disallowed = fm.get("disallowedTools", [])
         assert tool not in disallowed, (
             f"final-verifier needs {tool} for its .map/ artifacts; the `.map/` scope "
-            "check in safety-guardrails.py is the boundary, not a blanket denial"
+            "check in workflow-gate.py is the boundary, not a blanket denial"
         )

@@ -17,6 +17,7 @@ from typing import Any
 from mapify_cli.delivery.file_copier import (
     _IGNORED_TEMPLATE_NAMES,
     _IGNORED_TEMPLATE_SUFFIXES,
+    RETIRED_SAFETY_HOOK,
     _copy_map_path,
     _extract_requires_block,
     _get_version,
@@ -25,6 +26,7 @@ from mapify_cli.delivery.file_copier import (
     _skill_missing_dependency,
     _warn_requires_skills,
     get_templates_dir,
+    remove_retired_safety_hook,
 )
 from mapify_cli.delivery.managed_file_copier import (
     _assert_safe_dest,
@@ -127,6 +129,11 @@ def _is_map_managed_codex_hook(hook: Any, managed_names: frozenset[str]) -> bool
     command = hook.get("command")
     if not isinstance(command, str):
         return False
+    # The retired hook is absent from managed_names. Match its shipped launcher
+    # exactly so a user hook with a similar name remains registered.
+    root = "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    if command == f'CLAUDE_PROJECT_DIR="{root}" python3 "{root}/.codex/hooks/{RETIRED_SAFETY_HOOK}"':
+        return True
     return any(f".codex/hooks/{name}" in command for name in managed_names)
 
 
@@ -389,6 +396,7 @@ def create_codex_files(project_path: Path) -> dict[str, int]:
         )
         counts["hooks"] += 1
 
+    remove_retired_safety_hook(codex_dir)
     hooks_dir_src = codex_templates / "hooks"
     if hooks_dir_src.exists():
         hooks_dst = codex_dir / "hooks"

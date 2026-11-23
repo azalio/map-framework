@@ -11,7 +11,7 @@ Surfaces covered
 2. Mutation-boundary gate      — validate_step("2.4") strict-mode scope leak
 3. False-progress gate         — validate_step("2.4") no affected_files changed
 4. Wave lifecycle              — verify_group_clean with an open group
-5. Safety-guardrails hook      — autonomy-mode git commit blocked
+5. Workflow gate      — autonomy-mode git commit blocked
 6. Workflow-gate hook          — Edit during DECOMPOSE phase blocked
 7. Run-health schema           — validate_run_health_report rejects missing fields
 
@@ -45,7 +45,6 @@ import map_orchestrator  # pyright: ignore[reportMissingImports]
 import map_step_runner  # pyright: ignore[reportMissingImports]
 
 WORKFLOW_GATE_HOOK = REPO_ROOT / ".claude" / "hooks" / "workflow-gate.py"
-SAFETY_HOOK = REPO_ROOT / ".claude" / "hooks" / "safety-guardrails.py"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -73,20 +72,6 @@ def _run_workflow_gate(input_data: dict, cwd: Path) -> tuple[int, str, str]:
         capture_output=True,
         text=True,
         cwd=str(cwd),
-        check=False,
-    )
-    return result.returncode, result.stdout, result.stderr
-
-
-def _run_safety_hook(input_data: dict, env: dict | None = None) -> tuple[int, str, str]:
-    import os
-
-    result = subprocess.run(
-        [sys.executable, str(SAFETY_HOOK)],
-        input=json.dumps(input_data),
-        capture_output=True,
-        text=True,
-        env={**os.environ, **(env or {})},
         check=False,
     )
     return result.returncode, result.stdout, result.stderr
@@ -387,7 +372,7 @@ class TestAttackWaveGroupNotClosed:
 
 
 # ---------------------------------------------------------------------------
-# Surface 5 — Safety-guardrails hook (autonomy-mode git commit blocked)
+# Surface 5 — Workflow gate (autonomy-mode git commit blocked)
 # ---------------------------------------------------------------------------
 
 
@@ -407,26 +392,18 @@ class TestAttackAutonomyModeGitCommit:
     def test_git_commit_denied_in_autonomy_mode(self, tmp_path: Path) -> None:
         self._write_autonomy_settings(tmp_path, enabled=True)
         input_data = {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'sneaky'"}}
-        _, stdout, _ = _run_safety_hook(input_data, env={"CLAUDE_PROJECT_DIR": str(tmp_path)})
+        _, stdout, _ = _run_workflow_gate(input_data, cwd=tmp_path)
         _assert_hook_denied(stdout)
 
     def test_git_commit_allowed_without_autonomy(self, tmp_path: Path) -> None:
         """Control: git commit is NOT blocked when autonomy is off."""
         self._write_autonomy_settings(tmp_path, enabled=False)
         input_data = {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'normal'"}}
-        _, stdout, _ = _run_safety_hook(input_data, env={"CLAUDE_PROJECT_DIR": str(tmp_path)})
+        _, stdout, _ = _run_workflow_gate(input_data, cwd=tmp_path)
         parsed = _parse(stdout)
         # Allowed = empty JSON or no deny decision.
         deny = parsed.get("hookSpecificOutput", {}).get("permissionDecision")
         assert deny != "deny", f"unexpected deny without autonomy: {parsed}"
-
-    def test_env_file_always_blocked_regardless_of_autonomy(self, tmp_path: Path) -> None:
-        """Control: secret file blocking is independent of autonomy mode."""
-        self._write_autonomy_settings(tmp_path, enabled=False)
-        input_data = {"tool_name": "Read", "tool_input": {"file_path": ".env"}}
-        _, stdout, _ = _run_safety_hook(input_data, env={"CLAUDE_PROJECT_DIR": str(tmp_path)})
-        _assert_hook_denied(stdout)
-
 
 # ---------------------------------------------------------------------------
 # Surface 6 — Workflow-gate hook (Edit during non-editing phase blocked)

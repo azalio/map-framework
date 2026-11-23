@@ -11,7 +11,7 @@ effort: high
 # this agent's own contract requires an in-place append to
 # .map/<branch>/progress_<branch>.md; acceptance status is runner-derived,
 # never an agent-authored checkbox. The boundary is enforced by scope:
-# the safety-guardrails PreToolUse hook keys on agent_type and confines every
+# the workflow-gate PreToolUse hook keys on agent_type and confines every
 # verifier Edit/Write/MultiEdit to `.map/` (normalized, so `.map/../src` cannot
 # escape) while blocking all git-mutating Bash. Runner-owned state inside
 # `.map/` stays protected for everyone by the workflow-gate tamper detector.

@@ -2,7 +2,7 @@
 """
 MAP Workflow Enforcement Gate (PreToolUse Hook)
 
-Provider-agnostic: works with both Claude Code and Codex CLI.
+Claude Code uses the edit phase gate and a separate Bash registration for Git permissions.
 
 Blocks Edit/Write/MultiEdit outside of Actor-related phases.
 Uses step_state.json (orchestrator canonical state) as single source of truth.
@@ -11,7 +11,7 @@ ENFORCEMENT:
   - Edit allowed during phases: ACTOR, APPLY, TEST_WRITER
   - Edit blocked during all other phases (DECOMPOSE, MONITOR, PREDICTOR, etc.)
   - Fail-open: missing or unreadable step_state.json → allow
-  - Always allows: .map/ artifacts, non-editing tools
+  - Verifier writes stay inside the project artifact tree. The Git check also honors the local autonomy posture.
   - Every blocking phase (RESEARCH, INIT_STATE, DECOMPOSE, ...) blocks only
     the CURRENT subtask's declared affected_files; files orthogonal to that
     subtask are allowed in ANY phase so out-of-band hotfixes don't have to
@@ -23,7 +23,7 @@ ENFORCEMENT:
 CONSTRAINTS (from step_state.json):
   - scope_glob: restrict edits to matching file patterns
 
-KNOWN LIMITATION (#164): this gate intercepts Edit/Write/MultiEdit only.
+KNOWN LIMITATION (#164): phase-based file checks intercept Edit/Write/MultiEdit only.
 File writes performed via Bash (``cat >``, ``tee``, ``sed -i``) are NOT
 gated. Closing that bypass requires parsing shell write-targets and is
 deferred to avoid false positives that would block legitimate Bash in the
@@ -125,8 +125,8 @@ def extract_target_file_paths(tool_call: dict) -> list[str]:
 
     paths: list[str] = []
 
-    direct = tool_input.get("file_path")
-    if isinstance(direct, str) and direct.strip():
+    direct = tool_input.get("file_path") or tool_input.get("path")
+    if isinstance(direct, str) and direct:
         paths.append(direct)
 
     edits = tool_input.get("edits")
@@ -134,7 +134,7 @@ def extract_target_file_paths(tool_call: dict) -> list[str]:
         for edit in edits:
             if isinstance(edit, dict):
                 fp = edit.get("file_path")
-                if isinstance(fp, str) and fp.strip():
+                if isinstance(fp, str) and fp:
                     paths.append(fp)
 
     return paths
@@ -719,6 +719,9 @@ def _create_safety_guardrail_hold(branch: str, rel_path: str) -> None:
     )
 
 
+[% include "_partials/workflow-write-permissions.py.jinja" %]
+
+
 def deny(reason: str) -> None:
     """Print deny response and exit."""
     print(
@@ -746,11 +749,14 @@ def main() -> None:
         tool_call = json.load(sys.stdin)
         tool_name = tool_call.get("tool_name", "")
 
-        # Bash is inspected only while the parent workflow is suspended.
+        # Bash has separate commit permissions and suspension rules.
         if tool_name not in EDITING_TOOLS and tool_name != "Bash":
             allow()
 
         target_paths = extract_target_file_paths(tool_call)
+        enforce_workflow_write_permissions(tool_call, target_paths)
+        if tool_name == "Bash" and sys.argv[1:] == ["--git-permissions"]:
+            allow()
         branch = get_branch_name()
         interrupted = _has_active_interruption(branch)
         if interrupted:
