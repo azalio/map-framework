@@ -4103,7 +4103,8 @@ class TestMapReviewSharedSourceCodexRender:
 
     @pytest.mark.parametrize("provider", ["claude", "codex"])
     @pytest.mark.parametrize("specs", [{}, {"unit suite; literal": ["python3", "-m", "pytest"]}])
-    def test_review_documented_checks_use_literal_argv(self, monkeypatch, provider, specs) -> None:
+    @pytest.mark.parametrize("already_checked", [False, True])
+    def test_review_documented_checks_use_literal_argv(self, monkeypatch, provider, specs, already_checked) -> None:
         """Preserve literal check argv and request admitted-mode resume in both providers."""
         import subprocess
         import sys
@@ -4120,7 +4121,8 @@ class TestMapReviewSharedSourceCodexRender:
             assert kwargs.get("check") is True or "run_test_gate" in argv
             calls.append(argv)
             return SimpleNamespace(
-                stdout='{"status":"success","completed":false,"observation_valid":true}', returncode=0
+                stdout=json.dumps({"status": "success", "completed": False, "observation_valid": True,
+                                   "reusable_checks": list(specs) if already_checked else []}), returncode=0
             )
 
         monkeypatch.setattr(subprocess, "run", run)
@@ -4134,7 +4136,7 @@ class TestMapReviewSharedSourceCodexRender:
         assert admission[admission.index("--check-timeouts-json") + 1] == "{}"
         required = [admission[i + 1] for i, value in enumerate(admission) if value == "--required-check"]
         assert required == list(specs)
-        assert [argv[-1] for argv in calls[1:]] == list(specs)
+        assert [argv[-1] for argv in calls[1:]] == ([] if already_checked else list(specs))
         assert all(argv[-2] == "--check-id" for argv in calls[1:])
         assert "diff-only" not in skill
         assert "admitted required_files" in skill

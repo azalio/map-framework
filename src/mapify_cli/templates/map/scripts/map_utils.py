@@ -141,6 +141,25 @@ def branch_transaction(branch_dir: Path) -> Iterator[None]:
         release_branch_transaction()
 
 
+def review_file_entry(name: str, root: Path = Path(".")) -> dict[str, Any]:
+    path = root / name
+    if path.is_symlink():
+        content = os.fsencode(os.readlink(path))
+        kind, mode = "symlink", 0o120000
+    elif path.is_file():
+        content = path.read_bytes()
+        kind, mode = "file", path.stat().st_mode & 0o777
+    else:
+        content, kind, mode = b"", "missing", 0
+    return {"path": name, "kind": kind, "mode": mode, "sha256": hashlib.sha256(content).hexdigest()}
+
+
+def legacy_review_scripts(root: Path) -> dict[str, dict[str, Any]]:
+    """Reproduce the script entries included in pre-#704 review policy fingerprints."""
+    paths = (path for ext in ("py", "sh") for path in (root / ".map/scripts").rglob(f"*.{ext}") if path.is_file())
+    return {name: review_file_entry(name, root) for name in (path.relative_to(root).as_posix() for path in paths)}
+
+
 def atomic_write_text(path: Path, content: str) -> None:
     """Publish UTF-8 text, preserving the caller's line endings."""
     atomic_write_bytes(path, content.encode("utf-8"))

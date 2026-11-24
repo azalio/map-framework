@@ -945,3 +945,21 @@ class TestFenceAwareMerge:
         dest.write_text(inject_metadata(original, ".md", "2.0.0", compute_hash(original)))
         dr2 = detect_drift(src, dest)
         assert not dr2.drifted
+
+
+@pytest.mark.parametrize("damage", ["frontmatter", "metadata"])
+def test_refresh_repairs_damaged_prefix_even_if_managed_body_is_unchanged(tmp_path, damage):
+    source = tmp_path / "template.md"
+    source.write_text("---\ntools: Read, Grep\n---\nReview.\n")
+    target = tmp_path / "reviewer.md"
+    assert copy_managed_file(source, target, "1").success
+    damaged = target.read_text()
+    if damage == "frontmatter":
+        damaged = damaged.replace("Read, Grep", "Bash")
+    else:
+        damaged = damaged.replace('"mapify_version":"1"', '"mapify_version":null')
+    target.write_text(damaged)
+    assert copy_managed_file(source, target, "2", preserve_unchanged=True).success
+    meta, content = extract_metadata(target.read_text(), ".md")
+    assert meta and meta["mapify_version"] == "2"
+    assert "tools: Read, Grep" in content

@@ -580,6 +580,7 @@ def copy_managed_file(
     *,
     inject_meta: bool = True,
     fenced: bool = True,
+    preserve_unchanged: bool = False,
 ) -> CopyResult:
     """Copy a template file to destination with metadata injection and drift detection.
 
@@ -730,7 +731,7 @@ def copy_managed_file(
         return result
 
     # Check for existing metadata (required to know if this is a managed file)
-    existing_meta, _ = extract_metadata(dest_content, ext)
+    existing_meta, existing_payload = extract_metadata(dest_content, ext)
 
     if existing_meta is None:
         # No metadata → user file; apply drift backup + overwrite (legacy path)
@@ -848,6 +849,14 @@ def copy_managed_file(
     final_text = _replace_metadata_in_before(
         final_text, meta_prefix, ext, start_token
     )
+
+    # Preserve the original installation date/version only if the entire rendered
+    # payload matches, including the reviewer frontmatter or script shebang.
+    if (preserve_unchanged and stored_hash == template_hash and existing_meta.get("generated_by") == "mapify-cli"
+            and all(isinstance(existing_meta.get(key), str) for key in ("mapify_version", "installed_at"))
+            and existing_payload == extract_metadata(final_text, ext)[1]):
+        result.success = True
+        return result
 
     try:
         _atomic_write(dest, final_text)

@@ -48,6 +48,8 @@ Validation:
 
 ### Review state changes before opening a PR
 
+When deciding whether a review can resume, distinguish changes to the material reviewers examined from changes to the code that delivered it. Preserve completed work across compatible transport fixes.
+
 Trace persisted data from every writer through parsing and recovery to the next operation that consumes it. For each assumption that could lose progress or select the wrong next step, write a test that breaks it. Check these cases when they apply:
 
 - Feed the normal reader and the recovery reader the same ambiguous input, such as duplicate JSON keys. Verify that both reject it and preserve the original bytes.

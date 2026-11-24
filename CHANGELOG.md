@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A compatible transport update preserves pending review rounds, including completed checks, reviewer reports and delivery progress. Scripts explicitly selected with `--policy-file` still bind the review. (#704)
+
 - `/map-review` continues all checks and reviewer collection after an ordinary failed check when the runner confirms a valid current observation. Full checks remain FAIL. Initial baseline-aware approval supports only exact-base replay of an external native absolute Ruff executable with `check --isolated --no-respect-gitignore --no-cache --output-format concise src/ tests/`, byte-identical diagnostic files and unchanged non-`.py` inputs; tracked `.map`, symlinks and gitlinks are unsupported. Normal `make lint`, mypy and Pyright failures continue collection but stay `unknown` without an approval exemption: parser recognition does not prove environment closure. This is narrower than the planned aggregate comparison. New/unknown failures, invalid execution evidence and trusted `review.require_clean_checks: true` cannot use the exemption. Changed-files lint never replaces the full command; implementation/release gates are unchanged.
 
 ## [3.39.1] - 2026-11-11

@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 
@@ -152,6 +153,145 @@ def test_policy_rejects_pr_created_default_name_tag(policy_repo):
     attribution = json.loads(Path(bundle["bundle_path_json"]).read_text())["attribution"]
     assert attribution["base"] == policy_repo
     assert "+subprocess.run(command, shell=True)" in attribution["diff"]
+
+
+@contextmanager
+def review_writer(monkeypatch, ledger, *, legacy):
+    """Model the original admission inputs and on-disk row consumed after upgrade."""
+    with monkeypatch.context() as patch:
+        if legacy:
+            current_names = runner._review_policy_names
+
+            def previous_names(*args, **kwargs):
+                scripts = {str(path) for ext in ("py", "sh") for path in Path(".map/scripts").rglob(f"*.{ext}")
+                           if path.is_file()}
+                return sorted(set(current_names(*args, **kwargs)) | scripts)
+
+            patch.setattr(runner, "_review_policy_names", previous_names)
+        yield patch
+    if legacy:
+        record = json.loads(ledger.read_bytes())
+        record["convergence"]["rounds"][-1].pop("policy_inputs_version")
+        ledger.write_text(json.dumps(record))
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("changed", ["source", "rule", "explicit", "tracked_script", "bundle"])
+def test_transport_upgrade_rejects_changed_review_evidence(policy_repo, monkeypatch, legacy, changed):
+    from mapify_cli.delivery.file_copier import _copy_map_path
+
+    transport = Path(".map/scripts/send.sh")
+    transport.parent.mkdir(parents=True)
+    transport.write_text("exit 0\n")
+    transport.with_name(".py").write_text("# dotfile\n")
+    explicit = transport.with_name("check.sh")
+    explicit.write_text("exit 1\n")
+    tracked = transport.with_name("product.py")
+    tracked.write_text("value = 1\n")
+    git("add", "-f", str(tracked))
+    git("commit", "-m", "review tracked script")
+    options = {"branch": "feature", "policy_files": [str(explicit)]}
+    ledger = Path(".map/feature/review-verdict-ledger.json")
+    with review_writer(monkeypatch, ledger, legacy=legacy):
+        admission = runner.begin_review_run(**options)
+        assert admission["status"] == "success", admission
+        assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    row = json.loads(ledger.read_bytes())["convergence"]["rounds"][-1]
+    src = Path("..").resolve() / (Path.cwd().name + "-transport")
+    src.mkdir()
+    (src / transport.name).write_text("exit 2\n")
+    _copy_map_path(src, transport.parent, "new")
+    _copy_map_path(src, transport.parent, "newer")
+    assert runner.begin_review_run(**options).get("resumed") is True
+    bundle = ledger.parent / row["bundle_receipt"]["artifact"]
+    path = {"source": Path("old/code.py"), "rule": Path(".map/config.yaml"),
+            "explicit": explicit, "tracked_script": tracked, "bundle": bundle}[changed]
+    path.write_text((path.read_text() if path.exists() else "") + "\n")
+    if changed == "bundle":
+        assert not runner._review_attribution_artifact("feature")
+    else:
+        assert runner.begin_review_run(**options)["status"] == "error"
+    saved, = json.loads(ledger.read_bytes())["convergence"]["rounds"]
+    assert (saved["round_id"], saved["policy_hash"]) == (row["round_id"], row["policy_hash"])
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_installed_legacy_round_survives_provider_refresh(tmp_path, monkeypatch, provider):
+    from typer.testing import CliRunner
+
+    from mapify_cli import app
+    from mapify_cli.delivery import managed_file_copier
+
+    monkeypatch.chdir(tmp_path)
+    cli = CliRunner()
+    monkeypatch.setattr("mapify_cli.configure_global_permissions", lambda: None)
+    args = ["init", ".", "--provider", provider, "--force", "--no-git"]
+    installed = cli.invoke(app, [*args, "--mcp", "none"])
+    assert installed.exit_code == 0, installed.output
+    git("init", "-b", "main")
+    git("config", "user.name", "Test")
+    git("config", "user.email", "test@example.com")
+    # This product keeps its local MAP installation outside source control.
+    with Path(".gitignore").open("a") as stream:
+        stream.write("\n*\n!product.py\n!.gitignore\n")
+    Path("product.py").write_text("x = 1\n")
+    git("add", ".gitignore", "product.py")
+    git("commit", "-m", "product")
+    git("checkout", "-b", "feature")
+    Path("product.py").write_text("x = 2\n")
+    # Force a different installer timestamp even on fast filesystems.
+    original_metadata = managed_file_copier._build_metadata
+    monkeypatch.setattr(managed_file_copier, "_build_metadata", lambda *args:
+                        {**original_metadata(*args), "installed_at": "2030-01-01T00:00:00Z"})
+    transport = Path(".map/scripts/codex_review_host.py")
+    transport.write_text(transport.read_text() + "\n# previous transport implementation\n")
+    ledger = Path(".map/feature/review-verdict-ledger.json")
+    with review_writer(monkeypatch, ledger, legacy=True):
+        first = runner.begin_review_run(branch="feature", provider=provider, mode="lightweight")
+        assert first["status"] == "success", first
+    refreshed = cli.invoke(app, [*args, "--refresh-existing"])
+    assert refreshed.exit_code == 0, refreshed.output
+    assert "previous transport implementation" not in transport.read_text()
+    result = subprocess.run([sys.executable, ".map/scripts/map_step_runner.py", "begin_review_run",
+                             "--branch", "feature", "--provider", provider, "--mode", "lightweight"],
+                            check=False, capture_output=True, text=True)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    resumed = json.loads(result.stdout)
+    assert resumed["resumed"] and resumed["round_id"] == first["round_id"]
+    assert resumed["policy_hash"] == first["policy_hash"]
+
+
+def test_new_round_after_legacy_abandonment_gets_its_own_consent(policy_repo, monkeypatch):
+    del policy_repo
+    script = Path(".map/scripts/local.sh")
+    script.parent.mkdir(parents=True)
+    script.write_text("exit 0\n")
+    Path("old/code.py").write_text("import subprocess\n")
+    directory = Path(".map/feature")
+    with review_writer(monkeypatch, directory / "review-verdict-ledger.json", legacy=True):
+        first = runner.begin_review_run(branch="feature")
+    assert first["human_consent"]["status"] == "pending"
+    assert runner.abandon_review_round(first["round_id"], "new iteration", branch="feature")["status"] == "success"
+    second = runner.begin_review_run(branch="feature")
+    assert second["status"] == "success" and first["round_id"] != second["round_id"]
+    holds = json.loads((directory / "approval_holds.json").read_bytes())["holds"]
+    hold = holds[second["human_consent"]["hold_id"]]
+    assert hold["review_binding"] == {"target": second["target"], "policy_hash": second["policy_hash"],
+                                      "action": "review-ready"}
+
+
+def test_check_cannot_outlive_change_to_explicit_policy(policy_repo):
+    rule = Path(".map/scripts/check.sh")
+    rule.parent.mkdir(parents=True)
+    rule.write_text("exit 1\n")
+    command = [sys.executable, "-c", f"from pathlib import Path; Path({str(rule)!r}).write_text('exit 0')"]
+    opts = {"branch": "feature", "policy_files": [str(rule)], "required_checks": ["rules"],
+            "check_specs": {"rules": command}}
+    assert runner.begin_review_run(**opts)["status"] == "success"
+    check = runner.run_test_gate(check_id="rules", branch="feature")
+    assert check["exit_code"] == 0 and check["observation_valid"] is False
+    rule.write_text("exit 1\n")
+    assert runner.begin_review_run(**opts)["reusable_checks"] == []
 
 
 def test_runtime_capability_fingerprint_is_not_replaced(policy_repo):
