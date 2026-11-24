@@ -303,6 +303,10 @@ def test_new_round_after_legacy_abandonment_gets_its_own_consent(policy_repo, mo
                  'else "changed repository context"\n    )\n\n    prompts:', id="local-role-context"),
     pytest.param("map_step_runner.py", "spec_context = spec_text if spec_text is not None else _read_spec_for_review(",
                  'spec_context = "changed specification" if spec_text is not None else _read_spec_for_review(', id="local-hunter-context"),
+    pytest.param("map_step_runner.py", "spec, review_bundle, review_preferences, git_diff, layering=layering",
+                 'spec, review_bundle, "", git_diff, layering=layering', id="forwarded-preferences"),
+    pytest.param("map_step_runner.py", "ordered = [*stable_sections, documents_section]",
+                 "ordered = [documents_section]", id="nested-prompt-helper"),
     pytest.param("map_step_runner.py", "Use only its analytical protocol", "Apply its whole protocol", id="core-instructions"),
     pytest.param("map_step_runner.py", "Always include receipt with all four arrays", "Send whichever receipt arrays apply", id="role-instructions"),
     pytest.param("map_step_runner.py", "Every finding must include concrete evidence and a plausible failure_mode.",
@@ -331,6 +335,8 @@ def test_embedded_rule_change_rejects_saved_round(policy_repo, monkeypatch, lega
     pytest.param("map_step_runner.py", '**role_entry,\n            "estimated_tokens": 0',
                  '**role_entry,\n            "estimated_tokens": 42', id="entry-estimate"),
     pytest.param("codex_review_runner.py", "if no_progress > 1:", "if no_progress > 2:", id="retry-threshold"),
+    pytest.param("map_step_runner.py", '"prompt": prompt,\n        "estimated_tokens": 0,',
+                 '"prompt": prompt,\n        "estimated_tokens": len(prompt),', id="helper-estimate"),
     pytest.param("map_step_runner.py", '**role_entry,\n            "estimated_tokens": 0',
                  '**role_entry,\n            "estimated_tokens": len(role_id)', id="computed-estimate"),
 ])
@@ -364,14 +370,14 @@ def _change_installed_runner(monkeypatch, legacy, script, old, new):
     return first, resumed
 
 
-def test_rule_fingerprint_preserves_empty_ast_fields_across_python_versions(tmp_path):
+def test_rule_fingerprint_is_stable_across_python_versions(tmp_path):
     import hashlib
 
     from map_utils import review_rules_digest
 
     path = tmp_path / "rubrics.py"
     path.write_text("ROLE_RUBRICS = dict()  # a formatting-only comment\n")
-    canonical = {"ROLE_RUBRICS": ["Call(Name('dict', Load()), [], [])"]}
+    canonical = {"ROLE_RUBRICS": [["Call", {"func": ["Name", {"id": "'dict'", "ctx": ["Load", {}]}]}]]}
     expected = hashlib.sha256(json.dumps(canonical, sort_keys=True).encode()).hexdigest()
     assert review_rules_digest(path, "codex_review_runner.py") == expected
 

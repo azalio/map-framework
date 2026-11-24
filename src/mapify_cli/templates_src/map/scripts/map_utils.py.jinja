@@ -166,14 +166,21 @@ REVIEW_RULE_SOURCES = {
         "AGENT_OUTPUT_SCHEMAS", "ROLE_FINDING_CONTRACT_KEYS", "REVIEWER_PARAPHRASE_RULE",
         "REVIEW_COVERAGE_RECEIPT_SCHEMA", "ROLE_FINDING_SCHEMA",
         "REVIEW_FINDING_EVIDENCE_SCHEMA", "REVIEW_DESIGN_CHANGE_SCHEMA", "ADVERSARIAL_FINDING_SCHEMA",
-        "_render_review_prompt", "_render_role_reviewer_prompt", "_render_adversarial_reviewer_prompt",
-        "_render_complexity_lens_prompt", "build_cross_ai_review_prompt", "_isolated_reviewer_documents",
-        "_render_format_block", "_format_block_skeleton", "_role_prompt_entry", "_review_resolution_request",
-        "_review_compact_text",
+        "build_cross_ai_review_prompt", "_review_compact_text", "get_review_section_order",
         "build_json_retry_prompt", "build_review_prompts", "build_role_review_prompts", "build_adversarial_review_prompts",
     },
-    "codex_review_runner.py": {"ROLE_RUBRICS", "GUIDANCE", "_review_one"},
+    "codex_review_runner.py": {"ROLE_RUBRICS", "GUIDANCE", "_review_one", "_candidate_recheck_messages"},
     "codex_review_host.py": {"developerInstructions"},
+}
+
+
+# Prompt builders consume the admitted Git tree, policy, bundle and shard through these APIs.
+# Their values have their own receipts. Transport/ledger changes below this boundary do not
+# redefine reviewer instructions. Follow all other local helpers referenced by the builders.
+_REVIEW_INPUT_APIS = {
+    "_read_json_file", "_review_admitted_binding", "_review_attribution_artifact", "_review_compact_bundle",
+    "_review_diff_resource", "_review_git_optional", "_review_prompt_budget_tokens", "_review_shard_gate",
+    "_review_transport_active", "_review_trusted_policy", "_resolve_review_base", "_scoped_review_diff",
 }
 
 
@@ -183,7 +190,7 @@ def review_rules_digest(path: Path, script: str, *, expected_sha: str = "") -> s
                                 info.st_mtime_ns)
 
 
-def _review_prompt_entries(function: ast.FunctionDef) -> list[ast.AST]:
+def _review_prompt_entries(function: ast.FunctionDef, *, returns_entry: bool = False) -> list[ast.AST]:
     """Read each builder from input selection through prompt construction, up to delivery."""
     sections: list[ast.AST] = []
     body = function.body[1:] if ast.get_docstring(function) is not None else function.body
@@ -197,7 +204,9 @@ def _review_prompt_entries(function: ast.FunctionDef) -> list[ast.AST]:
                 continue
         for item in ast.walk(statement):
             match item:
-                case ast.Assign(targets=[ast.Subscript(value=ast.Name(id="prompts"))], value=ast.Dict() as entry):
+                case ast.Assign(targets=[ast.Subscript(value=ast.Name(id="prompts"))], value=ast.Dict() as entry) | ast.Return(value=ast.Dict() as entry):
+                    if isinstance(item, ast.Return) and not returns_entry:
+                        continue
                     # The same entry also carries estimates and other delivery diagnostics.
                     # Keep expanded role entries plus the fields that select a reader, its access and its prompt.
                     fields = [(key, value) for key, value in zip(entry.keys, entry.values)
@@ -227,6 +236,16 @@ def _codex_review_messages(statements: list[ast.stmt]) -> list[ast.stmt]:
     return messages
 
 
+def _review_ast(value: Any) -> Any:
+    """Use named syntax fields. Empty optional fields differ across supported Python versions."""
+    if isinstance(value, ast.AST):
+        fields = {key: _review_ast(item) for key, item in ast.iter_fields(value) if item is not None and item != []}
+        return [type(value).__name__, fields]
+    if isinstance(value, list):
+        return [_review_ast(item) for item in value]
+    return repr(value)  # Python literals include bytes, complex numbers and Ellipsis.
+
+
 @lru_cache(maxsize=32)
 def _cached_review_rules(path: Path, script: str, expected_sha: str, *stat_key: int) -> str:
     """Read declarations as data. An archived file must match the original admission's file entry."""
@@ -250,10 +269,12 @@ def _cached_review_rules(path: Path, script: str, expected_sha: str, *stat_key: 
                             declarations.setdefault("developerInstructions", []).append(field)
             case ast.FunctionDef(name="build_review_prompts" | "build_adversarial_review_prompts" | "build_role_review_prompts"):
                 declarations[node.name] = _review_prompt_entries(node)
+            case ast.FunctionDef(name="_budget_review_prompt" | "_role_prompt_entry"):
+                declarations[node.name] = _review_prompt_entries(node, returns_entry=True)
             case ast.FunctionDef(name="_review_one"):
                 declarations.setdefault(node.name, []).extend(_codex_review_messages(node.body))
-            case ast.FunctionDef(name=name) if name in REVIEW_RULE_SOURCES[script]:
-                # Prompt renderers own reviewer instructions, including text defined inside a function.
+            case ast.FunctionDef(name=name) if name not in _REVIEW_INPUT_APIS:
+                # Index helpers without hashing them until reached from a review entry point.
                 declarations.setdefault(name, []).extend(node.body[1:] if ast.get_docstring(node) is not None else node.body)
             # The registry also installs schemas for role reviewers and hunters, then adds
             # the common discarded-candidate contract to every participating reviewer.
@@ -265,15 +286,13 @@ def _cached_review_rules(path: Path, script: str, expected_sha: str, *stat_key: 
     # Include values referenced by the rules (e.g. the configured paraphrase length).
     # AST values omit comments, indentation and line locations throughout this closure.
     pending = list(REVIEW_RULE_SOURCES[script])
-    selected: dict[str, list[str]] = {}
+    selected: dict[str, list[Any]] = {}
     while pending:
         name = pending.pop()
         if name in selected or name not in declarations:
             continue
         expressions = declarations[name]
-        # Python 3.13 started omitting empty lists in ast.dump by default. Keep the 3.11 representation.
-        options = {"show_empty": True} if sys.version_info >= (3, 13) else {}
-        selected[name] = [ast.dump(value, annotate_fields=False, **options) for value in expressions]
+        selected[name] = [_review_ast(value) for value in expressions]
         pending.extend(ref.id for value in expressions for ref in ast.walk(value) if isinstance(ref, ast.Name))
     return hashlib.sha256(json.dumps(selected, sort_keys=True).encode()).hexdigest()
 
