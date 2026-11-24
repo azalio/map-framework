@@ -85,13 +85,18 @@ def _alive(pid):
     return bool((result.stdout or "").strip()) and not result.stdout.strip().startswith("Z")
 
 
+def _publish_child_pid(marker):
+    """Child script prefix. The marker becomes visible only after its PID has been written."""
+    return ("import os,time; from pathlib import Path; "
+            f"marker=Path({str(marker)!r}); staged=marker.with_suffix('.tmp'); "
+            "staged.write_text(str(os.getpid())); staged.replace(marker); ")
+
+
 @pytest.mark.parametrize("kill_runner", [False, True])
 def test_nested_check_keeps_lease_until_descendant_stops(check_workspace, kill_runner):
     marker = check_workspace.parent / "child.pid"
     release = check_workspace.parent / "release"
-    child = ("import os,time; from pathlib import Path; "
-             f"Path({str(marker)!r}).write_text(str(os.getpid())); "
-             f"release=Path({str(release)!r}); "
+    child = (_publish_child_pid(marker) + f"release=Path({str(release)!r}); "
              "exec('while not release.exists(): time.sleep(.02)')")
     wrapper = ("import subprocess,sys; "
                f"subprocess.run([sys.executable, '-c', {child!r}], "
@@ -155,7 +160,7 @@ def test_nested_check_keeps_lease_until_descendant_stops(check_workspace, kill_r
 @pytest.mark.parametrize("exit_code", [0, 7])
 def test_wrapper_exit_cleans_live_background_child(check_workspace, exit_code):
     marker = check_workspace.parent / "background.pid"
-    child = f"import os,time; from pathlib import Path; Path({str(marker)!r}).write_text(str(os.getpid())); time.sleep(10)"
+    child = _publish_child_pid(marker) + "time.sleep(10)"
     wrapper = ("import subprocess,sys,time; from pathlib import Path; "
                f"subprocess.Popen([sys.executable,'-c',{child!r}], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
                f"\nwhile not Path({str(marker)!r}).exists(): time.sleep(.01)\nsys.exit({exit_code})")

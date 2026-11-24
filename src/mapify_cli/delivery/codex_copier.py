@@ -44,6 +44,7 @@ def _install_managed_file(
     version: str,
     *,
     fenced: bool = True,
+    preserve_unchanged: bool = False,
     executable_suffixes: frozenset[str] = frozenset(),
 ) -> None:
     """Install one managed Codex file, preserving executable bits.
@@ -53,7 +54,7 @@ def _install_managed_file(
     (MAP-owned files like .map/scripts).
     """
     dst.parent.mkdir(parents=True, exist_ok=True)
-    copy_managed_file(src, dst, version, fenced=fenced)
+    copy_managed_file(src, dst, version, fenced=fenced, preserve_unchanged=preserve_unchanged)
     if executable_suffixes and src.suffix in executable_suffixes and dst.exists():
         dst.chmod(dst.stat().st_mode | 0o755)
 
@@ -382,7 +383,7 @@ def create_codex_files(project_path: Path) -> dict[str, int]:
         agents_dst = codex_dir / "agents"
         agents_dst.mkdir(parents=True, exist_ok=True)
         for src_file in agents_src.glob("*.toml"):
-            _install_managed_file(src_file, agents_dst / src_file.name, version)
+            _install_managed_file(src_file, agents_dst / src_file.name, version, preserve_unchanged=True)
             counts["agents"] += 1
 
     # ------------------------------------------------------------------
@@ -390,7 +391,7 @@ def create_codex_files(project_path: Path) -> dict[str, int]:
     # ------------------------------------------------------------------
     config_src = codex_templates / "config.toml"
     if config_src.exists():
-        _install_managed_file(config_src, codex_dir / "config.toml", version)
+        _install_managed_file(config_src, codex_dir / "config.toml", version, preserve_unchanged=True)
         counts["config"] += 1
 
     # ------------------------------------------------------------------

@@ -259,11 +259,12 @@ if base_ref is not None:
     argv.extend(["--base-ref", base_ref])
 for check_id in specs:
     argv.extend(["--required-check", check_id])
-admission = subprocess.run(argv, check=True, capture_output=True, text=True)
-print(admission.stdout, end="")
-if json.loads(admission.stdout).get("completed"):
+round_state = json.loads(subprocess.run(argv, check=True, capture_output=True, text=True).stdout)
+print(json.dumps(round_state))
+if round_state.get("completed"):
     raise SystemExit("Review already completed; do not dispatch reviewers")
-for check_id in specs:
+pending_checks = [name for name in specs if name not in round_state.get("reusable_checks", [])]
+for check_id in pending_checks:
     gate = subprocess.run(runner + ["run_test_gate", "--check-id", check_id], capture_output=True, text=True)
     try: receipt = json.loads(gate.stdout)
     except (ValueError, TypeError): raise SystemExit(f"Check {check_id}: malformed runner observation; STOP")

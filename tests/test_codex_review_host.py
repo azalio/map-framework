@@ -11,7 +11,7 @@ import pytest
 
 from tests import test_review_changed_scope as scope_tests
 from tests.review_paraphrase_helpers import with_paraphrase
-from tests.test_review_trusted_policy import runner
+from tests.test_review_trusted_policy import review_writer, runner
 
 host = importlib.import_module("codex_review_host")
 driver = importlib.import_module("codex_review_runner")
@@ -893,6 +893,87 @@ def test_unverified_advisory_lens_does_not_block_required_reviewers(repo, monkey
     runner.write_review_verdict_ledger(current_run=True, branch="feature")
     row = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
     assert row["advisory_results"]["default:complexity_lens"] == {"status": expected, "reason": "advisory reader unavailable"}
+
+
+@pytest.mark.parametrize("legacy", [False, True], ids=["current", "upgrade"])
+def test_transport_patch_reuses_report_check_and_session(repo, monkeypatch, legacy):
+    import hashlib
+
+    from mapify_cli.delivery.file_copier import _copy_map_path
+
+    scripts = Path(".map/scripts")
+    scripts.mkdir(parents=True)
+    transport = scripts / "local.py"
+    transport.write_text("# old transport\n")
+    Path("first.py").write_text("value = 2\n")
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES", str(
+        runner.REVIEW_CONTEXT_RESERVE_BYTES + runner.REVIEW_ROLE_RUBRIC_RESERVE_BYTES + 60_000))
+    scope_tests.write_many(6)
+    options = {"branch": "feature", "provider": "codex", "mode": "lightweight", "round_id": "transport",
+               "required_checks": ["smoke"], "check_specs": {"smoke": [sys.executable, "-V"]}}
+    ledger_path = Path(".map/feature/review-verdict-ledger.json")
+    class ShardHost(SimulatedHost):
+        resumed: ClassVar[list[str]] = []
+
+        def start(self, thread_id=""):
+            self.resumed.append(thread_id)
+            self.thread = thread_id or f"thread-{len(self.resumed)}"
+            return self.thread
+
+        def probe(self, context_id):
+            return {**super().probe(context_id), "thread_id": self.thread}
+
+    with review_writer(monkeypatch, ledger_path, legacy=legacy) as old:
+        admitted = runner.begin_review_run(**options)
+        assert admitted["status"] == "success", admitted
+        check = runner.run_test_gate(check_id="smoke", branch="feature")
+        assert check["passed"], check
+        assert runner.create_review_bundle(branch="feature")["status"] == "success"
+        old.setattr(driver, "CodexReviewHost", ShardHost)
+        ShardHost.resumed = []
+        ShardHost.interrupt_once = False
+        collect = driver._collect_role
+
+        def interrupt_second(branch, round_id, role, *args):
+            if args[2] == admitted["shard_ids"][1]:
+                ShardHost.interrupt_once = True
+            return collect(branch, round_id, role, *args)
+
+        old.setattr(driver, "_collect_role", interrupt_second)
+        with pytest.raises(host.HostError, match="interrupted"):
+            driver.run("feature")
+    before = json.loads(ledger_path.read_text())
+    row = before["convergence"]["rounds"][-1]
+    first, second = admitted["shard_ids"][:2]
+    witness = row["shard_receipts"]["default:monitor"][first]
+    report = ledger_path.parent / witness["artifact"]
+    digest = hashlib.sha256(report.read_bytes()).hexdigest()
+    pending = row["context_active"][f"default:monitor#{second}"]
+    assert row["context_sessions"][pending]["offsets"]
+
+    replacement = repo.parent / (repo.name + "-scripts")
+    replacement.mkdir()
+    (replacement / transport.name).write_text("# fixed transport\n")
+    _copy_map_path(replacement, scripts, "next")
+    assert "fixed transport" in transport.read_text()
+    transport.write_text("# another compatible local fix\n")
+    resumed = runner.begin_review_run(**options)
+    assert resumed.get("resumed") and resumed["target"] == admitted["target"], resumed
+    assert resumed["reusable_checks"] == ["smoke"]
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    monkeypatch.setattr(driver, "CodexReviewHost", ShardHost)
+    ShardHost.resumed = []
+    result = driver.run("feature")
+    assert ShardHost.resumed[0] == row["context_sessions"][pending]["agent_id"] == "thread-2"
+    assert result["status"] == "success" and result["reviewers"][0]["reused"], result
+    after = json.loads(ledger_path.read_text())
+    current, = after["convergence"]["rounds"]
+    assert current["context_active"][f"default:monitor#{second}"] == pending
+    assert current["shard_receipts"]["default:monitor"][first] == witness
+    assert hashlib.sha256(report.read_bytes()).hexdigest() == digest
+    assert after["execution_checks"] == before["execution_checks"]
+    verdict = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    assert verdict["completeness"]["status"] == "COMPLETE", verdict["completeness"]
 
 
 def test_pending_round_from_an_older_runner_is_resumed_on_a_fresh_thread_without_abandon(repo, monkeypatch):

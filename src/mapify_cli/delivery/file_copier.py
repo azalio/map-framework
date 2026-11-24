@@ -259,7 +259,7 @@ def create_agent_files(
             if agent_template.name in exclude_files:
                 continue
             dest_file = agents_dir / agent_template.name
-            result = copy_managed_file(agent_template, dest_file, version)
+            result = copy_managed_file(agent_template, dest_file, version, preserve_unchanged=True)
             if drift_report is not None:
                 drift_report.results.append(result)
             count += 1
@@ -440,6 +440,45 @@ def _install_managed_tree(src_dir: Path, dest_dir: Path, version: str) -> None:
         _install_managed_file(src, dest_dir / rel, version)
 
 
+def _preserve_legacy_review_transport(map_dir: Path) -> None:
+    """Keep old rounds verifiable across the first replacement of their installed scripts."""
+    from mapify_cli.templates.map.scripts.map_utils import (
+        REVIEW_RULE_SOURCES,
+        atomic_write_bytes,
+        atomic_write_text,
+        legacy_review_scripts,
+    )
+
+    scripts = None
+    for ledger in map_dir.glob("*/review-verdict-ledger.json"):
+        if ledger.is_symlink() or ledger.parent.is_symlink():
+            continue
+        try:
+            row = json.loads(ledger.read_bytes())["convergence"]["rounds"][-1]
+            digest = row["policy_hash"]
+        except (IndexError, KeyError, TypeError, ValueError):
+            continue  # A ledger without an admitted round has no transport binding to preserve.
+        if "policy_inputs_version" in row or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            continue
+        snapshot = map_dir / f".review-legacy-transport-{digest}.json"
+        if snapshot.exists():
+            continue
+        if scripts is None:
+            scripts = legacy_review_scripts(map_dir.parent)
+            archive = map_dir / ".review-legacy-rules"
+            if archive.is_symlink():
+                raise OSError(f"Cannot archive review rules through a symbolic link: {archive}")
+            for name in REVIEW_RULE_SOURCES:
+                source = map_dir / "scripts" / name
+                entry = scripts.get(source.relative_to(map_dir.parent).as_posix())
+                if entry and entry["kind"] == "file":
+                    raw = source.read_bytes()
+                    if hashlib.sha256(raw).hexdigest() != entry["sha256"]:
+                        raise OSError(f"Installed review script changed during upgrade: {source}")
+                    atomic_write_bytes(archive / entry["sha256"], raw)
+        atomic_write_text(snapshot, json.dumps(scripts, sort_keys=True))
+
+
 def _copy_map_path(src: Path, dest: Path, version: str) -> int:
     """Install a map-tools path into .map/ fully-managed (fenced=False), +x scripts.
 
@@ -449,6 +488,8 @@ def _copy_map_path(src: Path, dest: Path, version: str) -> int:
     """
     count = 0
     if src.is_dir():
+        if dest.name == "scripts" and dest.parent.name == ".map" and dest.is_dir():
+            _preserve_legacy_review_transport(dest.parent)
         for child in sorted(src.rglob("*")):
             if not child.is_file():
                 continue

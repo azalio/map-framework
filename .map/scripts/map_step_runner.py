@@ -8847,19 +8847,6 @@ def _review_git_bytes(*args: str) -> bytes:
     return result.stdout
 
 
-def _review_file_entry(name: str) -> dict[str, Any]:
-    path = Path(name)
-    if path.is_symlink():
-        content = os.fsencode(os.readlink(path))
-        kind, mode = "symlink", 0o120000
-    elif path.is_file():
-        content = path.read_bytes()
-        kind, mode = "file", path.stat().st_mode & 0o777
-    else:
-        content, kind, mode = b"", "missing", 0
-    return {"path": name, "kind": kind, "mode": mode, "sha256": hashlib.sha256(content).hexdigest()}
-
-
 def _review_control_path(name: str) -> bool:
     return name == ".map/config.yaml" or name.startswith(".map/scripts/")
 
@@ -9060,7 +9047,6 @@ def _review_policy_names(
     names.update(binding.get("policy_files", []))
     for pattern in (".claude/rules/**/*.md", ".claude/agents/review-reader.md",
                     ".codex/agents/review-reader.toml", ".codex/config.toml",
-                    ".map/scripts/**/*.py", ".map/scripts/**/*.sh",
                     ".map/*/spec_*.md", ".map/*/blueprint.json", ".map/*/test_contract_*.md",
                     ".map/*/task_plan_*.md", ".map/*/test_handoff_*.json"):
         names.update(str(path) for path in Path(".").glob(pattern) if path.is_file())
@@ -9069,15 +9055,26 @@ def _review_policy_names(
     return sorted(names)
 
 
+def _review_embedded_rules(binding: dict[str, Any] | None = None) -> dict[str, str]:
+    directory = Path(__file__).resolve().parent
+    names = REVIEW_RULE_SOURCES if binding and binding.get("provider") == "codex" else ("map_step_runner.py",)
+    return {name: review_rules_digest(directory / name, name) if (directory / name).is_file() else "missing"
+            for name in names}
+
+
 def _review_policy(
     binding: dict[str, Any] | None = None, *, trusted_policy: dict[str, Any] | None = None,
-    include_verification_summary: bool = True,
+    include_verification_summary: bool = True, legacy_scripts: dict[str, Any] | None = None,
 ) -> str:
     binding = binding or {}
     names = _review_policy_names(binding, include_verification_summary=include_verification_summary)
+    files = dict(legacy_scripts or {})
+    files.update((name, _review_file_entry(name)) for name in names)
     policy = {"schema": "review_receipt.v1", "criteria": _VERDICT_TABLE_ID,
-              "binding": binding, "files": [_review_file_entry(name) for name in names],
+              "binding": binding, "files": [files[name] for name in sorted(files)],
               "trusted_policy": _review_trusted_policy() if trusted_policy is None else trusted_policy}
+    if legacy_scripts is None:
+        policy["embedded_rules"] = _review_embedded_rules(binding)
     return hashlib.sha256(json.dumps(policy, sort_keys=True).encode()).hexdigest()
 
 
@@ -9219,7 +9216,7 @@ def _review_target_signature(
             if value)
         policy_names = _review_policy_names(include_verification_summary=include_verification_summary)
         watched = sorted({*names, *policy_names, *git_files, *(str(path) for path in outside)})
-        digest = hashlib.sha256(json.dumps([REVIEW_TARGET_CACHE_SCHEMA, os.getcwd(), head, anchor]).encode())
+        digest = hashlib.sha256(json.dumps([REVIEW_TARGET_CACHE_SCHEMA, os.getcwd(), head, anchor, _review_embedded_rules()]).encode())
         for name in watched:
             digest.update(json.dumps([name, _review_stat_token(name, now_ns)]).encode())
         return digest.hexdigest()
@@ -9824,14 +9821,50 @@ def _review_capability(binding: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _review_binding_current(row: dict[str, Any]) -> bool:
-    """Fingerprint fresh inputs once, sharing only this observation's trusted policy."""
+def _review_binding_current(row: dict[str, Any], *, target: dict[str, Any] | None = None) -> bool:
+    """Compare live review inputs while retaining the identity used by existing receipts."""
     try:
-        target = _review_target(row["binding"])
-        return (row.get("target") == target
-                and row.get("policy_hash") == _review_policy(
-                    row["binding"], trusted_policy=target["trusted_policy"]))
-    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
+        binding = row["binding"]
+        if target is None:
+            target = _review_target(binding)
+        policy = target["trusted_policy"]
+        admitted = row["target"]
+        if admitted == target and row["policy_hash"] == _review_policy(binding, trusted_policy=policy):
+            return True
+        observed = dict(target)
+        if "policy_hash" in target and "policy_hash" in admitted:
+            observed["policy_hash"] = admitted["policy_hash"]
+        if "policy_inputs_version" in row or admitted != observed:
+            return False
+        # Old receipts mix transport and rules. Only the script entries may come from before the
+        # upgrade. Recompute both original hashes with all current rules, including explicit scripts.
+        digest = row["policy_hash"]
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            return False
+        path = Path(".map") / f".review-legacy-transport-{digest}.json"
+        if path.is_file():
+            scripts = json.loads(path.read_bytes())
+            if not isinstance(scripts, dict) or any(
+                not isinstance(item, dict) or item.get("path") != name
+                or not name.startswith(".map/scripts/") or ".." in Path(name).parts
+                or not name.endswith((".py", ".sh")) for name, item in scripts.items()
+            ):
+                return False
+        else:
+            scripts = legacy_review_scripts(Path("."))
+        for name, live_digest in _review_embedded_rules(binding).items():
+            installed = Path(".map/scripts") / name
+            entry = scripts.get(installed.as_posix())
+            if not entry or entry.get("kind") != "file" or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]):
+                return False
+            archive = Path(".map/.review-legacy-rules") / entry["sha256"]
+            source = archive if archive.is_file() else installed
+            if review_rules_digest(source, name, expected_sha=entry["sha256"]) != live_digest:
+                return False
+        if "policy_hash" in admitted and admitted["policy_hash"] != _review_policy(trusted_policy=policy, legacy_scripts=scripts):
+            return False
+        return digest == _review_policy(binding, trusted_policy=policy, legacy_scripts=scripts)
+    except (OSError, ValueError, KeyError, TypeError, SyntaxError, subprocess.TimeoutExpired):
         return False
 
 
@@ -9932,21 +9965,12 @@ def begin_review_run(
         shard_plan = [{"id": f"s{index:02d}", "files": files, "bytes": sum(sizes[name] for name in files)}
                       for index, files in enumerate(planned, 1)]
     policy_hash = _review_policy(dict(payload), trusted_policy=target["trusted_policy"])
-    consent: dict[str, Any] = {"status": "not_required"}
-    if _review_requires_consent(target):
-        consent = _ensure_review_consent({"target": target, "policy_hash": policy_hash},
-                                         branch=branch_dir.name)
-        if consent["status"] == "error" and _review_gates_strict(target):
-            return consent
     convergence = prior.get("convergence", {"rounds": [], "started_at": time.time()})
-    if (convergence.get("outcome") == "awaiting_human" and convergence.get("rounds")
-            and convergence["rounds"][-1]["binding"] == dict(payload)
-            and (not round_id or round_id == convergence["rounds"][-1]["round_id"])
-            and _review_binding_current(convergence["rounds"][-1])):
-        return {"status": "success", "resumed": True, "completed": True,
-                "round_id": convergence["rounds"][-1]["round_id"], **dict(payload),
-                "human_consent": consent, "stop_reason": "human_consent_pending"}
-
+    awaiting_human = False
+    if (last_round and convergence.get("outcome") == "awaiting_human" and last_round["binding"] == dict(payload)
+            and (not round_id or round_id == last_round["round_id"]) and _review_binding_current(last_round, target=target)):
+        round_id = last_round["round_id"]
+        awaiting_human = True
     rounds = convergence["rounds"]
     pending = next((row for row in rounds if not _review_round_terminal(row)), None)
     if not round_id:
@@ -9954,11 +9978,23 @@ def begin_review_run(
     if not isinstance(round_id, str) or not round_id.strip():
         return {"status": "error", "message": "round_id must be nonempty"}
     existing = next((row for row in rounds if row["round_id"] == round_id), None)
+    resuming = (existing is not None and "aborted_at" not in existing and existing["binding"] == dict(payload)
+                and _review_binding_current(existing, target=target))
+    consent: dict[str, Any] = {"status": "not_required"}
+    if _review_requires_consent(target):
+        consent_binding = existing if existing is not None and resuming else {"target": target, "policy_hash": policy_hash}
+        consent = _ensure_review_consent(consent_binding, branch=branch_dir.name)
+        if consent["status"] == "error" and _review_gates_strict(target):
+            return consent
     if existing:
         if "aborted_at" in existing:
             return {"status": "error", "message": "Round was abandoned; use a new round ID within the remaining budget"}
-        if existing["binding"] != dict(payload) or not _review_binding_current(existing):
+        if not resuming:
             return {"status": "error", "message": "Round identity already bound to different review inputs"}
+    if awaiting_human:
+        return {"status": "success", "resumed": True, "completed": True, "round_id": round_id,
+                **dict(payload), "human_consent": consent, "stop_reason": "human_consent_pending"}
+    if existing:
         prior["human_consent"] = consent
         try:
             _write_json_file(branch_dir / "review-verdict-ledger.json", prior)
@@ -9970,6 +10006,8 @@ def begin_review_run(
             _prepare_review_inputs(branch_dir, prior, existing)
         return {"status": "success", "resumed": True, "round_id": round_id,
                 "completed": "completed_at" in existing, "human_consent": consent, **dict(payload),
+                "reusable_checks": [name for name in payload["required_checks"]
+                                    if _review_check_observation_valid(branch_dir, name, existing)],
                 **{key: existing.get(key) for key in ("target", "required_files", "policy_hash", "capability")},
                 **({"coverage_skips": existing["coverage_skips"]} if existing.get("coverage_skips") else {}),
                 **_review_shard_summary(existing)}
@@ -9986,7 +10024,7 @@ def begin_review_run(
         branch_dir.mkdir(parents=True, exist_ok=True)
         previous = [branch_dir / name for name in REVIEW_INPUT_NAMES if (branch_dir / name).exists()]
         row = {"round_id": round_id, "binding": dict(payload), "started_at": time.time(),
-               "archive_inputs": [path.name for path in previous], "prepared": False,
+               "archive_inputs": [path.name for path in previous], "prepared": False, "policy_inputs_version": 2,
                "target": target, "policy_hash": policy_hash,
                "capability": _review_capability(dict(payload)), "receipts": {}}
         skipped = {item["path"] for item in coverage_skips}
@@ -14086,8 +14124,10 @@ def create_review_bundle(branch: str | None = None) -> dict:
     rounds = ledger.get("convergence", {}).get("rounds", [])
     target = _review_target(binding)
     row = next((item for item in rounds if not _review_round_terminal(item)), None)
-    if row and not _review_binding_current(row):
-        raise ValueError("Review snapshot or policy changed before bundle creation")
+    if row:
+        if not _review_binding_current(row, target=target):
+            raise ValueError("Review snapshot or policy changed before bundle creation")
+        target = row["target"]
     result["snapshot"] = {"target": target, "policy_hash": row.get("policy_hash") if row else _review_policy(),
                           "required_files": row.get("required_files", []) if row else target.get("required_files", [])}
     skipped_paths = frozenset(item["path"] for item in (row or {}).get("coverage_skips", []))
@@ -18961,9 +19001,15 @@ def add_known_issue(
 
 
 from map_utils import (  # type: ignore[import-not-found]
+    REVIEW_RULE_SOURCES,
     atomic_write_text,
     branch_transaction,
     get_branch_name,
+    legacy_review_scripts,
+    review_rules_digest,
+)
+from map_utils import (  # type: ignore[import-not-found]
+    review_file_entry as _review_file_entry,
 )
 
 
@@ -20491,6 +20537,10 @@ def _record_review_check(check_id: str, command: list[str], *, branch: str | Non
             os.fsync(handle.fileno())
         try:
             after = _review_target(row["binding"])
+            if _review_binding_current(row, target=after):
+                after = row["target"]
+            elif after == row["target"]:
+                after = {**after, "unverified_reason": "Admitted review policy changed during execution"}
         except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
             after = {"reusable": False, "unverified_reason": str(exc)}
         check.update({**result, "state": "running" if result.get("status") == "cleanup_blocked" else "finished", "after": after,

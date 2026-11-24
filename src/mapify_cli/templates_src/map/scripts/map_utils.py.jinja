@@ -1,10 +1,12 @@
 """Shared utilities for MAP workflow scripts."""
 
 import argparse
+import ast
 import contextlib
 import errno
 import hashlib
 import importlib
+import json
 import os
 import re
 import subprocess
@@ -13,6 +15,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Iterator
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -139,6 +142,213 @@ def branch_transaction(branch_dir: Path) -> Iterator[None]:
         yield
     finally:
         release_branch_transaction()
+
+
+def review_file_entry(name: str, root: Path = Path(".")) -> dict[str, Any]:
+    path = root / name
+    if path.is_symlink():
+        content = os.fsencode(os.readlink(path))
+        kind, mode = "symlink", 0o120000
+    elif path.is_file():
+        content = path.read_bytes()
+        kind, mode = "file", path.stat().st_mode & 0o777
+    else:
+        content, kind, mode = b"", "missing", 0
+    return {"path": name, "kind": kind, "mode": mode, "sha256": hashlib.sha256(content).hexdigest()}
+
+
+# Declarative reviewer instructions embedded in the shipped scripts. Transport
+# functions and delivery bookkeeping do not define what the reviewer must check.
+REVIEW_RULE_SOURCES = {
+    "map_step_runner.py": {
+        "REVIEW_EVIDENCE_CONTRACT", "ROLE_FINDING_OUTPUT_CONTRACT", "ROLE_REVIEWER_SHARED_SCOPE",
+        "ROLE_REVIEWER_SPECS", "REVIEW_PROMPT_SPECS", "ADVERSARIAL_REVIEWER_SPECS",
+        "AGENT_OUTPUT_SCHEMAS", "ROLE_FINDING_CONTRACT_KEYS", "REVIEWER_PARAPHRASE_RULE",
+        "REVIEW_COVERAGE_RECEIPT_SCHEMA", "ROLE_FINDING_SCHEMA",
+        "REVIEW_FINDING_EVIDENCE_SCHEMA", "REVIEW_DESIGN_CHANGE_SCHEMA", "ADVERSARIAL_FINDING_SCHEMA",
+        "build_cross_ai_review_prompt", "_review_compact_text", "get_review_section_order",
+        "build_json_retry_prompt", "build_review_prompts", "build_role_review_prompts", "build_adversarial_review_prompts",
+    },
+    "codex_review_runner.py": {"ROLE_RUBRICS", "GUIDANCE", "run", "_review_one", "_candidate_recheck_messages"},
+    "codex_review_host.py": {"developerInstructions"},
+}
+
+
+# Prompt builders consume the admitted Git tree, policy, bundle and shard through these APIs.
+# Their values have their own receipts. Transport/ledger changes below this boundary do not
+# redefine reviewer instructions. Follow all other local helpers referenced by the builders.
+_REVIEW_INPUT_APIS = {
+    "_read_json_file", "_review_admitted_binding", "_review_attribution_artifact", "_review_compact_bundle",
+    "_review_diff_resource", "_review_git_optional", "_review_prompt_budget_tokens", "_review_shard_gate",
+    "_review_transport_active", "_review_trusted_policy", "_resolve_review_base", "_scoped_review_diff",
+}
+
+
+def review_rules_digest(path: Path, script: str, *, expected_sha: str = "") -> str:
+    info = path.stat()
+    return _cached_review_rules(path.resolve(), script, expected_sha, info.st_ino, info.st_size, info.st_ctime_ns,
+                                info.st_mtime_ns)
+
+
+def _review_prompt_entries(function: ast.FunctionDef, *, returns_entry: bool = False) -> list[ast.AST]:
+    """Read each builder from input selection through prompt construction, up to delivery."""
+    sections: list[ast.AST] = []
+    body = function.body[1:] if ast.get_docstring(function) is not None else function.body
+    for statement in body:
+        match statement:
+            # Current and historical builders hand completed entries to this same transport API.
+            case ast.Assign(value=ast.Call(func=ast.Name(id="_prepare_review_context"))):
+                break
+            # The budget is returned as telemetry. The builder emits the complete prompt.
+            case ast.Assign(targets=[ast.Name(id="budget")], value=ast.Call(func=ast.Name(id="_review_prompt_budget_tokens"))):
+                continue
+        for item in ast.walk(statement):
+            match item:
+                case ast.Assign(targets=[ast.Subscript(value=ast.Name(id="prompts"))], value=ast.Dict() as entry) | ast.Return(value=ast.Dict() as entry):
+                    if isinstance(item, ast.Return) and not returns_entry:
+                        continue
+                    # The same entry also carries estimates and other delivery diagnostics.
+                    # Keep expanded role entries plus the fields that select a reader, its access and its prompt.
+                    fields = [(key, value) for key, value in zip(entry.keys, entry.values)
+                              if key is None or (isinstance(key, ast.Constant)
+                                                 and key.value in ("prompt", "context_access", "subagent_type"))]
+                    entry.keys = [key for key, _ in fields]
+                    entry.values = [value for _, value in fields]
+        sections.append(statement)
+    return sections
+
+
+def _codex_review_setup(function: ast.FunctionDef) -> list[ast.AST]:
+    """The driver prepares a round's prompts and roster before starting its retry loop."""
+    for block in function.body:
+        if not isinstance(block, ast.With):
+            continue
+        setup: list[ast.AST] = []
+        for statement in block.body:
+            if isinstance(statement, ast.Assign) and any(
+                    isinstance(target, ast.Name) and target.id == "selected" for target in statement.targets):
+                setup = [statement]
+            elif setup:
+                setup.append(statement)
+                if isinstance(statement, ast.Assign) and any(
+                        isinstance(target, ast.Name) and target.id == "pending" for target in statement.targets):
+                    return setup
+    # A different driver layout needs a new comparison before any of it can be treated as transport.
+    return list(function.body)
+
+
+def _codex_review_messages(statements: list[ast.stmt]) -> list[ast.stmt]:
+    """Retain conditions and their branches only when they determine a message sent to a reviewer."""
+    messages: list[ast.stmt] = []
+    for statement in statements:
+        match statement:
+            case ast.Assign(targets=[ast.Name(id="message")]) | ast.AugAssign(target=ast.Name(id="message")):
+                messages.append(statement)
+            case ast.If():
+                yes = _codex_review_messages(statement.body)
+                no = _codex_review_messages(statement.orelse)
+                if yes or no:
+                    messages.append(ast.If(test=statement.test, body=yes, orelse=no))
+            case ast.While():
+                # Loop progress, retries and host operations do not select a role's output contract.
+                messages.extend(_codex_review_messages(statement.body))
+    return messages
+
+
+def _review_ast(value: Any, references: set[str]) -> Any:
+    """Collect syntax and helper references from the same reviewer-facing fields."""
+    if isinstance(value, ast.Raise):
+        # Preserve the exception type and enclosing guards, without pulling diagnostic formatters
+        # into a successful review's inputs.
+        exception = value.exc.func if isinstance(value.exc, ast.Call) else value.exc
+        value = ast.Raise(exc=exception, cause=None)
+    elif isinstance(value, ast.Return) and isinstance(value.value, ast.Dict):
+        entry = value.value
+        fields = list(zip(entry.keys, entry.values))
+        if any(isinstance(key, ast.Constant) and key.value == "status"
+               and isinstance(item, ast.Constant) and item.value == "error" for key, item in fields):
+            fields = [(key, item) for key, item in fields if not (isinstance(key, ast.Constant) and key.value == "message")]
+            value = ast.Return(value=ast.Dict(keys=[key for key, _ in fields], values=[item for _, item in fields]))
+    elif isinstance(value, ast.Name) and isinstance(value.ctx, ast.Load):
+        references.add(value.id)
+    if isinstance(value, ast.AST):
+        # Empty optional syntax fields differ across supported Python versions.
+        return [type(value).__name__, {
+            key: _review_ast(item, references) for key, item in ast.iter_fields(value)
+            if key not in {"annotation", "returns", "type_comment"} and item is not None and item != []
+        }]
+    if isinstance(value, list):
+        return [_review_ast(item, references) for item in value]
+    return repr(value)  # Python literals include bytes, complex numbers and Ellipsis.
+
+
+@lru_cache(maxsize=32)
+def _cached_review_rules(path: Path, script: str, expected_sha: str, *stat_key: int) -> str:
+    """Read declarations as data. An archived file must match the original admission's file entry."""
+    raw = path.read_bytes()
+    if expected_sha and hashlib.sha256(raw).hexdigest() != expected_sha:
+        raise ValueError("Archived review rules differ from the admitted script")
+    try:
+        statements = ast.parse(raw).body
+    except SyntaxError as exc:
+        raise ValueError(f"Cannot read reviewer rules from {script}: {exc.msg}") from exc
+    declarations: dict[str, list[ast.AST]] = {}
+    for node in statements:
+        match node:
+            case ast.Assign(targets=[ast.Name(id=name)], value=value) | ast.AnnAssign(target=ast.Name(id=name), value=value) if value:
+                declarations.setdefault(name, []).append(value)
+            case ast.ClassDef() if script == "codex_review_host.py":
+                # Only the developer instructions attached to a new thread define reviewer rules.
+                for mapping in (item for item in ast.walk(node) if isinstance(item, ast.Dict)):
+                    for key, field in zip(mapping.keys, mapping.values):
+                        if isinstance(key, ast.Constant) and key.value == "developerInstructions":
+                            declarations.setdefault("developerInstructions", []).append(field)
+            case ast.FunctionDef(name="build_review_prompts" | "build_adversarial_review_prompts" | "build_role_review_prompts"):
+                declarations[node.name] = _review_prompt_entries(node)
+            case ast.FunctionDef(name="_budget_review_prompt" | "_role_prompt_entry"):
+                declarations[node.name] = _review_prompt_entries(node, returns_entry=True)
+            case ast.FunctionDef(name="run") if script == "codex_review_runner.py":
+                declarations[node.name] = _codex_review_setup(node)
+                # This keyword-only deadline controls the host, not the instructions it receives.
+                keywords = [(arg, default) for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults)
+                            if arg.arg != "timeout"]
+                node.args.kwonlyargs = [arg for arg, _ in keywords]
+                node.args.kw_defaults = [default for _, default in keywords]
+            case ast.FunctionDef(name="_review_one"):
+                declarations.setdefault(node.name, []).extend(_codex_review_messages(node.body))
+            case ast.FunctionDef(name=name) if name not in _REVIEW_INPUT_APIS:
+                # Index helpers without hashing them until reached from a review entry point.
+                declarations.setdefault(name, []).extend(node.body[1:] if ast.get_docstring(node) is not None else node.body)
+            # The registry also installs schemas for role reviewers and hunters, then adds
+            # the common discarded-candidate contract to every participating reviewer.
+            case ast.Expr(value=ast.Call(func=ast.Attribute(value=ast.Name(id="AGENT_OUTPUT_SCHEMAS"), attr="update"))):
+                declarations.setdefault("AGENT_OUTPUT_SCHEMAS", []).append(node)
+            case ast.For(iter=ast.Name(id="REVIEWER_PARAPHRASE_AGENTS")):
+                declarations.setdefault("AGENT_OUTPUT_SCHEMAS", []).append(node)
+
+        if isinstance(node, ast.FunctionDef) and node.name in declarations:
+            # Callers can omit arguments. Their names, order and defaults also determine the prompt.
+            declarations[node.name].insert(0, node.args)
+
+    # Include values referenced by the rules (e.g. the configured paraphrase length).
+    # AST values omit comments, indentation and line locations throughout this closure.
+    pending = list(REVIEW_RULE_SOURCES[script])
+    selected: dict[str, list[Any]] = {}
+    while pending:
+        name = pending.pop()
+        if name in selected or name not in declarations:
+            continue
+        expressions = declarations[name]
+        references: set[str] = set()
+        selected[name] = [_review_ast(value, references) for value in expressions]
+        pending.extend(references)
+    return hashlib.sha256(json.dumps(selected, sort_keys=True).encode()).hexdigest()
+
+
+def legacy_review_scripts(root: Path) -> dict[str, dict[str, Any]]:
+    """Reproduce the script entries included in pre-#704 review policy fingerprints."""
+    paths = (path for ext in ("py", "sh") for path in (root / ".map/scripts").rglob(f"*.{ext}") if path.is_file())
+    return {name: review_file_entry(name, root) for name in (path.relative_to(root).as_posix() for path in paths)}
 
 
 def atomic_write_text(path: Path, content: str) -> None:

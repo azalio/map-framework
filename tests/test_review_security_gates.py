@@ -379,8 +379,7 @@ def test_tracked_map_control_changes_are_bound_and_security_reviewed(policy_repo
     git("add", "-f", str(runtime))
     # Even accidentally tracked runtime evidence is not control-plane source.
     assert runner._review_target() == before
-    # Existing policy separately fingerprints executable Python/shell runtime;
-    # ordinary untracked control-directory noise must not enter source scope.
+    # Local runtime files stay outside the admitted source and policy.
     Path(".map/scripts").mkdir(parents=True, exist_ok=True)
     Path(".map/scripts/untracked-notes.txt").write_text("untracked notes\n")
     assert runner._review_target() == before
@@ -392,8 +391,8 @@ def test_tracked_map_control_changes_are_bound_and_security_reviewed(policy_repo
     assert after["required_files"] == before["required_files"]
     assert after["diff_digest"] == before["diff_digest"]
     assert after["local_digest"] == before["local_digest"]
-    assert after["policy_hash"] != before["policy_hash"]
-    assert not runner._review_binding_current(row)
+    assert after["policy_hash"] == before["policy_hash"]
+    assert runner._review_binding_current(row)
 
 
 def test_review_target_and_bundle_use_bounded_git_argv(policy_repo, monkeypatch):
