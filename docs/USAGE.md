@@ -24,6 +24,10 @@ After discovery, `/map-plan` also runs an already-implemented gate: discovery re
 
 Once a plan reaches `ready` (task_plan + blueprint both present, the Step 7 boundary), you can start `/map-efficient` or `/map-task` right away — the plan needs no separate approval. A pending `plan_approval` hold left by an older mapify version is closed automatically by the `/map-efficient` and `/map-task` preflights.
 
+When `resume_from_plan` starts execution, `aag_contracts_found` counts subtasks
+with a nonblank `aag_contract` in the blueprint. If no subtask has an
+`aag_contract` field, the command counts entries in the legacy `aag_contracts` mapping.
+
 When a MAP run enters a merge/rebase conflict, the PreToolUse workflow-context hook adds a conflict-resolution discipline block to `additionalContext`. It fires before `git merge` / `git rebase` and whenever git reports unmerged paths via `git diff --name-only --diff-filter=U`. The protocol is deliberately manual and intent-preserving: list conflicted files, resolve one file or small batch at a time, preserve both sides' intended behavior, check for conflict markers, run the project's test gate after each batch, stage only resolved files, and continue the merge/rebase only after no unmerged files remain. Final verification is: branch current with `origin/main`, no conflict markers, and tests green. The hook never mutates the worktree and never auto-runs tests.
 
 ## Recovering workflow progress
