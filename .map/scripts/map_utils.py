@@ -255,14 +255,30 @@ def _codex_review_messages(statements: list[ast.stmt]) -> list[ast.stmt]:
     return messages
 
 
-def _review_ast(value: Any) -> Any:
-    """Use named syntax fields. Empty optional fields differ across supported Python versions."""
+def _review_ast(value: Any, references: set[str]) -> Any:
+    """Collect syntax and helper references from the same reviewer-facing fields."""
+    if isinstance(value, ast.Raise):
+        # Preserve the exception type and enclosing guards, without pulling diagnostic formatters
+        # into a successful review's inputs.
+        exception = value.exc.func if isinstance(value.exc, ast.Call) else value.exc
+        value = ast.Raise(exc=exception, cause=None)
+    elif isinstance(value, ast.Return) and isinstance(value.value, ast.Dict):
+        entry = value.value
+        fields = list(zip(entry.keys, entry.values))
+        if any(isinstance(key, ast.Constant) and key.value == "status"
+               and isinstance(item, ast.Constant) and item.value == "error" for key, item in fields):
+            fields = [(key, item) for key, item in fields if not (isinstance(key, ast.Constant) and key.value == "message")]
+            value = ast.Return(value=ast.Dict(keys=[key for key, _ in fields], values=[item for _, item in fields]))
+    elif isinstance(value, ast.Name) and isinstance(value.ctx, ast.Load):
+        references.add(value.id)
     if isinstance(value, ast.AST):
-        fields = {key: _review_ast(item) for key, item in ast.iter_fields(value)
-                  if key not in {"annotation", "returns", "type_comment"} and item is not None and item != []}
-        return [type(value).__name__, fields]
+        # Empty optional syntax fields differ across supported Python versions.
+        return [type(value).__name__, {
+            key: _review_ast(item, references) for key, item in ast.iter_fields(value)
+            if key not in {"annotation", "returns", "type_comment"} and item is not None and item != []
+        }]
     if isinstance(value, list):
-        return [_review_ast(item) for item in value]
+        return [_review_ast(item, references) for item in value]
     return repr(value)  # Python literals include bytes, complex numbers and Ellipsis.
 
 
@@ -323,8 +339,9 @@ def _cached_review_rules(path: Path, script: str, expected_sha: str, *stat_key: 
         if name in selected or name not in declarations:
             continue
         expressions = declarations[name]
-        selected[name] = [_review_ast(value) for value in expressions]
-        pending.extend(ref.id for value in expressions for ref in ast.walk(value) if isinstance(ref, ast.Name))
+        references: set[str] = set()
+        selected[name] = [_review_ast(value, references) for value in expressions]
+        pending.extend(references)
     return hashlib.sha256(json.dumps(selected, sort_keys=True).encode()).hexdigest()
 
 
