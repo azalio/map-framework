@@ -169,7 +169,7 @@ REVIEW_RULE_SOURCES = {
         "build_cross_ai_review_prompt", "_review_compact_text", "get_review_section_order",
         "build_json_retry_prompt", "build_review_prompts", "build_role_review_prompts", "build_adversarial_review_prompts",
     },
-    "codex_review_runner.py": {"ROLE_RUBRICS", "GUIDANCE", "_review_one", "_candidate_recheck_messages"},
+    "codex_review_runner.py": {"ROLE_RUBRICS", "GUIDANCE", "run", "_review_one", "_candidate_recheck_messages"},
     "codex_review_host.py": {"developerInstructions"},
 }
 
@@ -218,6 +218,25 @@ def _review_prompt_entries(function: ast.FunctionDef, *, returns_entry: bool = F
     return sections
 
 
+def _codex_review_setup(function: ast.FunctionDef) -> list[ast.AST]:
+    """The driver prepares a round's prompts and roster before starting its retry loop."""
+    for block in function.body:
+        if not isinstance(block, ast.With):
+            continue
+        setup: list[ast.AST] = []
+        for statement in block.body:
+            if isinstance(statement, ast.Assign) and any(
+                    isinstance(target, ast.Name) and target.id == "selected" for target in statement.targets):
+                setup = [statement]
+            elif setup:
+                setup.append(statement)
+                if isinstance(statement, ast.Assign) and any(
+                        isinstance(target, ast.Name) and target.id == "pending" for target in statement.targets):
+                    return setup
+    # A different driver layout needs a new comparison before any of it can be treated as transport.
+    return list(function.body)
+
+
 def _codex_review_messages(statements: list[ast.stmt]) -> list[ast.stmt]:
     """Retain conditions and their branches only when they determine a message sent to a reviewer."""
     messages: list[ast.stmt] = []
@@ -239,7 +258,8 @@ def _codex_review_messages(statements: list[ast.stmt]) -> list[ast.stmt]:
 def _review_ast(value: Any) -> Any:
     """Use named syntax fields. Empty optional fields differ across supported Python versions."""
     if isinstance(value, ast.AST):
-        fields = {key: _review_ast(item) for key, item in ast.iter_fields(value) if item is not None and item != []}
+        fields = {key: _review_ast(item) for key, item in ast.iter_fields(value)
+                  if key not in {"annotation", "returns", "type_comment"} and item is not None and item != []}
         return [type(value).__name__, fields]
     if isinstance(value, list):
         return [_review_ast(item) for item in value]
@@ -271,6 +291,13 @@ def _cached_review_rules(path: Path, script: str, expected_sha: str, *stat_key: 
                 declarations[node.name] = _review_prompt_entries(node)
             case ast.FunctionDef(name="_budget_review_prompt" | "_role_prompt_entry"):
                 declarations[node.name] = _review_prompt_entries(node, returns_entry=True)
+            case ast.FunctionDef(name="run") if script == "codex_review_runner.py":
+                declarations[node.name] = _codex_review_setup(node)
+                # This keyword-only deadline controls the host, not the instructions it receives.
+                keywords = [(arg, default) for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults)
+                            if arg.arg != "timeout"]
+                node.args.kwonlyargs = [arg for arg, _ in keywords]
+                node.args.kw_defaults = [default for _, default in keywords]
             case ast.FunctionDef(name="_review_one"):
                 declarations.setdefault(node.name, []).extend(_codex_review_messages(node.body))
             case ast.FunctionDef(name=name) if name not in _REVIEW_INPUT_APIS:
@@ -282,6 +309,10 @@ def _cached_review_rules(path: Path, script: str, expected_sha: str, *stat_key: 
                 declarations.setdefault("AGENT_OUTPUT_SCHEMAS", []).append(node)
             case ast.For(iter=ast.Name(id="REVIEWER_PARAPHRASE_AGENTS")):
                 declarations.setdefault("AGENT_OUTPUT_SCHEMAS", []).append(node)
+
+        if isinstance(node, ast.FunctionDef) and node.name in declarations:
+            # Callers can omit arguments. Their names, order and defaults also determine the prompt.
+            declarations[node.name].insert(0, node.args)
 
     # Include values referenced by the rules (e.g. the configured paraphrase length).
     # AST values omit comments, indentation and line locations throughout this closure.
