@@ -1,10 +1,12 @@
 """Shared utilities for MAP workflow scripts."""
 
 import argparse
+import ast
 import contextlib
 import errno
 import hashlib
 import importlib
+import json
 import os
 import re
 import subprocess
@@ -13,6 +15,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Iterator
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -152,6 +155,64 @@ def review_file_entry(name: str, root: Path = Path(".")) -> dict[str, Any]:
     else:
         content, kind, mode = b"", "missing", 0
     return {"path": name, "kind": kind, "mode": mode, "sha256": hashlib.sha256(content).hexdigest()}
+
+
+# Declarative reviewer instructions embedded in the shipped scripts. Transport
+# functions and delivery bookkeeping do not define what the reviewer must check.
+REVIEW_RULE_SOURCES = {
+    "map_step_runner.py": {
+        "REVIEW_EVIDENCE_CONTRACT", "ROLE_FINDING_OUTPUT_CONTRACT", "ROLE_REVIEWER_SHARED_SCOPE",
+        "ROLE_REVIEWER_SPECS", "REVIEW_PROMPT_SPECS", "ADVERSARIAL_REVIEWER_SPECS",
+        "AGENT_OUTPUT_SCHEMAS", "ROLE_FINDING_CONTRACT_KEYS", "REVIEWER_PARAPHRASE_RULE",
+        "REVIEW_COVERAGE_RECEIPT_SCHEMA", "ROLE_FINDING_SCHEMA",
+        "REVIEW_FINDING_EVIDENCE_SCHEMA", "REVIEW_DESIGN_CHANGE_SCHEMA", "ADVERSARIAL_FINDING_SCHEMA",
+    },
+    "codex_review_runner.py": {"ROLE_RUBRICS"},
+}
+
+
+def review_rules_digest(path: Path, script: str, *, expected_sha: str = "") -> str:
+    info = path.stat()
+    return _cached_review_rules(path.resolve(), script, expected_sha, info.st_ino, info.st_size, info.st_ctime_ns,
+                                info.st_mtime_ns)
+
+
+@lru_cache(maxsize=32)
+def _cached_review_rules(path: Path, script: str, expected_sha: str, *stat_key: int) -> str:
+    """Read declarations as data. An archived file must match the original admission's file entry."""
+    raw = path.read_bytes()
+    if expected_sha and hashlib.sha256(raw).hexdigest() != expected_sha:
+        raise ValueError("Archived review rules differ from the admitted script")
+    try:
+        statements = ast.parse(raw).body
+    except SyntaxError as exc:
+        raise ValueError(f"Cannot read reviewer rules from {script}: {exc.msg}") from exc
+    declarations: dict[str, list[ast.AST]] = {}
+    for node in statements:
+        match node:
+            case ast.Assign(targets=[ast.Name(id=name)], value=value) | ast.AnnAssign(target=ast.Name(id=name), value=value) if value:
+                declarations.setdefault(name, []).append(value)
+            # The registry also installs schemas for role reviewers and hunters, then adds
+            # the common discarded-candidate contract to every participating reviewer.
+            case ast.Expr(value=ast.Call(func=ast.Attribute(value=ast.Name(id="AGENT_OUTPUT_SCHEMAS"), attr="update"))):
+                declarations.setdefault("AGENT_OUTPUT_SCHEMAS", []).append(node)
+            case ast.For(iter=ast.Name(id="REVIEWER_PARAPHRASE_AGENTS")):
+                declarations.setdefault("AGENT_OUTPUT_SCHEMAS", []).append(node)
+
+    # Include values referenced by the rules (e.g. the configured paraphrase length).
+    # AST values omit comments, indentation and line locations throughout this closure.
+    pending = list(REVIEW_RULE_SOURCES[script])
+    selected: dict[str, list[str]] = {}
+    while pending:
+        name = pending.pop()
+        if name in selected or name not in declarations:
+            continue
+        expressions = declarations[name]
+        # Python 3.13 started omitting empty lists in ast.dump by default. Keep the 3.11 representation.
+        options = {"show_empty": True} if sys.version_info >= (3, 13) else {}
+        selected[name] = [ast.dump(value, annotate_fields=False, **options) for value in expressions]
+        pending.extend(ref.id for value in expressions for ref in ast.walk(value) if isinstance(ref, ast.Name))
+    return hashlib.sha256(json.dumps(selected, sort_keys=True).encode()).hexdigest()
 
 
 def legacy_review_scripts(root: Path) -> dict[str, dict[str, Any]]:

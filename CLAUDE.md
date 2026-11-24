@@ -48,7 +48,7 @@ Validation:
 
 ### Review state changes before opening a PR
 
-When deciding whether a review can resume, distinguish changes to the material reviewers examined from changes to the code that delivered it. Preserve completed work across compatible transport fixes.
+When deciding whether a review can resume, distinguish changes to the material reviewers examined from changes to the code that delivered it. A runner can contain both transport code and the criteria shown to reviewers. Change each in turn and check whether the same round should resume.
 
 Trace persisted data from every writer through parsing and recovery to the next operation that consumes it. For each assumption that could lose progress or select the wrong next step, write a test that breaks it. Check these cases when they apply:
 

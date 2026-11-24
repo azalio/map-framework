@@ -9030,6 +9030,13 @@ def _review_policy_names(
     return sorted(names)
 
 
+def _review_embedded_rules(binding: dict[str, Any] | None = None) -> dict[str, str]:
+    directory = Path(__file__).resolve().parent
+    names = REVIEW_RULE_SOURCES if binding and binding.get("provider") == "codex" else ("map_step_runner.py",)
+    return {name: review_rules_digest(directory / name, name) if (directory / name).is_file() else "missing"
+            for name in names}
+
+
 def _review_policy(
     binding: dict[str, Any] | None = None, *, trusted_policy: dict[str, Any] | None = None,
     include_verification_summary: bool = True, legacy_scripts: dict[str, Any] | None = None,
@@ -9041,6 +9048,8 @@ def _review_policy(
     policy = {"schema": "review_receipt.v1", "criteria": _VERDICT_TABLE_ID,
               "binding": binding, "files": [files[name] for name in sorted(files)],
               "trusted_policy": _review_trusted_policy() if trusted_policy is None else trusted_policy}
+    if legacy_scripts is None:
+        policy["embedded_rules"] = _review_embedded_rules(binding)
     return hashlib.sha256(json.dumps(policy, sort_keys=True).encode()).hexdigest()
 
 
@@ -9182,7 +9191,7 @@ def _review_target_signature(
             if value)
         policy_names = _review_policy_names(include_verification_summary=include_verification_summary)
         watched = sorted({*names, *policy_names, *git_files, *(str(path) for path in outside)})
-        digest = hashlib.sha256(json.dumps([REVIEW_TARGET_CACHE_SCHEMA, os.getcwd(), head, anchor]).encode())
+        digest = hashlib.sha256(json.dumps([REVIEW_TARGET_CACHE_SCHEMA, os.getcwd(), head, anchor, _review_embedded_rules()]).encode())
         for name in watched:
             digest.update(json.dumps([name, _review_stat_token(name, now_ns)]).encode())
         return digest.hexdigest()
@@ -9818,10 +9827,19 @@ def _review_binding_current(row: dict[str, Any], *, target: dict[str, Any] | Non
                 return False
         else:
             scripts = legacy_review_scripts(Path("."))
+        for name, live_digest in _review_embedded_rules(binding).items():
+            installed = Path(".map/scripts") / name
+            entry = scripts.get(installed.as_posix())
+            if not entry or entry.get("kind") != "file" or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]):
+                return False
+            archive = Path(".map/.review-legacy-rules") / entry["sha256"]
+            source = archive if archive.is_file() else installed
+            if review_rules_digest(source, name, expected_sha=entry["sha256"]) != live_digest:
+                return False
         if "policy_hash" in admitted and admitted["policy_hash"] != _review_policy(trusted_policy=policy, legacy_scripts=scripts):
             return False
         return digest == _review_policy(binding, trusted_policy=policy, legacy_scripts=scripts)
-    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
+    except (OSError, ValueError, KeyError, TypeError, SyntaxError, subprocess.TimeoutExpired):
         return False
 
 
@@ -18958,10 +18976,12 @@ def add_known_issue(
 
 
 from map_utils import (  # type: ignore[import-not-found]
+    REVIEW_RULE_SOURCES,
     atomic_write_text,
     branch_transaction,
     get_branch_name,
     legacy_review_scripts,
+    review_rules_digest,
 )
 from map_utils import (  # type: ignore[import-not-found]
     review_file_entry as _review_file_entry,

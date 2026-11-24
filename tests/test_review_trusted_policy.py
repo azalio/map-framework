@@ -1,6 +1,7 @@
 """Trusted policy is selected by the runner, never by the proposed head."""
 
 import json
+import shutil
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -160,14 +161,19 @@ def review_writer(monkeypatch, ledger, *, legacy):
     """Model the original admission inputs and on-disk row consumed after upgrade."""
     with monkeypatch.context() as patch:
         if legacy:
-            current_names = runner._review_policy_names
+            for name in ("map_step_runner.py", "codex_review_runner.py"):
+                installed = Path(".map/scripts") / name
+                installed.parent.mkdir(parents=True, exist_ok=True)
+                if not installed.exists():
+                    shutil.copyfile(SCRIPTS / name, installed)
+            policy = runner._review_policy
 
-            def previous_names(*args, **kwargs):
-                scripts = {str(path) for ext in ("py", "sh") for path in Path(".map/scripts").rglob(f"*.{ext}")
-                           if path.is_file()}
-                return sorted(set(current_names(*args, **kwargs)) | scripts)
+            def previous_policy(*args, **kwargs):
+                scripts = {str(path): runner._review_file_entry(str(path)) for ext in ("py", "sh")
+                           for path in Path(".map/scripts").rglob(f"*.{ext}") if path.is_file()}
+                return policy(*args, **kwargs, legacy_scripts=scripts)
 
-            patch.setattr(runner, "_review_policy_names", previous_names)
+            patch.setattr(runner, "_review_policy", previous_policy)
         yield patch
     if legacy:
         record = json.loads(ledger.read_bytes())
@@ -278,6 +284,62 @@ def test_new_round_after_legacy_abandonment_gets_its_own_consent(policy_repo, mo
     hold = holds[second["human_consent"]["hold_id"]]
     assert hold["review_binding"] == {"target": second["target"], "policy_hash": second["policy_hash"],
                                       "action": "review-ready"}
+
+
+@pytest.mark.parametrize("legacy", [False, True], ids=["current", "legacy"])
+@pytest.mark.parametrize("script,old,new", [
+    ("map_step_runner.py", "<evidence_validation>", "<changed_validation>"),
+    ("map_step_runner.py", "REVIEWER_PARAPHRASE_MAX_CHARS = 1200", "REVIEWER_PARAPHRASE_MAX_CHARS = 600"),
+    ("map_step_runner.py", "<'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'>", "<custom severity>"),
+    ("codex_review_runner.py", '"monitor": json.loads', '"different_role": json.loads'),
+])
+def test_embedded_rule_change_rejects_saved_round(policy_repo, monkeypatch, legacy, script, old, new):
+    from mapify_cli.delivery.file_copier import _copy_map_path
+
+    dest = Path(".map/scripts")
+    shutil.copytree(SCRIPTS, dest, dirs_exist_ok=True)
+    ledger = Path(".map/feature/review-verdict-ledger.json")
+    options = {"branch": "feature", "mode": "lightweight", "provider": "codex"}
+    with review_writer(monkeypatch, ledger, legacy=legacy):
+        assert runner.begin_review_run(**options)["status"] == "success"
+    src = Path("..").resolve() / (Path.cwd().name + "-changed-rules")
+    src.mkdir()
+    text = (SCRIPTS / script).read_text()
+    assert old in text
+    (src / script).write_text(text.replace(old, new, 1))
+    _copy_map_path(src, dest, "new")
+    resumed = subprocess.run([sys.executable, str(dest / "map_step_runner.py"), "begin_review_run",
+                              "--branch", "feature", "--mode", "lightweight", "--provider", "codex"],
+                             check=False, capture_output=True, text=True)
+    assert resumed.returncode == 1 and "different review inputs" in resumed.stdout, resumed.stderr
+
+
+def test_rule_fingerprint_preserves_empty_ast_fields_across_python_versions(tmp_path):
+    import hashlib
+
+    from map_utils import review_rules_digest
+
+    path = tmp_path / "rubrics.py"
+    path.write_text("ROLE_RUBRICS = dict()  # a formatting-only comment\n")
+    canonical = {"ROLE_RUBRICS": ["Call(Name('dict', Load()), [], [])"]}
+    expected = hashlib.sha256(json.dumps(canonical, sort_keys=True).encode()).hexdigest()
+    assert review_rules_digest(path, "codex_review_runner.py") == expected
+
+
+def test_codex_rubric_parse_error_only_affects_codex(policy_repo):
+    dest = Path(".map/scripts")
+    shutil.copytree(SCRIPTS, dest)
+    (dest / "codex_review_runner.py").write_text("invalid Python source\n")
+
+    def admit(provider):
+        result = subprocess.run([sys.executable, str(dest / "map_step_runner.py"), "begin_review_run",
+                                 "--branch", provider, "--mode", "lightweight", "--provider", provider],
+                                check=False, capture_output=True, text=True)
+        return json.loads(result.stdout)
+
+    assert admit("claude")["status"] == "success"
+    rejected = admit("codex")
+    assert rejected["status"] == "error" and "Cannot read reviewer rules" in rejected["message"]
 
 
 def test_check_cannot_outlive_change_to_explicit_policy(policy_repo):

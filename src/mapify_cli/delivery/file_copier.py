@@ -443,6 +443,8 @@ def _install_managed_tree(src_dir: Path, dest_dir: Path, version: str) -> None:
 def _preserve_legacy_review_transport(map_dir: Path) -> None:
     """Keep old rounds verifiable across the first replacement of their installed scripts."""
     from mapify_cli.templates.map.scripts.map_utils import (
+        REVIEW_RULE_SOURCES,
+        atomic_write_bytes,
         atomic_write_text,
         legacy_review_scripts,
     )
@@ -463,6 +465,17 @@ def _preserve_legacy_review_transport(map_dir: Path) -> None:
             continue
         if scripts is None:
             scripts = legacy_review_scripts(map_dir.parent)
+            archive = map_dir / ".review-legacy-rules"
+            if archive.is_symlink():
+                raise OSError(f"Cannot archive review rules through a symbolic link: {archive}")
+            for name in REVIEW_RULE_SOURCES:
+                source = map_dir / "scripts" / name
+                entry = scripts.get(source.relative_to(map_dir.parent).as_posix())
+                if entry and entry["kind"] == "file":
+                    raw = source.read_bytes()
+                    if hashlib.sha256(raw).hexdigest() != entry["sha256"]:
+                        raise OSError(f"Installed review script changed during upgrade: {source}")
+                    atomic_write_bytes(archive / entry["sha256"], raw)
         atomic_write_text(snapshot, json.dumps(scripts, sort_keys=True))
 
 

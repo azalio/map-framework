@@ -912,20 +912,31 @@ def test_transport_patch_reuses_report_check_and_session(repo, monkeypatch, lega
     options = {"branch": "feature", "provider": "codex", "mode": "lightweight", "round_id": "transport",
                "required_checks": ["smoke"], "check_specs": {"smoke": [sys.executable, "-V"]}}
     ledger_path = Path(".map/feature/review-verdict-ledger.json")
+    class ShardHost(SimulatedHost):
+        resumed: ClassVar[list[str]] = []
+
+        def start(self, thread_id=""):
+            self.resumed.append(thread_id)
+            self.thread = thread_id or f"thread-{len(self.resumed)}"
+            return self.thread
+
+        def probe(self, context_id):
+            return {**super().probe(context_id), "thread_id": self.thread}
+
     with review_writer(monkeypatch, ledger_path, legacy=legacy) as old:
         admitted = runner.begin_review_run(**options)
         assert admitted["status"] == "success", admitted
         check = runner.run_test_gate(check_id="smoke", branch="feature")
         assert check["passed"], check
         assert runner.create_review_bundle(branch="feature")["status"] == "success"
-        old.setattr(driver, "CodexReviewHost", SimulatedHost)
-        SimulatedHost.resumed = []
-        SimulatedHost.interrupt_once = False
+        old.setattr(driver, "CodexReviewHost", ShardHost)
+        ShardHost.resumed = []
+        ShardHost.interrupt_once = False
         collect = driver._collect_role
 
         def interrupt_second(branch, round_id, role, *args):
             if args[2] == admitted["shard_ids"][1]:
-                SimulatedHost.interrupt_once = True
+                ShardHost.interrupt_once = True
             return collect(branch, round_id, role, *args)
 
         old.setattr(driver, "_collect_role", interrupt_second)
@@ -950,8 +961,10 @@ def test_transport_patch_reuses_report_check_and_session(repo, monkeypatch, lega
     assert resumed.get("resumed") and resumed["target"] == admitted["target"], resumed
     assert resumed["reusable_checks"] == ["smoke"]
     assert runner.create_review_bundle(branch="feature")["status"] == "success"
-    monkeypatch.setattr(driver, "CodexReviewHost", SimulatedHost)
+    monkeypatch.setattr(driver, "CodexReviewHost", ShardHost)
+    ShardHost.resumed = []
     result = driver.run("feature")
+    assert ShardHost.resumed[0] == row["context_sessions"][pending]["agent_id"] == "thread-2"
     assert result["status"] == "success" and result["reviewers"][0]["reused"], result
     after = json.loads(ledger_path.read_text())
     current, = after["convergence"]["rounds"]
