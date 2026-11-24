@@ -184,13 +184,18 @@ def review_rules_digest(path: Path, script: str, *, expected_sha: str = "") -> s
 
 
 def _review_prompt_entries(function: ast.FunctionDef) -> list[ast.AST]:
-    """Keep role routing and the inputs a reviewer receives from each prompt entry."""
+    """Read each builder from input selection through prompt construction, up to delivery."""
     sections: list[ast.AST] = []
-    for statement in function.body:
-        uses_prompts = False
+    body = function.body[1:] if ast.get_docstring(function) is not None else function.body
+    for statement in body:
+        match statement:
+            # Current and historical builders hand completed entries to this same transport API.
+            case ast.Assign(value=ast.Call(func=ast.Name(id="_prepare_review_context"))):
+                break
+            # The budget is returned as telemetry. The builder emits the complete prompt.
+            case ast.Assign(targets=[ast.Name(id="budget")], value=ast.Call(func=ast.Name(id="_review_prompt_budget_tokens"))):
+                continue
         for item in ast.walk(statement):
-            if isinstance(item, ast.Subscript) and isinstance(item.value, ast.Name) and item.value.id == "prompts":
-                uses_prompts = True
             match item:
                 case ast.Assign(targets=[ast.Subscript(value=ast.Name(id="prompts"))], value=ast.Dict() as entry):
                     # The same entry also carries estimates and other delivery diagnostics.
@@ -200,8 +205,7 @@ def _review_prompt_entries(function: ast.FunctionDef) -> list[ast.AST]:
                                                  and key.value in ("prompt", "context_access", "subagent_type"))]
                     entry.keys = [key for key, _ in fields]
                     entry.values = [value for _, value in fields]
-        if uses_prompts:
-            sections.append(statement)
+        sections.append(statement)
     return sections
 
 

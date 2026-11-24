@@ -299,6 +299,10 @@ def test_new_round_after_legacy_abandonment_gets_its_own_consent(policy_repo, mo
                  "Use the previous evaluation.", id="codex-recheck"),
     pytest.param("codex_review_host.py", "follow the role prompt and return its exact schema",
                  "return a free-form report", id="codex-developer-instructions"),
+    pytest.param("map_step_runner.py", "else _read_repo_summary_for_review(branch_name)\n    )\n\n    prompts:",
+                 'else "changed repository context"\n    )\n\n    prompts:', id="local-role-context"),
+    pytest.param("map_step_runner.py", "spec_context = spec_text if spec_text is not None else _read_spec_for_review(",
+                 'spec_context = "changed specification" if spec_text is not None else _read_spec_for_review(', id="local-hunter-context"),
     pytest.param("map_step_runner.py", "Use only its analytical protocol", "Apply its whole protocol", id="core-instructions"),
     pytest.param("map_step_runner.py", "Always include receipt with all four arrays", "Send whichever receipt arrays apply", id="role-instructions"),
     pytest.param("map_step_runner.py", "Every finding must include concrete evidence and a plausible failure_mode.",
@@ -327,6 +331,8 @@ def test_embedded_rule_change_rejects_saved_round(policy_repo, monkeypatch, lega
     pytest.param("map_step_runner.py", '**role_entry,\n            "estimated_tokens": 0',
                  '**role_entry,\n            "estimated_tokens": 42', id="entry-estimate"),
     pytest.param("codex_review_runner.py", "if no_progress > 1:", "if no_progress > 2:", id="retry-threshold"),
+    pytest.param("map_step_runner.py", '**role_entry,\n            "estimated_tokens": 0',
+                 '**role_entry,\n            "estimated_tokens": len(role_id)', id="computed-estimate"),
 ])
 def test_delivery_change_keeps_saved_round(policy_repo, monkeypatch, legacy, script, old, new):
     first, resumed = _change_installed_runner(monkeypatch, legacy, script, old, new)
