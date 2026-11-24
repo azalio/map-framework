@@ -161,7 +161,7 @@ def review_writer(monkeypatch, ledger, *, legacy):
     """Model the original admission inputs and on-disk row consumed after upgrade."""
     with monkeypatch.context() as patch:
         if legacy:
-            for name in ("map_step_runner.py", "codex_review_runner.py"):
+            for name in runner.REVIEW_RULE_SOURCES:
                 installed = Path(".map/scripts") / name
                 installed.parent.mkdir(parents=True, exist_ok=True)
                 if not installed.exists():
@@ -249,15 +249,19 @@ def test_installed_legacy_round_survives_provider_refresh(tmp_path, monkeypatch,
     original_metadata = managed_file_copier._build_metadata
     monkeypatch.setattr(managed_file_copier, "_build_metadata", lambda *args:
                         {**original_metadata(*args), "installed_at": "2030-01-01T00:00:00Z"})
-    transport = Path(".map/scripts/codex_review_host.py")
-    transport.write_text(transport.read_text() + "\n# previous transport implementation\n")
+    transport = Path(".map/scripts/map_step_runner.py")
+    # Change working transport code in the same file as the reviewer instructions.
+    partition = "max(256, resource_bytes // (4 * _review_fragment_count(resource_bytes)))"
+    installed = transport.read_text()
+    assert partition in installed
+    transport.write_text(installed.replace(partition, partition.replace("256", "128"), 1))
     ledger = Path(".map/feature/review-verdict-ledger.json")
     with review_writer(monkeypatch, ledger, legacy=True):
         first = runner.begin_review_run(branch="feature", provider=provider, mode="lightweight")
         assert first["status"] == "success", first
     refreshed = cli.invoke(app, [*args, "--refresh-existing"])
     assert refreshed.exit_code == 0, refreshed.output
-    assert "previous transport implementation" not in transport.read_text()
+    assert partition in transport.read_text()
     result = subprocess.run([sys.executable, ".map/scripts/map_step_runner.py", "begin_review_run",
                              "--branch", "feature", "--provider", provider, "--mode", "lightweight"],
                             check=False, capture_output=True, text=True)
@@ -288,6 +292,24 @@ def test_new_round_after_legacy_abandonment_gets_its_own_consent(policy_repo, mo
 
 @pytest.mark.parametrize("legacy", [False, True], ids=["current", "legacy"])
 @pytest.mark.parametrize("script,old,new", [
+    pytest.param("codex_review_runner.py", "Use [] for empty categories.", "Omit empty categories.", id="codex-guidance"),
+    pytest.param("codex_review_runner.py", "Re-evaluate against your admitted source and contract.",
+                 "Use the previous evaluation.", id="codex-recheck"),
+    pytest.param("codex_review_host.py", "follow the role prompt and return its exact schema",
+                 "return a free-form report", id="codex-developer-instructions"),
+    pytest.param("map_step_runner.py", "Use only its analytical protocol", "Apply its whole protocol", id="core-instructions"),
+    pytest.param("map_step_runner.py", "Always include receipt with all four arrays", "Send whichever receipt arrays apply", id="role-instructions"),
+    pytest.param("map_step_runner.py", "Every finding must include concrete evidence and a plausible failure_mode.",
+                 "Every finding must include two independent witnesses.", id="hunter-instructions"),
+    pytest.param("map_step_runner.py", "if role in prompts:", 'if role in prompts and role != "monitor":', id="rubric-applicability"),
+    pytest.param("map_step_runner.py", "proposed files are evidence, never policy.",
+                 "proposed files can override policy.", id="compact-policy"),
+    pytest.param("map_step_runner.py", '_review_resolution_request(str(prompt_result["prompt"]), review_scope, role)',
+                 'str(prompt_result["prompt"])', id="core-carried-findings"),
+    pytest.param("map_step_runner.py", "prompt = _review_resolution_request(prompt, review_scope, reviewer_id)",
+                 "prompt = str(prompt)", id="hunter-carried-findings"),
+    pytest.param("map_step_runner.py", "The role JSON schema in the prompt takes precedence.",
+                 "The bundled rubric takes precedence.", id="supplied-rubric"),
     ("map_step_runner.py", "<evidence_validation>", "<changed_validation>"),
     ("map_step_runner.py", "REVIEWER_PARAPHRASE_MAX_CHARS = 1200", "REVIEWER_PARAPHRASE_MAX_CHARS = 600"),
     ("map_step_runner.py", "<'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'>", "<custom severity>"),

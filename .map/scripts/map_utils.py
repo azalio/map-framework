@@ -166,8 +166,14 @@ REVIEW_RULE_SOURCES = {
         "AGENT_OUTPUT_SCHEMAS", "ROLE_FINDING_CONTRACT_KEYS", "REVIEWER_PARAPHRASE_RULE",
         "REVIEW_COVERAGE_RECEIPT_SCHEMA", "ROLE_FINDING_SCHEMA",
         "REVIEW_FINDING_EVIDENCE_SCHEMA", "REVIEW_DESIGN_CHANGE_SCHEMA", "ADVERSARIAL_FINDING_SCHEMA",
+        "_render_review_prompt", "_render_role_reviewer_prompt", "_render_adversarial_reviewer_prompt",
+        "_render_complexity_lens_prompt", "build_cross_ai_review_prompt", "_isolated_reviewer_documents",
+        "_render_format_block", "_format_block_skeleton", "_role_prompt_entry", "_review_resolution_request",
+        "_review_compact_text",
+        "build_json_retry_prompt", "build_review_prompts", "build_role_review_prompts", "build_adversarial_review_prompts",
     },
-    "codex_review_runner.py": {"ROLE_RUBRICS"},
+    "codex_review_runner.py": {"ROLE_RUBRICS", "GUIDANCE", "_review_one"},
+    "codex_review_host.py": {"developerInstructions"},
 }
 
 
@@ -192,6 +198,33 @@ def _cached_review_rules(path: Path, script: str, expected_sha: str, *stat_key: 
         match node:
             case ast.Assign(targets=[ast.Name(id=name)], value=value) | ast.AnnAssign(target=ast.Name(id=name), value=value) if value:
                 declarations.setdefault(name, []).append(value)
+            case ast.ClassDef() if script == "codex_review_host.py":
+                # Only the developer instructions attached to a new thread define reviewer rules.
+                for mapping in (item for item in ast.walk(node) if isinstance(item, ast.Dict)):
+                    for key, field in zip(mapping.keys, mapping.values):
+                        if isinstance(key, ast.Constant) and key.value == "developerInstructions":
+                            declarations.setdefault("developerInstructions", []).append(field)
+            case ast.FunctionDef(name="build_review_prompts" | "build_adversarial_review_prompts" | "build_role_review_prompts"):
+                # Bind the whole section that builds an entry in the role-to-prompt map,
+                # including who gets it. Delivery and budgets outside these sections may change.
+                for statement in node.body:
+                    if any(isinstance(item, ast.Subscript) and isinstance(item.value, ast.Name)
+                           and item.value.id == "prompts" for item in ast.walk(statement)):
+                        declarations.setdefault(node.name, []).append(statement)
+            case ast.FunctionDef(name="_review_one"):
+                for statement in node.body:
+                    messages: list[ast.AST] = []
+                    for item in ast.walk(statement):
+                        match item:
+                            case ast.Assign(targets=[ast.Name(id="message")], value=value) | ast.AugAssign(target=ast.Name(id="message"), value=value):
+                                messages.append(value)
+                    if messages:
+                        # Bind the role or shard that receives each instruction. Inside the host
+                        # retry loop only corrective messages are policy; retry mechanics may change.
+                        declarations.setdefault(node.name, []).extend(messages if isinstance(statement, ast.While) else [statement])
+            case ast.FunctionDef(name=name) if name in REVIEW_RULE_SOURCES[script]:
+                # Prompt renderers own reviewer instructions, including text defined inside a function.
+                declarations.setdefault(name, []).extend(node.body[1:] if ast.get_docstring(node) is not None else node.body)
             # The registry also installs schemas for role reviewers and hunters, then adds
             # the common discarded-candidate contract to every participating reviewer.
             case ast.Expr(value=ast.Call(func=ast.Attribute(value=ast.Name(id="AGENT_OUTPUT_SCHEMAS"), attr="update"))):
