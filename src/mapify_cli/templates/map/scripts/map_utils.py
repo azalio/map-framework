@@ -183,6 +183,46 @@ def review_rules_digest(path: Path, script: str, *, expected_sha: str = "") -> s
                                 info.st_mtime_ns)
 
 
+def _review_prompt_entries(function: ast.FunctionDef) -> list[ast.AST]:
+    """Keep role routing and the inputs a reviewer receives from each prompt entry."""
+    sections: list[ast.AST] = []
+    for statement in function.body:
+        uses_prompts = False
+        for item in ast.walk(statement):
+            if isinstance(item, ast.Subscript) and isinstance(item.value, ast.Name) and item.value.id == "prompts":
+                uses_prompts = True
+            match item:
+                case ast.Assign(targets=[ast.Subscript(value=ast.Name(id="prompts"))], value=ast.Dict() as entry):
+                    # The same entry also carries estimates and other delivery diagnostics.
+                    # Keep expanded role entries plus the fields that select a reader, its access and its prompt.
+                    fields = [(key, value) for key, value in zip(entry.keys, entry.values)
+                              if key is None or (isinstance(key, ast.Constant)
+                                                 and key.value in ("prompt", "context_access", "subagent_type"))]
+                    entry.keys = [key for key, _ in fields]
+                    entry.values = [value for _, value in fields]
+        if uses_prompts:
+            sections.append(statement)
+    return sections
+
+
+def _codex_review_messages(statements: list[ast.stmt]) -> list[ast.stmt]:
+    """Retain conditions and their branches only when they determine a message sent to a reviewer."""
+    messages: list[ast.stmt] = []
+    for statement in statements:
+        match statement:
+            case ast.Assign(targets=[ast.Name(id="message")]) | ast.AugAssign(target=ast.Name(id="message")):
+                messages.append(statement)
+            case ast.If():
+                yes = _codex_review_messages(statement.body)
+                no = _codex_review_messages(statement.orelse)
+                if yes or no:
+                    messages.append(ast.If(test=statement.test, body=yes, orelse=no))
+            case ast.While():
+                # Loop progress, retries and host operations do not select a role's output contract.
+                messages.extend(_codex_review_messages(statement.body))
+    return messages
+
+
 @lru_cache(maxsize=32)
 def _cached_review_rules(path: Path, script: str, expected_sha: str, *stat_key: int) -> str:
     """Read declarations as data. An archived file must match the original admission's file entry."""
@@ -205,23 +245,9 @@ def _cached_review_rules(path: Path, script: str, expected_sha: str, *stat_key: 
                         if isinstance(key, ast.Constant) and key.value == "developerInstructions":
                             declarations.setdefault("developerInstructions", []).append(field)
             case ast.FunctionDef(name="build_review_prompts" | "build_adversarial_review_prompts" | "build_role_review_prompts"):
-                # Bind the whole section that builds an entry in the role-to-prompt map,
-                # including who gets it. Delivery and budgets outside these sections may change.
-                for statement in node.body:
-                    if any(isinstance(item, ast.Subscript) and isinstance(item.value, ast.Name)
-                           and item.value.id == "prompts" for item in ast.walk(statement)):
-                        declarations.setdefault(node.name, []).append(statement)
+                declarations[node.name] = _review_prompt_entries(node)
             case ast.FunctionDef(name="_review_one"):
-                for statement in node.body:
-                    messages: list[ast.AST] = []
-                    for item in ast.walk(statement):
-                        match item:
-                            case ast.Assign(targets=[ast.Name(id="message")], value=value) | ast.AugAssign(target=ast.Name(id="message"), value=value):
-                                messages.append(value)
-                    if messages:
-                        # Bind the role or shard that receives each instruction. Inside the host
-                        # retry loop only corrective messages are policy; retry mechanics may change.
-                        declarations.setdefault(node.name, []).extend(messages if isinstance(statement, ast.While) else [statement])
+                declarations.setdefault(node.name, []).extend(_codex_review_messages(node.body))
             case ast.FunctionDef(name=name) if name in REVIEW_RULE_SOURCES[script]:
                 # Prompt renderers own reviewer instructions, including text defined inside a function.
                 declarations.setdefault(name, []).extend(node.body[1:] if ast.get_docstring(node) is not None else node.body)

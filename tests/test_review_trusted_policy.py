@@ -292,6 +292,8 @@ def test_new_round_after_legacy_abandonment_gets_its_own_consent(policy_repo, mo
 
 @pytest.mark.parametrize("legacy", [False, True], ids=["current", "legacy"])
 @pytest.mark.parametrize("script,old,new", [
+    pytest.param("codex_review_runner.py", 'if role == "complexity_lens":\n            if response.strip()',
+                 'if role in {"complexity_lens", "monitor"}:\n            if response.strip()', id="codex-final-role"),
     pytest.param("codex_review_runner.py", "Use [] for empty categories.", "Omit empty categories.", id="codex-guidance"),
     pytest.param("codex_review_runner.py", "Re-evaluate against your admitted source and contract.",
                  "Use the previous evaluation.", id="codex-recheck"),
@@ -316,6 +318,25 @@ def test_new_round_after_legacy_abandonment_gets_its_own_consent(policy_repo, mo
     ("codex_review_runner.py", '"monitor": json.loads', '"different_role": json.loads'),
 ])
 def test_embedded_rule_change_rejects_saved_round(policy_repo, monkeypatch, legacy, script, old, new):
+    _, resumed = _change_installed_runner(monkeypatch, legacy, script, old, new)
+    assert resumed.returncode == 1 and "different review inputs" in resumed.stdout, resumed.stderr
+
+
+@pytest.mark.parametrize("legacy", [False, True], ids=["current", "legacy"])
+@pytest.mark.parametrize("script,old,new", [
+    pytest.param("map_step_runner.py", '**role_entry,\n            "estimated_tokens": 0',
+                 '**role_entry,\n            "estimated_tokens": 42', id="entry-estimate"),
+    pytest.param("codex_review_runner.py", "if no_progress > 1:", "if no_progress > 2:", id="retry-threshold"),
+])
+def test_delivery_change_keeps_saved_round(policy_repo, monkeypatch, legacy, script, old, new):
+    first, resumed = _change_installed_runner(monkeypatch, legacy, script, old, new)
+    assert resumed.returncode == 0, resumed.stdout
+    result = json.loads(resumed.stdout)
+    assert result["resumed"] and result["round_id"] == first["round_id"]
+    assert result["policy_hash"] == first["policy_hash"]
+
+
+def _change_installed_runner(monkeypatch, legacy, script, old, new):
     from mapify_cli.delivery.file_copier import _copy_map_path
 
     dest = Path(".map/scripts")
@@ -323,7 +344,8 @@ def test_embedded_rule_change_rejects_saved_round(policy_repo, monkeypatch, lega
     ledger = Path(".map/feature/review-verdict-ledger.json")
     options = {"branch": "feature", "mode": "lightweight", "provider": "codex"}
     with review_writer(monkeypatch, ledger, legacy=legacy):
-        assert runner.begin_review_run(**options)["status"] == "success"
+        first = runner.begin_review_run(**options)
+        assert first["status"] == "success"
     src = Path("..").resolve() / (Path.cwd().name + "-changed-rules")
     src.mkdir()
     text = (SCRIPTS / script).read_text()
@@ -333,7 +355,7 @@ def test_embedded_rule_change_rejects_saved_round(policy_repo, monkeypatch, lega
     resumed = subprocess.run([sys.executable, str(dest / "map_step_runner.py"), "begin_review_run",
                               "--branch", "feature", "--mode", "lightweight", "--provider", "codex"],
                              check=False, capture_output=True, text=True)
-    assert resumed.returncode == 1 and "different review inputs" in resumed.stdout, resumed.stderr
+    return first, resumed
 
 
 def test_rule_fingerprint_preserves_empty_ast_fields_across_python_versions(tmp_path):
