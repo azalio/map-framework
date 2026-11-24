@@ -24,7 +24,9 @@ After discovery, `/map-plan` also runs an already-implemented gate: discovery re
 
 Once a plan reaches `ready` (task_plan + blueprint both present, the Step 7 boundary), you can start `/map-efficient` or `/map-task` right away — the plan needs no separate approval. A pending `plan_approval` hold left by an older mapify version is closed automatically by the `/map-efficient` and `/map-task` preflights.
 
-When `resume_from_plan` starts execution, `aag_contracts_found` counts subtasks
+`resume_from_plan` places prerequisites before their dependents. If dependencies
+form a cycle, it reports the cycle before updating execution state.
+The result field `aag_contracts_found` counts subtasks
 with a nonblank `aag_contract` in the blueprint. If no subtask has an
 `aag_contract` field, the command counts entries in the legacy `aag_contracts` mapping.
 

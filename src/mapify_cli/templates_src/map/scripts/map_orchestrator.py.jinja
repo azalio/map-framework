@@ -4661,29 +4661,16 @@ def _load_blueprint_deps(branch: str) -> dict[str, list[str]]:
     empty dict on any read/parse failure — callers fall back to caller-
     provided order (no deps known means no topology to enforce).
     """
-    bp_path = Path(f".map/{branch}/blueprint.json")
-    if not bp_path.exists():
-        return {}
-    try:
-        payload = json.loads(bp_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}
-    body = payload.get("blueprint") if isinstance(payload.get("blueprint"), dict) else payload
-    subtasks = body.get("subtasks") if isinstance(body, dict) else None
+    blueprint = _read_plan_object(Path(f".map/{branch}/blueprint.json"))
+    return _subtask_dependencies(_blueprint_subtasks_by_id(blueprint))
+
+
+def _subtask_dependencies(subtasks: dict[str, dict]) -> dict[str, list[str]]:
     deps: dict[str, list[str]] = {}
-    if not isinstance(subtasks, list):
-        return deps
-    for st in subtasks:
-        if not isinstance(st, dict):
-            continue
-        sid = st.get("id")
-        if not isinstance(sid, str):
-            continue
-        raw = st.get("dependencies", [])
+    for sid, subtask in subtasks.items():
+        raw = subtask.get("dependencies", [])
         if isinstance(raw, list):
             deps[sid] = [d for d in raw if isinstance(d, str)]
-        else:
-            deps[sid] = []
     return deps
 
 
@@ -4711,7 +4698,7 @@ def _topological_sort_subtasks(
     children: dict[str, list[str]] = {sid: [] for sid in subtask_ids}
     for sid in subtask_ids:
         for dep in deps_map.get(sid, []):
-            if dep in known and dep != sid:
+            if dep in known:
                 incoming[sid] += 1
                 children[dep].append(sid)
 
@@ -5197,6 +5184,12 @@ def resume_from_plan(branch: str) -> dict:
             "status": "error",
             "message": f"No subtask IDs (ST-XXX) found in {plan_file}.",
         }
+
+    if subtasks:
+        ordered_ids, cycle = _topological_sort_subtasks(subtask_ids, _subtask_dependencies(subtasks))
+        if ordered_ids is None:
+            return {"status": "error", "message": f"Cannot resume plan: {cycle}"}
+        subtask_ids = ordered_ids
 
     state_file = plan_dir / "step_state.json"
     contracts = [st["aag_contract"] for st in subtasks.values() if "aag_contract" in st]

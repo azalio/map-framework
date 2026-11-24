@@ -600,6 +600,44 @@ class TestPlanResumeContract:
 
         assert result["aag_contracts_found"] == expected
 
+    @pytest.mark.parametrize("wrapped", [False, True], ids=["flat", "wrapped"])
+    def test_resume_starts_with_prerequisite(self, branch_dir, wrapped):
+        plan_dir = Path(".map") / branch_dir
+        (plan_dir / f"task_plan_{branch_dir}.md").write_text("# Task plan")
+        blueprint = {"subtasks": [
+            {"id": "ST-002", "dependencies": ["ST-001"], "aag_contract": "Build"},
+            {"id": "ST-001", "dependencies": [], "aag_contract": "Prepare"},
+        ]}
+        (plan_dir / "blueprint.json").write_text(
+            json.dumps({"blueprint": blueprint} if wrapped else blueprint)
+        )
+
+        result = map_orchestrator.resume_from_plan(branch_dir)
+
+        assert result["aag_contracts_found"] == 2
+        assert result["current_subtask_id"] == "ST-001"
+        state = map_orchestrator.StepState.load(plan_dir / "step_state.json")
+        assert state.current_subtask_id == "ST-001"
+        assert state.subtask_sequence == result["subtask_sequence"] == ["ST-001", "ST-002"]
+
+    @pytest.mark.parametrize("dependency", ["ST-001", "ST-002"], ids=["self", "mutual"])
+    def test_resume_rejects_cycle_before_changing_state(self, branch_dir, dependency):
+        plan_dir = Path(".map") / branch_dir
+        (plan_dir / f"task_plan_{branch_dir}.md").write_text("# Task plan")
+        (plan_dir / "blueprint.json").write_text(json.dumps({"subtasks": [
+            {"id": "ST-001", "dependencies": [dependency]},
+            {"id": "ST-002", "dependencies": ["ST-001"]},
+        ]}))
+        state_file = plan_dir / "step_state.json"
+        original = b'{"workflow": "map-plan"}'
+        state_file.write_bytes(original)
+
+        result = map_orchestrator.resume_from_plan(branch_dir)
+
+        assert result["status"] == "error"
+        assert "cycle" in result["message"]
+        assert state_file.read_bytes() == original
+
     def test_resume_counts_legacy_blueprint_contracts(self, branch_dir):
         plan_dir = Path(".map") / branch_dir
         (plan_dir / f"task_plan_{branch_dir}.md").write_text("### ST-001")
