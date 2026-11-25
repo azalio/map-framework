@@ -345,6 +345,13 @@ VERIFICATION_RESULTS_SCHEMA = {
 }
 
 
+_CHECK_ARGV_SCHEMA = {
+    "type": "array",
+    "minItems": 1,
+    "prefixItems": [{"type": "string", "minLength": 1}],
+    "items": {"type": "string"},
+}
+
 BLUEPRINT_SCHEMA = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://mapframework.dev/schemas/blueprint.json",
@@ -381,6 +388,20 @@ BLUEPRINT_SCHEMA = {
                         "description": "Files expected to be created or modified",
                         "items": {"type": "string"},
                     },
+                    "repository_checks": {
+                        "type": "object",
+                        "minProperties": 2,
+                        "propertyNames": {"minLength": 1},
+                        "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                                "base": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+                                "command": _CHECK_ARGV_SCHEMA,
+                            },
+                            "required": ["base", "command"],
+                        },
+                    },
+                    "joint_check": _CHECK_ARGV_SCHEMA,
                     "creates_files": {
                         "type": "array",
                         "description": (
@@ -460,6 +481,7 @@ BLUEPRINT_SCHEMA = {
                         "enum": [
                             "api",
                             "config",
+                            "cross-repo",
                             "data",
                             "docs",
                             "infra",
@@ -498,6 +520,7 @@ BLUEPRINT_SCHEMA = {
                     "one_logical_step",
                     "validation_criteria",
                 ],
+                "dependentRequired": {"repository_checks": ["joint_check"], "joint_check": ["repository_checks"]},
                 "additionalProperties": True,
             },
         },

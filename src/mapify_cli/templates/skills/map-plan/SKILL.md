@@ -346,7 +346,7 @@ Task(
 Break the spec into atomic subtasks. Include an `evidence` array before `subtasks` so every boundary is grounded in the spec or repo findings.
 </task>
 <constraints>
-Each subtask must include expected_diff_size, concern_type, one_logical_step, validation_criteria, dependencies, complexity_score, risk_level, test_strategy, and aag_contract.
+Each subtask must include expected_diff_size, concern_type, one_logical_step, validation_criteria, dependencies, complexity_score, risk_level, test_strategy, and aag_contract. For a feature spanning checkouts, list every file once in affected_files. Under repository_checks, give each checkout path (relative to the coordinator or absolute), its base from git rev-parse HEAD, and a local command argument list. Add a joint_check argument list that tests the interaction from the coordinator. Show these commands and their acceptance criterion in the plan.
 Split large subtasks unless split_rationale explains why the user payoff requires that scope in one subtask.
 Split mixed-concern subtasks unless concern_justification explains why separation would lose user value.
 Top-level coverage_map must map each acceptance criterion, invariant, and cross-cutting requirement to an owning subtask. Each key must appear as a bracketed tag in that subtask's validation_criteria, e.g. VC1 [AC-1]: retryable checkout timeout.

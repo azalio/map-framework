@@ -89,6 +89,27 @@ entry. Rejection or publication failure leaves the state file byte-identical;
 CLI failures return nonzero. This is not a plan/blueprint editor: keep the plan
 consistent separately, and never hand-edit `step_state.json`.
 
+## Features spanning Git repositories
+
+Start `map-plan` in one checkout and name the other participating checkouts. Describe one observable result, such as a client reading a new field from the server. MAP keeps the specification, blueprint and workflow status in the checkout where you started the plan.
+
+The planner includes each file once in `affected_files`. For a feature subtask it records one local test command and starting commit per checkout in `repository_checks`, plus one `joint_check` that exercises their interaction. For example, the following fields belong to a single subtask:
+
+```json
+{
+  "affected_files": ["api.py", "../client/client.py"],
+  "repository_checks": {
+    ".": {"base": "<server commit SHA>", "command": ["make", "test-api"]},
+    "../client": {"base": "<client commit SHA>", "command": ["make", "test-client"]}
+  },
+  "joint_check": ["make", "test-api-client"]
+}
+```
+
+The planner fills both `base` values with the full commit IDs from the corresponding checkouts. During execution MAP routes each Monitor to its checkout and runs its command there. The joint command runs from the coordinator checkout once every local check has passed. A failing client check leaves the server result available. A change to reviewed code invalidates that checkout's result and the joint result.
+
+To inspect progress from the coordinator, run `python3 .map/scripts/map_step_runner.py feature_check <branch> <subtask-id>`. To repeat one check, add `--repository` and the checkout key from the plan, such as `../client`. Use `--joint` to rerun the compatibility check. Rerunning a local check invalidates the previous joint result. Complete the feature once every local check and the joint check pass on the revisions you intend to deliver.
+
 ## Runner-witnessed acceptance proofs
 
 Acceptance status comes from runner-executed evidence, not agent-written checkboxes. Plan a public-interface proof for every spec AC and preserve its exact ID (`AC-1` is not `AC-001`). Keep ID mappings in `.map`, not product code or shipped test names. Independent TEST_WRITER authoring and RED precede freezing, including batch/wave TDD; Actor cannot silently change or re-freeze the tests.
@@ -368,7 +389,7 @@ Outcomes of the set-diff: if every index ID has an owner in `coverage_map`, the 
 
 Non-blocking guardrails also run alongside the main gate: a **prose-orphan check** warns when a canonical index ID appears in spec prose outside the fenced index block (possible stale reference or typo); a **reverse-phantom check** warns when a `coverage_map` key has no corresponding index entry or declared `soft_constraints` ID; and an **ownership-distribution report** always emits with a fan-in warning when any single subtask owns more than `_COVERAGE_FANIN_WARN` requirements (default 3, adjustable). Declared soft constraints do not need a Requirements Index entry, but mapped constraints still require a valid owner and a bracketed validation tag such as `[SC-1]`. Unmapped soft constraints require `tradeoff_rationale`.
 
-The **affected-files drift check** treats paths explicitly listed in a direct or transitive dependency's `creates_files` as existing for planning purposes. Dependencies must be unique, declared earlier, and structurally valid; unrelated tasks and legacy creation prose do not establish outputs for later tasks. The warning still fires when every local modify-target is absent both on disk and from dependency outputs. A subtask's own `creates_files` remain expected-absent, and cross-repository paths retain their separate warning.
+The **affected-files drift check** treats paths explicitly listed in a direct or transitive dependency's `creates_files` as existing for planning purposes. Dependencies must be unique, declared earlier, and structurally valid; unrelated tasks and legacy creation prose do not establish outputs for later tasks. The warning still fires when every local modify-target is absent both on disk and from dependency outputs. A subtask's own `creates_files` remain expected-absent, and paths in other repositories need an approved repository scope (see [Features spanning Git repositories](#features-spanning-git-repositories)).
 
 Two additional structural checks run unconditionally: an **entry-point existence check** confirms that a non-empty plan has at least one subtask with no dependencies (a plan with no starting point cannot execute); and a **max dependency depth** check emits a warning when the longest dependency chain exceeds `MAX_DEPENDENCY_DEPTH` (default 5, overridable via `MAP_MAX_DEPENDENCY_DEPTH` — a hard error threshold is deliberate; the current warn-first default allows gradual adoption).
 

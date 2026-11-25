@@ -112,6 +112,7 @@ Need to reorder unstarted work in an active run? Use the audited
 without resetting the current step, retries, results or baselines.
 
 - **Start with `/map-plan`** for anything non-trivial — it clarifies behavior and splits the work into contract-sized subtasks.
+- A feature can span multiple Git repositories. Give the planner each checkout path and one shared acceptance criterion. [Multi-repository workflow](docs/USAGE.md#features-spanning-git-repositories)
 - **Starting from a PRD?** Run `/map-prd-review` directly, or accept `/map-plan`'s optional readiness preflight. A non-ready result shows the gaps and asks whether to revise or continue planning anyway.
 - **Already scoped?** Go straight to `/map-efficient`.
 - **Tiny edit?** `/map-plan` off-ramps you to a direct edit or `/map-fast` instead of forcing full planning.

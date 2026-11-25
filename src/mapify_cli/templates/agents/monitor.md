@@ -79,10 +79,16 @@ report `valid: false`, `recommendation: "block"`; never fall back to the parent
 diff or silently use the checkout-local gates. Unset inherited Git directory
 and index variables for independent source/test commands as well.
 
-**Unmanaged checkout without explicit managed context:** use the existing
-checkout-local preflight below. A standalone `/map-review` skips both variants.
+**Assigned feature repository (`repository_checks`):** Read the blueprint and run
+`validate_mutation_boundary <branch> <subtask_id> --repository <key>` from the
+coordinator. Inspect the returned paths and run tests in the assigned checkout.
+The coordinator holds the MAP runtime and the shared plan. If a changed file
+also belongs to an earlier completed subtask, run that checkout's full suite.
+The parent records the approved local and joint commands through `feature_check`.
 
-Before invoking either Actor-specific `.map/scripts/map_step_runner.py` gate,
+**Single-repository unmanaged checkout:** use the existing checkout-local preflight below. A standalone `/map-review` skips both variants.
+
+For this single-repository checkout, before invoking either Actor-specific `.map/scripts/map_step_runner.py` gate,
 clear inherited `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, and
 `GIT_INDEX_FILE` in a subshell before resolving the checkout being reviewed
 with `git rev-parse --show-toplevel`. Check
@@ -142,14 +148,14 @@ state-changing orchestration continues in its original checkout. A standalone
    - Allowed remedies: install the tool or run the repo's tools target, then re-run; or explicit user deferral recorded in the conversation.
 3. Verify Goal is achieved — trace code path to confirm the stated outcome
 4. Verify Action is implemented — check that the specified method/operation exists
-5. **Verify mutation boundary (MANDATORY):** Run
+5. **Verify mutation boundary (MANDATORY):** For an assigned feature repository, run `python3 .map/scripts/map_step_runner.py validate_mutation_boundary <branch> <subtask_id> --repository <key>` from the coordinator checkout and review the returned paths in the assigned checkout. The parent records the local result with `feature_check`. For a single-repository task, run
    `(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; cd "$(git rev-parse --show-toplevel)" && python3 .map/scripts/map_step_runner.py validate_mutation_boundary <branch> <subtask_id>)`
    to compare the actual git diff against the subtask's declared `affected_files`.
    - `status="clean"` → continue.
    - `status="warning"` → record the `unexpected` files in your verdict; do
      NOT auto-reject (cycle-fix expansion is legitimate). The CLI also appends
      to `.map/<branch>/scope-violations.log` for audit.
-   - `status="violation"` (only when `MAP_STRICT_SCOPE=1` is set in env) →
+   - `status="violation"` (feature scope or `MAP_STRICT_SCOPE=1`) →
      `valid: false` with the `unexpected` list. The Actor must re-scope.
    - `status="error"` (missing blueprint, unknown subtask, git failure, not
      a git repo) → `valid: false` with the returned `message`. The CLI exit
@@ -948,7 +954,7 @@ single-module test run is INSUFFICIENT evidence: the canonical miss is a
 change to a shared pipeline file that breaks a stub/no-op path another
 subtask owns, surfacing only at the final full gate.
 
-- The orchestrator exposes the deterministic signal:
+- For an assigned feature repository, follow the feature preflight above. For a single-repository subtask, the orchestrator exposes the deterministic signal:
   `(unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; cd "$(git rev-parse --show-toplevel)" && python3 .map/scripts/map_step_runner.py detect_cross_subtask_regression_risk <branch> <subtask_id>)`.
   When it returns `recommended_gate == "full_suite"` (current diff overlaps a
   prior subtask's files, or the diff couldn't be computed), the `test_output`

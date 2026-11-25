@@ -59,6 +59,7 @@ Trace persisted data from every writer through parsing and recovery to the next 
 - Keep transport bookkeeping inside the runner. Test the operation the reviewer asks for (for example, rereading a source line) with a multi-page Unicode file. Interrupt midway and verify that the next request returns the remaining text and preserves required delivery progress.
 - When changing how persisted records are matched, check that previously published IDs still resolve and that replaying the same user feedback does not create a duplicate.
 - For workflow summaries, compare the reported count with what the next step receives from the same input.
+- Test handoffs through the installed workflow. Make the producer and consumer pass their own checks while they disagree on a field, path or result. Verify the workflow catches the mismatch and accepts the corrected pair.
 - When a check publishes a report, run the check, write and rewrite the report, then read the result in a fresh process. Verify that the same proof is reused, that changing a real input invalidates it, and that workflows which read the report still detect edits to it.
 - Damage an auxiliary file, deliver two more events, and verify that accounting resumes. Check that recoverable counters survive and that the primary workflow state stays intact.
 
