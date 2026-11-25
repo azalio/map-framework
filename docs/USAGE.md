@@ -944,9 +944,7 @@ export MAP_EFFICIENT_SEQUENTIAL_ONLY=1   # forces full legacy sequential path
 # or: true / yes / y / on
 ```
 
-When set, ALL concurrent behavior is suppressed regardless of config: no wave-loop,
-no worktrees, no concurrent dispatch. The code path is byte-identical to pre-Slice-5a
-legacy. Unset or set to `0`/`false` to re-enable default parallel behavior.
+With this override, MAP runs subtasks sequentially. Edit reminders and the first message after compaction show its current subtask, phase and next action, even if the plan includes waves. When the wave loop runs, both messages show each member of the current wave and its phase. Unset the override or set it to `0` or `false` to restore the configured strategy.
 
 ## Stack Overflow for Agents (SOFA)
 

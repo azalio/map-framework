@@ -1,0 +1,22 @@
+def active_wave_progress(state: dict) -> tuple[int, int, dict[str, str]] | None:
+    """Return member phases for the wave that owns the current execution cursor."""
+    driver = state.get("execution_driver")
+    if driver not in (None, "wave_loop"):
+        return None
+    waves = state.get("execution_waves")
+    index = state.get("current_wave_index", 0)
+    if not isinstance(waves, list) or type(index) is not int or not 0 <= index < len(waves):
+        return None
+    members = waves[index]
+    phases = state.get("subtask_phases", {})
+    if not isinstance(members, list) or not members or not all(isinstance(sid, str) for sid in members):
+        return None
+    if not isinstance(phases, dict):
+        return None
+    # Older runs have no driver field. A phase from a different wave cannot identify the active task.
+    if driver is None:
+        serial_task = state.get("current_subtask_id")
+        if (serial_task and serial_task not in members) or not any(sid in phases for sid in members):
+            return None
+    default = "2.25" if state.get("tdd_mode") else "2.3"
+    return index + 1, len(waves), {sid: phases.get(sid, default) for sid in members}

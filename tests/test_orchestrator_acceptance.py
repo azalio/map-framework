@@ -1,13 +1,15 @@
 """Completion uses current runner evidence, never a cached terminal flag."""
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "src/mapify_cli/templates/map/scripts"
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = ROOT / "src/mapify_cli/templates/map/scripts"
 
 
 def orchestrator(command, *args):
@@ -144,6 +146,98 @@ def test_actor_cannot_claim_independent_authoring(completion_workspace):
                           "--authoring-stage", "independent_test_first")
     assert result["status"] == "error", result
     assert "acceptance_authoring" not in json.loads(state_path.read_text())
+
+
+def _cursor_hints(provider, directory):
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(directory.parent.parent)}
+    env.pop("MAP_EFFICIENT_SEQUENTIAL_ONLY", None)
+    env.pop("MAP_INVOKED_BY", None)
+    hooks = ROOT / provider / "hooks"
+    for name in ("workflow-context-injector", "post-compact-context"):
+        result = subprocess.run([sys.executable, "-B", str(hooks / f"{name}.py")],
+                                env=env, input=json.dumps({"tool_name": "Edit", "tool_input": {"file_path": "x"}}),
+                                text=True, capture_output=True, check=True)
+        yield json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+
+
+@pytest.fixture()
+def cursor_plan(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    subprocess.run(["git", "init", "-b", "main"], check=True, capture_output=True)
+    directory = tmp_path / ".map/main"
+    directory.mkdir(parents=True)
+    subtasks = [{"id": "ST-001"}, {"id": "ST-002", "dependencies": ["ST-001"]},
+                {"id": "ST-003", "dependencies": ["ST-002"]}, {"id": "ST-004"}]
+    for task in subtasks:
+        task["affected_files"] = [task["id"] + ".py"]
+    monkeypatch.delenv("MAP_EFFICIENT_SEQUENTIAL_ONLY", raising=False)
+    (directory.parent / "config.yaml").write_text("execution.concurrent_dispatch: false\n")
+    (directory / "blueprint.json").write_text(json.dumps({"subtasks": subtasks}))
+    (directory / "task_plan_main.md").write_text("Feature with four subtasks.")
+    result = orchestrator("resume_from_plan")
+    assert result.get("waves_computed") == "success", result
+    return directory
+
+
+@pytest.mark.parametrize(("provider", "forced"), [(".claude", True), (".codex", False)])
+def test_serial_revision_shows_advanced_cursor_in_both_hooks(cursor_plan, monkeypatch, provider, forced):
+    from tests.test_map_orchestrator import _write_valid_research_artifact
+
+    if forced:
+        monkeypatch.setenv("MAP_EFFICIENT_SEQUENTIAL_ONLY", "1")
+    else:
+        (cursor_plan.parent / "config.yaml").write_text("execution.wave_mode: off\n")
+    assert orchestrator("select_execution_strategy")["strategy"] == "sequential"
+    assert orchestrator("get_next_step")["current_subtask"] == "ST-001"
+    assert orchestrator("mark_subtask_complete", "ST-001", "--reason", "already done")["status"] == "success"
+    assert orchestrator("request_acceptance_revision", "ST-002", "--reason", "Updated requirement")["status"] == "success"
+    edit, restored = _cursor_hints(provider, cursor_plan)
+    for hint in (edit, restored):
+        assert "ST-002" in hint and "TEST_WRITER" in hint, hint
+    assert "Write tests" in restored
+    for step in ("2.25", "2.26"):
+        result = orchestrator("validate_step", step)
+        assert result["valid"], result
+    Path("ST-002.py").write_text("value = 2\n")
+    result = orchestrator("validate_step", "2.4", "--recommendation", "proceed")
+    assert result["valid"], result
+    assert orchestrator("get_next_step")["current_subtask"] == "ST-003"
+    for hint in _cursor_hints(provider, cursor_plan):
+        assert "ST-003" in hint and "Persist" in hint and "RESEARCH" in hint, hint
+    _write_valid_research_artifact(cursor_plan.parent.parent, "main", "ST-003")
+    assert orchestrator("validate_step", "2.2")["next_step"] == "2.25"
+    state = json.loads((cursor_plan / "step_state.json").read_bytes())
+    assert state["subtask_phases"]["ST-002"] == "2.25"
+    edit, restored = _cursor_hints(provider, cursor_plan)
+    for hint in (edit, restored):
+        assert "ST-003" in hint and "TEST_WRITER" in hint and "ST-002" not in hint, hint
+    assert "Write tests" in restored
+
+
+def test_wave_hooks_show_members_on_dispatch_and_after_advance(cursor_plan):
+    assert orchestrator("select_execution_strategy")["strategy"] == "wave_loop"
+    first = orchestrator("get_wave_step")
+    assert {s["subtask_id"] for s in first["subtasks"]} == {"ST-001", "ST-004"}
+    for hint in _cursor_hints(".codex", cursor_plan):
+        assert "ST-001:2.3" in hint and "ST-004:2.3" in hint, hint
+        assert "ST: -" not in hint
+    assert orchestrator("validate_wave_step", "ST-001", "2.3")["valid"]
+    for hint in _cursor_hints(".claude", cursor_plan):
+        assert "ST-001:2.4" in hint and "ST-004:2.3" in hint, hint
+    assert orchestrator("advance_wave")["current_wave_index"] == 1
+    for hint in _cursor_hints(".codex", cursor_plan):
+        assert "ST-002:2.3" in hint and "ST-004" not in hint, hint
+
+
+def test_old_cursor_with_phases_from_another_wave(completion_workspace):
+    path = completion_workspace / "step_state.json"
+    state = json.loads(path.read_bytes())
+    state.update(current_subtask_id="ST-003", current_step_id="2.25", current_step_phase="TEST_WRITER",
+                 execution_waves=[["ST-002"], ["ST-003"]], current_wave_index=0, subtask_phases={"ST-002": "2.25"})
+    path.write_text(json.dumps(state))
+    for hint in _cursor_hints(".claude", completion_workspace):
+        assert "ST-003" in hint and "ST-002" not in hint, hint
 
 
 def test_revision_reenters_writer_before_opening_independent_checkpoint(completion_workspace):

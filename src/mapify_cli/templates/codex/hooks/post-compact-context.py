@@ -53,6 +53,8 @@ STEP_REQUIRED_ACTIONS = {
     "1.55": "Approve plan before execution state is initialized.",
     "1.56": "Choose execution mode before implementation.",
     "2.2": "Persist a RESEARCH artifact before Actor; delegate only when broad discovery is required.",
+    "2.25": "Write tests for the current subtask.",
+    "2.26": "Verify the new tests fail before implementation.",
     "2.3": "Implement only the current subtask, then run Monitor.",
     "2.4": "Run Monitor and treat valid=false as a hard stop.",
 }
@@ -110,17 +112,29 @@ def state_string(state: dict, key: str, default: str = "") -> str:
     return default
 
 
-def active_wave_bits(state: dict) -> list[str]:
-    """Return ``wave=i/n`` and ``phases=...`` bits when the wave loop is engaged."""
+def active_wave_progress(state: dict) -> tuple[int, int, dict[str, str]] | None:
+    """Return member phases for the wave that owns the current execution cursor."""
+    driver = state.get("execution_driver")
+    if driver not in (None, "wave_loop"):
+        return None
     waves = state.get("execution_waves")
-    phases = state.get("subtask_phases")
-    wave_idx = state.get("current_wave_index", 0)
-    if not (isinstance(waves, list) and waves and isinstance(phases, dict) and phases):
-        return []
-    if not isinstance(wave_idx, int) or isinstance(wave_idx, bool):
-        return []
-    per_subtask = " ".join(f"{sid}:{phase}" for sid, phase in phases.items())
-    return [f"wave={wave_idx + 1}/{len(waves)}", f"phases=[{per_subtask}]"]
+    index = state.get("current_wave_index", 0)
+    if not isinstance(waves, list) or type(index) is not int or not 0 <= index < len(waves):
+        return None
+    members = waves[index]
+    phases = state.get("subtask_phases", {})
+    if not isinstance(members, list) or not members or not all(isinstance(sid, str) for sid in members):
+        return None
+    if not isinstance(phases, dict):
+        return None
+    # Older runs have no driver field. A phase from a different wave cannot identify the active task.
+    if driver is None:
+        serial_task = state.get("current_subtask_id")
+        if (serial_task and serial_task not in members) or not any(sid in phases for sid in members):
+            return None
+    default = "2.25" if state.get("tdd_mode") else "2.3"
+    return index + 1, len(waves), {sid: phases.get(sid, default) for sid in members}
+
 
 
 def load_json(path: Path) -> dict | None:
@@ -222,17 +236,16 @@ def build_reprime(branch: str, branch_dir: Path) -> str | None:
     step_id = state_string(state, "current_step_id")
     subtask_id = state_string(state, "current_subtask_id")
 
-    wave_bits = active_wave_bits(state)
-    if wave_bits:
-        # Wave loop engaged: current_step_*/current_subtask_id are stale
-        # sequential leftovers; subtask_phases is the live progress record.
-        phase = step_id = subtask_id = ""
-
+    wave = active_wave_progress(state)
     lines = ["MAP RE-PRIME after compaction:"]
     state_bits = []
     if workflow:
         state_bits.append(f"workflow={workflow}")
-    state_bits.extend(wave_bits)
+    if wave:
+        number, total, phases = wave
+        members = " ".join(f"{sid}:{value}" for sid, value in phases.items())
+        state_bits.extend([f"wave={number}/{total}", f"phases=[{members}]"])
+        phase = step_id = subtask_id = ""
     if step_id:
         state_bits.append(f"step={step_id}")
     if phase:
