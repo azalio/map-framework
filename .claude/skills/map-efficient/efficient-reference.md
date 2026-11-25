@@ -2,6 +2,10 @@
 
 This file holds low-frequency MAP Efficient details so `SKILL.md` stays focused on the active state-machine path.
 
+## Features spanning repositories
+
+For a subtask with `repository_checks`, work from the approved coordinator checkout. Run `python3 .map/scripts/map_step_runner.py feature_check <branch> <subtask_id>`. Use each declared checkout as the Actor worktree. Give its Monitor the repository key, working directory, and files listed under `repositories`. From the coordinator run `feature_check <branch> <subtask_id> --repository <key>` for each ready part. Fix failed checks in their checkout. When all local checks pass, run `feature_check <branch> <subtask_id> --joint` and close Monitor when the status is `complete` on the final revisions. Resume with the same status command to see which checks still need work.
+
 ## Script Routing (dispatcher reference)
 
 Two CLI scripts back the workflow; calling the wrong one fails with `invalid choice`. Route by purpose, not by name prefix:

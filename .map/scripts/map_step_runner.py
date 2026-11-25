@@ -4463,9 +4463,12 @@ def validate_blueprint_contract(
     def _resolve_planned_path(value: str) -> Path | None:
         try:
             return (Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())) / value).resolve()
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, ValueError):
             return None
 
+    from map_feature_plan import cross_repo_paths, feature_projects
+
+    project_root_check = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
     for index, subtask in enumerate(subtasks):
         label = f"subtasks[{index}]"
         if not isinstance(subtask, dict):
@@ -4681,38 +4684,20 @@ def validate_blueprint_contract(
         # AND at least one path is declared (empty affected_files is the
         # decomposer's "no claim" signal and gets its own treatment in
         # the file-conflict checker).
+        feature_configured = "repository_checks" in subtask or "joint_check" in subtask
+        if feature_configured:
+            try:
+                feature_projects(project_root_check, subtask)
+            except (OSError, RuntimeError, ValueError) as exc:
+                errors.append(f"{label}: {exc}")
         if isinstance(affected_files, list) and affected_files:
             string_files = [p for p in affected_files if isinstance(p, str) and p.strip()]
             if string_files:
-                project_root_check = Path(
-                    os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
-                )
-                project_root_resolved = project_root_check.resolve()
-                # Cross-repo detection (computed FIRST so drift can dedup
-                # against it): any path that resolves OUTSIDE the project
-                # root (e.g. ``../LLM-memory/...``) means this subtask
-                # plans to mutate a sibling repo. MAP gates can't cover
-                # sibling repos.
-                cross_repo_paths: list[str] = []
-                for p in string_files:
-                    try:
-                        resolved = (project_root_check / p).resolve()
-                    except (OSError, RuntimeError):
-                        continue
-                    try:
-                        resolved.relative_to(project_root_resolved)
-                    except ValueError:
-                        cross_repo_paths.append(p)
-                if cross_repo_paths:
-                    warnings.append(
-                        f"{label}: cross-repo affected_files detected — "
-                        f"{cross_repo_paths!r} resolve outside the project root "
-                        f"({project_root_resolved}). MAP gates (workflow-gate, "
-                        "validate_mutation_boundary, hooks) do NOT cover sibling "
-                        "repos. Either split the subtask into a sibling-repo "
-                        "follow-up (recommended) or document the cross-repo "
-                        "intent in the subtask description and acknowledge that "
-                        "MAP cannot verify the change."
+                external_paths = cross_repo_paths(project_root_check, string_files)
+                if external_paths and not feature_configured:
+                    errors.append(
+                        f"{label}: cross-repo affected_files {external_paths!r} require "
+                        "repository_checks for each participating checkout and a joint_check for the feature."
                     )
                 # Drift detection: warn ONLY for the affected_files this
                 # subtask is expected to MODIFY (not create) that are both
@@ -4723,8 +4708,8 @@ def validate_blueprint_contract(
                 # blueprints that predate `creates_files`, fall back to the
                 # deprecated description-phrase heuristic (whole-subtask
                 # opt-out) so their behavior is unchanged.
-                cross_repo_set = set(cross_repo_paths)
-                local_files = [p for p in string_files if p not in cross_repo_set]
+                cross_repo_set = set(external_paths)
+                local_files = [p for p in string_files if feature_configured or p not in cross_repo_set]
                 if creates_files_declared:
                     create_set = set(creates_files_list)
                 else:
@@ -5942,6 +5927,8 @@ def _derive_terminal_status(state: dict[str, object]) -> str:
         return "superseded"
     if workflow_status in {"WONT_DO", "WON'T_DO"}:
         return "won't_do"
+    if workflow_status == "FINAL_VERIFICATION" and state.get("approved_feature_contracts"):
+        return "pending"
     # Cursor-independent fallback: if every subtask has a recorded result
     # (Monitor success OR mark_subtask_complete no-op), treat the run as
     # complete even when current_step_phase still points at a stale stub.
@@ -20972,6 +20959,8 @@ def load_blueprint(
         return None
     try:
         payload = json.loads(blueprint_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return None
         if isinstance(payload.get("blueprint"), dict):
             blueprint = dict(payload["blueprint"])
             if "coverage_map" not in blueprint and isinstance(payload.get("coverage_map"), dict):
@@ -22167,6 +22156,8 @@ def refresh_blueprint_affected_files(
         return {"status": "error", "message": f"unreadable blueprint: {exc}"}
 
     # Both wrapped and flat shapes — same convention as load_blueprint.
+    if not isinstance(bp_data, dict):
+        return {"status": "error", "message": "Blueprint must contain a JSON object"}
     if isinstance(bp_data.get("blueprint"), dict):
         target_body = bp_data["blueprint"]
         body_is_wrapped = True
@@ -22186,6 +22177,19 @@ def refresh_blueprint_affected_files(
             "status": "error",
             "message": f"subtask {subtask_id!r} not in blueprint",
         }
+
+    task = subtasks[found_index]
+    if "repository_checks" in task or "joint_check" in task:
+        scope = validate_mutation_boundary(branch_name, subtask_id)
+        if scope["status"] == "error":
+            return scope
+        if scope["unexpected"] or (replace and set(scope["expected"]) != set(scope["actual"])):
+            return {"status": "error", "subtask_id": subtask_id, "repositories": scope["repositories"],
+                    "message": "Revise the shared affected_files in the feature plan and approve the changed scope."}
+        return {"status": "dry_run" if dry_run else "success", "subtask_id": subtask_id,
+                "mode": "replace" if replace else "merge", "blueprint_path": str(bp_path),
+                "previous": task["affected_files"], "current": task["affected_files"], "actual": scope["actual"],
+                "repositories": scope["repositories"], "diff": {"added": [], "removed": []}}
 
     # Compute the per-subtask actual surface, using the same baseline
     # subtraction the mutation-boundary validator uses. Bug fix
@@ -24728,6 +24732,7 @@ def _monitor_gate_cli_args():
     parser.add_argument("subtask_id")
     if sys.argv[1] == "validate_mutation_boundary":
         parser.add_argument("base_ref", nargs="?")
+        parser.add_argument("--repository", help="Check one repository in the approved feature plan")
     parser.add_argument("--metadata-root", type=Path)
     parser.add_argument("--worktree", type=Path)
     return parser.parse_args(sys.argv[2:])
@@ -24753,7 +24758,7 @@ def _normalize_monitor_declaration(path: str, metadata_root: Path, actor_root: P
 
 def validate_mutation_boundary(
     branch: str, subtask_id: str, base_ref: str | None = None, *,
-    metadata_root: Path | None = None, worktree: Path | None = None,
+    metadata_root: Path | None = None, worktree: Path | None = None, repository: str | None = None,
 ) -> dict:
     """Compare actual repo diff against the subtask's declared affected_files.
 
@@ -24796,6 +24801,8 @@ def validate_mutation_boundary(
         project_dir, git_cwd, worktree_base = _monitor_worktree_context(
             branch_name, subtask_id, metadata_root, worktree,
         )
+        if repository is not None and metadata_root is None and worktree is None:
+            project_dir = git_cwd = Path.cwd()
         if worktree_base and base_ref:
             raise ValueError("Managed Monitor uses the registered creation SHA; omit base_ref")
     except ValueError as exc:
@@ -24815,6 +24822,32 @@ def validate_mutation_boundary(
             "subtask_id": subtask_id,
         }
 
+    if repository is not None or "repository_checks" in subtask or "joint_check" in subtask:
+        if metadata_root is not None or worktree is not None or base_ref is not None:
+            return {"status": "error", "message": "Use the feature coordinator and the base pinned for each repository."}
+        from map_feature_plan import feature_projects
+
+        try:
+            projects = feature_projects(project_dir, subtask)
+        except (ValueError, OSError) as exc:
+            return {"status": "error", "subtask_id": subtask_id, "message": str(exc)}
+        if repository is not None:
+            if repository not in projects:
+                return {"status": "error", "subtask_id": subtask_id, "message": f"Unknown feature checkout: {repository}"}
+            return validate_feature_mutation(branch_name, subtask_id, projects[repository], coordinator=project_dir)
+        reports = {key: validate_feature_mutation(branch_name, subtask_id, project, coordinator=project_dir)
+                   for key, project in projects.items()}
+        errors = [f"{key}: {report['message']}" for key, report in reports.items() if report["status"] == "error"]
+        if errors:
+            return {"status": "error", "subtask_id": subtask_id, "repositories": reports, "message": "; ".join(errors)}
+        def paths(field: str) -> list[str]:
+            return sorted(os.path.relpath(projects[key]["root"] / name, project_dir)
+                          for key, report in reports.items() for name in report[field])
+        unexpected = paths("unexpected")
+        return {"status": "violation" if unexpected else "clean", "strict": True, "subtask_id": subtask_id,
+                "repositories": reports, "actual": paths("actual"), "expected": paths("expected"),
+                "unexpected": unexpected, "allowed_test_files": []}
+
     expected_raw = subtask.get("affected_files", []) or []
     try:
         expected = sorted({
@@ -24827,6 +24860,18 @@ def validate_mutation_boundary(
             "message": f"Invalid affected_files: {exc}",
         }
 
+    return _local_mutation_report(branch_name, subtask_id, project_dir, git_cwd, expected, base_ref, worktree_base)
+
+
+def validate_feature_mutation(branch: str, subtask_id: str, project: dict, *, coordinator: Path) -> dict:
+    root = project["root"]
+    return _local_mutation_report(branch, subtask_id, root, root, project["files"], project["base"],
+                                  feature=True, coordinator=coordinator)
+
+
+def _local_mutation_report(branch_name: str, subtask_id: str, project_dir: Path, git_cwd: Path,
+                           expected: list[str], base_ref: str | None, worktree_base: str | None = None, *,
+                           feature: bool = False, coordinator: Path | None = None) -> dict:
     # Pick a base_ref. Caller's explicit arg wins; otherwise auto-resolve from
     # last_subtask_commit_sha (so the diff covers only THIS subtask's work),
     # re-basing onto the commit's parent when the subtask is already committed
@@ -24834,16 +24879,19 @@ def validate_mutation_boundary(
     # entirely and rely on porcelain (uncommitted + untracked) — the only sane
     # behaviour in a brand-new repo before its first commit.
     base_ref_explicit = bool(base_ref)
+    git_env = _attribution_git_env()
+    if feature:
+        git_env["GIT_OPTIONAL_LOCKS"] = "0"
     try:
         adjusted_base = (
-            None if worktree_base else _adjusted_subtask_diff_base(branch_name, subtask_id, project_dir)
+            None if feature or worktree_base else _adjusted_subtask_diff_base(branch_name, subtask_id, project_dir)
         )
         if not base_ref:
             base_ref = worktree_base or _resolve_subtask_diff_base(branch_name, subtask_id, project_dir)
         if base_ref:
             diff_result = subprocess.run(
                 ["git", "diff", "--name-only", "--no-renames", "-z", base_ref],
-                env=_attribution_git_env(),
+                env=git_env,
                 cwd=git_cwd,
                 capture_output=True,
                 text=False,
@@ -24860,7 +24908,7 @@ def validate_mutation_boundary(
         # scope check (#376).
         status_result = subprocess.run(
             ["git", "status", "--porcelain", "-z", "-uall"],
-            env=_attribution_git_env(),
+            env=git_env,
             cwd=git_cwd,
             capture_output=True,
             text=False,
@@ -24898,11 +24946,16 @@ def validate_mutation_boundary(
             ),
         }
 
-    actual_set = _git_status_paths(status_result.stdout)
+    dirty_paths = _git_status_paths(status_result.stdout)
+    actual_set = set(dirty_paths)
     if diff_result is not None:
         actual_set.update(_git_diff_paths(diff_result.stdout))
 
-    if worktree_base:
+    if feature:
+        # The coordinator and participating checkouts store workflow evidence in their branch directory.
+        runtime_lock = f".map/.locks/{branch_name}.transaction.lock"
+        actual_set = {p for p in actual_set if p in expected or (p != runtime_lock and not p.startswith(f".map/{branch_name}/"))}
+    elif worktree_base:
         actual_set = {p for p in actual_set if not _is_map_internal_artifact(p)}
     elif adjusted_base is not None and not base_ref_explicit:
         current_surface = _current_subtask_changed_files(branch_name, subtask_id, project_dir)
@@ -24934,10 +24987,20 @@ def validate_mutation_boundary(
     # them separately as `allowed_test_files` for auditability. A test file the
     # blueprint DID declare stays in expected_set and is never an "allowed"
     # extra. This makes the check independent of decomposer description wording.
-    out_of_scope = [p for p in actual if p not in expected_set]
-    allowed_test_files = sorted(p for p in out_of_scope if _is_test_path(p))
-    unexpected = sorted(p for p in out_of_scope if not _is_test_path(p))
-    strict = os.environ.get("MAP_STRICT_SCOPE", "0") == "1"
+    attributed_files = {}
+    if feature and base_ref and coordinator is not None and coordinator.resolve() == git_cwd.resolve():
+        from map_feature_plan import attributed_feature_files
+
+        try:
+            attributed_files = attributed_feature_files(
+                git_cwd, branch_name, subtask_id, base_ref, actual_set - expected_set - dirty_paths,
+            )
+        except (ValueError, OSError) as exc:
+            return {"status": "error", "subtask_id": subtask_id, "message": str(exc)}
+    out_of_scope = [p for p in actual if p not in expected_set and p not in attributed_files]
+    allowed_test_files = [] if feature else [p for p in out_of_scope if _is_test_path(p)]
+    unexpected = sorted(set(out_of_scope) - set(allowed_test_files))
+    strict = feature or os.environ.get("MAP_STRICT_SCOPE", "0") == "1"
 
     if not unexpected:
         status = "clean"
@@ -24952,7 +25015,7 @@ def validate_mutation_boundary(
     # The recommended recovery commands are inline so the operator
     # doesn't have to dig through docs.
     diagnostic_hint = None
-    if unexpected and not worktree_base:
+    if unexpected and not worktree_base and not feature:
         if not base_ref_explicit:
             diagnostic_hint = (
                 "If 'unexpected' includes files from prior subtasks: either "
@@ -24966,7 +25029,7 @@ def validate_mutation_boundary(
             diagnostic_hint = (
                 "No per-subtask baseline was found — RESEARCH (2.2) likely "
                 "didn't auto-snapshot. Run record_subtask_baseline "
-                f"{branch} {subtask_id} only before Actor starts; never recapture "
+                f"{branch_name} {subtask_id} only before Actor starts; never recapture "
                 "during Actor or a retry, because that would hide current work."
             )
 
@@ -24983,7 +25046,10 @@ def validate_mutation_boundary(
     if diagnostic_hint:
         report["diagnostic_hint"] = diagnostic_hint
 
-    if unexpected:
+    if attributed_files:
+        report["attributed_files"] = attributed_files
+
+    if unexpected and not feature:
         log_path = project_dir / ".map" / branch_name / "scope-violations.log"
         try:
             log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -25348,7 +25414,7 @@ def detect_actor_files_changed_mismatch(
           "status_mismatch": bool,         # True when declared_not_written non-empty
           "recovery_instruction": str,     # non-empty only when status_mismatch
           "reason": str,                   # non-empty only on status=="unknown"
-          "checked_in": "worktree"|"main", # which tree was inspected for git files
+          "checked_in": "worktree"|"main"|"repositories",
         }
 
     Fail-safe: any git failure → ``status="unknown"`` + ``status_mismatch=True``
@@ -25358,9 +25424,18 @@ def detect_actor_files_changed_mismatch(
     branch_name = _sanitize_branch(branch)
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
 
-    declared = [d.strip() for d in (declared_files or []) if d.strip()]
-    map_declared = [d for d in declared if _is_map_internal_artifact(d)]
-    git_declared = [d for d in declared if not _is_map_internal_artifact(d)]
+    coordinator = Path.cwd()
+    blueprint = load_blueprint(branch_name, project_dir=coordinator) or {}
+    task = get_subtask_from_blueprint(blueprint, subtask_id) or {}
+    feature = "repository_checks" in task or "joint_check" in task
+    if feature:
+        declared = [d for d in (declared_files or []) if d]
+        map_declared = []
+        git_declared = declared
+    else:
+        declared = [d.strip() for d in (declared_files or []) if d.strip()]
+        map_declared = [d for d in declared if _is_map_internal_artifact(d)]
+        git_declared = [d for d in declared if not _is_map_internal_artifact(d)]
 
     # MAP-internal artifacts are gitignored, so the diff surface can never
     # witness them. Validate them by filesystem existence + non-empty content
@@ -25372,8 +25447,8 @@ def detect_actor_files_changed_mismatch(
     # When worktree isolation is active, the Actor wrote files inside the
     # worktree, not the main checkout.  Query the worktree path so that
     # git diff/status sees the actual changes.  Fixes #471.
-    worktree_path = _get_active_worktree_path(branch_name, subtask_id, project_dir)
-    checked_in = "worktree" if worktree_path is not None else "main"
+    worktree_path = None if feature else _get_active_worktree_path(branch_name, subtask_id, project_dir)
+    checked_in = "repositories" if feature else ("worktree" if worktree_path is not None else "main")
 
     status = "ok"
     reason = ""
@@ -25384,15 +25459,34 @@ def detect_actor_files_changed_mismatch(
     # A MAP-only subtask needs no diff, so a git error must not force it into a
     # false mismatch.
     if git_declared:
-        actual_set = _current_subtask_changed_files(
-            branch_name, subtask_id, project_dir, work_dir=worktree_path
-        )
+        relative: dict[str, str] = {}
+        if feature:
+            from map_feature_plan import feature_projects
+
+            try:
+                actual_set = set()
+                for project in feature_projects(coordinator, task).values():
+                    report = validate_feature_mutation(branch_name, subtask_id, project, coordinator=coordinator)
+                    if report["status"] == "error":
+                        raise ValueError(report["message"])
+                    actual_set.update(os.path.relpath(project["root"] / p, coordinator) for p in report["actual"]
+                                      if p not in report.get("attributed_files", {}))
+                for name in git_declared:
+                    entry = coordinator / name
+                    relative[name] = os.path.relpath(entry.parent.resolve() / entry.name, coordinator)
+            except (OSError, ValueError, RuntimeError) as exc:
+                actual_set = None
+                reason = str(exc)
+        else:
+            actual_set = _current_subtask_changed_files(
+                branch_name, subtask_id, project_dir, work_dir=worktree_path
+            )
         if actual_set is None:
             # Intent: fail safe to mismatch so the gate cannot pass blindly on a
             # git error — but only for the git-tracked files. MAP artifacts were
             # already validated against the filesystem above.
             status = "unknown"
-            reason = (
+            reason = reason or (
                 "could not compute the actual diff (git unavailable) — "
                 "assuming the git-tracked declared files are unwritten as a "
                 "fail-safe."
@@ -25400,7 +25494,7 @@ def detect_actor_files_changed_mismatch(
             git_not_written = sorted(git_declared)
         else:
             actual_list = sorted(actual_set)
-            git_not_written = sorted(d for d in git_declared if d not in actual_set)
+            git_not_written = sorted(d for d in git_declared if relative.get(d, d) not in actual_set)
 
     declared_not_written = sorted([*git_not_written, *map_not_written])
     status_mismatch = bool(declared_not_written)
@@ -32574,6 +32668,12 @@ if __name__ == "__main__":
             if not subtask_id:
                 print(json.dumps({"status": "skipped", "message": "No subtask_id"}))
                 _sys.exit(0)
+            from map_orchestrator import _feature_blocker
+            if data.get("status", "valid") not in {"invalid", "failed"}:
+                blocker = _feature_blocker(branch_name, st, [subtask_id])
+                if blocker:
+                    print(json.dumps(blocker))
+                    _sys.exit(1)
             st.record_subtask_result(
                 subtask_id=subtask_id,
                 files_changed=data.get("files", []),
@@ -32814,6 +32914,23 @@ if __name__ == "__main__":
         if report.get("status") == "error":
             sys.exit(1)
 
+    elif func_name == "feature_check":
+        import argparse
+
+        from map_feature_checks import feature_check
+
+        parser = argparse.ArgumentParser(prog="map_step_runner.py feature_check")
+        parser.add_argument("branch")
+        parser.add_argument("subtask_id")
+        action = parser.add_mutually_exclusive_group()
+        action.add_argument("--repository")
+        action.add_argument("--joint", action="store_true")
+        args = parser.parse_args(sys.argv[2:])
+        report = feature_check(_sanitize_branch(args.branch), args.subtask_id, repository=args.repository,
+                               joint=args.joint, project_dir=Path.cwd())
+        print(json.dumps(report, indent=2))
+        sys.exit(1 if report["status"] == "error" or (args.joint and report["status"] != "complete") else 0)
+
     elif func_name == "validate_mutation_boundary" and len(sys.argv) >= 4:
         # CLI: validate_mutation_boundary <branch> <subtask_id> [base_ref]
         # Exit codes:
@@ -32824,7 +32941,7 @@ if __name__ == "__main__":
         gate_args = _monitor_gate_cli_args()
         report = validate_mutation_boundary(
             gate_args.branch, gate_args.subtask_id, gate_args.base_ref,
-            metadata_root=gate_args.metadata_root, worktree=gate_args.worktree,
+            metadata_root=gate_args.metadata_root, worktree=gate_args.worktree, repository=gate_args.repository,
         )
         print(json.dumps(report, indent=2))
         report_status = report.get("status")

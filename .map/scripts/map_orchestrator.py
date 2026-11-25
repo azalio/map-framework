@@ -333,7 +333,7 @@ def _dedupe_subtask_ids(subtask_ids: list[str]) -> list[str]:
 def _read_plan_object(path: Path) -> dict:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -879,6 +879,7 @@ class StepState:
     retry_count: int = 0
     max_retries: int = 5
     plan_approved: bool = False
+    approved_feature_contracts: dict[str, str] = field(default_factory=dict)
     execution_mode: str = "batch"  # batch|step_by_step
     # TDD mode: inserts TEST_WRITER and TEST_FAIL_GATE before ACTOR
     tdd_mode: bool = False
@@ -969,6 +970,7 @@ class StepState:
             "retry_count": self.retry_count,
             "max_retries": self.max_retries,
             "plan_approved": self.plan_approved,
+            "approved_feature_contracts": self.approved_feature_contracts,
             "execution_mode": self.execution_mode,
             "tdd_mode": self.tdd_mode,
             "skipped_steps": self.skipped_steps,
@@ -1020,6 +1022,7 @@ class StepState:
             retry_count=data.get("retry_count", 0),
             max_retries=data.get("max_retries", 5),
             plan_approved=data.get("plan_approved", False),
+            approved_feature_contracts=data.get("approved_feature_contracts", {}),
             execution_mode=data.get("execution_mode", "batch"),
             tdd_mode=data.get("tdd_mode", False),
             skipped_steps=data.get("skipped_steps", []),
@@ -1466,8 +1469,79 @@ def _acceptance_report(branch: str) -> dict:
                 "errors": [f"Acceptance evaluation failed: {exc}"]}
 
 
-def _acceptance_completion(branch: str, *, finalizing: bool = False) -> dict:
+def feature_contract_digest(subtask: dict, project_dir: Path) -> str:
+    configured = subtask.get("repository_checks")
+    roots = {key: os.path.realpath(project_dir / key) for key in configured
+             if isinstance(key, str) and "\x00" not in key} if isinstance(configured, dict) else {}
+    definition = [subtask, os.path.realpath(project_dir), roots]
+    return hashlib.sha256(json.dumps(definition, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _feature_contracts(branch: str) -> dict[str, str]:
+    blueprint = _read_plan_object(Path(".map") / branch / "blueprint.json")
+    contracts = {}
+    for sid, task in _blueprint_subtasks_by_id(blueprint).items():
+        if "repository_checks" in task or "joint_check" in task:
+            contracts[sid] = feature_contract_digest(task, Path.cwd())
+        elif isinstance(task.get("affected_files"), list):
+            from map_feature_plan import cross_repo_paths  # pyright: ignore[reportMissingImports]
+            if cross_repo_paths(Path.cwd(), task["affected_files"]):
+                contracts[sid] = ""  # Legacy mixed scope with no checks to approve.
+    return contracts
+
+
+def _missing_feature_checks(contracts: dict[str, str]) -> str | None:
+    missing = [sid for sid, digest in contracts.items() if not digest]
+    if missing:
+        return (f"Add repository_checks and joint_check to {', '.join(missing)}, review the updated plan, "
+                "then run set_plan_approved true.")
+    return None
+
+
+def _resume_plan_approval(state: StepState, branch: str) -> dict:
+    contracts = _feature_contracts(branch)
+    missing = _missing_feature_checks(contracts)
+    if missing:
+        return {"status": "error", "message": missing}
+    if ((state.plan_approved or state.approved_feature_contracts)
+            and (not state.plan_approved or state.approved_feature_contracts != contracts)):
+        return {"status": "error", "message": "Review and approve the changed feature plan before resuming."}
+    return {"plan_approved": True, "approved_feature_contracts": contracts}
+
+
+def _feature_reports(branch: str, state: StepState, ids: list[str] | None = None) -> dict:
+    current = _feature_contracts(branch)
+    approved = state.approved_feature_contracts
+    reports = {}
+    for sid in dict.fromkeys((*approved, *current)):
+        if ids is not None and sid not in ids:
+            continue
+        if current.get(sid) == "":
+            reports[sid] = {"status": "error", "message": _missing_feature_checks({sid: ""})}
+            continue
+        if not state.plan_approved or approved.get(sid) != current.get(sid):
+            reports[sid] = {"status": "error", "message": "Feature differs from the approved plan."}
+            continue
+        try:
+            from map_feature_checks import feature_check  # pyright: ignore[reportMissingImports]
+            reports[sid] = feature_check(branch, sid, project_dir=Path.cwd())
+        except (ImportError, OSError, ValueError) as exc:
+            reports[sid] = {"status": "error", "message": str(exc)}
+    return reports
+
+
+def _feature_blocker(branch: str, state: StepState, ids: list[str]) -> dict | None:
+    reports = _feature_reports(branch, state, ids)
+    if any(report["status"] != "complete" for report in reports.values()):
+        return {"valid": False, "status": "error", "feature_checks": reports,
+                "message": "Complete each repository check and the joint check before closing the feature."}
+    return None
+
+
+def _acceptance_completion(branch: str, state: StepState, *, finalizing: bool = False) -> dict:
     report = _acceptance_report(branch)
+    features = _feature_reports(branch, state)
+    incomplete = [sid for sid, item in features.items() if item["status"] != "complete"]
     # Exhaustion schedules final proof execution. Explicit finalization uses
     # the evaluator's warn-first policy, reporting unexecuted proofs honestly.
     pending = not finalizing and any(
@@ -1476,24 +1550,26 @@ def _acceptance_completion(branch: str, *, finalizing: bool = False) -> dict:
         and row["contract"].get("command")
         for row in report.get("requirements", [])
     )
-    complete = bool(report.get("allowed")) and not pending
+    complete = bool(report.get("allowed")) and not pending and not incomplete
     return {
         "step_id": "COMPLETE" if complete else "FINAL_VERIFICATION",
         "phase": "COMPLETE" if complete else "FINAL_VERIFICATION",
         "is_complete": complete,
         "implementation_complete": True,
         "instruction": (
-            "Acceptance evaluated; inspect the runner-derived report."
+            "Run the pending repository and joint checks for " + ", ".join(incomplete) + "."
+            if incomplete else "Acceptance evaluated; inspect the runner-derived report."
             if complete else
             "Implementation exhausted. Run run_acceptance_proofs, write the "
             "verification summary, then call mark_workflow_complete."
         ),
         "acceptance": report,
+        **({"feature_checks": features} if features else {}),
     }
 
 
 def _finish_implementation(state: StepState, branch: str, *, finalizing: bool = False) -> dict:
-    result = _acceptance_completion(branch, finalizing=finalizing)
+    result = _acceptance_completion(branch, state, finalizing=finalizing)
     state.current_step_id = result["step_id"]
     state.current_step_phase = result["phase"]
     state.workflow_status = (
@@ -1525,7 +1601,7 @@ def peek_current_step(branch: str) -> dict:
 
     if state.workflow_status in {"WORKFLOW_COMPLETE", "FINAL_VERIFICATION"}:
         return _acceptance_completion(
-            branch, finalizing=state.workflow_status == "WORKFLOW_COMPLETE"
+            branch, state, finalizing=state.workflow_status == "WORKFLOW_COMPLETE"
         )
 
     if state.workflow_status == "CONTRACT_READY":
@@ -1566,9 +1642,12 @@ def get_next_step(branch: str) -> dict:
     # the per-subtask branches and returns a stale "2.2 RESEARCH" instruction
     # for a workflow that already closed out.
     if state.workflow_status in {"WORKFLOW_COMPLETE", "FINAL_VERIFICATION"}:
-        return _acceptance_completion(
-            branch, finalizing=state.workflow_status == "WORKFLOW_COMPLETE"
-        )
+        result = _acceptance_completion(branch, state, finalizing=state.workflow_status == "WORKFLOW_COMPLETE")
+        if state.workflow_status == "WORKFLOW_COMPLETE" and result.get("feature_checks") and not result["is_complete"]:
+            state.workflow_status = state.current_step_id = state.current_step_phase = "FINAL_VERIFICATION"
+            state.completed_at = None
+            state.save(state_file)
+        return result
 
     if state.workflow_status == "CONTRACT_READY":
         if state.pending_steps != ["CONTRACT_READY"]:
@@ -1617,7 +1696,7 @@ def get_next_step(branch: str) -> dict:
             for sid in state.subtask_sequence
         )
         if not has_forward_slot and not has_deferred:
-            return _acceptance_completion(branch)
+            return _acceptance_completion(branch, state)
         ready_idx, skipped_for_deps = _find_next_ready_subtask_index(
             state, branch, start_after_index=state.subtask_index,
             treat_current_as_done=True,
@@ -1648,7 +1727,7 @@ def get_next_step(branch: str) -> dict:
                 sid for sid in state.subtask_sequence if sid not in completed
             ]
             if not remaining:
-                return _acceptance_completion(branch)
+                return _acceptance_completion(branch, state)
             # Deadlock: subtasks remain but every one of them has an
             # unmet dep. Surface BLOCKED_ON_DEPS so the caller doesn't
             # silently spin or report COMPLETE prematurely.
@@ -1736,6 +1815,10 @@ def get_next_step(branch: str) -> dict:
     }
     if research_skip_warning:
         response["warning"] = research_skip_warning
+    if state.current_subtask_id:
+        features = _feature_reports(branch, state, [state.current_subtask_id])
+        if features:
+            response["feature_checks"] = features
     return response
 
 
@@ -1894,6 +1977,10 @@ def validate_step(
     # explodes with "Step mismatch: expected Y, got X" — callers can safely
     # retry without first calling peek_current_step.
     if step_id in state.completed_steps and state.current_step_id != step_id:
+        if step_id == "2.4" and state.current_subtask_id:
+            blocked = _feature_blocker(branch, state, [state.current_subtask_id])
+            if blocked:
+                return blocked
         return {
             "valid": True,
             "message": f"Step {step_id} already completed (idempotent no-op)",
@@ -2172,6 +2259,9 @@ def validate_step(
     # just the orchestrator), skip silently rather than block the gate.
     _scope_warning_meta: dict | None = None
     if step_id == "2.4" and state.current_subtask_id:
+        blocked = _feature_blocker(branch, state, [state.current_subtask_id])
+        if blocked:
+            return blocked
         blueprint_present = Path(f".map/{branch}/blueprint.json").exists()
         if blueprint_present:
             try:
@@ -2393,6 +2483,8 @@ def initialize_workflow(task: str, branch: str) -> dict:
             archive_result = archive_completed_workflow(branch)
             if archive_result.get("status") == "archived":
                 archived_prior = archive_result.get("archive_file")
+            elif prior.approved_feature_contracts or archive_result.get("feature_checks"):
+                return archive_result
 
     # Create fresh state
     state = StepState()
@@ -2416,7 +2508,19 @@ def set_plan_approved(value: str, branch: str) -> dict:
     state = StepState.load(state_file)
     normalized = (value or "").strip().lower()
     if normalized in {"1", "true", "yes", "y"}:
+        contracts = _feature_contracts(branch)
+        missing = _missing_feature_checks(contracts)
+        if missing:
+            return {"status": "error", "message": missing}
+        if state.plan_approved and state.approved_feature_contracts and contracts != state.approved_feature_contracts:
+            return {"status": "error",
+                    "message": "Revoke the previous approval and review the changed feature plan before approving it."}
+        if state.approved_feature_contracts and not contracts:
+            blueprint = _read_plan_object(Path(".map") / branch / "blueprint.json")
+            if not _blueprint_subtasks_by_id(blueprint):
+                return {"status": "error", "message": "Restore the feature blueprint before approving the plan."}
         state.plan_approved = True
+        state.approved_feature_contracts = contracts
     elif normalized in {"0", "false", "no", "n"}:
         state.plan_approved = False
     else:
@@ -2858,6 +2962,10 @@ def get_wave_step(branch: str) -> dict:
     state = StepState.load(state_file)
 
     # Compute structured dispatch signal via config-driven gate (ST-001, Slice 5b).
+    if state.approved_feature_contracts:
+        return {"mode": "sequential", "wave_index": state.current_wave_index, "subtasks": [],
+                "dispatch_mode": "sequential", "concurrency_enabled": False, "isolation_active": False,
+                "reason": "feature_checkouts", **get_next_step(branch)}
     # compute_dispatch_gate short-circuits to sequential on the first line when
     # concurrent_dispatch=false (default), touching no new code/probe/import (HC-1).
     gate = compute_dispatch_gate(branch, Path("."))
@@ -2888,7 +2996,7 @@ def get_wave_step(branch: str) -> dict:
             "isolation_active": isolation_active,
             "reason": WAVE_REASON_NO_WAVES,
             "message": "No execution waves configured. Use sequential mode.",
-            **_acceptance_completion(branch),
+            **_acceptance_completion(branch, state),
         }
 
     if state.current_wave_index >= len(state.execution_waves):
@@ -2901,7 +3009,7 @@ def get_wave_step(branch: str) -> dict:
             "dispatch_mode": "sequential",
             "isolation_active": isolation_active,
             "reason": WAVE_REASON_WAVE_COMPLETE,
-            **_acceptance_completion(branch),
+            **_acceptance_completion(branch, state),
         }
 
     wave = state.execution_waves[state.current_wave_index]
@@ -2995,6 +3103,10 @@ def validate_wave_step(subtask_id: str, step_id: str, branch: str) -> dict:
     else:
         next_phase = "COMPLETE"
 
+    if next_phase == "COMPLETE":
+        blocked = _feature_blocker(branch, state, [subtask_id])
+        if blocked:
+            return blocked
     state.subtask_phases[subtask_id] = next_phase
     state.save(state_file)
 
@@ -3024,6 +3136,10 @@ def advance_wave(branch: str) -> dict:
     if not state.execution_waves:
         return {"status": "error", "message": "No execution waves configured"}
 
+    if state.current_wave_index < len(state.execution_waves):
+        blocked = _feature_blocker(branch, state, state.execution_waves[state.current_wave_index])
+        if blocked:
+            return blocked
     state.current_wave_index += 1
     # Reset per-subtask phases for the new wave
     state.subtask_phases = {}
@@ -3124,7 +3240,10 @@ def select_execution_strategy(
     state = StepState.load(state_file)
     has_parallel_groups = any(len(g) >= 2 for g in state.execution_waves)
 
-    if wave_mode in {"on", "auto"} and isolation_mode != "off" and has_parallel_groups:
+    if state.approved_feature_contracts:
+        strategy = "sequential"
+        reason = "Use the declared feature checkouts from the coordinator."
+    elif wave_mode in {"on", "auto"} and isolation_mode != "off" and has_parallel_groups:
         strategy = "wave_loop"
         reason = (
             f"wave_mode={wave_mode!r}, worktree.isolation={isolation_mode!r}, "
@@ -3644,12 +3763,15 @@ def mark_workflow_complete(branch: str) -> dict:
 
     completion = _finish_implementation(state, branch, finalizing=True)
     if not completion["is_complete"]:
+        if completion.get("feature_checks"):
+            state.save(state_file)
         return {"status": "error", "message": "Acceptance blocks completion", **completion}
     state.save(state_file)
 
     return {
         "status": "success",
         "acceptance": completion["acceptance"],
+        **({"feature_checks": completion["feature_checks"]} if "feature_checks" in completion else {}),
         "workflow_status": state.workflow_status,
         "current_step_id": state.current_step_id,
         "current_step_phase": state.current_step_phase,
@@ -3684,7 +3806,12 @@ def record_subtask_result(
     # Warn-only file-exists check: catches typos / drift between --files arg
     # and the actual diff without blocking on legitimate file deletions or
     # renames. Caller sees the missing list and decides; record proceeds.
-    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    if status.lower() not in {"invalid", "failed"}:
+        blocked = _feature_blocker(branch, state, [subtask_id])
+        if blocked:
+            return blocked
+    feature_subtask = subtask_id in state.approved_feature_contracts
+    project_dir = Path.cwd() if feature_subtask else Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
 
     def _is_cross_repo_path(p: str) -> bool:
         """Return True if ``p`` is a cross-repo (sibling) path.
@@ -3780,6 +3907,8 @@ def record_subtask_result(
     # gate is the operator reading the response — they SHOULD reject when
     # files_not_in_diff is non-empty.
     declared = [p for p in (files_changed or []) if isinstance(p, str) and p]
+    if feature_subtask:
+        declared = [p for p in declared if p not in cross_repo_files]
     files_not_in_diff: list[str] = []
     if declared:
         diff_paths: set[str] = set()
@@ -4312,6 +4441,9 @@ def mark_subtask_complete(
     # Normalize kind. Legacy callers pass no kind — keep backward
     # compatibility by mapping to "noop".
     normalized_kind = (kind or "noop").strip().lower()
+    blocked = _feature_blocker(branch, state, [subtask_id])
+    if blocked:
+        return blocked
     if normalized_kind not in VALID_MARK_COMPLETE_KINDS:
         return {
             "status": "error",
@@ -4515,7 +4647,7 @@ def archive_completed_workflow(branch: str) -> dict:
         }
 
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    completion = _acceptance_completion(branch, finalizing=True)
+    completion = _acceptance_completion(branch, state, finalizing=True)
     if not completion["is_complete"]:
         return {"status": "error", "message": "Acceptance blocks archival", **completion}
     archive_file = state_file.with_name(f"step_state.completed-{timestamp}.json")
@@ -4638,6 +4770,8 @@ def skip_step(step_id: str, branch: str) -> dict:
         next_id = state.pending_steps[0]
         state.current_step_id = next_id
         state.current_step_phase = STEP_PHASES.get(next_id, "UNKNOWN")
+    elif state.approved_feature_contracts:
+        _finish_implementation(state, branch)
     else:
         state.current_step_id = "COMPLETE"
         state.current_step_phase = "COMPLETE"
@@ -5124,6 +5258,9 @@ def resume_from_test_contract(subtask_id: str, branch: str) -> dict:
         }
 
     previous_state = StepState.load(plan_dir / "step_state.json")
+    approval = _resume_plan_approval(previous_state, branch)
+    if "status" in approval:
+        return approval
     integrity = _acceptance_integrity(branch, subtask_id)
     if not integrity.get("allowed"):
         return {"status": "error", "message": "Frozen acceptance contract changed",
@@ -5146,7 +5283,7 @@ def resume_from_test_contract(subtask_id: str, branch: str) -> dict:
         current_step_phase="ACTOR",
         completed_steps=["1.0", "1.5", "1.55", "1.56", "1.6", "2.2", "2.25", "2.26"],
         pending_steps=["2.3", "2.4"],
-        plan_approved=True,
+        **approval,
         execution_mode="batch",
         tdd_mode=True,
         workflow_status="IN_PROGRESS",
@@ -5233,6 +5370,9 @@ def resume_from_plan(branch: str) -> dict:
     execution_start = [s for s in STEP_ORDER if s not in skipped_phases]
 
     previous_state = StepState.load(state_file)
+    approval = _resume_plan_approval(previous_state, branch)
+    if "status" in approval:
+        return approval
     state = StepState(
         acceptance_authoring=previous_state.acceptance_authoring,
         acceptance_authoring_history=previous_state.acceptance_authoring_history,
@@ -5247,7 +5387,7 @@ def resume_from_plan(branch: str) -> dict:
         ),
         completed_steps=skipped_phases,
         pending_steps=execution_start,
-        plan_approved=True,
+        **approval,
         execution_mode="batch",
         workflow_status="IN_PROGRESS",
     )
@@ -5389,6 +5529,9 @@ def resume_single_subtask(subtask_id: str, branch: str, tdd_mode: bool = False) 
 
     state_file = plan_dir / "step_state.json"
     previous_state = StepState.load(state_file)
+    approval = _resume_plan_approval(previous_state, branch)
+    if "status" in approval:
+        return approval
     state = StepState(
         acceptance_authoring=previous_state.acceptance_authoring,
         acceptance_authoring_history=previous_state.acceptance_authoring_history,
@@ -5399,7 +5542,7 @@ def resume_single_subtask(subtask_id: str, branch: str, tdd_mode: bool = False) 
         current_step_phase="RESEARCH",
         completed_steps=["1.0", "1.5", "1.55", "1.56", "1.6"],
         pending_steps=subtask_steps,
-        plan_approved=True,
+        **approval,
         execution_mode="batch",
         tdd_mode=tdd_mode,
         workflow_status="IN_PROGRESS",

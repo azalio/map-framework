@@ -3,6 +3,10 @@
 This file holds lower-frequency details for the Codex `$map-efficient` skill.
 Load only the section needed by the active phase.
 
+## Features spanning repositories
+
+For a subtask with `repository_checks`, work from the approved coordinator checkout. Run `python3 .map/scripts/map_step_runner.py feature_check <branch> <subtask_id>`. Use each declared checkout as the Actor worktree. Give its Monitor the repository key, working directory, and files listed under `repositories`. From the coordinator run `feature_check <branch> <subtask_id> --repository <key>` for each ready part. Fix failed checks in their checkout. When all local checks pass, run `feature_check <branch> <subtask_id> --joint` and close Monitor when the status is `complete` on the final revisions. Resume with the same status command to see which checks still need work.
+
 ## Approval-Hold Preflight
 
 Resolve any pending approval hold BEFORE Step 0's `resume_from_plan`
@@ -50,8 +54,7 @@ the missing edits before Monitor. If `detect_symbol_blast_radius` recommends
 Before accepting an isolated candidate, use its current regression result from
 `monitor_instruction`, or rerun that exact command with both `--metadata-root`
 and `--worktree`. Run the recommended suite in the candidate before acceptance;
-never replace this decision with a parent-only result. For non-isolated execution
-only, ask whether a scoped test run is safe before committing or recording:
+never replace this decision with a parent-only result. For an assigned feature checkout, use its Monitor's scope report and test results. If the changed paths overlap a completed subtask, run that checkout's full suite. For other non-isolated tasks, ask whether a scoped test run is safe before committing or recording:
 
 ```bash
 python3 .map/scripts/map_step_runner.py detect_cross_subtask_regression_risk \

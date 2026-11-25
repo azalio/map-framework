@@ -59,13 +59,13 @@ Verification sequence (execute in order):
 
 3. Verify Goal is achieved -- trace code path to confirm the stated outcome
 4. Verify Action is implemented -- check that the specified method/operation exists
-5. Verify mutation boundary (MANDATORY): Run
+5. For an assigned feature repository, run `python3 .map/scripts/map_step_runner.py validate_mutation_boundary <branch> <subtask_id> --repository <key>` from the coordinator checkout. Review the assigned checkout and its returned local paths. The parent records its test result with `feature_check`. For a single-repository task, run
    (unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; cd "$(git rev-parse --show-toplevel)" && python3 .map/scripts/map_step_runner.py validate_mutation_boundary <branch> <subtask_id>)
    to compare the actual git diff against the subtask's declared affected_files.
    - status="clean" -> continue.
    - status="warning" -> record the unexpected files; do NOT auto-reject.
      The CLI also appends to .map/<branch>/scope-violations.log for audit.
-   - status="violation" (MAP_STRICT_SCOPE=1) -> valid: false with the unexpected
+   - status="violation" (feature scope or MAP_STRICT_SCOPE=1) -> valid: false with the unexpected
      list. The Actor must re-scope.
    - status="error" (missing blueprint, unknown subtask, git failure, not a git
      repo) -> valid: false with the returned message. The CLI exits non-zero;

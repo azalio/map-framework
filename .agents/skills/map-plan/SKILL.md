@@ -573,7 +573,7 @@ Output requirements per subtask:
 - title: <imperative title>
 - aag_contract: "Actor -> Action(params) -> Goal"  [REQUIRED for every subtask]
 - description: what needs to be done
-- affected_files: [list of file paths]
+- affected_files: [list of file paths]. For a feature spanning checkouts, list every file once in affected_files. Under repository_checks, give each checkout path (relative to the coordinator or absolute), its base from git rev-parse HEAD, and a local command argument list. Add a joint_check argument list that tests the interaction from the coordinator. Show these commands and their acceptance criterion in the plan.
 - dependencies: [] or [ST-NNN, ...]
 - complexity_score: 1-10
 - risk_level: low | medium | high

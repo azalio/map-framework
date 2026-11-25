@@ -7424,11 +7424,7 @@ class TestBlueprintContractAffectedFilesDrift:
     def test_drift_suppressed_when_all_paths_cross_repo(
         self, branch_workspace, monkeypatch
     ):
-        """Regression #2 (2026-05-26): when every missing path is
-        cross-repo, drift warning must NOT fire — cross-repo gets its
-        own dedicated warning, and the drift message would be a false
-        positive (MAP can't verify sibling repo files).
-        """
+        """Paths outside an undeclared checkout get a repository configuration error."""
         repo = branch_workspace.parents[1]
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         path = branch_workspace / "blueprint.json"
@@ -7437,9 +7433,8 @@ class TestBlueprintContractAffectedFilesDrift:
             "../sibling-repo/bar.py",
         ])))
         result = map_step_runner.validate_blueprint_contract(str(path))
-        assert result["valid"] is True
-        # Cross-repo warning fires; drift warning does NOT.
-        assert any("cross-repo affected_files" in w for w in result["warnings"])
+        assert result["valid"] is False
+        assert any("cross-repo affected_files" in error for error in result["errors"])
         assert not any("affected_files drift" in w for w in result["warnings"]), result["warnings"]
 
     def test_drift_suppressed_when_description_marks_new_file(
@@ -7639,11 +7634,7 @@ class TestBlueprintContractSoftConstraintForwardDisclosure:
 
 
 class TestBlueprintContractCrossRepoDetection:
-    """Fix #9: validate_blueprint_contract warns when affected_files
-    declares paths that resolve OUTSIDE the project root (sibling-repo
-    mutations). MAP cannot guarantee anything about cross-repo work, so
-    operators need a heads-up before blueprint approval.
-    """
+    """A blueprint identifies the checkouts that own its affected files."""
 
     def _bp(self, files: list[str]) -> dict:
         return {
@@ -7660,7 +7651,7 @@ class TestBlueprintContractCrossRepoDetection:
             }],
         }
 
-    def test_warns_on_cross_repo_path(self, branch_workspace, monkeypatch):
+    def test_requires_repository_checks_for_cross_repo_path(self, branch_workspace, monkeypatch):
         repo = branch_workspace.parents[1]
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         # Create a real file in current repo so we don't trigger drift warning.
@@ -7671,13 +7662,9 @@ class TestBlueprintContractCrossRepoDetection:
             json.dumps(self._bp(["real.py", "../sibling-repo/internal/handler.go"]))
         )
         result = map_step_runner.validate_blueprint_contract(str(path))
-        assert result["valid"] is True
-        assert any("cross-repo affected_files" in w for w in result["warnings"]), result["warnings"]
-        # Specific path is named in the warning so the operator can grep.
-        assert any(
-            "../sibling-repo/internal/handler.go" in w
-            for w in result["warnings"]
-        ), result["warnings"]
+        assert result["valid"] is False
+        assert any("repository_checks" in error and "../sibling-repo/internal/handler.go" in error
+                   for error in result["errors"]), result["errors"]
 
     def test_no_warning_when_all_paths_in_repo(
         self, branch_workspace, monkeypatch
@@ -13956,9 +13943,9 @@ class TestBlueprintDependencyCreation:
         path = branch_workspace / "blueprint.json"
         path.write_text(json.dumps(bp))
         result = map_step_runner.validate_blueprint_contract(str(path))
-        assert result["valid"], result["errors"]
+        assert result["valid"] is (shape != "cross_repo"), result["errors"]
         assert not any("affected_files drift" in w for w in result["warnings"])
-        assert any("cross-repo affected_files" in w for w in result["warnings"]) is (shape == "cross_repo")
+        assert any("cross-repo affected_files" in error for error in result["errors"]) is (shape == "cross_repo")
         assert not (repo / "src/new.py").exists()
 
     @pytest.mark.parametrize("shape", [

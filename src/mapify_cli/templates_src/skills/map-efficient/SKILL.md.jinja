@@ -9,18 +9,18 @@ argument-hint: "[task description]"
 [% endif -%]
 ---
 [% include "_partials/auto-update-preflight.md.jinja" %]
+
 [% if PROVIDER == "claude" %]# MAP Efficient Workflow (Optimized)
 [% else %][% endif %]
-[% if PROVIDER == "claude" %]## Core Design Principle
-[% else %]# <% cmd %>map-efficient - MAP Execution
+[% if PROVIDER != "claude" %]# <% cmd %>map-efficient - MAP Execution
 [% endif %]
-[% if PROVIDER == "claude" %]State-gated prompting: each invocation sees exactly one clear next action. The state machine enforces sequencing, Python validates completion, and hooks inject reminders.
+[% if PROVIDER == "claude" %]State-gated prompting: each invocation sees exactly one clear next action. The state machine enforces sequencing, Python validates completion, and hooks inject reminders. For a subtask with `repository_checks`, follow [Features spanning repositories](efficient-reference.md#features-spanning-repositories) before dispatching Actor and Monitor.
 [% else %]Execute the approved MAP plan for the current branch. This skill is the Codex
 counterpart to Claude `<% cmd %>map-efficient`, but it uses Codex-native instructions:
 skills live under `.agents/skills` and configured Codex subagents live under
 `.codex/agents`. The parent session orchestrates; `actor` owns isolated
 implementation work, `monitor` independently reviews it, and `final-verifier`
-performs the whole-plan verification gate.
+performs the whole-plan verification gate. For a subtask with `repository_checks`, follow [Features spanning repositories](efficient-reference.md#features-spanning-repositories) before dispatching Actor and Monitor.
 [% endif %]
 [% if PROVIDER == "claude" %]Long subagent prompts use the shared [XML Prompt Envelope](../../references/map-xml-prompt-envelopes.md): persisted artifacts and current subtask context appear before instructions, with output contracts isolated in `<expected_output>`.
 
@@ -364,7 +364,7 @@ BOUNDED_MAP_CONTEXT=$(python3 .map/scripts/map_step_runner.py build_context_bloc
 
 Then substitute `$BOUNDED_MAP_CONTEXT` into the Actor prompt below.
 For an approved baseline gate exception, pass the exact user approval and `.map/<branch>/approved-baseline-gates.md` path to both agents (or `[none]`); see [efficient-reference.md](efficient-reference.md#approved-baseline-gate-deferrals).
-**Worktree isolation (default `worktree.isolation: auto`):** when enabled, create the subtask's isolated git worktree before this dispatch and run the Actor inside it (dispatched WITHOUT harness-native isolation); honor the runner's degraded sequential fallback; `required` failures stop. Full recipe — commands, guard handling, Actor path instruction — in [efficient-reference.md](efficient-reference.md#worktree-isolation).
+**Worktree isolation (default `worktree.isolation: auto`):** when enabled for a single-repository subtask, create its isolated git worktree before this dispatch and run the Actor inside it (dispatched WITHOUT harness-native isolation); honor the runner's degraded sequential fallback; `required` failures stop. Full recipe — commands, guard handling, Actor path instruction — in [efficient-reference.md](efficient-reference.md#worktree-isolation).
 
 ```text
 Task(
@@ -489,7 +489,7 @@ Return JSON with valid, summary, issues, files_changed, tests_run, and escalatio
 - If `valid=false`, write `code-review-N.md`, run `python3 .map/scripts/map_orchestrator.py monitor_failed --feedback "<feedback>"`, inspect `retry_isolation`, and invoke Predictor only when stuck/high-risk escalation rules apply. **Worktree isolation:** if enabled, run `discard_subtask_worktree "$SUBTASK_ID"` BEFORE retrying (atomic reject — a failed attempt is never merged; retry starts from a clean worktree). Recipe: [efficient-reference.md](efficient-reference.md#worktree-isolation). **If `monitor_failed` returns `status:"max_retries"` (budget exhausted), do NOT retry — run `python3 .map/scripts/map_step_runner.py build_escalation_outcome "$SUBTASK_ID" max_retries --retry-count <retry_count> --max-retries <max_retries>` and STOP with its `outcome` (surface the blocker to the user).**
 - **Intra-run failure memory + bounded-effort escalation (MANDATORY on every `valid=false`):** record the rejection with `python3 .map/scripts/map_step_runner.py record_failure_signature "<monitor feedback>" "$SUBTASK_ID"`. If `armed:true`, prepend the block from `build_anti_repeat_constraint "$SUBTASK_ID"` (add `--quarantine-active` when CLEAN_RETRY is set) to the TOP of the next Actor prompt. If `escalation_recommended:true` (#255), the 3rd identical failure means the bounded recovery act did not work — do NOT retry and do NOT run the legacy retry-3 Stuck-Recovery for this identical loop; run `python3 .map/scripts/map_step_runner.py build_escalation_outcome "$SUBTASK_ID" repeated_failure` (add `--quarantine-active` on a CLEAN_RETRY iteration) and STOP with its `outcome:"BLOCKED"`. A `status:"not_escalated"` means the latest failure was a NEW signature (the Actor moved off the dead end) — resume normal retries. Full recipe: [efficient-reference.md](efficient-reference.md).
 - If `retry_isolation=clean_retry_required`, validate `.map/<branch>/retry_quarantine.json` before CLEAN_RETRY. If a test/check fails inconsistently, collect repeated evidence with `run_flaky_test_triage ...` (or manually with `record_flaky_test_triage ...` if already collected), validate `.map/<branch>/flaky_test_triage.json`. Monitor must then emit `valid:false` + `disposition {kind:deferred_nondeterministic, check_id}`; close via the verdict-path route `validate_step 2.4 --disposition deferred_nondeterministic --check-id "<check-id>" --monitor-envelope -` (honored only when sidecar + envelope back it; deferral is `valid:false`+`deferred:true`, non-green, exit 0). `defer_flaky_subtask` remains the lower-level direct close. This is not a passing gate and must not weaken/skip/delete the check. Full recipe: [efficient-reference.md](efficient-reference.md).
-- Treat test failures after Monitor approval as Monitor failure. **Cross-subtask regression gate (MANDATORY):** before accepting an isolated candidate, reuse its current regression result from `monitor_instruction` or rerun that exact command with both roots; never substitute a parent-only result. For non-isolated execution only, run `python3 .map/scripts/map_step_runner.py detect_cross_subtask_regression_risk "$BRANCH" "$SUBTASK_ID"`; if `recommended_gate == "full_suite"` you MUST run the FULL suite (never a `-k` subset) before commit / `record_subtask_result` — per-subtask Monitor is blind to regressions on prior subtasks' code. Recipe: [efficient-reference.md](efficient-reference.md).
+- Treat test failures after Monitor approval as Monitor failure. **Cross-subtask regression gate (MANDATORY):** before accepting an isolated candidate, reuse its current regression result from `monitor_instruction` or rerun that exact command with both roots; never substitute a parent-only result. For a feature with several checkouts, use the repository-specific Monitor results and joint check. For non-isolated execution only, a single-repository subtask runs `python3 .map/scripts/map_step_runner.py detect_cross_subtask_regression_risk "$BRANCH" "$SUBTASK_ID"`; if `recommended_gate == "full_suite"` you MUST run the FULL suite (never a `-k` subset) before commit / `record_subtask_result` — per-subtask Monitor is blind to regressions on prior subtasks' code. Recipe: [efficient-reference.md](efficient-reference.md).
 
 ### Phase: ADVANCE_SUBTASK (synthetic boundary)
 
@@ -655,7 +655,7 @@ spawn_agent(
 
 Replace `<exact_user_approval_and_record_path_or_none>` in this Monitor message
 with the same `APPROVED_BASELINE_GATE_EVIDENCE` passed to Actor. Normalize the
-Monitor task name and include the attempt number. If the configured Monitor is
+Monitor task name and include the attempt number. For a feature with several checkouts, append the checkout's ordinal to each Monitor task name. If the configured Monitor is
 unavailable, run the independent review in the current session with that same
 resolved value.
 
@@ -682,7 +682,7 @@ non-green, exit 0). `defer_flaky_subtask "$SUBTASK_ID" --check-id "<check-id>"`
 remains the lower-level direct close. Do not close this with
 `validate_step 2.4 --recommendation proceed`.
 
-On a clean pass, before accepting an isolated candidate, reuse its current regression result from `monitor_instruction` or rerun that exact command with both roots. Never substitute a parent-only result; run the recommended suite in the candidate before acceptance. For non-isolated execution only, run `python3 .map/scripts/map_step_runner.py detect_cross_subtask_regression_risk "$BRANCH" "$SUBTASK_ID"`. Then record the accepted subtask:
+On a clean pass, before accepting an isolated candidate, reuse its current regression result from `monitor_instruction` or rerun that exact command with both roots. Never substitute a parent-only result; run the recommended suite in the candidate before acceptance. For a feature with several checkouts, use the repository-specific Monitor results and joint check. For non-isolated execution only, a single-repository subtask runs `python3 .map/scripts/map_step_runner.py detect_cross_subtask_regression_risk "$BRANCH" "$SUBTASK_ID"`. Then record the accepted subtask:
 
 ```bash
 python3 .map/scripts/map_orchestrator.py record_subtask_result "$SUBTASK_ID" valid \
