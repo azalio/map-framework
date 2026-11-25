@@ -2362,6 +2362,9 @@ def test_compare_orderings_preserves_both_collections(branch_workspace, missing_
                 "user_experience": {"all_clear": True, "findings": []},
                 "maintainer": {"all_clear": True, "findings": []},
             }
+            envelopes["predictor"] = {**_predictor_low_risk(), "risk_assessment": "high",
+                "bug_class": "lost_write", "cause": "race", "failure_scenario": "concurrent writes",
+                "evidence_refs": [{"file_path": label + ".py", "revision": "current", "quote": "write()"}]}
             if label == "default":
                 envelopes["monitor"] = {"issues": [{
                     "severity": "HIGH", "category": "performance", "description": "First collection hot-path regression",
@@ -2373,9 +2376,54 @@ def test_compare_orderings_preserves_both_collections(branch_workspace, missing_
     assert result["computed_verdict"] == "REVISE"
     ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
     assert any("First collection" in row["claim"] for row in ledger["findings_registry"])
+    if not adversarial and not missing_collection:
+        (prediction,) = [row for row in ledger["findings_registry"] if row["source_agent"] == "predictor"]
+        assert {ref["file_path"] for ref in prediction["evidence_refs"]} == {"default.py", "reverse.py"}
     assert bool(result["input_errors"]) is missing_collection
     if missing_collection:
         assert any("reverse" in error for error in result["input_errors"])
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_role_occurrences_keep_ids_when_evidence_expands(legacy):
+    runner = cast(Any, map_step_runner)
+    def role(path, symbol):
+        return _complete_role_finding(file_path=path, symbol=symbol, reviewer="maintainer",
+                bug_class="lost_write", cause="no lock", failure_scenario="two writers",
+                evidence_refs=[{"file_path": path, "revision": "current", "quote": "write()"}])
+
+    inputs = [role("a.py", "first"), role("b.py", "second")]
+    prior = runner.normalize_review_verdict(role_findings=inputs)
+    if legacy:
+        for row in prior["findings_registry"]:
+            row["evidence"] = [item for item in row["evidence"] if item["source"] != "finding_location"]
+    prior["findings_registry"][1]["author_reactions"] = [{"reaction": "wrong", "evidence": "b-specific"}]
+    for report in inputs:
+        report["evidence_refs"].append({"file_path": "test.py", "revision": "current", "quote": "assert ok"})
+    ledger = runner.normalize_review_verdict(role_findings=[*reversed(inputs), role("b.py", "third")])
+    runner._retain_review_findings(ledger, prior)
+    rows = ledger["findings_registry"]
+    assert [(row["id"], row["evidence_refs"][0]["file_path"]) for row in rows] == [
+        ("RVF-001", "a.py"), ("RVF-002", "b.py"), ("RVF-003", "b.py")]
+    assert rows[1]["author_reactions"] == prior["findings_registry"][1]["author_reactions"]
+
+
+def test_upgrade_matches_the_published_role_revision_with_the_new_citation():
+    runner = cast(Any, map_step_runner)
+    def role(paths):
+        return _complete_role_finding(file_path="a.py", symbol="write", reviewer="maintainer",
+            bug_class="lost_write", cause="no lock", failure_scenario="two writers",
+            evidence_refs=[{"file_path": path, "revision": "current", "quote": "write()"} for path in paths])
+    prior = runner.normalize_review_verdict(role_findings=[role(["a.py"]), role(["a.py", "test.py"])])
+    for row in prior["findings_registry"]:
+        row["evidence"] = [item for item in row["evidence"] if item["source"] != "finding_location"]
+    prior["findings_registry"][1]["author_reactions"] = [{"reaction": "wrong", "evidence": "published revision"}]
+    ledger = runner.normalize_review_verdict(role_findings=[role(["a.py", "test.py", "caller.py"])])
+    runner._retain_review_findings(ledger, prior)
+    original, updated = ledger["findings_registry"]
+    assert original == prior["findings_registry"][0]
+    assert updated["id"] == "RVF-002" and updated["author_reactions"] == prior["findings_registry"][1]["author_reactions"]
+    assert len(updated["evidence_refs"]) == 3
 
 
 def test_ledger_with_role_findings_validates_against_its_declared_schema(branch_workspace):

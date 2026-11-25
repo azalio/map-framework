@@ -230,6 +230,111 @@ def test_reworded_finding_keeps_identity_and_author_reactions(evidence_review):
     assert len(json.loads(evidence_review.read_text())["findings_registry"]) == 2
 
 
+@pytest.mark.parametrize("legacy_pin", [False, True], ids=["fresh", "saved-key"])
+def test_predictor_citation_updates_the_published_finding(evidence_review, legacy_pin):
+    runner = cast(Any, map_step_runner)
+    Path("test_divide.py").write_text("assert divide(0) == 0\n")
+    issue = {**_issue(), "risk_assessment": "high"}
+
+    def capture(round_id):
+        admission = runner.begin_review_run(provider="claude", scheduled_reviewers=list(runner.NORMAL_REVIEWERS),
+                                           round_id=round_id)
+        assert admission["status"] == "success", admission
+        assert runner.create_review_bundle()["status"] == "success"
+        receipt = {"covered_files": admission["required_files"], "skipped_files": [],
+                   "denied_access": [], "check_evidence": []}
+        reports = {"monitor": {"issues": [], "verdict": "approved"}, "predictor": issue,
+                   "evaluator": {"overall_score": 9, "recommendation": "proceed", "scores": {}}}
+        for reviewer in runner.NORMAL_REVIEWERS:
+            report = reports.get(reviewer, {"findings": [], "all_clear": True, "checks_performed": ["divide"]})
+            payload = with_paraphrase({**report, "receipt": receipt})
+            captured = runner.capture_review_output(reviewer, json.dumps(payload), round_id)
+            assert captured["status"] == "success", captured
+        assert runner.write_review_verdict_ledger(current_run=True)["status"] == "success"
+
+    capture("first")
+    if legacy_pin:
+        # The citation-dependent key stored by the previous runner for this report.
+        saved = json.loads(evidence_review.read_text())
+        saved["findings_registry"][0]["identity_key"] = "d6cc6d1aedb108a8ccbcb37e6190ff2eb9546b5232491c434acd593c70651ddc"
+        evidence_review.write_text(json.dumps(saved))
+    runner.record_review_reaction("RVF-001", "wrong", "Caller contract is disputed")
+    first = runner.review_publication("test-destination")["publishable"][0]["revision_id"]
+    runner.review_publication("test-destination", [first])
+    prior = json.loads(evidence_review.read_text())
+    extra = {"file_path": "test_divide.py", "revision": "current", "quote": "assert divide(0) == 0"}
+    issue["evidence_refs"] = [extra, *issue["evidence_refs"]]
+    capture("corroborated")
+
+    runner.record_review_reaction("RVF-001", "wrong", "Caller contract is disputed")
+    ledger = json.loads(evidence_review.read_text())
+    (row,) = ledger["findings_registry"]
+    assert row["id"] == "RVF-001"
+    assert row["author_reactions"] == prior["findings_registry"][0]["author_reactions"]
+    assert row["evidence_refs"] == issue["evidence_refs"]
+    assert row["validation"]["verdict"] == "confirmed"
+    assert ledger["publication_history"] == prior["publication_history"]
+    assert ledger["finding_history"][:-1] == prior["finding_history"]
+    (revision,) = runner.review_publication("test-destination")["publishable"]
+    assert revision["finding"]["id"] == row["id"]
+    assert revision["revision_id"] != first
+
+
+@pytest.mark.parametrize("first_risk,second_risk", [("high", "high"), ("medium", "high"), ("high", "medium")])
+def test_current_round_retains_citations_from_both_reports(first_risk, second_risk):
+    runner = cast(Any, map_step_runner)
+    issue = _issue()
+    extra = {"file_path": "test_divide.py", "revision": "current", "quote": "assert divide(0) == 0"}
+    issue["evidence"] = [{"source": "code", "quote": "first report"}]
+    additional = {**issue, "risk_assessment": second_risk, "evidence_refs": [extra],
+                  "evidence": [{"source": "test", "quote": "second report"}]}
+    ledger = runner.normalize_review_verdict(predictor_result={
+        **issue, "risk_assessment": first_risk, "additional_defects": [additional]})
+    runner._retain_review_findings(ledger, {})
+    (row,) = ledger["findings_registry"]
+    assert row["evidence_refs"] == [*issue["evidence_refs"], extra]
+    assert row["affected_files"] == ["divide.py", "test_divide.py"]
+    assert row["evidence"] == [*issue["evidence"], *additional["evidence"]]
+
+
+def test_upgrade_keeps_previously_issued_ids_addressable():
+    runner = cast(Any, map_step_runner)
+    issue = {**_issue(), "risk_assessment": "high"}
+    first = runner.normalize_review_verdict(predictor_result=issue)["findings_registry"][0]
+    second = {**first, "id": "RVF-002", "evidence_refs": [], "author_reactions": [
+        {"reaction": "intentional", "evidence": "second publication"}]}
+    prior = {"findings_registry": [first, second]}
+    different = {**issue, "failure_scenario": "divide an empty batch"}
+    ledger = runner.normalize_review_verdict(predictor_result={**issue, "additional_defects": [different]})
+    runner._retain_review_findings(ledger, prior)
+    rows = ledger["findings_registry"]
+    assert [row["id"] for row in rows] == ["RVF-001", "RVF-002", "RVF-003"]
+    assert rows[1]["author_reactions"] == second["author_reactions"]
+    assert rows[2]["failure_scenario"] == different["failure_scenario"]
+
+
+@pytest.mark.parametrize("revision", ["exact", "reordered", "expanded"])
+def test_repeat_keeps_its_previously_published_duplicate_id(revision):
+    runner = cast(Any, map_step_runner)
+    issue = {**_issue(), "risk_assessment": "high"}
+    first = runner.normalize_review_verdict(predictor_result=issue)["findings_registry"][0]
+    extra = {"file_path": "test_divide.py", "revision": "current", "quote": "assert divide(0) == 0"}
+    issue["evidence_refs"] = [*issue["evidence_refs"], extra]
+    ledger = runner.normalize_review_verdict(predictor_result=issue)
+    second = {**ledger["findings_registry"][0], "id": "RVF-002", "author_reactions": [
+        {"reaction": "intentional", "evidence": "second publication"}], "affected_files": ["divide.py", "test_divide.py"]}
+    if revision == "reordered":
+        ledger["findings_registry"][0]["evidence_refs"] = list(reversed(issue["evidence_refs"]))
+    elif revision == "expanded":
+        ledger["findings_registry"][0]["evidence_refs"] = [*issue["evidence_refs"], {**extra, "file_path": "caller.py"}]
+    runner._retain_review_findings(ledger, {"findings_registry": [first, second]})
+    original, repeated = ledger["findings_registry"]
+    assert original == first
+    assert repeated["id"] == second["id"] and repeated["author_reactions"] == second["author_reactions"]
+    if revision == "exact":
+        assert repeated == second
+
+
 def test_adversarial_paraphrase_preserves_durable_id_and_reaction(evidence_review):
     """Retain finding identity and author reactions across paraphrased reports."""
     runner = cast(Any, map_step_runner)
