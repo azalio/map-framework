@@ -1140,6 +1140,30 @@ def test_identical_predictor_defect_from_two_shards_is_one_finding(sharded_predi
     assert [item["bug_class"] for item in predictor_findings()] == ["race"]
 
 
+def test_predictor_shards_keep_citations_with_the_reported_occurrence():
+    def report(location, cited):
+        return {"risk_assessment": "high", "bug_class": "lost_write", "cause": "missing lock",
+                "failure_scenario": "two writes race", "evidence": [
+                    {"source": "finding_location", "quote": json.dumps({"file": location})}],
+                "evidence_refs": [{"file_path": cited, "revision": "current", "quote": "write()"}]}
+
+    shards = [("s01", report("a.py", "a.py")), ("s02", report("a.py", "test_a.py")),
+              ("s03", report("b.py", "b.py"))]
+    merged = runner._review_merge_envelopes(shards, {})
+    ledger = runner.normalize_review_verdict(predictor_result=merged)
+    runner._retain_review_findings(ledger, {})
+
+    assert [row["affected_files"] for row in ledger["findings_registry"]] == [["a.py", "test_a.py"], ["b.py"]]
+
+
+def test_additional_predictor_defect_keeps_strongest_assessment():
+    def report(name, risk):
+        return {"risk_assessment": risk, "bug_class": name, "cause": name, "failure_scenario": name}
+    merged = runner._review_merge_envelopes([
+        ("primary", report("A", "critical")), ("one", report("B", "medium")), ("two", report("B", "high"))], {})
+    assert merged["additional_defects"][0]["risk_assessment"] == "high"
+
+
 def test_a_clean_shard_adds_no_predictor_defect(sharded_predictor):
     capture_predictor_round(sharded_predictor, {1: ("medium", "leak")})
     merged = json.loads(Path(".map/feature/review-agent-predictor.json").read_text())

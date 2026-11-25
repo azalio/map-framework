@@ -71,7 +71,7 @@ import sys
 import tempfile
 import time
 import unicodedata
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from datetime import UTC, datetime
 from functools import wraps
 from pathlib import Path, PurePosixPath
@@ -9553,17 +9553,9 @@ def _review_resolution_entry(row: dict[str, Any]) -> str:
     entry["affected_files"] = [_review_wrap_value(name) for name in _review_finding_files(row)]
     # Intent: the identity key hashes these location fields under their original names (never line numbers),
     # so a re-report must repeat them exactly.
-    locations = []
-    for item in _review_evidence(row.get("evidence")):
-        if item.get("source") != "finding_location":
-            continue
-        try:
-            details = json.loads(item.get("quote", ""))
-        except (ValueError, TypeError):
-            continue
-        if isinstance(details, dict):
-            locations.append({key: _review_wrap_value(value) if isinstance(value, str) else value
-                              for key, value in details.items() if key not in {"line", "line_range"}})
+    locations = [{key: _review_wrap_value(value) if isinstance(value, str) else value
+                  for key, value in details.items() if key not in {"line", "line_range"}}
+                 for details in _review_finding_locations(row)]
     if locations:
         entry["finding_location"] = locations
     for field in ("claim", "bug_class", "cause", "failure_scenario"):
@@ -10449,6 +10441,10 @@ def normalize_review_verdict(
                     "Monitor findings are authoritative per decision table."
                 )
 
+    def _role_location_evidence(entry: dict) -> list[dict[str, Any]]:
+        location = {key: entry[key] for key in ("file_path", "symbol", "line_range") if entry.get(key)}
+        return [{"source": "finding_location", "quote": json.dumps(location, sort_keys=True)}] if location else []
+
     def _record_contract_incomplete(
         entry: dict[str, Any], gaps: list[str], severity: str, reviewer: str
     ) -> None:
@@ -10473,7 +10469,7 @@ def normalize_review_verdict(
             "category": _normalize_category(str(entry.get("category") or "")),
             "severity": severity,
             "claim": f"[{reviewer}] {claim}",
-            "evidence": [],
+            "evidence": _role_location_evidence(entry),
             "status": "tombstoned",
             "transition_reason": "contract_incomplete",
             "contract_gaps": list(gaps),
@@ -10558,7 +10554,7 @@ def normalize_review_verdict(
 
         # The contract parts ARE the evidence: the verbatim current code, the
         # applicable fix, the measurable delta and its cost.
-        role_evidence: list[dict[str, Any]] = []
+        role_evidence = _role_location_evidence(entry)
         for part in ("evidence", *ROLE_FINDING_CONTRACT_KEYS, "design_change"):
             part_value = str(entry.get(part) or "").strip()
             if part_value:
@@ -11094,28 +11090,31 @@ def _validate_review_findings(ledger: dict[str, Any], admitted: dict[str, Any]) 
                 finding.update(status="downgraded", severity="needs_investigation")
 
 
-def _review_finding_key(finding: dict[str, Any]) -> str:
-    if finding.get("identity_key"):
-        return str(finding["identity_key"])
-    complete = all(isinstance(finding.get(field), str) and finding[field].strip()
-                   for field in ("bug_class", "cause", "failure_scenario"))
-    location = []
+def _review_finding_locations(finding: dict[str, Any]) -> Iterator[dict[str, Any]]:
     for item in _review_evidence(finding.get("evidence")):
         if item.get("source") == "finding_location":
             try:
                 details = json.loads(item.get("quote", ""))
             except (ValueError, TypeError):
                 continue
-            if not isinstance(details, dict):
-                continue
-            stable = {key: value for key, value in details.items()
-                      if key not in {"line", "line_range"} and not (complete and key == "failure_mode")}
-            if isinstance(stable.get("location"), str):
-                stable["location"] = re.sub(r":\d+(?::\d+)?(?:-\d+(?::\d+)?)?$", "", stable["location"])
+            if isinstance(details, dict):
+                yield details
+
+
+def _review_finding_key(finding: dict[str, Any], *, use_stored: bool = True) -> str:
+    if use_stored and finding.get("identity_key"):
+        return str(finding["identity_key"])
+    complete = all(isinstance(finding.get(field), str) and finding[field].strip()
+                   for field in ("bug_class", "cause", "failure_scenario"))
+    location = []
+    for details in _review_finding_locations(finding):
+        stable = {key: value for key, value in details.items()
+                  if key not in {"line", "line_range"} and not (complete and key == "failure_mode")}
+        if isinstance(stable.get("location"), str):
+            stable["location"] = re.sub(r":\d+(?::\d+)?(?:-\d+(?::\d+)?)?$", "", stable["location"])
+        if stable not in location:
             location.append(stable)
-    if complete and not location:
-        location = sorted({ref["file_path"] for ref in finding.get("evidence_refs", [])
-                           if isinstance(ref, dict) and isinstance(ref.get("file_path"), str)})
+    location.sort(key=lambda item: json.dumps(item, sort_keys=True))
     return hashlib.sha256(json.dumps(
         [finding.get("source_agent"),
          finding.get("originating_reviewer") if finding.get("source_agent") != "adversarial" else None,
@@ -11147,20 +11146,65 @@ def _reject_review_resolution(
                      "source_agent": resolution.get("source_agent"), "reason": reason, "fields": fields})
 
 
+def _match_prior_finding(candidates: list[dict], finding: dict, *, require_unique: bool) -> dict | None:
+    if len(candidates) < 2:
+        return candidates[0] if candidates else None
+
+    def citations(row: dict) -> set[str]:
+        return {json.dumps(ref, sort_keys=True) for ref in row.get("evidence_refs") or [] if isinstance(ref, dict)}
+
+    current = citations(finding)
+    files = _review_affected_files(finding)
+
+    def score(row: dict) -> tuple[bool, int, bool]:
+        previous = citations(row)
+        return (previous == current, len(previous) if previous <= current else -1, _review_affected_files(row) == files)
+
+    scores = [score(row) for row in candidates]
+    best = max(scores)
+    if require_unique and scores.count(best) > 1:
+        return None
+    return candidates[scores.index(best)]
+
+
+def _merge_review_evidence(target: dict, first: dict, second: dict) -> None:
+    for field in ("evidence", "evidence_refs"):
+        left, right = first.get(field, []), second.get(field, [])
+        if isinstance(left, list) and isinstance(right, list) and (left or right):
+            target[field] = [*left, *(item for item in right if item not in left)]
+
+
 def _retain_review_findings(
     ledger: dict[str, Any], prior: dict[str, Any], resolutions: list[dict[str, Any]] | None = None,
     objections: list[dict[str, Any]] | None = None,
     admitted: dict[str, Any] | None = None,
 ) -> None:
     """Omission is not resolution; preserve stable IDs and each evidence revision."""
-    registry = {_review_finding_key(row): dict(row) for row in prior.get("findings_registry", [])
+    registry = {row["id"]: dict(row) for row in prior.get("findings_registry", [])
                 if row.get("transition_reason") != "input_integrity"}
-    next_id = max((int(row["id"].removeprefix("RVF-")) for row in registry.values()), default=0)
+    # Keep previously issued IDs addressable even if an older runner assigned two IDs to the same defect.
+    ids_by_key: dict[str, list[str]] = {}
+    for finding_id, row in registry.items():
+        keys = {_review_finding_key(row, use_stored=False), _review_finding_key(row)}
+        for key in keys:
+            ids_by_key.setdefault(key, []).append(finding_id)
+    next_id = max((int(fid.removeprefix("RVF-")) for fid in registry), default=0)
     history = list(prior.get("finding_history", []))
     observed: dict[str, dict[str, Any]] = {}
     for finding in ledger["findings_registry"]:
         key = _review_finding_key(finding)
-        old = registry.get(key)
+        candidates = [registry[fid] for fid in ids_by_key.get(key, [])]
+        old = observed.get(key) or _match_prior_finding(candidates, finding, require_unique=False)
+        if old is None and finding.get("source_agent") == "role":
+            # Older role records omitted the declared file and symbol. Only adopt an unambiguous match.
+            location = next(_review_finding_locations(finding), {})
+            unlocated = _review_finding_key({**finding, "evidence": []}, use_stored=False)
+            legacy = [registry[fid] for fid in ids_by_key.get(unlocated, [])
+                      if not any(_review_finding_locations(registry[fid]))
+                      and location.get("file_path") in _review_affected_files(registry[fid])]
+            old = _match_prior_finding(legacy, finding, require_unique=True)
+            if old is not None:
+                ids_by_key[key] = [old["id"]]
         if finding.get("source_agent") == "adversarial":
             finding["reported_by"] = sorted(set(_review_reporters(finding)) | set(_review_reporters(old) if old else []))
         # Remedies are alternatives, not primary evidence: retain every attributed
@@ -11174,15 +11218,20 @@ def _retain_review_findings(
                 finding["remedies"] = remedies
         # Intent: duplicate/order-dependent reviewer rows must never overwrite stronger evidence.
         if key in observed:
+            previous = observed[key]
             severity_order = {"minor": 0, "needs_investigation": 1, "important": 2, "critical": 3}
             if severity_order.get(finding["severity"], 1) <= severity_order.get(observed[key]["severity"], 1):
+                _merge_review_evidence(previous, previous, finding)
+                affected = set(previous.get("affected_files", [])) | _review_affected_files(previous)
+                if affected:
+                    previous["affected_files"] = sorted(affected)
                 if "remedies" in finding:
                     observed[key]["remedies"] = finding["remedies"]
                 if "reported_by" in finding:
                     observed[key]["reported_by"] = finding["reported_by"]
                 continue
+            _merge_review_evidence(finding, previous, finding)
         observed[key] = finding
-        old = registry.get(key)
         if old:
             finding["id"] = old["id"]
             finding["author_reactions"] = old.get("author_reactions", [])
@@ -11195,17 +11244,18 @@ def _retain_review_findings(
         else:
             next_id += 1
             finding["id"] = f"RVF-{next_id:03d}"
+            ids_by_key[key] = [finding["id"]]
         known = _review_known_occurrences(finding)
         if known:
             finding["known_sibling_occurrences"] = known
         affected = _review_affected_files(finding) | set(finding.get("affected_files", []))
         if affected:
             finding["affected_files"] = sorted(affected)
-        registry[key] = finding
+        registry[finding["id"]] = finding
     rejected: list[dict[str, Any]] = []
     accepted_ids: set[str] = set()
     for resolution in resolutions or []:
-        finding = next((row for row in registry.values() if row["id"] == resolution.get("finding_id")), None)
+        finding = registry.get(str(resolution.get("finding_id")))
         reviewer = resolution.get("source_agent")
         if finding is None:
             _reject_review_resolution(rejected, resolution, "Resolution names an unknown finding ID", ["finding_id"])
@@ -11254,7 +11304,7 @@ def _retain_review_findings(
     if admitted is not None:
         _validate_review_findings(ledger, admitted)
     for item in rejected:
-        closed = next((row for row in registry.values() if row["id"] == item["finding_id"]), {})
+        closed = registry.get(item["finding_id"], {})
         if closed.get("resolved_by"):
             # Intent: never claim a finding stays open when another resolution for it was accepted.
             item["superseded"] = True
@@ -11301,13 +11351,51 @@ def _review_worst(key: str, values: list[Any]) -> Any:
     return max(values, key=lambda value: order.index(value) if value in order else len(order))
 
 
+def _merge_predictor_reports(outputs: list[dict[str, Any]]) -> dict[str, Any]:
+    risks = _REVIEW_VERDICT_ORDERS["risk_assessment"]
+    base_source = max(outputs, key=lambda out: risks.index(out["risk_assessment"])
+                      if out.get("risk_assessment") in risks else len(risks))
+    base = dict(base_source)
+    defect_fields = ("risk_assessment", "bug_class", "cause", "failure_scenario", "evidence_refs", "reachability",
+                     "baseline_attribution", "landmine_evidence", "evidence")
+
+    def defect_key(out: dict[str, Any]) -> str:
+        return _review_finding_key({key: out.get(key) for key in ("bug_class", "cause", "failure_scenario", "evidence")})
+
+    defects: dict[str, dict] = {}
+    for output in [base_source, *(out for out in outputs if out is not base_source)]:
+        for out in (output, *(output.get("additional_defects") or [])):
+            if not isinstance(out, dict) or (out.get("risk_assessment") == "low" and not any(
+                out.get(field) for field in ("bug_class", "cause", "failure_scenario")
+            )):
+                continue
+            key = defect_key(out)
+            fields = {field: out[field] for field in defect_fields if field in out}
+            previous = defects.get(key)
+            if previous is None:
+                defects[key] = fields
+            else:
+                risk = _review_worst("risk_assessment", [previous.get("risk_assessment"), out.get("risk_assessment")])
+                strongest = fields if risk != previous.get("risk_assessment") else previous
+                _merge_review_evidence(strongest, previous, fields)
+                defects[key] = strongest
+    if defects:
+        primary, *extras = defects.values()
+        for field in defect_fields:
+            base.pop(field, None)
+        base.update(primary)
+        if extras:
+            base["additional_defects"] = extras
+        else:
+            base.pop("additional_defects", None)
+    return base
+
+
 def _review_merge_envelopes(items: list[tuple[str, dict[str, Any]]], owners: dict[str, set[str]]) -> dict[str, Any]:
     """Merge per-shard reviewer envelopes: worst-of verdicts, concatenated findings, unioned receipts."""
     outputs = [output for _, output in items]
-    base_source = (max(outputs, key=lambda out: _REVIEW_VERDICT_ORDERS["risk_assessment"].index(out["risk_assessment"])
-                       if out.get("risk_assessment") in _REVIEW_VERDICT_ORDERS["risk_assessment"] else 99)
-                   if all("risk_assessment" in out for out in outputs) else outputs[0])
-    base = dict(base_source)
+    predictor = all("risk_assessment" in out for out in outputs)
+    base = _merge_predictor_reports(outputs) if predictor else dict(outputs[0])
 
     def present(key: str) -> list[Any]:
         return [out[key] for out in outputs if key in out]
@@ -11322,6 +11410,8 @@ def _review_merge_envelopes(items: list[tuple[str, dict[str, Any]]], owners: dic
         if present(key):
             base[key] = union([item for value in present(key) if isinstance(value, list) for item in value])
     for key in ("findings", "issues", "evidence", "monitor_severity_audit", "resolved_findings"):
+        if key == "evidence" and predictor:
+            continue
         lists = [value for value in present(key) if isinstance(value, list)]
         if lists:
             base[key] = union([item for value in lists for item in value])
@@ -11361,23 +11451,6 @@ def _review_merge_envelopes(items: list[tuple[str, dict[str, Any]]], owners: dic
             state[key] = union([item for out in outputs for item in out["predicted_state"].get(key, [])
                                 if isinstance(out["predicted_state"].get(key, []), list)])
         base["predicted_state"] = state
-    if all("risk_assessment" in out for out in outputs):
-        # Intent: the worst-risk shard is the primary verdict; every other shard's distinct defect stays its own finding.
-        defect_fields = ("risk_assessment", "bug_class", "cause", "failure_scenario", "evidence_refs", "reachability",
-                         "baseline_attribution", "landmine_evidence", "evidence")
-
-        def identity(out: dict[str, Any]) -> tuple[str, ...]:
-            return tuple(str(out.get(key) or "") for key in ("bug_class", "cause", "failure_scenario"))
-
-        seen = {identity(base)}
-        extras = list(base.get("additional_defects") or [])
-        for out in outputs:
-            claims_defect = out.get("risk_assessment") != "low" or any(identity(out))
-            if out is not base_source and claims_defect and identity(out) not in seen:
-                seen.add(identity(out))
-                extras.append({key: out[key] for key in defect_fields if key in out})
-        if extras:
-            base["additional_defects"] = extras
     for key in ("summary", "all_clear_rationale", "landmine_evidence"):
         joined = [str(value) for value in present(key) if str(value).strip()]
         if joined:
@@ -11637,7 +11710,8 @@ def record_review_reaction(
         raise ValueError("Reaction requires an existing finding")
     entry = {"reaction": reaction, "evidence": evidence, "finding_key": _review_finding_key(finding)}
     reactions = finding.setdefault("author_reactions", [])
-    if entry not in reactions:
+    if not any(isinstance(item, dict) and item.get("reaction") == reaction and item.get("evidence") == evidence
+               for item in reactions):
         reactions.append(entry)
         revision = hashlib.sha256(json.dumps(finding, sort_keys=True).encode()).hexdigest()
         ledger.setdefault("finding_history", []).append({"finding_key": entry["finding_key"],
@@ -12574,9 +12648,9 @@ def write_review_verdict_ledger(
                 if reviewer == "monitor":
                     target["issues"] = [*(target.get("issues") or []), *(other.get("issues") or [])]
                 elif reviewer == "predictor":
-                    risk_order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
-                    if risk_order.get(str(other.get("risk_assessment")), -1) > risk_order.get(str(target.get("risk_assessment")), -1):
-                        target.update(other)
+                    reports = [report for report in (target, other) if "risk_assessment" in report]
+                    if reports:
+                        predictor_result = _merge_predictor_reports(reports)
 
     # Role reviewers hand over their envelope verbatim, exactly like Monitor —
     # the ledger owns the unwrap so no caller has to pre-flatten a findings array.
