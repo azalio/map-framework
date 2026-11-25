@@ -856,6 +856,7 @@ class StepState:
     plan_approved: bool = False
     approved_feature_contracts: dict[str, str] = field(default_factory=dict)
     execution_mode: str = "batch"  # batch|step_by_step
+    execution_driver: str | None = "sequential"  # None for state saved before driver tracking
     # TDD mode: inserts TEST_WRITER and TEST_FAIL_GATE before ACTOR
     tdd_mode: bool = False
     # Steps skipped (not executed) — tracked separately from completed_steps
@@ -947,6 +948,7 @@ class StepState:
             "plan_approved": self.plan_approved,
             "approved_feature_contracts": self.approved_feature_contracts,
             "execution_mode": self.execution_mode,
+            "execution_driver": self.execution_driver,
             "tdd_mode": self.tdd_mode,
             "skipped_steps": self.skipped_steps,
             "execution_waves": self.execution_waves,
@@ -999,6 +1001,7 @@ class StepState:
             plan_approved=data.get("plan_approved", False),
             approved_feature_contracts=data.get("approved_feature_contracts", {}),
             execution_mode=data.get("execution_mode", "batch"),
+            execution_driver=data.get("execution_driver"),
             tdd_mode=data.get("tdd_mode", False),
             skipped_steps=data.get("skipped_steps", []),
             execution_waves=data.get("execution_waves", []),
@@ -1612,6 +1615,7 @@ def get_next_step(branch: str) -> dict:
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
 
+    state.execution_driver = "sequential"
     # WORKFLOW_COMPLETE is authoritative — short-circuit even if pending_steps
     # got repopulated by a partial recovery path. Otherwise the function walks
     # the per-subtask branches and returns a stale "2.2 RESEARCH" instruction
@@ -1985,6 +1989,7 @@ def validate_step(
             "message": f"Step mismatch: expected {state.current_step_id}, got {step_id}",
         }
 
+    state.execution_driver = "sequential"
     # Step-specific validation
     if step_id == "1.55" and not state.plan_approved:
         return {
@@ -3029,6 +3034,10 @@ def get_wave_step(branch: str) -> dict:
                 )
         subtask_infos.append(info)
 
+    # The isolation preview can inspect a wave before the plan has a subtask sequence.
+    if state.subtask_sequence and state.execution_driver != "wave_loop":
+        state.execution_driver = "wave_loop"
+        state.save(state_file)
     return {
         "mode": mode,
         "wave_index": state.current_wave_index,
@@ -3082,6 +3091,7 @@ def validate_wave_step(subtask_id: str, step_id: str, branch: str) -> dict:
         blocked = _feature_blocker(branch, state, [subtask_id])
         if blocked:
             return blocked
+    state.execution_driver = "wave_loop"
     state.subtask_phases[subtask_id] = next_phase
     state.save(state_file)
 
@@ -3115,6 +3125,7 @@ def advance_wave(branch: str) -> dict:
         blocked = _feature_blocker(branch, state, state.execution_waves[state.current_wave_index])
         if blocked:
             return blocked
+    state.execution_driver = "wave_loop"
     state.current_wave_index += 1
     # Reset per-subtask phases for the new wave
     state.subtask_phases = {}
@@ -3573,6 +3584,7 @@ def monitor_failed(branch: str, feedback: str = "") -> dict:
             ),
         }
 
+    state.execution_driver = "sequential"
     state.retry_count += 1
 
     escalation = _check_retry_limit(
@@ -3650,6 +3662,7 @@ def wave_monitor_failed(
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
 
+    state.execution_driver = "wave_loop"
     # Increment per-subtask retry count
     current_retries = state.subtask_retry_counts.get(subtask_id, 0) + 1
     state.subtask_retry_counts[subtask_id] = current_retries
@@ -4544,6 +4557,7 @@ def reopen_for_fixes(branch: str, feedback: str = "") -> dict:
             ),
         }
 
+    state.execution_driver = "sequential"
     # Reset to ACTOR+MONITOR cycle. Reset every completion field atomically —
     # the same rule that ``mark_workflow_complete`` enforces in the forward
     # direction. Leaving ``workflow_status="WORKFLOW_COMPLETE"`` here would
@@ -4735,6 +4749,7 @@ def skip_step(step_id: str, branch: str) -> dict:
             "message": f"Step mismatch: current is {state.current_step_id}, cannot skip {step_id}",
         }
 
+    state.execution_driver = "sequential"
     # Mark step as completed (skipped) and advance
     state.completed_steps.append(step_id)
     if step_id in state.pending_steps:

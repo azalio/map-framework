@@ -568,22 +568,29 @@ def state_string(state: dict, key: str, default: str = "") -> str:
     return default
 
 
-def active_wave_label(state: dict) -> str | None:
-    """Return ``WAVE i/n [ST-x:phase ...]`` when the wave loop is engaged.
-
-    Waves track progress only in ``subtask_phases``; ``current_step_*`` is a
-    stale sequential leftover (advance_wave resets it to 2.2/RESEARCH), so it
-    must not drive the banner while the wave loop is active.
-    """
+def active_wave_progress(state: dict) -> tuple[int, int, dict[str, str]] | None:
+    """Return member phases for the wave that owns the current execution cursor."""
+    driver = state.get("execution_driver")
+    if driver not in (None, "wave_loop"):
+        return None
     waves = state.get("execution_waves")
-    phases = state.get("subtask_phases")
-    wave_idx = state.get("current_wave_index", 0)
-    if not (isinstance(waves, list) and waves and isinstance(phases, dict) and phases):
+    index = state.get("current_wave_index", 0)
+    if not isinstance(waves, list) or type(index) is not int or not 0 <= index < len(waves):
         return None
-    if not isinstance(wave_idx, int) or isinstance(wave_idx, bool):
+    members = waves[index]
+    phases = state.get("subtask_phases", {})
+    if not isinstance(members, list) or not members or not all(isinstance(sid, str) for sid in members):
         return None
-    per_subtask = " ".join(f"{sid}:{phase}" for sid, phase in phases.items())
-    return f"WAVE {wave_idx + 1}/{len(waves)} [{per_subtask}]"
+    if not isinstance(phases, dict):
+        return None
+    # Older runs have no driver field. A phase from a different wave cannot identify the active task.
+    if driver is None:
+        serial_task = state.get("current_subtask_id")
+        if (serial_task and serial_task not in members) or not any(sid in phases for sid in members):
+            return None
+    default = "2.25" if state.get("tdd_mode") else "2.3"
+    return index + 1, len(waves), {sid: phases.get(sid, default) for sid in members}
+
 
 
 def required_action_for_step(step_id: str, step_phase: str) -> str | None:
@@ -594,6 +601,10 @@ def required_action_for_step(step_id: str, step_phase: str) -> str | None:
         return "Choose mode (set_execution_mode step_by_step|batch)"
     if step_id == "2.2":
         return "Persist RESEARCH artifact (research-agent only for broad/high-risk discovery)"
+    if step_id == "2.25":
+        return "Write tests for the current subtask"
+    if step_id == "2.26":
+        return "Verify the new tests fail before implementation"
     if step_id == "2.3":
         return "Run Actor"
     if step_id == "2.4":
@@ -774,37 +785,13 @@ def format_reminder(
     plan_ok = "y" if state.get("plan_approved") else "n"
     mode = state_string(state, "execution_mode") or "batch"
 
-    # Wave progress display
-    waves_value = state.get("execution_waves")
-    waves = waves_value if isinstance(waves_value, list) else []
-    wave_idx = state.get("current_wave_index", 0)
-    wave_hint = ""
-    if waves and isinstance(wave_idx, int):
-        # Surface the WAVE banner when the wave-loop driver is ACTUALLY
-        # in use. Previous "wave_idx > 0" check missed the very first
-        # wave (wave 0 is the first wave by definition). Better signal:
-        # subtask_phases is populated only by the wave-loop dispatcher
-        # (get_wave_step writes per-subtask phase tracking there). So
-        # if subtask_phases has any entries AND execution_waves is set,
-        # the wave-loop is engaged — show the banner from wave 0 onward.
-        subtask_phases_value = state.get("subtask_phases", {})
-        subtask_phases_dict = subtask_phases_value if isinstance(subtask_phases_value, dict) else {}
-        wave_loop_engaged = bool(subtask_phases_dict) or wave_idx > 0
-        if wave_loop_engaged:
-            wave_hint = f" | WAVE {wave_idx + 1}/{len(waves)}"
-            current_wave = waves[wave_idx] if wave_idx < len(waves) else []
-            if isinstance(current_wave, list) and len(current_wave) > 1:
-                wave_hint += f" ({', '.join(str(item) for item in current_wave)})"
-                mode = "batch:parallel"
-
+    wave = active_wave_progress(state)
     required = required_action_for_step(step_id, step_phase)
     step_label = f"{step_id} {step_phase}"
-    wave_label = active_wave_label(state)
-    if wave_label:
-        # Wave loop engaged: current_step_*/current_subtask_id are stale
-        # sequential leftovers, so show per-subtask phases instead.
-        step_label = wave_label
-        wave_hint = ""
+    if wave:
+        number, total, phases = wave
+        members = " ".join(f"{sid}:{phase}" for sid, phase in phases.items())
+        step_label = f"WAVE {number}/{total} [{members}]"
         subtask_id = "-"
         required = None
 
@@ -832,7 +819,7 @@ def format_reminder(
             if len(current_files) > 5:
                 files_hint += f" +{len(current_files) - 5}"
 
-    if not step_id and not step_phase and not wave_label:
+    if not step_id and not step_phase and not wave:
         return None
 
     # Context-aware: add goal and subtask title
@@ -846,6 +833,7 @@ def format_reminder(
             title_hint = f" {title}"
     hard_hint, tag_hint = load_subtask_contract_hints(branch, subtask_id)
 
+    subtask_hint = "" if wave else f" | ST: {subtask_id}{title_hint} ({progress})"
     authority_hint = " | Source>summary"
     # Lag diagnostics: emit hook wall-clock UTC and the age of step_state.json
     # (now - state mtime, seconds, 1 decimal). If the hook is reading stale
@@ -866,15 +854,15 @@ def format_reminder(
     except OSError:
         pass
     ts_hint = f" @ {now_utc.strftime('%H:%M:%S.%f')[:-3]}Z (state {state_age_str})"
-    base = f"[MAP]{ts_hint} {step_label}{goal_hint} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{hard_hint}{tag_hint}{authority_hint}"
+    base = f"[MAP]{ts_hint} {step_label}{goal_hint}{subtask_hint} | plan:{plan_ok} mode:{mode}{diag_hint}{files_hint}{hard_hint}{tag_hint}{authority_hint}"
 
     # Enforce limit: trim goal first, then constraint detail, then word-boundary truncate.
     if len(base) > REMINDER_LIMIT:
         goal_hint = ""
-        base = f"[MAP]{ts_hint} {step_label} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{hard_hint}{tag_hint}{authority_hint}"
+        base = f"[MAP]{ts_hint} {step_label}{subtask_hint} | plan:{plan_ok} mode:{mode}{diag_hint}{files_hint}{hard_hint}{tag_hint}{authority_hint}"
     if len(base) > REMINDER_LIMIT:
         hard_hint = ""
-        base = f"[MAP]{ts_hint} {step_label} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{tag_hint}{authority_hint}"
+        base = f"[MAP]{ts_hint} {step_label}{subtask_hint} | plan:{plan_ok} mode:{mode}{diag_hint}{files_hint}{tag_hint}{authority_hint}"
     if len(base) > REMINDER_LIMIT:
         base = _truncate_at_word(base, REMINDER_LIMIT)
 
