@@ -402,6 +402,40 @@ def test_truncated_lookup_respects_a_different_explicit_range(repo):
     complete_result(delivery, second, "second")
 
 
+def test_binary_file_hint_returns_its_readable_source_record(repo):
+    del repo
+    Path("second.py").write_bytes(b"\x00\xff")
+    delivery = admitted_delivery()
+    result = delivery.respond({"arguments": {"resource_id": "repo:second.py", "start_line": 1, "end_line": 1},
+                               "callId": "wrong"})
+    rejected = json.loads(result["contentItems"][0]["text"])
+    assert rejected["reason"] == "wrong_resource_prefix"
+    assert "only resource_id" in rejected["message"]
+    candidate, = rejected["candidates"]
+    result = delivery.respond({"arguments": {"resource_id": candidate}, "callId": "retry"})
+    assert result["success"]
+    source = json.loads(json.loads(result["contentItems"][0]["text"])["content"])
+    assert (source["path"], source["encoding"], source["current_content"]) == ("second.py", "base64", "AP8=")
+
+
+def test_diff_only_reader_gets_no_file_address_hint(repo):
+    del repo
+    scope_tests.write_changes()
+    assert runner.begin_review_run(branch="feature", provider="codex", arguments="--adversarial",
+                                   round_id="blind")["status"] == "success"
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    entry = runner.build_adversarial_review_prompts(branch="feature")["prompts"]["blind"]
+    state = runner.bind_review_context("blind", entry["context_transport"]["context_id"], "thread", "blind", branch="feature")
+    delivery = driver.Delivery("feature", "blind", state)
+    before = delivery.refresh()
+    for resource in ("repo:first.py", "current:dependency.py", "base:dependency.py"):
+        result = delivery.respond({"arguments": {"resource_id": resource}, "callId": resource})
+        assert not result["success"]
+        rejected = json.loads(result["contentItems"][0]["text"])
+        assert rejected["status"] == "context_request_rejected" and "candidates" not in rejected
+    assert delivery.refresh() == before
+
+
 def test_lookup_reports_where_baseline_of_a_renamed_file_is_stored(repo):
     del repo
     scope_tests.git("mv", "moved.py", "renamed.py")
@@ -689,6 +723,61 @@ def test_adversarial_preferences_rejected_before_saving(repo, monkeypatch):
         driver.run("feature", review_preferences="Requested focus")
     row = runner._read_review_ledger(Path(".map/feature"))["convergence"]["rounds"][-1]
     assert "codex_review_preferences" not in row
+
+
+def test_sharded_driver_retries_file_with_suggested_resource_in_same_session(repo, monkeypatch):
+    del repo
+    monkeypatch.setenv("MAP_REVIEW_CONTEXT_BUDGET_BYTES",
+                       scope_tests.shard_budget(runner.REVIEW_ROLE_RUBRIC_RESERVE_BYTES + 60_000))
+    scope_tests.write_changes()
+    scope_tests.write_many(6)
+    admission = runner.begin_review_run(branch="feature", provider="codex", mode="lightweight", round_id="alias")
+    assert admission["status"] == "success" and len(admission["shard_ids"]) >= 2, admission
+    assert runner.create_review_bundle(branch="feature")["status"] == "success"
+    shards = scope_tests.current_row()["shards"]
+    own, other = (shard["files"][0] for shard in shards[:2])
+    retried = []
+
+    class AliasReader(SimulatedHost):
+        def turn(self, message):
+            report = super().turn(message)
+            if retried:
+                return report
+            delivery = self.on_event.__self__
+            ready = delivery.refresh()
+
+            def read(resource, **bounds):
+                reply = delivery.respond({"arguments": {"resource_id": resource, **bounds}, "callId": resource})
+                complete_result(delivery, reply, resource)
+                return json.loads(reply["contentItems"][0]["text"])
+
+            for wrong, expected in (("repo:" + own, "current:" + own),
+                                    ("current:" + other, "repo:" + other),
+                                    ("base:" + other, "repo:" + other)):
+                rejected = read(wrong, start_line=1, end_line=1)
+                assert rejected.get("candidates") == [expected], rejected
+                assert "only resource_id" in rejected["message"]
+                if wrong.startswith("base:"):
+                    assert "baseline_known" in rejected["message"]
+                assert rejected["status"] == "context_request_rejected" and "content" not in rejected
+                delivery = driver.Delivery("feature", "alias", ready)
+                assert delivery.refresh() == ready
+                content = read(rejected["candidates"][0])["content"]
+                if expected.startswith("repo:"):
+                    source = json.loads(content)
+                    assert source["baseline_known"] is False and source["base_content"] == ""
+                    assert source["current_content"] == Path(other).read_text()
+                else:
+                    assert content == Path(own).read_text()
+                retried.append(wrong)
+            assert delivery.refresh() == ready
+            return report
+
+    monkeypatch.setattr(driver, "CodexReviewHost", AliasReader)
+    assert driver.run("feature")["status"] == "success"
+    assert len(retried) == 3
+    result = runner.write_review_verdict_ledger(current_run=True, branch="feature")
+    assert result["completeness"]["status"] == "COMPLETE", result
 
 
 def test_sharded_driver_loops_shards_and_resumes_per_shard(repo, monkeypatch):

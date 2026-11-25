@@ -54,7 +54,7 @@ Trace persisted data from every writer through parsing and recovery to the next 
 
 - Feed the normal reader and the recovery reader the same ambiguous input, such as duplicate JSON keys. Verify that both reject it and preserve the original bytes.
 - Give recovery a complete JSON object with a wrong field type, such as a string where the next step expects a list. Verify refusal before any write. For valid recovery, run the next real operation and assert its result.
-- Before making a read error recoverable, trace every condition that produces it. Test a missing input separately from an admitted input whose contents have changed. Only the former should offer a corrected request.
+- When a read fails, distinguish a missing path, a wrong address for an admitted file, and a changed snapshot. Retry any suggested address in the same reviewer session and verify the returned content. Check that a changed snapshot still reports the error.
 - Test automatic recovery with one caller invocation. Interrupt the real transport after progress is saved and let the original caller finish the operation. Also fail one reader and verify that the published verdict retains the other readers' findings and distinguishes required from advisory roles.
 - Keep transport bookkeeping inside the runner. Test the operation the reviewer asks for (for example, rereading a source line) with a multi-page Unicode file. Interrupt midway and verify that the next request returns the remaining text and preserves required delivery progress.
 - When changing how persisted records are matched, check that previously published IDs still resolve and that replaying the same user feedback does not create a duplicate.
