@@ -62,7 +62,7 @@ This reports the existing artifacts (`plan__discovery` or legacy `findings`/`spe
 - `goal_mismatch` → the branch already holds a plan for a **different** goal. Do **NOT** print "plan complete" and do **NOT** overwrite the prior `spec`/`blueprint`/`task_plan`. Follow the `recommendation`: archive or rename the existing `.map/<branch>/` artifacts (or run `$map-plan` on a fresh branch) — confirm with the operator first — then plan the new goal
 - `resume` → the request matches the existing plan (or no request text was supplied to compare); apply the per-artifact resume rules below
 
-**Per-artifact resume rules (only when `verdict` is `resume`):**
+**On resume:** These shortcuts apply to an unchanged plan. If the user revises a decision during planning, update the affected spec, blueprint and task plan before reporting the plan ready.
 - plan discovery EXISTS → prefer `.map/<branch>/research/plan__discovery.md`. If only legacy `.map/<branch>/findings_<branch>.md` exists, read it as a compatibility fallback and migrate it with `save_research "$BRANCH" plan discovery` ONLY if the file has an `Already Implemented` section; if it predates that format, re-run Step 0 so the Step 0.5 gate has its evidence
 - `spec` EXISTS → skip Steps 1-2, read existing spec
 - `task_plan` EXISTS → skip Steps 4-6, read existing plan
@@ -218,7 +218,7 @@ For EVERY file path:
 
 For the request itself: search for an existing implementation BEFORE
 reporting a behavior as missing. For each asked-for behavior/acceptance
-criterion, decide if it is already implemented and cite `file:line` proof.
+criterion, trace the caller through the implementation and tests, checking which arguments reach the receiver at any process boundary. Cite `file:line` for existing behavior and identify the missing connection or observed failure.
 
 User request:
 <paste user_requirements here>
@@ -348,7 +348,8 @@ exec_command:
 # Spec: [Title]
 
 ## Decisions Made
-| # | Question | Decision | Rationale |
+| Decision | Current behavior and evidence | Gap and smallest change | Basis | Status |
+| --- | --- | --- | --- | --- |
 
 ## Contradiction
 State the core design tension.
@@ -402,6 +403,7 @@ requirements:
 - Questions that must be answered before decomposition or execution.
 SPEC_EOF
 ````
+For both spec paths, follow [Planning decisions](plan-reference.md#planning-decisions) to record the current behavior, gap, smallest change and basis for each material decision.
 
 **Requirements Index (MANDATORY):** After writing the spec, populate the `mapify:requirements-index:v1` sentinel-wrapped fenced YAML block (defined in the spec template) with exactly ONE `{id, kind}` entry per acceptance criterion, invariant, hard constraint, and cross-cutting requirement. `kind` must be one of `acceptance_criterion | invariant | hard_constraint | cross_cutting`. IDs must be canonical: prefix in `{AC, INV, HC, CCR}`, no leading zeros, uppercase (e.g. `AC-1`, `INV-2`, `HC-3`). These IDs are **exactly** the keys the decomposer must map in `coverage_map` — the forward-completeness gate diffs the index IDs against `coverage_map` keys to detect uncovered requirements.
 
@@ -414,8 +416,8 @@ SPEC_EOF
 If interview was skipped, still write `spec_<branch>.md` using the same template.
 Populate from user requirements and discovery findings:
 
-- **Decisions Made:** extract from user's request (may be short or N/A)
-- **Invariants:** derive from existing code patterns found in discovery
+- **Decisions Made:** include user decisions and material choices implied by other sections.
+- **Invariants:** cite the contract or failure that makes each invariant necessary.
 - **Acceptance Criteria:** REQUIRED — must be testable, define "done"
 - **Edge Cases:** from task description and affected code
 
@@ -448,7 +450,7 @@ spawn_agent(
   message="""You are reviewing a SPECIFICATION (not code). Act as Devil's Advocate.
 
 Read the spec at: .map/<branch>/spec_<branch>.md
-(Use exec_command to cat the file.)
+Original request: {original_request}. User decisions and rejections: {user_decisions}. Relevant discovery: {plan_discovery_content}. If discovery was skipped, identify assumptions.
 
 Paraphrase first, before any finding. Start your output with a PARAPHRASE: block holding two parts
 in your own words, 2-5 sentences each:
@@ -457,6 +459,7 @@ in your own words, 2-5 sentences each:
 A section you cannot paraphrase is a CRITICAL spec gap: name it in the PARAPHRASE: block and report
 it as a CRITICAL finding (CATEGORY: paraphrase).
 
+Compare each material change with those inputs. Flag redundant work and unsupported restrictions, including those found only in tests. If neither the user nor an established contract requires a safeguard, identify the concrete failure it prevents on the requested path. Leave other risks advisory.
 Check for:
 1. Race conditions / concurrency gaps — shared resources without defined conflict resolution?
 2. Ownership ambiguity — could two components both assume the other handles something?
@@ -467,7 +470,7 @@ Check for:
 
 Output format (for each finding):
   SEVERITY: CRITICAL | HIGH | MEDIUM | LOW
-  CATEGORY: [paraphrase|concurrency|ownership|edge-case|contradiction|security|assumption]
+  CATEGORY: [paraphrase|scope|concurrency|ownership|edge-case|contradiction|security|assumption]
   DESCRIPTION: [what the issue is]
   SUGGESTED FIX: [how to resolve]
 
@@ -587,6 +590,7 @@ Output requirements per subtask:
 - hard_constraints: [{id: "HC-1", description: "non-negotiable requirement"}]
 - soft_constraints: [{id: "SC-1", description: "preference", tradeoff_rationale: "if not covered"}]
 
+Reuse existing commands, helpers and checks wherever they meet the requirement. Explain the remaining gap before introducing a new one. Preserve decision status in test strategies and validation criteria.
 Target subtask size: one cohesive, testable responsibility (no line or token cap).
 Aim for 3-7 subtasks; flag if more than 10 are needed.
 LIGHT mode: target 2-5 minimal bite-sized subtasks; prefer merging related concerns over splitting.
@@ -597,9 +601,7 @@ Coverage requirements:
 - Every validation_criteria item that proves a mapped requirement must cite the matching coverage_map key in brackets, e.g. `VC1 [AC-1]: ...`.
 - Every hard_constraints id must appear in coverage_map and as a matching validation_criteria bracket tag.
 - Every soft_constraints id must either appear in coverage_map or include tradeoff_rationale explaining the tradeoff.
-- For cross-cutting requirements (observability, error handling, structured logging,
-  budget tracking), create a dedicated subtask or add them as validation_criteria
-  to the subtask that implements the relevant infrastructure.
+- Assign the spec's applicable cross-cutting requirements to the subtasks that implement them.
 - For each structured result type, ALL fields (including optional envelope fields
   like budget_state, deferred_work, recovery_state) must be in validation_criteria.
 - Output a coverage_map field for every acceptance criterion, invariant, and cross-cutting requirement: {"AC-1": "ST-NNN", "AC-2": "ST-MMM", ...}
@@ -659,18 +661,13 @@ and report the validator errors to the user.
 
 ## Step 5.5: Decomposition Coverage Check
 
-Before writing the human-readable plan, verify coverage. The decomposer may silently drop requirements.
+Before writing the human-readable plan, reconcile blueprint constraints, test strategy and validation criteria with Decisions Made, including new choices and rejections. Follow [Planning decisions](plan-reference.md#planning-decisions) after each revision.
 
 **1. AC mapping:** For each spec AC, identify which ST-NNN covers it. If an AC has no owner, add it to an existing subtask's validation_criteria or create a new subtask.
 
 **2. Result schema check:** For each structured result type in the spec, verify ALL fields appear in at least one subtask's validation_criteria.
 
-**3. Cross-cutting concerns scan:** Confirm these have an explicit owner:
-- Observability / structured logging
-- Error codes and structured error types
-- Concurrency / locking
-- Budget tracking and exhaustion
-- Recovery state for write-capable workflows
+**3. Cross-cutting concerns scan:** Confirm that a subtask owns each concern required by the spec. Ground any new concern in a contract or a concrete failure on the requested path.
 
 **4. Invariant coverage:** Each spec invariant must have at least one subtask AC that would catch a violation.
 

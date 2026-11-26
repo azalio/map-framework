@@ -60,7 +60,7 @@ Read `$ARGUMENTS` for mode flags **before any other action**. Strip detected fla
 
 | Flag | Mode | Effect |
 |------|------|--------|
-| `--light` | LIGHT | Spec-only, no research. **Skip** Step 0, Step 0.5 (Always-Implemented Gate), and Step 2b (Devil's Advocate Review). Limit decomposition to 2–5 minimal subtasks. Fastest plan mode — use when scope is small and well-understood. |
+| `--light` | LIGHT | Spec-only, no research. **Skip** Step 0, Step 0.5 (Already-Implemented Gate), and Step 2b (Devil's Advocate Review). Limit decomposition to 2–5 minimal subtasks. Fastest plan mode — use when scope is small and well-understood. |
 | `--deep` | DEEP | Full research + architecture review. Add extended research sweep **before** Step 0 and an architecture review step **after** Step 4. Use when scope is large or risk is high. |
 | `--force-full` | DEEP alias | Identical to `--deep`. Overrides any scale auto-advisory toward maximum planning depth. |
 | `--force-fast` | FAST exit | Recommend `/map-fast` and STOP. Use when the task is clearly trivial and MAP planning overhead is not warranted. |
@@ -80,7 +80,7 @@ This reports the existing artifacts (`plan__discovery` or legacy `findings`/`spe
 - `goal_mismatch` → the branch already holds a plan for a **different** goal (a single branch can host several sequential plans over its lifetime). Do **NOT** print "plan complete" and do **NOT** overwrite the prior `spec`/`blueprint`/`task_plan`. Follow the `recommendation`: archive or rename the existing `.map/<branch>/` artifacts (or run `/map-plan` on a fresh branch) — confirm with the operator first — then plan the new goal.
 - `resume` → the request matches the existing plan (or no request text was supplied to compare). Apply the per-artifact resume rules below.
 
-Per-artifact resume rules (only when `verdict` is `resume`):
+These resume shortcuts apply to an unchanged plan. If the user revises a decision during planning, update the affected spec, blueprint and task plan before reporting the plan ready.
 - Existing plan discovery: prefer `.map/<branch>/research/plan__discovery.md`. If only legacy `.map/<branch>/findings_<branch>.md` exists, read it as a compatibility fallback and migrate it to the canonical research path only if it has an `Already Implemented` section. If the discovery artifact predates that format, re-run discovery (see Step 0).
 - Existing `spec`: skip interview/spec writing.
 - Existing `task_plan`: skip decomposition and plan creation.
@@ -179,7 +179,7 @@ Task(
 <documents>
   <document source="user-request"><document_content>$ARGUMENTS</document_content></document>
 </documents>
-<task>Locate relevant code and return verified existing files, new files confirmed absent, patterns, risks, and unknowns. Also determine, with `file:line` evidence, which parts of the request are ALREADY IMPLEMENTED in the codebase (whole feature, or specific behaviors/acceptance criteria) versus genuinely missing. Do not assume absence — search for existing implementations before reporting a part as missing.
+<task>Locate relevant code and return verified existing files, new files confirmed absent, patterns, risks, and unknowns. Also determine, with `file:line` evidence, which parts of the request are ALREADY IMPLEMENTED in the codebase (whole feature, or specific behaviors/acceptance criteria) versus genuinely missing. Trace the requested behavior from its caller to the implementation and tests. If it crosses a process boundary, check which arguments reach the receiver. Identify the missing connection or observed failure.
 
 **MANDATORY artifact write:** When your research is complete, write the FULL detailed report (not a summary) directly to `.map/$BRANCH/research/plan__discovery.md` using the Write tool. Every `file:line` reference you found must appear in that file — downstream steps (Step 0.5 and Step 2a.5) read this file directly and will fail if it contains only a summary. After writing, confirm: "Written full discovery report to .map/$BRANCH/research/plan__discovery.md".</task>
 <expected_output>Write `.map/$BRANCH/research/plan__discovery.md` containing Markdown sections: Already Implemented (each entry cites the feature part + `file:line` proof), Existing Files, Files to Create, Patterns Found, Risks / Unknowns. If nothing matching the request exists, write "Already Implemented: none found (searched: &lt;queries&gt;)". Then return a brief confirmation to the parent (not a re-summary — the file is the canonical artifact).</expected_output>
@@ -200,7 +200,7 @@ fi
 
 ### Step 0.5: Already-Implemented Gate (MANDATORY when discovery ran; SKIP in LIGHT mode)
 
-> **LIGHT mode:** Skip this step — no discovery was run, so there is no evidence base for the gate. Rely on the user's statement that the feature is new; if you discover overlap during spec writing, surface it there.
+> **LIGHT mode:** Skip this step — no discovery was run, so there is no evidence base for the gate. Use available evidence during spec writing and mark unverified assumptions as open.
 
 Before interviewing or writing the spec, reconcile the request against the discovery `Already Implemented` section. Do not plan work the codebase already does. This gate runs whenever Step 0 produced findings; if discovery was intentionally skipped (greenfield or fully-provided spec), state that the gate was skipped and why. If the findings file lacks an `Already Implemented` section (it predates this format), do NOT run the gate on incomplete evidence — re-run Step 0 discovery first.
 
@@ -241,7 +241,7 @@ Skip interview only when the task is already well-defined with clear acceptance 
 
 Ask only non-obvious questions. Cover technical choices, UX, tradeoffs, risks, scope, integration, contract clarity, and durable state lifecycle for operations longer than one request.
 
-Write `.map/<branch>/spec_<branch>.md`. The full spec template is in [plan-reference.md](plan-reference.md#spec-template); the active spec must include decisions, contradiction, invariants, constraints, edge cases, acceptance criteria, security boundaries, out of scope, and open questions.
+Write `.map/<branch>/spec_<branch>.md` using the [spec template](plan-reference.md#spec-template) and [Planning decisions](plan-reference.md#planning-decisions) for both spec paths.
 
 **Requirements Index (MANDATORY):** After writing the spec, populate the `mapify:requirements-index:v1` sentinel-wrapped fenced YAML block (defined in the spec template) with exactly ONE `{id, kind}` entry per acceptance criterion, invariant, hard constraint, and cross-cutting requirement. `kind` must be one of `acceptance_criterion | invariant | hard_constraint | cross_cutting`. IDs must be canonical: prefix in `{AC, INV, HC, CCR}`, no leading zeros, uppercase (e.g. `AC-1`, `INV-2`, `HC-3`). These IDs are **exactly** the keys the decomposer must map in `coverage_map` — the forward-completeness gate diffs the index IDs against `coverage_map` keys to detect uncovered requirements.
 
@@ -275,13 +275,14 @@ Task(
   description="Review spec before decomposition",
   prompt="""
 <documents>
+  <document source="user-request"><document_content>{original_request}</document_content></document>
+  <document source="user-decisions"><document_content>{user_decisions}</document_content></document>
   <document source="spec"><document_content>{spec_content}</document_content></document>
   <document source="plan-discovery"><document_content>{plan_discovery_content}</document_content></document>
 </documents>
 <task>
 Paraphrase first, before any finding, in your own words: What this proposes, and How the existing system works, per this document (2-5 sentences each). A section you cannot paraphrase is a CRITICAL spec gap: report it as a CRITICAL issue naming the section. Then review the spec for ambiguity, missing invariants, impossible acceptance criteria, and risky assumptions.
-Evidence first: for every finding, quote the spec or plan discovery before judgment.
-HIGH-severity findings must cite the exact spec section.
+Compare each material change with the request, decisions (including rejections), and discovery. Flag redundant work and unsupported restrictions, including those found only in tests. Evidence first: for every finding, quote its basis. HIGH-severity findings must cite the exact spec section. If neither the user nor an established contract requires a safeguard, identify the concrete failure it prevents on the requested path. Leave other risks advisory.
 </task>
 <expected_output>
 Return JSON whose first key is paraphrase={"change": "<What this proposes>", "existing_system": "<How the existing system works>"}, then evidence before verdict fields, issues, and required spec revisions.
@@ -343,7 +344,7 @@ Task(
   <document source="plan-discovery"><document_content>{plan_discovery_content}</document_content></document>
 </documents>
 <task>
-Break the spec into atomic subtasks. Include an `evidence` array before `subtasks` so every boundary is grounded in the spec or repo findings.
+Break the spec into atomic subtasks. Reuse existing commands, helpers and checks wherever they meet the requirement. Explain the remaining gap before introducing a new one. Preserve decision status in test strategies and validation criteria. Include an `evidence` array before `subtasks`.
 </task>
 <constraints>
 Each subtask must include expected_diff_size, concern_type, one_logical_step, validation_criteria, dependencies, complexity_score, risk_level, test_strategy, and aag_contract. For a feature spanning checkouts, list every file once in affected_files. Under repository_checks, give each checkout path (relative to the coordinator or absolute), its base from git rev-parse HEAD, and a local command argument list. Add a joint_check argument list that tests the interaction from the coordinator. Show these commands and their acceptance criterion in the plan.
@@ -387,7 +388,7 @@ Do not proceed until this passes. The validator protects `coverage_map`, `valida
 
 ### Step 5.7: Decomposition Coverage Check
 
-Read validation output and confirm every acceptance criterion/invariant has an owning subtask and executable validation criteria.
+Reconcile blueprint constraints, test strategy and validation criteria with Decisions Made, including new choices and rejections. Follow [Planning decisions](plan-reference.md#planning-decisions) after each revision. Confirm that each acceptance criterion and invariant has an owner and executable criteria.
 
 ### Step 6: Create Human-Readable Plan
 

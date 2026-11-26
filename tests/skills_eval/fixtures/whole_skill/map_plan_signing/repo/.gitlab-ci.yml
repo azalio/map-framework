@@ -1,0 +1,26 @@
+variables:
+  REGISTRY: registry.local
+  FORCE: "false"
+  TAG: dev
+
+default:
+  before_script:
+    - make bootstrap
+
+app:
+  variables:
+    IMAGE: app
+  script:
+    - &publish make publish FORCE_PUSH="$FORCE"
+    - &sign make sign
+
+tools:
+  variables:
+    IMAGE: tools
+  script:
+    - *publish
+
+release:
+  needs: [app, tools]
+  script:
+    - make verify

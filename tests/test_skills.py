@@ -2845,6 +2845,13 @@ class TestPlanDiscoveryResearchNamespace:
             f"{map_plan_path} must save new discovery through the shared research API."
         )
 
+    def test_spec_reviewer_receives_the_basis_for_scope(self, map_plan_path: Path) -> None:
+        skill = map_plan_path.read_text(encoding="utf-8")
+        step = skill.split("Step 2b: Devil's Advocate Review", 1)[1]
+        dispatch = step.split('"""', 2)[1]
+        for source in ("{original_request}", "{user_decisions}", "{plan_discovery_content}"):
+            assert source in dispatch
+
     def test_map_plan_documents_runtime_state_gate(self, map_plan_path: Path) -> None:
         """Every map-plan surface (Claude + Codex) must ship the Step 0.6 gate (#243)."""
         content = map_plan_path.read_text(encoding="utf-8")

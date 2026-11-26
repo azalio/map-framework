@@ -111,7 +111,7 @@ Need to reorder unstarted work in an active run? Use the audited
 [`resequence_pending` command](docs/USAGE.md#reorder-pending-subtasks)
 without resetting the current step, retries, results or baselines.
 
-- **Start with `/map-plan`** for anything non-trivial — it clarifies behavior and splits the work into contract-sized subtasks.
+- **Start with `/map-plan`** for anything non-trivial — it checks what the code already does and splits the remaining changes into testable subtasks.
 - A feature can span multiple Git repositories. Give the planner each checkout path and one shared acceptance criterion. [Multi-repository workflow](docs/USAGE.md#features-spanning-git-repositories)
 - **Starting from a PRD?** Run `/map-prd-review` directly, or accept `/map-plan`'s optional readiness preflight. A non-ready result shows the gaps and asks whether to revise or continue planning anyway.
 - **Already scoped?** Go straight to `/map-efficient`.
