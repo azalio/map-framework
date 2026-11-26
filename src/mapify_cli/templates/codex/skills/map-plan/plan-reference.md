@@ -8,7 +8,8 @@ This file holds templates, examples, and troubleshooting for `$map-plan` so the 
 # Spec: [Title]
 
 ## Decisions Made
-| # | Question | Decision | Rationale |
+| Decision | Current behavior and evidence | Gap and smallest change | Basis | Status |
+| --- | --- | --- | --- | --- |
 
 ## Contradiction
 State the core design tension.
@@ -62,11 +63,19 @@ requirements:
 - Questions that must be answered before decomposition or execution.
 ````
 
+## Planning decisions
+
+Use the spec's **Decisions Made** table for choices that affect behavior, compatibility, scope or acceptance. Cite the current code, test or configuration. Trace the caller and its arguments to distinguish an existing mechanism that needs wiring from a missing capability. Record what the request cannot achieve today and the smallest change that closes that gap. Mark any unverified assumptions.
+
+For each decision, give its basis (user request, established contract, demonstrated necessity, or optional proposal) and status (agreed, entailed, proposed, or rejected). Record unresolved proposals in Open Questions. Only agreed or entailed decisions can create requirements. A hypothetical risk can stay advisory. Ask the user to resolve it only if the answer changes the work needed for their request. Retain explicit requirements and fixes needed for the requested outcome. Routine implementation details can go straight into subtasks.
+
+Read invariants, constraints, acceptance criteria, blueprint subtasks, test strategy and validation criteria for material choices missing from the table. Repeat after decomposition or a revision. When the user asks to discuss decisions one at a time, show the next open choice and how many remain. Keep rejected decisions in the table as history. Remove their obligations from the spec, requirements index, blueprint, coverage map, validation criteria and task plan. Recheck surviving requirements that shared a subtask. If the requirements or blueprint changed, rerun `validate_blueprint_contract` on the revised artifacts.
+
 ## Runner-witnessed acceptance proofs
 
 Plan an executable public-interface proof for every spec AC, including criteria absent from the blueprint. Preserve exact spec IDs: `AC-1` and `AC-001` are not interchangeable. Keep the AC-to-test mapping in `.map` artifacts, never product code or shipped test names. Citation coverage is not execution proof.
 
-After independent TEST_WRITER authoring and RED, freeze each proof **before Actor**. This applies to single-subtask, batch, wave and resumed workflows. The orchestrator opens the initial authoring checkpoint when it returns TEST_WRITER; do not bypass it by editing state files. Example (substitute the actual spec ID, owning subtask, command and files):
+Start with existing checks. Add a test for changed behavior or a demonstrated defect those checks miss. If an existing test proves the outcome, use the justified authoring outcome below. After independent TEST_WRITER authoring, freeze each proof **before Actor**. This applies to single-subtask, batch, wave and resumed workflows. The orchestrator opens the initial authoring checkpoint when it returns TEST_WRITER; do not bypass it by editing state files. Example (substitute the actual spec ID, owning subtask, command and files):
 
 ```bash
 python3 .map/scripts/map_step_runner.py freeze_acceptance_contract --json '{"ac_id":"AC-1","command":["python3","-m","pytest","tests/test_login.py"],"proof_files":["tests/test_login.py"],"subtask_id":"ST-001","author":"test-writer","authoring_stage":"test_first","cwd":".","timeout":300}'
