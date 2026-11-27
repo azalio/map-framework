@@ -138,10 +138,8 @@ TDD_FLAG=false
 [% if PROVIDER == "claude" %]Use `$TASK_ARGS`, not raw `$ARGUMENTS`, in prompts.
 [% else %]Empty `$TASK_ARGS` is a stop condition only when all of these are true:
 [% endif %]
-[% if PROVIDER == "claude" %]**MANDATORY: Empty $TASK_ARGS is NOT a stop condition.** Do not bail out on an
-empty `$TASK_ARGS`/`$ARGUMENTS` value alone — this skill resumes from
-existing artifacts. The skill stops with a task-required message ONLY when
-ALL THREE are true:
+[% if PROVIDER == "claude" %]**Empty $TASK_ARGS is NOT a stop condition** when a plan or workflow exists.
+Ask for a task only when all three conditions hold:
 [% else %]1. `.map/<branch>/step_state.json` is missing.
 2. `.map/<branch>/task_plan_<branch>.md` is missing.
 3. `$TASK_ARGS` is empty.
@@ -150,9 +148,8 @@ ALL THREE are true:
 2. `.map/<branch>/step_state.json` does NOT exist, AND
 3. `.map/<branch>/task_plan_<branch>.md` does NOT exist.
 
-In every other case you MUST execute Step 0 first and let `resume_from_plan` /
-`get_next_step` decide the next phase. The DECOMPOSE phase (1.0) is the only
-phase that reads `$TASK_ARGS` — and resumed workflows skip it.
+After the approval-hold preflight, run Step 0 to continue a workflow, resume a saved plan, or initialize a new task from `$TASK_ARGS`.
+Resuming a saved plan skips DECOMPOSE (1.0).
 [% else %]Otherwise proceed to resume detection.
 [% endif %]
 ## Approval-hold preflight (MANDATORY — run BEFORE Step 0)
@@ -197,6 +194,8 @@ elif [ -z "$TASK_ARGS" ]; then
 [% else %]  echo "No task, step_state.json, or task_plan_${BRANCH}.md found." >&2
   echo "Provide a task or run \<% cmd %>map-plan first." >&2
 [% endif %]  exit 1
+else
+  python3 .map/scripts/map_orchestrator.py initialize -- "$TASK_ARGS" || exit 1
 fi
 [% if PROVIDER == "claude" %]```
 [% else %][% endif %]

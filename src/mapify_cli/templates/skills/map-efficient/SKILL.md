@@ -86,18 +86,15 @@ fi
 
 Use `$TASK_ARGS`, not raw `$ARGUMENTS`, in prompts.
 
-**MANDATORY: Empty $TASK_ARGS is NOT a stop condition.** Do not bail out on an
-empty `$TASK_ARGS`/`$ARGUMENTS` value alone — this skill resumes from
-existing artifacts. The skill stops with a task-required message ONLY when
-ALL THREE are true:
+**Empty $TASK_ARGS is NOT a stop condition** when a plan or workflow exists.
+Ask for a task only when all three conditions hold:
 
 1. `$TASK_ARGS` is empty, AND
 2. `.map/<branch>/step_state.json` does NOT exist, AND
 3. `.map/<branch>/task_plan_<branch>.md` does NOT exist.
 
-In every other case you MUST execute Step 0 first and let `resume_from_plan` /
-`get_next_step` decide the next phase. The DECOMPOSE phase (1.0) is the only
-phase that reads `$TASK_ARGS` — and resumed workflows skip it.
+After the approval-hold preflight, run Step 0 to continue a workflow, resume a saved plan, or initialize a new task from `$TASK_ARGS`.
+Resuming a saved plan skips DECOMPOSE (1.0).
 
 ## Approval-hold preflight (MANDATORY — run BEFORE Step 0)
 
@@ -132,6 +129,8 @@ elif [ -z "$TASK_ARGS" ]; then
   echo "Provide a task description (e.g. '/map-efficient add retry policy')" >&2
   echo "or run /map-plan first to create a plan to resume from." >&2
   exit 1
+else
+  python3 .map/scripts/map_orchestrator.py initialize -- "$TASK_ARGS" || exit 1
 fi
 ```
 

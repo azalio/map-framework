@@ -54,6 +54,7 @@ When deciding whether a review can resume, distinguish changes to the material r
 
 Trace persisted data from every writer through parsing and recovery to the next operation that consumes it. For each assumption that could lose progress or select the wrong next step, write a test that breaks it. Check these cases when they apply:
 
+- When removing an implicit state write, check which callers used it to start work. Test both an idle query and an explicit start through the installed entry points.
 - Feed the normal reader and the recovery reader the same ambiguous input, such as duplicate JSON keys. Verify that both reject it and preserve the original bytes.
 - Give recovery a complete JSON object with a wrong field type, such as a string where the next step expects a list. Verify refusal before any write. For valid recovery, run the next real operation and assert its result.
 - When a read fails, distinguish a missing path, a wrong address for an admitted file, and a changed snapshot. Retry any suggested address in the same reviewer session and verify the returned content. Check that a changed snapshot still reports the error.

@@ -114,7 +114,7 @@ without resetting the current step, retries, results or baselines.
 - **Start with `/map-plan`** for anything non-trivial — it checks what the code already does and splits the remaining changes into testable subtasks.
 - A feature can span multiple Git repositories. Give the planner each checkout path and one shared acceptance criterion. [Multi-repository workflow](docs/USAGE.md#features-spanning-git-repositories)
 - **Starting from a PRD?** Run `/map-prd-review` directly, or accept `/map-plan`'s optional readiness preflight. A non-ready result shows the gaps and asks whether to revise or continue planning anyway.
-- **Already scoped?** Go straight to `/map-efficient`.
+- **Already scoped?** Run `/map-efficient "your task"` to start, or `/map-efficient` to resume a saved plan or workflow.
 - **Tiny edit?** `/map-plan` off-ramps you to a direct edit or `/map-fast` instead of forcing full planning.
 - **Too foggy to plan?** `/map-wayfind` resolves open design decisions on a durable map. Evidence-first research is on by default: factual lookups stay light; uncertain decisions get independent investigations and targeted checks, with no default attempt cap for authorized read-only work. Opt in at task start with `configure_research --budget-limit N`; existing caps remain binding and extensions require scoped user approval. Consequential or genuinely expensive actions still need separate consent. Stale open-ticket evidence can be explicitly refreshed without erasing history or resetting that budget. Research handoffs are checked before `/map-plan`; historical decisions retain explicit legacy provenance.
 - **Want one entry point?** `/map-auto` routes and drives the chain autonomously; hard-stops only on `dangerous_action`/`safety_guardrail` holds.

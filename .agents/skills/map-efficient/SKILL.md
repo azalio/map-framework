@@ -176,6 +176,8 @@ elif [ -z "$TASK_ARGS" ]; then
   echo "No task, step_state.json, or task_plan_${BRANCH}.md found." >&2
   echo "Provide a task or run \$map-plan first." >&2
   exit 1
+else
+  python3 .map/scripts/map_orchestrator.py initialize -- "$TASK_ARGS" || exit 1
 fi
 
 if [ "$TDD_FLAG" = "true" ]; then

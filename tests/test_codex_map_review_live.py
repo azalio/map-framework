@@ -385,9 +385,10 @@ def _start_review(root: Path, arguments: str, *, lightweight: bool = False) -> N
         "tests": ["python3", "-c", "print('fixture test check')"],
         "lint": ["python3", "-c", "print('fixture lint check')"],
     })
+    check_timeouts = json.dumps({"tests": LOAD_DEADLINE, "lint": LOAD_DEADLINE})
     _run_block(root, f"ARGUMENTS={shlex.quote(arguments)}\n"
                f"CHECK_SPECS_JSON={shlex.quote(check_specs)}\n"
-               "CHECK_TIMEOUTS_JSON='{\"tests\": 5, \"lint\": 5}'\n" + "\n".join(blocks))
+               f"CHECK_TIMEOUTS_JSON={shlex.quote(check_timeouts)}\n" + "\n".join(blocks))
 
 
 def _abandon_incomplete_review(root: Path) -> None:
