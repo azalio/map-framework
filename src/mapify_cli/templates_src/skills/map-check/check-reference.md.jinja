@@ -33,6 +33,38 @@ cargo clippy -- -D warnings
 cargo test
 ```
 
+## Mutation checks
+
+With `<% cmd %>map-check --mutations PLAN.json`, run the following from the candidate Git root using the project's Python with pytest installed.
+
+```sh
+python .map/scripts/mutation_check.py PLAN.json
+```
+
+Use a plan supplied by the developer. Each replacement describes a plausible fault in the changed implementation and the selected tests exercise one public behavior. For example, given a function whose threshold is ten:
+
+```json
+{
+  "criterion": "An order of exactly ten items earns the discount",
+  "tests": ["tests/test_price.py::test_discount"],
+  "mutations": [
+    {"path": "price.py", "before": "quantity >= 10", "after": "quantity > 10",
+     "effect": "deny the discount at exactly ten items"}
+  ]
+}
+```
+
+Select test files or pytest node IDs with repository-relative paths. Use enough context in `before` to match exactly once. `--limit` defaults to 3 changes, `--timeout` to 30 seconds per test invocation and `--total-timeout` to 180 seconds for the run. Cleanup of an owned process group can take additional time. The check uses a fresh copy of the tracked and non-ignored untracked working files for each trial. It omits Git metadata, ignored build products and `.map` state. Install dependencies in the Python environment first. Use local tests that run from a copy of the checkout. This is workspace isolation for trusted tests.
+
+The runner prints a short summary on stderr and the full report as JSON on stdout. Each report has a unique path under `.map/mutation-checks/`. To compare its recorded inputs with the current checkout, run `python .map/scripts/mutation_check.py --check-report PATH/TO/report.json`.
+
+- `detected` records the test and assertion line. A fresh clean run must pass and a second mutant run must fail at the same assertion. If the test calls a CLI, check its output after the command succeeds. A failed child process or an unverified exit makes the assertion inconclusive.
+- `survived` identifies the change the tests missed. Report it with the criterion and the selected test. When strengthening a frozen proof, use the existing `request_acceptance_revision` and independent TEST_WRITER flow, then rerun the same plan.
+- `invalid` covers an inapplicable replacement or invalid Python source. `inconclusive` covers timeout, collection/setup errors and failures that cannot be attributed to a selected test assertion. `not_run` identifies a candidate outside the budget or behind a failing baseline.
+- `equivalent` records identical compiled Python code on this interpreter and a passing trial. This comparison concerns executable code. Tests that inspect source text need separate evidence.
+
+A measurement exits with code 0 when the inputs are current, at least one mutation is detected and every other mutation is detected or equivalent. With `--check-report`, exit code 0 means the inputs still match, regardless of the recorded result. These measurements are separate from acceptance receipts.
+
 ## Docs Drift
 
 `.map/scripts/docs_drift.py` (stdlib only) checks claims outside fenced code blocks:

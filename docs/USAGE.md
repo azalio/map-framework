@@ -286,6 +286,12 @@ Once routed, `/map-auto` drives the chain by invoking the existing slash workflo
 
 **End state:** a committed feature branch. `/map-auto` never opens a pull request, never polls CI, and never merges — it reports the committed branch and the recorded phases, then stops.
 
+## Check what a test detects
+
+Run `/map-check --mutations PLAN.json` (Codex: `$map-check --mutations PLAN.json`) for a selected change. The plan names the intended behavior, pytest selectors and small source replacements. The runner tests each replacement in a fresh copy of the current Git checkout. A surviving replacement shows which change the selected tests missed.
+
+Use the project’s Python for the direct command, `python .map/scripts/mutation_check.py PLAN.json`. Reports include the baseline, exact patch, test outcomes and any candidates the budget left untested. Use `--check-report` with the saved report path to check whether its inputs still match. See the [example plan and result meanings](../src/mapify_cli/templates/skills/map-check/check-reference.md#mutation-checks).
+
 ## Docs drift report (`/map-check --docs`)
 
 `/map-check --docs [paths...]` (`$map-check --docs` on Codex) lists only the claims in checked-in docs that no longer match the source. It is read-only: it never edits a doc, and fixes go through `/map-fast` or `/map-efficient`.

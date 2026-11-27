@@ -2329,6 +2329,7 @@ If you forked the skill-backed `/map-efficient` workflow, you must manually inte
 - **Security:** OWASP compliance, input validation, secure defaults
 - **Testability:** Can it be easily tested? Clear test cases provided?
   Vacuous tests (green against a do-nothing implementation) count as absent; Monitor and Actor apply the same check from `_partials/vacuous-test-check.md.jinja`.
+  `/map-check --mutations` measures selected faults after a green baseline. The runner copies the candidate once, executes each trial in a fresh checkout copy through the process-group supervisor, and records pytest call-phase assertion evidence. Each report binds the measured working files and input plan. The report lists surviving mutations. To strengthen a frozen proof, use the existing acceptance revision flow.
 - **Maintainability:** Clear code, good naming, documented trade-offs
 
 **Approval Threshold:** >7.0 overall score

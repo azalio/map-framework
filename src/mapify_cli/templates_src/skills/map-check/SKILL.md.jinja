@@ -2,9 +2,9 @@
 [% set cmd = "/" if PROVIDER == "claude" else "$" -%]
 name: map-check
 description: |
-  Run quality gates (lint, types, tests), verify MAP workflow completion, or report docs-vs-code drift (--docs). Use when user asks to run checks, validate a workflow, confirm a MAP run is done, or check whether README/docs still match the source. Do NOT use to plan or execute new tasks; use map-plan or map-efficient.
+  Run quality gates (lint, types, tests), verify MAP workflow completion, report docs-vs-code drift (--docs), or check which faults selected tests detect (--mutations). Use when user asks to run checks, validate a workflow, confirm a MAP run is done, or check whether README/docs still match the source. Do NOT use to plan or execute new tasks; use map-plan or map-efficient.
 [% if PROVIDER == "claude" %]effort: low
-argument-hint: "[focus area] | --docs [paths...]"
+argument-hint: "[focus area] | --docs [paths...] | --mutations PLAN.json"
 [% else %][% endif -%]
 ---
 [% include "_partials/auto-update-preflight.md.jinja" %]
@@ -30,7 +30,7 @@ parallel_tool_policy: independent_checks_only
 - Do not decompose, research, or implement new subtasks from this skill.
 - Do not run extra audits after the requested quality gates and MAP completion checks have a clear pass/fail result.
 
-Mode selection: an argument starting with `--docs` always selects Mode 3 (docs drift). Otherwise Mode 1 or Mode 2 is chosen by whether `step_state.json` exists.
+Mode selection: `--mutations PLAN.json` runs the [local mutation check](check-reference.md#mutation-checks) and reports the gaps detected for the selected criterion. Stop after the report. An argument starting with `--docs` always selects Mode 3 (docs drift). Otherwise Mode 1 or Mode 2 is chosen by whether `step_state.json` exists.
 
 ## Mode 1: Standalone Quality Check (No MAP workflow)
 
