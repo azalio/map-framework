@@ -34,6 +34,8 @@ with a nonblank `aag_contract` in the blueprint. If no subtask has an
 
 When a MAP run enters a merge/rebase conflict, the PreToolUse workflow-context hook adds a conflict-resolution discipline block to `additionalContext`. It fires before `git merge` / `git rebase` and whenever git reports unmerged paths via `git diff --name-only --diff-filter=U`. The protocol is deliberately manual and intent-preserving: list conflicted files, resolve one file or small batch at a time, preserve both sides' intended behavior, check for conflict markers, run the project's test gate after each batch, stage only resolved files, and continue the merge/rebase only after no unmerged files remain. Final verification is: branch current with `origin/main`, no conflict markers, and tests green. The hook never mutates the worktree and never auto-runs tests.
 
+On a branch without a workflow, `get_next_step` and `peek_current_step` return `{"status":"no_workflow"}`. The workflow gate allows edits to project files. Run `/map-efficient` with a task to start execution, or run it without arguments to resume a saved plan or workflow.
+
 ## Recovering workflow progress
 
 If `peek_current_step` reports invalid JSON in `.map/<branch>/step_state.json`,

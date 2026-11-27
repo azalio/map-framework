@@ -13,7 +13,9 @@ deterministic, and suitable for CI.
 """
 
 import json
+import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -263,6 +265,109 @@ class TestPlanArtifactProduction:
 # =====================================================================
 # Phase 2: map-plan → map-efficient handoff
 # =====================================================================
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_idle_query_and_explicit_skill_start(tmp_path, monkeypatch, provider):
+    from typer.testing import CliRunner
+
+    from mapify_cli import app
+
+    project = tmp_path / "project"
+    installed = CliRunner().invoke(
+        app,
+        [
+            "init",
+            str(project),
+            "--provider",
+            provider,
+            "--no-git",
+            "--mcp",
+            "none",
+            "--no-auto-update",
+        ],
+    )
+    assert installed.exit_code == 0, installed.output
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+    subprocess.run(["git", "init", "-q", "-b", "topic"], check=True)
+    (project / "app.py").write_text("old = 1\n")
+    state = project / ".map/topic/step_state.json"
+    orchestrator = [sys.executable, ".map/scripts/map_orchestrator.py"]
+
+    def query(command):
+        return json.loads(subprocess.check_output([*orchestrator, command], text=True))
+
+    def edit_decision():
+        payload = {
+            "tool_name": "Edit",
+            "tool_input": {"file_path": str(project / "app.py")},
+        }
+        if provider == "codex":
+            payload = {
+                "tool_name": "apply_patch",
+                "tool_input": {
+                    "input": (
+                        "*** Begin Patch\n*** Update File: app.py\n@@\n-old = 1\n+new = 1\n*** End Patch"
+                    )
+                },
+            }
+        output = subprocess.check_output(
+            [sys.executable, f".{provider}/hooks/workflow-gate.py"],
+            input=json.dumps(payload),
+            text=True,
+        )
+        return (
+            json.loads(output).get("hookSpecificOutput", {}).get("permissionDecision")
+        )
+
+    skills_dir = ".claude" if provider == "claude" else ".agents"
+    skill = (project / skills_dir / "skills/map-efficient/SKILL.md").read_text()
+    step_zero = (
+        skill.split("## Step 0:", 1)[1].split("```bash\n", 1)[1].split("```", 1)[0]
+    )
+
+    def start(task):
+        return subprocess.run(
+            ["bash", "-c", step_zero],
+            env={**os.environ, "TASK_ARGS": task, "TDD_FLAG": "false"},
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    assert not state.exists()
+    for command in ("get_next_step", "get_next_step", "peek_current_step"):
+        assert query(command).get("status") == "no_workflow"
+        assert not state.exists()
+    assert edit_decision() is None
+    assert start("").returncode != 0
+    assert not state.exists()
+
+    fresh = start("Add a price field")
+    assert fresh.returncode == 0, fresh.stderr
+    assert state.is_file()
+    assert query("get_next_step")["phase"] == "DECOMPOSE"
+    assert edit_decision() == "deny"
+    before = state.read_bytes()
+    assert start("").returncode == 0
+    assert state.read_bytes() == before
+
+    subprocess.run(["git", "switch", "-qc", "planned"], check=True)
+    plan_dir = project / ".map/planned"
+    plan_dir.mkdir()
+    (plan_dir / "task_plan_planned.md").write_text("### ST-001: Add a price field\n")
+    resumed = start("")
+    assert resumed.returncode == 0, resumed.stderr
+    assert query("get_next_step")["current_subtask"] == "ST-001"
+
+    path = plan_dir / "step_state.json"
+    path.write_bytes(b"{broken")
+    bad = subprocess.run(
+        [*orchestrator, "get_next_step"], check=False, capture_output=True, text=True
+    )
+    assert bad.returncode != 0 and "step_state.json" in bad.stderr
+    assert path.read_bytes() == b"{broken"
 
 
 class TestPlanToEfficientHandoff:

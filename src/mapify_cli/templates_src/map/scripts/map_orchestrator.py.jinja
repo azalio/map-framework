@@ -1037,10 +1037,14 @@ class StepState:
         return state
 
     @classmethod
-    def load(cls, state_file: Path) -> "StepState":
-        """Load state from file."""
+    def load_if_present(cls, state_file: Path) -> "StepState | None":
         data = _read_state_object(state_file)
-        return cls() if data is None else cls._from_validated_dict(data)
+        return None if data is None else cls._from_validated_dict(data)
+
+    @classmethod
+    def load(cls, state_file: Path) -> "StepState":
+        """Load saved state, using initial defaults for a missing file."""
+        return cls.load_if_present(state_file) or cls()
 
     def save(self, state_file: Path) -> None:
         """Save state to file."""
@@ -1575,7 +1579,9 @@ def peek_current_step(branch: str) -> dict:
     Returns the same shape as ``get_next_step`` but never saves the state.
     """
     state_file = Path(f".map/{branch}/step_state.json")
-    state = StepState.load(state_file)
+    state = StepState.load_if_present(state_file)
+    if state is None:
+        return {"status": "no_workflow"}
 
     if state.workflow_status in {"WORKFLOW_COMPLETE", "FINAL_VERIFICATION"}:
         return _acceptance_completion(
@@ -1610,10 +1616,12 @@ def get_next_step(branch: str) -> dict:
         branch: Git branch name (sanitized)
 
     Returns:
-        Dict with step_id, phase, instruction, is_complete
+        The next step, or {"status": "no_workflow"} if the branch has no saved state.
     """
     state_file = Path(f".map/{branch}/step_state.json")
-    state = StepState.load(state_file)
+    state = StepState.load_if_present(state_file)
+    if state is None:
+        return {"status": "no_workflow"}
 
     state.execution_driver = "sequential"
     # WORKFLOW_COMPLETE is authoritative — short-circuit even if pending_steps
@@ -2457,14 +2465,15 @@ def initialize_workflow(task: str, branch: str) -> dict:
     # workflow is retired here — an in-flight run is never clobbered; that
     # stays an explicit operator decision.
     archived_prior = None
-    if state_file.exists():
-        prior = StepState.load(state_file)
-        if _is_workflow_complete(prior):
-            archive_result = archive_completed_workflow(branch)
-            if archive_result.get("status") == "archived":
-                archived_prior = archive_result.get("archive_file")
-            elif prior.approved_feature_contracts or archive_result.get("feature_checks"):
-                return archive_result
+    prior = StepState.load_if_present(state_file)
+    if prior is not None:
+        if not _is_workflow_complete(prior):
+            return {"status": "already_initialized", "state_file": str(state_file), "branch": branch}
+        archive_result = archive_completed_workflow(branch)
+        if archive_result.get("status") == "archived":
+            archived_prior = archive_result.get("archive_file")
+        elif prior.approved_feature_contracts or archive_result.get("feature_checks"):
+            return archive_result
 
     # Create fresh state
     state = StepState()
@@ -6006,6 +6015,8 @@ def main():
             task = args.task_or_step or "MAP workflow task"
             result = initialize_workflow(task, branch)
             print(json.dumps(result, indent=2))
+            if result.get("status") == "error":
+                sys.exit(1)
 
         elif args.command == "set_plan_approved":
             value = args.task_or_step

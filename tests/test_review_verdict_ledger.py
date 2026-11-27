@@ -23,6 +23,7 @@ sys.path.insert(0, str(SCRIPTS_PATH))
 
 import map_step_runner  # type: ignore[import-not-found]
 
+from tests.load_tolerance import LOAD_DEADLINE
 from tests.review_paraphrase_helpers import with_paraphrase
 
 # ---------------------------------------------------------------------------
@@ -2970,23 +2971,23 @@ def test_interrupted_check_retries_after_restart_without_losing_failed_attempt(r
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     try:
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + LOAD_DEADLINE
         while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
             time.sleep(0.02)
-        assert marker.exists(), process.communicate(timeout=5)
+        assert marker.exists(), f"Check did not signal readiness (exit={process.poll()})"
         ledger_path = workspace / "review-verdict-ledger.json"
         running_ledger = ledger_path.read_bytes()
         _, blocked = _review_cli("run_test_gate", "--check-id", "suite")
         assert blocked["status"] == "error" and blocked["passed"] is False, blocked
         assert ledger_path.read_bytes() == running_ledger
         process.kill()
-        process.wait(timeout=5)
+        process.wait(timeout=LOAD_DEADLINE)
         # The direct check process is alive after its runner dies: no overlap.
         _, blocked = _review_cli("run_test_gate", "--check-id", "suite")
         assert blocked["status"] == "error" and blocked["passed"] is False, blocked
         assert ledger_path.read_bytes() == running_ledger
         release.touch()
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + LOAD_DEADLINE
         while True:
             _, result = _review_cli("run_test_gate", "--check-id", "suite")
             if result.get("state") == "finished" or time.monotonic() >= deadline:
@@ -3009,7 +3010,7 @@ def test_interrupted_check_retries_after_restart_without_losing_failed_attempt(r
         release.touch()
         if process.poll() is None:
             process.kill()
-        process.communicate(timeout=5)
+        process.communicate(timeout=LOAD_DEADLINE)
 
 
 def test_terminal_review_rejects_check_rerun_without_revoking_approval(review_git_workspace):
@@ -3047,16 +3048,16 @@ def test_execution_completion_cannot_cross_abandoned_round(review_git_workspace)
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     try:
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + LOAD_DEADLINE
         while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
             time.sleep(0.02)
-        assert marker.exists(), process.communicate(timeout=5)
+        assert marker.exists(), f"Check did not signal readiness (exit={process.poll()})"
         assert runner.abandon_review_round("receipt", reason="Replace active review")["status"] == "success"
         replacement = _admit_receipt_review(runner, round_id="replacement", required_checks=["suite"],
                                             check_specs={"suite": command})
         assert replacement["status"] == "success", replacement
         release.touch()
-        stdout, stderr = process.communicate(timeout=10)
+        stdout, stderr = process.communicate(timeout=LOAD_DEADLINE)
         result = json.loads(stdout)
         assert result["status"] == "error", (result, stderr)
         ledger = json.loads((workspace / "review-verdict-ledger.json").read_text())
@@ -3070,7 +3071,7 @@ def test_execution_completion_cannot_cross_abandoned_round(review_git_workspace)
         release.touch()
         if process.poll() is None:
             process.kill()
-        process.communicate(timeout=5)
+        process.communicate(timeout=LOAD_DEADLINE)
 
 
 def test_historical_legacy_ledger_does_not_approve_without_receipts(review_git_workspace):

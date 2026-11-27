@@ -3707,8 +3707,10 @@ class TestArchiveCompletedWorkflow:
         prior.current_step_phase = "ACTOR"
         state_file = tmp_path / ".map" / branch_dir / "step_state.json"
         prior.save(state_file)
+        before = state_file.read_bytes()
         result = map_orchestrator.initialize_workflow("new task", branch_dir)
-        assert "archived_prior" not in result
+        assert result["status"] == "already_initialized"
+        assert state_file.read_bytes() == before
         archives = list(
             (tmp_path / ".map" / branch_dir).glob("step_state.completed-*.json")
         )
@@ -5215,11 +5217,8 @@ class TestCwdIndependence:
         must read project_a/.map/<branch>/step_state.json, not project_b's.
 
         We seed project_a in a fully-completed terminal state (workflow
-        finished). project_b has no .map/ at all — so a broken anchor
-        would fall back to default-initialised state and return step
-        ``1.0`` / ``DECOMPOSE``. The two outcomes are structurally
-        distinct, so the assertion uniquely identifies which project was
-        read.
+        finished). project_b has no .map/ at all and would return
+        ``no_workflow`` if the script read the wrong project.
         """
         project_a = tmp_path / "project_a"
         project_a.mkdir()
