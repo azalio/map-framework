@@ -9,6 +9,7 @@ from typing import Any, cast
 import pytest
 
 from tests import test_review_verdict_ledger as ledger_tests
+from tests.load_tolerance import LOAD_DEADLINE
 
 runner = cast(Any, ledger_tests.map_step_runner)
 branch_workspace = ledger_tests.branch_workspace
@@ -16,7 +17,7 @@ review_git_workspace = ledger_tests.review_git_workspace
 
 
 def _admit(workspace, program="print('diagnostic remains visible'); raise SystemExit(2)", *,
-           command=None, timeout=10):
+           command=None, timeout=LOAD_DEADLINE):
     profile = Path(".claude/agents/review-reader.md")
     profile.parent.mkdir(parents=True, exist_ok=True)
     profile.write_text("---\nname: review-reader\ntools: Read, Glob, Grep\n---\nRead only.\n")
@@ -81,7 +82,7 @@ def test_failed_observation_rejects_tampered_or_misbound_evidence(review_git_wor
     mutations = {
         "hash": ("output_sha256", "0" * 64), "command": ("command", [sys.executable, "-c", "pass"]),
         "attempt": ("attempt_id", ""), "round": ("round_id", "other-round"),
-        "timeout": ("timeout_seconds", 11), "policy": ("policy_hash", "other-policy"),
+        "timeout": ("timeout_seconds", check["timeout_seconds"] + 1), "policy": ("policy_hash", "other-policy"),
         "before": ("before", {}), "after": ("after", {}), "lease": ("lease_protocol", "legacy"),
         "state": ("state", "running"), "status": ("status", "cleanup_blocked"),
         "boolean_exit": ("exit_code", True), "negative_exit": ("exit_code", -15),

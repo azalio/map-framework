@@ -12000,8 +12000,8 @@ def _review_completeness(row: dict[str, Any], directory: Path) -> dict[str, Any]
     security = _review_security_gate(row, directory)
     if _review_gates_strict(row.get("target", {})):
         reasons.extend(security["collection_reasons"])
-        if row.get("target", {}).get("security_gate_policy", {}).get("error"):
-            reasons.append("Trusted security gate policy is invalid")
+        if policy_error := _review_policy_error(row.get("target", {})):
+            reasons.append(policy_error)
     result = {"status": "BLOCKED" if blocked else ("INCOMPLETE" if reasons else "COMPLETE"), "reasons": reasons}
     if row.get("coverage_skips"):
         result["skipped_scope"] = row["coverage_skips"]
@@ -12938,8 +12938,8 @@ def _check_review_ledger_binding(branch_dir: Path, verdict: str) -> dict | str:
             rounds = ledger.get("convergence", {}).get("rounds", [])
             if rounds or (branch_dir / "review-mode.json").exists():
                 target = _review_target(_review_admitted_binding(branch_dir.name))
-            if target.get("security_gate_policy", {}).get("error"):
-                return {"status": "error", "message": "Trusted security gate configuration is invalid"}
+            if policy_error := _review_policy_error(target):
+                return {"status": "error", "message": policy_error}
             if ((_review_requires_consent(target) and _review_gates_strict(target))
                     or (rounds and _review_requires_consent(rounds[-1].get("target", {}))
                         and _review_gates_strict(rounds[-1].get("target", {})))):
@@ -26476,6 +26476,14 @@ def _review_requires_consent(target: dict[str, Any]) -> bool:
 
 def _review_gates_strict(target: dict[str, Any]) -> bool:
     return target.get("security_gate_policy", {}).get("mode", "shadow") == "strict"
+
+
+def _review_policy_error(target: dict[str, Any]) -> str:
+    error = target.get("security_gate_policy", {}).get("error")
+    if error == "No module named 'yaml'":
+        return ("The review runner cannot import PyYAML to read the trusted policy. "
+                "Rerun the review with the Python interpreter from the environment where mapify is installed.")
+    return "Trusted security gate configuration is invalid" if error else ""
 
 
 def _review_security_policy(policy: dict[str, Any]) -> dict[str, Any]:
