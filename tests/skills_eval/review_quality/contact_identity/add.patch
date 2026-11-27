@@ -1,0 +1,37 @@
+diff --git a/contacts.py b/contacts.py
+new file mode 100644
+index 0000000..a217f6b
+--- /dev/null
++++ b/contacts.py
+@@ -0,0 +1,4 @@
++def add_contact(contacts, value, kind):
++    if all(contact[0] != value for contact in contacts):
++        contacts.append((value, kind))
++    return True
+diff --git a/test_contacts.py b/test_contacts.py
+new file mode 100644
+index 0000000..a43faa0
+--- /dev/null
++++ b/test_contacts.py
+@@ -0,0 +1,21 @@
++import unittest
++
++from contacts import add_contact
++
++
++class AddressBookTests(unittest.TestCase):
++    def test_add(self):
++        contacts = [("X", "home")]
++        self.assertTrue(add_contact(contacts, "Y", "work"))
++        self.assertEqual(contacts, [("X", "home"), ("Y", "work")])
++
++    def test_repeat(self):
++        contacts = [("X", "home")]
++        for _ in range(2):
++            self.assertTrue(add_contact(contacts, "X", "work"))
++            self.assertEqual(contacts, [("X", "home")])
++
++    def test_exact_repeat(self):
++        contacts = [("X", "home")]
++        self.assertTrue(add_contact(contacts, "X", "home"))
++        self.assertEqual(contacts, [("X", "home")])

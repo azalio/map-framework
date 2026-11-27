@@ -846,7 +846,29 @@ def test_invalid_trusted_gate_config_fails_closed_before_first_round(policy_repo
     git("checkout", "feature")
     Path("old/code.py").write_text("value = 2\n")
     monkeypatch.setenv("MAP_REVIEW_LEDGER_ENFORCE", "0")
-    assert runner.write_stage_gate("review", "ready", branch="feature")["status"] == "error"
+    gate = runner.write_stage_gate("review", "ready", branch="feature")
+    assert gate["status"] == "error"
+    assert "configuration is invalid" in gate["message"]
+
+
+def test_review_reports_missing_yaml_in_runner_python(strict_repo):
+    Path("old/code.py").write_text("value = 2\n")
+    command = [sys.executable, "-S", runner.__file__]
+
+    def invoke(*args):
+        result = subprocess.run([*command, *args], check=False, capture_output=True, text=True)
+        assert result.stdout, result.stderr
+        return json.loads(result.stdout)
+
+    admitted = invoke("begin_review_run", "--mode", "lightweight")
+    assert admitted["target"]["security_gate_policy"]["mode"] == "strict"
+    ledger = invoke("write_review_verdict_ledger", "--current-run")
+    assert ledger["completeness"]["status"] == "INCOMPLETE"
+    assert any("PyYAML" in reason for reason in ledger["completeness"]["reasons"])
+
+    gate = invoke("write_stage_gate", "review", "ready")
+    assert gate["status"] == "error"
+    assert "PyYAML" in gate["message"]
 
 
 @pytest.mark.parametrize("mode", ["strict", "shadow"])

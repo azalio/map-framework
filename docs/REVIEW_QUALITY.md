@@ -27,6 +27,38 @@ Give each case a separate fresh context; do not show its counterpart. Preserve
 raw reports from before and after verification, including discarded hypotheses.
 Use identical inputs across configurations and repeat each configuration.
 
+## Review a passing test against two contracts
+
+The [contact fixtures](../tests/skills_eval/review_quality/contact_identity/) contain one patch and two versions of the address book contract. The patch adds a contact and includes a passing test that keeps only `("X", "home")` after adding `("X", "work")` twice. To replay the reviews, run this from a MAP Framework checkout with its development environment installed.
+
+```bash
+fixtures="$PWD/tests/skills_eval/review_quality/contact_identity"
+export PATH="$PWD/.venv/bin:$PATH"
+projects=$(mktemp -d)
+(
+  set -e
+  for sample in birch cedar; do
+    cd "$projects"
+    mapify init "$sample" --provider codex --mcp none --no-git --no-auto-update
+    cd "$sample"
+    git init -b main
+    git add .
+    git commit -qm "Initialize address book project"
+    git switch -c contacts
+    git apply "$fixtures/add.patch"
+    cp "$fixtures/$sample.md" ADDRESS_BOOK.md
+    git add contacts.py test_contacts.py ADDRESS_BOOK.md
+    git commit -qm "Support adding contacts to an address book"
+    python3 -B -m unittest -v
+  done
+  printf '%s\n' "$projects"
+)
+```
+
+From the same shell, open a fresh Codex session in each project and run `$map-review --ci --base-ref main`. Give each session only its own project. Compare the final findings after both reviews finish.
+
+With the `birch` contract, identity includes the value and kind. The review should explain that `add_contact` skips `("X", "work")` and that `test_repeat` incorrectly expects only `("X", "home")` after each call. The first add should retain both contacts, and repeating it should preserve those same entries. With the `cedar` contract, identity depends on value alone and a match keeps the original contact. Reporting data loss in that case is a false positive.
+
 ## Adjudicate then score
 
 Match each candidate to a corpus target by its cause, triggering path and
